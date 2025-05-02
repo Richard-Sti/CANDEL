@@ -19,7 +19,7 @@ scale = 2
 [sigma_v]
 dist = "jeffreys"
 low = 5
-high = 5000
+high = 2500
 
 [Vext]
 dist = "vector_uniform"
