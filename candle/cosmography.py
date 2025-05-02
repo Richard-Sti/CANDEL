@@ -16,6 +16,7 @@
 import numpy as np
 from astropy.cosmology import FlatLambdaCDM
 from interpax import Interpolator1D
+from scipy.interpolate import CubicSpline
 from jax import numpy as jnp
 
 
@@ -28,12 +29,14 @@ class Distmod2Distance:
     ----------
     Om0 : float
         Matter density parameter.
+    H0 : float
+        Hubble constant in `km / s / Mpc`.
     zmin_interp, zmax_interp : float
         Minimum and maximum redshift for the interpolation grid.
     npoints_interp : int
         Number of points in the interpolation grid.
     """
-    def __init__(self, Om0=0.3, H0=100, zmin_interp=1e-6, zmax_interp=0.5,
+    def __init__(self, Om0=0.3, H0=100, zmin_interp=1e-8, zmax_interp=0.5,
                  npoints_interp=1000):
         cosmo = FlatLambdaCDM(H0=H0, Om0=Om0)
         z_grid = np.linspace(zmin_interp, zmax_interp, npoints_interp)
@@ -58,12 +61,14 @@ class Distmod2Redshift:
     ----------
     Om0 : float
         Matter density parameter.
+    H0 : float
+        Hubble constant in `km / s / Mpc`.
     zmin_interp, zmax_interp : float
         Minimum and maximum redshift for the interpolation grid.
     npoints_interp : int
         Number of points in the interpolation grid.
     """
-    def __init__(self, Om0=0.3, H0=100, zmin_interp=1e-6, zmax_interp=0.5,
+    def __init__(self, Om0=0.3, H0=100, zmin_interp=1e-8, zmax_interp=0.5,
                  npoints_interp=1000):
         cosmo = FlatLambdaCDM(H0=H0, Om0=Om0)
         z_grid = np.linspace(zmin_interp, zmax_interp, npoints_interp)
@@ -76,3 +81,38 @@ class Distmod2Redshift:
             return self._f(r)
 
         return jnp.exp(self._f(r))
+
+
+class LogGrad_Distmod2ComovingDistance:
+    """
+    Class to build an interpolator to compute the log gradient of the comoving
+    distance in `Mpc / h` with respect to distance modulus.
+
+    The function is: `log (dr / dmu) | mu`.
+
+    Parameters
+    ----------
+    Om0 : float
+        Matter density parameter.
+    H0 : float
+        Hubble constant in `km / s / Mpc`.
+    zmin_interp, zmax_interp : float
+        Minimum and maximum redshift for the interpolation grid.
+    npoints_interp : int
+        Number of points in the interpolation grid.
+    """
+    def __init__(self, Om0=0.3, H0=100, zmin_interp=1e-8, zmax_interp=0.5,
+                 npoints_interp=1000):
+        cosmo = FlatLambdaCDM(H0=H0, Om0=Om0)
+        z_grid = np.logspace(np.log10(zmin_interp), np.log10(zmax_interp),
+                             npoints_interp)
+        r_grid = cosmo.comoving_distance(z_grid).value
+        mu_grid = cosmo.distmod(z_grid).value
+
+        spline = CubicSpline(mu_grid, r_grid, extrapolate=False)
+        drdmu = spline.derivative()(mu_grid)
+
+        self._f = Interpolator1D(mu_grid, jnp.log(drdmu), extrap=False)
+
+    def __call__(self, mu):
+        return self._f(mu)

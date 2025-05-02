@@ -25,7 +25,7 @@ from .data import ( # noqa                                                      
 
 from .model import (                                                            # noqa
     load_priors,                                                                # noqa
-    simple_TFR_model,                                                           # noqa
+    SimpleTFRModel,                                                             # noqa
     )
 
 from .inference import (                                                        # noqa
