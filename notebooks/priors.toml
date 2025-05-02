@@ -1,0 +1,16 @@
+[TFR_zeropoint]
+dist = "normal"
+loc = -20
+scale = 5
+
+[TFR_slope]
+dist = "normal"
+loc = -7
+scale = 3
+
+
+[sigma_v]
+dist = "jeffreys"
+low = 5
+high = 5000
+
