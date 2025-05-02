@@ -41,6 +41,8 @@ setup(
         "scipy",
         "matplotlib",
         "h5py",
+        "tomli",
+        "corner",
     ],
     include_package_data=True,
     zip_safe=False,
