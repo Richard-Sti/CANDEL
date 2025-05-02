@@ -19,6 +19,11 @@ dist = "normal"
 loc = -7
 scale = 2
 
+[model.priors.TFR_curvature]
+dist = "normal"
+loc = 10
+scale = 2
+
 [model.priors.TFR_scatter]
 dist = "jeffreys"
 low = 0.01
