@@ -129,6 +129,15 @@ def norm_pmu_homogeneous(mu_TFR, sigma_mu, distmod2distance, num_points=30,
     return vmap(f)(mu_TFR, sigma_mu)
 
 
+# def make_mu_grid(mu_TFR, sigma_mu, num_points=51, num_sigma=5):
+#     """Create a grid of mu values around mu_TFR for numerical integration."""
+#     delta = num_sigma * sigma_mu  # (N,)
+#     unit_grid = jnp.linspace(-1, 1, num_points)  # (num_grid_points,)
+#     # The final shape is (N, num_grid_points)
+#     return mu_TFR[:, None] + unit_grid[None, :] * (delta[:, None] /
+# num_sigma)
+
+
 def get_muTFR(mag, eta, a_TFR, b_TFR, c_TFR=0.0):
     curvature_correction = jnp.where(eta > 0, c_TFR * eta**2, 0.0)
     return mag - (a_TFR + b_TFR * eta + curvature_correction)
@@ -138,7 +147,7 @@ def get_linear_sigma_mu_TFR(data, sigma_mu, b_TFR, c_TFR):
     return jnp.sqrt(
         data["e2_mag"]
         + (b_TFR + 2 * jnp.where(
-            data["eta"] > 0, c_TFR, 0) * data["eta"]) * data["e2_eta"]
+            data["eta"] > 0, c_TFR, 0) * data["eta"])**2 * data["e2_eta"]
         + sigma_mu**2)
 
 
@@ -160,6 +169,7 @@ class BaseModel(ABC):
 
         self.priors = load_priors(config["model"]["priors"])
         self.num_norm_kwargs = config["model"]["mu_norm"]
+        self.mu_grid_kwargs = config["model"]["mu_grid"]
 
     @abstractmethod
     def __call__(self, *args, **kwargs):
@@ -187,9 +197,8 @@ class SimpleTFRModel(BaseModel):
 
         with plate("data", nsamples):
             mu_TFR = get_muTFR(data["mag"], data["eta"], a_TFR, b_TFR, c_TFR)
+            sigma_mu = get_linear_sigma_mu_TFR(data, sigma_mu, b_TFR, c_TFR)
 
-            sigma_mu = jnp.sqrt(
-                data["e2_mag"] + b_TFR**2 * data["e2_eta"] + sigma_mu**2)
             mu = sample("mu_latent", Normal(mu_TFR, sigma_mu))
             r = self.distmod2distance(mu)
 
@@ -205,3 +214,42 @@ class SimpleTFRModel(BaseModel):
             czpred = SPEED_OF_LIGHT * ((1 + zcmb) * (1 + zpec) - 1)
 
             sample("obs", Normal(czpred, sigma_v), obs=data["czcmb"])
+
+
+# class SimpleTFRModel_DistMarg(BaseModel):
+#     """
+#     A TFR model where the distance modulus μ is integrated out using a grid,
+#     instead of being sampled as a latent variable.
+#     """
+
+#     def __call__(self, data):
+#         nsamples = len(data)
+
+#         # Sample the TFR parameters.
+#         a_TFR = rsample("a_TFR", self.priors["TFR_zeropoint"])
+#         b_TFR = rsample("b_TFR", self.priors["TFR_slope"])
+#         c_TFR = rsample("c_TFR", self.priors["TFR_curvature"])
+#         sigma_mu = rsample("sigma_mu", self.priors["TFR_scatter"])
+
+#         # Sample velocity field parameters.
+#         Vext = rsample("Vext", self.priors["Vext"])[None, :]
+#         sigma_v = rsample("sigma_v", self.priors["sigma_v"])
+
+#         with plate("data", nsamples):
+#             mu_TFR = get_muTFR(data["mag"], data["eta"], a_TFR, b_TFR, c_TFR)
+#             sigma_mu = get_linear_sigma_mu_TFR(data, sigma_mu, b_TFR, c_TFR)
+
+#             # Grid around mu_TFR
+#             mu_grid = make_mu_grid(mu_TFR, sigma_mu, **self.mu_grid_kwargs)
+#             # r_grid = self.distmod2distance(mu_grid)
+#             zpec = jnp.sum(data["rhat"] * Vext, axis=1)[:, None] / SPEED_OF_LIGHT  # noqa
+#             zcmb = self.distmod2redshift(mu_grid)
+#             czpred = SPEED_OF_LIGHT * ((1 + zcmb) * (1 + zpec) - 1)
+
+#             ll = Normal(czpred, sigma_v).log_prob(data["czcmb"][:, None])
+#             ll += Normal(mu_TFR[:, None], sigma_mu[:, None]).log_prob(mu_grid)
+
+#             ll = jnp.log(simpson(jnp.exp(ll), x=mu_grid, axis=1))
+
+#             factor("obs", ll)
+
