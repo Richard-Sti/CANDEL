@@ -57,7 +57,7 @@ class DataFrame:
         if key in self._cache:
             return self._cache[key]
 
-        elif key.startswith("e2_") and key.replace("e2_", "e_") in self.data:
+        if key.startswith("e2_") and key.replace("e2_", "e_") in self.data:
             val = self.data[key.replace("e2_", "e_")]**2
         elif key == "theta":
             val = np.deg2rad(self.data["RA"])
