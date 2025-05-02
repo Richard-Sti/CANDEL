@@ -1,0 +1,5 @@
+.vscode/
+venv_candle/
+candle.egg-info/
+__pycache__/
+data/
