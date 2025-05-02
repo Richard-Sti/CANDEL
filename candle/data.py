@@ -16,9 +16,74 @@
 from os.path import join
 
 import numpy as np
+from jax import numpy as jnp
 from h5py import File
 
 from .util import SPEED_OF_LIGHT
+
+
+###############################################################################
+#                             Data frames                                     #
+###############################################################################
+
+
+class DataFrame:
+    """Lightweight container for PV data."""
+
+    def __init__(self, data):
+        self.data = dict(data)
+
+        for key in self.data:
+            data[key] = jnp.asarray(data[key])
+
+        self._cache = {}
+
+    def subsample(self, nsamples, seed=42):
+        """
+        Returns a new frame with randomly selected `nsamples`.
+        """
+        gen = np.random.default_rng(seed)
+        ndata = len(self)
+
+        if nsamples > ndata:
+            raise ValueError(f"`n_samples = {nsamples}` must be less than the "
+                             f"number of data points of {ndata}.")
+
+        mask = gen.choice(ndata, nsamples, replace=False)
+        subsampled = {key: self[key][mask] for key in self.keys()}
+        return DataFrame(subsampled)
+
+    def __getitem__(self, key):
+        if key in self._cache:
+            return self._cache[key]
+
+        if key == "theta":
+            val = np.deg2rad(self.data["RA"])
+        elif key == "phi":
+            val = 0.5 * np.pi - np.deg2rad(self.data["dec"])
+        elif key == "czcmb":
+            val = self.data["zcmb"] * SPEED_OF_LIGHT
+        else:
+            return self.data[key]
+
+        self._cache[key] = val
+        return val
+
+    def keys(self):
+        return list(self.data.keys()) + list(self._cache.keys())
+
+    def __len__(self):
+        return len(next(iter(self.data.values())))
+
+    def __repr__(self):
+        n = len(self)
+        keys = ", ".join(sorted(self.keys()))
+        return f"<DataFrame: {n} galaxies | fields: {keys}>"
+
+
+###############################################################################
+#                            Specific loaders                                 #
+###############################################################################
 
 
 def load_CF4_data(root, which_band, best_mag_quality=True, eta_min=-0.3,
@@ -48,8 +113,8 @@ def load_CF4_data(root, which_band, best_mag_quality=True, eta_min=-0.3,
 
     data = {
         "zcmb": zcmb,
-        "theta": np.deg2rad(RA),
-        "phi": np.pi / 2 * np.deg2rad(DEC),
+        "RA": RA,
+        "dec": DEC,
         "mag": mag,
         "e_mag": np.ones_like(mag) * 0.05,
         "eta": eta,
@@ -67,19 +132,3 @@ def load_CF4_data(root, which_band, best_mag_quality=True, eta_min=-0.3,
         data[key] = data[key][mask]
 
     return data
-
-
-def subsample_data(data, nsamples, seed=42):
-    """
-    Uses `seed` to randomly select `nsamples` entries from data without
-    replacement. Returns a new dictionary containing the subsampled arrays.
-    """
-    gen = np.random.default_rng(seed)
-    ndata = len(data[list(data.keys())[0]])
-
-    if nsamples > ndata:
-        raise ValueError(f"`n_samples = {nsamples}` must be less than the "
-                         f"number of data points of {ndata}.")
-
-    mask = gen.choice(ndata, nsamples, replace=False)
-    return {key: data[key][mask] for key in data}
