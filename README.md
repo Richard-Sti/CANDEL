@@ -1,2 +1,1 @@
-# **C**alibration **A**nd **N**ormalization of **D**istance **L**adder and **E**stimation of Cosmic Flow
-
+# **C**alibration and **A**nalysis of the **N**ear-universe **D**istance **L**adder and **E**xtragalactic Flows
