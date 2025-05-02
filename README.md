@@ -1,1 +1,5 @@
-# **C**alibration and **A**nalysis of the **N**ear-universe **D**istance **L**adder and **E**xtragalactic Flows
+# Calibration and analysis of the near-Universe distance ladder and extragalactic flows
+
+
+## TODO
+- [ ]A lot....
