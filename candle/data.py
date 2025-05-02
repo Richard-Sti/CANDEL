@@ -19,7 +19,7 @@ import numpy as np
 from jax import numpy as jnp
 from h5py import File
 
-from .util import SPEED_OF_LIGHT
+from .util import SPEED_OF_LIGHT, radec_to_cartesian
 
 
 ###############################################################################
@@ -63,10 +63,13 @@ class DataFrame:
             val = 0.5 * np.pi - np.deg2rad(self.data["dec"])
         elif key == "czcmb":
             val = self.data["zcmb"] * SPEED_OF_LIGHT
+        elif key == "rhat":
+            val = radec_to_cartesian(self.data["RA"], self.data["dec"])
+            val /= np.linalg.norm(val, axis=1)[:, None]
         else:
             return self.data[key]
 
-        self._cache[key] = val
+        self._cache[key] = jnp.asarray(val)
         return val
 
     def keys(self):
