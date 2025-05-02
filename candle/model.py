@@ -14,14 +14,20 @@
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 """Distance ladder and velocity field probabilistic models."""
 import tomllib
+from abc import ABC, abstractmethod
 
 import jax.numpy as jnp
+from jax import vmap
 from jax.lax import cond
-from numpyro import deterministic, plate, sample
+from jax.scipy.stats import norm
+from numpyro import deterministic, factor, plate, sample
 from numpyro.distributions import Delta, Normal, ProjectedNormal, Uniform
 from numpyro.handlers import reparam
 from numpyro.infer.reparam import ProjectedNormalReparam
+from quadax import simpson
 
+from .cosmography import (Distmod2Distance, Distmod2Redshift,
+                          LogGrad_Distmod2ComovingDistance)
 from .util import SPEED_OF_LIGHT
 
 ###############################################################################
@@ -69,11 +75,8 @@ def sample_vector(name, mag_min, mag_max):
     ])
 
 
-def load_priors(path):
+def load_priors(config_priors):
     """Load a dictionary of NumPyro distributions from a TOML file."""
-    with open(path, "rb") as f:
-        config = tomllib.load(f)
-
     _DIST_MAP = {
         "normal": lambda p: Normal(p["loc"], p["scale"]),
         "uniform": lambda p: Uniform(p["low"], p["high"]),
@@ -82,7 +85,7 @@ def load_priors(path):
         "vector_uniform": lambda p: {"type": "vector_uniform", "low": p["low"], "high": p["high"],}  # noqa
     }
     priors = {}
-    for name, spec in config.items():
+    for name, spec in config_priors.items():
         dist_name = spec.pop("dist", None)
         if dist_name not in _DIST_MAP:
             raise ValueError(
@@ -110,26 +113,80 @@ def rsample(name, dist):
     return sample(name, dist)
 
 
+def norm_pmu_homogeneous(mu_TFR, sigma_mu, distmod2distance, num_points=30,
+                         num_sigma=5):
+    """
+    Calculate the integral of `r^2 * p(mu | mu_TFR, sigma_mu)` over the r.
+    There is no Jacobian because it cancels as `|dr / dmu| * dmu`.
+    """
+    def f(mu_tfr_i, sigma_mu_i):
+        delta = num_sigma * sigma_mu_i
+        mu_grid = jnp.linspace(mu_tfr_i - delta, mu_tfr_i + delta, num_points)
+        r = distmod2distance(mu_grid)
+        weights = r**2 * norm.pdf(mu_grid, loc=mu_tfr_i, scale=sigma_mu_i)
+        return simpson(weights, x=mu_grid)
+
+    return vmap(f)(mu_TFR, sigma_mu)
+
 ###############################################################################
 #                                 Models                                      #
 ###############################################################################
 
 
-def simple_TFR_model(data, priors, distmod2redshift):
-    nsamples = len(data)
+class BaseModel(ABC):
+    """Base class for all models. """
 
-    # Sample the TFR parameters.
-    a_TFR = rsample("a_TFR", priors["TFR_zeropoint"])
-    b_TFR = rsample("b_TFR", priors["TFR_slope"])
+    def __init__(self, config_path):
+        with open(config_path, "rb") as f:
+            config = tomllib.load(f)
 
-    # Sample the velocity field parameters.
-    Vext = rsample("Vext", priors["Vext"])[None, :]
-    sigma_v = rsample("sigma_v", priors["sigma_v"])
+        self.distmod2redshift = Distmod2Redshift()
+        self.distmod2distance = Distmod2Distance()
+        self.log_grad_distmod2distance = LogGrad_Distmod2ComovingDistance()
 
-    with plate("data", nsamples):
-        mu = data["mag"] - (a_TFR + b_TFR * data["eta"])
-        zpec = jnp.sum(data["rhat"] * Vext, axis=1) / SPEED_OF_LIGHT
-        zcmb = distmod2redshift(mu)
-        czpred = SPEED_OF_LIGHT * ((1 + zcmb) * (1 + zpec) - 1)
+        self.priors = load_priors(config["model"]["priors"])
+        self.num_norm_kwargs = config["model"]["mu_norm"]
 
-        sample("obs", Normal(czpred, sigma_v), obs=data["czcmb"])
+    @abstractmethod
+    def __call__(self, *args, **kwargs):
+        pass
+
+
+class SimpleTFRModel(BaseModel):
+    """
+    A simple TFR model that samples the distance modulus but fixes the true
+    apparent magnitude and linewidth to the observed values.
+    """
+
+    def __call__(self, data,):
+        nsamples = len(data)
+
+        # Sample the TFR parameters.
+        a_TFR = rsample("a_TFR", self.priors["TFR_zeropoint"])
+        b_TFR = rsample("b_TFR", self.priors["TFR_slope"])
+        sigma_mu = rsample("sigma_mu", self.priors["TFR_scatter"])
+
+        # Sample the velocity field parameters.
+        Vext = rsample("Vext", self.priors["Vext"])[None, :]
+        sigma_v = rsample("sigma_v", self.priors["sigma_v"])
+
+        with plate("data", nsamples):
+            mu_TFR = data["mag"] - (a_TFR + b_TFR * data["eta"])
+
+            sigma_mu = jnp.sqrt(
+                data["e2_mag"] + b_TFR**2 * data["e2_eta"] + sigma_mu**2)
+            mu = sample("mu_latent", Normal(mu_TFR, sigma_mu))
+            r = self.distmod2distance(mu)
+
+            # Homogeneous Malmquist bias
+            log_drdmu = self.log_grad_distmod2distance(mu)
+            pmu_norm = norm_pmu_homogeneous(
+                mu_TFR, sigma_mu, self.distmod2distance,
+                **self.num_norm_kwargs)
+            factor("mu_norm", 2 * jnp.log(r) + log_drdmu - jnp.log(pmu_norm))
+
+            zpec = jnp.sum(data["rhat"] * Vext, axis=1) / SPEED_OF_LIGHT
+            zcmb = self.distmod2redshift(mu)
+            czpred = SPEED_OF_LIGHT * ((1 + zcmb) * (1 + zpec) - 1)
+
+            sample("obs", Normal(czpred, sigma_v), obs=data["czcmb"])
