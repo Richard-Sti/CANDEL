@@ -31,3 +31,7 @@ from .model import (                                                            
 from .inference import (                                                        # noqa
     run_inference,                                                              # noqa
     )
+
+from .util import (                                                             # noqa
+    plot_corner,                                                                # noqa
+)

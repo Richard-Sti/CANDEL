@@ -16,6 +16,8 @@
 import numpy as np
 from astropy.coordinates import SkyCoord
 import astropy.units as u
+from corner import corner
+import matplotlib.pyplot as plt
 
 SPEED_OF_LIGHT = 299_792.458  # km / s
 
@@ -47,3 +49,52 @@ def radec_to_galactic(ra, dec):
     """
     c = SkyCoord(ra=ra*u.degree, dec=dec*u.degree, frame='icrs')
     return c.galactic.l.degree, c.galactic.b.degree
+
+
+###############################################################################
+#                               Plotting                                      #
+###############################################################################
+
+
+def name2label(name):
+    latex_labels = {
+        "a_TFR": r"$a_\mathrm{TFR}$",
+        "b_TFR": r"$b_\mathrm{TFR}$",
+        "sigma_mu": r"$\sigma_\mu$",
+        "sigma_v": r"$\sigma_v$",
+        "Vext_mag": r"$V_\mathrm{ext}$",
+        "Vext_ell": r"$\ell_\mathrm{ext}$",
+        "Vext_b": r"$b_\mathrm{ext}$",
+    }
+    return latex_labels.get(name, name)
+
+
+def plot_corner(samples, filename=None, keys=None):
+    """Plot a corner plot from posterior samples."""
+    flat_samples = []
+    labels = []
+
+    for k, v in samples.items():
+        if keys is not None and k not in keys:
+            continue
+        if v.ndim > 2:
+            continue
+        flat_samples.append(v.reshape(-1))
+        labels.append(name2label(k))
+
+    if not flat_samples:
+        raise ValueError("No valid samples to plot.")
+
+    data = np.vstack(flat_samples).T
+
+    fig = corner(
+        data,
+        labels=labels,
+        show_titles=True,
+        smooth=1,
+    )
+
+    if filename is not None:
+        fig.savefig(filename, bbox_inches="tight")
+    else:
+        plt.show()
