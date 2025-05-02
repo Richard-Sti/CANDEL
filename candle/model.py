@@ -128,6 +128,20 @@ def norm_pmu_homogeneous(mu_TFR, sigma_mu, distmod2distance, num_points=30,
 
     return vmap(f)(mu_TFR, sigma_mu)
 
+
+def get_muTFR(mag, eta, a_TFR, b_TFR, c_TFR=0.0):
+    curvature_correction = jnp.where(eta > 0, c_TFR * eta**2, 0.0)
+    return mag - (a_TFR + b_TFR * eta + curvature_correction)
+
+
+def get_linear_sigma_mu_TFR(data, sigma_mu, b_TFR, c_TFR):
+    return jnp.sqrt(
+        data["e2_mag"]
+        + (b_TFR + 2 * jnp.where(
+            data["eta"] > 0, c_TFR, 0) * data["eta"]) * data["e2_eta"]
+        + sigma_mu**2)
+
+
 ###############################################################################
 #                                 Models                                      #
 ###############################################################################
@@ -164,6 +178,7 @@ class SimpleTFRModel(BaseModel):
         # Sample the TFR parameters.
         a_TFR = rsample("a_TFR", self.priors["TFR_zeropoint"])
         b_TFR = rsample("b_TFR", self.priors["TFR_slope"])
+        c_TFR = rsample("c_TFR", self.priors["TFR_curvature"])
         sigma_mu = rsample("sigma_mu", self.priors["TFR_scatter"])
 
         # Sample the velocity field parameters.
@@ -171,7 +186,7 @@ class SimpleTFRModel(BaseModel):
         sigma_v = rsample("sigma_v", self.priors["sigma_v"])
 
         with plate("data", nsamples):
-            mu_TFR = data["mag"] - (a_TFR + b_TFR * data["eta"])
+            mu_TFR = get_muTFR(data["mag"], data["eta"], a_TFR, b_TFR, c_TFR)
 
             sigma_mu = jnp.sqrt(
                 data["e2_mag"] + b_TFR**2 * data["e2_eta"] + sigma_mu**2)
