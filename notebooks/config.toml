@@ -1,30 +1,47 @@
+###############################################################################
+#                               Model                                         #
+###############################################################################
+
 [model]
 
 [model.mu_norm]
 num_points = 20
 num_sigma = 5
 
-[priors.TFR_zeropoint]
+
+[model.priors.TFR_zeropoint]
 dist = "normal"
 loc = -20
 scale = 2
 
-[priors.TFR_slope]
+[model.priors.TFR_slope]
 dist = "normal"
 loc = -7
 scale = 2
 
-[priors.TFR_scatter]
+[model.priors.TFR_scatter]
 dist = "jeffreys"
 low = 0.01
 high = 1.0
 
-[priors.sigma_v]
+[model.priors.sigma_v]
 dist = "jeffreys"
 low = 5
 high = 2500
 
-[priors.Vext]
+[model.priors.Vext]
 dist = "vector_uniform"
 low = 0.0
 high = 1000.0
+
+
+###############################################################################
+#                               Inference                                     #
+###############################################################################
+
+
+[inference]
+num_warmup = 500
+num_samples = 500
+num_chains = 1
+seed = 42

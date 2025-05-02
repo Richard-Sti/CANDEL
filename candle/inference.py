@@ -12,6 +12,8 @@
 # You should have received a copy of the GNU General Public License along
 # with this program; if not, write to the Free Software Foundation, Inc.,
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+"""Running the MCMC inference for the model and some postprocessing."""
+import tomllib
 
 import jax
 import numpy as np
@@ -22,14 +24,24 @@ from numpyro.infer.initialization import init_to_median
 from .util import radec_to_galactic
 
 
-def run_inference(model, model_args, print_summary=True, num_warmup=500,
-                  num_samples=1000, seed=0):
-    """Run MCMC inference on the given model."""
-    kernel = NUTS(model, init_strategy=init_to_median(num_samples=5000))
-    mcmc = MCMC(kernel, num_warmup=num_warmup, num_samples=num_samples)
-    mcmc.run(jax.random.key(seed), *model_args)
+def load_inference_config(config_file):
+    with open(config_file, "rb") as f:
+        config = tomllib.load(f)
 
-    samples = mcmc.get_samples()
+    return config["inference"]
+
+
+def run_inference(model, model_args, config_path, print_summary=True, ):
+    """Run MCMC inference on the given model."""
+    kwargs = load_inference_config(config_path)
+
+    kernel = NUTS(model, init_strategy=init_to_median(num_samples=5000))
+    mcmc = MCMC(
+        kernel, num_warmup=kwargs["num_warmup"],
+        num_samples=kwargs["num_samples"], num_chains=kwargs["num_chains"],)
+    mcmc.run(jax.random.key(kwargs["seed"]), *model_args)
+
+    samples = mcmc.get_samples(group_by_chain=True)
     samples = postprocess_samples(samples)
 
     if print_summary:
@@ -60,12 +72,12 @@ def postprocess_samples(samples):
     return samples
 
 
-def print_clean_summary(samples,):
+def print_clean_summary(samples):
     """Wrapper around numpyro's `print_summary`."""
     samples_print = {}
     for key, x in samples.items():
-        if x.ndim == 1:
-            x = x.reshape(1, -1)
+        if "_latent" in key:
+            continue
 
         samples_print[key] = x
 
