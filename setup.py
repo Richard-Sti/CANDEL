@@ -43,6 +43,8 @@ setup(
         "h5py",
         "tomli",
         "corner",
+        "interpax",
+        "astropy",
     ],
     include_package_data=True,
     zip_safe=False,
