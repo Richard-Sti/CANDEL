@@ -45,6 +45,7 @@ setup(
         "corner",
         "interpax",
         "astropy",
+        "quadax",
     ],
     include_package_data=True,
     zip_safe=False,
