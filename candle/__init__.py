@@ -16,5 +16,14 @@
 
 from .data import ( # noqa                                                      # noqa
     load_CF4_data,                                                              # noqa
-    subsample_data,                                                             # noqa
+    DataFrame,                                                                  # noqa
+    )
+
+from .model import (                                                            # noqa
+    load_priors,                                                                # noqa
+    simple_TFR_model,                                                           # noqa
+    )
+
+from .inference import (                                                        # noqa
+    run_inference,                                                              # noqa
     )
