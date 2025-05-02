@@ -3,3 +3,6 @@ venv_candle/
 candle.egg-info/
 __pycache__/
 data/
+
+
+notebooks/test.ipynb
