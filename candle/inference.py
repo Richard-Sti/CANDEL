@@ -14,16 +14,59 @@
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 import jax
+import numpy as np
+from numpyro.diagnostics import print_summary as print_summary_numpyro
 from numpyro.infer import MCMC, NUTS
+from numpyro.infer.initialization import init_to_median
+
+from .util import radec_to_galactic
 
 
 def run_inference(model, model_args, print_summary=True, num_warmup=500,
                   num_samples=1000, seed=0):
-    kernel = NUTS(model)
+    """Run MCMC inference on the given model."""
+    kernel = NUTS(model, init_strategy=init_to_median(num_samples=5000))
     mcmc = MCMC(kernel, num_warmup=num_warmup, num_samples=num_samples)
     mcmc.run(jax.random.key(seed), *model_args)
 
-    if print_summary:
-        mcmc.print_summary(exclude_deterministic=False)
+    samples = mcmc.get_samples()
+    samples = postprocess_samples(samples)
 
-    return mcmc.get_samples()
+    if print_summary:
+        print_clean_summary(samples)
+
+    return samples
+
+
+def postprocess_samples(samples):
+    """
+    Postprocess the samples from the MCMC run. Removes unused latent variables,
+    and converts Vext samples to galactic coordinates.
+    """
+    # Remove unused, latent variables used for deterministic sampling
+    for key in list(samples.keys()):
+        if "skipZ" in key:
+            samples.pop(key,)
+
+    # Convert the Vext samples to galactic coordinates
+    if any("Vext" in key for key in samples.keys()):
+        ell, b = radec_to_galactic(
+            np.rad2deg(samples.pop("Vext_phi")),
+            np.rad2deg(0.5 * np.pi - np.arccos(samples.pop("Vext_cos_theta"))),)  # noqa
+        samples["Vext_mag"] = samples.pop("Vext_mag")
+        samples["Vext_ell"] = ell
+        samples["Vext_b"] = b
+
+    return samples
+
+
+def print_clean_summary(samples,):
+    """Wrapper around numpyro's `print_summary`."""
+    samples_print = {}
+    for key, x in samples.items():
+        if x.ndim == 1:
+            x = x.reshape(1, -1)
+
+        samples_print[key] = x
+
+    print_summary_numpyro(samples_print,)
