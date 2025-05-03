@@ -6,11 +6,13 @@
 
 [model.mu_norm]
 num_points = 25
-num_sigma = 5
+num_sigma = 4
 
 [model.mu_grid]
-num_points = 50
-num_sigma = 10
+num_points = 250
+half_width = 2.0
+low_clip = 20.0
+high_clip = 40.0
 
 
 [model.priors.TFR_zeropoint]
