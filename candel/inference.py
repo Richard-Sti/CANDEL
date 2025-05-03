@@ -17,6 +17,7 @@ import tomllib
 
 import jax
 import numpy as np
+from h5py import File
 from jax import jit
 from jax import numpy as jnp
 from jax import vmap
@@ -26,7 +27,10 @@ from numpyro.infer.initialization import init_to_median
 from numpyro.infer.util import log_density
 from tqdm import trange
 
-from .util import radec_to_galactic
+from .evidence import (BIC_AIC, dict_samples_to_array, harmonic_evidence,
+                       laplace_evidence)
+from .util import (fprint, galactic_to_radec, radec_to_cartesian,
+                   radec_to_galactic)
 
 
 def load_inference_config(config_file):
@@ -36,8 +40,12 @@ def load_inference_config(config_file):
     return config["inference"]
 
 
-def run_inference(model, model_args, config_path, print_summary=True, ):
-    """Run MCMC inference on the given model."""
+def run_inference(model, model_args, config_path, print_summary=True,
+                  save_samples=True):
+    """
+    Run MCMC inference on the given model, post-process the samples, optionally
+    compute the BIC, AIC, evidence and save the samples to an HDF5 file.
+    """
     kwargs = load_inference_config(config_path)
 
     kernel = NUTS(model, init_strategy=init_to_median(num_samples=5000))
@@ -59,6 +67,41 @@ def run_inference(model, model_args, config_path, print_summary=True, ):
     if print_summary:
         print_clean_summary(samples)
 
+    if model.config["inference"]["compute_evidence"]:
+        bic, aic = BIC_AIC(samples, log_density)
+
+        samples_arr, names = dict_samples_to_array(
+            samples, stack_chains=True)
+        fprint(f"computing harmonic evidence from {len(names)} "
+               f"parameters: {names}")
+
+        samples_arr = samples_arr.reshape(
+            kwargs["num_chains_harmonic"], -1, len(names))
+        log_density_arr = log_density.reshape(
+            kwargs["num_chains_harmonic"], -1)
+        lnZ_laplace, err_lnZ_laplace = laplace_evidence(
+            samples_arr, log_density_arr)
+        lnZ_harmonic, err_lnZ_harmonic = harmonic_evidence(
+            samples_arr, log_density_arr, epochs_num=50,
+            return_flow_samples=False)
+        err_lnZ_harmonic = np.mean(np.abs(err_lnZ_harmonic))
+
+        fprint(f"BIC:          {bic:.2f}")
+        fprint(f"AIC:          {aic:.2f}")
+        fprint(f"Laplace lnZ:  {lnZ_laplace:.2f} +- {err_lnZ_laplace:.2f}")
+        fprint(f"Harmonic lnZ: {lnZ_harmonic:.2f} +- {err_lnZ_harmonic:.2f}")
+
+        gof = {"BIC": bic, "AIC": aic,
+               "lnZ_laplace": lnZ_laplace,
+               "err_lnZ_laplace": err_lnZ_laplace,
+               "lnZ_harmonic": lnZ_harmonic,
+               "err_lnZ_harmonic": err_lnZ_harmonic}
+
+
+    if save_samples:
+        save_mcmc_samples(
+            samples, log_density, gof, model.config["io"]["fname_output"])
+
     return samples, log_density
 
 
@@ -78,7 +121,7 @@ def get_log_density(samples, model, model_args, batch_size=5):
     log_densities = jnp.zeros((num_samples,))
 
     for i in trange(0, num_samples, batch_size, desc="Batched log densities"):
-        batch = {k: v[i:i+batch_size] for k, v in samples.items()}
+        batch = {k: v[i:i + batch_size] for k, v in samples.items()}
         batch_log_densities = f_vmap(batch)
 
         log_densities = log_densities.at[i:i+batch_size].set(
@@ -114,7 +157,7 @@ def postprocess_samples(samples):
         samples["Vext_b"] = b
 
     # Convert aTFR dipole samples to galactic coordinates
-    if (any("a_TFR_dipole") in key for key in samples.keys()):
+    if any("a_TFR_dipole" in key for key in samples.keys()):
         ell, b = radec_to_galactic(
             np.rad2deg(samples.pop("a_TFR_dipole_phi")),
             np.rad2deg(0.5 * np.pi - np.arccos(samples.pop("a_TFR_dipole_cos_theta"))),)
@@ -135,3 +178,42 @@ def print_clean_summary(samples):
         samples_print[key] = x
 
     print_summary_numpyro(samples_print,)
+
+
+def save_mcmc_samples(samples, log_density, gof, filename):
+    """Save the MCMC samples to an HDF5 file."""
+    with File(filename, 'w') as f:
+        grp = f.create_group("samples")
+        for key, x in samples.items():
+            grp.create_dataset(key, data=x, dtype=np.float32)
+
+        try:
+            ndim = samples["Vext_ell"].ndim
+            if ndim > 1:
+                Vext_ell = samples["Vext_ell"].reshape(-1)
+                Vext_b = samples["Vext_b"].reshape(-1)
+                Vext_mag = samples["Vext_mag"].reshape(-1,)
+                original_shape = samples["Vext_ell"].shape
+            else:
+                Vext_ell = samples["Vext_ell"]
+                Vext_b = samples["Vext_b"]
+                Vext_mag = samples["Vext_mag"]
+
+            ra, dec = galactic_to_radec(Vext_ell, Vext_b)
+            Vext = Vext_mag[:, None] * radec_to_cartesian(ra, dec)
+
+            if ndim > 1:
+                Vext = Vext.reshape(*original_shape, 3)
+            grp.create_dataset("Vext", data=Vext)
+        except KeyError:
+            pass
+
+        if log_density is not None:
+            f.create_dataset("log_density", data=log_density)
+
+        if gof is not None:
+            grp = f.create_group("gof")
+            for key, x in gof.items():
+                grp.create_dataset(key, data=x)
+
+    fprint(f"saved samples to `{filename}`.")
