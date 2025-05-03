@@ -16,11 +16,10 @@
 from os.path import join
 
 import numpy as np
-from jax import numpy as jnp
 from h5py import File
+from jax import numpy as jnp
 
-from .util import SPEED_OF_LIGHT, radec_to_cartesian
-
+from .util import SPEED_OF_LIGHT, fprint, radec_to_cartesian
 
 ###############################################################################
 #                             Data frames                                     #
@@ -91,8 +90,38 @@ class DataFrame:
 ###############################################################################
 
 
+def load_SH0ES_calibration(calibration_path, pgc_CF4):
+    """
+    Load SH0ES distance modulus samples and match to CF4 galaxies by PGC ID.
+    """
+    with File(calibration_path, 'r') as f:
+        mu_samples = f["distmod_samples"][...]
+        pgc_SH0ES = f["pgc"][...]
+
+    i_CF4 = []
+    i_SH0ES = []
+
+    for i, pgc_i in enumerate(pgc_CF4):
+        if pgc_i in pgc_SH0ES:
+            match = np.where(pgc_SH0ES == pgc_i)[0]
+            assert len(match) == 1
+            i_CF4.append(i)
+            i_SH0ES.append(match[0])
+
+    i_CF4 = np.array(i_CF4)
+    i_SH0ES = np.array(i_SH0ES)
+
+    is_calibrator = np.zeros(len(pgc_CF4), dtype=bool)
+    is_calibrator[i_CF4] = True
+
+    mu_cal = np.mean(mu_samples[:, i_SH0ES], axis=0)
+    C_mu_cal = np.cov(mu_samples[:, i_SH0ES], rowvar=False)
+
+    return is_calibrator, mu_cal, C_mu_cal
+
+
 def load_CF4_data(root, which_band, best_mag_quality=True, eta_min=-0.3,
-                  zcmb_max=None):
+                  zcmb_max=None, calibration=None):
     """
     Loads the `CF4_TFR.hdf5` file from `root` and extracts fields based on
     `which_band`. Applies filters using `eta_min`, `zcmb_max`, and
@@ -116,6 +145,10 @@ def load_CF4_data(root, which_band, best_mag_quality=True, eta_min=-0.3,
         eta = f["lgWmxi"][...] - 2.5
         e_eta = f["elgWi"][...]
 
+        pgc = f["pgc"][...]
+
+    fprint(f"initially loaded {len(pgc)} galaxies from CF4 TFR data.")
+
     data = {
         "zcmb": zcmb,
         "RA": RA,
@@ -123,17 +156,32 @@ def load_CF4_data(root, which_band, best_mag_quality=True, eta_min=-0.3,
         "mag": mag,
         "e_mag": np.ones_like(mag) * 0.05,
         "eta": eta,
-        "e_eta": e_eta
+        "e_eta": e_eta,
     }
 
     mask = data["eta"] > eta_min
     if best_mag_quality:
         mask &= mag_quality == 5
-
     if zcmb_max is not None:
         mask &= data["zcmb"] < zcmb_max
+    fprint(f"removed {len(pgc) - np.sum(mask)} galaxies, thus "
+           f"{len(pgc[mask])} remain.")
 
     for key in data:
         data[key] = data[key][mask]
+    pgc = pgc[mask]
+
+    if calibration == "SH0ES":
+        is_calibrator, mu_cal, C_mu_cal = load_SH0ES_calibration(
+            join(root, "CF4_SH0ES_calibration.hdf5"), pgc)
+
+        fprint(f"out of {len(pgc)} galaxies, {np.sum(is_calibrator)} are "
+               "SH0ES calibrators.")
+
+        data = {**data,
+                "is_calibrator": is_calibrator,
+                "mu_cal": mu_cal,
+                "C_mu_cal": C_mu_cal,
+                }
 
     return data
