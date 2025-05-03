@@ -60,6 +60,15 @@ def radec_to_galactic(ra, dec):
     return c.galactic.l.degree, c.galactic.b.degree
 
 
+def galactic_to_radec(l, b):
+    """
+    Convert galactic coordinates to right ascension and declination (all in
+    degrees).
+    """
+    c = SkyCoord(l=l*u.degree, b=b*u.degree, frame='galactic')
+    return c.icrs.ra.degree, c.icrs.dec.degree
+
+
 ###############################################################################
 #                               Plotting                                      #
 ###############################################################################
