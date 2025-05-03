@@ -13,13 +13,22 @@
 # with this program; if not, write to the Free Software Foundation, Inc.,
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
+from datetime import datetime
+
+import astropy.units as u
+import matplotlib.pyplot as plt
 import numpy as np
 from astropy.coordinates import SkyCoord
-import astropy.units as u
 from corner import corner
-import matplotlib.pyplot as plt
 
 SPEED_OF_LIGHT = 299_792.458  # km / s
+
+
+def fprint(*args, verbose=True, **kwargs):
+    """Prints a message with a timestamp prepended."""
+    if verbose:
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S%f")[:-6]
+        print(f"{timestamp}", *args, **kwargs)
 
 
 ###############################################################################
