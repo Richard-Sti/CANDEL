@@ -56,3 +56,4 @@ num_warmup = 500
 num_samples = 500
 num_chains = 1
 seed = 42
+compute_log_density = false
