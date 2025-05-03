@@ -20,12 +20,12 @@ scale = 2
 
 [model.priors.TFR_slope]
 dist = "normal"
-loc = -7
+loc = -9.5
 scale = 2
 
 [model.priors.TFR_curvature]
 dist = "normal"
-loc = 10
+loc = 9
 scale = 2
 
 [model.priors.TFR_scatter]
