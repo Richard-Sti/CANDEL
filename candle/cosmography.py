@@ -18,6 +18,7 @@ from astropy.cosmology import FlatLambdaCDM
 from interpax import Interpolator1D
 from scipy.interpolate import CubicSpline
 from jax import numpy as jnp
+from jax import vmap
 
 
 class Distmod2Distance:
@@ -43,13 +44,13 @@ class Distmod2Distance:
         r_grid = cosmo.comoving_distance(z_grid).value
         mu_grid = cosmo.distmod(z_grid).value
 
-        self._f = Interpolator1D(mu_grid, jnp.log(r_grid), extrap=False)
+        self._f = vmap(Interpolator1D(mu_grid, jnp.log(r_grid), extrap=False))
 
-    def __call__(self, r, return_log=False):
+    def __call__(self, mu, return_log=False):
         if return_log:
-            return self._f(r)
+            return self._f(mu)
 
-        return jnp.exp(self._f(r))
+        return jnp.exp(self._f(mu))
 
 
 class Distmod2Redshift:
@@ -74,7 +75,7 @@ class Distmod2Redshift:
         z_grid = np.linspace(zmin_interp, zmax_interp, npoints_interp)
         mu_grid = cosmo.distmod(z_grid).value
 
-        self._f = Interpolator1D(mu_grid, jnp.log(z_grid), extrap=False)
+        self._f = vmap(Interpolator1D(mu_grid, jnp.log(z_grid), extrap=False))
 
     def __call__(self, r, return_log=False):
         if return_log:
@@ -112,7 +113,7 @@ class LogGrad_Distmod2ComovingDistance:
         spline = CubicSpline(mu_grid, r_grid, extrapolate=False)
         drdmu = spline.derivative()(mu_grid)
 
-        self._f = Interpolator1D(mu_grid, jnp.log(drdmu), extrap=False)
+        self._f = vmap(Interpolator1D(mu_grid, jnp.log(drdmu), extrap=False))
 
     def __call__(self, mu):
         return self._f(mu)
