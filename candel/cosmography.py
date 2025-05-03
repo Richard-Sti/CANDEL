@@ -77,11 +77,39 @@ class Distmod2Redshift:
 
         self._f = vmap(Interpolator1D(mu_grid, jnp.log(z_grid), extrap=False))
 
-    def __call__(self, r, return_log=False):
+    def __call__(self, mu, return_log=False):
         if return_log:
-            return self._f(r)
+            return self._f(mu)
 
-        return jnp.exp(self._f(r))
+        return jnp.exp(self._f(mu))
+
+
+class Distance2Redshit:
+    """
+    Class to build an interpolator to convert comoving distance in `Mpc / h`
+    to redshift.
+
+    Parameters
+    ----------
+    Om0 : float
+        Matter density parameter.
+    H0 : float
+        Hubble constant in `km / s / Mpc`.
+    zmin_interp, zmax_interp : float
+        Minimum and maximum redshift for the interpolation grid.
+    npoints_interp : int
+        Number of points in the interpolation grid.
+    """
+    def __init__(self, Om0=0.3, H0=100, zmin_interp=1e-8, zmax_interp=0.5,
+                 npoints_interp=1000):
+        cosmo = FlatLambdaCDM(H0=H0, Om0=Om0)
+        z_grid = np.linspace(zmin_interp, zmax_interp, npoints_interp)
+        r_grid = cosmo.comoving_distance(z_grid).value
+
+        self._f = vmap(Interpolator1D(r_grid, z_grid, extrap=False))
+
+    def __call__(self, r,):
+        return self._f(r)
 
 
 class LogGrad_Distmod2ComovingDistance:
