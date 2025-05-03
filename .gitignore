@@ -1,6 +1,6 @@
 .vscode/
-venv_candle/
-candle.egg-info/
+venv_candel/
+candel.egg-info/
 __pycache__/
 data/
 

@@ -1,4 +1,4 @@
-# Calibration and analysis of the near-Universe distance ladder and extragalactic flows
+# Calibration And Normalization of the DistancE Ladder
 
 
 ## TODO
@@ -9,7 +9,7 @@
 - [ ] Add numerically stable treatment of `V_ext` when computing model evidence.
 - [ ] Add a code, given a model to invert the likelihood.
 
-
+- [ ] Think about folder organization.
 - [ ] Add MNR-compatible versions of likelihoods.
 - [ ] Think about a strategy for generating CF4-like mock catalogs.
 - [ ] Implement an efficient submission script for many runs.

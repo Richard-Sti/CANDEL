@@ -16,14 +16,14 @@
 from setuptools import setup, find_packages
 
 setup(
-    name="candle",
+    name="candel",
     version="0.1.0",
     author="Richard Stiskalek",
     author_email="richard.stiskalek@protonmail.com",
-    description="Calibration And Normalization of Distance Ladder and Estimation of Cosmic Flows",  # noqa
+    description="Calibration And Normalization of the DistancE Ladder",
     long_description=open("README.md").read(),
     long_description_content_type="text/markdown",
-    url="https://github.com/richard-sti/candle",
+    url="https://github.com/richard-sti/candel",
     packages=find_packages(include=["my_package", "my_package.*"]),
     classifiers=[
         "Programming Language :: Python :: 3",
