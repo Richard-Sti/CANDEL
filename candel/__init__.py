@@ -20,7 +20,7 @@ from .cosmography import (                                                      
 
 from .data import ( # noqa                                                      # noqa
     load_CF4_data,                                                              # noqa
-    DataFrame,                                                                  # noqa
+    PVDataFrame,                                                                # noqa
     )
 
 from .evidence import (                                                         # noqa
