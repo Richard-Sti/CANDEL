@@ -58,7 +58,8 @@ def BIC_AIC(samples, log_density, stack_chains=True):
 
         ndata = x.shape[-1]
 
-    fprint(f"found {nparam} parameters and {ndata} data points.")
+    fprint(f"BIC & AIC calculation found {nparam} parameters and {ndata} "
+           "data points.")
 
     BIC = nparam * np.log(ndata) - 2 * log_density[kmax]
     AIC = 2 * nparam - 2 * log_density[kmax]
