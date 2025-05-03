@@ -28,7 +28,7 @@ from numpyro.infer.reparam import ProjectedNormalReparam
 from .cosmography import (Distmod2Distance, Distmod2Redshift,
                           LogGrad_Distmod2ComovingDistance)
 from .simpson import ln_simpson
-from .util import SPEED_OF_LIGHT
+from .util import SPEED_OF_LIGHT, fprint
 
 ###############################################################################
 #                                Priors                                       #
@@ -208,6 +208,8 @@ class BaseModel(ABC):
         self.num_norm_kwargs = config["model"]["mu_norm"]
         self.mu_grid_kwargs = config["model"]["mu_grid"]
 
+        self.config = config
+
     @abstractmethod
     def __call__(self, *args, **kwargs):
         pass
@@ -218,6 +220,12 @@ class SimpleTFRModel(BaseModel):
     A simple TFR model that samples the distance modulus but fixes the true
     apparent magnitude and linewidth to the observed values.
     """
+
+    def __init__(self, config_path):
+        super().__init__(config_path)
+        if self.config["inference"]["compute_evidence"]:
+            fprint("setting `compute_evidence` to False.")
+            self.config["inference"]["compute_evidence"] = False
 
     def __call__(self, data,):
         nsamples = len(data)
