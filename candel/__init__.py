@@ -23,6 +23,13 @@ from .data import ( # noqa                                                      
     DataFrame,                                                                  # noqa
     )
 
+from .evidence import (                                                         # noqa
+    BIC_AIC,                                                                    # noqa
+    laplace_evidence,                                                           # noqa
+    harmonic_evidence,                                                          # noqa
+    dict_samples_to_array,                                                      # noqa
+    )
+
 from .model import (                                                            # noqa
     load_priors,                                                                # noqa
     SimpleTFRModel,                                                             # noqa
