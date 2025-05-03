@@ -84,7 +84,7 @@ class Distmod2Redshift:
         return jnp.exp(self._f(mu))
 
 
-class Distance2Redshit:
+class Distance2Redshift:
     """
     Class to build an interpolator to convert comoving distance in `Mpc / h`
     to redshift.
