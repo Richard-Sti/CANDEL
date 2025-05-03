@@ -26,7 +26,7 @@ from .util import SPEED_OF_LIGHT, fprint, radec_to_cartesian
 ###############################################################################
 
 
-class DataFrame:
+class PVDataFrame:
     """Lightweight container for PV data."""
 
     def __init__(self, data):
@@ -44,6 +44,7 @@ class DataFrame:
         calibration fields accordingly.
         """
         fprint(f"subsampling from {len(self)} to {nsamples} galaxies.")
+
         gen = np.random.default_rng(seed)
         ndata = len(self)
 
@@ -51,9 +52,27 @@ class DataFrame:
             raise ValueError(f"`n_samples = {nsamples}` must be less than the "
                              f"number of data points of {ndata}.")
 
-        mask = gen.choice(ndata, nsamples, replace=False)
-        subsampled = {key: self[key][mask] for key in self.keys()}
-        return DataFrame(subsampled)
+        main_mask = np.zeros(ndata, dtype=bool)
+        if self.num_calibrators > 0:
+            main_mask[self.data["is_calibrator"]] = True
+
+        indx_choice = np.where(~main_mask)[0]
+        indx_choice = gen.choice(
+            indx_choice, nsamples - self.num_calibrators, replace=False)
+        main_mask[indx_choice] = True
+
+        keys_skip = ["is_calibrator", "mu_cal", "C_mu_cal"]
+        subsampled = {key: self[key][main_mask] for key in self.keys() if key not in keys_skip}
+
+        for key in keys_skip:
+            if key in self.data:
+                if key == "is_calibrator":
+                    subsampled[key] = self[key][main_mask]
+                else:
+                    subsampled[key] = self.data[key]
+
+
+        return PVDataFrame(subsampled)
 
     def __getitem__(self, key):
         if key in self._cache:
@@ -79,21 +98,26 @@ class DataFrame:
     def keys(self):
         return list(self.data.keys()) + list(self._cache.keys())
 
-    def __len__(self):
-        return len(next(iter(self.data.values())))
-
-    def __repr__(self):
-        n = len(self)
-
+    @property
+    def num_calibrators(self):
         if "mu_cal" in self.data:
             num_cal = np.sum(self.data["is_calibrator"])
         else:
             num_cal = 0
 
+        return num_cal
+
+    def __len__(self):
+        return len(next(iter(self.data.values())))
+
+    def __repr__(self):
+        n = len(self)
+        num_cal = self.num_calibrators
+
         if num_cal > 0:
-            return f"<DataFrame: {n} galaxies | {num_cal} calibrators>"
+            return f"<PVDataFrame: {n} galaxies | {num_cal} calibrators>"
         else:
-            return f"<DataFrame: {n} galaxies>"
+            return f"<PVDataFrame: {n} galaxies>"
 
 
 ###############################################################################
