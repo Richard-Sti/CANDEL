@@ -75,6 +75,28 @@ def sample_vector(name, mag_min, mag_max):
     ])
 
 
+def sample_vector_fixed(name, mag_min, mag_max):
+    """
+    Sample a 3D vector but without accounting for continuity and poles.
+
+    This enforces that all sampled points have the same contribution to
+    `log_density` which is not the case for the `sample_vector` function
+    because the unit vectors are drawn.
+    """
+    phi = sample(f"{name}_phi", Uniform(0, 2 * jnp.pi))
+
+    cos_theta = sample(f"{name}_cos_theta", Uniform(-1, 1))
+    sin_theta = jnp.sqrt(1 - cos_theta**2)
+
+    mag = sample(f"{name}_mag", Uniform(mag_min, mag_max))
+
+    return mag * jnp.array(
+        [sin_theta * jnp.cos(phi),
+         sin_theta * jnp.sin(phi),
+         cos_theta]
+        )
+
+
 def load_priors(config_priors):
     """Load a dictionary of NumPyro distributions from a TOML file."""
     _DIST_MAP = {
@@ -82,7 +104,8 @@ def load_priors(config_priors):
         "uniform": lambda p: Uniform(p["low"], p["high"]),
         "delta": lambda p: Delta(p["value"]),
         "jeffreys": lambda p: JeffreysPrior(p["low"], p["high"]),
-        "vector_uniform": lambda p: {"type": "vector_uniform", "low": p["low"], "high": p["high"],}  # noqa
+        "vector_uniform": lambda p: {"type": "vector_uniform", "low": p["low"], "high": p["high"]},  # noqa
+        "vector_uniform_fixed": lambda p: {"type": "vector_uniform_fixed", "low": p["low"], "high": p["high"],}  # noqa
     }
     priors = {}
     for name, spec in config_priors.items():
@@ -109,6 +132,9 @@ def rsample(name, dist):
 
     if isinstance(dist, dict) and dist.get("type") == "vector_uniform":
         return sample_vector(name, dist["low"], dist["high"])
+
+    if isinstance(dist, dict) and dist.get("type") == "vector_uniform_fixed":
+        return sample_vector_fixed(name, dist["low"], dist["high"])
 
     return sample(name, dist)
 
