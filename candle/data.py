@@ -39,8 +39,11 @@ class DataFrame:
 
     def subsample(self, nsamples, seed=42):
         """
-        Returns a new frame with randomly selected `nsamples`.
+        Returns a new frame with randomly selected `nsamples`. Keeps all
+        calibrators in the sample (if present), and updates associated
+        calibration fields accordingly.
         """
+        fprint(f"subsampling from {len(self)} to {nsamples} galaxies.")
         gen = np.random.default_rng(seed)
         ndata = len(self)
 
@@ -81,8 +84,16 @@ class DataFrame:
 
     def __repr__(self):
         n = len(self)
-        keys = ", ".join(sorted(self.keys()))
-        return f"<DataFrame: {n} galaxies | fields: {keys}>"
+
+        if "mu_cal" in self.data:
+            num_cal = np.sum(self.data["is_calibrator"])
+        else:
+            num_cal = 0
+
+        if num_cal > 0:
+            return f"<DataFrame: {n} galaxies | {num_cal} calibrators>"
+        else:
+            return f"<DataFrame: {n} galaxies>"
 
 
 ###############################################################################
