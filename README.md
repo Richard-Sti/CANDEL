@@ -5,8 +5,8 @@
 
 ### General
 - [ ] Fix subsampling to preserve calibrator assignment.
-- [ ] Add evidence computation (Laplace, harmonic mean).
-- [ ] Add numerically stable treatment of `V_ext` when computing model evidence.
+- [x] Add evidence computation (Laplace, harmonic mean).
+- [x] Add numerically stable treatment of `V_ext` when computing model evidence.
 - [ ] Add a code, given a model to invert the likelihood.
 
 - [ ] Think about folder organization.
