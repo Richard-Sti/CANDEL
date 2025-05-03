@@ -1,0 +1,12 @@
+[input]
+fname_data = "/Users/rstiskalek/Projects/CANDEL/data/redshift_survey_example.hdf5"
+fname_calibration = "/Users/rstiskalek/Projects/CANDEL/results/samples_test.hdf5"
+
+[output]
+fname = "/Users/rstiskalek/Projects/CANDEL/results/redshift_survey_example_mapped.hdf5"
+
+[model]
+which_model = "simple"
+
+r_min = 0.1
+r_max = 350
