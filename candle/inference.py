@@ -17,9 +17,14 @@ import tomllib
 
 import jax
 import numpy as np
+from jax import jit
+from jax import numpy as jnp
+from jax import vmap
 from numpyro.diagnostics import print_summary as print_summary_numpyro
 from numpyro.infer import MCMC, NUTS
 from numpyro.infer.initialization import init_to_median
+from numpyro.infer.util import log_density
+from tqdm import trange
 
 from .util import radec_to_galactic
 
@@ -41,13 +46,44 @@ def run_inference(model, model_args, config_path, print_summary=True, ):
         num_samples=kwargs["num_samples"], num_chains=kwargs["num_chains"],)
     mcmc.run(jax.random.key(kwargs["seed"]), *model_args)
 
+    samples = mcmc.get_samples()
+    if kwargs["compute_log_density"]:
+        log_density = get_log_density(samples, model, model_args)
+    else:
+        log_density = None
+
     samples = mcmc.get_samples(group_by_chain=True)
     samples = postprocess_samples(samples)
 
     if print_summary:
         print_clean_summary(samples)
 
-    return samples
+    return samples, log_density.reshape(kwargs["num_chains"], -1)
+
+
+def get_log_density(samples, model, model_args, batch_size=5):
+    """
+    Compute the log density of the peculiar velocity validation model. The
+    batch size cannot be much larger to prevent exhausting the memory.
+    """
+    def f(sample):
+        return log_density(model, model_args, {}, sample)[0]
+
+    f_vmap = vmap(f)
+    f_vmap = jit(f_vmap)
+
+    samples = {k: jnp.array(v) for k, v in samples.items()}
+    num_samples = len(samples[next(iter(samples))])
+    log_densities = jnp.zeros((num_samples,))
+
+    for i in trange(0, num_samples, batch_size, desc="Batched log densities"):
+        batch = {k: v[i:i+batch_size] for k, v in samples.items()}
+        batch_log_densities = f_vmap(batch)
+
+        log_densities = log_densities.at[i:i+batch_size].set(
+            batch_log_densities)
+
+    return log_densities
 
 
 def postprocess_samples(samples):
