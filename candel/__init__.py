@@ -38,9 +38,17 @@ from .model import (                                                            
 
 from .inference import (                                                        # noqa
     run_inference,                                                              # noqa
+    save_mcmc_samples,                                                          # noqa
+    )
+
+from .redshift2real import (                                                    # noqa
+    SimpleRedshift2Real,                                                        # noqa
     )
 
 from .util import (                                                             # noqa
     SPEED_OF_LIGHT,                                                             # noqa
     plot_corner,                                                                # noqa
+    radec_to_cartesian,                                                         # noqa
+    radec_to_galactic,                                                          # noqa
+    galactic_to_radec,                                                          # noqa
 )
