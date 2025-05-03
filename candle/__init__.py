@@ -34,5 +34,6 @@ from .inference import (                                                        
     )
 
 from .util import (                                                             # noqa
+    SPEED_OF_LIGHT,                                                             # noqa
     plot_corner,                                                                # noqa
 )
