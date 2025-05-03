@@ -49,6 +49,7 @@ def run_inference(model, model_args, config_path, print_summary=True, ):
     samples = mcmc.get_samples()
     if kwargs["compute_log_density"]:
         log_density = get_log_density(samples, model, model_args)
+        log_density = log_density.reshape(kwargs["num_chains"], -1)
     else:
         log_density = None
 
@@ -58,7 +59,7 @@ def run_inference(model, model_args, config_path, print_summary=True, ):
     if print_summary:
         print_clean_summary(samples)
 
-    return samples, log_density.reshape(kwargs["num_chains"], -1)
+    return samples, log_density
 
 
 def get_log_density(samples, model, model_args, batch_size=5):
