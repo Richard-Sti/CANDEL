@@ -108,14 +108,20 @@ def load_priors(config_priors):
         "vector_uniform_fixed": lambda p: {"type": "vector_uniform_fixed", "low": p["low"], "high": p["high"],}  # noqa
     }
     priors = {}
+    prior_dist_name = {}
     for name, spec in config_priors.items():
         dist_name = spec.pop("dist", None)
         if dist_name not in _DIST_MAP:
             raise ValueError(
                 f"Unsupported distribution '{dist_name}' for '{name}'")
-        priors[name] = _DIST_MAP[dist_name](spec)
 
-    return priors
+        if dist_name == "delta":
+            spec["value"] = jnp.asarray(spec["value"])
+
+        priors[name] = _DIST_MAP[dist_name](spec)
+        prior_dist_name[name] = dist_name
+
+    return priors, prior_dist_name
 
 
 ###############################################################################
@@ -197,7 +203,8 @@ class BaseModel(ABC):
         self.distmod2distance = Distmod2Distance()
         self.log_grad_distmod2distance = LogGrad_Distmod2ComovingDistance()
 
-        self.priors = load_priors(config["model"]["priors"])
+        self.priors, self.prior_dist_name = load_priors(
+            config["model"]["priors"])
         self.num_norm_kwargs = config["model"]["mu_norm"]
         self.mu_grid_kwargs = config["model"]["mu_grid"]
 
@@ -221,11 +228,18 @@ class SimpleTFRModel(BaseModel):
         c_TFR = rsample("c_TFR", self.priors["TFR_curvature"])
         sigma_mu = rsample("sigma_mu", self.priors["TFR_scatter"])
 
+        if self.prior_dist_name["TFR_zeropoint_dipole"] != "delta":
+            a_TFR_dipole = rsample(
+                "a_TFR_dipole", self.priors["TFR_zeropoint_dipole"])[None, :]
+
         # Sample the velocity field parameters.
         Vext = rsample("Vext", self.priors["Vext"])[None, :]
         sigma_v = rsample("sigma_v", self.priors["sigma_v"])
 
         with plate("data", nsamples):
+            if self.prior_dist_name["TFR_zeropoint_dipole"] != "delta":
+                a_TFR = a_TFR + jnp.sum(a_TFR_dipole * data["rhat"], axis=1)
+
             mu_TFR = get_muTFR(data["mag"], data["eta"], a_TFR, b_TFR, c_TFR)
             sigma_mu = get_linear_sigma_mu_TFR(data, sigma_mu, b_TFR, c_TFR)
 
@@ -261,11 +275,18 @@ class SimpleTFRModel_DistMarg(BaseModel):
         c_TFR = rsample("c_TFR", self.priors["TFR_curvature"])
         sigma_mu = rsample("sigma_mu", self.priors["TFR_scatter"])
 
+        if self.prior_dist_name["TFR_zeropoint_dipole"] != "delta":
+            a_TFR_dipole = rsample(
+                "a_TFR_dipole", self.priors["TFR_zeropoint_dipole"])[None, :]
+
         # Sample velocity field parameters.
         Vext = rsample("Vext", self.priors["Vext"])[None, :]
         sigma_v = rsample("sigma_v", self.priors["sigma_v"])
 
         with plate("data", nsamples):
+            if self.prior_dist_name["TFR_zeropoint_dipole"] != "delta":
+                a_TFR = a_TFR + jnp.sum(a_TFR_dipole * data["rhat"], axis=1)
+
             mu_TFR = get_muTFR(data["mag"], data["eta"], a_TFR, b_TFR, c_TFR)
             sigma_mu = get_linear_sigma_mu_TFR(data, sigma_mu, b_TFR, c_TFR)
 

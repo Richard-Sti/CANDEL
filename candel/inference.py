@@ -92,10 +92,17 @@ def postprocess_samples(samples):
     Postprocess the samples from the MCMC run. Removes unused latent variables,
     and converts Vext samples to galactic coordinates.
     """
-    # Remove unused, latent variables used for deterministic sampling
     for key in list(samples.keys()):
+        # Remove unused, latent variables used for deterministic sampling
         if "skipZ" in key:
             samples.pop(key,)
+            continue
+
+        # Remove samples fixed to a single value (delta prior)
+        x = samples[key]
+        if np.alltrue(x.flatten()[0] == x):
+            samples.pop(key,)
+            continue
 
     # Convert the Vext samples to galactic coordinates
     if any("Vext" in key for key in samples.keys()):
@@ -105,6 +112,15 @@ def postprocess_samples(samples):
         samples["Vext_mag"] = samples.pop("Vext_mag")
         samples["Vext_ell"] = ell
         samples["Vext_b"] = b
+
+    # Convert aTFR dipole samples to galactic coordinates
+    if (any("a_TFR_dipole") in key for key in samples.keys()):
+        ell, b = radec_to_galactic(
+            np.rad2deg(samples.pop("a_TFR_dipole_phi")),
+            np.rad2deg(0.5 * np.pi - np.arccos(samples.pop("a_TFR_dipole_cos_theta"))),)
+        samples["a_TFR_dipole_mag"] = samples.pop("a_TFR_dipole_mag")
+        samples["a_TFR_dipole_ell"] = ell
+        samples["a_TFR_dipole_b"] = b
 
     return samples
 
