@@ -13,8 +13,6 @@
 # with this program; if not, write to the Free Software Foundation, Inc.,
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 """Running the MCMC inference for the model and some postprocessing."""
-import tomllib
-
 import jax
 import numpy as np
 from h5py import File
@@ -33,20 +31,12 @@ from .util import (fprint, galactic_to_radec, radec_to_cartesian,
                    radec_to_galactic)
 
 
-def load_inference_config(config_file):
-    with open(config_file, "rb") as f:
-        config = tomllib.load(f)
-
-    return config["inference"]
-
-
-def run_inference(model, model_args, config_path, print_summary=True,
-                  save_samples=True):
+def run_inference(model, model_args, print_summary=True, save_samples=True):
     """
     Run MCMC inference on the given model, post-process the samples, optionally
     compute the BIC, AIC, evidence and save the samples to an HDF5 file.
     """
-    kwargs = load_inference_config(config_path)
+    kwargs = model.config["inference"]
 
     kernel = NUTS(model, init_strategy=init_to_median(num_samples=5000))
     mcmc = MCMC(
@@ -96,6 +86,8 @@ def run_inference(model, model_args, config_path, print_summary=True,
                "err_lnZ_laplace": err_lnZ_laplace,
                "lnZ_harmonic": lnZ_harmonic,
                "err_lnZ_harmonic": err_lnZ_harmonic}
+    else:
+        gof = None
 
 
     if save_samples:
