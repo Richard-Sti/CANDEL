@@ -7,7 +7,7 @@
 - [x] Fix subsampling to preserve calibrator assignment.
 - [x] Add evidence computation (Laplace, harmonic mean).
 - [x] Add numerically stable treatment of `V_ext` when computing model evidence.
-- [ ] Add a code, given a model to invert the likelihood.
+- [x] Add a code, given a model to invert the likelihood.
 - [x] Add option to save samples.
 
 - [x] Think about folder organization.
