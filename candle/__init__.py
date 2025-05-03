@@ -26,7 +26,7 @@ from .data import ( # noqa                                                      
 from .model import (                                                            # noqa
     load_priors,                                                                # noqa
     SimpleTFRModel,                                                             # noqa
-    # SimpleTFRModel_DistMarg,                                                    # noqa
+    SimpleTFRModel_DistMarg,                                                    # noqa
     )
 
 from .inference import (                                                        # noqa

@@ -24,10 +24,10 @@ from numpyro import deterministic, factor, plate, sample
 from numpyro.distributions import Delta, Normal, ProjectedNormal, Uniform
 from numpyro.handlers import reparam
 from numpyro.infer.reparam import ProjectedNormalReparam
-from quadax import simpson
 
 from .cosmography import (Distmod2Distance, Distmod2Redshift,
                           LogGrad_Distmod2ComovingDistance)
+from .simpson import ln_simpson
 from .util import SPEED_OF_LIGHT
 
 ###############################################################################
@@ -113,8 +113,8 @@ def rsample(name, dist):
     return sample(name, dist)
 
 
-def norm_pmu_homogeneous(mu_TFR, sigma_mu, distmod2distance, num_points=30,
-                         num_sigma=5):
+def log_norm_pmu_homogeneous(mu_TFR, sigma_mu, distmod2distance, num_points=30,
+                             num_sigma=5):
     """
     Calculate the integral of `r^2 * p(mu | mu_TFR, sigma_mu)` over the r.
     There is no Jacobian because it cancels as `|dr / dmu| * dmu`.
@@ -122,20 +122,24 @@ def norm_pmu_homogeneous(mu_TFR, sigma_mu, distmod2distance, num_points=30,
     def f(mu_tfr_i, sigma_mu_i):
         delta = num_sigma * sigma_mu_i
         mu_grid = jnp.linspace(mu_tfr_i - delta, mu_tfr_i + delta, num_points)
-        r = distmod2distance(mu_grid)
-        weights = r**2 * norm.pdf(mu_grid, loc=mu_tfr_i, scale=sigma_mu_i)
-        return simpson(weights, x=mu_grid)
+        r_grid = distmod2distance(mu_grid)
+
+        weights = (
+            + 2 * jnp.log(r_grid)
+            + norm.logpdf(mu_grid, loc=mu_tfr_i, scale=sigma_mu_i)
+            )
+
+        return ln_simpson(weights, x=r_grid, axis=-1)
 
     return vmap(f)(mu_TFR, sigma_mu)
 
 
-# def make_mu_grid(mu_TFR, sigma_mu, num_points=51, num_sigma=5):
-#     """Create a grid of mu values around mu_TFR for numerical integration."""
-#     delta = num_sigma * sigma_mu  # (N,)
-#     unit_grid = jnp.linspace(-1, 1, num_points)  # (num_grid_points,)
-#     # The final shape is (N, num_grid_points)
-#     return mu_TFR[:, None] + unit_grid[None, :] * (delta[:, None] /
-# num_sigma)
+def make_mu_grid(mu_TFR, num_points=51, half_width=1.5, low_clip=20.,
+                 high_clip=40.,):
+    """Generate a grid of `mu` values centered on each `mu_TFR`"""
+    lo = jnp.clip((mu_TFR - half_width).ravel(), low_clip, high_clip)
+    hi = jnp.clip((mu_TFR + half_width).ravel(), low_clip, high_clip)
+    return jnp.linspace(lo, hi, num_points, axis=-1)
 
 
 def get_muTFR(mag, eta, a_TFR, b_TFR, c_TFR=0.0):
@@ -204,10 +208,10 @@ class SimpleTFRModel(BaseModel):
 
             # Homogeneous Malmquist bias
             log_drdmu = self.log_grad_distmod2distance(mu)
-            pmu_norm = norm_pmu_homogeneous(
+            log_pmu_norm = log_norm_pmu_homogeneous(
                 mu_TFR, sigma_mu, self.distmod2distance,
                 **self.num_norm_kwargs)
-            factor("mu_norm", 2 * jnp.log(r) + log_drdmu - jnp.log(pmu_norm))
+            factor("mu_norm", 2 * jnp.log(r) + log_drdmu - log_pmu_norm)
 
             zpec = jnp.sum(data["rhat"] * Vext, axis=1) / SPEED_OF_LIGHT
             zcmb = self.distmod2redshift(mu)
@@ -216,40 +220,41 @@ class SimpleTFRModel(BaseModel):
             sample("obs", Normal(czpred, sigma_v), obs=data["czcmb"])
 
 
-# class SimpleTFRModel_DistMarg(BaseModel):
-#     """
-#     A TFR model where the distance modulus μ is integrated out using a grid,
-#     instead of being sampled as a latent variable.
-#     """
+class SimpleTFRModel_DistMarg(BaseModel):
+    """
+    A TFR model where the distance modulus μ is integrated out using a grid,
+    instead of being sampled as a latent variable.
+    """
 
-#     def __call__(self, data):
-#         nsamples = len(data)
+    def __call__(self, data):
+        nsamples = len(data)
 
-#         # Sample the TFR parameters.
-#         a_TFR = rsample("a_TFR", self.priors["TFR_zeropoint"])
-#         b_TFR = rsample("b_TFR", self.priors["TFR_slope"])
-#         c_TFR = rsample("c_TFR", self.priors["TFR_curvature"])
-#         sigma_mu = rsample("sigma_mu", self.priors["TFR_scatter"])
+        # Sample the TFR parameters.
+        a_TFR = rsample("a_TFR", self.priors["TFR_zeropoint"])
+        b_TFR = rsample("b_TFR", self.priors["TFR_slope"])
+        c_TFR = rsample("c_TFR", self.priors["TFR_curvature"])
+        sigma_mu = rsample("sigma_mu", self.priors["TFR_scatter"])
 
-#         # Sample velocity field parameters.
-#         Vext = rsample("Vext", self.priors["Vext"])[None, :]
-#         sigma_v = rsample("sigma_v", self.priors["sigma_v"])
+        # Sample velocity field parameters.
+        Vext = rsample("Vext", self.priors["Vext"])[None, :]
+        sigma_v = rsample("sigma_v", self.priors["sigma_v"])
 
-#         with plate("data", nsamples):
-#             mu_TFR = get_muTFR(data["mag"], data["eta"], a_TFR, b_TFR, c_TFR)
-#             sigma_mu = get_linear_sigma_mu_TFR(data, sigma_mu, b_TFR, c_TFR)
+        with plate("data", nsamples):
+            mu_TFR = get_muTFR(data["mag"], data["eta"], a_TFR, b_TFR, c_TFR)
+            sigma_mu = get_linear_sigma_mu_TFR(data, sigma_mu, b_TFR, c_TFR)
 
-#             # Grid around mu_TFR
-#             mu_grid = make_mu_grid(mu_TFR, sigma_mu, **self.mu_grid_kwargs)
-#             # r_grid = self.distmod2distance(mu_grid)
-#             zpec = jnp.sum(data["rhat"] * Vext, axis=1)[:, None] / SPEED_OF_LIGHT  # noqa
-#             zcmb = self.distmod2redshift(mu_grid)
-#             czpred = SPEED_OF_LIGHT * ((1 + zcmb) * (1 + zpec) - 1)
+            mu_grid = make_mu_grid(mu_TFR, **self.mu_grid_kwargs)
+            r_grid = self.distmod2distance(mu_grid)
 
-#             ll = Normal(czpred, sigma_v).log_prob(data["czcmb"][:, None])
-#             ll += Normal(mu_TFR[:, None], sigma_mu[:, None]).log_prob(mu_grid)
+            zpec = jnp.sum(data["rhat"] * Vext, axis=1)[:, None] / SPEED_OF_LIGHT  # noqa
+            zcmb = self.distmod2redshift(mu_grid)
+            czpred = SPEED_OF_LIGHT * ((1 + zcmb) * (1 + zpec) - 1)
 
-#             ll = jnp.log(simpson(jnp.exp(ll), x=mu_grid, axis=1))
+            ll = 2 * jnp.log(r_grid)
+            ll += Normal(mu_TFR[:, None], sigma_mu[:, None]).log_prob(mu_grid)
+            ll -= ln_simpson(ll, x=r_grid, axis=-1)[:, None]
 
-#             factor("obs", ll)
+            ll += Normal(czpred, sigma_v).log_prob(data["czcmb"][:, None])
+            ll = ln_simpson(ll, x=r_grid, axis=-1)
 
+            factor("obs", ll)
