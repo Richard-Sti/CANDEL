@@ -21,7 +21,8 @@ from jax import vmap
 from jax.lax import cond
 from jax.scipy.stats import norm
 from numpyro import deterministic, factor, plate, sample
-from numpyro.distributions import Delta, Normal, ProjectedNormal, Uniform
+from numpyro.distributions import (Delta, MultivariateNormal, Normal,
+                                   ProjectedNormal, Uniform)
 from numpyro.handlers import reparam
 from numpyro.infer.reparam import ProjectedNormalReparam
 
@@ -146,7 +147,7 @@ def rsample(name, dist):
 
 
 def log_norm_pmu_homogeneous(mu_TFR, sigma_mu, distmod2distance, num_points=30,
-                             num_sigma=5):
+                             num_sigma=5, h=1):
     """
     Calculate the integral of `r^2 * p(mu | mu_TFR, sigma_mu)` over the r.
     There is no Jacobian because it cancels as `|dr / dmu| * dmu`.
@@ -154,7 +155,7 @@ def log_norm_pmu_homogeneous(mu_TFR, sigma_mu, distmod2distance, num_points=30,
     def f(mu_tfr_i, sigma_mu_i):
         delta = num_sigma * sigma_mu_i
         mu_grid = jnp.linspace(mu_tfr_i - delta, mu_tfr_i + delta, num_points)
-        r_grid = distmod2distance(mu_grid)
+        r_grid = distmod2distance(mu_grid, h=h)
 
         weights = (
             + 2 * jnp.log(r_grid)
@@ -188,12 +189,12 @@ def get_linear_sigma_mu_TFR(data, sigma_mu, b_TFR, c_TFR):
 
 
 ###############################################################################
-#                                 Models                                      #
+#                               Base models                                   #
 ###############################################################################
 
 
 class BaseModel(ABC):
-    """Base class for all models. """
+    """Base class for all PV models. """
 
     def __init__(self, config_path):
         with open(config_path, "rb") as f:
@@ -215,6 +216,11 @@ class BaseModel(ABC):
         pass
 
 
+###############################################################################
+#                              TFR models                                     #
+###############################################################################
+
+
 class SimpleTFRModel(BaseModel):
     """
     A simple TFR model that samples the distance modulus but fixes the true
@@ -231,7 +237,7 @@ class SimpleTFRModel(BaseModel):
         nsamples = len(data)
 
         # Sample the TFR parameters.
-        a_TFR = rsample("a_TFR", self.priors["TFR_zeropoint"])
+        a_TFR = rsample("a_TFR_h", self.priors["TFR_zeropoint"])
         b_TFR = rsample("b_TFR", self.priors["TFR_slope"])
         c_TFR = rsample("c_TFR", self.priors["TFR_curvature"])
         sigma_mu = rsample("sigma_mu", self.priors["TFR_scatter"])
@@ -244,6 +250,11 @@ class SimpleTFRModel(BaseModel):
         Vext = rsample("Vext", self.priors["Vext"])[None, :]
         sigma_v = rsample("sigma_v", self.priors["sigma_v"])
 
+        # Remainining parameters
+        h = rsample("h", self.priors["h"])
+
+        a_TFR = deterministic("a_TFR", a_TFR + 5 * jnp.log10(h))
+
         with plate("data", nsamples):
             if self.prior_dist_name["TFR_zeropoint_dipole"] != "delta":
                 a_TFR = a_TFR + jnp.sum(a_TFR_dipole * data["rhat"], axis=1)
@@ -252,20 +263,28 @@ class SimpleTFRModel(BaseModel):
             sigma_mu = get_linear_sigma_mu_TFR(data, sigma_mu, b_TFR, c_TFR)
 
             mu = sample("mu_latent", Normal(mu_TFR, sigma_mu))
-            r = self.distmod2distance(mu)
+            r = self.distmod2distance(mu, h=h)
 
             # Homogeneous Malmquist bias
-            log_drdmu = self.log_grad_distmod2distance(mu)
+            log_drdmu = self.log_grad_distmod2distance(mu, h=1)
             log_pmu_norm = log_norm_pmu_homogeneous(
                 mu_TFR, sigma_mu, self.distmod2distance,
-                **self.num_norm_kwargs)
+                **self.num_norm_kwargs, h=h)
             factor("mu_norm", 2 * jnp.log(r) + log_drdmu - log_pmu_norm)
 
             zpec = jnp.sum(data["rhat"] * Vext, axis=1) / SPEED_OF_LIGHT
-            zcmb = self.distmod2redshift(mu)
+            zcmb = self.distmod2redshift(mu, h=h)
             czpred = SPEED_OF_LIGHT * ((1 + zcmb) * (1 + zpec) - 1)
 
             sample("obs", Normal(czpred, sigma_v), obs=data["czcmb"])
+
+        if data.num_calibrators > 0:
+            mu_calibration = mu[data["is_calibrator"]]
+            with plate("calibrators", len(mu_calibration)):
+                sample(
+                    "mu_cal",
+                    MultivariateNormal(mu_calibration, data["C_mu_cal"]),
+                    obs=data["mu_cal"])
 
 
 class SimpleTFRModel_DistMarg(BaseModel):
