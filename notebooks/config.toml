@@ -1,0 +1,92 @@
+###############################################################################
+#                               Inference                                     #
+###############################################################################
+
+[inference]
+model = "SimpleTFR"
+num_warmup = 500
+num_samples = 500
+num_chains = 1
+seed = 42
+compute_log_density = true
+compute_evidence = true
+num_chains_harmonic = 5
+
+###############################################################################
+#                                 Model                                       #
+###############################################################################
+
+[model]
+
+[model.mu_norm]
+num_points = 25
+num_sigma = 4
+
+[model.mu_grid]
+num_points = 250
+half_width = 2.0
+low_clip = 20.0
+high_clip = 40.0
+
+[model.priors.h]
+dist = "delta"
+value = 1.0
+# dist = "normal"
+# loc = 0.7
+# scale = 0.1
+
+
+[model.priors.TFR_zeropoint]
+dist = "normal"
+loc = -20
+scale = 2
+
+[model.priors.TFR_slope]
+dist = "normal"
+loc = -9.5
+scale = 2
+
+[model.priors.TFR_curvature]
+dist = "normal"
+loc = 9
+scale = 2
+
+[model.priors.TFR_scatter]
+dist = "jeffreys"
+low = 0.01
+high = 1.0
+
+[model.priors.TFR_zeropoint_dipole]
+dist = "delta"
+value = [0.0, 0.0, 0.0]
+
+[model.priors.sigma_v]
+dist = "jeffreys"
+low = 5
+high = 2500
+
+[model.priors.Vext]
+dist = "vector_uniform"
+low = 0.0
+high = 1000.0
+
+################################################################################
+#                                  Data                                        #
+################################################################################
+
+[io]
+catalogue_name = "CF4_W1"
+fname_output = "/Users/rstiskalek/Projects/CANDEL/results/samples_test.hdf5"
+
+[io.CF4_W1]
+root = "/Users/rstiskalek/Projects/CANDEL/data/CF4"
+which_band = "w1"
+best_mag_quality = true
+eta_min = -0.3
+zcmb_max = "None"
+b_min = 7.5
+remove_outliers = true
+calibration = "None"
+
+nsamples_subsample = 250
+seed_subsample = 42
