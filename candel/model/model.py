@@ -25,10 +25,10 @@ from numpyro.distributions import (Delta, MultivariateNormal, Normal,
 from numpyro.handlers import reparam
 from numpyro.infer.reparam import ProjectedNormalReparam
 
-from .cosmography import (Distmod2Distance, Distmod2Redshift,
-                          LogGrad_Distmod2ComovingDistance)
+from ..cosmography import (Distmod2Distance, Distmod2Redshift,
+                           LogGrad_Distmod2ComovingDistance)
 from .simpson import ln_simpson
-from .util import SPEED_OF_LIGHT, fprint, load_config
+from ..util import SPEED_OF_LIGHT, fprint, load_config
 
 
 ###############################################################################
