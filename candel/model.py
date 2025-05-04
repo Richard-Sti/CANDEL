@@ -13,7 +13,6 @@
 # with this program; if not, write to the Free Software Foundation, Inc.,
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 """Distance ladder and velocity field probabilistic models."""
-import tomllib
 from abc import ABC, abstractmethod
 
 import jax.numpy as jnp
@@ -29,7 +28,8 @@ from numpyro.infer.reparam import ProjectedNormalReparam
 from .cosmography import (Distmod2Distance, Distmod2Redshift,
                           LogGrad_Distmod2ComovingDistance)
 from .simpson import ln_simpson
-from .util import SPEED_OF_LIGHT, fprint
+from .util import SPEED_OF_LIGHT, fprint, load_config
+
 
 ###############################################################################
 #                                Priors                                       #
@@ -197,8 +197,7 @@ class BaseModel(ABC):
     """Base class for all PV models. """
 
     def __init__(self, config_path):
-        with open(config_path, "rb") as f:
-            config = tomllib.load(f)
+        config = load_config(config_path)
 
         self.distmod2redshift = Distmod2Redshift()
         self.distmod2distance = Distmod2Distance()
