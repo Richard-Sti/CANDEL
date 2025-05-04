@@ -61,8 +61,9 @@ class PVDataFrame:
             indx_choice, nsamples - self.num_calibrators, replace=False)
         main_mask[indx_choice] = True
 
-        keys_skip = ["is_calibrator", "mu_cal", "C_mu_cal"]
-        subsampled = {key: self[key][main_mask] for key in self.keys() if key not in keys_skip}
+        keys_skip = ["is_calibrator", "mu_cal", "C_mu_cal", "std_mu_cal"]
+        subsampled = {key: self[key][main_mask]
+                      for key in self.keys() if key not in keys_skip}
 
         for key in keys_skip:
             if key in self.data:
@@ -70,7 +71,6 @@ class PVDataFrame:
                     subsampled[key] = self[key][main_mask]
                 else:
                     subsampled[key] = self.data[key]
-
 
         return PVDataFrame(subsampled)
 
@@ -217,6 +217,7 @@ def load_CF4_data(root, which_band, best_mag_quality=True, eta_min=-0.3,
                 "is_calibrator": is_calibrator,
                 "mu_cal": mu_cal,
                 "C_mu_cal": C_mu_cal,
+                "std_mu_cal": np.diag(C_mu_cal)**0.5,
                 }
 
     return data
