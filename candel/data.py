@@ -19,7 +19,7 @@ import numpy as np
 from h5py import File
 from jax import numpy as jnp
 
-from .util import SPEED_OF_LIGHT, fprint, radec_to_cartesian
+from .util import SPEED_OF_LIGHT, fprint, radec_to_cartesian, radec_to_galactic
 
 ###############################################################################
 #                             Data frames                                     #
@@ -156,7 +156,8 @@ def load_SH0ES_calibration(calibration_path, pgc_CF4):
 
 
 def load_CF4_data(root, which_band, best_mag_quality=True, eta_min=-0.3,
-                  zcmb_max=None, calibration=None):
+                  zcmb_max=None, b_min=7.5, remove_outliers=True,
+                  calibration=None):
     """
     Loads the `CF4_TFR.hdf5` file from `root` and extracts fields based on
     `which_band`. Applies filters using `eta_min`, `zcmb_max`, and
@@ -199,6 +200,19 @@ def load_CF4_data(root, which_band, best_mag_quality=True, eta_min=-0.3,
         mask &= mag_quality == 5
     if zcmb_max is not None:
         mask &= data["zcmb"] < zcmb_max
+    if remove_outliers:
+        outliers = np.concatenate([
+            np.genfromtxt(
+                join(root, f"CF4_{band}_outliers.csv"),
+                delimiter=",", names=True)
+            for band in ("W1", "i")
+            ])
+        pgc_outliers = outliers["PGC"]
+        mask &= ~np.isin(pgc, pgc_outliers)
+    if b_min is not None:
+        b = radec_to_galactic(RA, DEC)[1]
+        mask &= np.abs(b) > b_min
+
     fprint(f"removed {len(pgc) - np.sum(mask)} galaxies, thus "
            f"{len(pgc[mask])} remain.")
 
