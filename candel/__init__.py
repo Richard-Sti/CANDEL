@@ -13,6 +13,11 @@
 # with this program; if not, write to the Free Software Foundation, Inc.,
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
+from candel import (                                                            # noqa
+    model,                                                                      # noqa
+    redshift2real,                                                              # noqa
+    )
+
 from .cosmography import (                                                      # noqa
     Distmod2Redshift,                                                           # noqa
     Distmod2Distance,                                                           # noqa
@@ -33,14 +38,8 @@ from .evidence import (                                                         
     dict_samples_to_array,                                                      # noqa
     )
 
-from .model import (                                                            # noqa
-    load_priors,                                                                # noqa
-    SimpleTFRModel,                                                             # noqa
-    SimpleTFRModel_DistMarg,                                                    # noqa
-    )
-
 from .inference import (                                                        # noqa
-    run_inference,                                                              # noqa
+    run_pv_inference,                                                           # noqa
     save_mcmc_samples,                                                          # noqa
     )
 
@@ -56,15 +55,3 @@ from .util import (                                                             
     galactic_to_radec,                                                          # noqa
     load_config,                                                                # noqa
 )
-
-
-def name2model(name):
-    mapping = {
-        "SimpleTFRModel": SimpleTFRModel,
-        "SimpleTFRModel_DistMarg": SimpleTFRModel_DistMarg,
-        }
-
-    if name not in mapping:
-        raise ValueError(f"Model name `{name}` not recognized.\n"
-                         f"Available models: {list(mapping.keys())}")
-    return mapping[name]

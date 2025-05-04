@@ -31,10 +31,11 @@ from .util import (fprint, galactic_to_radec, radec_to_cartesian,
                    radec_to_galactic)
 
 
-def run_inference(model, model_args, print_summary=True, save_samples=True):
+def run_pv_inference(model, model_args, print_summary=True, save_samples=True):
     """
-    Run MCMC inference on the given model, post-process the samples, optionally
-    compute the BIC, AIC, evidence and save the samples to an HDF5 file.
+    Run MCMC inference on the given PV model, post-process the samples,
+    optionally compute the BIC, AIC, evidence and save the samples to an
+    HDF5 file.
     """
     kwargs = model.config["inference"]
 

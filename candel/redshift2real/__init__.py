@@ -1,4 +1,3 @@
-
 # Copyright (C) 2025 Richard Stiskalek
 # This program is free software; you can redistribute it and/or modify it
 # under the terms of the GNU General Public License as published by the
@@ -14,17 +13,6 @@
 # with this program; if not, write to the Free Software Foundation, Inc.,
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
-import sys
-import candel
-
-
-def main(config_path):
-    data = candel.load_PV_dataframes(config_path)
-    model_name = candel.load_config(config_path)["inference"]["model"]
-
-    model = candel.name2model(model_name)(config_path)
-    candel.run_pv_inference(model, (data,))
-
-
-if __name__ == "__main__":
-    main(sys.argv[1])
+from .model import (                                                            # noqa
+    SimpleRedshift2Real,                                                        # noqa
+    )
