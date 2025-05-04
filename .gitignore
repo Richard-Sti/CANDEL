@@ -1,0 +1,10 @@
+.vscode/
+venv_candel/
+candel.egg-info/
+__pycache__/
+data/
+results/
+
+
+notebooks/test.ipynb
+.DS_Store
