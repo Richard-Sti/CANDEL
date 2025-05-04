@@ -4,6 +4,21 @@
 ## TODO
 
 ### General
+- [ ] Add support for the linear theory field.
+
+- [ ] Add MNR-compatible versions of likelihoods.
+- [ ] Think about a strategy for generating CF4-like mock catalogs.
+- [ ] Implement an efficient submission script for many runs.
+
+### Hubble Dipole
+
+### Hubble Calibration
+
+
+
+## Completed TODO
+
+### General
 - [x] Fix subsampling to preserve calibrator assignment.
 - [x] Add evidence computation (Laplace, harmonic mean).
 - [x] Add numerically stable treatment of `V_ext` when computing model evidence.
@@ -12,10 +27,6 @@
 - [x] Think about folder organization.
 - [x] Break degeneracy when sampling `h` and `a_TFR`
 - [x] Add code to remove CF4 outliers
-
-- [ ] Add MNR-compatible versions of likelihoods.
-- [ ] Think about a strategy for generating CF4-like mock catalogs.
-- [ ] Implement an efficient submission script for many runs.
 
 ### Hubble Dipole
 - [x] Add option for dipole variation in `a_TFR`.
