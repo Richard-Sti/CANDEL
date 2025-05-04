@@ -16,106 +16,104 @@
 import numpy as np
 from astropy.cosmology import FlatLambdaCDM
 from interpax import Interpolator1D
-from scipy.interpolate import CubicSpline
 from jax import numpy as jnp
 from jax import vmap
+from scipy.interpolate import CubicSpline
 
 
 class Distmod2Distance:
     """
     Class to build an interpolator to convert distance modulus to comoving
-    distance in `Mpc / h`.
+    distance in `Mpc`. Choice of `h` is determined when calling the
+    `__call__` method.
 
     Parameters
     ----------
     Om0 : float
         Matter density parameter.
-    H0 : float
-        Hubble constant in `km / s / Mpc`.
     zmin_interp, zmax_interp : float
         Minimum and maximum redshift for the interpolation grid.
     npoints_interp : int
         Number of points in the interpolation grid.
     """
-    def __init__(self, Om0=0.3, H0=100, zmin_interp=1e-8, zmax_interp=0.5,
+    def __init__(self, Om0=0.3, zmin_interp=1e-8, zmax_interp=0.5,
                  npoints_interp=1000):
-        cosmo = FlatLambdaCDM(H0=H0, Om0=Om0)
+        cosmo = FlatLambdaCDM(H0=100, Om0=Om0)
         z_grid = np.linspace(zmin_interp, zmax_interp, npoints_interp)
         r_grid = cosmo.comoving_distance(z_grid).value
         mu_grid = cosmo.distmod(z_grid).value
 
         self._f = vmap(Interpolator1D(mu_grid, jnp.log(r_grid), extrap=False))
 
-    def __call__(self, mu, return_log=False):
+    def __call__(self, mu, h=1, return_log=False):
         if return_log:
-            return self._f(mu)
+            return self._f(mu + 5 * jnp.log10(h)) - jnp.log(h)
 
-        return jnp.exp(self._f(mu))
+        return jnp.exp(self._f(mu + 5 * jnp.log10(h))) / h
 
 
 class Distmod2Redshift:
     """
     Class to build an interpolator to convert distance modulus to comoving
-    distance in `Mpc / h`.
+    distance in `Mpc`. Choice of `h` is determined when calling the
+    `__call__` method.
 
     Parameters
     ----------
     Om0 : float
         Matter density parameter.
-    H0 : float
-        Hubble constant in `km / s / Mpc`.
     zmin_interp, zmax_interp : float
         Minimum and maximum redshift for the interpolation grid.
     npoints_interp : int
         Number of points in the interpolation grid.
     """
-    def __init__(self, Om0=0.3, H0=100, zmin_interp=1e-8, zmax_interp=0.5,
+    def __init__(self, Om0=0.3, zmin_interp=1e-8, zmax_interp=0.5,
                  npoints_interp=1000):
-        cosmo = FlatLambdaCDM(H0=H0, Om0=Om0)
+        cosmo = FlatLambdaCDM(H0=100, Om0=Om0)
         z_grid = np.linspace(zmin_interp, zmax_interp, npoints_interp)
         mu_grid = cosmo.distmod(z_grid).value
 
         self._f = vmap(Interpolator1D(mu_grid, jnp.log(z_grid), extrap=False))
 
-    def __call__(self, mu, return_log=False):
+    def __call__(self, mu, h=1, return_log=False):
         if return_log:
-            return self._f(mu)
+            return self._f(mu + 5 * jnp.log10(h))
 
-        return jnp.exp(self._f(mu))
+        return jnp.exp(self._f(mu + 5 * jnp.log10(h)))
 
 
 class Distance2Redshift:
     """
-    Class to build an interpolator to convert comoving distance in `Mpc / h`
-    to redshift.
+    Class to build an interpolator to convert comoving distance in `Mpc`
+    to redshift. Choice of `h` is determined when calling the
+    `__call__` method.
 
     Parameters
     ----------
     Om0 : float
         Matter density parameter.
-    H0 : float
-        Hubble constant in `km / s / Mpc`.
     zmin_interp, zmax_interp : float
         Minimum and maximum redshift for the interpolation grid.
     npoints_interp : int
         Number of points in the interpolation grid.
     """
-    def __init__(self, Om0=0.3, H0=100, zmin_interp=1e-8, zmax_interp=0.5,
+    def __init__(self, Om0=0.3, zmin_interp=1e-8, zmax_interp=0.5,
                  npoints_interp=1000):
-        cosmo = FlatLambdaCDM(H0=H0, Om0=Om0)
+        cosmo = FlatLambdaCDM(H0=100, Om0=Om0)
         z_grid = np.linspace(zmin_interp, zmax_interp, npoints_interp)
         r_grid = cosmo.comoving_distance(z_grid).value
 
         self._f = vmap(Interpolator1D(r_grid, z_grid, extrap=False))
 
-    def __call__(self, r,):
-        return self._f(r)
+    def __call__(self, r, h=1):
+        return self._f(r * h)
 
 
 class LogGrad_Distmod2ComovingDistance:
     """
     Class to build an interpolator to compute the log gradient of the comoving
-    distance in `Mpc / h` with respect to distance modulus.
+    distance in `Mpc / h` with respect to distance modulus. Choice of `h` is
+    determined when calling the `__call__` method.
 
     The function is: `log (dr / dmu) | mu`.
 
@@ -130,9 +128,9 @@ class LogGrad_Distmod2ComovingDistance:
     npoints_interp : int
         Number of points in the interpolation grid.
     """
-    def __init__(self, Om0=0.3, H0=100, zmin_interp=1e-8, zmax_interp=0.5,
+    def __init__(self, Om0=0.3, zmin_interp=1e-8, zmax_interp=0.5,
                  npoints_interp=1000):
-        cosmo = FlatLambdaCDM(H0=H0, Om0=Om0)
+        cosmo = FlatLambdaCDM(H0=100, Om0=Om0)
         z_grid = np.logspace(np.log10(zmin_interp), np.log10(zmax_interp),
                              npoints_interp)
         r_grid = cosmo.comoving_distance(z_grid).value
@@ -143,5 +141,5 @@ class LogGrad_Distmod2ComovingDistance:
 
         self._f = vmap(Interpolator1D(mu_grid, jnp.log(drdmu), extrap=False))
 
-    def __call__(self, mu):
-        return self._f(mu)
+    def __call__(self, mu, h=1):
+        return self._f(mu + 5 * jnp.log10(h)) - jnp.log(h)
