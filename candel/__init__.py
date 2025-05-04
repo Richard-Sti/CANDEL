@@ -16,6 +16,8 @@
 from .cosmography import (                                                      # noqa
     Distmod2Redshift,                                                           # noqa
     Distmod2Distance,                                                           # noqa
+    Distance2Redshift,                                                          # noqa
+    LogGrad_Distmod2ComovingDistance,                                           # noqa
     )
 
 from .data import ( # noqa                                                      # noqa
