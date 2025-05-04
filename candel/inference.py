@@ -89,7 +89,6 @@ def run_inference(model, model_args, print_summary=True, save_samples=True):
     else:
         gof = None
 
-
     if save_samples:
         save_mcmc_samples(
             samples, log_density, gof, model.config["io"]["fname_output"])
@@ -139,6 +138,13 @@ def postprocess_samples(samples):
             samples.pop(key,)
             continue
 
+    keys = list(samples.keys())
+    # Remove the a_TFR_h samples if a_TFR is present or rename it to a_TFR
+    if "a_TFR" in keys and "a_TFR_h" in keys:
+        samples.pop("a_TFR_h",)
+    elif "a_TFR_h" in keys and "a_TFR" not in keys:
+        samples["a_TRF"] = samples.pop("a_TFR_h",)
+
     # Convert the Vext samples to galactic coordinates
     if any("Vext" in key for key in samples.keys()):
         ell, b = radec_to_galactic(
@@ -152,7 +158,7 @@ def postprocess_samples(samples):
     if any("a_TFR_dipole" in key for key in samples.keys()):
         ell, b = radec_to_galactic(
             np.rad2deg(samples.pop("a_TFR_dipole_phi")),
-            np.rad2deg(0.5 * np.pi - np.arccos(samples.pop("a_TFR_dipole_cos_theta"))),)
+            np.rad2deg(0.5 * np.pi - np.arccos(samples.pop("a_TFR_dipole_cos_theta"))),)  # noqa
         samples["a_TFR_dipole_mag"] = samples.pop("a_TFR_dipole_mag")
         samples["a_TFR_dipole_ell"] = ell
         samples["a_TFR_dipole_b"] = b
