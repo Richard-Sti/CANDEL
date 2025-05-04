@@ -19,6 +19,22 @@ num_chains_harmonic = 5
 [io]
 fname_output = "/Users/rstiskalek/Projects/CANDEL/results/samples_test.hdf5"
 
+[io.data]
+name = "CF4"
+root = "/Users/rstiskalek/Projects/CANDEL/data/CF4"
+which_band = "w1"
+best_mag_quality = true
+eta_min = -0.3
+zcmb_max = "None"
+b_min = 7.5
+remove_outliers = true
+calibration = "None"
+
+nsamples_subsample = 250
+seed_subsample = 42
+
+
+
 ###############################################################################
 #                                 Model                                       #
 ###############################################################################
