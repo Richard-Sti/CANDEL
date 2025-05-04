@@ -20,6 +20,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from astropy.coordinates import SkyCoord
 from corner import corner
+import tomllib
 
 SPEED_OF_LIGHT = 299_792.458  # km / s
 
@@ -29,6 +30,29 @@ def fprint(*args, verbose=True, **kwargs):
     if verbose:
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S%f")[:-6]
         print(f"{timestamp}", *args, **kwargs)
+
+
+def convert_none_strings(d):
+    """
+    Convert all string values in a dictionary to None if they are equal to
+    "none" (case insensitive). This is useful for parsing TOML files where
+    "none" is used to represent None values.
+    """
+    for k, v in d.items():
+        if isinstance(v, dict):
+            convert_none_strings(v)
+        elif isinstance(v, str) and v.strip().lower() == "none":
+            d[k] = None
+    return d
+
+
+def load_config(config_path):
+    """
+    Load a TOML configuration file and convert "none" strings to None.
+    """
+    with open(config_path, 'rb') as f:
+        config = tomllib.load(f)
+    return convert_none_strings(config)
 
 
 ###############################################################################
