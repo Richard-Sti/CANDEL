@@ -4,16 +4,17 @@
 ## TODO
 
 ### General
-- [ ] Add support for the linear theory field.
+- [ ] Add support for interpolating fields.
+- [ ] Add support for the Carrick linear theory field.
+
+- [ ] Implement an efficient submission script for many runs.
 
 - [ ] Add MNR-compatible versions of likelihoods.
 - [ ] Think about a strategy for generating CF4-like mock catalogs.
-- [ ] Implement an efficient submission script for many runs.
 
 ### Hubble Dipole
 
 ### Hubble Calibration
-
 
 
 ## Completed TODO
