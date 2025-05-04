@@ -27,31 +27,49 @@ from .util import (SPEED_OF_LIGHT, fprint, load_config, radec_to_cartesian,
 ###############################################################################
 
 
+def load_PV_dataframes(config_path):
+    """Loads PV dataframes from the given configuration file."""
+    config = load_config(config_path)["io"]
+    names = config.pop("catalogue_name")
+    if isinstance(names, str):
+        names = [names]
+
+    dfs = []
+    for name in names:
+        df = PVDataFrame.from_config_dict(config[name].copy(), name)
+        print("df is ", df)
+        dfs.append(df)
+
+    if len(dfs) == 1:
+        return dfs[0]
+
+    return dfs
+
+
 class PVDataFrame:
     """Lightweight container for PV data."""
 
-    def __init__(self, config_path, which="data"):
-        config = load_config(config_path)["io"][which]
+    def __init__(self, data):
+        self.data = {k: jnp.asarray(v) for k, v in data.items()}
+        self._cache = {}
 
-        name = config.pop("name")
+    @classmethod
+    def from_config_dict(cls, config, name):
         root = config.pop("root")
         nsamples_subsample = config.pop("nsamples_subsample", None)
         seed_subsample = config.pop("seed_subsample", 42)
 
-        if name == "CF4":
+        if "CF4_" in name:
             data = load_CF4_data(root, **config)
         else:
             raise ValueError(f"Unknown catalogue name: {name}")
 
-        self.data = data
-        self._cache = {}
-
         if nsamples_subsample is not None:
-            self.data = self.subsample(nsamples_subsample, seed=seed_subsample)
-            self._cache = {}
-
-        for key in self.data:
-            self.data[key] = jnp.asarray(self.data[key])
+            frame = cls(data)
+            frame = frame.subsample(nsamples_subsample, seed=seed_subsample)
+            return frame
+        else:
+            return cls(data)
 
     def subsample(self, nsamples, seed=42):
         """
@@ -88,7 +106,7 @@ class PVDataFrame:
                 else:
                     subsampled[key] = self.data[key]
 
-        return subsampled
+        return PVDataFrame(subsampled)
 
     def __getitem__(self, key):
         if key in self._cache:

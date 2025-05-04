@@ -23,6 +23,7 @@ from .cosmography import (                                                      
 from .data import ( # noqa                                                      # noqa
     load_CF4_data,                                                              # noqa
     PVDataFrame,                                                                # noqa
+    load_PV_dataframes,
     )
 
 from .evidence import (                                                         # noqa
@@ -53,4 +54,17 @@ from .util import (                                                             
     radec_to_cartesian,                                                         # noqa
     radec_to_galactic,                                                          # noqa
     galactic_to_radec,                                                          # noqa
+    load_config,                                                                # noqa
 )
+
+
+def name2model(name):
+    mapping = {
+        "SimpleTFRModel": SimpleTFRModel,
+        "SimpleTFRModel_DistMarg": SimpleTFRModel_DistMarg,
+        }
+
+    if name not in mapping:
+        raise ValueError(f"Model name `{name}` not recognized.\n"
+                         f"Available models: {list(mapping.keys())}")
+    return mapping[name]
