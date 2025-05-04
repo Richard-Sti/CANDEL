@@ -19,7 +19,8 @@ import numpy as np
 from h5py import File
 from jax import numpy as jnp
 
-from .util import SPEED_OF_LIGHT, fprint, radec_to_cartesian, radec_to_galactic
+from .util import (SPEED_OF_LIGHT, fprint, load_config, radec_to_cartesian,
+                   radec_to_galactic)
 
 ###############################################################################
 #                             Data frames                                     #
@@ -29,13 +30,28 @@ from .util import SPEED_OF_LIGHT, fprint, radec_to_cartesian, radec_to_galactic
 class PVDataFrame:
     """Lightweight container for PV data."""
 
-    def __init__(self, data):
-        self.data = dict(data)
+    def __init__(self, config_path, which="data"):
+        config = load_config(config_path)["io"][which]
+
+        name = config.pop("name")
+        root = config.pop("root")
+        nsamples_subsample = config.pop("nsamples_subsample", None)
+        seed_subsample = config.pop("seed_subsample", 42)
+
+        if name == "CF4":
+            data = load_CF4_data(root, **config)
+        else:
+            raise ValueError(f"Unknown catalogue name: {name}")
+
+        self.data = data
+        self._cache = {}
+
+        if nsamples_subsample is not None:
+            self.data = self.subsample(nsamples_subsample, seed=seed_subsample)
+            self._cache = {}
 
         for key in self.data:
-            data[key] = jnp.asarray(data[key])
-
-        self._cache = {}
+            self.data[key] = jnp.asarray(self.data[key])
 
     def subsample(self, nsamples, seed=42):
         """
@@ -72,7 +88,7 @@ class PVDataFrame:
                 else:
                     subsampled[key] = self.data[key]
 
-        return PVDataFrame(subsampled)
+        return subsampled
 
     def __getitem__(self, key):
         if key in self._cache:
@@ -233,5 +249,7 @@ def load_CF4_data(root, which_band, best_mag_quality=True, eta_min=-0.3,
                 "C_mu_cal": C_mu_cal,
                 "std_mu_cal": np.diag(C_mu_cal)**0.5,
                 }
+    elif calibration is not None:
+        raise ValueError("Unknown calibration type.")
 
     return data
