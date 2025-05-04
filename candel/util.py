@@ -60,12 +60,12 @@ def radec_to_galactic(ra, dec):
     return c.galactic.l.degree, c.galactic.b.degree
 
 
-def galactic_to_radec(l, b):
+def galactic_to_radec(ell, b):
     """
     Convert galactic coordinates to right ascension and declination (all in
     degrees).
     """
-    c = SkyCoord(l=l*u.degree, b=b*u.degree, frame='galactic')
+    c = SkyCoord(l=ell*u.degree, b=b*u.degree, frame='galactic')
     return c.icrs.ra.degree, c.icrs.dec.degree
 
 
@@ -83,11 +83,12 @@ def name2label(name):
         "Vext_mag": r"$V_\mathrm{ext}$",
         "Vext_ell": r"$\ell_\mathrm{ext}$",
         "Vext_b": r"$b_\mathrm{ext}$",
+        "h": r"$h$",
     }
     return latex_labels.get(name, name)
 
 
-def plot_corner(samples, filename=None, keys=None):
+def plot_corner(samples, filename=None, smooth=1, keys=None):
     """Plot a corner plot from posterior samples."""
     flat_samples = []
     labels = []
@@ -109,7 +110,7 @@ def plot_corner(samples, filename=None, keys=None):
         data,
         labels=labels,
         show_titles=True,
-        smooth=1,
+        smooth=smooth,
     )
 
     if filename is not None:
