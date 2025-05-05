@@ -14,6 +14,7 @@
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 from candel import (                                                            # noqa
+    field,                                                                      # noqa
     model,                                                                      # noqa
     redshift2real,                                                              # noqa
     )
@@ -54,4 +55,6 @@ from .util import (                                                             
     radec_to_galactic,                                                          # noqa
     galactic_to_radec,                                                          # noqa
     load_config,                                                                # noqa
+    hms_to_degrees,                                                             # noqa
+    dms_to_degrees,                                                             # noqa
 )

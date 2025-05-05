@@ -93,6 +93,16 @@ def galactic_to_radec(ell, b):
     return c.icrs.ra.degree, c.icrs.dec.degree
 
 
+def hms_to_degrees(hours, minutes=None, seconds=None):
+    """Convert hours, minutes and seconds to degrees."""
+    return hours * 15 + (minutes or 0) / 60 * 15 + (seconds or 0) / 3600 * 15
+
+
+def dms_to_degrees(degrees, arcminutes=None, arcseconds=None):
+    """Convert degrees, arcminutes and arcseconds to decimal degrees."""
+    return degrees + (arcminutes or 0) / 60 + (arcseconds or 0) / 3600
+
+
 ###############################################################################
 #                               Plotting                                      #
 ###############################################################################
