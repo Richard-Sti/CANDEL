@@ -15,6 +15,7 @@
 
 from candel import (                                                            # noqa
     field,                                                                      # noqa
+    pvdata,                                                                     # noqa
     model,                                                                      # noqa
     redshift2real,                                                              # noqa
     )
@@ -24,12 +25,6 @@ from .cosmography import (                                                      
     Distmod2Distance,                                                           # noqa
     Distance2Redshift,                                                          # noqa
     LogGrad_Distmod2ComovingDistance,                                           # noqa
-    )
-
-from .data import ( # noqa                                                      # noqa
-    load_CF4_data,                                                              # noqa
-    PVDataFrame,                                                                # noqa
-    load_PV_dataframes,
     )
 
 from .evidence import (                                                         # noqa
@@ -57,4 +52,5 @@ from .util import (                                                             
     load_config,                                                                # noqa
     hms_to_degrees,                                                             # noqa
     dms_to_degrees,                                                             # noqa
+    fprint,                                                                     # noqa
 )

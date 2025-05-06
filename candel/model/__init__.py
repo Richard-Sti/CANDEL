@@ -20,6 +20,9 @@ from .model import (                                                            
     )
 
 
+from .interp import LOSInterpolator                                             # noqa
+
+
 def name2model(name):
     mapping = {
         "SimpleTFRModel": SimpleTFRModel,
