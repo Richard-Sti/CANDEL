@@ -16,7 +16,6 @@
 from abc import ABC, abstractmethod
 
 import jax.numpy as jnp
-from jax import vmap
 from jax.lax import cond
 from jax.scipy.stats import norm
 from numpyro import deterministic, factor, plate, sample
@@ -24,12 +23,12 @@ from numpyro.distributions import (Delta, MultivariateNormal, Normal,
                                    ProjectedNormal, Uniform)
 from numpyro.handlers import reparam
 from numpyro.infer.reparam import ProjectedNormalReparam
+from quadax import simpson
 
 from ..cosmography import (Distmod2Distance, Distmod2Redshift,
                            LogGrad_Distmod2ComovingDistance)
-from .simpson import ln_simpson
 from ..util import SPEED_OF_LIGHT, fprint, load_config
-
+from .simpson import ln_simpson
 
 ###############################################################################
 #                                Priors                                       #
@@ -146,25 +145,59 @@ def rsample(name, dist):
     return sample(name, dist)
 
 
-def log_norm_pmu_homogeneous(mu_TFR, sigma_mu, distmod2distance, num_points=30,
-                             num_sigma=5, h=1):
-    """
-    Calculate the integral of `r^2 * p(mu | mu_TFR, sigma_mu)` over the r.
-    There is no Jacobian because it cancels as `|dr / dmu| * dmu`.
-    """
-    def f(mu_tfr_i, sigma_mu_i):
-        delta = num_sigma * sigma_mu_i
-        mu_grid = jnp.linspace(mu_tfr_i - delta, mu_tfr_i + delta, num_points)
-        r_grid = distmod2distance(mu_grid, h=h)
+def log_norm_pmu(mu_TFR, sigma_mu, distmod2distance, num_points=30,
+                 num_sigma=5, low_clip=20., high_clip=40., h=1.0):
+    """Computation of log ∫ r^2 * p(mu | mu_TFR, sigma_mu) dr"""
+    delta = num_sigma * sigma_mu
+    lo = jnp.clip(mu_TFR - delta, low_clip, high_clip)
+    hi = jnp.clip(mu_TFR + delta, low_clip, high_clip)
 
-        weights = (
-            + 2 * jnp.log(r_grid)
-            + norm.logpdf(mu_grid, loc=mu_tfr_i, scale=sigma_mu_i)
-            )
+    # shape: (ngalaxies, num_points)
+    mu_grid = jnp.linspace(0.0, 1.0, num_points)
+    # shape (n, num_points)
+    mu_grid = lo[:, None] + (hi - lo)[:, None] * mu_grid
+    # same shape
+    r_grid = distmod2distance(mu_grid, h=h)
 
-        return ln_simpson(weights, x=r_grid, axis=-1)
+    weights = (
+        2 * jnp.log(r_grid)
+        + norm.logpdf(mu_grid, loc=mu_TFR[:, None], scale=sigma_mu[:, None])
+    )
 
-    return vmap(f)(mu_TFR, sigma_mu)
+    return jnp.where(
+        lo == hi,
+        0.0,
+        jnp.log(simpson(jnp.exp(weights), x=r_grid, axis=-1))
+        )
+
+
+def log_norm_pmu_im(mu_TFR, sigma_mu, alpha, distmod2distance, los_interp,
+                    num_points=30, num_sigma=5, low_clip=20., high_clip=40.,
+                    h=1.0):
+    """Computation of log ∫ r^2 * rho * p(mu | mu_TFR, sigma_mu) dr."""
+    delta = num_sigma * sigma_mu
+    lo = jnp.clip(mu_TFR - delta, low_clip, high_clip)
+    hi = jnp.clip(mu_TFR + delta, low_clip, high_clip)
+
+    # shape: (n, num_points)
+    mu_grid = jnp.linspace(0.0, 1.0, num_points)
+    mu_grid = lo[:, None] + (hi - lo)[:, None] * mu_grid
+
+    # These are of shape (n, num_points)
+    r_grid = distmod2distance(mu_grid, h=h)
+    log_rho_grid = los_interp.interp_many_steps_per_galaxy(r_grid * h)
+
+    weights = (
+        2 * jnp.log(r_grid)
+        + alpha * log_rho_grid
+        + norm.logpdf(mu_grid, loc=mu_TFR[:, None], scale=sigma_mu[:, None])
+    )
+
+    return jnp.where(
+        lo == hi,
+        0.0,
+        jnp.log(simpson(jnp.exp(weights), x=r_grid, axis=-1))
+        )
 
 
 def make_mu_grid(mu_TFR, num_points=51, half_width=1.5, low_clip=20.,
@@ -250,6 +283,8 @@ class SimpleTFRModel(BaseModel):
         sigma_v = rsample("sigma_v", self.priors["sigma_v"])
 
         # Remainining parameters
+        alpha = rsample("alpha", self.priors["alpha"])
+        beta = rsample("beta", self.priors["beta"])
         h = rsample("h", self.priors["h"])
 
         a_TFR = deterministic("a_TFR", a_TFR + 5 * jnp.log10(h))
@@ -264,14 +299,29 @@ class SimpleTFRModel(BaseModel):
             mu = sample("mu_latent", Normal(mu_TFR, sigma_mu))
             r = self.distmod2distance(mu, h=h)
 
-            # Homogeneous Malmquist bias
-            log_drdmu = self.log_grad_distmod2distance(mu, h=1)
-            log_pmu_norm = log_norm_pmu_homogeneous(
-                mu_TFR, sigma_mu, self.distmod2distance,
-                **self.num_norm_kwargs, h=h)
-            factor("mu_norm", 2 * jnp.log(r) + log_drdmu - log_pmu_norm)
+            # Homogeneous & inhomogeneous Malmquist bias
+            log_pmu = 2 * jnp.log(r) + self.log_grad_distmod2distance(mu, h=1)
+            if data.has_precomputed_los:
+                # The field is in Mpc / h, so convert the distance modulus
+                # back to Mpc / h in case that h != 1.
+                Vrad = beta * data.f_los_velocity(r * h)
 
-            zpec = jnp.sum(data["rhat"] * Vext, axis=1) / SPEED_OF_LIGHT
+                # Inhomogeneous Malmquist bias
+                log_pmu += alpha * data.f_los_log_density(r * h)
+                log_pmu_norm = log_norm_pmu_im(
+                    mu_TFR, sigma_mu, alpha, self.distmod2distance,
+                    data.f_los_log_density, **self.num_norm_kwargs, h=h)
+            else:
+                Vrad = 0.
+                # Homogeneous Malmquist bias
+                log_pmu_norm = log_norm_pmu(
+                    mu_TFR, sigma_mu, self.distmod2distance,
+                    **self.num_norm_kwargs, h=h)
+
+            factor("mu_norm", log_pmu - log_pmu_norm)
+
+            Vext_rad = jnp.sum(data["rhat"] * Vext, axis=1)
+            zpec = (Vrad + Vext_rad) / SPEED_OF_LIGHT
             zcmb = self.distmod2redshift(mu, h=h)
             czpred = SPEED_OF_LIGHT * ((1 + zcmb) * (1 + zpec) - 1)
 
@@ -309,6 +359,10 @@ class SimpleTFRModel_DistMarg(BaseModel):
         Vext = rsample("Vext", self.priors["Vext"])[None, :]
         sigma_v = rsample("sigma_v", self.priors["sigma_v"])
 
+        # # Remaining parameters
+        # alpha = rsample("alpha", self.priors["alpha"])
+        # beta = rsample("beta", self.priors["beta"])
+
         with plate("data", nsamples):
             if self.prior_dist_name["TFR_zeropoint_dipole"] != "delta":
                 a_TFR = a_TFR + jnp.sum(a_TFR_dipole * data["rhat"], axis=1)
@@ -325,7 +379,16 @@ class SimpleTFRModel_DistMarg(BaseModel):
 
             ll = 2 * jnp.log(r_grid)
             ll += Normal(mu_TFR[:, None], sigma_mu[:, None]).log_prob(mu_grid)
-            ll -= ln_simpson(ll, x=r_grid, axis=-1)[:, None]
+
+            if data.has_precomputed_los:
+                raise NotImplementedError(
+                    "Precomputed LOS density and velocity fields are not "
+                    "implemented for the distance marginalization model.")
+                # Vrad = beta * data.f_los_velocity(r_grid)
+                # log_rho_grid = data.f_los_log_density(r_grid)
+                # ll += alpha * log_rho_grid
+            else:
+                ll -= ln_simpson(ll, x=r_grid, axis=-1)[:, None]
 
             ll += Normal(czpred, sigma_v).log_prob(data["czcmb"][:, None])
             ll = ln_simpson(ll, x=r_grid, axis=-1)
