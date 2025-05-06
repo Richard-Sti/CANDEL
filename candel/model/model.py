@@ -133,6 +133,9 @@ def rsample(name, dist):
     """
     Samples from `dist` unless it is a delta function or vector directive.
     """
+    if name == "TFR_zeropoint_dipole" and dist.get("dist") == "delta":
+        return jnp.zeros(3)
+
     if isinstance(dist, Delta):
         return deterministic(name, dist.v)
 
@@ -274,9 +277,8 @@ class SimpleTFRModel(BaseModel):
         c_TFR = rsample("c_TFR", self.priors["TFR_curvature"])
         sigma_mu = rsample("sigma_mu", self.priors["TFR_scatter"])
 
-        if self.prior_dist_name["TFR_zeropoint_dipole"] != "delta":
-            a_TFR_dipole = rsample(
-                "a_TFR_dipole", self.priors["TFR_zeropoint_dipole"])[None, :]
+        a_TFR_dipole = rsample(
+            "a_TFR_dipole", self.priors["TFR_zeropoint_dipole"])
 
         # Sample the velocity field parameters.
         Vext = rsample("Vext", self.priors["Vext"])[None, :]
@@ -290,9 +292,7 @@ class SimpleTFRModel(BaseModel):
         a_TFR = deterministic("a_TFR", a_TFR + 5 * jnp.log10(h))
 
         with plate("data", nsamples):
-            if self.prior_dist_name["TFR_zeropoint_dipole"] != "delta":
-                a_TFR = a_TFR + jnp.sum(a_TFR_dipole * data["rhat"], axis=1)
-
+            a_TFR = a_TFR + jnp.sum(a_TFR_dipole * data["rhat"], axis=1)
             mu_TFR = get_muTFR(data["mag"], data["eta"], a_TFR, b_TFR, c_TFR)
             sigma_mu = get_linear_sigma_mu_TFR(data, sigma_mu, b_TFR, c_TFR)
 
@@ -350,45 +350,46 @@ class SimpleTFRModel_DistMarg(BaseModel):
         b_TFR = rsample("b_TFR", self.priors["TFR_slope"])
         c_TFR = rsample("c_TFR", self.priors["TFR_curvature"])
         sigma_mu = rsample("sigma_mu", self.priors["TFR_scatter"])
-
-        if self.prior_dist_name["TFR_zeropoint_dipole"] != "delta":
-            a_TFR_dipole = rsample(
-                "a_TFR_dipole", self.priors["TFR_zeropoint_dipole"])[None, :]
+        a_TFR_dipole = rsample(
+            "a_TFR_dipole", self.priors["TFR_zeropoint_dipole"])
 
         # Sample velocity field parameters.
-        Vext = rsample("Vext", self.priors["Vext"])[None, :]
+        Vext = rsample("Vext", self.priors["Vext"])
         sigma_v = rsample("sigma_v", self.priors["sigma_v"])
 
         # # Remaining parameters
-        # alpha = rsample("alpha", self.priors["alpha"])
-        # beta = rsample("beta", self.priors["beta"])
+        alpha = rsample("alpha", self.priors["alpha"])
+        beta = rsample("beta", self.priors["beta"])
 
         with plate("data", nsamples):
-            if self.prior_dist_name["TFR_zeropoint_dipole"] != "delta":
-                a_TFR = a_TFR + jnp.sum(a_TFR_dipole * data["rhat"], axis=1)
-
+            a_TFR = a_TFR + jnp.sum(a_TFR_dipole * data["rhat"], axis=1)
             mu_TFR = get_muTFR(data["mag"], data["eta"], a_TFR, b_TFR, c_TFR)
             sigma_mu = get_linear_sigma_mu_TFR(data, sigma_mu, b_TFR, c_TFR)
 
             mu_grid = make_mu_grid(mu_TFR, **self.mu_grid_kwargs)
             r_grid = self.distmod2distance(mu_grid)
 
-            zpec = jnp.sum(data["rhat"] * Vext, axis=1)[:, None] / SPEED_OF_LIGHT  # noqa
-            zcmb = self.distmod2redshift(mu_grid)
-            czpred = SPEED_OF_LIGHT * ((1 + zcmb) * (1 + zpec) - 1)
-
             ll = 2 * jnp.log(r_grid)
             ll += Normal(mu_TFR[:, None], sigma_mu[:, None]).log_prob(mu_grid)
 
             if data.has_precomputed_los:
-                raise NotImplementedError(
-                    "Precomputed LOS density and velocity fields are not "
-                    "implemented for the distance marginalization model.")
-                # Vrad = beta * data.f_los_velocity(r_grid)
-                # log_rho_grid = data.f_los_log_density(r_grid)
-                # ll += alpha * log_rho_grid
+                # The shape is `(n_galaxies, num_steps.)`
+                Vrad = data.f_los_velocity.interp_many_steps_per_galaxy(r_grid)
+                Vrad *= beta
+
+                log_rho = data.f_los_log_density.interp_many_steps_per_galaxy(
+                    r_grid)
+                ll += alpha * log_rho
             else:
-                ll -= ln_simpson(ll, x=r_grid, axis=-1)[:, None]
+                Vrad = 0.
+
+            ll -= ln_simpson(ll, x=r_grid, axis=-1)[:, None]
+
+            Vext_rad = jnp.sum(data["rhat"] * Vext[None, :], axis=1)
+
+            zpec = (Vrad + Vext_rad[:, None]) / SPEED_OF_LIGHT
+            zcmb = self.distmod2redshift(mu_grid)
+            czpred = SPEED_OF_LIGHT * ((1 + zcmb) * (1 + zpec) - 1)
 
             ll += Normal(czpred, sigma_v).log_prob(data["czcmb"][:, None])
             ll = ln_simpson(ll, x=r_grid, axis=-1)
