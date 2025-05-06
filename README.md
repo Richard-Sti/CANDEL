@@ -4,8 +4,8 @@
 ## TODO
 
 ### General
-- [ ] Add support for interpolating fields.
-- [ ] Add support for the Carrick linear theory field.
+- [x] Add support for interpolating fields.
+- [x] Add support for the Carrick linear theory field.
 
 - [ ] Implement an efficient submission script for many runs.
 
@@ -15,7 +15,6 @@
 ### Hubble Dipole
 
 ### Hubble Calibration
-
 
 ## Completed TODO
 
