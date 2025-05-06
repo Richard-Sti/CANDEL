@@ -31,7 +31,7 @@ def build_regular_interpolator(field, boxsize):
     Y, Z = X, X
 
     return RegularGridInterpolator(
-        (X, Y, Z), field, fill_value=np.nan, bounds_error=False,
+        (X, Y, Z), field, fill_value=None, bounds_error=False,
         method="linear")
 
 
