@@ -18,8 +18,8 @@ num_chains_harmonic = 5
 
 [pv_model]
 
-# kind = "precomputed_los_Carrick2015"
-kind = "constant"
+kind = "precomputed_los_Carrick2015"
+# kind = "constant"
 
 
 ###############################################################################
