@@ -13,6 +13,16 @@ compute_evidence = true
 num_chains_harmonic = 5
 
 ###############################################################################
+#                           Peculiar velocity model                           #
+###############################################################################
+
+[pv_model]
+
+# kind = "precomputed_los_Carrick2015"
+kind = "constant"
+
+
+###############################################################################
 #                                 Model                                       #
 ###############################################################################
 
@@ -21,6 +31,8 @@ num_chains_harmonic = 5
 [model.mu_norm]
 num_points = 25
 num_sigma = 4
+low_clip = 20
+high_clip = 40
 
 [model.mu_grid]
 num_points = 250
@@ -35,6 +47,16 @@ value = 1.0
 # loc = 0.7
 # scale = 0.1
 
+[model.priors.alpha]
+dist = "normal"
+loc = 1.0
+scale = 0.5
+
+
+[model.priors.beta]
+dist = "normal"
+loc = 0.43
+scale = 0.1
 
 [model.priors.TFR_zeropoint]
 dist = "normal"
@@ -83,10 +105,35 @@ root = "/Users/rstiskalek/Projects/CANDEL/data/CF4"
 which_band = "w1"
 best_mag_quality = true
 eta_min = -0.3
-zcmb_max = "None"
+zcmb_max = 0.05
 b_min = 7.5
 remove_outliers = true
 calibration = "None"
 
 nsamples_subsample = 250
 seed_subsample = 42
+
+los_file = "/Users/rstiskalek/Projects/CANDEL/data/CF4/los_CF4_TFR_<X>.hdf5"
+
+
+########
+# Static paths to define a general acces to the catalogues and reconstruction
+# fields without applying any cuts etc.
+########
+
+[io.PV_main]
+
+[io.PV_main.CF4]
+root = "/Users/rstiskalek/Projects/CANDEL/data/CF4"
+which_band = "i"  # Does not matter
+return_all = true
+los_file = "/Users/rstiskalek/Projects/CANDEL/data/CF4/los_CF4_TFR_<X>.hdf5"
+
+[io.reconstruction_main]
+rmin = 0
+rmax = 200
+num_steps = 250
+
+[io.reconstruction_main.Carrick2015]
+path_density = "/Users/rstiskalek/Projects/CANDEL/data/fields/carrick2015_twompp_density.npy"
+path_velocity = "/Users/rstiskalek/Projects/CANDEL/data/fields/carrick2015_twompp_velocity.npy"
