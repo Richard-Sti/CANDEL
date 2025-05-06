@@ -19,8 +19,9 @@ import numpy as np
 from h5py import File
 from jax import numpy as jnp
 
-from .util import (SPEED_OF_LIGHT, fprint, load_config, radec_to_cartesian,
-                   radec_to_galactic)
+from ..util import (SPEED_OF_LIGHT, fprint, load_config, radec_to_cartesian,
+                    radec_to_galactic)
+from ..model.interp import LOSInterpolator
 
 ###############################################################################
 #                             Data frames                                     #
@@ -29,15 +30,28 @@ from .util import (SPEED_OF_LIGHT, fprint, load_config, radec_to_cartesian,
 
 def load_PV_dataframes(config_path):
     """Loads PV dataframes from the given configuration file."""
-    config = load_config(config_path)["io"]
-    names = config.pop("catalogue_name")
+    config = load_config(config_path)
+
+    if config["pv_model"]["kind"].startswith("precomputed_los_"):
+        los_reconstruction = config["pv_model"]["kind"].replace("precomputed_los_", "")  # noqa
+    else:
+        los_reconstruction = None
+
+    config_io = config["io"]
+    names = config_io.pop("catalogue_name")
     if isinstance(names, str):
         names = [names]
 
     dfs = []
     for name in names:
-        df = PVDataFrame.from_config_dict(config[name].copy(), name)
-        print("df is ", df)
+        kwargs = config_io[name].copy()
+        if los_reconstruction is not None:
+            kwargs["los_data_path"] = kwargs.pop("los_file").replace(
+                "<X>", los_reconstruction)
+            fprint(
+                f"loading existing LOS data from {kwargs['los_data_path']}.")
+
+        df = PVDataFrame.from_config_dict(kwargs, name)
         dfs.append(df)
 
     if len(dfs) == 1:
@@ -49,8 +63,20 @@ def load_PV_dataframes(config_path):
 class PVDataFrame:
     """Lightweight container for PV data."""
 
-    def __init__(self, data):
+    def __init__(self, data, los_method="linear", los_extrap=True):
         self.data = {k: jnp.asarray(v) for k, v in data.items()}
+
+        if "los_r" in self.data:
+            self.has_precomputed_los = True
+            kwargs = {"method": los_method, "extrap": los_extrap}
+            self.f_los_log_density = LOSInterpolator(
+                self.data["los_r"], jnp.log(self.data["los_density"]),
+                **kwargs)
+            self.f_los_velocity = LOSInterpolator(
+                self.data["los_r"], self.data["los_velocity"], **kwargs)
+        else:
+            self.has_precomputed_los = False
+
         self._cache = {}
 
     @classmethod
@@ -95,7 +121,9 @@ class PVDataFrame:
             indx_choice, nsamples - self.num_calibrators, replace=False)
         main_mask[indx_choice] = True
 
-        keys_skip = ["is_calibrator", "mu_cal", "C_mu_cal", "std_mu_cal"]
+        keys_skip = [
+            "is_calibrator", "mu_cal", "C_mu_cal", "std_mu_cal", "los_r"]
+
         subsampled = {key: self[key][main_mask]
                       for key in self.keys() if key not in keys_skip}
 
@@ -191,7 +219,8 @@ def load_SH0ES_calibration(calibration_path, pgc_CF4):
 
 def load_CF4_data(root, which_band, best_mag_quality=True, eta_min=-0.3,
                   zcmb_max=None, b_min=7.5, remove_outliers=True,
-                  calibration=None):
+                  calibration=None, los_data_path=None, return_all=False,
+                  **kwargs):
     """
     Loads the `CF4_TFR.hdf5` file from `root` and extracts fields based on
     `which_band`. Applies filters using `eta_min`, `zcmb_max`, and
@@ -229,6 +258,9 @@ def load_CF4_data(root, which_band, best_mag_quality=True, eta_min=-0.3,
         "e_eta": e_eta,
     }
 
+    if return_all:
+        return data
+
     mask = data["eta"] > eta_min
     if best_mag_quality:
         mask &= mag_quality == 5
@@ -253,6 +285,15 @@ def load_CF4_data(root, which_band, best_mag_quality=True, eta_min=-0.3,
     for key in data:
         data[key] = data[key][mask]
     pgc = pgc[mask]
+
+    if los_data_path is not None:
+        with File(los_data_path, 'r') as f:
+            data["los_density"] = f['los_density'][...][mask, ...]
+            data["los_velocity"] = f['los_velocity'][...][mask, ...]
+            data["los_r"] = f['r'][...]
+
+            assert np.all(data["los_density"] > 0)
+            assert np.all(np.isfinite(data["los_velocity"]))
 
     if calibration == "SH0ES":
         is_calibrator, mu_cal, C_mu_cal = load_SH0ES_calibration(
