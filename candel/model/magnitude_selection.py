@@ -37,9 +37,11 @@ class MagnitudeSelection:
 
     def log_selection_function(self, m, m1, m2, a):
         """Logarithm of the Boubel+2024 selection function."""
-        return jnp.where(m <= m1,
-                         0,
-                         a * (m - m2)**2 - a * (m1 - m2)**2 - 0.6 * (m - m1))
+        log_Fm = jnp.where(
+            m <= m1,
+            0,
+            a * (m - m2)**2 - a * (m1 - m2)**2 - 0.6 * (m - m1))
+        return jnp.clip(log_Fm, None, 0.)
 
     def log_observed_pdf(self, m, alpha, m1, m2, a):
         """
@@ -60,7 +62,7 @@ class MagnitudeSelection:
         """NumPyro model, uses an informative prior on `alpha`."""
         alpha = 0.6
         m1 = sample("m1", Uniform(0, 25))
-        m2 = sample("m2", Uniform(0, 25))
+        m2 = sample("m2", Uniform(m1, 25))
         a = sample("a", Uniform(-10, 0))
 
         with plate("data", len(mag)):
@@ -72,7 +74,8 @@ def log_magnitude_selection(mag, m1, m2, a):
     JAX implementation of `MagnitudeSelection` but natural logarithm,
     whereas the one in `MagnitudeSelection` is base 10.
     """
-    return jnp.log(10) * jnp.where(
+    Fm = jnp.log(10) * jnp.where(
         mag <= m1,
         0,
         a * (mag - m2)**2 - a * (m1 - m2)**2 - 0.6 * (mag - m1))
+    return jnp.clip(Fm, None, 0.)
