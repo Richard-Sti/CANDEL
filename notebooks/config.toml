@@ -40,6 +40,16 @@ half_width = 2.0
 low_clip = 20.0
 high_clip = 40.0
 
+[model.r_grid]
+num_mu_sigma = 4
+num_vel_sigma = 5
+num_points = 101
+low_clip_mu = 20.0
+high_clip_mu = 42.5
+low_clip_dist = 0.1
+max_clip_dist = 1000
+
+
 [model.priors.h]
 dist = "delta"
 value = 1.0
@@ -110,7 +120,7 @@ b_min = 7.5
 remove_outliers = true
 calibration = "None"
 
-nsamples_subsample = 250
+nsamples_subsample = 1000
 seed_subsample = 42
 
 los_file = "/Users/rstiskalek/Projects/CANDEL/data/CF4/los_CF4_TFR_<X>.hdf5"
