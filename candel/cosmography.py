@@ -20,12 +20,50 @@ from jax import numpy as jnp
 from jax import vmap
 from scipy.interpolate import CubicSpline
 
+from .util import SPEED_OF_LIGHT
+
 
 class Distmod2Distance:
     """
     Class to build an interpolator to convert distance modulus to comoving
     distance in `Mpc`. Choice of `h` is determined when calling the
     `__call__` method.
+
+    Parameters
+    ----------
+    Om0 : float
+        Matter density parameter.
+    zmin_interp, zmax_interp : float
+        Minimum and maximum redshift for the interpolation grid.
+    npoints_interp : int
+        Number of points in the interpolation grid.
+    is_scalar : bool
+        If `True`, the interpolator is not vectorized. This is useful for
+        debugging, but should be set to `False` for performance.
+    """
+    def __init__(self, Om0=0.3, zmin_interp=1e-8, zmax_interp=0.5,
+                 npoints_interp=1000, is_scalar=False):
+        cosmo = FlatLambdaCDM(H0=100, Om0=Om0)
+        z_grid = np.linspace(zmin_interp, zmax_interp, npoints_interp)
+        r_grid = cosmo.comoving_distance(z_grid).value
+        mu_grid = cosmo.distmod(z_grid).value
+
+        f = Interpolator1D(mu_grid, jnp.log(r_grid), extrap=False)
+        if not is_scalar:
+            f = vmap(f)
+        self._f = f
+
+    def __call__(self, mu, h=1, return_log=False):
+        if return_log:
+            return self._f(mu + 5 * jnp.log10(h)) - jnp.log(h)
+
+        return jnp.exp(self._f(mu + 5 * jnp.log10(h))) / h
+
+
+class Distance2Distmod:
+    """
+    Class to build an interpolator to convert distance in `Mpc` to distance
+    modulus. Choice of `h` is determined when calling the `__call__` method.
 
     Parameters
     ----------
@@ -43,13 +81,10 @@ class Distmod2Distance:
         r_grid = cosmo.comoving_distance(z_grid).value
         mu_grid = cosmo.distmod(z_grid).value
 
-        self._f = vmap(Interpolator1D(mu_grid, jnp.log(r_grid), extrap=False))
+        self._f = vmap(Interpolator1D(jnp.log(r_grid), mu_grid, extrap=False))
 
-    def __call__(self, mu, h=1, return_log=False):
-        if return_log:
-            return self._f(mu + 5 * jnp.log10(h)) - jnp.log(h)
-
-        return jnp.exp(self._f(mu + 5 * jnp.log10(h))) / h
+    def __call__(self, r, h=1,):
+        return self._f(jnp.log(r * h)) - 5 * jnp.log10(h)
 
 
 class Distmod2Redshift:
@@ -80,6 +115,44 @@ class Distmod2Redshift:
             return self._f(mu + 5 * jnp.log10(h))
 
         return jnp.exp(self._f(mu + 5 * jnp.log10(h)))
+
+
+class Redshift2Distance:
+    """
+    Class to build an interpolator to convert redshift to distance modulus.
+    Choice of `h` is determined when calling the `__call__` method.
+
+    Parameters
+    ----------
+    Om0 : float
+        Matter density parameter.
+    zmin_interp, zmax_interp : float
+        Minimum and maximum redshift for the interpolation grid.
+    npoints_interp : int
+        Number of points in the interpolation grid.
+    """
+    def __init__(self, Om0=0.3, zmin_interp=1e-8, zmax_interp=0.5,
+                 npoints_interp=1000, is_scalar=False):
+        cosmo = FlatLambdaCDM(H0=100, Om0=Om0)
+        z_grid = np.linspace(zmin_interp, zmax_interp, npoints_interp)
+        r_grid = cosmo.comoving_distance(z_grid).value
+
+        f = Interpolator1D(z_grid, r_grid, extrap=False)
+        f_cz = Interpolator1D(
+            z_grid * SPEED_OF_LIGHT, r_grid, extrap=False)
+
+        if not is_scalar:
+            f = vmap(f)
+            f_cz = vmap(f_cz)
+
+        self._f = f
+        self._f_cz = f_cz
+
+    def __call__(self, z, h=1, is_velocity=False):
+        if is_velocity:
+            return self._f_cz(z) / h
+
+        return self._f(z) / h
 
 
 class Distance2Redshift:

@@ -13,17 +13,20 @@
 # with this program; if not, write to the Free Software Foundation, Inc.,
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
+from candel import (                                                            # noqa
+    field,                                                                      # noqa
+    pvdata,                                                                     # noqa
+    model,                                                                      # noqa
+    redshift2real,                                                              # noqa
+    )
+
 from .cosmography import (                                                      # noqa
     Distmod2Redshift,                                                           # noqa
     Distmod2Distance,                                                           # noqa
+    Distance2Distmod,                                                           # noqa
     Distance2Redshift,                                                          # noqa
+    Redshift2Distance,                                                          # noqa
     LogGrad_Distmod2ComovingDistance,                                           # noqa
-    )
-
-from .data import ( # noqa                                                      # noqa
-    load_CF4_data,                                                              # noqa
-    PVDataFrame,                                                                # noqa
-    load_PV_dataframes,
     )
 
 from .evidence import (                                                         # noqa
@@ -33,14 +36,9 @@ from .evidence import (                                                         
     dict_samples_to_array,                                                      # noqa
     )
 
-from .model import (                                                            # noqa
-    load_priors,                                                                # noqa
-    SimpleTFRModel,                                                             # noqa
-    SimpleTFRModel_DistMarg,                                                    # noqa
-    )
-
 from .inference import (                                                        # noqa
-    run_inference,                                                              # noqa
+    run_pv_inference,                                                           # noqa
+    run_magsel_inference,                                                       # noqa
     save_mcmc_samples,                                                          # noqa
     )
 
@@ -55,16 +53,7 @@ from .util import (                                                             
     radec_to_galactic,                                                          # noqa
     galactic_to_radec,                                                          # noqa
     load_config,                                                                # noqa
+    hms_to_degrees,                                                             # noqa
+    dms_to_degrees,                                                             # noqa
+    fprint,                                                                     # noqa
 )
-
-
-def name2model(name):
-    mapping = {
-        "SimpleTFRModel": SimpleTFRModel,
-        "SimpleTFRModel_DistMarg": SimpleTFRModel_DistMarg,
-        }
-
-    if name not in mapping:
-        raise ValueError(f"Model name `{name}` not recognized.\n"
-                         f"Available models: {list(mapping.keys())}")
-    return mapping[name]

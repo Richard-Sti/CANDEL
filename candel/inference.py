@@ -31,10 +31,11 @@ from .util import (fprint, galactic_to_radec, radec_to_cartesian,
                    radec_to_galactic)
 
 
-def run_inference(model, model_args, print_summary=True, save_samples=True):
+def run_pv_inference(model, model_args, print_summary=True, save_samples=True):
     """
-    Run MCMC inference on the given model, post-process the samples, optionally
-    compute the BIC, AIC, evidence and save the samples to an HDF5 file.
+    Run MCMC inference on the given PV model, post-process the samples,
+    optionally compute the BIC, AIC, evidence and save the samples to an
+    HDF5 file.
     """
     kwargs = model.config["inference"]
 
@@ -94,6 +95,19 @@ def run_inference(model, model_args, print_summary=True, save_samples=True):
             samples, log_density, gof, model.config["io"]["fname_output"])
 
     return samples, log_density
+
+
+def run_magsel_inference(model, model_args, num_warmup=1000, num_samples=5000,
+                         seed=42, print_summary=True,):
+    """Run MCMC inference on the given magnitude selection model."""
+    kernel = NUTS(model, init_strategy=init_to_median(num_samples=5000))
+    mcmc = MCMC(kernel, num_warmup=num_warmup, num_samples=num_samples, )
+    mcmc.run(jax.random.key(seed), *model_args)
+
+    if print_summary:
+        mcmc.print_summary()
+
+    return mcmc.get_samples()
 
 
 def get_log_density(samples, model, model_args, batch_size=5):
