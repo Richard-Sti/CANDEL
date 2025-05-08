@@ -97,6 +97,19 @@ def run_pv_inference(model, model_args, print_summary=True, save_samples=True):
     return samples, log_density
 
 
+def run_magsel_inference(model, model_args, num_warmup=1000, num_samples=5000,
+                         seed=42, print_summary=True,):
+    """Run MCMC inference on the given magnitude selection model."""
+    kernel = NUTS(model, init_strategy=init_to_median(num_samples=5000))
+    mcmc = MCMC(kernel, num_warmup=num_warmup, num_samples=num_samples, )
+    mcmc.run(jax.random.key(seed), *model_args)
+
+    if print_summary:
+        mcmc.print_summary()
+
+    return mcmc.get_samples()
+
+
 def get_log_density(samples, model, model_args, batch_size=5):
     """
     Compute the log density of the peculiar velocity validation model. The
