@@ -46,13 +46,35 @@ def convert_none_strings(d):
     return d
 
 
+def try_replace_with_delta_if_not_los(config, param, value):
+    """
+    Replace the prior of `param` with a delta function if `pv_model.kind` does
+    not start with 'precomputed_los'.
+    """
+    kind = config.get("pv_model", {}).get("kind", "")
+    if not kind.startswith("precomputed_los"):
+        fprint(f"replacing prior of `{param}` with a delta function.")
+        priors = config.setdefault("model", {}).setdefault("priors", {})
+        priors.pop(param, None)
+        priors[param] = {
+            "dist": "delta",
+            "value": value
+        }
+
+    return config
+
+
 def load_config(config_path):
     """
     Load a TOML configuration file and convert "none" strings to None.
     """
     with open(config_path, 'rb') as f:
         config = tomllib.load(f)
-    return convert_none_strings(config)
+
+    config = convert_none_strings(config)
+    config = try_replace_with_delta_if_not_los(config, "alpha", 1.0)
+    config = try_replace_with_delta_if_not_los(config, "beta", 1.0)
+    return config
 
 
 ###############################################################################
@@ -91,6 +113,16 @@ def galactic_to_radec(ell, b):
     """
     c = SkyCoord(l=ell*u.degree, b=b*u.degree, frame='galactic')
     return c.icrs.ra.degree, c.icrs.dec.degree
+
+
+def hms_to_degrees(hours, minutes=None, seconds=None):
+    """Convert hours, minutes and seconds to degrees."""
+    return hours * 15 + (minutes or 0) / 60 * 15 + (seconds or 0) / 3600 * 15
+
+
+def dms_to_degrees(degrees, arcminutes=None, arcseconds=None):
+    """Convert degrees, arcminutes and arcseconds to decimal degrees."""
+    return degrees + (arcminutes or 0) / 60 + (arcseconds or 0) / 3600
 
 
 ###############################################################################

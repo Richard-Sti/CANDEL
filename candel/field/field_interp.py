@@ -1,0 +1,80 @@
+# Copyright (C) 2025 Richard Stiskalek
+# This program is free software; you can redistribute it and/or modify it
+# under the terms of the GNU General Public License as published by the
+# Free Software Foundation; either version 3 of the License, or (at your
+# option) any later version.
+# This program is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General
+# Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along
+# with this program; if not, write to the Free Software Foundation, Inc.,
+# 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+"""
+Scripts to load fields that have been previously interpolated at the line of
+sight of galaxies and saved to HDF5 files, typically this is done with the
+`csiborgtools` package.
+"""
+import numpy as np
+from scipy.interpolate import RegularGridInterpolator
+
+from ..util import radec_to_cartesian, radec_to_galactic, fprint
+
+
+def build_regular_interpolator(field, boxsize):
+    """A regular grid interpolator for a 3D field."""
+    ngrid = field.shape[0]
+    cellsize = boxsize / ngrid
+
+    X = np.linspace(0.5 * cellsize, boxsize - 0.5 * cellsize, ngrid)
+    Y, Z = X, X
+
+    return RegularGridInterpolator(
+        (X, Y, Z), field, fill_value=None, bounds_error=False,
+        method="linear")
+
+
+def interpolate_los_density_velocity(field_loader, r, RA, dec):
+    """
+    Interpolate the density and velocity fields along the line of sight
+    specified by `RA` and `dec` at radial steps `r` from the observer. The
+    former is expected in degrees, while the latter in `Mpc / h`.
+    """
+    if field_loader.coordinate_frame == "icrs":
+        rhat = radec_to_cartesian(RA, dec)
+    elif field_loader.coordinate_frame == "galactic":
+        ell, b = radec_to_galactic(RA, dec)
+        rhat = radec_to_cartesian(ell, b)
+    else:
+        raise ValueError(
+            f"Unknown coordinate frame: `{field_loader.coordinate_frame}`. "
+            "Please add support for it.")
+
+    rhat = rhat.astype(np.float32)
+
+    # Precompute positions (n_r, n_gal, 3)
+    pos = (field_loader.observer_pos[None, None, :]
+           + r[:, None, None] * rhat[None, :, :]).astype(np.float32)
+    pos_shape = pos.shape
+    pos_flat = pos.reshape(-1, 3)
+
+    # Interpolate density
+    fprint("interpolating the density field...")
+    density = field_loader.load_density()
+    f_density = build_regular_interpolator(density, field_loader.boxsize)
+    los_density = f_density(pos_flat).reshape(pos_shape[:2]).astype(np.float32)
+
+    # Interpolate velocity components one at a time
+    fprint("interpolating the velocity field...")
+    velocity = field_loader.load_velocity()  # shape (3, ngrid, ngrid, ngrid)
+    v_interp = np.empty((pos_flat.shape[0], 3), dtype=np.float32)
+
+    for i in range(3):
+        f_vel = build_regular_interpolator(velocity[i], field_loader.boxsize)
+        v_interp[:, i] = f_vel(pos_flat)
+
+    v_interp = v_interp.reshape(*pos_shape)  # (n_r, n_gal, 3)
+    los_velocity = np.einsum('ijk,jk->ij', v_interp, rhat)
+
+    return los_density.T, los_velocity.T

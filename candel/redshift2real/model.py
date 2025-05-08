@@ -26,8 +26,8 @@ from jax.scipy.special import logsumexp
 from numpyro import factor, plate, sample
 from numpyro.distributions import Normal, Uniform
 
-from .cosmography import Distance2Redshift
-from .util import SPEED_OF_LIGHT, fprint, radec_to_cartesian
+from ..cosmography import Distance2Redshift
+from ..util import SPEED_OF_LIGHT, fprint, radec_to_cartesian
 
 
 def log_mean_exp(logp, axis=-1):

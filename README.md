@@ -4,17 +4,12 @@
 ## TODO
 
 ### General
-- [ ] Add support for the linear theory field.
-
-- [ ] Add MNR-compatible versions of likelihoods.
-- [ ] Think about a strategy for generating CF4-like mock catalogs.
 - [ ] Implement an efficient submission script for many runs.
+- [ ] Add a strategy to generate CF4 mocks based on sampled CF4 data.
 
 ### Hubble Dipole
 
 ### Hubble Calibration
-
-
 
 ## Completed TODO
 
@@ -27,6 +22,12 @@
 - [x] Think about folder organization.
 - [x] Break degeneracy when sampling `h` and `a_TFR`
 - [x] Add code to remove CF4 outliers
+- [x] Add support for interpolating fields.
+- [x] Add support for the Carrick linear theory field.
+- [x] Implement more efficient/safe grid when marginalising over radial distance.
+- [x] Add MNR-compatible versions of likelihoods.
+- [x] Add selection in `eta`.
+- [x] Add selection in `mag`.
 
 ### Hubble Dipole
 - [x] Add option for dipole variation in `a_TFR`.
