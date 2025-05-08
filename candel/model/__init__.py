@@ -19,6 +19,7 @@ from .model import (                                                            
     TFRModel_DistMarg,                                                          # noqa
     )
 
+from .magnitude_selection import MagnitudeSelection                             # noqa
 
 from .interp import LOSInterpolator                                             # noqa
 
