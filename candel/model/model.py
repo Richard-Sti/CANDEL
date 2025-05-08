@@ -21,8 +21,8 @@ from jax.lax import cond
 from jax.scipy.stats import norm
 from numpyro import deterministic, factor, plate, sample
 from numpyro.distributions import (Delta, Distribution, MultivariateNormal,
-                                   Normal, ProjectedNormal, Uniform,
-                                   constraints)
+                                   Normal, ProjectedNormal, TruncatedNormal,
+                                   Uniform, constraints)
 from numpyro.distributions.util import validate_sample
 from numpyro.handlers import reparam
 from numpyro.infer.reparam import ProjectedNormalReparam
@@ -32,6 +32,7 @@ from ..cosmography import (Distance2Distmod, Distmod2Distance,
                            Distmod2Redshift, LogGrad_Distmod2ComovingDistance,
                            Redshift2Distance)
 from ..util import SPEED_OF_LIGHT, fprint, load_config
+from .magnitude_selection import log_magnitude_selection
 from .simpson import ln_simpson
 
 ###############################################################################
@@ -282,6 +283,13 @@ def make_r_grid(mu_TFR, czcmb, sigma_mu, sigma_v, distmod2distance_scalar,
     return jnp.linspace(lo, hi, num_points, axis=-1)
 
 
+def make_mag_grid(mag, e_mag, num_sigma=3, num_points=100):
+    """Make a magnitude grid for the TFR model."""
+    mu_start = mag - num_sigma * e_mag
+    mu_end = mag + num_sigma * e_mag
+    return jnp.linspace(mu_start, mu_end, num_points).T
+
+
 def get_muTFR(mag, eta, a_TFR, b_TFR, c_TFR=0.0):
     curvature_correction = jnp.where(eta > 0, c_TFR * eta**2, 0.0)
     return mag - (a_TFR + b_TFR * eta + curvature_correction)
@@ -320,6 +328,7 @@ class BaseModel(ABC):
             config["model"]["priors"])
         self.num_norm_kwargs = config["model"]["mu_norm"]
         self.r_grid_kwargs = config["model"]["r_grid"]
+        self.mag_grid_kwargs = config["model"]["mag_grid"]
 
         self.use_MNR = config["pv_model"]["use_MNR"]
 
@@ -355,7 +364,6 @@ class TFRModel(BaseModel):
         b_TFR = rsample("b_TFR", self.priors["TFR_slope"])
         c_TFR = rsample("c_TFR", self.priors["TFR_curvature"])
         sigma_mu = rsample("sigma_mu", self.priors["TFR_scatter"])
-
         a_TFR_dipole = rsample(
             "a_TFR_dipole", self.priors["TFR_zeropoint_dipole"])
 
@@ -378,14 +386,39 @@ class TFRModel(BaseModel):
 
         with plate("data", nsamples):
             if self.use_MNR:
+                # Magnitude hyperprior and selection.
                 mag = sample(
                     "mag_latent",
                     MagnitudeDistribution(**data.mag_dist_kwargs,))
+                if data.add_mag_selection:
+                    # Magnitude selection at the true magnitude values.
+                    log_Fm = log_magnitude_selection(
+                        mag, **data.mag_selection_kwargs)
+
+                    # Magnitude selection normalization.
+                    mag_grid = make_mag_grid(
+                        mag, data["e_mag"], **self.mag_grid_kwargs)
+                    log_pmag_norm = (
+                        + Normal(mag_grid, data["e_mag"][:, None]).log_prob(mag[:, None])  # noqa
+                        + log_magnitude_selection(
+                            mag_grid, **data.mag_selection_kwargs)
+                        )
+
+                    log_Fm -= ln_simpson(log_pmag_norm, x=mag_grid, axis=-1)
+                    factor("mag_norm", log_Fm)
+
                 sample("mag_obs", Normal(mag, data["e_mag"]), obs=data["mag"])
 
+                # Linewidth hyperprior and selection.
                 eta = sample(
                     "eta_latent", Normal(eta_prior_mean, eta_prior_std))
-                sample("eta_obs", Normal(eta, data["e_eta"]), obs=data["eta"])
+                if data.add_eta_truncation:
+                    sample("eta_obs", TruncatedNormal(
+                        eta, data["e_eta"], low=data.eta_min,
+                        high=data.eta_max), obs=data["eta"])
+                else:
+                    sample("eta_obs", Normal(
+                        eta, data["e_eta"]), obs=data["eta"])
             else:
                 mag = data["mag"]
                 eta = data["eta"]
@@ -478,14 +511,40 @@ class TFRModel_DistMarg(BaseModel):
 
         with plate("data", nsamples):
             if self.use_MNR:
+                # Magnitude hyperprior and selection.
                 mag = sample(
                     "mag_latent",
                     MagnitudeDistribution(**data.mag_dist_kwargs,))
+                if data.add_mag_selection:
+                    # Magnitude selection at the true magnitude values.
+                    log_Fm = log_magnitude_selection(
+                        mag, **data.mag_selection_kwargs)
+
+                    # Magnitude selection normalization.
+                    mag_grid = make_mag_grid(
+                        mag, data["e_mag"], **self.mag_grid_kwargs)
+                    log_pmag_norm = (
+                        + Normal(mag_grid, data["e_mag"][:, None]).log_prob(mag[:, None])  # noqa
+                        + log_magnitude_selection(
+                            mag_grid, **data.mag_selection_kwargs)
+                        )
+
+                    log_Fm -= ln_simpson(log_pmag_norm, x=mag_grid, axis=-1)
+                    factor("mag_norm", log_Fm)
+
                 sample("mag_obs", Normal(mag, data["e_mag"]), obs=data["mag"])
 
+                # Linewidth hyperprior and selection.
                 eta = sample(
                     "eta_latent", Normal(eta_prior_mean, eta_prior_std))
-                sample("eta_obs", Normal(eta, data["e_eta"]), obs=data["eta"])
+                if data.add_eta_truncation:
+                    sample("eta_obs", TruncatedNormal(
+                        eta, data["e_eta"], low=data.eta_min,
+                        high=data.eta_max), obs=data["eta"])
+                else:
+                    sample("eta_obs", Normal(
+                        eta, data["e_eta"]), obs=data["eta"])
+
                 sigma_mu = jnp.ones_like(mag) * sigma_mu
             else:
                 mag = data["mag"]
