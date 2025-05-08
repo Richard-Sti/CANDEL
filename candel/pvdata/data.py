@@ -62,6 +62,8 @@ def load_PV_dataframes(config_path):
 
 class PVDataFrame:
     """Lightweight container for PV data."""
+    add_eta_truncation = False
+    add_mag_selection = False
 
     def __init__(self, data, los_method="linear", los_extrap=True):
         self.data = {k: jnp.asarray(v) for k, v in data.items()}
@@ -84,6 +86,7 @@ class PVDataFrame:
         root = config.pop("root")
         nsamples_subsample = config.pop("nsamples_subsample", None)
         seed_subsample = config.pop("seed_subsample", 42)
+        mag_selection = config.pop("mag_selection", None)
 
         if "CF4_" in name:
             data = load_CF4_data(root, **config)
@@ -96,6 +99,7 @@ class PVDataFrame:
         else:
             frame = cls(data)
 
+        # Keyword arguments for the magnitude hyperprior.
         if "mag" in data:
             frame.mag_dist_kwargs = {
                 "xmin": frame["min_mag"] - 0.5 * frame["std_mag"],
@@ -103,6 +107,41 @@ class PVDataFrame:
                 "mag_sample": frame["mag"],
                 "e_mag_sample": frame["e_mag"],
                 }
+
+        # Magnitude selection hyperparameters.
+        if mag_selection is not None:
+            if config["add_mag_selection"]:
+                frame.mag_selection_kwargs = mag_selection
+            else:
+                frame.mag_selection_kwargs = None
+                fprint(f"disabling magnitude selection for `{name}`.")
+        frame.add_mag_selection = frame.mag_selection_kwargs is not None
+
+        # Hyperparameters for the TFR linewidth selection.
+        if "eta_min" in config or "eta_max" in config:
+            if config["add_eta_selection"]:
+                frame.add_eta_truncation = True
+            else:
+                frame.add_eta_truncation = False
+                fprint(f"disabling eta truncation for `{name}`.")
+
+        if "eta_min" in config:
+            frame.eta_min = config["eta_min"]
+            if np.any(frame["eta"] < frame.eta_min):
+                raise ValueError(
+                    f"eta_min = {frame.eta_min} is smaller than the minimum "
+                    f"eta value of {np.min(frame['eta'])}.")
+        else:
+            frame.eta_min = None
+
+        if "eta_max" in config:
+            frame.eta_max = config["eta_max"]
+            if np.any(frame["eta"] > frame.eta_max):
+                raise ValueError(
+                    f"eta_max = {frame.eta_max} is larger than the maximum "
+                    f"eta value of {np.max(frame['eta'])}.")
+        else:
+            frame.eta_max = None
 
         return frame
 
