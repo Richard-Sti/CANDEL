@@ -15,8 +15,8 @@
 
 from .model import (                                                            # noqa
     load_priors,                                                                # noqa
-    SimpleTFRModel,                                                             # noqa
-    SimpleTFRModel_DistMarg,                                                    # noqa
+    TFRModel,                                                                   # noqa
+    TFRModel_DistMarg,                                                          # noqa
     )
 
 
@@ -25,8 +25,8 @@ from .interp import LOSInterpolator                                             
 
 def name2model(name):
     mapping = {
-        "SimpleTFRModel": SimpleTFRModel,
-        "SimpleTFRModel_DistMarg": SimpleTFRModel_DistMarg,
+        "TFRModel": TFRModel,
+        "TFRModel_DistMarg": TFRModel_DistMarg,
         }
 
     if name not in mapping:
