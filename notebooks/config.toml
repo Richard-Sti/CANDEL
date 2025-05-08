@@ -127,7 +127,7 @@ los_file = "/Users/rstiskalek/Projects/CANDEL/data/CF4/los_CF4_TFR_<X>.hdf5"
 
 [io.CF4_W1.mag_selection]
 a = -0.16
-m1 = 11.29
+m1 = 11.32
 m2 = 13.23
 
 
