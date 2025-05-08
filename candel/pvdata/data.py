@@ -93,9 +93,18 @@ class PVDataFrame:
         if nsamples_subsample is not None:
             frame = cls(data)
             frame = frame.subsample(nsamples_subsample, seed=seed_subsample)
-            return frame
         else:
-            return cls(data)
+            frame = cls(data)
+
+        if "mag" in data:
+            frame.mag_dist_kwargs = {
+                "xmin": frame["min_mag"] - 0.5 * frame["std_mag"],
+                "xmax": frame["max_mag"] + 0.5 * frame["std_mag"],
+                "mag_sample": frame["mag"],
+                "e_mag_sample": frame["e_mag"],
+                }
+
+        return frame
 
     def subsample(self, nsamples, seed=42):
         """
@@ -140,6 +149,13 @@ class PVDataFrame:
         if key in self._cache:
             return self._cache[key]
 
+        stat_funcs = {
+            "mean": np.mean,
+            "std": np.std,
+            "min": np.min,
+            "max": np.max
+            }
+
         if key.startswith("e2_") and key.replace("e2_", "e_") in self.data:
             val = self.data[key.replace("e2_", "e_")]**2
         elif key == "theta":
@@ -151,6 +167,12 @@ class PVDataFrame:
         elif key == "rhat":
             val = radec_to_cartesian(self.data["RA"], self.data["dec"])
             val /= np.linalg.norm(val, axis=1)[:, None]
+        elif "_" in key:
+            stat, field = key.split("_", 1)
+            if stat in stat_funcs and field in self.data:
+                val = stat_funcs[stat](self.data[field])
+            else:
+                return self.data[key]  # Fallback
         else:
             return self.data[key]
 
