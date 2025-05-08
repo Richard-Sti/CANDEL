@@ -16,11 +16,14 @@
 from abc import ABC, abstractmethod
 
 import jax.numpy as jnp
+from jax import random
 from jax.lax import cond
 from jax.scipy.stats import norm
 from numpyro import deterministic, factor, plate, sample
-from numpyro.distributions import (Delta, MultivariateNormal, Normal,
-                                   ProjectedNormal, Uniform)
+from numpyro.distributions import (Delta, Distribution, MultivariateNormal,
+                                   Normal, ProjectedNormal, Uniform,
+                                   constraints)
+from numpyro.distributions.util import validate_sample
 from numpyro.handlers import reparam
 from numpyro.infer.reparam import ProjectedNormalReparam
 from quadax import simpson
@@ -45,6 +48,37 @@ class JeffreysPrior(Uniform):
     def log_prob(self, value):
         in_bounds = (value >= self.low) & (value <= self.high)
         return jnp.where(in_bounds, -jnp.log(value), -jnp.inf)
+
+
+class MagnitudeDistribution(Distribution):
+    """
+    Distribution with unnormalized log-prob ∝ 10^{0.6 x}, sampled via Normal.
+    """
+    reparametrized_params = ["xmin", "xmax"]
+    support = constraints.real  # change to interval if you want hard clipping
+
+    def __init__(self, xmin, xmax, mag_sample, e_mag_sample,
+                 validate_args=None):
+        self.xmin = xmin
+        self.xmax = xmax
+        self.mag_sample = mag_sample
+        self.e_mag_sample = e_mag_sample
+        self._lambda = 0.6 * jnp.log(10)
+
+        batch_shape = jnp.shape(mag_sample)
+        super().__init__(batch_shape=batch_shape, event_shape=(),
+                         validate_args=validate_args)
+
+    def sample(self, key, sample_shape=()):
+        u = random.normal(key, shape=sample_shape + self.batch_shape)
+        return self.mag_sample + self.e_mag_sample * u
+
+    @validate_sample
+    def log_prob(self, value):
+        # Optional: hard truncate outside [xmin, xmax]
+        in_bounds = (value >= self.xmin) & (value <= self.xmax)
+        logp = self._lambda * value
+        return jnp.where(in_bounds, logp, -jnp.inf)
 
 
 def sample_vector(name, mag_min, mag_max):
@@ -287,6 +321,8 @@ class BaseModel(ABC):
         self.num_norm_kwargs = config["model"]["mu_norm"]
         self.r_grid_kwargs = config["model"]["r_grid"]
 
+        self.use_MNR = config["pv_model"]["use_MNR"]
+
         self.config = config
 
     @abstractmethod
@@ -299,9 +335,9 @@ class BaseModel(ABC):
 ###############################################################################
 
 
-class SimpleTFRModel(BaseModel):
+class TFRModel(BaseModel):
     """
-    A simple TFR model that samples the distance modulus but fixes the true
+    A TFR model that samples the distance modulus but fixes the true
     apparent magnitude and linewidth to the observed values.
     """
 
@@ -334,9 +370,30 @@ class SimpleTFRModel(BaseModel):
 
         a_TFR = deterministic("a_TFR", a_TFR + 5 * jnp.log10(h))
 
+        if self.use_MNR:
+            eta_prior_mean = sample(
+                "eta_prior_mean", Uniform(data["min_eta"], data["max_eta"]))
+            eta_prior_std = sample(
+                "eta_prior_std", Uniform(0, data["max_eta"] - data["min_eta"]))
+
         with plate("data", nsamples):
+            if self.use_MNR:
+                mag = sample(
+                    "mag_latent",
+                    MagnitudeDistribution(**data.mag_dist_kwargs,))
+                sample("mag_obs", Normal(mag, data["e_mag"]), obs=data["mag"])
+
+                eta = sample(
+                    "eta_latent", Normal(eta_prior_mean, eta_prior_std))
+                sample("eta_obs", Normal(eta, data["e_eta"]), obs=data["eta"])
+            else:
+                mag = data["mag"]
+                eta = data["eta"]
+                sigma_mu = get_linear_sigma_mu_TFR(
+                    data, sigma_mu, b_TFR, c_TFR)
+
             a_TFR = a_TFR + jnp.sum(a_TFR_dipole * data["rhat"], axis=1)
-            mu_TFR = get_muTFR(data["mag"], data["eta"], a_TFR, b_TFR, c_TFR)
+            mu_TFR = get_muTFR(mag, eta, a_TFR, b_TFR, c_TFR)
             sigma_mu = get_linear_sigma_mu_TFR(data, sigma_mu, b_TFR, c_TFR)
 
             mu = sample("mu_latent", Normal(mu_TFR, sigma_mu))
@@ -379,11 +436,17 @@ class SimpleTFRModel(BaseModel):
                     obs=data["mu_cal"])
 
 
-class SimpleTFRModel_DistMarg(BaseModel):
+class TFRModel_DistMarg(BaseModel):
     """
     A TFR model where the distance modulus μ is integrated out using a grid,
     instead of being sampled as a latent variable.
     """
+    def __init__(self, config_path):
+        super().__init__(config_path)
+
+        if self.use_MNR:
+            fprint("setting `compute_evidence` to False.")
+            self.config["inference"]["compute_evidence"] = False
 
     def __call__(self, data):
         nsamples = len(data)
@@ -407,10 +470,31 @@ class SimpleTFRModel_DistMarg(BaseModel):
         # For the distance marginalization, h is not sampled.
         h = 1.
 
+        if self.use_MNR:
+            eta_prior_mean = sample(
+                "eta_prior_mean", Uniform(data["min_eta"], data["max_eta"]))
+            eta_prior_std = sample(
+                "eta_prior_std", Uniform(0, data["max_eta"] - data["min_eta"]))
+
         with plate("data", nsamples):
+            if self.use_MNR:
+                mag = sample(
+                    "mag_latent",
+                    MagnitudeDistribution(**data.mag_dist_kwargs,))
+                sample("mag_obs", Normal(mag, data["e_mag"]), obs=data["mag"])
+
+                eta = sample(
+                    "eta_latent", Normal(eta_prior_mean, eta_prior_std))
+                sample("eta_obs", Normal(eta, data["e_eta"]), obs=data["eta"])
+                sigma_mu = jnp.ones_like(mag) * sigma_mu
+            else:
+                mag = data["mag"]
+                eta = data["eta"]
+                sigma_mu = get_linear_sigma_mu_TFR(
+                    data, sigma_mu, b_TFR, c_TFR)
+
             a_TFR = a_TFR + jnp.sum(a_TFR_dipole * data["rhat"], axis=1)
-            mu_TFR = get_muTFR(data["mag"], data["eta"], a_TFR, b_TFR, c_TFR)
-            sigma_mu = get_linear_sigma_mu_TFR(data, sigma_mu, b_TFR, c_TFR)
+            mu_TFR = get_muTFR(mag, eta, a_TFR, b_TFR, c_TFR)
 
             r_grid = make_r_grid(
                 mu_TFR, data["czcmb"], sigma_mu, sigma_v,
