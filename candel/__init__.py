@@ -23,7 +23,9 @@ from candel import (                                                            
 from .cosmography import (                                                      # noqa
     Distmod2Redshift,                                                           # noqa
     Distmod2Distance,                                                           # noqa
+    Distance2Distmod,                                                           # noqa
     Distance2Redshift,                                                          # noqa
+    Redshift2Distance,                                                          # noqa
     LogGrad_Distmod2ComovingDistance,                                           # noqa
     )
 
