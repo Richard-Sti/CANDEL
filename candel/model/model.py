@@ -25,8 +25,9 @@ from numpyro.handlers import reparam
 from numpyro.infer.reparam import ProjectedNormalReparam
 from quadax import simpson
 
-from ..cosmography import (Distmod2Distance, Distmod2Redshift,
-                           LogGrad_Distmod2ComovingDistance)
+from ..cosmography import (Distance2Distmod, Distmod2Distance,
+                           Distmod2Redshift, LogGrad_Distmod2ComovingDistance,
+                           Redshift2Distance)
 from ..util import SPEED_OF_LIGHT, fprint, load_config
 from .simpson import ln_simpson
 
@@ -150,7 +151,12 @@ def rsample(name, dist):
 
 def log_norm_pmu(mu_TFR, sigma_mu, distmod2distance, num_points=30,
                  num_sigma=5, low_clip=20., high_clip=40., h=1.0):
-    """Computation of log ∫ r^2 * p(mu | mu_TFR, sigma_mu) dr"""
+    """
+    Computation of log ∫ r^2 * p(mu | mu_TFR, sigma_mu) dr. The regular grid
+    over which the integral is computed is defined uniformly in distance
+    modulus.
+    """
+    # Get the limits in distance modulus
     delta = num_sigma * sigma_mu
     lo = jnp.clip(mu_TFR - delta, low_clip, high_clip)
     hi = jnp.clip(mu_TFR + delta, low_clip, high_clip)
@@ -177,7 +183,11 @@ def log_norm_pmu(mu_TFR, sigma_mu, distmod2distance, num_points=30,
 def log_norm_pmu_im(mu_TFR, sigma_mu, alpha, distmod2distance, los_interp,
                     num_points=30, num_sigma=5, low_clip=20., high_clip=40.,
                     h=1.0):
-    """Computation of log ∫ r^2 * rho * p(mu | mu_TFR, sigma_mu) dr."""
+    """
+    Computation of log ∫ r^2 * rho * p(mu | mu_TFR, sigma_mu) dr. The regular
+    grid over which the integral is computed is defined uniformly in distance
+    modulus.
+    """
     delta = num_sigma * sigma_mu
     lo = jnp.clip(mu_TFR - delta, low_clip, high_clip)
     hi = jnp.clip(mu_TFR + delta, low_clip, high_clip)
@@ -203,11 +213,38 @@ def log_norm_pmu_im(mu_TFR, sigma_mu, alpha, distmod2distance, los_interp,
         )
 
 
-def make_mu_grid(mu_TFR, num_points=51, half_width=1.5, low_clip=20.,
-                 high_clip=40.,):
-    """Generate a grid of `mu` values centered on each `mu_TFR`"""
-    lo = jnp.clip((mu_TFR - half_width).ravel(), low_clip, high_clip)
-    hi = jnp.clip((mu_TFR + half_width).ravel(), low_clip, high_clip)
+def make_r_grid(mu_TFR, czcmb, sigma_mu, sigma_v, distmod2distance_scalar,
+                redshift2distance_scalar, h, num_mu_sigma=4, num_vel_sigma=5,
+                num_points=101, low_clip_mu=20., high_clip_mu=45.,
+                low_clip_dist=0.1, max_clip_dist=1000,):
+    """
+    Generate a uniform grid of radial distances in `Mpc`. The left and right
+    edges of the grid are determined by the distance modulus and the
+    observed redshift.
+    """
+
+    lo_mu = mu_TFR - sigma_mu * num_mu_sigma
+    hi_mu = mu_TFR + sigma_mu * num_mu_sigma
+
+    lo_mu = jnp.clip(lo_mu, low_clip_mu, high_clip_mu)
+    hi_mu = jnp.clip(hi_mu, low_clip_mu, high_clip_mu)
+
+    lo_mu_dist = distmod2distance_scalar(lo_mu, h=h)
+    hi_mu_dist = distmod2distance_scalar(hi_mu, h=h)
+
+    # Clip the lower bound at 5 km / s to ensure that the interpolator is
+    # within range.
+    lo_cz = jnp.clip(czcmb - sigma_v * num_vel_sigma, 5, None)
+    hi_cz = czcmb + sigma_v * num_vel_sigma
+
+    lo_cz_dist = redshift2distance_scalar(lo_cz, h=h, is_velocity=True)
+    hi_cz_dist = redshift2distance_scalar(hi_cz, h=h, is_velocity=True)
+
+    lo = jnp.clip(
+        jnp.minimum(lo_mu_dist, lo_cz_dist), low_clip_dist, max_clip_dist)
+    hi = jnp.clip(
+        jnp.maximum(hi_mu_dist, hi_cz_dist), low_clip_dist, max_clip_dist)
+
     return jnp.linspace(lo, hi, num_points, axis=-1)
 
 
@@ -235,14 +272,20 @@ class BaseModel(ABC):
     def __init__(self, config_path):
         config = load_config(config_path)
 
+        # Initialize plenty of interpolators for distance and redshift
         self.distmod2redshift = Distmod2Redshift()
         self.distmod2distance = Distmod2Distance()
+        self.distance2distmod = Distance2Distmod()
+        self.redshift2distance = Redshift2Distance()
         self.log_grad_distmod2distance = LogGrad_Distmod2ComovingDistance()
+
+        self.distmod2distance_scalar = Distmod2Distance(is_scalar=True)
+        self.redshift2distance_scalar = Redshift2Distance(is_scalar=True)
 
         self.priors, self.prior_dist_name = load_priors(
             config["model"]["priors"])
         self.num_norm_kwargs = config["model"]["mu_norm"]
-        self.mu_grid_kwargs = config["model"]["mu_grid"]
+        self.r_grid_kwargs = config["model"]["r_grid"]
 
         self.config = config
 
@@ -357,28 +400,35 @@ class SimpleTFRModel_DistMarg(BaseModel):
         Vext = rsample("Vext", self.priors["Vext"])
         sigma_v = rsample("sigma_v", self.priors["sigma_v"])
 
-        # # Remaining parameters
+        # Remaining parameters
         alpha = rsample("alpha", self.priors["alpha"])
         beta = rsample("beta", self.priors["beta"])
+
+        # For the distance marginalization, h is not sampled.
+        h = 1.
 
         with plate("data", nsamples):
             a_TFR = a_TFR + jnp.sum(a_TFR_dipole * data["rhat"], axis=1)
             mu_TFR = get_muTFR(data["mag"], data["eta"], a_TFR, b_TFR, c_TFR)
             sigma_mu = get_linear_sigma_mu_TFR(data, sigma_mu, b_TFR, c_TFR)
 
-            mu_grid = make_mu_grid(mu_TFR, **self.mu_grid_kwargs)
-            r_grid = self.distmod2distance(mu_grid)
+            r_grid = make_r_grid(
+                mu_TFR, data["czcmb"], sigma_mu, sigma_v,
+                self.distmod2distance_scalar, self.redshift2distance_scalar,
+                h=h, **self.r_grid_kwargs)
+            mu_grid = self.distance2distmod(r_grid, h=h)
 
             ll = 2 * jnp.log(r_grid)
             ll += Normal(mu_TFR[:, None], sigma_mu[:, None]).log_prob(mu_grid)
 
             if data.has_precomputed_los:
                 # The shape is `(n_galaxies, num_steps.)`
-                Vrad = data.f_los_velocity.interp_many_steps_per_galaxy(r_grid)
+                Vrad = data.f_los_velocity.interp_many_steps_per_galaxy(
+                    r_grid * h)
                 Vrad *= beta
 
                 log_rho = data.f_los_log_density.interp_many_steps_per_galaxy(
-                    r_grid)
+                    r_grid * h)
                 ll += alpha * log_rho
             else:
                 Vrad = 0.
