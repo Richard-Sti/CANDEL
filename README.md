@@ -6,10 +6,10 @@
 ### General
 - [x] Add support for interpolating fields.
 - [x] Add support for the Carrick linear theory field.
+- [x] Implement more efficient/safe grid when marginalising over radial distance.
+- [x] Add MNR-compatible versions of likelihoods.
 
 - [ ] Implement an efficient submission script for many runs.
-
-- [ ] Add MNR-compatible versions of likelihoods.
 - [ ] Think about a strategy for generating CF4-like mock catalogs.
 
 ### Hubble Dipole
