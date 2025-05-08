@@ -21,7 +21,7 @@ num_chains_harmonic = 5
 kind = "precomputed_los_Carrick2015"
 # kind = "constant"
 
-use_MNR = true
+use_MNR = false
 
 
 ###############################################################################
@@ -38,20 +38,21 @@ high_clip = 40
 
 [model.r_grid]
 num_mu_sigma = 4
-num_vel_sigma = 5
-num_points = 201
+num_vel_sigma = 4
+num_points = 51
 low_clip_mu = 20.0
 high_clip_mu = 42.5
 low_clip_dist = 0.1
 max_clip_dist = 1000
 
+[model.mag_grid]
+num_sigma = 4
+num_points = 25
+
 
 [model.priors.h]
 dist = "delta"
 value = 1.0
-# dist = "normal"
-# loc = 0.7
-# scale = 0.1
 
 [model.priors.alpha]
 dist = "normal"
@@ -116,10 +117,18 @@ b_min = 7.5
 remove_outliers = true
 calibration = "None"
 
+add_mag_selection = false
+add_eta_selection = false
+
 nsamples_subsample = 100
 seed_subsample = 42
 
 los_file = "/Users/rstiskalek/Projects/CANDEL/data/CF4/los_CF4_TFR_<X>.hdf5"
+
+[io.CF4_W1.mag_selection]
+a = -0.16
+m1 = 11.29
+m2 = 13.23
 
 
 ########
