@@ -13,8 +13,6 @@
 # with this program; if not, write to the Free Software Foundation, Inc.,
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 """Running the MCMC inference for the model and some postprocessing."""
-from os.path import dirname, splitext
-
 import jax
 import numpy as np
 from h5py import File
@@ -29,7 +27,7 @@ from tqdm import trange
 
 from .evidence import (BIC_AIC, dict_samples_to_array, harmonic_evidence,
                        laplace_evidence)
-from .util import (fprint, galactic_to_radec, plot_corner, radec_to_cartesian,
+from .util import (fprint, galactic_to_radec, radec_to_cartesian,
                    radec_to_galactic)
 
 
@@ -93,12 +91,8 @@ def run_pv_inference(model, model_args, print_summary=True, save_samples=True):
         gof = None
 
     if save_samples:
-        fname_out = model.config["io"]["fname_output"]
-        fprint(f"output directory is `{dirname(fname_out)}`.")
-        save_mcmc_samples(samples, log_density, gof, fname_out)
-
-        fname_plot = splitext(fname_out)[0] + ".png"
-        plot_corner(samples, fname_plot)
+        save_mcmc_samples(
+            samples, log_density, gof, model.config["io"]["fname_output"])
 
     return samples, log_density
 

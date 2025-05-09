@@ -64,7 +64,6 @@ class PVDataFrame:
     """Lightweight container for PV data."""
     add_eta_truncation = False
     add_mag_selection = False
-    mag_selection_kwargs = None
 
     def __init__(self, data, los_method="linear", los_extrap=True):
         self.data = {k: jnp.asarray(v) for k, v in data.items()}
