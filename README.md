@@ -4,10 +4,13 @@
 ## TODO
 
 ### General
-- [ ] Implement an efficient submission script for many runs.
-- [ ] Add a strategy to generate CF4 mocks based on sampled CF4 data.
+- [x] Implement an efficient submission script for many runs.
+
+- [ ] Add a strategy to generate CF4 mocks based on sampled CF4 data. This should ideally be a resampling of the true CF4 magnitude and linewidth distributions, at random sky positions. The mocks should also account for both the homogeneous and inhomogeneous Malmquist bias.
 
 ### Hubble Dipole
+- Focus the main inference solely on CF4 TFR W1 because of its uniform sky coverage, and then add a set of mock calibration to test if there is any signal.
+- Implement Boubel likelihood?
 
 ### Hubble Calibration
 
