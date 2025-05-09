@@ -12,15 +12,17 @@
 # You should have received a copy of the GNU General Public License along
 # with this program; if not, write to the Free Software Foundation, Inc.,
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+"""Various utility functions for candel."""
 
+import tomllib
 from datetime import datetime
+from os.path import abspath, isabs, join
 
 import astropy.units as u
 import matplotlib.pyplot as plt
 import numpy as np
 from astropy.coordinates import SkyCoord
 from corner import corner
-import tomllib
 
 SPEED_OF_LIGHT = 299_792.458  # km / s
 
@@ -64,16 +66,45 @@ def try_replace_with_delta_if_not_los(config, param, value):
     return config
 
 
-def load_config(config_path):
+def convert_to_absolute_paths(config):
+    """Recursively convert relative paths in config to absolute paths."""
+    root = config["root_main"]
+
+    path_keys = {
+        "fname_output",
+        "los_file",
+        "root",
+        "path_density",
+        "path_velocity",
+    }
+
+    def _recurse(d):
+        for k, v in d.items():
+            if isinstance(v, dict):
+                _recurse(v)
+            elif k in path_keys and isinstance(v, str) and not isabs(v):
+                d[k] = abspath(join(root, v))
+
+    _recurse(config)
+    return config
+
+
+def load_config(config_path, replace_none=True, fill_paths=True):
     """
     Load a TOML configuration file and convert "none" strings to None.
     """
     with open(config_path, 'rb') as f:
         config = tomllib.load(f)
 
-    config = convert_none_strings(config)
+    if replace_none:
+        config = convert_none_strings(config)
+
     config = try_replace_with_delta_if_not_los(config, "alpha", 1.0)
     config = try_replace_with_delta_if_not_los(config, "beta", 1.0)
+
+    if fill_paths:
+        config = convert_to_absolute_paths(config)
+
     return config
 
 
