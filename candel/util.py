@@ -165,8 +165,11 @@ def name2label(name):
     latex_labels = {
         "a_TFR": r"$a_\mathrm{TFR}$",
         "b_TFR": r"$b_\mathrm{TFR}$",
+        "c_TFR": r"$c_\mathrm{TFR}$",
         "sigma_mu": r"$\sigma_\mu$",
         "sigma_v": r"$\sigma_v$",
+        "alpha": r"$\alpha$",
+        "beta": r"$\beta$",
         "Vext_mag": r"$V_\mathrm{ext}$",
         "Vext_ell": r"$\ell_\mathrm{ext}$",
         "Vext_b": r"$b_\mathrm{ext}$",
