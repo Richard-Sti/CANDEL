@@ -61,9 +61,9 @@ class MagnitudeSelection:
     def __call__(self, mag):
         """NumPyro model, uses an informative prior on `alpha`."""
         alpha = 0.6
-        m1 = sample("m1", Uniform(0, 25))
-        m2 = sample("m2", Uniform(m1, 25))
-        a = sample("a", Uniform(-10, 0))
+        m1 = sample("m1", Uniform(8, 15))
+        m2 = sample("m2", Uniform(m1, 20))
+        a = sample("a", Uniform(-1, 0))
 
         with plate("data", len(mag)):
             factor("ll", self.log_observed_pdf(mag, alpha, m1, m2, a))
