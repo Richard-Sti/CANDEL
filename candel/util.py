@@ -174,6 +174,9 @@ def name2label(name):
         "Vext_ell": r"$\ell_\mathrm{ext}$",
         "Vext_b": r"$b_\mathrm{ext}$",
         "h": r"$h$",
+        "a": r"$a$",
+        "m1": r"$m_1$",
+        "m2": r"$m_2$",
     }
     return latex_labels.get(name, name)
 
