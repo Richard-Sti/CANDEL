@@ -201,6 +201,7 @@ def plot_corner(samples, filename=None, smooth=1, keys=None):
     )
 
     if filename is not None:
+        fprint(f"saving a corner plot to `{filename}`")
         fig.savefig(filename, bbox_inches="tight")
     else:
         plt.show()
