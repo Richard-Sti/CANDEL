@@ -43,11 +43,13 @@ def overwrite_config(config, key, value):
 if __name__ == "__main__":
     config_path = "./config.toml"
     config = load_config(config_path, replace_none=False)
-    to_submit = True
 
     kind = "Carrick2015"
-    catalogues = "CF4_W1"
+    catalogues = "CF4_i"
     tag = None
+
+    print(f"kind:       {kind}")
+    print(f"catalogues: {catalogues}")
 
     # Process the catalogue/simulation names
     if isinstance(catalogues, str):
@@ -60,6 +62,11 @@ if __name__ == "__main__":
 
     if tag is None:
         tag = "default"
+
+    confirm = input("Are you sure you want to submit these runs? [y/N] ")
+    to_submit = confirm.lower() == "y"
+    if to_submit:
+        fprint("The scripts will not be submitted.")
 
     for catalogue in catalogues:
         local_config = overwrite_config(
