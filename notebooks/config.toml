@@ -1,13 +1,11 @@
-root_main = "/Users/rstiskalek/Projects/CANDEL/"
-
 ###############################################################################
 #                               Inference                                     #
 ###############################################################################
 
 [inference]
-model = "TFRModel"
-num_warmup = 1500
-num_samples = 5000
+model = "SimpleTFR"
+num_warmup = 500
+num_samples = 500
 num_chains = 1
 seed = 42
 compute_log_density = true
@@ -19,11 +17,11 @@ num_chains_harmonic = 5
 ###############################################################################
 
 [pv_model]
-use_MNR = false
 
-# Default kind. This gets overwritten if using a submission script.
 kind = "precomputed_los_Carrick2015"
+# kind = "constant"
 
+use_MNR = false
 
 
 ###############################################################################
@@ -106,14 +104,11 @@ high = 1000.0
 ################################################################################
 
 [io]
-root_output = "results"
-# Default catalogue name and output path. This gets overwritten
-# if using a submission script.
-catalogue_name = "CF4_i"
-fname_output = "results/test.hdf5"
+catalogue_name = "CF4_W1"
+fname_output = "/Users/rstiskalek/Projects/CANDEL/results/samples_test.hdf5"
 
 [io.CF4_W1]
-root = "data/CF4"
+root = "/Users/rstiskalek/Projects/CANDEL/data/CF4"
 which_band = "w1"
 best_mag_quality = true
 eta_min = -0.3
@@ -128,35 +123,12 @@ add_eta_selection = false
 nsamples_subsample = 100
 seed_subsample = 42
 
-los_file = "data/CF4/los_CF4_TFR_<X>.hdf5"
+los_file = "/Users/rstiskalek/Projects/CANDEL/data/CF4/los_CF4_TFR_<X>.hdf5"
 
 [io.CF4_W1.mag_selection]
 a = -0.16
 m1 = 11.32
 m2 = 13.23
-
-[io.CF4_i]
-root = "data/CF4"
-which_band = "i"
-best_mag_quality = true
-eta_min = -0.3
-zcmb_max = 0.05
-b_min = 7.5
-remove_outliers = true
-calibration = "None"
-
-add_mag_selection = false
-add_eta_selection = false
-
-nsamples_subsample = 100
-seed_subsample = 42
-
-los_file = "data/CF4/los_CF4_TFR_<X>.hdf5"
-
-[io.CF4_i.mag_selection]
-a = -0.17
-m1 = 12.21
-m2 = 13.9
 
 
 ########
@@ -167,10 +139,10 @@ m2 = 13.9
 [io.PV_main]
 
 [io.PV_main.CF4]
-root = "data/CF4"
+root = "/Users/rstiskalek/Projects/CANDEL/data/CF4"
 which_band = "i"  # Does not matter
 return_all = true
-los_file = "data/CF4/los_CF4_TFR_<X>.hdf5"
+los_file = "/Users/rstiskalek/Projects/CANDEL/data/CF4/los_CF4_TFR_<X>.hdf5"
 
 [io.reconstruction_main]
 rmin = 0
@@ -178,5 +150,5 @@ rmax = 200
 num_steps = 250
 
 [io.reconstruction_main.Carrick2015]
-path_density = "data/fields/carrick2015_twompp_density.npy"
-path_velocity = "data/fields/carrick2015_twompp_velocity.npy"
+path_density = "/Users/rstiskalek/Projects/CANDEL/data/fields/carrick2015_twompp_density.npy"
+path_velocity = "/Users/rstiskalek/Projects/CANDEL/data/fields/carrick2015_twompp_velocity.npy"
