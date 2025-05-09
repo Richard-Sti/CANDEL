@@ -46,7 +46,7 @@ if __name__ == "__main__":
     to_submit = True
 
     kind = "Carrick2015"
-    catalogues = ["CF4_W1", "CF4_W1"]
+    catalogues = "CF4_W1"
     tag = None
 
     # Process the catalogue/simulation names
@@ -79,11 +79,10 @@ if __name__ == "__main__":
             tomli_w.dump(local_config, f)
 
         if to_submit:
-            cmd = ["./submit_run.sh", toml_out]
+            cmd = ["./_submit_run.sh", toml_out]
             fprint(f"Submitting job with: {' '.join(cmd)}")
             try:
                 subprocess.run(cmd, check=True)
-                fprint("Submission successful.")
             except subprocess.CalledProcessError as e:
                 fprint(f"Submission failed with return code {e.returncode}")
                 fprint(f"Command: {' '.join(e.cmd)}")
