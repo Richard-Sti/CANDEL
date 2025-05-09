@@ -28,7 +28,12 @@ class MagnitudeSelection:
     [1] https://www.arxiv.org/abs/2408.03660
     """
 
-    def __init__(self):
+    def __init__(self, m1_min=8, m1_max=15, m2_max=20, a_min=-1,):
+        self.m1_min = m1_min
+        self.m1_max = m1_max
+        self.m2_max = m2_max
+        self.a_min = a_min
+
         self.mrange = jnp.linspace(0, 25, 1000)
 
     def log_true_pdf(self, m, alpha, m1):
@@ -61,9 +66,9 @@ class MagnitudeSelection:
     def __call__(self, mag):
         """NumPyro model, uses an informative prior on `alpha`."""
         alpha = 0.6
-        m1 = sample("m1", Uniform(0, 25))
-        m2 = sample("m2", Uniform(m1, 25))
-        a = sample("a", Uniform(-10, 0))
+        m1 = sample("m1", Uniform(self.m1_min, self.m1_max))
+        m2 = sample("m2", Uniform(m1, self.m2_max))
+        a = sample("a", Uniform(self.a_min, 0))
 
         with plate("data", len(mag)):
             factor("ll", self.log_observed_pdf(mag, alpha, m1, m2, a))
