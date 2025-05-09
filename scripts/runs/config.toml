@@ -6,8 +6,8 @@ root_main = "/Users/rstiskalek/Projects/CANDEL/"
 
 [inference]
 model = "TFRModel"
-num_warmup = 500
-num_samples = 500
+num_warmup = 1500
+num_samples = 5000
 num_chains = 1
 seed = 42
 compute_log_density = true
@@ -109,7 +109,7 @@ high = 1000.0
 root_output = "results"
 # Default catalogue name and output path. This gets overwritten
 # if using a submission script.
-catalogue_name = "CF4_W1"
+catalogue_name = "CF4_i"
 fname_output = "results/test.hdf5"
 
 [io.CF4_W1]
@@ -134,6 +134,29 @@ los_file = "data/CF4/los_CF4_TFR_<X>.hdf5"
 a = -0.16
 m1 = 11.32
 m2 = 13.23
+
+[io.CF4_i]
+root = "data/CF4"
+which_band = "i"
+best_mag_quality = true
+eta_min = -0.3
+zcmb_max = 0.05
+b_min = 7.5
+remove_outliers = true
+calibration = "None"
+
+add_mag_selection = false
+add_eta_selection = false
+
+nsamples_subsample = 100
+seed_subsample = 42
+
+los_file = "data/CF4/los_CF4_TFR_<X>.hdf5"
+
+[io.CF4_i.mag_selection]
+a = -0.17
+m1 = 12.21
+m2 = 13.9
 
 
 ########
