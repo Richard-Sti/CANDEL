@@ -6,8 +6,8 @@ root_main = "/Users/rstiskalek/Projects/CANDEL/"
 
 [inference]
 model = "TFRModel"
-num_warmup = 1500
-num_samples = 5000
+num_warmup = 500
+num_samples = 500
 num_chains = 1
 seed = 42
 compute_log_density = true
@@ -22,7 +22,8 @@ num_chains_harmonic = 5
 use_MNR = false
 
 # Default kind. This gets overwritten if using a submission script.
-kind = "precomputed_los_Carrick2015"
+# kind = "precomputed_los_Carrick2015"
+kind = "constant"
 
 
 
@@ -33,16 +34,16 @@ kind = "precomputed_los_Carrick2015"
 [model]
 
 [model.mu_norm]
-num_points = 25
-num_sigma = 6
-low_clip = 20
-high_clip = 40
+num_points = 31
+num_sigma = 5
+low_clip = 18.0
+high_clip = 42.0
 
 [model.r_grid]
 num_mu_sigma = 4
 num_vel_sigma = 4
-num_points = 51
-low_clip_mu = 20.0
+num_points = 101
+low_clip_mu = 18.0
 high_clip_mu = 42.5
 low_clip_dist = 0.1
 max_clip_dist = 1000
@@ -109,8 +110,22 @@ high = 1000.0
 root_output = "results"
 # Default catalogue name and output path. This gets overwritten
 # if using a submission script.
-catalogue_name = "CF4_i"
+# catalogue_name = "CF4_i"
+catalogue_name = "CF4_mock_0"
+
 fname_output = "results/test.hdf5"
+
+[io.CF4_mock]
+root = "data/CF4_mock"
+
+add_mag_selection = true
+add_eta_selection = true
+
+[io.CF4_mock.mag_selection]
+a = -0.17
+m1 = 12.21
+m2 = 13.9
+
 
 [io.CF4_W1]
 root = "data/CF4"
