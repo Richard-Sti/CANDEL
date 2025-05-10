@@ -7,7 +7,7 @@ root_main = "/Users/rstiskalek/Projects/CANDEL/"
 [inference]
 model = "TFRModel"
 num_warmup = 500
-num_samples = 500
+num_samples = 2500
 num_chains = 1
 seed = 42
 compute_log_density = true
@@ -39,14 +39,6 @@ num_sigma = 5
 low_clip = 18.0
 high_clip = 42.0
 
-[model.r_grid]
-num_mu_sigma = 4
-num_vel_sigma = 4
-num_points = 101
-low_clip_mu = 18.0
-high_clip_mu = 42.5
-low_clip_dist = 0.1
-max_clip_dist = 1000
 
 [model.mag_grid]
 num_sigma = 4
@@ -188,9 +180,9 @@ return_all = true
 los_file = "data/CF4/los_CF4_TFR_<X>.hdf5"
 
 [io.reconstruction_main]
-rmin = 0
-rmax = 200
-num_steps = 250
+rmin = 0.1
+rmax = 250
+num_steps = 501
 
 [io.reconstruction_main.Carrick2015]
 path_density = "data/fields/carrick2015_twompp_density.npy"
