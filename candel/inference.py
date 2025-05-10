@@ -98,7 +98,7 @@ def run_pv_inference(model, model_args, print_summary=True, save_samples=True):
         save_mcmc_samples(samples, log_density, gof, fname_out)
 
         fname_plot = splitext(fname_out)[0] + ".png"
-        plot_corner(samples, fname_plot)
+        plot_corner(samples, show_fig=False, filename=fname_plot,)
 
     return samples, log_density
 

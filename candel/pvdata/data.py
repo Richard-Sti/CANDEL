@@ -44,14 +44,21 @@ def load_PV_dataframes(config_path):
 
     dfs = []
     for name in names:
-        kwargs = config_io[name].copy()
-        if los_reconstruction is not None:
+        is_mock = name.startswith("CF4_mock")
+        if is_mock:
+            kwargs = config_io["CF4_mock"].copy()
+        else:
+            kwargs = config_io[name].copy()
+
+        try_pop_los = is_mock and los_reconstruction is None
+        if los_reconstruction is not None and not is_mock:
             kwargs["los_data_path"] = kwargs.pop("los_file").replace(
                 "<X>", los_reconstruction)
             fprint(
                 f"loading existing LOS data from {kwargs['los_data_path']}.")
 
-        df = PVDataFrame.from_config_dict(kwargs, name)
+        df = PVDataFrame.from_config_dict(
+            kwargs, name, try_pop_los=try_pop_los)
         dfs.append(df)
 
     if len(dfs) == 1:
@@ -69,7 +76,7 @@ class PVDataFrame:
     def __init__(self, data, los_method="linear", los_extrap=True):
         self.data = {k: jnp.asarray(v) for k, v in data.items()}
 
-        if "los_r" in self.data:
+        if "los_velocity" in self.data:
             self.has_precomputed_los = True
             kwargs = {"method": los_method, "extrap": los_extrap}
             self.f_los_log_density = LOSInterpolator(
@@ -83,16 +90,28 @@ class PVDataFrame:
         self._cache = {}
 
     @classmethod
-    def from_config_dict(cls, config, name):
+    def from_config_dict(cls, config, name, try_pop_los):
         root = config.pop("root")
         nsamples_subsample = config.pop("nsamples_subsample", None)
         seed_subsample = config.pop("seed_subsample", 42)
         mag_selection = config.pop("mag_selection", None)
 
-        if "CF4_" in name:
+        if "CF4_mock" in name:
+            index = name.split("_")[-1]
+            data = load_CF4_mock(root, index)
+        elif "CF4_" in name:
             data = load_CF4_data(root, **config)
         else:
             raise ValueError(f"Unknown catalogue name: {name}")
+
+        if try_pop_los:
+            for key in list(data.keys()):
+                if key.startswith("los_") and key != "los_r":
+                    fprint(f"removing `{key}` from data.")
+                    data.pop(key, None)
+
+        if "los_density" in data:
+            data["los_log_density"] = np.log(data["los_density"])
 
         if nsamples_subsample is not None:
             frame = cls(data)
@@ -373,4 +392,12 @@ def load_CF4_data(root, which_band, best_mag_quality=True, eta_min=-0.3,
     elif calibration is not None:
         raise ValueError("Unknown calibration type.")
 
+    return data
+
+
+def load_CF4_mock(root, index):
+    fname = join(root, f"mock_{index}.hdf5")
+    with File(fname, 'r') as f:
+        grp = f["mock"]
+        data = {key: grp[key][...] for key in grp.keys()}
     return data

@@ -248,41 +248,6 @@ def log_norm_pmu_im(mu_TFR, sigma_mu, alpha, distmod2distance, los_interp,
         )
 
 
-def make_r_grid(mu_TFR, czcmb, sigma_mu, sigma_v, distmod2distance_scalar,
-                redshift2distance_scalar, h, num_mu_sigma=4, num_vel_sigma=5,
-                num_points=101, low_clip_mu=20., high_clip_mu=45.,
-                low_clip_dist=0.1, max_clip_dist=1000,):
-    """
-    Generate a uniform grid of radial distances in `Mpc`. The left and right
-    edges of the grid are determined by the distance modulus and the
-    observed redshift.
-    """
-
-    lo_mu = mu_TFR - sigma_mu * num_mu_sigma
-    hi_mu = mu_TFR + sigma_mu * num_mu_sigma
-
-    lo_mu = jnp.clip(lo_mu, low_clip_mu, high_clip_mu)
-    hi_mu = jnp.clip(hi_mu, low_clip_mu, high_clip_mu)
-
-    lo_mu_dist = distmod2distance_scalar(lo_mu, h=h)
-    hi_mu_dist = distmod2distance_scalar(hi_mu, h=h)
-
-    # Clip the lower bound at 5 km / s to ensure that the interpolator is
-    # within range.
-    lo_cz = jnp.clip(czcmb - sigma_v * num_vel_sigma, 5, None)
-    hi_cz = czcmb + sigma_v * num_vel_sigma
-
-    lo_cz_dist = redshift2distance_scalar(lo_cz, h=h, is_velocity=True)
-    hi_cz_dist = redshift2distance_scalar(hi_cz, h=h, is_velocity=True)
-
-    lo = jnp.clip(
-        jnp.minimum(lo_mu_dist, lo_cz_dist), low_clip_dist, max_clip_dist)
-    hi = jnp.clip(
-        jnp.maximum(hi_mu_dist, hi_cz_dist), low_clip_dist, max_clip_dist)
-
-    return jnp.linspace(lo, hi, num_points, axis=-1)
-
-
 def make_mag_grid(mag, e_mag, num_sigma=3, num_points=100):
     """Make a magnitude grid for the TFR model."""
     mu_start = mag - num_sigma * e_mag
@@ -321,13 +286,9 @@ class BaseModel(ABC):
         self.redshift2distance = Redshift2Distance()
         self.log_grad_distmod2distance = LogGrad_Distmod2ComovingDistance()
 
-        self.distmod2distance_scalar = Distmod2Distance(is_scalar=True)
-        self.redshift2distance_scalar = Redshift2Distance(is_scalar=True)
-
         self.priors, self.prior_dist_name = load_priors(
             config["model"]["priors"])
         self.num_norm_kwargs = config["model"]["mu_norm"]
-        self.r_grid_kwargs = config["model"]["r_grid"]
         self.mag_grid_kwargs = config["model"]["mag_grid"]
 
         self.use_MNR = config["pv_model"]["use_MNR"]
@@ -427,13 +388,12 @@ class TFRModel(BaseModel):
 
             a_TFR = a_TFR + jnp.sum(a_TFR_dipole * data["rhat"], axis=1)
             mu_TFR = get_muTFR(mag, eta, a_TFR, b_TFR, c_TFR)
-            sigma_mu = get_linear_sigma_mu_TFR(data, sigma_mu, b_TFR, c_TFR)
 
             mu = sample("mu_latent", Normal(mu_TFR, sigma_mu))
             r = self.distmod2distance(mu, h=h)
 
             # Homogeneous & inhomogeneous Malmquist bias
-            log_pmu = 2 * jnp.log(r) + self.log_grad_distmod2distance(mu, h=1)
+            log_pmu = 2 * jnp.log(r) + self.log_grad_distmod2distance(mu, h=h)
             if data.has_precomputed_los:
                 # The field is in Mpc / h, so convert the distance modulus
                 # back to Mpc / h in case that h != 1.
@@ -555,10 +515,7 @@ class TFRModel_DistMarg(BaseModel):
             a_TFR = a_TFR + jnp.sum(a_TFR_dipole * data["rhat"], axis=1)
             mu_TFR = get_muTFR(mag, eta, a_TFR, b_TFR, c_TFR)
 
-            r_grid = make_r_grid(
-                mu_TFR, data["czcmb"], sigma_mu, sigma_v,
-                self.distmod2distance_scalar, self.redshift2distance_scalar,
-                h=h, **self.r_grid_kwargs)
+            r_grid = data["los_r"][None, :] / h
             mu_grid = self.distance2distmod(r_grid, h=h)
 
             ll = 2 * jnp.log(r_grid)
@@ -566,25 +523,20 @@ class TFRModel_DistMarg(BaseModel):
 
             if data.has_precomputed_los:
                 # The shape is `(n_galaxies, num_steps.)`
-                Vrad = data.f_los_velocity.interp_many_steps_per_galaxy(
-                    r_grid * h)
-                Vrad *= beta
-
-                log_rho = data.f_los_log_density.interp_many_steps_per_galaxy(
-                    r_grid * h)
-                ll += alpha * log_rho
+                Vrad = beta * data["los_velocity"]
+                ll += alpha * data["los_log_density"]
             else:
                 Vrad = 0.
 
-            ll -= ln_simpson(ll, x=r_grid, axis=-1)[:, None]
+            ll_norm = ln_simpson(ll, x=r_grid, axis=-1)
 
             Vext_rad = jnp.sum(data["rhat"] * Vext[None, :], axis=1)
 
             zpec = (Vrad + Vext_rad[:, None]) / SPEED_OF_LIGHT
-            zcmb = self.distmod2redshift(mu_grid)
+            zcmb = self.distmod2redshift(mu_grid, h=h)
             czpred = SPEED_OF_LIGHT * ((1 + zcmb) * (1 + zpec) - 1)
 
             ll += Normal(czpred, sigma_v).log_prob(data["czcmb"][:, None])
-            ll = ln_simpson(ll, x=r_grid, axis=-1)
+            ll = ln_simpson(ll, x=r_grid, axis=-1) - ll_norm
 
             factor("obs", ll)
