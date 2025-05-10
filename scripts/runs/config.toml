@@ -7,7 +7,7 @@ root_main = "/Users/rstiskalek/Projects/CANDEL/"
 [inference]
 model = "TFRModel"
 num_warmup = 500
-num_samples = 2500
+num_samples = 1500
 num_chains = 1
 seed = 42
 compute_log_density = true
@@ -81,8 +81,11 @@ low = 0.01
 high = 1.0
 
 [model.priors.TFR_zeropoint_dipole]
-dist = "delta"
-value = [0.0, 0.0, 0.0]
+# dist = "delta"
+# value = [0.0, 0.0, 0.0]
+dist = "vector_uniform"
+low = 0.0
+high = 0.5
 
 [model.priors.sigma_v]
 dist = "jeffreys"
