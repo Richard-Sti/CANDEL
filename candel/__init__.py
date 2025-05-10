@@ -15,6 +15,7 @@
 
 from candel import (                                                            # noqa
     field,                                                                      # noqa
+    mock,                                                                       # noqa
     pvdata,                                                                     # noqa
     model,                                                                      # noqa
     redshift2real,                                                              # noqa
@@ -52,6 +53,7 @@ from .util import (                                                             
     radec_to_cartesian,                                                         # noqa
     radec_to_galactic,                                                          # noqa
     galactic_to_radec,                                                          # noqa
+    galactic_to_radec_cartesian,                                                # noqa
     load_config,                                                                # noqa
     hms_to_degrees,                                                             # noqa
     dms_to_degrees,                                                             # noqa

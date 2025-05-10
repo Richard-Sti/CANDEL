@@ -4,15 +4,15 @@
 ## TODO
 
 ### General
-- [x] Implement an efficient submission script for many runs.
-
-- [ ] Add a strategy to generate CF4 mocks based on sampled CF4 data. This should ideally be a resampling of the true CF4 magnitude and linewidth distributions, at random sky positions. The mocks should also account for both the homogeneous and inhomogeneous Malmquist bias.
+- [ ] Move the code to ARC, along with submission scripts.
 
 ### Hubble Dipole
 - Focus the main inference solely on CF4 TFR W1 because of its uniform sky coverage, and then add a set of mock calibration to test if there is any signal.
 - Implement Boubel likelihood?
 
 ### Hubble Calibration
+- [x] Add support for `a_TFR` dipole in the mock generator.
+- [x] Test the `a_TFR` dipole in the mock generator.
 
 ## Completed TODO
 
@@ -31,6 +31,8 @@
 - [x] Add MNR-compatible versions of likelihoods.
 - [x] Add selection in `eta`.
 - [x] Add selection in `mag`.
+- [x] Implement an efficient submission script for many runs.
+- [x] Add a strategy to generate CF4 mocks based on sampled CF4 data. This should ideally be a resampling of the true CF4 magnitude and linewidth distributions, at random sky positions. The mocks should also account for both the homogeneous and inhomogeneous Malmquist bias.
 
 ### Hubble Dipole
 - [x] Add option for dipole variation in `a_TFR`.

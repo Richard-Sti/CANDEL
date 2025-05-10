@@ -146,6 +146,20 @@ def galactic_to_radec(ell, b):
     return c.icrs.ra.degree, c.icrs.dec.degree
 
 
+def galactic_to_radec_cartesian(ell, b):
+    """
+    Convert galactic coordinates (ell, b) in degrees to ICRS Cartesian unit
+    vectors.
+    """
+    c = SkyCoord(l=np.atleast_1d(ell) * u.deg,
+                 b=np.atleast_1d(b) * u.deg,
+                 frame='galactic')
+    icrs = c.icrs
+    xyz = icrs.cartesian.xyz.value.T
+
+    return xyz[0] if np.isscalar(ell) and np.isscalar(b) else xyz
+
+
 def hms_to_degrees(hours, minutes=None, seconds=None):
     """Convert hours, minutes and seconds to degrees."""
     return hours * 15 + (minutes or 0) / 60 * 15 + (seconds or 0) / 3600 * 15
@@ -177,11 +191,14 @@ def name2label(name):
         "a": r"$a$",
         "m1": r"$m_1$",
         "m2": r"$m_2$",
+        "a_TFR_dipole_mag": r"$a_\mathrm{TFR, dipole}$",
+        "a_TFR_dipole_ell": r"$\ell_\mathrm{TFR, dipole}$",
+        "a_TFR_dipole_b": r"$b_\mathrm{TFR, dipole}$",
     }
     return latex_labels.get(name, name)
 
 
-def plot_corner(samples, filename=None, smooth=1, keys=None):
+def plot_corner(samples, show_fig=True, filename=None, smooth=1, keys=None):
     """Plot a corner plot from posterior samples."""
     flat_samples = []
     labels = []
@@ -209,5 +226,8 @@ def plot_corner(samples, filename=None, smooth=1, keys=None):
     if filename is not None:
         fprint(f"saving a corner plot to `{filename}`")
         fig.savefig(filename, bbox_inches="tight")
+
+    if show_fig:
+        fig.show()
     else:
-        plt.show()
+        plt.close(fig)
