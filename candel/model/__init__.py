@@ -27,6 +27,8 @@ from .magnitude_selection import (                                              
 
 from .interp import LOSInterpolator                                             # noqa
 
+from .simpson import ln_simpson                                                 # noqa
+
 
 def name2model(name):
     mapping = {
