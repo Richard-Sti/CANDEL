@@ -191,6 +191,9 @@ def name2label(name):
         "a": r"$a$",
         "m1": r"$m_1$",
         "m2": r"$m_2$",
+        "a_TFR_dipole_mag": r"$a_\mathrm{TFR, dipole}$",
+        "a_TFR_dipole_ell": r"$\ell_\mathrm{TFR, dipole}$",
+        "a_TFR_dipole_b": r"$b_\mathrm{TFR, dipole}$",
     }
     return latex_labels.get(name, name)
 
