@@ -8,3 +8,4 @@ results/
 
 notebooks/test.ipynb
 .DS_Store
+scripts/sync_*
