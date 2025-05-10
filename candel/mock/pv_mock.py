@@ -68,8 +68,9 @@ def sample_magnitude(nsamples, mag_min, mag_max, gen):
 
 
 def gen_CF4_TFR_mock(nsamples, Vext_mag, Vext_ell, Vext_b, sigma_v, alpha,
-                     beta, a_TFR, b_TFR, c_TFR, sigma_TFR, h, mag, eta,
-                     mag_min, mag_max, e_mag, eta_mean, eta_std, e_eta,
+                     beta, a_TFR, b_TFR, c_TFR, sigma_TFR, a_TFR_dipole_mag,
+                     a_TFR_dipole_ell, a_TFR_dipole_b, h, mag, eta, mag_min,
+                     mag_max, e_mag, eta_mean, eta_std, e_eta,
                      b_min, zcmb_max, r_h_max, distmod2dist, distmod2redshift,
                      log_grad_distmod2dist, field_loader, use_data_prior,
                      rmin_reconstruction, rmax_reconstruction,
@@ -119,6 +120,11 @@ def gen_CF4_TFR_mock(nsamples, Vext_mag, Vext_ell, Vext_b, sigma_v, alpha,
 
         los_density_precomp, los_velocity_precomp = interpolate_los_density_velocity(  # noqa
             field_loader, r_los, RA, dec)
+
+    if a_TFR_dipole_mag is not None:
+        a_TFR_dipole = a_TFR_dipole_mag * galactic_to_radec_cartesian(
+            a_TFR_dipole_ell, a_TFR_dipole_b)
+        a_TFR += np.sum(a_TFR_dipole[None, :] * rhat, axis=1)
 
     mu_TFR = mag_true - (a_TFR + b_TFR * eta_true + np.where(
         eta_true > 0, c_TFR * eta_true**2, 0))
