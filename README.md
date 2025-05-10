@@ -4,6 +4,7 @@
 ## TODO
 
 ### General
+- [ ] Move the code to ARC, along with submission scripts.
 
 ### Hubble Dipole
 - Focus the main inference solely on CF4 TFR W1 because of its uniform sky coverage, and then add a set of mock calibration to test if there is any signal.
