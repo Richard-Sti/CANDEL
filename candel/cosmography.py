@@ -194,8 +194,6 @@ class LogGrad_Distmod2ComovingDistance:
     ----------
     Om0 : float
         Matter density parameter.
-    H0 : float
-        Hubble constant in `km / s / Mpc`.
     zmin_interp, zmax_interp : float
         Minimum and maximum redshift for the interpolation grid.
     npoints_interp : int
