@@ -1,4 +1,6 @@
-root_main = "/Users/rstiskalek/Projects/CANDEL/"
+# root_main = "/Users/rstiskalek/Projects/CANDEL/"
+root_main = "/mnt/home/rstiskalek/ceph/CANDEL"
+
 
 ###############################################################################
 #                               Inference                                     #
