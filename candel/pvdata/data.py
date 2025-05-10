@@ -76,7 +76,7 @@ class PVDataFrame:
     def __init__(self, data, los_method="linear", los_extrap=True):
         self.data = {k: jnp.asarray(v) for k, v in data.items()}
 
-        if "los_r" in self.data:
+        if "los_velocity" in self.data:
             self.has_precomputed_los = True
             kwargs = {"method": los_method, "extrap": los_extrap}
             self.f_los_log_density = LOSInterpolator(
@@ -106,9 +106,12 @@ class PVDataFrame:
 
         if try_pop_los:
             for key in list(data.keys()):
-                if key.startswith("los_"):
+                if key.startswith("los_") and key != "los_r":
                     fprint(f"removing `{key}` from data.")
                     data.pop(key, None)
+
+        if "los_density" in data:
+            data["los_log_density"] = np.log(data["los_density"])
 
         if nsamples_subsample is not None:
             frame = cls(data)
