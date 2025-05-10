@@ -427,13 +427,12 @@ class TFRModel(BaseModel):
 
             a_TFR = a_TFR + jnp.sum(a_TFR_dipole * data["rhat"], axis=1)
             mu_TFR = get_muTFR(mag, eta, a_TFR, b_TFR, c_TFR)
-            sigma_mu = get_linear_sigma_mu_TFR(data, sigma_mu, b_TFR, c_TFR)
 
             mu = sample("mu_latent", Normal(mu_TFR, sigma_mu))
             r = self.distmod2distance(mu, h=h)
 
             # Homogeneous & inhomogeneous Malmquist bias
-            log_pmu = 2 * jnp.log(r) + self.log_grad_distmod2distance(mu, h=1)
+            log_pmu = 2 * jnp.log(r) + self.log_grad_distmod2distance(mu, h=h)
             if data.has_precomputed_los:
                 # The field is in Mpc / h, so convert the distance modulus
                 # back to Mpc / h in case that h != 1.
@@ -559,6 +558,7 @@ class TFRModel_DistMarg(BaseModel):
                 mu_TFR, data["czcmb"], sigma_mu, sigma_v,
                 self.distmod2distance_scalar, self.redshift2distance_scalar,
                 h=h, **self.r_grid_kwargs)
+            # r_grid = jnp.linspace(0.1, 250, 501)[None, :]
             mu_grid = self.distance2distmod(r_grid, h=h)
 
             ll = 2 * jnp.log(r_grid)
@@ -576,15 +576,15 @@ class TFRModel_DistMarg(BaseModel):
             else:
                 Vrad = 0.
 
-            ll -= ln_simpson(ll, x=r_grid, axis=-1)[:, None]
+            ll_norm = ln_simpson(ll, x=r_grid, axis=-1)
 
             Vext_rad = jnp.sum(data["rhat"] * Vext[None, :], axis=1)
 
             zpec = (Vrad + Vext_rad[:, None]) / SPEED_OF_LIGHT
-            zcmb = self.distmod2redshift(mu_grid)
+            zcmb = self.distmod2redshift(mu_grid, h=h)
             czpred = SPEED_OF_LIGHT * ((1 + zcmb) * (1 + zpec) - 1)
 
             ll += Normal(czpred, sigma_v).log_prob(data["czcmb"][:, None])
-            ll = ln_simpson(ll, x=r_grid, axis=-1)
+            ll = ln_simpson(ll, x=r_grid, axis=-1) - ll_norm
 
             factor("obs", ll)
