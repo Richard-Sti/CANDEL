@@ -101,6 +101,8 @@ class PVDataFrame:
             data = load_CF4_mock(root, index)
         elif "CF4_" in name:
             data = load_CF4_data(root, **config)
+        elif name == "PantheonPlus":
+            data = load_PantheonPlus(root, **config)
         else:
             raise ValueError(f"Unknown catalogue name: {name}")
 
@@ -196,7 +198,8 @@ class PVDataFrame:
         main_mask[indx_choice] = True
 
         keys_skip = [
-            "is_calibrator", "mu_cal", "C_mu_cal", "std_mu_cal", "los_r"]
+            "is_calibrator", "mu_cal", "C_mu_cal", "std_mu_cal", "los_r",
+            "mag_covmat"]
 
         subsampled = {key: self[key][main_mask]
                       for key in self.keys() if key not in keys_skip}
@@ -205,6 +208,8 @@ class PVDataFrame:
             if key in self.data:
                 if key == "is_calibrator":
                     subsampled[key] = self[key][main_mask]
+                elif key == "mag_covmat":
+                    subsampled[key] = self.data[key][main_mask][:, main_mask]
                 else:
                     subsampled[key] = self.data[key]
 
@@ -406,4 +411,63 @@ def load_CF4_mock(root, index):
     with File(fname, 'r') as f:
         grp = f["mock"]
         data = {key: grp[key][...] for key in grp.keys()}
+    return data
+
+
+def load_PantheonPlus(root, zcmb_max=None, b_min=7.5, los_data_path=None,
+                      return_all=False, **kwargs):
+    """
+    Load the Pantheon+ data from the given root directory, the covariance
+    is expected to have peculiar velocity contribution removed.
+    """
+    arr = np.genfromtxt(
+        join(root, "Pantheon+SH0ES_zsel.dat"), names=True, dtype=None,
+        encoding=None)
+
+    fprint(f"initially loaded {len(arr)} galaxies from Pantheon+ data.")
+
+    data = {
+        "zcmb": arr["zCMB"],
+        "e_zcmb": arr["zCMBERR"],
+        "RA": arr["RA"],
+        "dec": arr["DEC"],
+        "mag": arr["m_b_corr"],
+    }
+
+    if return_all:
+        return data
+
+    covmat = np.loadtxt(
+        join(root, "Pantheon+SH0ES_zsel_STAT+SYS_noPV.cov"), delimiter=",")
+    size = int(covmat[0])
+    C = np.reshape(covmat[1:], (size, size))
+
+    mask = np.ones(len(data["zcmb"]), dtype=bool)
+
+    if zcmb_max is not None:
+        mask &= data["zcmb"] < zcmb_max
+
+    if b_min is not None:
+        b = radec_to_galactic(data["RA"], data["dec"])[1]
+        mask &= np.abs(b) > b_min
+
+    fprint(f"removed {len(mask) - np.sum(mask)} galaxies, thus "
+           f"{len(arr[mask])} remain.")
+
+    for key in data:
+        data[key] = data[key][mask]
+
+    C = C[mask][:, mask]
+    data["mag_covmat"] = C
+    data["e_mag"] = np.sqrt(np.diag(C))  # Do not use in the inference!
+
+    if los_data_path is not None:
+        with File(los_data_path, 'r') as f:
+            data["los_density"] = f['los_density'][...][mask, ...]
+            data["los_velocity"] = f['los_velocity'][...][mask, ...]
+            data["los_r"] = f['r'][...]
+
+            assert np.all(data["los_density"] > 0)
+            assert np.all(np.isfinite(data["los_velocity"]))
+
     return data

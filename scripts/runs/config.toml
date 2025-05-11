@@ -1,7 +1,10 @@
-# root_main = "/Users/rstiskalek/Projects/CANDEL/"
-root_main = "/mnt/home/rstiskalek/ceph/CANDEL"
-python_exec="/mnt/home/rstiskalek/CANDEL/venv_gpu_candel/bin/python"
-machine="rusty"
+root_main = "/Users/rstiskalek/Projects/CANDEL/"
+python_exec = "/Users/rstiskalek/Projects/CANDEL/venv_candel/bin/python"
+machine = "local"
+
+# root_main = "/mnt/home/rstiskalek/ceph/CANDEL"
+# python_exec="/mnt/home/rstiskalek/CANDEL/venv_gpu_candel/bin/python"
+# machine="rusty"
 
 
 ###############################################################################
@@ -10,8 +13,8 @@ machine="rusty"
 
 [inference]
 model = "TFRModel_DistMarg"
-num_warmup = 1500
-num_samples = 3500
+num_warmup = 500
+num_samples = 500
 num_chains = 1
 seed = 42
 compute_log_density = true
@@ -23,9 +26,10 @@ num_chains_harmonic = 5
 ###############################################################################
 
 [pv_model]
-use_MNR = false
+use_MNR = true
 # Default kind. This gets overwritten if using a submission script.
 kind = "precomputed_los_Carrick2015"
+# kind = "constant"
 
 
 ###############################################################################
@@ -76,7 +80,7 @@ dist = "normal"
 loc = 9
 scale = 2
 
-[model.priors.TFR_scatter]
+[model.priors.sigma_mu]
 dist = "jeffreys"
 low = 0.01
 high = 1.0
@@ -84,6 +88,11 @@ high = 1.0
 [model.priors.TFR_zeropoint_dipole]
 dist = "delta"
 value = [0.0, 0.0, 0.0]
+
+[model.priors.SN_absmag]
+dist = "normal"
+loc = -18.5
+scale = 0.5
 
 [model.priors.sigma_v]
 dist = "jeffreys"
@@ -103,7 +112,7 @@ high = 1000.0
 root_output = "results"
 # Default catalogue name and output path. This gets overwritten
 # if using a submission script.
-catalogue_name = "CF4_W1"
+catalogue_name = "PantheonPlus"
 # catalogue_name = "CF4_mock_0"
 
 fname_output = "results/test.hdf5"
@@ -166,6 +175,17 @@ a = -0.17
 m1 = 12.21
 m2 = 13.9
 
+[io.PantheonPlus]
+root = "data/Pantheon+"
+zcmb_max = 0.05
+b_min = 7.5
+
+nsamples_subsample = "none"
+seed_subsample = 42
+
+los_file = "data/Pantheon+/los_CF4_Pantheon+_<X>.hdf5"
+
+
 
 ########
 # Static paths to define a general acces to the catalogues and reconstruction
@@ -179,6 +199,12 @@ root = "data/CF4"
 which_band = "i"  # Does not matter
 return_all = true
 los_file = "data/CF4/los_CF4_TFR_<X>.hdf5"
+
+[io.PV_main.PantheonPlus]
+root = "data/Pantheon+"
+return_all = true
+los_file = "data/Pantheon+/los_CF4_Pantheon+_<X>.hdf5"
+
 
 [io.reconstruction_main]
 rmin = 0.1
