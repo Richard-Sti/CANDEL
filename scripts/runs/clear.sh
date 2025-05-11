@@ -2,5 +2,7 @@
 
 set -e
 
-echo "[INFO] Removing .out/.err files from job arrays..."
-rm -v *_%A_%a.out *_%A_%a.err 2>/dev/null || true
+log_dir="logs"
+
+echo "[INFO] Removing SLURM job array output files from '$log_dir/'..."
+rm -v "$log_dir"/logs-*.out "$log_dir"/logs-*.err 2>/dev/null || true
