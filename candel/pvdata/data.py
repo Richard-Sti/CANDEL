@@ -58,7 +58,7 @@ def load_PV_dataframes(config_path):
                 f"loading existing LOS data from {kwargs['los_data_path']}.")
 
         df = PVDataFrame.from_config_dict(
-            kwargs, name, try_pop_los=try_pop_los)
+            kwargs, name, try_pop_los=try_pop_los, config_io=config_io)
         dfs.append(df)
 
     if len(dfs) == 1:
@@ -90,7 +90,7 @@ class PVDataFrame:
         self._cache = {}
 
     @classmethod
-    def from_config_dict(cls, config, name, try_pop_los):
+    def from_config_dict(cls, config, name, try_pop_los, config_io):
         root = config.pop("root")
         nsamples_subsample = config.pop("nsamples_subsample", None)
         seed_subsample = config.pop("seed_subsample", 42)
@@ -106,9 +106,15 @@ class PVDataFrame:
 
         if try_pop_los:
             for key in list(data.keys()):
-                if key.startswith("los_") and key != "los_r":
+                if key.startswith("los_"):
                     fprint(f"removing `{key}` from data.")
                     data.pop(key, None)
+
+        if "los_r" not in data:
+            d = config_io["reconstruction_main"]
+            fprint(f"setting the LOS radial grid from {d['rmin']} to "
+                   f"{d['rmax']} with {d['num_steps']} steps.")
+            data["los_r"] = np.linspace(d["rmin"], d["rmax"], d["num_steps"])
 
         if "los_density" in data:
             data["los_log_density"] = np.log(data["los_density"])
