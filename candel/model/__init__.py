@@ -17,6 +17,7 @@ from .model import (                                                            
     load_priors,                                                                # noqa
     TFRModel,                                                                   # noqa
     TFRModel_DistMarg,                                                          # noqa
+    PantheonPlusModel_DistMarg,                                                 # noqa
     )
 
 
