@@ -1,5 +1,7 @@
 # root_main = "/Users/rstiskalek/Projects/CANDEL/"
 root_main = "/mnt/home/rstiskalek/ceph/CANDEL"
+python_exec="/mnt/home/rstiskalek/CANDEL/venv_gpu_candel/bin/python"
+machine="rusty"
 
 
 ###############################################################################
@@ -7,7 +9,7 @@ root_main = "/mnt/home/rstiskalek/ceph/CANDEL"
 ###############################################################################
 
 [inference]
-model = "TFRModel"
+model = "TFRModel_DistMarg"
 num_warmup = 500
 num_samples = 1500
 num_chains = 1
@@ -21,11 +23,11 @@ num_chains_harmonic = 5
 ###############################################################################
 
 [pv_model]
-use_MNR = false
+use_MNR = true
 
 # Default kind. This gets overwritten if using a submission script.
-# kind = "precomputed_los_Carrick2015"
-kind = "constant"
+kind = "precomputed_los_Carrick2015"
+# kind = "constant"
 
 
 
@@ -83,11 +85,8 @@ low = 0.01
 high = 1.0
 
 [model.priors.TFR_zeropoint_dipole]
-# dist = "delta"
-# value = [0.0, 0.0, 0.0]
-dist = "vector_uniform"
-low = 0.0
-high = 0.5
+dist = "delta"
+value = [0.0, 0.0, 0.0]
 
 [model.priors.sigma_v]
 dist = "jeffreys"
@@ -107,8 +106,8 @@ high = 1000.0
 root_output = "results"
 # Default catalogue name and output path. This gets overwritten
 # if using a submission script.
-# catalogue_name = "CF4_i"
-catalogue_name = "CF4_mock_0"
+catalogue_name = "CF4_W1"
+# catalogue_name = "CF4_mock_0"
 
 fname_output = "results/test.hdf5"
 
@@ -134,10 +133,10 @@ b_min = 7.5
 remove_outliers = true
 calibration = "None"
 
-add_mag_selection = false
-add_eta_selection = false
+add_mag_selection = true
+add_eta_selection = true
 
-nsamples_subsample = 100
+nsamples_subsample = "none"
 seed_subsample = 42
 
 los_file = "data/CF4/los_CF4_TFR_<X>.hdf5"
@@ -157,10 +156,10 @@ b_min = 7.5
 remove_outliers = true
 calibration = "None"
 
-add_mag_selection = false
-add_eta_selection = false
+add_mag_selection = true
+add_eta_selection = true
 
-nsamples_subsample = 100
+nsamples_subsample = 200
 seed_subsample = 42
 
 los_file = "data/CF4/los_CF4_TFR_<X>.hdf5"
@@ -186,8 +185,8 @@ los_file = "data/CF4/los_CF4_TFR_<X>.hdf5"
 
 [io.reconstruction_main]
 rmin = 0.1
-rmax = 250
-num_steps = 501
+rmax = 200
+num_steps = 301
 
 [io.reconstruction_main.Carrick2015]
 path_density = "data/fields/carrick2015_twompp_density.npy"
