@@ -22,7 +22,7 @@ from scipy.interpolate import RegularGridInterpolator
 from ..util import radec_to_cartesian, radec_to_galactic, fprint
 
 
-def build_regular_interpolator(field, boxsize):
+def build_regular_interpolator(field, boxsize, fill_value=None):
     """A regular grid interpolator for a 3D field."""
     ngrid = field.shape[0]
     cellsize = boxsize / ngrid
@@ -31,8 +31,8 @@ def build_regular_interpolator(field, boxsize):
     Y, Z = X, X
 
     return RegularGridInterpolator(
-        (X, Y, Z), field, fill_value=None, bounds_error=False,
-        method="linear")
+        (X, Y, Z), field, fill_value=fill_value, bounds_error=False,
+        method="linear",)
 
 
 def interpolate_los_density_velocity(field_loader, r, RA, dec):
@@ -61,9 +61,16 @@ def interpolate_los_density_velocity(field_loader, r, RA, dec):
 
     # Interpolate density
     fprint("interpolating the density field...")
-    density = field_loader.load_density()
-    f_density = build_regular_interpolator(density, field_loader.boxsize)
+    eps = 1e-4
+    density = np.log(field_loader.load_density() + eps)
+    fill_value = np.log(1 + eps)
+
+    f_density = build_regular_interpolator(
+        density, field_loader.boxsize, fill_value=fill_value)
     los_density = f_density(pos_flat).reshape(pos_shape[:2]).astype(np.float32)
+    los_density = np.exp(los_density) - eps
+    los_density = np.clip(los_density, eps, None)
+    assert np.all(los_density > 0)
 
     # Interpolate velocity components one at a time
     fprint("interpolating the velocity field...")
@@ -76,5 +83,6 @@ def interpolate_los_density_velocity(field_loader, r, RA, dec):
 
     v_interp = v_interp.reshape(*pos_shape)  # (n_r, n_gal, 3)
     los_velocity = np.einsum('ijk,jk->ij', v_interp, rhat)
+    assert np.all(np.isfinite(los_velocity))
 
     return los_density.T, los_velocity.T
