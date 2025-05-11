@@ -10,8 +10,8 @@ machine="rusty"
 
 [inference]
 model = "TFRModel_DistMarg"
-num_warmup = 500
-num_samples = 1500
+num_warmup = 1500
+num_samples = 3500
 num_chains = 1
 seed = 42
 compute_log_density = true
@@ -23,12 +23,9 @@ num_chains_harmonic = 5
 ###############################################################################
 
 [pv_model]
-use_MNR = true
-
+use_MNR = false
 # Default kind. This gets overwritten if using a submission script.
 kind = "precomputed_los_Carrick2015"
-# kind = "constant"
-
 
 
 ###############################################################################
@@ -159,7 +156,7 @@ calibration = "None"
 add_mag_selection = true
 add_eta_selection = true
 
-nsamples_subsample = 200
+nsamples_subsample = "none"
 seed_subsample = 42
 
 los_file = "data/CF4/los_CF4_TFR_<X>.hdf5"
