@@ -324,7 +324,7 @@ class TFRModel(BaseModel):
         a_TFR = rsample("a_TFR_h", self.priors["TFR_zeropoint"])
         b_TFR = rsample("b_TFR", self.priors["TFR_slope"])
         c_TFR = rsample("c_TFR", self.priors["TFR_curvature"])
-        sigma_mu = rsample("sigma_mu", self.priors["TFR_scatter"])
+        sigma_mu = rsample("sigma_mu", self.priors["sigma_mu"])
         a_TFR_dipole = rsample(
             "a_TFR_dipole", self.priors["TFR_zeropoint_dipole"])
 
@@ -449,7 +449,7 @@ class TFRModel_DistMarg(BaseModel):
         a_TFR = rsample("a_TFR", self.priors["TFR_zeropoint"])
         b_TFR = rsample("b_TFR", self.priors["TFR_slope"])
         c_TFR = rsample("c_TFR", self.priors["TFR_curvature"])
-        sigma_mu = rsample("sigma_mu", self.priors["TFR_scatter"])
+        sigma_mu = rsample("sigma_mu", self.priors["sigma_mu"])
         a_TFR_dipole = rsample(
             "a_TFR_dipole", self.priors["TFR_zeropoint_dipole"])
 
@@ -521,6 +521,84 @@ class TFRModel_DistMarg(BaseModel):
 
             ll = 2 * jnp.log(r_grid)
             ll += Normal(mu_TFR[:, None], sigma_mu[:, None]).log_prob(mu_grid)
+
+            if data.has_precomputed_los:
+                # The shape is `(n_galaxies, num_steps.)`
+                Vrad = beta * data["los_velocity"]
+                ll += alpha * data["los_log_density"]
+            else:
+                Vrad = 0.
+
+            ll_norm = ln_simpson(ll, x=r_grid, axis=-1)
+
+            Vext_rad = jnp.sum(data["rhat"] * Vext[None, :], axis=1)
+
+            zpec = (Vrad + Vext_rad[:, None]) / SPEED_OF_LIGHT
+            zcmb = self.distmod2redshift(mu_grid, h=h)
+            czpred = SPEED_OF_LIGHT * ((1 + zcmb) * (1 + zpec) - 1)
+
+            ll += Normal(czpred, sigma_v).log_prob(data["czcmb"][:, None])
+            ll = ln_simpson(ll, x=r_grid, axis=-1) - ll_norm
+
+            factor("obs", ll)
+
+
+###############################################################################
+#                           Supernova models                                 #
+###############################################################################
+
+
+class PantheonPlusModel_DistMarg(BaseModel):
+    """
+    Pantheon+ model with numerical distance marginalisation. Uses the
+    precomputed magnitude covariance matrix.
+    """
+    def __init__(self, config_path):
+        super().__init__(config_path)
+
+        if not self.use_MNR:
+            raise ValueError(
+                "The PantheonPlus model requires the MNR model to be used. "
+                "Please set `use_MNR` to True in the config file.")
+
+        fprint("setting `compute_evidence` to False.")
+        self.config["inference"]["compute_evidence"] = False
+
+    def __call__(self, data):
+        nsamples = len(data)
+
+        # Sample the SN parameters.
+        M = rsample("M", self.priors["SN_absmag"])
+        sigma_mu = rsample("sigma_mu", self.priors["sigma_mu"])
+
+        # Sample velocity field parameters.
+        Vext = rsample("Vext", self.priors["Vext"])
+        sigma_v = rsample("sigma_v", self.priors["sigma_v"])
+
+        # Remaining parameters
+        alpha = rsample("alpha", self.priors["alpha"])
+        beta = rsample("beta", self.priors["beta"])
+
+        # For the distance marginalization, h is not sampled.
+        h = 1.
+
+        with plate("data", nsamples):
+            # Magnitude hyperprior and selection.
+            mag = sample("mag_latent",
+                         MagnitudeDistribution(**data.mag_dist_kwargs,))
+            # This can be sped up using decomposition.
+            sample(
+                "mag_obs", MultivariateNormal(mag, data["mag_covmat"]),
+                obs=data["mag"])
+            sigma_mu = jnp.ones_like(mag) * sigma_mu
+
+            mu_SN = mag - M
+
+            r_grid = data["los_r"][None, :] / h
+            mu_grid = self.distance2distmod(r_grid, h=h)
+
+            ll = 2 * jnp.log(r_grid)
+            ll += Normal(mu_SN[:, None], sigma_mu[:, None]).log_prob(mu_grid)
 
             if data.has_precomputed_los:
                 # The shape is `(n_galaxies, num_steps.)`
