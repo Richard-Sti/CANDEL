@@ -16,12 +16,13 @@
 from os.path import join
 
 import numpy as np
+from astropy.io import fits
 from h5py import File
 from jax import numpy as jnp
 
+from ..model.interp import LOSInterpolator
 from ..util import (SPEED_OF_LIGHT, fprint, load_config, radec_to_cartesian,
                     radec_to_galactic)
-from ..model.interp import LOSInterpolator
 
 ###############################################################################
 #                             Data frames                                     #
@@ -469,5 +470,63 @@ def load_PantheonPlus(root, zcmb_max=None, b_min=7.5, los_data_path=None,
 
             assert np.all(data["los_density"] > 0)
             assert np.all(np.isfinite(data["los_velocity"]))
+
+    return data
+
+
+def load_SH0ES(root):
+    """
+    Load the SH0ES data which can be used to sample distances.
+
+    NOTE: Set the zero-width prior to a delta prior so it is not sampled?
+    """
+    lstsq_results_path = join(root, 'lstsq_results.txt')
+    Y_fits_path = join(root, 'ally_shoes_ceph_topantheonwt6.0_112221.fits')
+    L_fits_path = join(root, 'alll_shoes_ceph_topantheonwt6.0_112221.fits')
+    C_fits_path = join(root, 'allc_shoes_ceph_topantheonwt6.0_112221.fits')
+
+    Y = fits.open(Y_fits_path)[0].data
+    L = fits.open(L_fits_path)[0].data
+    C = fits.open(C_fits_path)[0].data
+
+    from scipy import linalg
+
+    C_inv_cho = linalg.cho_solve(linalg.cho_factor(C), np.identity(C.shape[0]))
+    q_lstsq, sigma_lstsq = np.loadtxt(lstsq_results_path, unpack=True)
+    mu_list = q_lstsq
+    width_list = sigma_lstsq * 10
+
+    ks = np.where(width_list == 0)[0]
+    if len(ks) > 0:
+        fprint("warning: zero width found in the priors. Setting it to 1e-5.")
+        fprint(f"indices of zero width: {ks}")
+
+    if len(ks) != 1:
+        raise ValueError("At most one zero width is allowed.")
+
+    k = ks[0]
+    fprint(f"found zero-width prior at index {k}. Setting it to 0.")
+    width_list[k] = 1e-5
+    fixed_idx = k
+    fixed_value = 0.
+
+    mu_list = jnp.asarray(mu_list)
+    width_list = jnp.asarray(width_list)
+    theta_min, theta_max = mu_list - width_list / 2, mu_list + width_list / 2
+
+    data = {
+        "Y": Y,
+        "L": L,
+        "C_inv_cho": C_inv_cho,
+        "theta_min": theta_min,
+        "theta_max": theta_max,
+        "fixed_idx": fixed_idx,
+        "fixed_value": fixed_value,
+        "C": C,
+        }
+
+    for key in data:
+        if not key.startswith("fixed_"):
+            data[key] = jnp.asarray(data[key], dtype=jnp.float32)
 
     return data
