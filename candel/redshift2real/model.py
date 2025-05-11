@@ -16,7 +16,12 @@
 Module for mapping observed redshift to cosmological redshift given some
 calibrated density and velocity field.
 """
-import tomllib
+try:
+    # Python 3.11+
+    import tomllib                                                              # noqa
+except ModuleNotFoundError:
+    # Backport for <=3.10
+    import tomli as tomllib
 from abc import ABC, abstractmethod
 
 import numpy as np

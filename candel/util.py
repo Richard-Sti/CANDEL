@@ -14,7 +14,13 @@
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 """Various utility functions for candel."""
 
-import tomllib
+try:
+    # Python 3.11+
+    import tomllib                                                              # noqa
+except ModuleNotFoundError:
+    # Backport for <=3.10
+    import tomli as tomllib
+
 from datetime import datetime
 from os.path import abspath, isabs, join
 
