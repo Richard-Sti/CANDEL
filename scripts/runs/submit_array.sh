@@ -1,5 +1,5 @@
 #!/bin/bash
-#BATCH -p gpu
+#SBATCH -p gpu
 #SBATCH --mail-user=rstiskalek@flatironinstitute.org
 #SBATCH --mail-type=FAIL,END
 #SBATCH --ntasks=1
@@ -7,10 +7,10 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
 #SBATCH --constraint=a100
-#SBATCH --time=01:00:00
+#SBATCH --time=00:15:00
 #SBATCH --job-name=candel
-#SBATCH --output=run_cd-%A_%a.out
-#SBATCH --error=run_cd-%A_%a.err
+#SBATCH --output=logs/logs-%A_%a.out
+#SBATCH --error=logs/logs-%A_%a.err
 #SBATCH --array=0-1%1
 
 set -e
@@ -29,6 +29,8 @@ echo "[DEBUG] Reading from $task_file for task ID $SLURM_ARRAY_TASK_ID"
 # Safely extract line and config path
 task_line=$(sed -n "$((SLURM_ARRAY_TASK_ID + 1))p" "$task_file")
 config_path=$(echo "$task_line" | cut -d' ' -f2)
+
+mkdir -p "logs"
 
 # --- Validate config path ---
 if [[ -z "$config_path" ]]; then
