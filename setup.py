@@ -32,7 +32,7 @@ setup(
         "Intended Audience :: Science/Research",
         "Topic :: Scientific/Engineering :: Astronomy",
     ],
-    python_requires=">=3.11",
+    python_requires=">=3.10",
     install_requires=[
         "jax",
         "jaxlib",
@@ -47,6 +47,7 @@ setup(
         "quadax",
         "matplotlib",
         "corner",
+        "tomli_w"
     ],
     include_package_data=True,
     zip_safe=False,

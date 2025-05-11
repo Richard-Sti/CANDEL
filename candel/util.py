@@ -14,7 +14,13 @@
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 """Various utility functions for candel."""
 
-import tomllib
+try:
+    # Python 3.11+
+    import tomllib                                                              # noqa
+except ModuleNotFoundError:
+    # Backport for <=3.10
+    import tomli as tomllib
+
 from datetime import datetime
 from os.path import abspath, isabs, join
 
@@ -194,6 +200,8 @@ def name2label(name):
         "a_TFR_dipole_mag": r"$a_\mathrm{TFR, dipole}$",
         "a_TFR_dipole_ell": r"$\ell_\mathrm{TFR, dipole}$",
         "a_TFR_dipole_b": r"$b_\mathrm{TFR, dipole}$",
+        "eta_prior_mean": r"$\hat{\eta}$",
+        "eta_prior_std": r"$w_\eta$",
     }
     return latex_labels.get(name, name)
 
