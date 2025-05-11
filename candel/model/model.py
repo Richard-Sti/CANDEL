@@ -380,6 +380,7 @@ class TFRModel(BaseModel):
                 else:
                     sample("eta_obs", Normal(
                         eta, data["e_eta"]), obs=data["eta"])
+                sigma_mu = jnp.ones_like(mag) * sigma_mu
             else:
                 mag = data["mag"]
                 eta = data["eta"]

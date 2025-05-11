@@ -1,4 +1,3 @@
-
 # Copyright (C) 2025 Richard Stiskalek
 # This program is free software; you can redistribute it and/or modify it
 # under the terms of the GNU General Public License as published by the
@@ -20,20 +19,38 @@ from the configuration file and runs the inference.
 This script is expected to be run either from the command line or from a shell
 submission script.
 """
+
+import time
 from argparse import ArgumentParser
 
 import candel
 from candel import fprint
 
+
+def insert_comment_at_top(path: str, label: str):
+    """Insert a comment line with a timestamp at the top of a file."""
+    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    comment = f"# Job {label} at: {timestamp}\n"
+
+    with open(path, "r") as f:
+        original = f.readlines()
+
+    with open(path, "w") as f:
+        f.write(comment)
+        f.writelines(original)
+
+
 if __name__ == "__main__":
     parser = ArgumentParser(description="Run inference on a PV model.")
     parser.add_argument("--config", type=str, required=True,
-                        help="Path to the configuration file.",)
+                        help="Path to the configuration file.")
     args = parser.parse_args()
 
-    data = candel.pvdata.load_PV_dataframes(args.config)
+    insert_comment_at_top(args.config, "started")
 
+    data = candel.pvdata.load_PV_dataframes(args.config)
     config = candel.load_config(args.config)
+
     model_name = config["inference"]["model"]
     data_name = config["io"]["catalogue_name"]
 
@@ -41,4 +58,6 @@ if __name__ == "__main__":
            f"data `{data_name}`")
 
     model = candel.model.name2model(model_name)(args.config)
-    candel.run_pv_inference(model, (data,), )
+    candel.run_pv_inference(model, (data,))
+
+    insert_comment_at_top(args.config, "finished")
