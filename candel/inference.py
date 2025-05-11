@@ -21,6 +21,7 @@ from h5py import File
 from jax import jit
 from jax import numpy as jnp
 from jax import vmap
+from numpyro import set_platform
 from numpyro.diagnostics import print_summary as print_summary_numpyro
 from numpyro.infer import MCMC, NUTS
 from numpyro.infer.initialization import init_to_median
@@ -39,6 +40,17 @@ def run_pv_inference(model, model_args, print_summary=True, save_samples=True):
     optionally compute the BIC, AIC, evidence and save the samples to an
     HDF5 file.
     """
+    devices = jax.devices()
+    device_str = ", ".join(f"{d.device_kind}({d.platform})" for d in devices)
+    fprint(f"running inference on devices: {device_str}")
+
+    if any(d.platform == "gpu" for d in devices):
+        set_platform("gpu")
+        fprint("using NumPyro platform: GPU")
+    else:
+        set_platform("cpu")
+        fprint("using NumPyro platform: CPU")
+
     kwargs = model.config["inference"]
 
     kernel = NUTS(model, init_strategy=init_to_median(num_samples=5000))
@@ -154,7 +166,7 @@ def postprocess_samples(samples):
 
         # Remove samples fixed to a single value (delta prior)
         x = samples[key]
-        if np.alltrue(x.flatten()[0] == x):
+        if np.all(x.flatten()[0] == x):
             samples.pop(key,)
             continue
 
