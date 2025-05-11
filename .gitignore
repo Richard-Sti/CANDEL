@@ -10,3 +10,6 @@ results/
 notebooks/test.ipynb
 .DS_Store
 scripts/sync_*
+
+logs_*/
+slurm-*
