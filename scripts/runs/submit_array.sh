@@ -21,6 +21,33 @@ if [[ -z "$1" ]]; then
     exit 1
 fi
 
+# --- Determine machine from config file ---
+machine=$(grep -E '^machine *= *' "$config_path" | sed -E 's/^machine *= *"([^"]+)"/\1/')
+if [[ -z "$machine" ]]; then
+    echo "[ERROR] Could not determine machine from config: $config_path"
+    exit 1
+fi
+
+# --- Choose frozen path based on machine ---
+if [[ "$machine" == "rusty" ]]; then
+    frozen_dir="/mnt/home/${USER}/frozen_candel/current"
+elif [[ "$machine" == "local" ]]; then
+    frozen_dir="/Users/${USER}/Projects/CANDEL_frozen"
+else
+    echo "[ERROR] Unknown machine: $machine"
+    exit 2
+fi
+
+# --- Use frozen package ---
+if [[ ! -d "$frozen_dir" ]]; then
+    echo "[ERROR] Frozen package not found: $frozen_dir"
+    echo "Run freeze_candel.sh first."
+    exit 3
+fi
+
+echo "[INFO] Using frozen package from: $frozen_dir"
+export PYTHONPATH="$frozen_dir:$PYTHONPATH"
+
 task_index="$1"
 task_file="tasks_${task_index}.txt"
 
@@ -45,13 +72,6 @@ if [[ -z "$python_exec" ]]; then
     exit 2
 fi
 
-# --- Extract machine from TOML config ---
-machine=$(grep -E '^machine *= *' "$config_path" | sed -E 's/^machine *= *"([^"]+)"$/\1/')
-if [[ -z "$machine" ]]; then
-    echo "[ERROR] 'machine' not found in config file: $config_path"
-    exit 3
-fi
-
 # --- Optionally load modules based on machine ---
 if [[ "$machine" == "rusty" ]]; then
     echo "[INFO] Loading modules for machine: rusty"
@@ -63,7 +83,21 @@ if [[ "$machine" == "rusty" ]]; then
     module list
 fi
 
+# --- Freeze local package (candel) and add to PYTHONPATH ---
+timestamp=$(date +%Y%m%d_%H%M%S)
+frozen_dir="/mnt/home/${USER}/frozen_candel/candel_${SLURM_JOB_ID}_${SLURM_ARRAY_TASK_ID}_$timestamp"
+echo "[INFO] Freezing local 'candel' package to $frozen_dir"
+mkdir -p "$frozen_dir"
+CANDEL_SRC="/mnt/home/rstiskalek/CANDEL/candel"
+echo "[INFO] Freezing local 'candel' package from: $CANDEL_SRC"
+rsync -a --exclude '__pycache__' --exclude '*.pyc' "$CANDEL_SRC/" "$frozen_dir/"
+export PYTHONPATH="$frozen_dir:$PYTHONPATH"
+
 # --- Run ---
 echo "[INFO] Submitting run with config: $config_path"
 echo "[INFO] Using Python: $python_exec"
 $python_exec main.py --config "$config_path"
+
+# --- Clean up frozen package ---
+echo "[INFO] Cleaning up frozen package at: $frozen_dir"
+[[ "$frozen_dir" == /mnt/home/$USER/frozen_candel/* ]] && rm -rf "$frozen_dir"
