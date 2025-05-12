@@ -1,10 +1,10 @@
-root_main = "/Users/rstiskalek/Projects/CANDEL/"
-python_exec = "/Users/rstiskalek/Projects/CANDEL/venv_candel/bin/python"
-machine = "local"
+# root_main = "/Users/rstiskalek/Projects/CANDEL/"
+# python_exec = "/Users/rstiskalek/Projects/CANDEL/venv_candel/bin/python"
+# machine = "local"
 
-# root_main = "/mnt/home/rstiskalek/ceph/CANDEL"
-# python_exec="/mnt/home/rstiskalek/CANDEL/venv_gpu_candel/bin/python"
-# machine="rusty"
+root_main = "/mnt/home/rstiskalek/ceph/CANDEL"
+python_exec="/mnt/home/rstiskalek/CANDEL/venv_gpu_candel/bin/python"
+machine="rusty"
 
 
 ###############################################################################
@@ -12,9 +12,9 @@ machine = "local"
 ###############################################################################
 
 [inference]
-model = "TFRModel_DistMarg"
-num_warmup = 1000
-num_samples = 10_000
+model = "ClustersLT_DistMarg"
+num_warmup = 2000
+num_samples = 20_000
 num_chains = 1
 seed = 42
 compute_log_density = true
