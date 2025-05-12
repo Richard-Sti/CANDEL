@@ -1,10 +1,10 @@
-root_main = "/Users/rstiskalek/Projects/CANDEL/"
-python_exec = "/Users/rstiskalek/Projects/CANDEL/venv_candel/bin/python"
-machine = "local"
+# root_main = "/Users/rstiskalek/Projects/CANDEL/"
+# python_exec = "/Users/rstiskalek/Projects/CANDEL/venv_candel/bin/python"
+# machine = "local"
 
-# root_main = "/mnt/home/rstiskalek/ceph/CANDEL"
-# python_exec="/mnt/home/rstiskalek/CANDEL/venv_gpu_candel/bin/python"
-# machine="rusty"
+root_main = "/mnt/home/rstiskalek/ceph/CANDEL"
+python_exec="/mnt/home/rstiskalek/CANDEL/venv_gpu_candel/bin/python"
+machine="rusty"
 
 
 ###############################################################################
@@ -12,9 +12,9 @@ machine = "local"
 ###############################################################################
 
 [inference]
-model = "TFRModel_DistMarg"
-num_warmup = 500
-num_samples = 500
+model = "ClustersLT_DistMarg"
+num_warmup = 2000
+num_samples = 20_000
 num_chains = 1
 seed = 42
 compute_log_density = true
@@ -26,10 +26,10 @@ num_chains_harmonic = 5
 ###############################################################################
 
 [pv_model]
-use_MNR = true
+use_MNR = false
 # Default kind. This gets overwritten if using a submission script.
-kind = "precomputed_los_Carrick2015"
-# kind = "constant"
+# kind = "precomputed_los_Carrick2015"
+kind = "constant"
 
 
 ###############################################################################
@@ -94,6 +94,16 @@ dist = "normal"
 loc = -18.5
 scale = 0.5
 
+[model.priors.LT_zeropoint]
+dist = "normal"
+loc = -0.3
+scale = 1
+
+[model.priors.LT_slope]
+dist = "normal"
+loc = 2
+scale = 1
+
 [model.priors.sigma_v]
 dist = "jeffreys"
 low = 5
@@ -102,7 +112,7 @@ high = 2500
 [model.priors.Vext]
 dist = "vector_uniform"
 low = 0.0
-high = 1000.0
+high = 2500
 
 ################################################################################
 #                                  Data                                        #
@@ -112,7 +122,7 @@ high = 1000.0
 root_output = "results"
 # Default catalogue name and output path. This gets overwritten
 # if using a submission script.
-catalogue_name = "PantheonPlus"
+catalogue_name = "Clusters"
 # catalogue_name = "CF4_mock_0"
 
 fname_output = "results/test.hdf5"
@@ -185,6 +195,14 @@ seed_subsample = 42
 
 los_file = "data/Pantheon+/los_CF4_Pantheon+_<X>.hdf5"
 
+[io.Clusters]
+root = "data/Clusters"
+zcmb_max = 0.2
+
+los_file = "data/Clusters/los_Clusters_<X>.hdf5"
+
+nsamples_subsample = "none"
+seed_subsample = 42
 
 
 ########
@@ -205,11 +223,16 @@ root = "data/Pantheon+"
 return_all = true
 los_file = "data/Pantheon+/los_CF4_Pantheon+_<X>.hdf5"
 
+[io.PV_main.Clusters]
+root = "data/Clusters"
+return_all = true
+los_file = "data/Clusters/los_Clusters_<X>.hdf5"
+
 
 [io.reconstruction_main]
 rmin = 0.1
-rmax = 200
-num_steps = 301
+rmax = 1001
+num_steps = 501
 
 [io.reconstruction_main.Carrick2015]
 path_density = "data/fields/carrick2015_twompp_density.npy"

@@ -86,9 +86,14 @@ def generate_dynamic_tag(config, base_tag="default"):
             parts.append(f"beta{val}")
 
     # aTFRdipole if it's not a delta distribution
-    dipole_prior = get_nested(config, "model/priors/TFR_zeropoint_dipole", {})
-    if isinstance(dipole_prior, dict) and dipole_prior.get("dist") != "delta":
+    aTFRdip_prior = get_nested(config, "model/priors/TFR_zeropoint_dipole", {})
+    if isinstance(aTFRdip_prior, dict) and aTFRdip_prior.get("dist") != "delta":  # noqa
         parts.append("aTFRdipole")
+
+    # If Vext is a delta distribution (not sampled)
+    Vext_prior = get_nested(config, "model/priors/Vext", {})
+    if isinstance(Vext_prior, dict) and Vext_prior.get("dist") == "delta":
+        parts.append("noVext")
 
     return "_".join(parts) if base_tag == "default" else base_tag
 
@@ -114,10 +119,10 @@ if __name__ == "__main__":
 
     # Multiple override options → this creates a job per combination
     manual_overrides = {
-        "pv_model/kind": "Carrick2015",
-        "io/catalogue_name": ["CF4_i", "CF4_W1"],
+        "pv_model/kind": "constant",
+        "io/catalogue_name": "Clusters",
         "io/root_output": "results",
-        "pv_model/use_MNR": [False],
+        "pv_model/use_MNR": False,
         # "model/priors/beta": [
         #     {"dist": "normal", "loc": 0.43, "scale": 0.1},
         #     {"dist": "delta", "value": 1.0},
@@ -126,6 +131,10 @@ if __name__ == "__main__":
         #     {"dist": "delta", "value": [0.0, 0.0, 0.0]},
         #     {"dist": "vector_uniform", "low": 0.0, "high": 1.0},
         # ],
+        "model/priors/Vext": [
+            {"dist": "delta", "value": [0.0, 0.0, 0.0]},
+            {"dist": "vector_uniform_fixed", "low": 0.0, "high": 2500.0},
+        ],
     }
 
     task_file = f"tasks_{tasks_index}.txt"
