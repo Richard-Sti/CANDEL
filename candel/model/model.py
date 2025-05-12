@@ -619,3 +619,92 @@ class PantheonPlusModel_DistMarg(BaseModel):
             ll = ln_simpson(ll, x=r_grid, axis=-1) - ll_norm
 
             factor("obs", ll)
+
+
+###############################################################################
+#                           Clusters models                                 #
+###############################################################################
+
+
+def get_Ez(z, Om=0.3):
+    """
+    Compute the E(z) function for a flat universe with matter density Om.
+    """
+    return jnp.sqrt(Om * (1 + z)**3 + (1 - Om))
+
+
+class ClustersLT_DistMarg(BaseModel):
+    """
+    Cluster L-T scaling relation peculiar velocity model with distance
+    marginalization.
+    """
+
+    def __init__(self, config_path):
+        super().__init__(config_path)
+
+        if self.use_MNR:
+            raise NotImplementedError(
+                "MNR for clusters is not implemented yet. Please set "
+                "`use_MNR` to False in the config file.")
+            # fprint("setting `compute_evidence` to False.")
+            # self.config["inference"]["compute_evidence"] = False
+
+    def __call__(self, data):
+        nsamples = len(data)
+
+        # Sample the cluster scaling parameters.
+        A = rsample("A_CL", self.priors["LT_zeropoint"])
+        B = rsample("B_CL", self.priors["LT_slope"])
+        sigma_mu = rsample("sigma_mu", self.priors["sigma_mu"])
+
+        # Sample velocity field parameters.
+        Vext = rsample("Vext", self.priors["Vext"])
+        sigma_v = rsample("sigma_v", self.priors["sigma_v"])
+
+        # For the distance marginalization, h is not sampled.
+        h = 1.
+
+        with plate("data", nsamples):
+            # No MNR at the moment.
+            logF = data["logF"]
+            logT = data["logT"]
+
+            # Should propagate here the uncertainty in logF and logT if no MNR.
+            sigma_mu = jnp.ones_like(logF) * sigma_mu
+
+            # Maybe this should depend on the cosmological redshift, but it's
+            # a small correction..
+            Ez = get_Ez(data["zcmb"], Om=0.3)
+
+            # Luminosity predicted from temperature
+            logL_pred = jnp.log10(Ez) + A + B * logT
+            # Turn the luminosity into distance modulus
+            logDL_cluster = 0.5 * (logL_pred - jnp.log10(4 * jnp.pi) - logF)
+            mu_cluster = 5 * logDL_cluster + 25
+
+            # From now on it is standard calculations.
+            r_grid = data["los_r"][None, :] / h
+            mu_grid = self.distance2distmod(r_grid, h=h)
+
+            ll = 2 * jnp.log(r_grid)
+            ll += Normal(
+                mu_cluster[:, None], sigma_mu[:, None]).log_prob(mu_grid)
+
+            if data.has_precomputed_los:
+                raise NotImplementedError(
+                    "Precomputed LOS for clusters is not implemented yet.")
+            else:
+                Vrad = 0.
+
+            ll_norm = ln_simpson(ll, x=r_grid, axis=-1)
+
+            Vext_rad = jnp.sum(data["rhat"] * Vext[None, :], axis=1)
+
+            zpec = (Vrad + Vext_rad[:, None]) / SPEED_OF_LIGHT
+            zcmb = self.distmod2redshift(mu_grid, h=h)
+            czpred = SPEED_OF_LIGHT * ((1 + zcmb) * (1 + zpec) - 1)
+
+            ll += Normal(czpred, sigma_v).log_prob(data["czcmb"][:, None])
+            ll = ln_simpson(ll, x=r_grid, axis=-1) - ll_norm
+
+            factor("obs", ll)

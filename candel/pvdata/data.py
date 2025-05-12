@@ -16,12 +16,14 @@
 from os.path import join
 
 import numpy as np
+from astropy.cosmology import FlatLambdaCDM
+from astropy.io import fits
 from h5py import File
 from jax import numpy as jnp
 
-from ..util import (SPEED_OF_LIGHT, fprint, load_config, radec_to_cartesian,
-                    radec_to_galactic)
 from ..model.interp import LOSInterpolator
+from ..util import (SPEED_OF_LIGHT, fprint, galactic_to_radec, load_config,
+                    radec_to_cartesian, radec_to_galactic)
 
 ###############################################################################
 #                             Data frames                                     #
@@ -103,6 +105,9 @@ class PVDataFrame:
             data = load_CF4_data(root, **config)
         elif name == "PantheonPlus":
             data = load_PantheonPlus(root, **config)
+        elif name == "Clusters":
+            data = load_clusters(root, **config)
+            print(data.keys())
         else:
             raise ValueError(f"Unknown catalogue name: {name}")
 
@@ -279,6 +284,18 @@ class PVDataFrame:
 ###############################################################################
 
 
+def load_los(los_data_path, data, mask=None):
+    with File(los_data_path, 'r') as f:
+        data["los_density"] = f['los_density'][...][mask, ...]
+        data["los_velocity"] = f['los_velocity'][...][mask, ...]
+        data["los_r"] = f['r'][...]
+
+        assert np.all(data["los_density"] > 0)
+        assert np.all(np.isfinite(data["los_velocity"]))
+
+    return data
+
+
 def load_SH0ES_calibration(calibration_path, pgc_CF4):
     """
     Load SH0ES distance modulus samples and match to CF4 galaxies by PGC ID.
@@ -379,13 +396,7 @@ def load_CF4_data(root, which_band, best_mag_quality=True, eta_min=-0.3,
     pgc = pgc[mask]
 
     if los_data_path is not None:
-        with File(los_data_path, 'r') as f:
-            data["los_density"] = f['los_density'][...][mask, ...]
-            data["los_velocity"] = f['los_velocity'][...][mask, ...]
-            data["los_r"] = f['r'][...]
-
-            assert np.all(data["los_density"] > 0)
-            assert np.all(np.isfinite(data["los_velocity"]))
+        data = load_los(los_data_path, data, mask=mask)
 
     if calibration == "SH0ES":
         is_calibrator, mu_cal, C_mu_cal = load_SH0ES_calibration(
@@ -462,12 +473,146 @@ def load_PantheonPlus(root, zcmb_max=None, b_min=7.5, los_data_path=None,
     data["e_mag"] = np.sqrt(np.diag(C))  # Do not use in the inference!
 
     if los_data_path is not None:
-        with File(los_data_path, 'r') as f:
-            data["los_density"] = f['los_density'][...][mask, ...]
-            data["los_velocity"] = f['los_velocity'][...][mask, ...]
-            data["los_r"] = f['r'][...]
+        data = load_los(los_data_path, data, mask=mask)
 
-            assert np.all(data["los_density"] > 0)
-            assert np.all(np.isfinite(data["los_velocity"]))
+    return data
+
+
+def load_SH0ES(root):
+    """
+    Load the SH0ES data which can be used to sample distances.
+
+    NOTE: Set the zero-width prior to a delta prior so it is not sampled?
+    """
+    lstsq_results_path = join(root, 'lstsq_results.txt')
+    Y_fits_path = join(root, 'ally_shoes_ceph_topantheonwt6.0_112221.fits')
+    L_fits_path = join(root, 'alll_shoes_ceph_topantheonwt6.0_112221.fits')
+    C_fits_path = join(root, 'allc_shoes_ceph_topantheonwt6.0_112221.fits')
+
+    Y = fits.open(Y_fits_path)[0].data
+    L = fits.open(L_fits_path)[0].data
+    C = fits.open(C_fits_path)[0].data
+
+    from scipy import linalg
+
+    C_inv_cho = linalg.cho_solve(linalg.cho_factor(C), np.identity(C.shape[0]))
+    q_lstsq, sigma_lstsq = np.loadtxt(lstsq_results_path, unpack=True)
+    mu_list = q_lstsq
+    width_list = sigma_lstsq * 10
+
+    ks = np.where(width_list == 0)[0]
+    if len(ks) > 0:
+        fprint("warning: zero width found in the priors. Setting it to 1e-5.")
+        fprint(f"indices of zero width: {ks}")
+
+    if len(ks) != 1:
+        raise ValueError("At most one zero width is allowed.")
+
+    k = ks[0]
+    fprint(f"found zero-width prior at index {k}. Setting it to 0.")
+    width_list[k] = 1e-5
+    fixed_idx = k
+    fixed_value = 0.
+
+    mu_list = jnp.asarray(mu_list)
+    width_list = jnp.asarray(width_list)
+    theta_min, theta_max = mu_list - width_list / 2, mu_list + width_list / 2
+
+    data = {
+        "Y": Y,
+        "L": L,
+        "C_inv_cho": C_inv_cho,
+        "theta_min": theta_min,
+        "theta_max": theta_max,
+        "fixed_idx": fixed_idx,
+        "fixed_value": fixed_value,
+        "C": C,
+        }
+
+    for key in data:
+        if not key.startswith("fixed_"):
+            data[key] = jnp.asarray(data[key], dtype=jnp.float32)
+
+    return data
+
+
+def load_clusters(root, zcmb_max=0.2, los_data_path=None, return_all=False,
+                  **kwargs):
+    """
+    Load the cluster scaling relation data from the given root directory.
+
+    Y is currently not being loaded.
+    """
+    fname = join(root, "ClustersData.txt")
+
+    dtype = [
+        ('Cluster', 'U32'), ('z', 'f8'), ('Glon', 'f8'), ('Glat', 'f8'),
+        ('Offset', 'f8'), ('T', 'f8'), ('Tmax', 'f8'), ('Tmin', 'f8'),
+        ('Lx', 'f8'), ('eL', 'f8'), ('NHtot', 'f8'), ('Metal', 'f8'),
+        ('Met_max', 'f8'), ('Met_min', 'f8'), ('Y_arcmin2', 'f8'),
+        ('e_Y', 'f8'), ('Y5r500', 'f8'), ('e_Y2', 'f8'), ('Y_nr_no_ksz', 'f8'),
+        ('e_Y3', 'f8'), ('Y_nr_mmf', 'f8'), ('e_Y4', 'f8'), ('Y_nr_mf', 'f8'),
+        ('e_Y5', 'f8'), ('Abs2MASS', 'f8'), ('BCG_Offset', 'f8'),
+        ('Catalog', 'U32'), ('Analysed_by', 'U32')
+    ]
+
+    data = np.genfromtxt(fname, dtype=dtype, skip_header=1)
+    data = data[(data['Y_nr_no_ksz'] != -1.0)]
+    fprint(f"initially loaded {len(data)} clusters.")
+
+    z = data['z']
+    T = data['T']
+    Lx = data['Lx']
+    eL = data['eL']
+    Tmax = data['Tmax']
+    Tmin = data['Tmin']
+    # Y_arcmin2 = data['Y_arcmin2']
+    # e_Y = data['e_Y']
+
+    # The file assumes a cosmology with H0 = 70 km/s/Mpc and Omega_m = 0.3
+    cosmo = FlatLambdaCDM(H0=70, Om0=0.3)
+    # DA = cosmo.angular_diameter_distance(z).value * 1e3  # Mpc → kpc
+    DL = cosmo.luminosity_distance(z).value
+
+    logT = np.log10(T)
+    logF = np.log10(Lx / (4 * np.pi * DL**2))
+    # logY = np.log10(Y_arcmin2 * DA**2 * (np.pi / 180 / 60)**2)
+
+    e_logT = np.log10(np.e) * (Tmax - Tmin) / (2 * T)
+    e_logF = np.log10(np.e) * (Lx * eL / 100) / Lx
+    # e_logY = e_Y / Y_arcmin2 / np.log(10)
+
+    RA, dec = galactic_to_radec(data['Glon'], data['Glat'])
+
+    data = {
+        "zcmb": z,
+        "RA": RA,
+        "dec": dec,
+        "logT": logT,
+        "e_logT": e_logT,
+        "logF": logF,
+        "e_logF": e_logF,
+        # "logY": logY,
+        # "e_logY": e_logY,
+    }
+
+    if return_all:
+        return data
+
+    mask = np.ones(len(z), dtype=bool)
+    if zcmb_max is not None:
+        mask &= z < zcmb_max
+
+    fprint(f"removed {len(mask) - np.sum(mask)} clusters, thus "
+           f"{len(data['RA'][mask])} remain.")
+
+    for key in data:
+        data[key] = data[key][mask]
+
+    fprint("subtracting the mean logT from the data.")
+    data["logT"] -= np.mean(data["logT"])
+
+    if los_data_path is not None:
+        data = load_los(los_data_path, data, mask=mask)
 
     return data

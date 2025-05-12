@@ -7,10 +7,17 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
 #SBATCH --constraint=a100
-#SBATCH --time=02:00:00
+#SBATCH --time=01:00:00
 #SBATCH --job-name=candel
 #SBATCH --output=logs/logs-%j.out
 #SBATCH --error=logs/logs-%j.err
+
+# Report requested time
+if [[ -n "$SLURM_TIMELIMIT" ]]; then
+    hrs=$((SLURM_TIMELIMIT / 60))
+    mins=$((SLURM_TIMELIMIT % 60))
+    echo "[INFO] SLURM time limit requested: ${hrs}h ${mins}m"
+fi
 
 set -e
 
