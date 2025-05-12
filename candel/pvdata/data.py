@@ -604,7 +604,7 @@ def load_clusters(root, zcmb_max=0.2, los_data_path=None, return_all=False,
         mask &= z < zcmb_max
 
     fprint(f"removed {len(mask) - np.sum(mask)} clusters, thus "
-           f"{len(data["RA"][mask])} remain.")
+           f"{len(data['RA'][mask])} remain.")
 
     for key in data:
         data[key] = data[key][mask]
