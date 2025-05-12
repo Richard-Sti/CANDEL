@@ -202,6 +202,8 @@ def name2label(name):
         "a_TFR_dipole_b": r"$b_\mathrm{TFR, dipole}$",
         "eta_prior_mean": r"$\hat{\eta}$",
         "eta_prior_std": r"$w_\eta$",
+        "A_CL": r"$A_{\rm CL}$",
+        "B_CL": r"$B_{\rm CL}$",
     }
     return latex_labels.get(name, name)
 
