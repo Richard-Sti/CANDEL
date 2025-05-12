@@ -17,6 +17,7 @@ from .data import ( # noqa                                                      
     load_CF4_data,                                                              # noqa
     load_CF4_mock,                                                              # noqa
     load_SH0ES,                                                                 # noqa
+    load_clusters,                                                              # noqa
     load_PantheonPlus,                                                          # noqa
     PVDataFrame,                                                                # noqa
     load_PV_dataframes,                                                         # noqa

@@ -18,6 +18,7 @@ from .model import (                                                            
     TFRModel,                                                                   # noqa
     TFRModel_DistMarg,                                                          # noqa
     PantheonPlusModel_DistMarg,                                                 # noqa
+    ClustersLT_DistMarg,                                                        # noqa
     )
 
 
