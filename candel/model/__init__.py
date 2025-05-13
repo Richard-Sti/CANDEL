@@ -18,7 +18,7 @@ from .model import (                                                            
     TFRModel,                                                                   # noqa
     TFRModel_DistMarg,                                                          # noqa
     PantheonPlusModel_DistMarg,                                                 # noqa
-    ClustersLT_DistMarg,                                                        # noqa
+    Clusters_DistMarg,                                                          # noqa
     )
 
 
@@ -37,7 +37,7 @@ def name2model(name):
         "TFRModel": TFRModel,
         "TFRModel_DistMarg": TFRModel_DistMarg,
         "PantheonPlusModel_DistMarg": PantheonPlusModel_DistMarg,
-        "ClustersLT_DistMarg": ClustersLT_DistMarg,
+        "ClustersLT_DistMarg": Clusters_DistMarg,
         }
 
     if name not in mapping:
