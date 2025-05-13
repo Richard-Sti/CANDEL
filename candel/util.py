@@ -203,6 +203,7 @@ def name2label(name):
         "eta_prior_std": r"$w_\eta$",
         "A_CL": r"$A_{\rm CL}$",
         "B_CL": r"$B_{\rm CL}$",
+        "C_CL": r"$C_{\rm CL}$",
     }
     return latex_labels.get(name, name)
 
