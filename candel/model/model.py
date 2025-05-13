@@ -14,9 +14,12 @@
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 """Distance ladder and velocity field probabilistic models."""
 from abc import ABC, abstractmethod
+from functools import partial
 
 import jax.numpy as jnp
-from jax import random
+import numpy as np
+from astropy.cosmology import FlatLambdaCDM
+from jax import random, vmap
 from jax.lax import cond
 from jax.scipy.stats import norm
 from numpyro import deterministic, factor, plate, sample
@@ -526,6 +529,11 @@ class TFRModel_DistMarg(BaseModel):
                 # The shape is `(n_galaxies, num_steps.)`
                 Vrad = beta * data["los_velocity"]
                 ll += alpha * data["los_log_density"]
+                # galaxy_bias = 1 + b1 * data["los_log_density"]
+                # galaxy_bias += 0.5 * b2 * data["los_log_density"]**2
+                # galaxy_bias = jnp.clip(galaxy_bias, 1e-4, None)
+                # ll += jnp.log(galaxy_bias)
+
             else:
                 Vrad = 0.
 
@@ -626,21 +634,55 @@ class PantheonPlusModel_DistMarg(BaseModel):
 ###############################################################################
 
 
-def get_Ez(z, Om=0.3):
+def get_Ez(z, Om):
     """
     Compute the E(z) function for a flat universe with matter density Om.
     """
     return jnp.sqrt(Om * (1 + z)**3 + (1 - Om))
 
 
-class ClustersLT_DistMarg(BaseModel):
+def mu_from_CL_calibration(theta, c, log_dL_grid, log_dA_grid, mu_grid):
     """
-    Cluster L-T scaling relation peculiar velocity model with distance
+    Solve for which distance modulus solves the equation
+    `log_dL - c * log_dA = theta`. Takes advantage of pre-computing `mu`
+    and `log_dL` and `log_dA` grids.
+    """
+
+    y = log_dL_grid - c * log_dA_grid
+    res = y - theta
+    return jnp.interp(0.0, res, mu_grid)
+
+
+class Clusters_DistMarg(BaseModel):
+    """
+    Cluster L-T-Y scaling relation peculiar velocity model with distance
     marginalization.
     """
 
-    def __init__(self, config_path):
+    def __init__(self, config_path, which_relation="LT"):
         super().__init__(config_path)
+
+        if which_relation not in ["LT", "LTY"]:
+            raise ValueError(f"Invalid scaling relation '{which_relation}'. "
+                             "Choose either 'LT' or 'LTY'.")
+
+        self.which_relation = which_relation
+        self.sample_T = "T" in which_relation
+        self.sample_Y = "Y" in which_relation
+
+        # Later make this choice more flexible.
+        self.Om = 0.3
+
+        # Disable priors for some of the models.
+        if not self.sample_T:
+            fprint("`logT` is not used in the model. Disabling its prior.")
+            self.priors["CL_B"] = Delta(jnp.asarray(0.0))
+            self.prior_dist_name["CL_B"] = "delta"
+
+        if not self.sample_Y:
+            fprint("`logY` is not used in the model. Disabling its prior.")
+            self.priors["CL_C"] = Delta(jnp.asarray(0.0))
+            self.prior_dist_name["CL_C"] = "delta"
 
         if self.use_MNR:
             raise NotImplementedError(
@@ -649,38 +691,85 @@ class ClustersLT_DistMarg(BaseModel):
             # fprint("setting `compute_evidence` to False.")
             # self.config["inference"]["compute_evidence"] = False
 
+        # If C is being sampled, then we need to precompute the grids to
+        # relate `logDL - c * logDA = theta` to `mu`. Note that these are
+        # h = 1 and with a hard-cded Om = 0.3 cosmology.
+        if which_relation == "LTY":
+            d = self.config["io"]["Clusters"]
+            z_grid = np.linspace(
+                d["zcmb_mapping_min"], d["zcmb_mapping_max"],
+                d["zcmb_mapping_num_points"])
+            fprint("precomputing the distance grid for z in "
+                   f"[{d['zcmb_mapping_min']}, {d['zcmb_mapping_max']}] with "
+                   f"{d['zcmb_mapping_num_points']} points.")
+
+            cs = FlatLambdaCDM(H0=100, Om0=self.Om)
+            mu_grid = cs.distmod(z_grid).value
+            log_dA_grid = jnp.log10(cs.angular_diameter_distance(z_grid).value)
+            log_dL_grid = jnp.log10(cs.luminosity_distance(z_grid).value)
+            mu_grid = jnp.asarray(mu_grid)
+
+            f_partial = partial(
+                mu_from_CL_calibration, log_dL_grid=log_dL_grid,
+                log_dA_grid=log_dA_grid, mu_grid=mu_grid)
+            self.mu_from_LTY_calibration = vmap(
+                f_partial, in_axes=(0, None), out_axes=0)
+
     def __call__(self, data):
         nsamples = len(data)
 
         # Sample the cluster scaling parameters.
-        A = rsample("A_CL", self.priors["LT_zeropoint"])
-        B = rsample("B_CL", self.priors["LT_slope"])
+        A = rsample("A_CL", self.priors["CL_A"])
+        B = rsample("B_CL", self.priors["CL_B"])
+        C = rsample("C_CL", self.priors["CL_C"])
         sigma_mu = rsample("sigma_mu", self.priors["sigma_mu"])
 
         # Sample velocity field parameters.
         Vext = rsample("Vext", self.priors["Vext"])
         sigma_v = rsample("sigma_v", self.priors["sigma_v"])
 
+        # Remaining parameters
+        alpha = rsample("alpha", self.priors["alpha"])
+        beta = rsample("beta", self.priors["beta"])
+
         # For the distance marginalization, h is not sampled.
         h = 1.
 
         with plate("data", nsamples):
-            # No MNR at the moment.
-            logF = data["logF"]
-            logT = data["logT"]
+            if self.use_MNR:
+                raise NotImplementedError(
+                    "MNR for clusters is not implemented yet. Please set "
+                    "`use_MNR` to False in the config file.")
+            else:
+                logF = data["logF"]
+                sigma_mu2 = jnp.ones_like(logF) * sigma_mu**2
 
-            # Should propagate here the uncertainty in logF and logT if no MNR.
-            sigma_mu = jnp.ones_like(logF) * sigma_mu
+                if self.sample_T:
+                    logT = data["logT"]
+                    sigma_mu2 += B**2 * data["e2_logT"]
 
-            # Maybe this should depend on the cosmological redshift, but it's
-            # a small correction..
-            Ez = get_Ez(data["zcmb"], Om=0.3)
+                if self.sample_Y:
+                    logY = data["logY"]
+                    sigma_mu += C**2 * data["e2_logY"]
 
-            # Luminosity predicted from temperature
-            logL_pred = jnp.log10(Ez) + A + B * logT
-            # Turn the luminosity into distance modulus
-            logDL_cluster = 0.5 * (logL_pred - jnp.log10(4 * jnp.pi) - logF)
-            mu_cluster = 5 * logDL_cluster + 25
+                sigma_mu = jnp.sqrt(sigma_mu2)
+
+            # This should depend on the cosmological redshift, but the
+            # corrections are small and subdominant to the noise in the cluster
+            # scaling relations.
+            Ez = get_Ez(data["zcmb"], Om=self.Om)
+
+            if self.which_relation == "LT":
+                # Luminosity predicted from temperature, turned into distance
+                # modulus.
+                logL_pred = jnp.log10(Ez) + A + B * logT
+                mu_cluster = 2.5 * (logL_pred - logF) + 25
+            elif self.which_relation == "LTY":
+                theta = 0.5 * (jnp.log10(Ez) + A + B * logT + C * logY - logF)
+                mu_cluster = self.mu_from_LTY_calibration(theta, C)
+            else:
+                raise ValueError(
+                    f"Invalid scaling relation '{self.which_relation}'.")
 
             # From now on it is standard calculations.
             r_grid = data["los_r"][None, :] / h
@@ -691,8 +780,9 @@ class ClustersLT_DistMarg(BaseModel):
                 mu_cluster[:, None], sigma_mu[:, None]).log_prob(mu_grid)
 
             if data.has_precomputed_los:
-                raise NotImplementedError(
-                    "Precomputed LOS for clusters is not implemented yet.")
+                # The shape is `(n_galaxies, num_steps.)`
+                Vrad = beta * data["los_velocity"]
+                ll += alpha * data["los_log_density"]
             else:
                 Vrad = 0.
 
