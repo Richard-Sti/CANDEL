@@ -54,21 +54,15 @@ def convert_none_strings(d):
     return d
 
 
-def try_replace_with_delta_if_not_los(config, param, value):
-    """
-    Replace the prior of `param` with a delta function if `pv_model.kind` does
-    not start with 'precomputed_los'.
-    """
-    kind = config.get("pv_model", {}).get("kind", "")
-    if not kind.startswith("precomputed_los"):
-        fprint(f"replacing prior of `{param}` with a delta function.")
-        priors = config.setdefault("model", {}).setdefault("priors", {})
-        priors.pop(param, None)
-        priors[param] = {
-            "dist": "delta",
-            "value": value
+def replace_prior_with_delta(config, param, value):
+    """Replace the prior of `param` with a delta distribution at `value`."""
+    fprint(f"replacing prior of `{param}` with a delta function.")
+    priors = config.setdefault("model", {}).setdefault("priors", {})
+    priors.pop(param, None)
+    priors[param] = {
+        "dist": "delta",
+        "value": value
         }
-
     return config
 
 
@@ -102,12 +96,17 @@ def load_config(config_path, replace_none=True, fill_paths=True):
     with open(config_path, 'rb') as f:
         config = tomllib.load(f)
 
+    # Convert "none" strings to None
     if replace_none:
         config = convert_none_strings(config)
 
-    config = try_replace_with_delta_if_not_los(config, "alpha", 1.0)
-    config = try_replace_with_delta_if_not_los(config, "beta", 1.0)
+    # Assign delta priors if not using an underlying reconstruction.
+    kind = config.get("pv_model", {}).get("kind", "")
+    if not kind.startswith("precomputed_los"):
+        config = replace_prior_with_delta(config, "alpha", 1.)
+        config = replace_prior_with_delta(config, "beta", 0.)
 
+    # Convert relative paths to absolute paths
     if fill_paths:
         config = convert_to_absolute_paths(config)
 
@@ -204,6 +203,7 @@ def name2label(name):
         "eta_prior_std": r"$w_\eta$",
         "A_CL": r"$A_{\rm CL}$",
         "B_CL": r"$B_{\rm CL}$",
+        "C_CL": r"$C_{\rm CL}$",
     }
     return latex_labels.get(name, name)
 

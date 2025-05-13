@@ -125,6 +125,7 @@ class PVDataFrame:
 
         if "los_density" in data:
             data["los_log_density"] = np.log(data["los_density"])
+            data["los_delta"] = data["los_density"] - 1
 
         if nsamples_subsample is not None:
             frame = cls(data)
@@ -566,23 +567,26 @@ def load_clusters(root, zcmb_max=0.2, los_data_path=None, return_all=False,
     eL = data['eL']
     Tmax = data['Tmax']
     Tmin = data['Tmin']
-    # Y_arcmin2 = data['Y_arcmin2']
-    # e_Y = data['e_Y']
+    Y_arcmin2 = data['Y_arcmin2']
+    e_Y = data['e_Y']
 
     # The file assumes a cosmology with H0 = 70 km/s/Mpc and Omega_m = 0.3
     cosmo = FlatLambdaCDM(H0=70, Om0=0.3)
-    # DA = cosmo.angular_diameter_distance(z).value * 1e3  # Mpc → kpc
+    DA = cosmo.angular_diameter_distance(z).value * 1e3  # Mpc → kpc
     DL = cosmo.luminosity_distance(z).value
 
     logT = np.log10(T)
     logF = np.log10(Lx / (4 * np.pi * DL**2))
-    # logY = np.log10(Y_arcmin2 * DA**2 * (np.pi / 180 / 60)**2)
+    logY = np.log10(Y_arcmin2 * DA**2 * (np.pi / 180 / 60)**2)
 
     e_logT = np.log10(np.e) * (Tmax - Tmin) / (2 * T)
     e_logF = np.log10(np.e) * (Lx * eL / 100) / Lx
-    # e_logY = e_Y / Y_arcmin2 / np.log(10)
+    e_logY = e_Y / Y_arcmin2 / np.log(10)
 
     RA, dec = galactic_to_radec(data['Glon'], data['Glat'])
+
+    # Add the factor of 4 \pi to the logF to avoid having to add it every time.
+    logF += np.log10(4 * np.pi)
 
     data = {
         "zcmb": z,
@@ -592,8 +596,8 @@ def load_clusters(root, zcmb_max=0.2, los_data_path=None, return_all=False,
         "e_logT": e_logT,
         "logF": logF,
         "e_logF": e_logF,
-        # "logY": logY,
-        # "e_logY": e_logY,
+        "logY": logY,
+        "e_logY": e_logY,
     }
 
     if return_all:
@@ -611,6 +615,9 @@ def load_clusters(root, zcmb_max=0.2, los_data_path=None, return_all=False,
 
     fprint("subtracting the mean logT from the data.")
     data["logT"] -= np.mean(data["logT"])
+
+    fprint("subtracting the mean logY from the data.")
+    data["logY"] -= np.mean(data["logY"])
 
     if los_data_path is not None:
         data = load_los(los_data_path, data, mask=mask)

@@ -8,6 +8,10 @@ CANDEL (Calibration and Normalization of the Distance Ladder) is a JAX-based fra
 ### General
 - [ ] Test the effect of galaxy biases. Try linear and quadratic.
 
+$$
+1 + b_1 \delta + \frac{b_2}{2} \delta^2
+$$
+
 
 ### Hubble Dipole
 - Focus the main inference solely on CF4 TFR W1 because of its uniform sky coverage, and then add a set of mock calibration to test if there is any signal.
