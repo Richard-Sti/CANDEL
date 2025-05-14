@@ -573,12 +573,11 @@ def load_clusters(root, zcmb_max=0.2, los_data_path=None, return_all=False,
 
     # The file assumes a cosmology with H0 = 70 km/s/Mpc and Omega_m = 0.3
     cosmo = FlatLambdaCDM(H0=70, Om0=0.3)
-    DA = cosmo.angular_diameter_distance(z).value * 1e3  # Mpc → kpc
     DL = cosmo.luminosity_distance(z).value
 
     logT = np.log10(T)
     logF = np.log10(Lx / (4 * np.pi * DL**2))
-    logY = np.log10(Y_arcmin2 * DA**2 * (np.pi / 180 / 60)**2)
+    logY = np.log10(Y_arcmin2)
 
     e_logT = np.log10(np.e) * (Tmax - Tmin) / (2 * T)
     e_logF = np.log10(np.e) * (Lx * eL / 100) / Lx
