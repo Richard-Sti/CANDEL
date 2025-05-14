@@ -12,9 +12,9 @@ machine = "local"
 ###############################################################################
 
 [inference]
-model = "TFR_DistMarg"
+model = "Clusters_DistMarg"
 num_warmup = 1000
-num_samples = 5000
+num_samples = 2500
 num_chains = 1
 seed = 42
 compute_log_density = true
@@ -28,8 +28,9 @@ num_chains_harmonic = 5
 [pv_model]
 use_MNR = false
 # Default kind. This gets overwritten if using a submission script.
-kind = "precomputed_los_Carrick2015"
-# kind = "constant"
+# kind = "precomputed_los_Carrick2015"
+kind = "constant"
+galaxy_bias = "powerlaw"
 
 
 ###############################################################################
@@ -212,6 +213,7 @@ los_file = "data/Pantheon+/los_CF4_Pantheon+_<X>.hdf5"
 [io.Clusters]
 root = "data/Clusters"
 zcmb_max = 0.2
+which_relation = "LTY"
 
 zcmb_mapping_min = 1e-5
 zcmb_mapping_max = 0.3

@@ -81,6 +81,8 @@ class PVDataFrame:
         if "los_velocity" in self.data:
             self.has_precomputed_los = True
             kwargs = {"method": los_method, "extrap": los_extrap}
+            self.f_los_delta = LOSInterpolator(
+                self.data["los_r"], self.data["los_delta"], **kwargs)
             self.f_los_log_density = LOSInterpolator(
                 self.data["los_r"], jnp.log(self.data["los_density"]),
                 **kwargs)
@@ -107,7 +109,6 @@ class PVDataFrame:
             data = load_PantheonPlus(root, **config)
         elif name == "Clusters":
             data = load_clusters(root, **config)
-            print(data.keys())
         else:
             raise ValueError(f"Unknown catalogue name: {name}")
 
@@ -572,12 +573,11 @@ def load_clusters(root, zcmb_max=0.2, los_data_path=None, return_all=False,
 
     # The file assumes a cosmology with H0 = 70 km/s/Mpc and Omega_m = 0.3
     cosmo = FlatLambdaCDM(H0=70, Om0=0.3)
-    DA = cosmo.angular_diameter_distance(z).value * 1e3  # Mpc → kpc
     DL = cosmo.luminosity_distance(z).value
 
     logT = np.log10(T)
     logF = np.log10(Lx / (4 * np.pi * DL**2))
-    logY = np.log10(Y_arcmin2 * DA**2 * (np.pi / 180 / 60)**2)
+    logY = np.log10(Y_arcmin2)
 
     e_logT = np.log10(np.e) * (Tmax - Tmin) / (2 * T)
     e_logF = np.log10(np.e) * (Lx * eL / 100) / Lx
