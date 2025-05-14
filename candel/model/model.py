@@ -218,9 +218,9 @@ def log_norm_pmu(mu_TFR, sigma_mu, distmod2distance, num_points=30,
         )
 
 
-def log_norm_pmu_im(mu_TFR, sigma_mu, alpha, distmod2distance, los_interp,
-                    num_points=30, num_sigma=5, low_clip=20., high_clip=40.,
-                    h=1.0):
+def log_norm_pmu_im(mu_TFR, sigma_mu, bias_params, distmod2distance,
+                    los_interp, galaxy_bias, num_points=30, num_sigma=5,
+                    low_clip=20., high_clip=40., h=1.0):
     """
     Computation of log ∫ r^2 * rho * p(mu | mu_TFR, sigma_mu) dr. The regular
     grid over which the integral is computed is defined uniformly in distance
@@ -236,13 +236,17 @@ def log_norm_pmu_im(mu_TFR, sigma_mu, alpha, distmod2distance, los_interp,
 
     # These are of shape (n, num_points)
     r_grid = distmod2distance(mu_grid, h=h)
-    log_rho_grid = los_interp.interp_many_steps_per_galaxy(r_grid * h)
 
     weights = (
         2 * jnp.log(r_grid)
-        + alpha * log_rho_grid
         + norm.logpdf(mu_grid, loc=mu_TFR[:, None], scale=sigma_mu[:, None])
     )
+
+    if galaxy_bias == "powerlaw":
+        log_rho_grid = los_interp.interp_many_steps_per_galaxy(r_grid * h)
+        weights += bias_params[0] * log_rho_grid
+    else:
+        raise ValueError(f"Invalid galaxy bias model '{galaxy_bias}'.")
 
     return jnp.where(
         lo == hi,
@@ -296,11 +300,42 @@ class BaseModel(ABC):
 
         self.use_MNR = config["pv_model"]["use_MNR"]
 
+        self.galaxy_bias = config["pv_model"]["galaxy_bias"]
+        if self.galaxy_bias not in ["powerlaw"]:
+            raise ValueError(
+                f"Invalid galaxy bias model '{self.galaxy_bias}'. "
+                "Choose either 'powerlaw'.")
+
         self.config = config
 
     @abstractmethod
     def __call__(self, *args, **kwargs):
         pass
+
+
+def sample_galaxy_bias(priors, galaxy_bias):
+    """
+    Sample a vector of galaxy bias parameters based on the specified model.
+    """
+    if galaxy_bias == "powerlaw":
+        alpha = rsample("alpha", priors["alpha"])
+        bias_params = [alpha]
+    else:
+        raise ValueError(f"Invalid galaxy bias model '{galaxy_bias}'.")
+
+    return bias_params
+
+
+def lp_galaxy_bias(delta, log_rho, bias_params, galaxy_bias):
+    """
+    Given the galaxy bias probabibility, given some density and a bias model.
+    """
+    if galaxy_bias == "powerlaw":
+        lp = bias_params[0] * log_rho
+    else:
+        raise ValueError(f"Invalid galaxy bias model '{galaxy_bias}'.")
+
+    return lp
 
 
 ###############################################################################
@@ -336,7 +371,7 @@ class TFRModel(BaseModel):
         sigma_v = rsample("sigma_v", self.priors["sigma_v"])
 
         # Remainining parameters
-        alpha = rsample("alpha", self.priors["alpha"])
+        bias_params = sample_galaxy_bias(self.priors, self.galaxy_bias)
         beta = rsample("beta", self.priors["beta"])
         h = rsample("h", self.priors["h"])
 
@@ -403,11 +438,17 @@ class TFRModel(BaseModel):
                 # back to Mpc / h in case that h != 1.
                 Vrad = beta * data.f_los_velocity(r * h)
 
-                # Inhomogeneous Malmquist bias
-                log_pmu += alpha * data.f_los_log_density(r * h)
+                if self.galaxy_bias == "powerlaw":
+                    alpha = bias_params[0]
+                    log_pmu += alpha * data.f_los_log_density(r * h)
+                else:
+                    raise ValueError(
+                        f"Invalid galaxy bias model '{self.galaxy_bias}'.")
+
                 log_pmu_norm = log_norm_pmu_im(
-                    mu_TFR, sigma_mu, alpha, self.distmod2distance,
-                    data.f_los_log_density, **self.num_norm_kwargs, h=h)
+                    mu_TFR, sigma_mu, bias_params, self.distmod2distance,
+                    data.f_los_log_density, self.galaxy_bias,
+                    **self.num_norm_kwargs, h=h)
             else:
                 Vrad = 0.
                 # Homogeneous Malmquist bias
@@ -461,7 +502,7 @@ class TFRModel_DistMarg(BaseModel):
         sigma_v = rsample("sigma_v", self.priors["sigma_v"])
 
         # Remaining parameters
-        alpha = rsample("alpha", self.priors["alpha"])
+        bias_params = sample_galaxy_bias(self.priors, self.galaxy_bias)
         beta = rsample("beta", self.priors["beta"])
 
         # For the distance marginalization, h is not sampled.
@@ -528,12 +569,9 @@ class TFRModel_DistMarg(BaseModel):
             if data.has_precomputed_los:
                 # The shape is `(n_galaxies, num_steps.)`
                 Vrad = beta * data["los_velocity"]
-                ll += alpha * data["los_log_density"]
-                # galaxy_bias = 1 + b1 * data["los_log_density"]
-                # galaxy_bias += 0.5 * b2 * data["los_log_density"]**2
-                # galaxy_bias = jnp.clip(galaxy_bias, 1e-4, None)
-                # ll += jnp.log(galaxy_bias)
-
+                ll += lp_galaxy_bias(
+                    data["los_delta"], data["los_log_density"], bias_params,
+                    self.galaxy_bias)
             else:
                 Vrad = 0.
 
@@ -584,7 +622,7 @@ class PantheonPlusModel_DistMarg(BaseModel):
         sigma_v = rsample("sigma_v", self.priors["sigma_v"])
 
         # Remaining parameters
-        alpha = rsample("alpha", self.priors["alpha"])
+        bias_params = sample_galaxy_bias(self.priors, self.galaxy_bias)
         beta = rsample("beta", self.priors["beta"])
 
         # For the distance marginalization, h is not sampled.
@@ -611,7 +649,9 @@ class PantheonPlusModel_DistMarg(BaseModel):
             if data.has_precomputed_los:
                 # The shape is `(n_galaxies, num_steps.)`
                 Vrad = beta * data["los_velocity"]
-                ll += alpha * data["los_log_density"]
+                ll += lp_galaxy_bias(
+                    data["los_delta"], data["los_log_density"], bias_params,
+                    self.galaxy_bias)
             else:
                 Vrad = 0.
 
@@ -729,7 +769,7 @@ class Clusters_DistMarg(BaseModel):
         sigma_v = rsample("sigma_v", self.priors["sigma_v"])
 
         # Remaining parameters
-        alpha = rsample("alpha", self.priors["alpha"])
+        bias_params = sample_galaxy_bias(self.priors, self.galaxy_bias)
         beta = rsample("beta", self.priors["beta"])
 
         # For the distance marginalization, h is not sampled.
@@ -782,7 +822,9 @@ class Clusters_DistMarg(BaseModel):
             if data.has_precomputed_los:
                 # The shape is `(n_galaxies, num_steps.)`
                 Vrad = beta * data["los_velocity"]
-                ll += alpha * data["los_log_density"]
+                ll += lp_galaxy_bias(
+                    data["los_delta"], data["los_log_density"], bias_params,
+                    self.galaxy_bias)
             else:
                 Vrad = 0.
 
