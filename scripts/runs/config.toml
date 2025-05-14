@@ -13,8 +13,8 @@ machine = "local"
 
 [inference]
 model = "TFR_DistMarg"
-num_warmup = 1000
-num_samples = 5000
+num_warmup = 500
+num_samples = 500
 num_chains = 1
 seed = 42
 compute_log_density = true
@@ -26,10 +26,11 @@ num_chains_harmonic = 5
 ###############################################################################
 
 [pv_model]
-use_MNR = false
+use_MNR = true
 # Default kind. This gets overwritten if using a submission script.
 kind = "precomputed_los_Carrick2015"
 # kind = "constant"
+galaxy_bias = "powerlaw"
 
 
 ###############################################################################
