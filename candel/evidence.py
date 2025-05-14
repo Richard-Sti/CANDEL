@@ -66,6 +66,7 @@ def BIC_AIC(samples, log_density, stack_chains=True):
 
     return float(BIC), float(AIC)
 
+
 def dict_samples_to_array(samples, stack_chains=True):
     """Convert a dictionary of samples to a 2-dimensional array."""
     data = []
@@ -125,8 +126,13 @@ def harmonic_evidence(samples_arr, log_density, temperature=0.8, epochs_num=20,
     try:
         import harmonic as hm
     except ImportError as e:
-        raise ImportError("The `harmonic` package is required to "
-                          "calculate the evidence.") from e
+        if return_flow_samples:
+            raise ImportError("The `harmonic` package is required to "
+                              "calculate the evidence.") from e
+        fprint("The `harmonic` package is required to calculate the evidence. "
+               "Skipping. Install it with `pip install harmonic` to enable "
+               "evidence computation.")
+        return np.nan, np.nan
 
     # Do some standard checks of inputs.
     if samples_arr.ndim != 3:
@@ -185,7 +191,6 @@ def laplace_evidence(samples_array, log_density):
         raise ValueError("The log_density must be a 2-dimensional array of "
                          "shape `(nchains, nsamples)`.")
 
-
     nchains = len(samples_array)
     ndim = samples_array.shape[-1]
     logZ = np.full(nchains, np.nan)
@@ -198,4 +203,3 @@ def laplace_evidence(samples_array, log_density):
                                    + ndim * np.log(2 * np.pi)))
 
     return np.mean(logZ), np.std(logZ)
-
