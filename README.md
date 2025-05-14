@@ -19,6 +19,9 @@ python -m pip install --upgrade pip && python -m pip install --upgrade setuptool
 python -m pip install -e .
 ```
 
+To enable model evidence computation, install the [harmonic](https://github.com/astro-informatics/harmonic) package.
+
+
 If the package is not recognised in a notebook, add the project directory to the Python path manually, e.g.:
 ```
 import sys
