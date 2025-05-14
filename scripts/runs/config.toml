@@ -213,7 +213,7 @@ los_file = "data/Pantheon+/los_CF4_Pantheon+_<X>.hdf5"
 [io.Clusters]
 root = "data/Clusters"
 zcmb_max = 0.2
-which_relation = "LTY"
+which_relation = "LT"
 
 zcmb_mapping_min = 1e-5
 zcmb_mapping_max = 0.3
