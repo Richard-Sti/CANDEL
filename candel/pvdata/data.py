@@ -109,7 +109,6 @@ class PVDataFrame:
             data = load_PantheonPlus(root, **config)
         elif name == "Clusters":
             data = load_clusters(root, **config)
-            print(data.keys())
         else:
             raise ValueError(f"Unknown catalogue name: {name}")
 
