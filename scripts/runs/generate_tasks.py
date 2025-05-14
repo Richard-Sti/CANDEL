@@ -19,9 +19,11 @@ the default configuration file.
 
 from copy import deepcopy
 from itertools import product
-from os.path import join, splitext
+from os import makedirs
+from os.path import exists, join, splitext
 
 import tomli_w
+
 from candel import fprint, load_config
 
 
@@ -126,9 +128,10 @@ if __name__ == "__main__":
     manual_overrides = {
         "pv_model/kind": "constant",
         "io/catalogue_name": "Clusters",
-        "io/root_output": "results",
+        "io/root_output": "results/Clusters_Anisotropy",
         "pv_model/use_MNR": False,
         "io/Clusters/which_relation": ["LT", "LTY"],
+        # "io/Clusters/which_relation": "LT",
         # "model/priors/beta": [
         #     {"dist": "normal", "loc": 0.43, "scale": 0.1},
         #     {"dist": "delta", "value": 1.0},
@@ -162,6 +165,13 @@ if __name__ == "__main__":
                     local_config = overwrite_subtree(local_config, key, value)
                 else:
                     local_config = overwrite_config(local_config, key, value)
+
+            # Check that the output directory exists
+            fdir_out = join(
+                local_config["root_main"], local_config["io"]["root_output"])
+            if not exists(fdir_out):
+                fprint(f"creating output directory `{fdir_out}`")
+                makedirs(fdir_out, exist_ok=True)
 
             dynamic_tag = generate_dynamic_tag(local_config, base_tag=tag)
 
