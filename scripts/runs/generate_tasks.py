@@ -78,12 +78,17 @@ def generate_dynamic_tag(config, base_tag="default"):
     use_mnr = get_nested(config, "pv_model/use_MNR", False)
     parts.append("MNR" if use_mnr else "noMNR")
 
+    # Clusters scaling relation choice
+    if get_nested(config, "inference/model", None) == "Clusters_DistMarg":
+        parts.append(get_nested(config, "io/Clusters/which_relation", None))
+
     # Fixed beta value from delta prior
-    beta_prior = get_nested(config, "model/priors/beta", {})
-    if isinstance(beta_prior, dict) and beta_prior.get("dist") == "delta":
-        val = beta_prior.get("value")
-        if val is not None:
-            parts.append(f"beta{val}")
+    if get_nested(config, "pv_model/kind/", "").startswith("precomputed_los"):
+        beta_prior = get_nested(config, "model/priors/beta", {})
+        if isinstance(beta_prior, dict) and beta_prior.get("dist") == "delta":
+            val = beta_prior.get("value")
+            if val is not None:
+                parts.append(f"beta{val}")
 
     # aTFRdipole if it's not a delta distribution
     aTFRdip_prior = get_nested(config, "model/priors/TFR_zeropoint_dipole", {})
@@ -123,6 +128,7 @@ if __name__ == "__main__":
         "io/catalogue_name": "Clusters",
         "io/root_output": "results",
         "pv_model/use_MNR": False,
+        "io/Clusters/which_relation": ["LT", "LTY"],
         # "model/priors/beta": [
         #     {"dist": "normal", "loc": 0.43, "scale": 0.1},
         #     {"dist": "delta", "value": 1.0},
@@ -131,10 +137,10 @@ if __name__ == "__main__":
         #     {"dist": "delta", "value": [0.0, 0.0, 0.0]},
         #     {"dist": "vector_uniform", "low": 0.0, "high": 1.0},
         # ],
-        "model/priors/Vext": [
-            {"dist": "delta", "value": [0.0, 0.0, 0.0]},
-            {"dist": "vector_uniform_fixed", "low": 0.0, "high": 2500.0},
-        ],
+        # "model/priors/Vext": [
+        #     {"dist": "delta", "value": [0.0, 0.0, 0.0]},
+        #     {"dist": "vector_uniform_fixed", "low": 0.0, "high": 2500.0},
+        # ],
     }
 
     task_file = f"tasks_{tasks_index}.txt"
