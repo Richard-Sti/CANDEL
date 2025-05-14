@@ -81,6 +81,8 @@ class PVDataFrame:
         if "los_velocity" in self.data:
             self.has_precomputed_los = True
             kwargs = {"method": los_method, "extrap": los_extrap}
+            self.f_los_delta = LOSInterpolator(
+                self.data["los_r"], self.data["los_delta"], **kwargs)
             self.f_los_log_density = LOSInterpolator(
                 self.data["los_r"], jnp.log(self.data["los_density"]),
                 **kwargs)
