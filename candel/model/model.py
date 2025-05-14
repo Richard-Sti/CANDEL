@@ -699,9 +699,10 @@ class Clusters_DistMarg(BaseModel):
     marginalization.
     """
 
-    def __init__(self, config_path, which_relation="LT"):
+    def __init__(self, config_path):
         super().__init__(config_path)
 
+        which_relation = self.config["io"]["Clusters"]["which_relation"]
         if which_relation not in ["LT", "LTY"]:
             raise ValueError(f"Invalid scaling relation '{which_relation}'. "
                              "Choose either 'LT' or 'LTY'.")
