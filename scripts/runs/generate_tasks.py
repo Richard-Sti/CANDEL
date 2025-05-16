@@ -24,7 +24,7 @@ from os.path import exists, join, splitext
 
 import tomli_w
 
-from candel import fprint, load_config
+from candel import fprint, load_config, replace_prior_with_delta
 
 
 def overwrite_config(config, key, value):
@@ -119,7 +119,8 @@ def expand_override_grid(overrides):
 
 if __name__ == "__main__":
     config_path = "./config.toml"
-    config = load_config(config_path, replace_none=False)
+    config = load_config(
+        config_path, replace_none=False, replace_los_prior=False)
 
     tag = "default"
     tasks_index = 0
@@ -157,9 +158,13 @@ if __name__ == "__main__":
 
             for key, value in override_set.items():
                 # Special handling for kind: transform before writing
-                if key == "pv_model/kind" and value != "constant":
-                    value = f"precomputed_los_{value}"
-                    fprint(f"transformed kind override to: {value}")
+                if key == "pv_model/kind":
+                    if value == "constant":
+                        config = replace_prior_with_delta(config, "alpha", 1.)
+                        config = replace_prior_with_delta(config, "beta", 0.)
+                    else:
+                        value = f"precomputed_los_{value}"
+                        fprint(f"transformed kind override to: {value}")
 
                 if isinstance(value, dict):
                     local_config = overwrite_subtree(local_config, key, value)
