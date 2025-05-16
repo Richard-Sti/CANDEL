@@ -12,9 +12,9 @@ machine="rusty"
 ###############################################################################
 
 [inference]
-model = "Clusters_DistMarg"
+model = "TFRModel_DistMarg"
 num_warmup = 2000
-num_samples = 10000
+num_samples = 15000
 num_chains = 1
 seed = 42
 compute_log_density = true
@@ -125,7 +125,7 @@ low = 5
 high = 2500
 
 [model.priors.Vext]
-dist = "vector_uniform"
+dist = "vector_uniform_fixed"
 low = 0.0
 high = 2500
 
@@ -251,7 +251,7 @@ los_file = "data/Clusters/los_Clusters_<X>.hdf5"
 
 [io.reconstruction_main]
 rmin = 0.1
-rmax = 1001
+rmax = 251
 num_steps = 501
 
 [io.reconstruction_main.Carrick2015]

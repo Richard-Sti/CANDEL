@@ -126,20 +126,20 @@ if __name__ == "__main__":
 
     # Multiple override options → this creates a job per combination
     manual_overrides = {
-        "pv_model/kind": "constant",
-        "io/catalogue_name": "Clusters",
-        "io/root_output": "results/Clusters_Anisotropy",
-        "pv_model/use_MNR": False,
-        "io/Clusters/which_relation": ["LT", "LTY"],
+        "pv_model/kind": ["constant", "precomputed_los_Carrick2015"],
+        "io/catalogue_name": "CF4_W1",
+        "io/root_output": "results/CF4_H0_anisotropy",
+        "pv_model/use_MNR": [True, False],
+        # "io/Clusters/which_relation": ["LT", "LTY"],
         # "io/Clusters/which_relation": "LT",
         # "model/priors/beta": [
         #     {"dist": "normal", "loc": 0.43, "scale": 0.1},
         #     {"dist": "delta", "value": 1.0},
         # ],
-        # "model/priors/TFR_zeropoint_dipole": [
-        #     {"dist": "delta", "value": [0.0, 0.0, 0.0]},
-        #     {"dist": "vector_uniform", "low": 0.0, "high": 1.0},
-        # ],
+        "model/priors/TFR_zeropoint_dipole": [
+            {"dist": "delta", "value": [0.0, 0.0, 0.0]},
+            {"dist": "vector_uniform_fixed", "low": 0.0, "high": 0.5},
+        ],
         # "model/priors/Vext": [
         #     {"dist": "delta", "value": [0.0, 0.0, 0.0]},
         #     {"dist": "vector_uniform_fixed", "low": 0.0, "high": 2500.0},
