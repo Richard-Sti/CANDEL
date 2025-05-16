@@ -56,9 +56,9 @@ dist = "delta"
 value = 1.0
 
 [model.priors.alpha]
-dist = "normal"
-loc = 1.0
-scale = 0.5
+dist = "uniform"
+low = 0.0
+high = 3.0
 
 # [model.priors.b1]
 # dist = "normal"
@@ -71,24 +71,24 @@ scale = 0.5
 # scale = 1.0
 
 [model.priors.beta]
-dist = "normal"
-loc = 0.43
-scale = 0.1
+dist = "uniform"
+low = 0.0
+high = 3.0
 
 [model.priors.TFR_zeropoint]
-dist = "normal"
-loc = -20
-scale = 2
+dist = "uniform"
+low = -22.0
+high = -18.0
 
 [model.priors.TFR_slope]
-dist = "normal"
-loc = -9.5
-scale = 2
+dist = "uniform"
+low = -15.0
+high = -5.0
 
 [model.priors.TFR_curvature]
-dist = "normal"
-loc = 9
-scale = 2
+dist = "uniform"
+low = -10
+high = 10
 
 [model.priors.sigma_mu]
 dist = "jeffreys"
