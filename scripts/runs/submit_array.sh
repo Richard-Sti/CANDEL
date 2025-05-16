@@ -88,7 +88,3 @@ fi
 echo "[INFO] Submitting run with config: $config_path"
 echo "[INFO] Using Python: $python_exec"
 $python_exec main.py --config "$config_path"
-
-# --- Clean up frozen package ---
-echo "[INFO] Cleaning up frozen package at: $frozen_dir"
-[[ "$frozen_dir" == /mnt/home/$USER/frozen_candel/* ]] && rm -rf "$frozen_dir"
