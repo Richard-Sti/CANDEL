@@ -16,7 +16,7 @@
 
 try:
     # Python 3.11+
-    import tomllib
+    import tomllib                                                              # noqa
 except ModuleNotFoundError:
     # Backport for <=3.10
     import tomli as tomllib
@@ -90,7 +90,8 @@ def convert_to_absolute_paths(config):
     return config
 
 
-def load_config(config_path, replace_none=True, fill_paths=True):
+def load_config(config_path, replace_none=True, fill_paths=True,
+                replace_los_prior=True):
     """
     Load a TOML configuration file and convert "none" strings to None.
     """
@@ -103,7 +104,7 @@ def load_config(config_path, replace_none=True, fill_paths=True):
 
     # Assign delta priors if not using an underlying reconstruction.
     kind = config.get("pv_model", {}).get("kind", "")
-    if not kind.startswith("precomputed_los"):
+    if replace_los_prior and not kind.startswith("precomputed_los"):
         config = replace_prior_with_delta(config, "alpha", 1.)
         config = replace_prior_with_delta(config, "beta", 0.)
 
