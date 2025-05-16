@@ -58,4 +58,5 @@ from .util import (                                                             
     hms_to_degrees,                                                             # noqa
     dms_to_degrees,                                                             # noqa
     fprint,                                                                     # noqa
+    read_gof,                                                                   # noqa
 )

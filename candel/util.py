@@ -16,7 +16,7 @@
 
 try:
     # Python 3.11+
-    import tomllib                                                              # noqa
+    import tomllib
 except ModuleNotFoundError:
     # Backport for <=3.10
     import tomli as tomllib
@@ -29,6 +29,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from astropy.coordinates import SkyCoord
 from corner import corner
+from h5py import File
 
 SPEED_OF_LIGHT = 299_792.458  # km / s
 
@@ -241,3 +242,19 @@ def plot_corner(samples, show_fig=True, filename=None, smooth=1, keys=None):
         fig.show()
     else:
         plt.close(fig)
+
+
+def read_gof(fname, which):
+    """Read goodness-of-fit statistics from a file with samples."""
+    convert = which.startswith("logZ_")
+    key = which.replace("logZ_", "lnZ_") if convert else which
+
+    with File(fname, "r") as f:
+        try:
+            stat = float(f[f"gof/{key}"][...])
+        except KeyError as e:
+            raise KeyError(
+                f"`{key}` not found in the file. Available keys are: "
+                f"{list(f['gof'].keys())}") from e
+
+    return stat / np.log(10) if convert else stat
