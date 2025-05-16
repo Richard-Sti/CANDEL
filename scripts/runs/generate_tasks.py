@@ -127,7 +127,7 @@ if __name__ == "__main__":
 
     # Multiple override options → this creates a job per combination
     manual_overrides = {
-        "pv_model/kind": "Carrick2015",
+        "pv_model/kind": ["constant", "Carrick2015"],
         "io/catalogue_name": "CF4_W1",
         "io/root_output": "results/CF4_H0_anisotropy",
         "pv_model/use_MNR": [True, False],
