@@ -47,7 +47,9 @@ setup(
         "quadax",
         "matplotlib",
         "corner",
-        "tomli_w"
+        "tomli_w",
+        "scienceplots",
+        "jax-cosmo",
     ],
     include_package_data=True,
     zip_safe=False,
