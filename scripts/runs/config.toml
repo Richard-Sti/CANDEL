@@ -26,7 +26,7 @@ num_chains_harmonic = 5
 ###############################################################################
 
 [pv_model]
-use_MNR = true
+use_MNR = false
 # Default kind. This gets overwritten if using a submission script.
 kind = "precomputed_los_Carrick2015"
 # kind = "Vext_radial"
@@ -60,11 +60,11 @@ dist = "normal"
 loc = 1.0
 scale = 0.5
 
-# [model.priors.b1]
-# dist = "normal"
-# loc = 0
-# scale = 1.0
-#
+[model.priors.b1]
+dist = "normal"
+loc = 0
+scale = 1.0
+
 # [model.priors.b2]
 # dist = "normal"
 # loc = 0
@@ -151,7 +151,7 @@ endpoints="not-a-knot"
 root_output = "results"
 # Default catalogue name and output path. This gets overwritten
 # if using a submission script.
-catalogue_name = "PantheonPlus"
+catalogue_name = "CF4_W1"
 # catalogue_name = "CF4_mock_0"
 
 fname_output = "results/test.hdf5"
