@@ -203,6 +203,9 @@ def name2label(name):
         "a_TFR_dipole_mag": r"$a_\mathrm{TFR, dipole}$",
         "a_TFR_dipole_ell": r"$\ell_\mathrm{TFR, dipole}$",
         "a_TFR_dipole_b": r"$b_\mathrm{TFR, dipole}$",
+        "M_dipole_mag": r"$M_\mathrm{dipole}$",
+        "M_dipole_ell": r"$\ell_\mathrm{dipole}$",
+        "M_dipole_b": r"$b_\mathrm{dipole}$",
         "eta_prior_mean": r"$\hat{\eta}$",
         "eta_prior_std": r"$w_\eta$",
         "A_CL": r"$A_{\rm CL}$",
@@ -277,7 +280,7 @@ def plot_Vext_rad_corner(samples, show_fig=True, filename=None, smooth=1):
     fig = corner(data, labels=labels, show_titles=True, smooth=smooth)
 
     if filename is not None:
-        fprint(f"Saving corner plot to {filename}")
+        fprint(f"saving knots corner plot to {filename}")
         fig.savefig(filename, bbox_inches="tight")
 
     if show_fig:
