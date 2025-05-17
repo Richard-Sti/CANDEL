@@ -50,6 +50,7 @@ from .redshift2real import (                                                    
 from .util import (                                                             # noqa
     SPEED_OF_LIGHT,                                                             # noqa
     plot_corner,                                                                # noqa
+    plot_radial_profiles,                                                       # noqa
     radec_to_cartesian,                                                         # noqa
     radec_to_galactic,                                                          # noqa
     galactic_to_radec,                                                          # noqa

@@ -1,10 +1,10 @@
-# root_main = "/Users/rstiskalek/Projects/CANDEL/"
-# python_exec = "/Users/rstiskalek/Projects/CANDEL/venv_candel/bin/python"
-# machine = "local"
+root_main = "/Users/rstiskalek/Projects/CANDEL/"
+python_exec = "/Users/rstiskalek/Projects/CANDEL/venv_candel/bin/python"
+machine = "local"
 
-root_main = "/mnt/home/rstiskalek/ceph/CANDEL"
-python_exec="/mnt/home/rstiskalek/CANDEL/venv_gpu_candel/bin/python"
-machine="rusty"
+# root_main = "/mnt/home/rstiskalek/ceph/CANDEL"
+# python_exec="/mnt/home/rstiskalek/CANDEL/venv_gpu_candel/bin/python"
+# machine="rusty"
 
 
 ###############################################################################
@@ -12,6 +12,9 @@ machine="rusty"
 ###############################################################################
 
 [inference]
+model = "Clusters_DistMarg"
+num_warmup = 500
+num_samples = 500
 model = "TFRModel_DistMarg"
 num_warmup = 2000
 num_samples = 15000
@@ -28,9 +31,9 @@ num_chains_harmonic = 5
 [pv_model]
 use_MNR = false
 # Default kind. This gets overwritten if using a submission script.
-# kind = "precomputed_los_Carrick2015"
-kind = "constant"
-galaxy_bias = "powerlaw"
+kind = "precomputed_los_Carrick2015"
+# kind = "Vext_radial"
+galaxy_bias = "powerlaw"  # Ignored unless having an underlying density field
 
 
 ###############################################################################
@@ -60,11 +63,11 @@ dist = "uniform"
 low = 0.0
 high = 3.0
 
-# [model.priors.b1]
-# dist = "normal"
-# loc = 0
-# scale = 1.0
-#
+[model.priors.b1]
+dist = "normal"
+loc = 0
+scale = 1.0
+
 # [model.priors.b2]
 # dist = "normal"
 # loc = 0
@@ -104,6 +107,11 @@ dist = "normal"
 loc = -18.5
 scale = 0.5
 
+[model.priors.SN_absmag_dipole]
+dist = "vector_uniform"
+low = 0.0
+high = 0.25
+
 [model.priors.CL_A]
 dist = "normal"
 loc = -0.3
@@ -129,6 +137,15 @@ dist = "vector_uniform_fixed"
 low = 0.0
 high = 2500
 
+[model.priors.Vext_radial]
+dist = "vector_radial_spline_uniform"
+low = 0.0
+high = 5000
+
+rknot = [0, 250, 600]
+k = 1
+endpoints="not-a-knot"
+
 ################################################################################
 #                                  Data                                        #
 ################################################################################
@@ -137,7 +154,7 @@ high = 2500
 root_output = "results"
 # Default catalogue name and output path. This gets overwritten
 # if using a submission script.
-catalogue_name = "Clusters"
+catalogue_name = "CF4_W1"
 # catalogue_name = "CF4_mock_0"
 
 fname_output = "results/test.hdf5"
@@ -251,6 +268,7 @@ los_file = "data/Clusters/los_Clusters_<X>.hdf5"
 
 [io.reconstruction_main]
 rmin = 0.1
+rmax = 750
 rmax = 251
 num_steps = 501
 
