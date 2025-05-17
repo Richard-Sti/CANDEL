@@ -13,11 +13,8 @@ machine = "local"
 
 [inference]
 model = "Clusters_DistMarg"
-num_warmup = 500
-num_samples = 500
-model = "TFRModel_DistMarg"
 num_warmup = 2000
-num_samples = 15000
+num_samples = 10000
 num_chains = 1
 seed = 42
 compute_log_density = true
@@ -268,8 +265,7 @@ los_file = "data/Clusters/los_Clusters_<X>.hdf5"
 
 [io.reconstruction_main]
 rmin = 0.1
-rmax = 750
-rmax = 251
+rmax = 1001
 num_steps = 501
 
 [io.reconstruction_main.Carrick2015]

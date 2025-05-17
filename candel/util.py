@@ -28,9 +28,9 @@ import astropy.units as u
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
-import scienceplots  # noqa
 from astropy.coordinates import SkyCoord
 from corner import corner
+from h5py import File
 from jax import vmap
 from jax_cosmo.scipy.interpolate import InterpolatedUnivariateSpline
 
