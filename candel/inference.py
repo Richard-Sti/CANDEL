@@ -201,14 +201,19 @@ def postprocess_samples(samples):
                 samples[f"{prefix}_mag"] = samples.pop(f"{prefix}_mag")
             break
 
-    # Convert aTFR dipole samples to galactic coordinates
-    if any("a_TFR_dipole" in key for key in samples.keys()):
-        ell, b = radec_to_galactic(
-            np.rad2deg(samples.pop("a_TFR_dipole_phi")),
-            np.rad2deg(0.5 * np.pi - np.arccos(samples.pop("a_TFR_dipole_cos_theta"))),)  # noqa
-        samples["a_TFR_dipole_mag"] = samples.pop("a_TFR_dipole_mag")
-        samples["a_TFR_dipole_ell"] = ell
-        samples["a_TFR_dipole_b"] = b
+    for prefix in ["a_TFR_dipole", "M_dipole"]:
+        if f"{prefix}_phi" in samples and f"{prefix}_cos_theta" in samples:
+            phi = np.rad2deg(samples.pop(f"{prefix}_phi"))
+            theta = np.arccos(samples.pop(f"{prefix}_cos_theta"))
+            dec = np.rad2deg(0.5 * np.pi - theta)
+
+            ell, b = radec_to_galactic(phi, dec)
+
+            samples[f"{prefix}_ell"] = ell
+            samples[f"{prefix}_b"] = b
+
+            if f"{prefix}_mag" in samples:
+                samples[f"{prefix}_mag"] = samples.pop(f"{prefix}_mag")
 
     return samples
 

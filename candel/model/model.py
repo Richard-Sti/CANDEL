@@ -662,7 +662,7 @@ class TFRModel_DistMarg(BaseModel):
             Vext_rad = compute_Vext_radial(
                 data, Vext, with_radial_Vext=self.with_radial_Vext,
                 **self.kwargs_radial_Vext)
-            zpec = (Vrad + Vext_rad[:, None]) / SPEED_OF_LIGHT
+            zpec = (Vrad + Vext_rad) / SPEED_OF_LIGHT
             zcmb = self.distmod2redshift(mu_grid, h=h)
             czpred = SPEED_OF_LIGHT * ((1 + zcmb) * (1 + zpec) - 1)
 
@@ -698,6 +698,7 @@ class PantheonPlusModel_DistMarg(BaseModel):
 
         # Sample the SN parameters.
         M = rsample("M", self.priors["SN_absmag"])
+        dM = rsample("M_dipole", self.priors["SN_absmag_dipole"])
         sigma_mu = rsample("sigma_mu", self.priors["sigma_mu"])
 
         # Sample velocity field parameters.
@@ -724,6 +725,7 @@ class PantheonPlusModel_DistMarg(BaseModel):
                 obs=data["mag"])
             sigma_mu = jnp.ones_like(mag) * sigma_mu
 
+            M = M + jnp.sum(dM * data["rhat"], axis=1)
             mu_SN = mag - M
 
             r_grid = data["los_r"][None, :] / h
@@ -746,7 +748,7 @@ class PantheonPlusModel_DistMarg(BaseModel):
             Vext_rad = compute_Vext_radial(
                 data, Vext, with_radial_Vext=self.with_radial_Vext,
                 **self.kwargs_radial_Vext)
-            zpec = (Vrad + Vext_rad[:, None]) / SPEED_OF_LIGHT
+            zpec = (Vrad + Vext_rad) / SPEED_OF_LIGHT
             zcmb = self.distmod2redshift(mu_grid, h=h)
             czpred = SPEED_OF_LIGHT * ((1 + zcmb) * (1 + zpec) - 1)
 
