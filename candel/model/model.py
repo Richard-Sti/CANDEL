@@ -22,6 +22,7 @@ from astropy.cosmology import FlatLambdaCDM
 from jax import random, vmap
 from jax.lax import cond
 from jax.scipy.stats import norm
+from jax_cosmo.scipy.interpolate import InterpolatedUnivariateSpline
 from numpyro import deterministic, factor, plate, sample
 from numpyro.distributions import (Delta, Distribution, MultivariateNormal,
                                    Normal, ProjectedNormal, TruncatedNormal,
@@ -136,6 +137,38 @@ def sample_vector_fixed(name, mag_min, mag_max):
         )
 
 
+def sample_spline_radial_vector(name, nval, low, high):
+    """
+    Sample a radial vector approximated as a spline with `n` knots spherical
+    coordinates. The magnitude is sampled uniformly and the direction is
+    sampled uniformly on the unit sphere.
+    """
+    with plate(f"{name}_plate", nval):
+        phi = sample(f"{name}_phi", Uniform(0, 2 * jnp.pi))
+        cos_theta = sample(f"{name}_cos_theta", Uniform(-1, 1))
+        sin_theta = jnp.sqrt(1 - cos_theta**2)
+
+        mag = sample(f"{name}_mag", Uniform(low, high))
+
+    return mag[:, None] * jnp.asarray([
+        sin_theta * jnp.cos(phi),
+        sin_theta * jnp.sin(phi),
+        cos_theta]).T
+
+
+def interp_spline_radial_vector(rq, bin_values, **kwargs):
+    """Interpolate delta radial vectors using JAX-compatible splines."""
+    x = jnp.asarray(kwargs["rknot"])
+    k = kwargs.get("k", 3)
+    endpoints = kwargs.get("endpoints", "not-a-knot")
+
+    def spline_eval(y):
+        spline = InterpolatedUnivariateSpline(x, y, k=k, endpoints=endpoints)
+        return spline(rq)
+
+    return vmap(spline_eval)(bin_values.T)
+
+
 def load_priors(config_priors):
     """Load a dictionary of NumPyro distributions from a TOML file."""
     _DIST_MAP = {
@@ -144,7 +177,8 @@ def load_priors(config_priors):
         "delta": lambda p: Delta(p["value"]),
         "jeffreys": lambda p: JeffreysPrior(p["low"], p["high"]),
         "vector_uniform": lambda p: {"type": "vector_uniform", "low": p["low"], "high": p["high"]},  # noqa
-        "vector_uniform_fixed": lambda p: {"type": "vector_uniform_fixed", "low": p["low"], "high": p["high"],}  # noqa
+        "vector_uniform_fixed": lambda p: {"type": "vector_uniform_fixed", "low": p["low"], "high": p["high"],},  # noqa
+        "vector_radial_spline_uniform": lambda p: {"type": "vector_radial_spline_uniform", "nval": len(p["rknot"]), "low": p["low"], "high": p["high"]},  # noqa
     }
     priors = {}
     prior_dist_name = {}
@@ -183,6 +217,10 @@ def rsample(name, dist):
 
     if isinstance(dist, dict) and dist.get("type") == "vector_uniform_fixed":
         return sample_vector_fixed(name, dist["low"], dist["high"])
+
+    if isinstance(dist, dict) and dist.get("type") == "vector_radial_spline_uniform":  # noqa
+        return sample_spline_radial_vector(
+            name, dist["nval"], dist["low"], dist["high"], )
 
     return sample(name, dist)
 
@@ -286,6 +324,13 @@ class BaseModel(ABC):
     def __init__(self, config_path):
         config = load_config(config_path)
 
+        kind = config["pv_model"]["kind"]
+        kind_allowed = ["Vext", "Vext_radial"]
+        if kind not in kind_allowed and not kind.startswith("precomputed_los_"):  # noqa
+            raise ValueError(
+                f"Invalid kind '{kind}'. Must be one of {kind_allowed} or "
+                "start with 'precomputed_los_'.")
+
         # Initialize plenty of interpolators for distance and redshift
         self.distmod2redshift = Distmod2Redshift()
         self.distmod2distance = Distmod2Distance()
@@ -293,8 +338,20 @@ class BaseModel(ABC):
         self.redshift2distance = Redshift2Distance()
         self.log_grad_distmod2distance = LogGrad_Distmod2ComovingDistance()
 
-        self.priors, self.prior_dist_name = load_priors(
-            config["model"]["priors"])
+        priors = config["model"]["priors"]
+
+        self.with_radial_Vext = kind == "Vext_radial"
+        if self.with_radial_Vext:
+            d = priors["Vext_radial"]
+            fprint(f"using radial `Vext` with spline knots at {d['rknot']}")
+            self.with_radial_Vext = True
+            self.kwargs_radial_Vext = {
+                key: d[key] for key in ["rknot", "k", "endpoints"]}
+        else:
+            self.with_radial_Vext = False
+            self.kwargs_radial_Vext = {}
+
+        self.priors, self.prior_dist_name = load_priors(priors)
         self.num_norm_kwargs = config["model"]["mu_norm"]
         self.mag_grid_kwargs = config["model"]["mag_grid"]
 
@@ -338,6 +395,24 @@ def lp_galaxy_bias(delta, log_rho, bias_params, galaxy_bias):
     return lp
 
 
+def compute_Vext_radial(data, Vext, with_radial_Vext=False, **kwargs_radial):
+    """Compute the line-of-sight projection of the external velocity."""
+    if with_radial_Vext:
+        Vext = interp_spline_radial_vector(
+            data["los_r"], Vext, **kwargs_radial
+        )  # → shape (3, n_rbins)
+
+        Vext_rad = jnp.sum(
+            data["rhat"][..., None] * Vext[None, ...], axis=1
+        )  # → (n_galaxies, n_rbins)
+    else:
+        Vext_rad = jnp.sum(
+            data["rhat"] * Vext[None, :], axis=1
+        )[:, None]  # → (n_galaxies, 1)
+
+    return Vext_rad
+
+
 ###############################################################################
 #                              TFR models                                     #
 ###############################################################################
@@ -367,7 +442,11 @@ class TFRModel(BaseModel):
             "a_TFR_dipole", self.priors["TFR_zeropoint_dipole"])
 
         # Sample the velocity field parameters.
-        Vext = rsample("Vext", self.priors["Vext"])[None, :]
+        if self.with_radial_Vext:
+            raise NotImplementedError(
+                "Radial Vext is not implemented for TFRModel.")
+        else:
+            Vext = rsample("Vext", self.priors["Vext"])
         sigma_v = rsample("sigma_v", self.priors["sigma_v"])
 
         # Remainining parameters
@@ -498,7 +577,10 @@ class TFRModel_DistMarg(BaseModel):
             "a_TFR_dipole", self.priors["TFR_zeropoint_dipole"])
 
         # Sample velocity field parameters.
-        Vext = rsample("Vext", self.priors["Vext"])
+        if self.with_radial_Vext:
+            Vext = rsample("Vext_rad", self.priors["Vext_radial"])
+        else:
+            Vext = rsample("Vext", self.priors["Vext"])
         sigma_v = rsample("sigma_v", self.priors["sigma_v"])
 
         # Remaining parameters
@@ -577,8 +659,9 @@ class TFRModel_DistMarg(BaseModel):
 
             ll_norm = ln_simpson(ll, x=r_grid, axis=-1)
 
-            Vext_rad = jnp.sum(data["rhat"] * Vext[None, :], axis=1)
-
+            Vext_rad = compute_Vext_radial(
+                data, Vext, with_radial_Vext=self.with_radial_Vext,
+                **self.kwargs_radial_Vext)
             zpec = (Vrad + Vext_rad[:, None]) / SPEED_OF_LIGHT
             zcmb = self.distmod2redshift(mu_grid, h=h)
             czpred = SPEED_OF_LIGHT * ((1 + zcmb) * (1 + zpec) - 1)
@@ -618,7 +701,10 @@ class PantheonPlusModel_DistMarg(BaseModel):
         sigma_mu = rsample("sigma_mu", self.priors["sigma_mu"])
 
         # Sample velocity field parameters.
-        Vext = rsample("Vext", self.priors["Vext"])
+        if self.with_radial_Vext:
+            Vext = rsample("Vext_rad", self.priors["Vext_radial"])
+        else:
+            Vext = rsample("Vext", self.priors["Vext"])
         sigma_v = rsample("sigma_v", self.priors["sigma_v"])
 
         # Remaining parameters
@@ -657,8 +743,9 @@ class PantheonPlusModel_DistMarg(BaseModel):
 
             ll_norm = ln_simpson(ll, x=r_grid, axis=-1)
 
-            Vext_rad = jnp.sum(data["rhat"] * Vext[None, :], axis=1)
-
+            Vext_rad = compute_Vext_radial(
+                data, Vext, with_radial_Vext=self.with_radial_Vext,
+                **self.kwargs_radial_Vext)
             zpec = (Vrad + Vext_rad[:, None]) / SPEED_OF_LIGHT
             zcmb = self.distmod2redshift(mu_grid, h=h)
             czpred = SPEED_OF_LIGHT * ((1 + zcmb) * (1 + zpec) - 1)
@@ -766,7 +853,10 @@ class Clusters_DistMarg(BaseModel):
         sigma_mu = rsample("sigma_mu", self.priors["sigma_mu"])
 
         # Sample velocity field parameters.
-        Vext = rsample("Vext", self.priors["Vext"])
+        if self.with_radial_Vext:
+            Vext = rsample("Vext_rad", self.priors["Vext_radial"])
+        else:
+            Vext = rsample("Vext", self.priors["Vext"])
         sigma_v = rsample("sigma_v", self.priors["sigma_v"])
 
         # Remaining parameters
@@ -831,9 +921,10 @@ class Clusters_DistMarg(BaseModel):
 
             ll_norm = ln_simpson(ll, x=r_grid, axis=-1)
 
-            Vext_rad = jnp.sum(data["rhat"] * Vext[None, :], axis=1)
-
-            zpec = (Vrad + Vext_rad[:, None]) / SPEED_OF_LIGHT
+            Vext_rad = compute_Vext_radial(
+                data, Vext, with_radial_Vext=self.with_radial_Vext,
+                **self.kwargs_radial_Vext)
+            zpec = (Vrad + Vext_rad) / SPEED_OF_LIGHT
             zcmb = self.distmod2redshift(mu_grid, h=h)
             czpred = SPEED_OF_LIGHT * ((1 + zcmb) * (1 + zpec) - 1)
 
