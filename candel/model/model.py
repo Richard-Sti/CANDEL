@@ -406,17 +406,16 @@ def lp_galaxy_bias(delta, log_rho, bias_params, galaxy_bias):
 def compute_Vext_radial(data, Vext, with_radial_Vext=False, **kwargs_radial):
     """Compute the line-of-sight projection of the external velocity."""
     if with_radial_Vext:
+        # Shape (3, n_rbins)
         Vext = interp_spline_radial_vector(
-            data["los_r"], Vext, **kwargs_radial
-        )  # → shape (3, n_rbins)
+            data["los_r"], Vext, **kwargs_radial)
 
+        # Shape (n_galaxies, n_rbins)
         Vext_rad = jnp.sum(
-            data["rhat"][..., None] * Vext[None, ...], axis=1
-        )  # → (n_galaxies, n_rbins)
+            data["rhat"][..., None] * Vext[None, ...], axis=1)
     else:
-        Vext_rad = jnp.sum(
-            data["rhat"] * Vext[None, :], axis=1
-        )[:, None]  # → (n_galaxies, 1)
+        # Shape (n_galaxies, 1)
+        Vext_rad = jnp.sum(data["rhat"] * Vext[None, :], axis=1)[:, None]
 
     return Vext_rad
 
