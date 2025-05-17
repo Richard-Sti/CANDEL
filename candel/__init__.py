@@ -14,6 +14,7 @@
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 from candel import (                                                            # noqa
+    cosmo,                                                                      # noqa
     field,                                                                      # noqa
     mock,                                                                       # noqa
     pvdata,                                                                     # noqa
