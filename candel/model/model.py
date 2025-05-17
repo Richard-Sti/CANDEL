@@ -283,6 +283,9 @@ def log_norm_pmu_im(mu_TFR, sigma_mu, bias_params, distmod2distance,
     if galaxy_bias == "powerlaw":
         log_rho_grid = los_interp.interp_many_steps_per_galaxy(r_grid * h)
         weights += bias_params[0] * log_rho_grid
+    elif galaxy_bias == "linear":
+        delta_grid = los_interp.interp_many_steps_per_galaxy(r_grid * h)
+        weights += jnp.log(jnp.clip(1 + bias_params[0] * delta_grid, 1e-5))
     else:
         raise ValueError(f"Invalid galaxy bias model '{galaxy_bias}'.")
 
@@ -358,7 +361,7 @@ class BaseModel(ABC):
         self.use_MNR = config["pv_model"]["use_MNR"]
 
         self.galaxy_bias = config["pv_model"]["galaxy_bias"]
-        if self.galaxy_bias not in ["powerlaw"]:
+        if self.galaxy_bias not in ["powerlaw", "linear"]:
             raise ValueError(
                 f"Invalid galaxy bias model '{self.galaxy_bias}'. "
                 "Choose either 'powerlaw'.")
@@ -376,7 +379,10 @@ def sample_galaxy_bias(priors, galaxy_bias):
     """
     if galaxy_bias == "powerlaw":
         alpha = rsample("alpha", priors["alpha"])
-        bias_params = [alpha]
+        bias_params = [alpha,]
+    elif galaxy_bias == "linear":
+        b1 = rsample("b1", priors["b1"])
+        bias_params = [b1,]
     else:
         raise ValueError(f"Invalid galaxy bias model '{galaxy_bias}'.")
 
@@ -389,6 +395,8 @@ def lp_galaxy_bias(delta, log_rho, bias_params, galaxy_bias):
     """
     if galaxy_bias == "powerlaw":
         lp = bias_params[0] * log_rho
+    elif galaxy_bias == "linear":
+        lp = jnp.log(jnp.clip(1 + bias_params[0] * delta, 1e-5))
     else:
         raise ValueError(f"Invalid galaxy bias model '{galaxy_bias}'.")
 
@@ -520,14 +528,22 @@ class TFRModel(BaseModel):
                 if self.galaxy_bias == "powerlaw":
                     alpha = bias_params[0]
                     log_pmu += alpha * data.f_los_log_density(r * h)
+                    log_pmu_norm = log_norm_pmu_im(
+                        mu_TFR, sigma_mu, bias_params, self.distmod2distance,
+                        data.f_los_log_density, self.galaxy_bias,
+                        **self.num_norm_kwargs, h=h)
+                elif self.galaxy_bias == "linear":
+                    b1 = bias_params[0]
+                    log_pmu += jnp.log(
+                        jnp.clip(1 + b1 * data.f_los_delta(r * h), 1e-5))
+                    log_pmu_norm = log_norm_pmu_im(
+                        mu_TFR, sigma_mu, bias_params, self.distmod2distance,
+                        data.f_los_delta, self.galaxy_bias,
+                        **self.num_norm_kwargs, h=h)
                 else:
                     raise ValueError(
                         f"Invalid galaxy bias model '{self.galaxy_bias}'.")
 
-                log_pmu_norm = log_norm_pmu_im(
-                    mu_TFR, sigma_mu, bias_params, self.distmod2distance,
-                    data.f_los_log_density, self.galaxy_bias,
-                    **self.num_norm_kwargs, h=h)
             else:
                 Vrad = 0.
                 # Homogeneous Malmquist bias
