@@ -192,6 +192,8 @@ def name2label(name):
         "sigma_mu": r"$\sigma_\mu$",
         "sigma_v": r"$\sigma_v$",
         "alpha": r"$\alpha$",
+        "b1": r"$b_1$",
+        "b2": r"$b_2$",
         "beta": r"$\beta$",
         "Vext_mag": r"$V_\mathrm{ext}$",
         "Vext_ell": r"$\ell_\mathrm{ext}$",
