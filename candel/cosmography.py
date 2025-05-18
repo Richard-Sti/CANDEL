@@ -87,6 +87,35 @@ class Distance2Distmod:
         return self._f(jnp.log(r * h)) - 5 * jnp.log10(h)
 
 
+class LogAngularDiameterDistance2Distmod:
+    """
+    Class to build an interpolator to convert log angular diameter distance in
+    `Mpc` to distance modulus. Choice of `h` is determined when calling the
+    `__call__` method.
+
+    Parameters
+    ----------
+    Om0 : float
+        Matter density parameter.
+    zmin_interp, zmax_interp : float
+        Minimum and maximum redshift for the interpolation grid.
+    npoints_interp : int
+        Number of points in the interpolation grid.
+    """
+    def __init__(self, Om0=0.3, zmin_interp=1e-8, zmax_interp=0.5,
+                 npoints_interp=1000):
+        cosmo = FlatLambdaCDM(H0=100, Om0=Om0)
+        z_grid = np.linspace(zmin_interp, zmax_interp, npoints_interp)
+        da_grid = cosmo.angular_diameter_distance(z_grid).value
+        mu_grid = cosmo.distmod(z_grid).value
+
+        self._f = vmap(
+            Interpolator1D(jnp.log10(da_grid), mu_grid, extrap=False))
+
+    def __call__(self, logdA, h=1,):
+        return self._f(logdA + jnp.log10(h)) - 5 * jnp.log10(h)
+
+
 class Distmod2Redshift:
     """
     Class to build an interpolator to convert distance modulus to comoving
