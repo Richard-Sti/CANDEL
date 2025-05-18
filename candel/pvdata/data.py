@@ -16,6 +16,7 @@
 from os.path import join
 
 import numpy as np
+from astropy import units as u
 from astropy.cosmology import FlatLambdaCDM
 from astropy.io import fits
 from h5py import File
@@ -105,6 +106,8 @@ class PVDataFrame:
             data = load_CF4_mock(root, index)
         elif "CF4_" in name:
             data = load_CF4_data(root, **config)
+        elif name == "SDSS_FP":
+            data = load_SDSS_FP(root, **config)
         elif name == "PantheonPlus":
             data = load_PantheonPlus(root, **config)
         elif name == "Clusters":
@@ -618,6 +621,65 @@ def load_clusters(root, zcmb_max=0.2, los_data_path=None, return_all=False,
 
     fprint("subtracting the mean logY from the data.")
     data["logY"] -= np.mean(data["logY"])
+
+    if los_data_path is not None:
+        data = load_los(los_data_path, data, mask=mask)
+
+    return data
+
+
+###############################################################################
+#                                 SDSS FP                                     #
+###############################################################################
+
+def arcsec_to_radian(arcsec):
+    return (arcsec * u.arcsec).to(u.radian).value
+
+
+def load_SDSS_FP(root, zcmb_max=None, b_min=7.5, los_data_path=None,
+                 return_all=False, **kwargs):
+    """Load the SDSS FP data from the given root directory."""
+    fname = join(root, "SDSS_PV_public.dat")
+    d_input = np.genfromtxt(fname, names=True, )
+
+    rdev = d_input["deVRad_r"]
+    e_rdev = d_input["deVRadErr_r"]
+    boa = d_input["deVAB_r"]
+    e_boa = d_input["deVABErr_r"]
+
+    theta_eff = arcsec_to_radian(rdev * np.sqrt(boa))
+    e_theta_eff = theta_eff * np.sqrt(
+        (e_rdev / rdev)**2 + (0.5 * e_boa / boa)**2)
+
+    data = {
+        "RA": d_input["RA"],
+        "dec": d_input["Dec"],
+        "zcmb": d_input["zcmb_group"],
+        "theta_eff": theta_eff,
+        "e_theta_eff": e_theta_eff,
+        "log_theta_eff": np.log10(theta_eff),
+        "logI": d_input["i"],
+        "e_logI": d_input["ei"],
+        "logs": d_input["s"],
+        "e_logs": d_input["es"],
+        }
+
+    if return_all:
+        return data
+
+    mask = np.ones(len(data["zcmb"]), dtype=bool)
+    if zcmb_max is not None:
+        mask &= data["zcmb"] < zcmb_max
+
+    if b_min is not None:
+        b = radec_to_galactic(data["RA"], data["dec"])[1]
+        mask &= np.abs(b) > b_min
+
+    fprint(f"removed {len(mask) - np.sum(mask)} galaxies, thus "
+           f"{len(data['RA'][mask])} remain.")
+
+    for key in data:
+        data[key] = data[key][mask]
 
     if los_data_path is not None:
         data = load_los(los_data_path, data, mask=mask)
