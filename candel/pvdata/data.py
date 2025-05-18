@@ -335,88 +335,70 @@ def load_CF4_data(root, which_band, best_mag_quality=True, eta_min=-0.3,
                   zcmb_max=None, b_min=7.5, remove_outliers=True,
                   calibration=None, los_data_path=None, return_all=False,
                   **kwargs):
-    """
-    Loads the `CF4_TFR.hdf5` file from `root` and extracts fields based on
-    `which_band`. Applies filters using `eta_min`, `zcmb_max`, and
-    `best_mag_quality`. Returns a dictionary of cleaned and filtered data
-    arrays.
-    """
+    """Load CF4 TFR data and apply optional filters."""
     with File(join(root, "CF4_TFR.hdf5"), 'r') as f:
         zcmb = f["Vcmb"][...] / SPEED_OF_LIGHT
-        RA = f["RA"][...] * 360 / 24
+        RA = f["RA"][...] * 15  # deg
         DEC = f["DE"][...]
-
-        if which_band == "w1":
-            mag = f["w1"][...]
-            mag_quality = f["Qw"][...]
-        elif which_band == "i":
-            mag = f["i"][...]
-            mag_quality = f["Qs"][...]
-        else:
-            raise ValueError("which_band must be 'w1' or 'i'.")
-
+        mag = f[which_band][...]
+        mag_quality = f["Qw"][...] if which_band == "w1" else f["Qs"][...]
         eta = f["lgWmxi"][...] - 2.5
         e_eta = f["elgWi"][...]
-
         pgc = f["pgc"][...]
 
     fprint(f"initially loaded {len(pgc)} galaxies from CF4 TFR data.")
 
-    data = {
-        "zcmb": zcmb,
-        "RA": RA,
-        "dec": DEC,
-        "mag": mag,
-        "e_mag": np.ones_like(mag) * 0.05,
-        "eta": eta,
-        "e_eta": e_eta,
-    }
+    data = dict(
+        zcmb=zcmb,
+        RA=RA,
+        dec=DEC,
+        mag=mag,
+        e_mag=np.full_like(mag, 0.05),
+        eta=eta,
+        e_eta=e_eta,
+    )
 
     if return_all:
         return data
 
-    mask = data["eta"] > eta_min
+    mask = eta > eta_min
     if best_mag_quality:
         mask &= mag_quality == 5
     if zcmb_max is not None:
-        mask &= data["zcmb"] < zcmb_max
+        mask &= zcmb < zcmb_max
     if remove_outliers:
         outliers = np.concatenate([
-            np.genfromtxt(
-                join(root, f"CF4_{band}_outliers.csv"),
-                delimiter=",", names=True)
-            for band in ("W1", "i")
-            ])
-        pgc_outliers = outliers["PGC"]
-        mask &= ~np.isin(pgc, pgc_outliers)
+            np.genfromtxt(join(root, f"CF4_{b}_outliers.csv"),
+                          delimiter=",", names=True)
+            for b in ("W1", "i")
+        ])
+        mask &= ~np.isin(pgc, outliers["PGC"])
     if b_min is not None:
         b = radec_to_galactic(RA, DEC)[1]
         mask &= np.abs(b) > b_min
 
     fprint(f"removed {len(pgc) - np.sum(mask)} galaxies, thus "
-           f"{len(pgc[mask])} remain.")
+           f"{np.sum(mask)} remain.")
 
-    for key in data:
-        data[key] = data[key][mask]
+    for k in data:
+        data[k] = data[k][mask]
     pgc = pgc[mask]
 
-    if los_data_path is not None:
+    if los_data_path:
         data = load_los(los_data_path, data, mask=mask)
 
     if calibration == "SH0ES":
-        is_calibrator, mu_cal, C_mu_cal = load_SH0ES_calibration(
+        is_cal, mu, C_mu = load_SH0ES_calibration(
             join(root, "CF4_SH0ES_calibration.hdf5"), pgc)
-
-        fprint(f"out of {len(pgc)} galaxies, {np.sum(is_calibrator)} are "
+        fprint(f"out of {len(pgc)} galaxies, {np.sum(is_cal)} are "
                "SH0ES calibrators.")
-
-        data = {**data,
-                "is_calibrator": is_calibrator,
-                "mu_cal": mu_cal,
-                "C_mu_cal": C_mu_cal,
-                "std_mu_cal": np.diag(C_mu_cal)**0.5,
-                }
-    elif calibration is not None:
+        data.update({
+            "is_calibrator": is_cal,
+            "mu_cal": mu,
+            "C_mu_cal": C_mu,
+            "std_mu_cal": np.sqrt(np.diag(C_mu)),
+        })
+    elif calibration:
         raise ValueError("Unknown calibration type.")
 
     return data
