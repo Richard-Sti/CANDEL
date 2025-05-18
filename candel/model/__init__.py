@@ -19,6 +19,7 @@ from .model import (                                                            
     TFRModel_DistMarg,                                                          # noqa
     PantheonPlusModel_DistMarg,                                                 # noqa
     Clusters_DistMarg,                                                          # noqa
+    FPModel_DistMarg,                                                           # noqa
     )
 
 
@@ -38,6 +39,7 @@ def name2model(name):
         "TFRModel_DistMarg": TFRModel_DistMarg,
         "PantheonPlusModel_DistMarg": PantheonPlusModel_DistMarg,
         "Clusters_DistMarg": Clusters_DistMarg,
+        "FPModel_DistMarg": FPModel_DistMarg
         }
 
     if name not in mapping:
