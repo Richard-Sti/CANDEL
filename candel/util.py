@@ -213,6 +213,9 @@ def name2label(name):
         "A_CL": r"$A_{\rm CL}$",
         "B_CL": r"$B_{\rm CL}$",
         "C_CL": r"$C_{\rm CL}$",
+        "a_FP": r"$a_{\rm FP}$",
+        "b_FP": r"$b_{\rm FP}$",
+        "c_FP": r"$c_{\rm FP}$",
     }
     return latex_labels.get(name, name)
 
