@@ -703,9 +703,9 @@ class Clusters_DistMarg(BaseModel):
         super().__init__(config_path)
 
         which_relation = self.config["io"]["Clusters"]["which_relation"]
-        if which_relation not in ["LT", "LTY"]:
+        if which_relation not in ["LT", "LY", "LTY"]:
             raise ValueError(f"Invalid scaling relation '{which_relation}'. "
-                             "Choose either 'LT' or 'LTY'.")
+                             "Choose either 'LT' or 'LY' or 'LTY'.")
 
         self.which_relation = which_relation
         self.sample_T = "T" in which_relation
@@ -735,7 +735,7 @@ class Clusters_DistMarg(BaseModel):
         # If C is being sampled, then we need to precompute the grids to
         # relate `logDL - c * logDA = theta` to `mu`. Note that these are
         # h = 1 and with a hard-cded Om = 0.3 cosmology.
-        if which_relation == "LTY":
+        if which_relation in ["LY", "LTY"]:
             d = self.config["io"]["Clusters"]
             z_grid = np.linspace(
                 d["zcmb_mapping_min"], d["zcmb_mapping_max"],
@@ -805,6 +805,9 @@ class Clusters_DistMarg(BaseModel):
                 # modulus.
                 logL_pred = jnp.log10(Ez) + A + B * logT
                 mu_cluster = 2.5 * (logL_pred - logF) + 25
+            elif self.which_relation == "LY":
+                theta = 0.5 * (jnp.log10(Ez) + A + C * logY - logF)
+                mu_cluster = self.mu_from_LTY_calibration(theta, C)
             elif self.which_relation == "LTY":
                 theta = 0.5 * (jnp.log10(Ez) + A + B * logT + C * logY - logF)
                 mu_cluster = self.mu_from_LTY_calibration(theta, C)
