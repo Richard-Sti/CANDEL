@@ -127,10 +127,10 @@ if __name__ == "__main__":
 
     # Multiple override options → this creates a job per combination
     manual_overrides = {
-        "pv_model/kind": ["constant", "Carrick2015"],
+        "pv_model/kind": "Carrick2015",
         "io/catalogue_name": "CF4_W1",
-        "io/root_output": "results/CF4_H0_anisotropy",
-        "pv_model/use_MNR": [True, False],
+        "io/root_output": "results/TEST_CF4_H0_anisotropy",
+        "pv_model/use_MNR": False,
         # "io/Clusters/which_relation": ["LT", "LTY"],
         # "io/Clusters/which_relation": "LT",
         # "model/priors/beta": [
@@ -139,7 +139,7 @@ if __name__ == "__main__":
         # ],
         "model/priors/TFR_zeropoint_dipole": [
             {"dist": "delta", "value": [0.0, 0.0, 0.0]},
-            {"dist": "vector_uniform_fixed", "low": 0.0, "high": 0.5},
+            {"dist": "vector_uniform_fixed", "low": 0.0, "high": 0.3},
         ],
         # "model/priors/Vext": [
         #     {"dist": "delta", "value": [0.0, 0.0, 0.0]},
