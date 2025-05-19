@@ -98,6 +98,9 @@ high = 1.0
 [model.priors.TFR_zeropoint_dipole]
 dist = "delta"
 value = [0.0, 0.0, 0.0]
+# dist = "vector_uniform"
+# low = 0.0
+# high = 0.5
 
 [model.priors.SN_absmag]
 dist = "normal"
@@ -198,7 +201,7 @@ zcmb_max = 0.05
 b_min = 7.5
 remove_outliers = true
 calibration = "None"
-dust_model = "default"
+dust_model = "none"
 
 add_mag_selection = true
 add_eta_selection = true
