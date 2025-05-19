@@ -163,9 +163,9 @@ k = 1
 endpoints="not-a-knot"
 
 [model.priors.Rdust]
-dist = "uniform"
-low = 0.0
-high = 0.5
+dist = "normal"
+low = 0.19
+high = 0.01
 
 ################################################################################
 #                                  Data                                        #
