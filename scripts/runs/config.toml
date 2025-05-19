@@ -13,8 +13,8 @@ machine = "local"
 
 [inference]
 model = "Clusters_DistMarg"
-num_warmup = 2000
-num_samples = 1500
+num_warmup = 1000
+num_samples = 1000
 num_chains = 1
 seed = 42
 compute_log_density = true
@@ -60,11 +60,11 @@ dist = "normal"
 loc = 1.0
 scale = 0.5
 
-# [model.priors.b1]
-# dist = "normal"
-# loc = 0
-# scale = 1.0
-#
+[model.priors.b1]
+dist = "normal"
+loc = 0
+scale = 1.0
+
 # [model.priors.b2]
 # dist = "normal"
 # loc = 0
@@ -104,20 +104,21 @@ dist = "normal"
 loc = -18.5
 scale = 0.5
 
+
 [model.priors.CL_A]
+dist = "uniform"
+low = -5
+high = 10
+
+[model.priors.CL_B]
 dist = "uniform"
 low = 0
 high = 10
 
-[model.priors.CL_B]
-dist = "normal"
-loc = 2
-scale = 1
-
 [model.priors.CL_C]
 dist = "uniform"
-low = -2
-high = 2
+low = -2.0
+high = 2.0
 
 [model.priors.sigma_v]
 dist = "jeffreys"
@@ -213,7 +214,7 @@ los_file = "data/Pantheon+/los_CF4_Pantheon+_<X>.hdf5"
 [io.Clusters]
 root = "data/Clusters"
 zcmb_max = 0.2
-which_relation = "LY"
+which_relation = "LTY"
 
 zcmb_mapping_min = 1e-5
 zcmb_mapping_max = 0.3

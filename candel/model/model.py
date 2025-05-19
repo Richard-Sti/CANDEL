@@ -710,6 +710,7 @@ class Clusters_DistMarg(BaseModel):
         self.which_relation = which_relation
         self.sample_T = "T" in which_relation
         self.sample_Y = "Y" in which_relation
+        self.sample_F = "L" in which_relation
 
         # Later make this choice more flexible.
         self.Om = 0.3
@@ -725,6 +726,11 @@ class Clusters_DistMarg(BaseModel):
             self.priors["CL_C"] = Delta(jnp.asarray(0.0))
             self.prior_dist_name["CL_C"] = "delta"
 
+        if not self.sample_F:
+            fprint("`logF` is not used in the model. Disabling its prior.")
+            self.priors["CL_A"] = Delta(jnp.asarray(0.0))
+            self.prior_dist_name["CL_A"] = "delta"
+
         if self.use_MNR:
             raise NotImplementedError(
                 "MNR for clusters is not implemented yet. Please set "
@@ -735,7 +741,7 @@ class Clusters_DistMarg(BaseModel):
         # If C is being sampled, then we need to precompute the grids to
         # relate `logDL - c * logDA = theta` to `mu`. Note that these are
         # h = 1 and with a hard-cded Om = 0.3 cosmology.
-        if which_relation in ["LY", "LTY"]:
+        if which_relation in ["LY", "LTY", "LT"]:
             d = self.config["io"]["Clusters"]
             z_grid = np.linspace(
                 d["zcmb_mapping_min"], d["zcmb_mapping_max"],
@@ -782,8 +788,10 @@ class Clusters_DistMarg(BaseModel):
                     "MNR for clusters is not implemented yet. Please set "
                     "`use_MNR` to False in the config file.")
             else:
-                logF = data["logF"]
-                sigma_mu2 = jnp.ones_like(logF) * sigma_mu**2
+                sigma_mu2 = np.ones(nsamples) * sigma_mu**2 
+                if self.sample_F:
+                    logF = data["logF"]
+                    sigma_mu2 += data["e2_logF"]
 
                 if self.sample_T:
                     logT = data["logT"]
@@ -803,8 +811,10 @@ class Clusters_DistMarg(BaseModel):
             if self.which_relation == "LT":
                 # Luminosity predicted from temperature, turned into distance
                 # modulus.
-                logL_pred = jnp.log10(Ez) + A + B * logT
-                mu_cluster = 2.5 * (logL_pred - logF) + 25
+                # logL_pred = jnp.log10(Ez) + A + B * logT
+                # mu_cluster = 2.5 * (logL_pred - logF) + 25
+                theta = 0.5 * (jnp.log10(Ez) + A + B * logT - logF)
+                mu_cluster = self.mu_from_LTY_calibration(theta, C)
             elif self.which_relation == "LY":
                 theta = 0.5 * (jnp.log10(Ez) + A + C * logY - logF)
                 mu_cluster = self.mu_from_LTY_calibration(theta, C)
