@@ -33,8 +33,9 @@ from numpyro.infer.reparam import ProjectedNormalReparam
 from quadax import simpson
 
 from ..cosmography import (Distance2Distmod, Distmod2Distance,
-                           Distmod2Redshift, LogGrad_Distmod2ComovingDistance,
-                           Redshift2Distance)
+                           Distmod2Redshift,
+                           LogAngularDiameterDistance2Distmod,
+                           LogGrad_Distmod2ComovingDistance, Redshift2Distance)
 from ..util import SPEED_OF_LIGHT, fprint, load_config
 from .magnitude_selection import log_magnitude_selection
 from .simpson import ln_simpson
@@ -440,6 +441,10 @@ class TFRModel(BaseModel):
     def __call__(self, data,):
         nsamples = len(data)
 
+        if data.sample_dust:
+            raise NotImplementedError(
+                "Dust sampling is not implemented for `TFRModel`.")
+
         # Sample the TFR parameters.
         a_TFR = rsample("a_TFR_h", self.priors["TFR_zeropoint"])
         b_TFR = rsample("b_TFR", self.priors["TFR_slope"])
@@ -591,6 +596,12 @@ class TFRModel_DistMarg(BaseModel):
         a_TFR_dipole = rsample(
             "a_TFR_dipole", self.priors["TFR_zeropoint_dipole"])
 
+        if data.sample_dust:
+            Rdust = rsample("R_dust", self.priors["Rdust"])
+            Ab = Rdust * data["ebv"]
+        else:
+            Ab = 0.
+
         # Sample velocity field parameters.
         if self.with_radial_Vext:
             Vext = rsample("Vext_rad", self.priors["Vext_radial"])
@@ -613,10 +624,12 @@ class TFRModel_DistMarg(BaseModel):
 
         with plate("data", nsamples):
             if self.use_MNR:
-                # Magnitude hyperprior and selection.
+                # Magnitude hyperprior and selection, note the optional dust
+                # correction.
                 mag = sample(
                     "mag_latent",
                     MagnitudeDistribution(**data.mag_dist_kwargs,))
+
                 if data.add_mag_selection:
                     # Magnitude selection at the true magnitude values.
                     log_Fm = log_magnitude_selection(
@@ -634,7 +647,13 @@ class TFRModel_DistMarg(BaseModel):
                     log_Fm -= ln_simpson(log_pmag_norm, x=mag_grid, axis=-1)
                     factor("mag_norm", log_Fm)
 
-                sample("mag_obs", Normal(mag, data["e_mag"]), obs=data["mag"])
+                # Correct for Milky Way extinction by subtracting Ab. If Ab
+                # is nonzero, the data is assumed to be uncorrected.
+                # This correction is applied only when comparing to observed
+                # values (MNR parameters are sampled from an isotropic).
+                sample(
+                    "mag_obs",
+                    Normal(mag + Ab, data["e_mag"]), obs=data["mag"])
 
                 # Linewidth hyperprior and selection.
                 eta = sample(
@@ -649,7 +668,7 @@ class TFRModel_DistMarg(BaseModel):
 
                 sigma_mu = jnp.ones_like(mag) * sigma_mu
             else:
-                mag = data["mag"]
+                mag = data["mag"] - Ab
                 eta = data["eta"]
                 sigma_mu = get_linear_sigma_mu_TFR(
                     data, sigma_mu, b_TFR, c_TFR)
@@ -710,6 +729,10 @@ class PantheonPlusModel_DistMarg(BaseModel):
 
     def __call__(self, data):
         nsamples = len(data)
+
+        if data.sample_dust:
+            raise NotImplementedError(
+                "Dust sampling is not implemented for `PantheonPlusModel`.")
 
         # Sample the SN parameters.
         M = rsample("M", self.priors["SN_absmag"])
@@ -863,6 +886,10 @@ class Clusters_DistMarg(BaseModel):
     def __call__(self, data):
         nsamples = len(data)
 
+        if data.sample_dust:
+            raise NotImplementedError(
+                "Dust sampling is not implemented for `TFRModel`.")
+
         # Sample the cluster scaling parameters.
         A = rsample("A_CL", self.priors["CL_A"])
         B = rsample("B_CL", self.priors["CL_B"])
@@ -926,6 +953,100 @@ class Clusters_DistMarg(BaseModel):
             ll = 2 * jnp.log(r_grid)
             ll += Normal(
                 mu_cluster[:, None], sigma_mu[:, None]).log_prob(mu_grid)
+
+            if data.has_precomputed_los:
+                # The shape is `(n_galaxies, num_steps.)`
+                Vrad = beta * data["los_velocity"]
+                ll += lp_galaxy_bias(
+                    data["los_delta"], data["los_log_density"], bias_params,
+                    self.galaxy_bias)
+            else:
+                Vrad = 0.
+
+            ll_norm = ln_simpson(ll, x=r_grid, axis=-1)
+
+            Vext_rad = compute_Vext_radial(
+                data, Vext, with_radial_Vext=self.with_radial_Vext,
+                **self.kwargs_radial_Vext)
+            zpec = (Vrad + Vext_rad) / SPEED_OF_LIGHT
+            zcmb = self.distmod2redshift(mu_grid, h=h)
+            czpred = SPEED_OF_LIGHT * ((1 + zcmb) * (1 + zpec) - 1)
+
+            ll += Normal(czpred, sigma_v).log_prob(data["czcmb"][:, None])
+            ll = ln_simpson(ll, x=r_grid, axis=-1) - ll_norm
+
+            factor("obs", ll)
+
+
+###############################################################################
+#                                FP models                                    #
+###############################################################################
+
+
+class FPModel_DistMarg(BaseModel):
+    """
+    A FP model where the distance modulus μ is integrated out using a grid,
+    instead of being sampled as a latent variable.
+    """
+    def __init__(self, config_path):
+        super().__init__(config_path)
+
+        if self.use_MNR:
+            raise RuntimeError(
+                "MNR for FP is not implemented yet. Please set "
+                "`use_MNR` to False in the config file.")
+            # fprint("setting `compute_evidence` to False.")
+            # self.config["inference"]["compute_evidence"] = False
+
+        self.logangdist2distmod = LogAngularDiameterDistance2Distmod()
+
+    def __call__(self, data):
+        nsamples = len(data)
+
+        if data.sample_dust:
+            raise NotImplementedError(
+                "Dust sampling is not implemented for `TFRModel`.")
+
+        # Sample the TFR parameters.
+        a_FP = rsample("a_FP", self.priors["FP_a"])
+        b_FP = rsample("b_FP", self.priors["FP_b"])
+        c_FP = rsample("c_FP", self.priors["FP_c"])
+        sigma_mu = rsample("sigma_mu", self.priors["sigma_mu"])
+
+        # Sample velocity field parameters.
+        if self.with_radial_Vext:
+            Vext = rsample("Vext_rad", self.priors["Vext_radial"])
+        else:
+            Vext = rsample("Vext", self.priors["Vext"])
+        sigma_v = rsample("sigma_v", self.priors["sigma_v"])
+
+        # Remaining parameters
+        bias_params = sample_galaxy_bias(self.priors, self.galaxy_bias)
+        beta = rsample("beta", self.priors["beta"])
+
+        # For the distance marginalization, h is not sampled.
+        h = 1.
+
+        if self.use_MNR:
+            raise NotImplementedError("MNR for FP is not implemented yet.")
+
+        with plate("data", nsamples):
+            if self.use_MNR:
+                raise NotImplementedError("MNR for FP is not implemented yet.")
+            else:
+                logs = data["logs"]
+                logI = data["logI"]
+                logtheta = data["log_theta_eff"]
+                sigma_mu = jnp.ones_like(logs) * sigma_mu
+
+            logdA = a_FP * logs + b_FP * logI + c_FP - logtheta - 3
+            mu_FP = self.logangdist2distmod(logdA, h=h)
+
+            r_grid = data["los_r"][None, :] / h
+            mu_grid = self.distance2distmod(r_grid, h=h)
+
+            ll = 2 * jnp.log(r_grid)
+            ll += Normal(mu_FP[:, None], sigma_mu[:, None]).log_prob(mu_grid)
 
             if data.has_precomputed_los:
                 # The shape is `(n_galaxies, num_steps.)`
