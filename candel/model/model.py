@@ -628,7 +628,7 @@ class TFRModel_DistMarg(BaseModel):
                 # correction.
                 mag = sample(
                     "mag_latent",
-                    MagnitudeDistribution(**data.mag_dist_kwargs,)) - Ab
+                    MagnitudeDistribution(**data.mag_dist_kwargs,))
 
                 if data.add_mag_selection:
                     # Magnitude selection at the true magnitude values.
@@ -647,7 +647,13 @@ class TFRModel_DistMarg(BaseModel):
                     log_Fm -= ln_simpson(log_pmag_norm, x=mag_grid, axis=-1)
                     factor("mag_norm", log_Fm)
 
-                sample("mag_obs", Normal(mag, data["e_mag"]), obs=data["mag"])
+                # Correct for Milky Way extinction by subtracting Ab. If Ab
+                # is nonzero, the data is assumed to be uncorrected.
+                # This correction is applied only when comparing to observed
+                # values (MNR parameters are sampled from an isotropic).
+                sample(
+                    "mag_obs",
+                    Normal(mag + Ab, data["e_mag"]), obs=data["mag"])
 
                 # Linewidth hyperprior and selection.
                 eta = sample(
