@@ -25,6 +25,7 @@ from jax import numpy as jnp
 from ..model.interp import LOSInterpolator
 from ..util import (SPEED_OF_LIGHT, fprint, galactic_to_radec, load_config,
                     radec_to_cartesian, radec_to_galactic)
+from .dust import read_dustmap
 
 ###############################################################################
 #                             Data frames                                     #
@@ -100,12 +101,18 @@ class PVDataFrame:
         nsamples_subsample = config.pop("nsamples_subsample", None)
         seed_subsample = config.pop("seed_subsample", 42)
         mag_selection = config.pop("mag_selection", None)
+        sample_dust = False
 
         if "CF4_mock" in name:
             index = name.split("_")[-1]
             data = load_CF4_mock(root, index)
         elif "CF4_" in name:
             data = load_CF4_data(root, **config)
+
+            dust_model = config.get("dust_model", None)
+            if dust_model is not None:
+                fprint(f"using `{dust_model}` for the dust model.")
+                sample_dust = True
         elif name == "SDSS_FP":
             data = load_SDSS_FP(root, **config)
         elif name == "PantheonPlus":
@@ -154,6 +161,7 @@ class PVDataFrame:
                 frame.mag_selection_kwargs = None
                 fprint(f"disabling magnitude selection for `{name}`.")
         frame.add_mag_selection = frame.mag_selection_kwargs is not None
+        frame.sample_dust = sample_dust
 
         # Hyperparameters for the TFR linewidth selection.
         if "eta_min" in config or "eta_max" in config:
@@ -334,89 +342,94 @@ def load_SH0ES_calibration(calibration_path, pgc_CF4):
 def load_CF4_data(root, which_band, best_mag_quality=True, eta_min=-0.3,
                   zcmb_max=None, b_min=7.5, remove_outliers=True,
                   calibration=None, los_data_path=None, return_all=False,
-                  **kwargs):
+                  dust_model=None, **kwargs):
     """
-    Loads the `CF4_TFR.hdf5` file from `root` and extracts fields based on
-    `which_band`. Applies filters using `eta_min`, `zcmb_max`, and
-    `best_mag_quality`. Returns a dictionary of cleaned and filtered data
-    arrays.
+    Load CF4 TFR data and apply optional filters and dust correction removal.
     """
     with File(join(root, "CF4_TFR.hdf5"), 'r') as f:
-        zcmb = f["Vcmb"][...] / SPEED_OF_LIGHT
-        RA = f["RA"][...] * 360 / 24
-        DEC = f["DE"][...]
+        grp = f["cf4"]
+        zcmb = grp["Vcmb"][...] / SPEED_OF_LIGHT
+        RA = grp["RA"][...] * 15  # deg
+        DEC = grp["DE"][...]
+        mag = grp[which_band][...]
+        mag_quality = grp["Qw"][...] if which_band == "w1" else grp["Qs"][...]
+        eta = grp["lgWmxi"][...] - 2.5
+        e_eta = grp["elgWi"][...]
+        pgc = grp["pgc"][...]
 
-        if which_band == "w1":
-            mag = f["w1"][...]
-            mag_quality = f["Qw"][...]
-        elif which_band == "i":
-            mag = f["i"][...]
-            mag_quality = f["Qs"][...]
+        # Remove extinction correction if requested
+        if which_band in ["w1", "w2"] and dust_model is not None:
+            Ab_default = grp[f"A_{which_band}"][...]
+            fprint(f"switching the dust model to `{dust_model}`.")
+
+            # Remove applied correction; new E(B-V) model handled externally
+            mag += Ab_default
+            if dust_model == "default":
+                ebv = Ab_default / (0.186 if which_band == "w1" else 0.123)
+            else:
+                ebv = read_dustmap(RA, DEC, dust_model)
+
+            if not np.all(np.isfinite(ebv[0])):
+                raise ValueError(
+                    f"Non-finite E(B-V) values for dust map `{dust_model}`.")
         else:
-            raise ValueError("which_band must be 'w1' or 'i'.")
-
-        eta = f["lgWmxi"][...] - 2.5
-        e_eta = f["elgWi"][...]
-
-        pgc = f["pgc"][...]
+            raise ValueError(f"Dust models are only available for W1 and W2. "
+                             f"Got {which_band}.")
 
     fprint(f"initially loaded {len(pgc)} galaxies from CF4 TFR data.")
 
-    data = {
-        "zcmb": zcmb,
-        "RA": RA,
-        "dec": DEC,
-        "mag": mag,
-        "e_mag": np.ones_like(mag) * 0.05,
-        "eta": eta,
-        "e_eta": e_eta,
-    }
+    data = dict(
+        zcmb=zcmb,
+        RA=RA,
+        dec=DEC,
+        mag=mag,
+        e_mag=np.full_like(mag, 0.05),
+        eta=eta,
+        e_eta=e_eta,
+        ebv=ebv,
+    )
 
     if return_all:
         return data
 
-    mask = data["eta"] > eta_min
+    mask = eta > eta_min
     if best_mag_quality:
         mask &= mag_quality == 5
     if zcmb_max is not None:
-        mask &= data["zcmb"] < zcmb_max
+        mask &= zcmb < zcmb_max
     if remove_outliers:
         outliers = np.concatenate([
-            np.genfromtxt(
-                join(root, f"CF4_{band}_outliers.csv"),
-                delimiter=",", names=True)
-            for band in ("W1", "i")
-            ])
-        pgc_outliers = outliers["PGC"]
-        mask &= ~np.isin(pgc, pgc_outliers)
+            np.genfromtxt(join(root, f"CF4_{b}_outliers.csv"),
+                          delimiter=",", names=True)
+            for b in ("W1", "i")
+        ])
+        mask &= ~np.isin(pgc, outliers["PGC"])
     if b_min is not None:
         b = radec_to_galactic(RA, DEC)[1]
         mask &= np.abs(b) > b_min
 
     fprint(f"removed {len(pgc) - np.sum(mask)} galaxies, thus "
-           f"{len(pgc[mask])} remain.")
+           f"{np.sum(mask)} remain.")
 
-    for key in data:
-        data[key] = data[key][mask]
+    for k in data:
+        data[k] = data[k][mask]
     pgc = pgc[mask]
 
-    if los_data_path is not None:
+    if los_data_path:
         data = load_los(los_data_path, data, mask=mask)
 
     if calibration == "SH0ES":
-        is_calibrator, mu_cal, C_mu_cal = load_SH0ES_calibration(
+        is_cal, mu, C_mu = load_SH0ES_calibration(
             join(root, "CF4_SH0ES_calibration.hdf5"), pgc)
-
-        fprint(f"out of {len(pgc)} galaxies, {np.sum(is_calibrator)} are "
-               "SH0ES calibrators.")
-
-        data = {**data,
-                "is_calibrator": is_calibrator,
-                "mu_cal": mu_cal,
-                "C_mu_cal": C_mu_cal,
-                "std_mu_cal": np.diag(C_mu_cal)**0.5,
-                }
-    elif calibration is not None:
+        fprint(f"out of {len(pgc)} galaxies, {np.sum(is_cal)} are SH0ES  "
+               "calibrators.")
+        data.update({
+            "is_calibrator": is_cal,
+            "mu_cal": mu,
+            "C_mu_cal": C_mu,
+            "std_mu_cal": np.sqrt(np.diag(C_mu)),
+        })
+    elif calibration:
         raise ValueError("Unknown calibration type.")
 
     return data
