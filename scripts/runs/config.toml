@@ -146,11 +146,9 @@ high = 2500
 
 
 [model.priors.Vext]
-dist = "delta"
-value = [0.0, 0.0, 0.0]
-# dist = "vector_uniform"
-# low = 0.0
-# high = 2500
+dist = "vector_uniform"
+low = 0.0
+high = 2500
 
 [model.priors.Vext_radial]
 dist = "vector_radial_spline_uniform"
@@ -160,6 +158,11 @@ high = 5000
 rknot = [0, 250, 600]
 k = 1
 endpoints="not-a-knot"
+
+[model.priors.Rdust]
+dist = "uniform"
+low = 0.0
+high = 0.5
 
 ################################################################################
 #                                  Data                                        #
@@ -195,11 +198,12 @@ zcmb_max = 0.05
 b_min = 7.5
 remove_outliers = true
 calibration = "None"
+dust_model = "default"
 
 add_mag_selection = true
 add_eta_selection = true
 
-nsamples_subsample = "None"
+nsamples_subsample = 250
 seed_subsample = 42
 
 los_file = "data/CF4/los_CF4_TFR_<X>.hdf5"
