@@ -441,6 +441,10 @@ class TFRModel(BaseModel):
     def __call__(self, data,):
         nsamples = len(data)
 
+        if data.sample_dust:
+            raise NotImplementedError(
+                "Dust sampling is not implemented for `TFRModel`.")
+
         # Sample the TFR parameters.
         a_TFR = rsample("a_TFR_h", self.priors["TFR_zeropoint"])
         b_TFR = rsample("b_TFR", self.priors["TFR_slope"])
@@ -592,6 +596,12 @@ class TFRModel_DistMarg(BaseModel):
         a_TFR_dipole = rsample(
             "a_TFR_dipole", self.priors["TFR_zeropoint_dipole"])
 
+        if data.sample_dust:
+            Rdust = rsample("R_dust", self.priors["Rdust"])
+            Ab = Rdust * data["ebv"]
+        else:
+            Ab = 0.
+
         # Sample velocity field parameters.
         if self.with_radial_Vext:
             Vext = rsample("Vext_rad", self.priors["Vext_radial"])
@@ -614,10 +624,12 @@ class TFRModel_DistMarg(BaseModel):
 
         with plate("data", nsamples):
             if self.use_MNR:
-                # Magnitude hyperprior and selection.
+                # Magnitude hyperprior and selection, note the optional dust
+                # correction.
                 mag = sample(
                     "mag_latent",
                     MagnitudeDistribution(**data.mag_dist_kwargs,))
+
                 if data.add_mag_selection:
                     # Magnitude selection at the true magnitude values.
                     log_Fm = log_magnitude_selection(
@@ -635,7 +647,13 @@ class TFRModel_DistMarg(BaseModel):
                     log_Fm -= ln_simpson(log_pmag_norm, x=mag_grid, axis=-1)
                     factor("mag_norm", log_Fm)
 
-                sample("mag_obs", Normal(mag, data["e_mag"]), obs=data["mag"])
+                # Correct for Milky Way extinction by subtracting Ab. If Ab
+                # is nonzero, the data is assumed to be uncorrected.
+                # This correction is applied only when comparing to observed
+                # values (MNR parameters are sampled from an isotropic).
+                sample(
+                    "mag_obs",
+                    Normal(mag + Ab, data["e_mag"]), obs=data["mag"])
 
                 # Linewidth hyperprior and selection.
                 eta = sample(
@@ -650,7 +668,7 @@ class TFRModel_DistMarg(BaseModel):
 
                 sigma_mu = jnp.ones_like(mag) * sigma_mu
             else:
-                mag = data["mag"]
+                mag = data["mag"] - Ab
                 eta = data["eta"]
                 sigma_mu = get_linear_sigma_mu_TFR(
                     data, sigma_mu, b_TFR, c_TFR)
@@ -711,6 +729,10 @@ class PantheonPlusModel_DistMarg(BaseModel):
 
     def __call__(self, data):
         nsamples = len(data)
+
+        if data.sample_dust:
+            raise NotImplementedError(
+                "Dust sampling is not implemented for `PantheonPlusModel`.")
 
         # Sample the SN parameters.
         M = rsample("M", self.priors["SN_absmag"])
@@ -864,6 +886,10 @@ class Clusters_DistMarg(BaseModel):
     def __call__(self, data):
         nsamples = len(data)
 
+        if data.sample_dust:
+            raise NotImplementedError(
+                "Dust sampling is not implemented for `TFRModel`.")
+
         # Sample the cluster scaling parameters.
         A = rsample("A_CL", self.priors["CL_A"])
         B = rsample("B_CL", self.priors["CL_B"])
@@ -976,6 +1002,10 @@ class FPModel_DistMarg(BaseModel):
 
     def __call__(self, data):
         nsamples = len(data)
+
+        if data.sample_dust:
+            raise NotImplementedError(
+                "Dust sampling is not implemented for `TFRModel`.")
 
         # Sample the TFR parameters.
         a_FP = rsample("a_FP", self.priors["FP_a"])
