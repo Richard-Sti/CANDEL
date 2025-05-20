@@ -581,7 +581,7 @@ def load_clusters(root, zcmb_max=0.2, los_data_path=None, return_all=False,
 
     e_logT = np.log10(np.e) * (Tmax - Tmin) / (2 * T)
     e_logF = np.log10(np.e) * (Lx * eL / 100) / Lx
-    e_logY = e_Y / Y_arcmin2 / np.log(10)
+    e_logY = np.log10(np.e) * e_Y / Y_arcmin2
 
     RA, dec = galactic_to_radec(data['Glon'], data['Glat'])
 
@@ -618,6 +618,9 @@ def load_clusters(root, zcmb_max=0.2, los_data_path=None, return_all=False,
 
     fprint("subtracting the mean logY from the data.")
     data["logY"] -= np.mean(data["logY"])
+
+    fprint("subtracting the mean logF from the data.")
+    data["logF"] -= np.mean(data["logF"])
 
     # fprint("subtracting the mean logF from the data.")
     # data["logF"] -= np.mean(data["logF"])

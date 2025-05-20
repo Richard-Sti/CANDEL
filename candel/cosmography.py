@@ -33,7 +33,7 @@ class Distmod2Distance:
     ----------
     Om0 : float
         Matter density parameter.
-    zmin_interp, zmax_interp : float
+    zmin_interp, zmax_interp : floatxr
         Minimum and maximum redshift for the interpolation grid.
     npoints_interp : int
         Number of points in the interpolation grid.
@@ -153,6 +153,33 @@ class Redshift2Distance:
             return self._f_cz(z) / h
 
         return self._f(z) / h
+    
+class DistAng2Distmod:
+    """
+    Class to build an interpolator to convert angular diameter distance to
+    distance modulus. Choice of `h` is determined when calling the
+    `__call__` method.
+
+    Parameters
+    ----------
+    Om0 : float
+        Matter density parameter.
+    zmin_interp, zmax_interp : float
+        Minimum and maximum redshift for the interpolation grid.
+    npoints_interp : int
+        Number of points in the interpolation grid.
+    """
+    def __init__(self, Om0=0.3, zmin_interp=1e-8, zmax_interp=0.5,
+                 npoints_interp=1000):
+        cosmo = FlatLambdaCDM(H0=100, Om0=Om0)
+        z_grid = np.linspace(zmin_interp, zmax_interp, npoints_interp)
+        DAng_grid = cosmo.angular_diameter_distance(z_grid).value
+        mu_grid = cosmo.distmod(z_grid).value
+
+        self._f = vmap(Interpolator1D(np.log10(DAng_grid), mu_grid, extrap=False))
+
+    def __call__(self, r, h=1):
+        return self._f(jnp.log10(r * h))
 
 
 class Distance2Redshift:
