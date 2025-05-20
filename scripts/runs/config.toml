@@ -1,10 +1,10 @@
-root_main = "/Users/yasin/code/CANDEL/"
-python_exec = "/Users/yasin/code/CANDEL/venv_candel/bin/python"
-machine = "local"
-
-# root_main = "/Users/rstiskalek/Projects/CANDEL/"
-# python_exec = "/Users/rstiskalek/Projects/CANDEL/venv_candel/bin/python"
+# root_main = "/Users/yasin/code/CANDEL/"
+# python_exec = "/Users/yasin/code/CANDEL/venv_candel/bin/python"
 # machine = "local"
+
+root_main = "/Users/rstiskalek/Projects/CANDEL/"
+python_exec = "/Users/rstiskalek/Projects/CANDEL/venv_candel/bin/python"
+machine = "local"
 
 #root_main = "/mnt/home/rstiskalek/ceph/CANDEL"
 #python_exec="/mnt/home/rstiskalek/CANDEL/venv_gpu_candel/bin/python"
@@ -33,7 +33,7 @@ num_chains_harmonic = 5
 use_MNR = false
 # Default kind. This gets overwritten if using a submission script.
 # kind = "precomputed_los_Carrick2015"
-kind = "constant"
+kind = "Vext"
 galaxy_bias = "powerlaw"  # Ignored unless having an underlying density field
 
 
@@ -85,7 +85,7 @@ loc = -9.0
 scale = 2.0
 
 [model.priors.TFR_curvature]
-dist = "norm"
+dist = "normal"
 loc = 10
 scale = 4.0
 
@@ -173,7 +173,7 @@ scale = 0.05
 root_output = "results"
 # Default catalogue name and output path. This gets overwritten
 # if using a submission script.
-catalogue_name = "CF4_W1"
+catalogue_name = "Clusters"
 
 fname_output = "results/test.hdf5"
 
@@ -252,7 +252,7 @@ los_file = "data/Pantheon+/los_CF4_Pantheon+_<X>.hdf5"
 [io.Clusters]
 root = "data/Clusters"
 zcmb_max = 0.2
-which_relation = "LY"
+which_relation = "LT"
 
 zcmb_mapping_min = 1e-5
 zcmb_mapping_max = 0.3
@@ -260,7 +260,7 @@ zcmb_mapping_num_points = 1001
 
 los_file = "data/Clusters/los_Clusters_<X>.hdf5"
 
-nsamples_subsample = "none"
+nsamples_subsample = 50
 seed_subsample = 42
 
 [io.SDSS_FP]
@@ -305,8 +305,8 @@ los_file = "data/SDSS/los_SDSS_FP_<X>.hdf5"
 
 [io.reconstruction_main]
 rmin = 0.1
-rmax = 251
-num_steps = 251
+rmax = 751
+num_steps = 501
 
 [io.reconstruction_main.Carrick2015]
 path_density = "data/fields/carrick2015_twompp_density.npy"
