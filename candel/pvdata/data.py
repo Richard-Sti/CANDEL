@@ -131,7 +131,7 @@ class PVDataFrame:
         if "los_r" not in data:
             d = config_io["reconstruction_main"]
             fprint(f"setting the LOS radial grid from {d['rmin']} to "
-                   f"{d['rmax']} with {d['num_steps']} steps.")
+                   f"{d['rmax']} Mpc/h with {d['num_steps']} steps.")
             data["los_r"] = np.linspace(d["rmin"], d["rmax"], d["num_steps"])
 
         if "los_density" in data:
