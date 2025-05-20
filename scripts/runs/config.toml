@@ -65,30 +65,25 @@ dist = "normal"
 loc = 0
 scale = 1.0
 
-# [model.priors.b2]
-# dist = "normal"
-# loc = 0
-# scale = 1.0
-
 [model.priors.beta]
 dist = "uniform"
 low = 0.0
 high = 3.0
 
 [model.priors.TFR_zeropoint]
-dist = "uniform"
-low = -22.0
-high = -18.0
+dist = "normal"
+loc = -20.0
+scale = 1.0
 
 [model.priors.TFR_slope]
-dist = "uniform"
-low = -15.0
-high = -5.0
+dist = "normal"
+loc = -9.0
+scale = 2.0
 
 [model.priors.TFR_curvature]
-dist = "uniform"
-low = -10
-high = 20
+dist = "norm"
+loc = 10
+scale = 4.0
 
 [model.priors.sigma_mu]
 dist = "jeffreys"
