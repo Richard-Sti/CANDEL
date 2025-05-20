@@ -158,10 +158,11 @@ k = 1
 endpoints="not-a-knot"
 
 [model.priors.Rdust]
-# 0.19 +- 0.01 for W1. For W2 should be 0.15 +- 0.01
+# 0.19 +- 0.01 for W1. For W2 should be 0.15 +- 0.01. I take it a little bit
+# larger to be conservative.
 dist = "normal"
 loc = 0.19
-scale = 0.5
+scale = 0.05
 
 ################################################################################
 #                                  Data                                        #
