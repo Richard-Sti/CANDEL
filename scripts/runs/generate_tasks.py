@@ -24,7 +24,7 @@ from os.path import exists, join, splitext
 
 import tomli_w
 
-from candel import fprint, load_config
+from candel import fprint, load_config, replace_prior_with_delta
 
 
 def overwrite_config(config, key, value):
@@ -102,6 +102,11 @@ def generate_dynamic_tag(config, base_tag="default"):
     if isinstance(Vext_prior, dict) and Vext_prior.get("dist") == "delta":
         parts.append("noVext")
 
+    # Flag if sampling the dust prior
+    dust_model = get_nested(config, f"io/{catalogue}/dust_model", None)
+    if dust_model is not None and dust_model.lower() != "none":
+        parts.append(f"dust-{dust_model}")
+
     return "_".join(parts) if base_tag == "default" else base_tag
 
 
@@ -119,27 +124,29 @@ def expand_override_grid(overrides):
 
 if __name__ == "__main__":
     config_path = "./config.toml"
-    config = load_config(config_path, replace_none=False)
+    config = load_config(
+        config_path, replace_none=False, replace_los_prior=False)
 
     tag = "default"
     tasks_index = 0
 
     # Multiple override options → this creates a job per combination
     manual_overrides = {
-        "pv_model/kind": "constant",
-        "io/catalogue_name": "Clusters",
-        "io/root_output": "results/Clusters_Anisotropy",
+        "pv_model/kind": "Carrick2015",
+        "io/catalogue_name": "CF4_W1",
+        "io/root_output": "results/TEST_CF4_H0_anisotropy",
         "pv_model/use_MNR": False,
-        "io/Clusters/which_relation": ["LT", "LTY"],
+        # "io/CF4_W1/dust_model": "CSFD",
+        # "io/Clusters/which_relation": ["LT", "LTY"],
         # "io/Clusters/which_relation": "LT",
         # "model/priors/beta": [
         #     {"dist": "normal", "loc": 0.43, "scale": 0.1},
         #     {"dist": "delta", "value": 1.0},
         # ],
-        # "model/priors/TFR_zeropoint_dipole": [
-        #     {"dist": "delta", "value": [0.0, 0.0, 0.0]},
-        #     {"dist": "vector_uniform", "low": 0.0, "high": 1.0},
-        # ],
+        "model/priors/TFR_zeropoint_dipole": [
+            {"dist": "delta", "value": [0.0, 0.0, 0.0]},
+            {"dist": "vector_uniform_fixed", "low": 0.0, "high": 0.3},
+        ],
         # "model/priors/Vext": [
         #     {"dist": "delta", "value": [0.0, 0.0, 0.0]},
         #     {"dist": "vector_uniform_fixed", "low": 0.0, "high": 2500.0},
@@ -157,9 +164,13 @@ if __name__ == "__main__":
 
             for key, value in override_set.items():
                 # Special handling for kind: transform before writing
-                if key == "pv_model/kind" and value != "constant":
-                    value = f"precomputed_los_{value}"
-                    fprint(f"transformed kind override to: {value}")
+                if key == "pv_model/kind":
+                    if value == "constant":
+                        config = replace_prior_with_delta(config, "alpha", 1.)
+                        config = replace_prior_with_delta(config, "beta", 0.)
+                    else:
+                        value = f"precomputed_los_{value}"
+                        fprint(f"transformed kind override to: {value}")
 
                 if isinstance(value, dict):
                     local_config = overwrite_subtree(local_config, key, value)

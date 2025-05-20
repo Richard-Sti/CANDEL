@@ -22,6 +22,7 @@ from astropy.cosmology import FlatLambdaCDM
 from jax import random, vmap
 from jax.lax import cond
 from jax.scipy.stats import norm
+from jax_cosmo.scipy.interpolate import InterpolatedUnivariateSpline
 from numpyro import deterministic, factor, plate, sample
 from numpyro.distributions import (Delta, Distribution, MultivariateNormal,
                                    Normal, ProjectedNormal, TruncatedNormal,
@@ -32,8 +33,9 @@ from numpyro.infer.reparam import ProjectedNormalReparam
 from quadax import simpson
 
 from ..cosmography import (Distance2Distmod, Distmod2Distance,
-                           Distmod2Redshift, LogGrad_Distmod2ComovingDistance,
-                           Redshift2Distance, DistAng2Distmod)
+                           Distmod2Redshift,
+                           LogAngularDiameterDistance2Distmod,
+                           LogGrad_Distmod2ComovingDistance, Redshift2Distance)
 from ..util import SPEED_OF_LIGHT, fprint, load_config
 from .magnitude_selection import log_magnitude_selection
 from .simpson import ln_simpson
@@ -136,6 +138,38 @@ def sample_vector_fixed(name, mag_min, mag_max):
         )
 
 
+def sample_spline_radial_vector(name, nval, low, high):
+    """
+    Sample a radial vector approximated as a spline with `n` knots spherical
+    coordinates. The magnitude is sampled uniformly and the direction is
+    sampled uniformly on the unit sphere.
+    """
+    with plate(f"{name}_plate", nval):
+        phi = sample(f"{name}_phi", Uniform(0, 2 * jnp.pi))
+        cos_theta = sample(f"{name}_cos_theta", Uniform(-1, 1))
+        sin_theta = jnp.sqrt(1 - cos_theta**2)
+
+        mag = sample(f"{name}_mag", Uniform(low, high))
+
+    return mag[:, None] * jnp.asarray([
+        sin_theta * jnp.cos(phi),
+        sin_theta * jnp.sin(phi),
+        cos_theta]).T
+
+
+def interp_spline_radial_vector(rq, bin_values, **kwargs):
+    """Interpolate delta radial vectors using JAX-compatible splines."""
+    x = jnp.asarray(kwargs["rknot"])
+    k = kwargs.get("k", 3)
+    endpoints = kwargs.get("endpoints", "not-a-knot")
+
+    def spline_eval(y):
+        spline = InterpolatedUnivariateSpline(x, y, k=k, endpoints=endpoints)
+        return spline(rq)
+
+    return vmap(spline_eval)(bin_values.T)
+
+
 def load_priors(config_priors):
     """Load a dictionary of NumPyro distributions from a TOML file."""
     _DIST_MAP = {
@@ -144,7 +178,8 @@ def load_priors(config_priors):
         "delta": lambda p: Delta(p["value"]),
         "jeffreys": lambda p: JeffreysPrior(p["low"], p["high"]),
         "vector_uniform": lambda p: {"type": "vector_uniform", "low": p["low"], "high": p["high"]},  # noqa
-        "vector_uniform_fixed": lambda p: {"type": "vector_uniform_fixed", "low": p["low"], "high": p["high"],}  # noqa
+        "vector_uniform_fixed": lambda p: {"type": "vector_uniform_fixed", "low": p["low"], "high": p["high"],},  # noqa
+        "vector_radial_spline_uniform": lambda p: {"type": "vector_radial_spline_uniform", "nval": len(p["rknot"]), "low": p["low"], "high": p["high"]},  # noqa
     }
     priors = {}
     prior_dist_name = {}
@@ -183,6 +218,10 @@ def rsample(name, dist):
 
     if isinstance(dist, dict) and dist.get("type") == "vector_uniform_fixed":
         return sample_vector_fixed(name, dist["low"], dist["high"])
+
+    if isinstance(dist, dict) and dist.get("type") == "vector_radial_spline_uniform":  # noqa
+        return sample_spline_radial_vector(
+            name, dist["nval"], dist["low"], dist["high"], )
 
     return sample(name, dist)
 
@@ -245,6 +284,9 @@ def log_norm_pmu_im(mu_TFR, sigma_mu, bias_params, distmod2distance,
     if galaxy_bias == "powerlaw":
         log_rho_grid = los_interp.interp_many_steps_per_galaxy(r_grid * h)
         weights += bias_params[0] * log_rho_grid
+    elif galaxy_bias == "linear":
+        delta_grid = los_interp.interp_many_steps_per_galaxy(r_grid * h)
+        weights += jnp.log(jnp.clip(1 + bias_params[0] * delta_grid, 1e-5))
     else:
         raise ValueError(f"Invalid galaxy bias model '{galaxy_bias}'.")
 
@@ -286,6 +328,13 @@ class BaseModel(ABC):
     def __init__(self, config_path):
         config = load_config(config_path)
 
+        kind = config["pv_model"]["kind"]
+        kind_allowed = ["Vext", "Vext_radial"]
+        if kind not in kind_allowed and not kind.startswith("precomputed_los_"):  # noqa
+            raise ValueError(
+                f"Invalid kind '{kind}'. Must be one of {kind_allowed} or "
+                "start with 'precomputed_los_'.")
+
         # Initialize plenty of interpolators for distance and redshift
         self.distmod2redshift = Distmod2Redshift()
         self.distmod2distance = Distmod2Distance()
@@ -293,15 +342,27 @@ class BaseModel(ABC):
         self.redshift2distance = Redshift2Distance()
         self.log_grad_distmod2distance = LogGrad_Distmod2ComovingDistance()
 
-        self.priors, self.prior_dist_name = load_priors(
-            config["model"]["priors"])
+        priors = config["model"]["priors"]
+
+        self.with_radial_Vext = kind == "Vext_radial"
+        if self.with_radial_Vext:
+            d = priors["Vext_radial"]
+            fprint(f"using radial `Vext` with spline knots at {d['rknot']}")
+            self.with_radial_Vext = True
+            self.kwargs_radial_Vext = {
+                key: d[key] for key in ["rknot", "k", "endpoints"]}
+        else:
+            self.with_radial_Vext = False
+            self.kwargs_radial_Vext = {}
+
+        self.priors, self.prior_dist_name = load_priors(priors)
         self.num_norm_kwargs = config["model"]["mu_norm"]
         self.mag_grid_kwargs = config["model"]["mag_grid"]
 
         self.use_MNR = config["pv_model"]["use_MNR"]
 
         self.galaxy_bias = config["pv_model"]["galaxy_bias"]
-        if self.galaxy_bias not in ["powerlaw"]:
+        if self.galaxy_bias not in ["powerlaw", "linear"]:
             raise ValueError(
                 f"Invalid galaxy bias model '{self.galaxy_bias}'. "
                 "Choose either 'powerlaw'.")
@@ -319,7 +380,10 @@ def sample_galaxy_bias(priors, galaxy_bias):
     """
     if galaxy_bias == "powerlaw":
         alpha = rsample("alpha", priors["alpha"])
-        bias_params = [alpha]
+        bias_params = [alpha,]
+    elif galaxy_bias == "linear":
+        b1 = rsample("b1", priors["b1"])
+        bias_params = [b1,]
     else:
         raise ValueError(f"Invalid galaxy bias model '{galaxy_bias}'.")
 
@@ -332,10 +396,29 @@ def lp_galaxy_bias(delta, log_rho, bias_params, galaxy_bias):
     """
     if galaxy_bias == "powerlaw":
         lp = bias_params[0] * log_rho
+    elif galaxy_bias == "linear":
+        lp = jnp.log(jnp.clip(1 + bias_params[0] * delta, 1e-5))
     else:
         raise ValueError(f"Invalid galaxy bias model '{galaxy_bias}'.")
 
     return lp
+
+
+def compute_Vext_radial(data, Vext, with_radial_Vext=False, **kwargs_radial):
+    """Compute the line-of-sight projection of the external velocity."""
+    if with_radial_Vext:
+        # Shape (3, n_rbins)
+        Vext = interp_spline_radial_vector(
+            data["los_r"], Vext, **kwargs_radial)
+
+        # Shape (n_galaxies, n_rbins)
+        Vext_rad = jnp.sum(
+            data["rhat"][..., None] * Vext[None, ...], axis=1)
+    else:
+        # Shape (n_galaxies, 1)
+        Vext_rad = jnp.sum(data["rhat"] * Vext[None, :], axis=1)[:, None]
+
+    return Vext_rad
 
 
 ###############################################################################
@@ -358,6 +441,10 @@ class TFRModel(BaseModel):
     def __call__(self, data,):
         nsamples = len(data)
 
+        if data.sample_dust:
+            raise NotImplementedError(
+                "Dust sampling is not implemented for `TFRModel`.")
+
         # Sample the TFR parameters.
         a_TFR = rsample("a_TFR_h", self.priors["TFR_zeropoint"])
         b_TFR = rsample("b_TFR", self.priors["TFR_slope"])
@@ -367,7 +454,11 @@ class TFRModel(BaseModel):
             "a_TFR_dipole", self.priors["TFR_zeropoint_dipole"])
 
         # Sample the velocity field parameters.
-        Vext = rsample("Vext", self.priors["Vext"])[None, :]
+        if self.with_radial_Vext:
+            raise NotImplementedError(
+                "Radial Vext is not implemented for TFRModel.")
+        else:
+            Vext = rsample("Vext", self.priors["Vext"])
         sigma_v = rsample("sigma_v", self.priors["sigma_v"])
 
         # Remainining parameters
@@ -441,14 +532,22 @@ class TFRModel(BaseModel):
                 if self.galaxy_bias == "powerlaw":
                     alpha = bias_params[0]
                     log_pmu += alpha * data.f_los_log_density(r * h)
+                    log_pmu_norm = log_norm_pmu_im(
+                        mu_TFR, sigma_mu, bias_params, self.distmod2distance,
+                        data.f_los_log_density, self.galaxy_bias,
+                        **self.num_norm_kwargs, h=h)
+                elif self.galaxy_bias == "linear":
+                    b1 = bias_params[0]
+                    log_pmu += jnp.log(
+                        jnp.clip(1 + b1 * data.f_los_delta(r * h), 1e-5))
+                    log_pmu_norm = log_norm_pmu_im(
+                        mu_TFR, sigma_mu, bias_params, self.distmod2distance,
+                        data.f_los_delta, self.galaxy_bias,
+                        **self.num_norm_kwargs, h=h)
                 else:
                     raise ValueError(
                         f"Invalid galaxy bias model '{self.galaxy_bias}'.")
 
-                log_pmu_norm = log_norm_pmu_im(
-                    mu_TFR, sigma_mu, bias_params, self.distmod2distance,
-                    data.f_los_log_density, self.galaxy_bias,
-                    **self.num_norm_kwargs, h=h)
             else:
                 Vrad = 0.
                 # Homogeneous Malmquist bias
@@ -497,8 +596,17 @@ class TFRModel_DistMarg(BaseModel):
         a_TFR_dipole = rsample(
             "a_TFR_dipole", self.priors["TFR_zeropoint_dipole"])
 
+        if data.sample_dust:
+            Rdust = rsample("R_dust", self.priors["Rdust"])
+            Ab = Rdust * data["ebv"]
+        else:
+            Ab = 0.
+
         # Sample velocity field parameters.
-        Vext = rsample("Vext", self.priors["Vext"])
+        if self.with_radial_Vext:
+            Vext = rsample("Vext_rad", self.priors["Vext_radial"])
+        else:
+            Vext = rsample("Vext", self.priors["Vext"])
         sigma_v = rsample("sigma_v", self.priors["sigma_v"])
 
         # Remaining parameters
@@ -516,10 +624,12 @@ class TFRModel_DistMarg(BaseModel):
 
         with plate("data", nsamples):
             if self.use_MNR:
-                # Magnitude hyperprior and selection.
+                # Magnitude hyperprior and selection, note the optional dust
+                # correction.
                 mag = sample(
                     "mag_latent",
                     MagnitudeDistribution(**data.mag_dist_kwargs,))
+
                 if data.add_mag_selection:
                     # Magnitude selection at the true magnitude values.
                     log_Fm = log_magnitude_selection(
@@ -537,7 +647,13 @@ class TFRModel_DistMarg(BaseModel):
                     log_Fm -= ln_simpson(log_pmag_norm, x=mag_grid, axis=-1)
                     factor("mag_norm", log_Fm)
 
-                sample("mag_obs", Normal(mag, data["e_mag"]), obs=data["mag"])
+                # Correct for Milky Way extinction by subtracting Ab. If Ab
+                # is nonzero, the data is assumed to be uncorrected.
+                # This correction is applied only when comparing to observed
+                # values (MNR parameters are sampled from an isotropic).
+                sample(
+                    "mag_obs",
+                    Normal(mag + Ab, data["e_mag"]), obs=data["mag"])
 
                 # Linewidth hyperprior and selection.
                 eta = sample(
@@ -552,7 +668,7 @@ class TFRModel_DistMarg(BaseModel):
 
                 sigma_mu = jnp.ones_like(mag) * sigma_mu
             else:
-                mag = data["mag"]
+                mag = data["mag"] - Ab
                 eta = data["eta"]
                 sigma_mu = get_linear_sigma_mu_TFR(
                     data, sigma_mu, b_TFR, c_TFR)
@@ -577,9 +693,10 @@ class TFRModel_DistMarg(BaseModel):
 
             ll_norm = ln_simpson(ll, x=r_grid, axis=-1)
 
-            Vext_rad = jnp.sum(data["rhat"] * Vext[None, :], axis=1)
-
-            zpec = (Vrad + Vext_rad[:, None]) / SPEED_OF_LIGHT
+            Vext_rad = compute_Vext_radial(
+                data, Vext, with_radial_Vext=self.with_radial_Vext,
+                **self.kwargs_radial_Vext)
+            zpec = (Vrad + Vext_rad) / SPEED_OF_LIGHT
             zcmb = self.distmod2redshift(mu_grid, h=h)
             czpred = SPEED_OF_LIGHT * ((1 + zcmb) * (1 + zpec) - 1)
 
@@ -613,12 +730,20 @@ class PantheonPlusModel_DistMarg(BaseModel):
     def __call__(self, data):
         nsamples = len(data)
 
+        if data.sample_dust:
+            raise NotImplementedError(
+                "Dust sampling is not implemented for `PantheonPlusModel`.")
+
         # Sample the SN parameters.
         M = rsample("M", self.priors["SN_absmag"])
+        dM = rsample("M_dipole", self.priors["SN_absmag_dipole"])
         sigma_mu = rsample("sigma_mu", self.priors["sigma_mu"])
 
         # Sample velocity field parameters.
-        Vext = rsample("Vext", self.priors["Vext"])
+        if self.with_radial_Vext:
+            Vext = rsample("Vext_rad", self.priors["Vext_radial"])
+        else:
+            Vext = rsample("Vext", self.priors["Vext"])
         sigma_v = rsample("sigma_v", self.priors["sigma_v"])
 
         # Remaining parameters
@@ -638,6 +763,7 @@ class PantheonPlusModel_DistMarg(BaseModel):
                 obs=data["mag"])
             sigma_mu = jnp.ones_like(mag) * sigma_mu
 
+            M = M + jnp.sum(dM * data["rhat"], axis=1)
             mu_SN = mag - M
 
             r_grid = data["los_r"][None, :] / h
@@ -657,9 +783,10 @@ class PantheonPlusModel_DistMarg(BaseModel):
 
             ll_norm = ln_simpson(ll, x=r_grid, axis=-1)
 
-            Vext_rad = jnp.sum(data["rhat"] * Vext[None, :], axis=1)
-
-            zpec = (Vrad + Vext_rad[:, None]) / SPEED_OF_LIGHT
+            Vext_rad = compute_Vext_radial(
+                data, Vext, with_radial_Vext=self.with_radial_Vext,
+                **self.kwargs_radial_Vext)
+            zpec = (Vrad + Vext_rad) / SPEED_OF_LIGHT
             zcmb = self.distmod2redshift(mu_grid, h=h)
             czpred = SPEED_OF_LIGHT * ((1 + zcmb) * (1 + zpec) - 1)
 
@@ -786,6 +913,10 @@ class Clusters_DistMarg(BaseModel):
     def __call__(self, data):
         nsamples = len(data)
 
+        if data.sample_dust:
+            raise NotImplementedError(
+                "Dust sampling is not implemented for `TFRModel`.")
+
         # Sample the cluster scaling parameters.
         A = rsample("A_CL", self.priors["CL_A"])
         B = rsample("B_CL", self.priors["CL_B"])
@@ -793,7 +924,10 @@ class Clusters_DistMarg(BaseModel):
         sigma_mu = rsample("sigma_mu", self.priors["sigma_mu"])
 
         # Sample velocity field parameters.
-        Vext = rsample("Vext", self.priors["Vext"])
+        if self.with_radial_Vext:
+            Vext = rsample("Vext_rad", self.priors["Vext_radial"])
+        else:
+            Vext = rsample("Vext", self.priors["Vext"])
         sigma_v = rsample("sigma_v", self.priors["sigma_v"])
         # Remaining parameters
         bias_params = sample_galaxy_bias(self.priors, self.galaxy_bias)
@@ -879,9 +1013,104 @@ class Clusters_DistMarg(BaseModel):
 
             ll_norm = ln_simpson(ll, x=r_grid, axis=-1)
 
-            Vext_rad = jnp.sum(data["rhat"] * Vext[None, :], axis=1)
+            Vext_rad = compute_Vext_radial(
+                data, Vext, with_radial_Vext=self.with_radial_Vext,
+                **self.kwargs_radial_Vext)
+            zpec = (Vrad + Vext_rad) / SPEED_OF_LIGHT
+            zcmb = self.distmod2redshift(mu_grid, h=h)
+            czpred = SPEED_OF_LIGHT * ((1 + zcmb) * (1 + zpec) - 1)
 
-            zpec = (Vrad + Vext_rad[:, None]) / SPEED_OF_LIGHT
+            ll += Normal(czpred, sigma_v).log_prob(data["czcmb"][:, None])
+            ll = ln_simpson(ll, x=r_grid, axis=-1) - ll_norm
+
+            factor("obs", ll)
+
+
+###############################################################################
+#                                FP models                                    #
+###############################################################################
+
+
+class FPModel_DistMarg(BaseModel):
+    """
+    A FP model where the distance modulus μ is integrated out using a grid,
+    instead of being sampled as a latent variable.
+    """
+    def __init__(self, config_path):
+        super().__init__(config_path)
+
+        if self.use_MNR:
+            raise RuntimeError(
+                "MNR for FP is not implemented yet. Please set "
+                "`use_MNR` to False in the config file.")
+            # fprint("setting `compute_evidence` to False.")
+            # self.config["inference"]["compute_evidence"] = False
+
+        self.logangdist2distmod = LogAngularDiameterDistance2Distmod()
+
+    def __call__(self, data):
+        nsamples = len(data)
+
+        if data.sample_dust:
+            raise NotImplementedError(
+                "Dust sampling is not implemented for `TFRModel`.")
+
+        # Sample the TFR parameters.
+        a_FP = rsample("a_FP", self.priors["FP_a"])
+        b_FP = rsample("b_FP", self.priors["FP_b"])
+        c_FP = rsample("c_FP", self.priors["FP_c"])
+        sigma_mu = rsample("sigma_mu", self.priors["sigma_mu"])
+
+        # Sample velocity field parameters.
+        if self.with_radial_Vext:
+            Vext = rsample("Vext_rad", self.priors["Vext_radial"])
+        else:
+            Vext = rsample("Vext", self.priors["Vext"])
+        sigma_v = rsample("sigma_v", self.priors["sigma_v"])
+
+        # Remaining parameters
+        bias_params = sample_galaxy_bias(self.priors, self.galaxy_bias)
+        beta = rsample("beta", self.priors["beta"])
+
+        # For the distance marginalization, h is not sampled.
+        h = 1.
+
+        if self.use_MNR:
+            raise NotImplementedError("MNR for FP is not implemented yet.")
+
+        with plate("data", nsamples):
+            if self.use_MNR:
+                raise NotImplementedError("MNR for FP is not implemented yet.")
+            else:
+                logs = data["logs"]
+                logI = data["logI"]
+                logtheta = data["log_theta_eff"]
+                sigma_mu = jnp.ones_like(logs) * sigma_mu
+
+            logdA = a_FP * logs + b_FP * logI + c_FP - logtheta - 3
+            mu_FP = self.logangdist2distmod(logdA, h=h)
+
+            r_grid = data["los_r"][None, :] / h
+            mu_grid = self.distance2distmod(r_grid, h=h)
+
+            ll = 2 * jnp.log(r_grid)
+            ll += Normal(mu_FP[:, None], sigma_mu[:, None]).log_prob(mu_grid)
+
+            if data.has_precomputed_los:
+                # The shape is `(n_galaxies, num_steps.)`
+                Vrad = beta * data["los_velocity"]
+                ll += lp_galaxy_bias(
+                    data["los_delta"], data["los_log_density"], bias_params,
+                    self.galaxy_bias)
+            else:
+                Vrad = 0.
+
+            ll_norm = ln_simpson(ll, x=r_grid, axis=-1)
+
+            Vext_rad = compute_Vext_radial(
+                data, Vext, with_radial_Vext=self.with_radial_Vext,
+                **self.kwargs_radial_Vext)
+            zpec = (Vrad + Vext_rad) / SPEED_OF_LIGHT
             zcmb = self.distmod2redshift(mu_grid, h=h)
 
             

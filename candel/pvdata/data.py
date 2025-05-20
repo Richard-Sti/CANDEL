@@ -16,6 +16,7 @@
 from os.path import join
 
 import numpy as np
+from astropy import units as u
 from astropy.cosmology import FlatLambdaCDM
 from astropy.io import fits
 from h5py import File
@@ -24,6 +25,7 @@ from jax import numpy as jnp
 from ..model.interp import LOSInterpolator
 from ..util import (SPEED_OF_LIGHT, fprint, galactic_to_radec, load_config,
                     radec_to_cartesian, radec_to_galactic)
+from .dust import read_dustmap
 
 ###############################################################################
 #                             Data frames                                     #
@@ -99,12 +101,20 @@ class PVDataFrame:
         nsamples_subsample = config.pop("nsamples_subsample", None)
         seed_subsample = config.pop("seed_subsample", 42)
         mag_selection = config.pop("mag_selection", None)
+        sample_dust = False
 
         if "CF4_mock" in name:
             index = name.split("_")[-1]
             data = load_CF4_mock(root, index)
         elif "CF4_" in name:
             data = load_CF4_data(root, **config)
+
+            dust_model = config.get("dust_model", None)
+            if dust_model is not None:
+                fprint(f"using `{dust_model}` for the dust model.")
+                sample_dust = True
+        elif name == "SDSS_FP":
+            data = load_SDSS_FP(root, **config)
         elif name == "PantheonPlus":
             data = load_PantheonPlus(root, **config)
         elif name == "Clusters":
@@ -151,6 +161,7 @@ class PVDataFrame:
                 frame.mag_selection_kwargs = None
                 fprint(f"disabling magnitude selection for `{name}`.")
         frame.add_mag_selection = frame.mag_selection_kwargs is not None
+        frame.sample_dust = sample_dust
 
         # Hyperparameters for the TFR linewidth selection.
         if "eta_min" in config or "eta_max" in config:
@@ -329,91 +340,102 @@ def load_SH0ES_calibration(calibration_path, pgc_CF4):
 
 
 def load_CF4_data(root, which_band, best_mag_quality=True, eta_min=-0.3,
-                  zcmb_max=None, b_min=7.5, remove_outliers=True,
-                  calibration=None, los_data_path=None, return_all=False,
-                  **kwargs):
+                  zcmb_min=None, zcmb_max=None, b_min=7.5,
+                  remove_outliers=True, calibration=None, los_data_path=None,
+                  return_all=False, dust_model=None, **kwargs):
     """
-    Loads the `CF4_TFR.hdf5` file from `root` and extracts fields based on
-    `which_band`. Applies filters using `eta_min`, `zcmb_max`, and
-    `best_mag_quality`. Returns a dictionary of cleaned and filtered data
-    arrays.
+    Load CF4 TFR data and apply optional filters and dust correction removal.
     """
     with File(join(root, "CF4_TFR.hdf5"), 'r') as f:
-        zcmb = f["Vcmb"][...] / SPEED_OF_LIGHT
-        RA = f["RA"][...] * 360 / 24
-        DEC = f["DE"][...]
+        grp = f["cf4"]
+        zcmb = grp["Vcmb"][...] / SPEED_OF_LIGHT
+        RA = grp["RA"][...] * 15  # deg
+        DEC = grp["DE"][...]
+        mag = grp[which_band][...]
+        mag_quality = grp["Qw"][...] if which_band == "w1" else grp["Qs"][...]
+        eta = grp["lgWmxi"][...] - 2.5
+        e_eta = grp["elgWi"][...]
+        pgc = grp["pgc"][...]
 
-        if which_band == "w1":
-            mag = f["w1"][...]
-            mag_quality = f["Qw"][...]
-        elif which_band == "i":
-            mag = f["i"][...]
-            mag_quality = f["Qs"][...]
+        # Remove extinction correction if requested
+        if dust_model is not None:
+            if which_band not in ["w1", "w2"]:
+                raise ValueError(
+                    f"Band `{which_band}` is not supported for dust "
+                    f"correction removal. Only `w1` and `w2` are supported.")
+
+            Ab_default = grp[f"A_{which_band}"][...]
+            fprint(f"switching the dust model to `{dust_model}`.")
+
+            # Remove applied correction; new E(B-V) model handled externally
+            mag += Ab_default
+            if dust_model == "default":
+                ebv = Ab_default / (0.186 if which_band == "w1" else 0.123)
+            else:
+                ebv = read_dustmap(RA, DEC, dust_model)
+
+            if not np.all(np.isfinite(ebv[0])):
+                raise ValueError(
+                    f"Non-finite E(B-V) values for dust map `{dust_model}`.")
         else:
-            raise ValueError("which_band must be 'w1' or 'i'.")
-
-        eta = f["lgWmxi"][...] - 2.5
-        e_eta = f["elgWi"][...]
-
-        pgc = f["pgc"][...]
+            ebv = np.full_like(mag, np.nan)
 
     fprint(f"initially loaded {len(pgc)} galaxies from CF4 TFR data.")
 
-    data = {
-        "zcmb": zcmb,
-        "RA": RA,
-        "dec": DEC,
-        "mag": mag,
-        "e_mag": np.ones_like(mag) * 0.05,
-        "eta": eta,
-        "e_eta": e_eta,
-    }
+    data = dict(
+        zcmb=zcmb,
+        RA=RA,
+        dec=DEC,
+        mag=mag,
+        e_mag=np.full_like(mag, 0.05),
+        eta=eta,
+        e_eta=e_eta,
+        ebv=ebv,
+    )
 
     if return_all:
         return data
 
-    mask = data["eta"] > eta_min
+    mask = eta > eta_min
     if best_mag_quality:
         mask &= mag_quality == 5
+    if zcmb_min is not None:
+        mask &= zcmb > zcmb_min
     if zcmb_max is not None:
-        mask &= data["zcmb"] < zcmb_max
+        mask &= zcmb < zcmb_max
     if remove_outliers:
         outliers = np.concatenate([
-            np.genfromtxt(
-                join(root, f"CF4_{band}_outliers.csv"),
-                delimiter=",", names=True)
-            for band in ("W1", "i")
-            ])
-        pgc_outliers = outliers["PGC"]
-        mask &= ~np.isin(pgc, pgc_outliers)
+            np.genfromtxt(join(root, f"CF4_{b}_outliers.csv"),
+                          delimiter=",", names=True)
+            for b in ("W1", "i")
+        ])
+        mask &= ~np.isin(pgc, outliers["PGC"])
     if b_min is not None:
         b = radec_to_galactic(RA, DEC)[1]
         mask &= np.abs(b) > b_min
 
     fprint(f"removed {len(pgc) - np.sum(mask)} galaxies, thus "
-           f"{len(pgc[mask])} remain.")
+           f"{np.sum(mask)} remain.")
 
-    for key in data:
-        data[key] = data[key][mask]
+    for k in data:
+        data[k] = data[k][mask]
     pgc = pgc[mask]
 
-    if los_data_path is not None:
+    if los_data_path:
         data = load_los(los_data_path, data, mask=mask)
 
     if calibration == "SH0ES":
-        is_calibrator, mu_cal, C_mu_cal = load_SH0ES_calibration(
+        is_cal, mu, C_mu = load_SH0ES_calibration(
             join(root, "CF4_SH0ES_calibration.hdf5"), pgc)
-
-        fprint(f"out of {len(pgc)} galaxies, {np.sum(is_calibrator)} are "
-               "SH0ES calibrators.")
-
-        data = {**data,
-                "is_calibrator": is_calibrator,
-                "mu_cal": mu_cal,
-                "C_mu_cal": C_mu_cal,
-                "std_mu_cal": np.diag(C_mu_cal)**0.5,
-                }
-    elif calibration is not None:
+        fprint(f"out of {len(pgc)} galaxies, {np.sum(is_cal)} are SH0ES  "
+               "calibrators.")
+        data.update({
+            "is_calibrator": is_cal,
+            "mu_cal": mu,
+            "C_mu_cal": C_mu,
+            "std_mu_cal": np.sqrt(np.diag(C_mu)),
+        })
+    elif calibration:
         raise ValueError("Unknown calibration type.")
 
     return data
@@ -427,8 +449,8 @@ def load_CF4_mock(root, index):
     return data
 
 
-def load_PantheonPlus(root, zcmb_max=None, b_min=7.5, los_data_path=None,
-                      return_all=False, **kwargs):
+def load_PantheonPlus(root, zcmb_min=None, zcmb_max=None, b_min=7.5,
+                      los_data_path=None, return_all=False, **kwargs):
     """
     Load the Pantheon+ data from the given root directory, the covariance
     is expected to have peculiar velocity contribution removed.
@@ -456,6 +478,9 @@ def load_PantheonPlus(root, zcmb_max=None, b_min=7.5, los_data_path=None,
     C = np.reshape(covmat[1:], (size, size))
 
     mask = np.ones(len(data["zcmb"]), dtype=bool)
+
+    if zcmb_min is not None:
+        mask &= data["zcmb"] > zcmb_min
 
     if zcmb_max is not None:
         mask &= data["zcmb"] < zcmb_max
@@ -538,8 +563,8 @@ def load_SH0ES(root):
     return data
 
 
-def load_clusters(root, zcmb_max=0.2, los_data_path=None, return_all=False,
-                  **kwargs):
+def load_clusters(root, zcmb_min=None, zcmb_max=None, los_data_path=None,
+                  return_all=False, **kwargs):
     """
     Load the cluster scaling relation data from the given root directory.
 
@@ -604,6 +629,10 @@ def load_clusters(root, zcmb_max=0.2, los_data_path=None, return_all=False,
         return data
 
     mask = np.ones(len(z), dtype=bool)
+
+    if zcmb_min is not None:
+        mask &= z > zcmb_min
+
     if zcmb_max is not None:
         mask &= z < zcmb_max
 
@@ -621,6 +650,69 @@ def load_clusters(root, zcmb_max=0.2, los_data_path=None, return_all=False,
 
     fprint("subtracting the mean logF from the data.")
     data["logF"] -= np.mean(data["logF"])
+
+    if los_data_path is not None:
+        data = load_los(los_data_path, data, mask=mask)
+
+    return data
+
+
+###############################################################################
+#                                 SDSS FP                                     #
+###############################################################################
+
+def arcsec_to_radian(arcsec):
+    return (arcsec * u.arcsec).to(u.radian).value
+
+
+def load_SDSS_FP(root, zcmb_min=None, zcmb_max=None, b_min=7.5,
+                 los_data_path=None, return_all=False, **kwargs):
+    """Load the SDSS FP data from the given root directory."""
+    fname = join(root, "SDSS_PV_public.dat")
+    d_input = np.genfromtxt(fname, names=True, )
+
+    rdev = d_input["deVRad_r"]
+    e_rdev = d_input["deVRadErr_r"]
+    boa = d_input["deVAB_r"]
+    e_boa = d_input["deVABErr_r"]
+
+    theta_eff = arcsec_to_radian(rdev * np.sqrt(boa))
+    e_theta_eff = theta_eff * np.sqrt(
+        (e_rdev / rdev)**2 + (0.5 * e_boa / boa)**2)
+
+    data = {
+        "RA": d_input["RA"],
+        "dec": d_input["Dec"],
+        "zcmb": d_input["zcmb_group"],
+        "theta_eff": theta_eff,
+        "e_theta_eff": e_theta_eff,
+        "log_theta_eff": np.log10(theta_eff),
+        "logI": d_input["i"],
+        "e_logI": d_input["ei"],
+        "logs": d_input["s"],
+        "e_logs": d_input["es"],
+        }
+
+    if return_all:
+        return data
+
+    mask = np.ones(len(data["zcmb"]), dtype=bool)
+
+    if zcmb_min is not None:
+        mask &= data["zcmb"] > zcmb_min
+
+    if zcmb_max is not None:
+        mask &= data["zcmb"] < zcmb_max
+
+    if b_min is not None:
+        b = radec_to_galactic(data["RA"], data["dec"])[1]
+        mask &= np.abs(b) > b_min
+
+    fprint(f"removed {len(mask) - np.sum(mask)} galaxies, thus "
+           f"{len(data['RA'][mask])} remain.")
+
+    for key in data:
+        data[key] = data[key][mask]
 
     if los_data_path is not None:
         data = load_los(los_data_path, data, mask=mask)
