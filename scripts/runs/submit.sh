@@ -90,7 +90,8 @@ for line in "${task_lines[@]}"; do
         exit 4
     fi
 
-    export PYTHONPATH="$frozen_dir:$PYTHONPATH"
+    # export PYTHONPATH="$frozen_dir:$PYTHONPATH"
+    export PYTHONPATH="$frozen_dir:${PYTHONPATH:-}"
 
     echo "[INFO] Running main.py with config: $config_path"
     $python_exec main.py --config "$config_path"
