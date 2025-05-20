@@ -32,8 +32,8 @@ num_chains_harmonic = 5
 [pv_model]
 use_MNR = false
 # Default kind. This gets overwritten if using a submission script.
-kind = "precomputed_los_Carrick2015"
-# kind = "Vext"
+# kind = "precomputed_los_Carrick2015"
+kind = "constant"
 galaxy_bias = "powerlaw"  # Ignored unless having an underlying density field
 
 
