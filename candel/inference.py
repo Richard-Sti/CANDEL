@@ -30,11 +30,13 @@ from tqdm import trange
 
 from .evidence import (BIC_AIC, dict_samples_to_array, harmonic_evidence,
                        laplace_evidence)
-from .util import (fprint, galactic_to_radec, plot_corner, radec_to_cartesian,
-                   radec_to_galactic)
+from .util import (fprint, galactic_to_radec, plot_corner,
+                   plot_radial_profiles, plot_Vext_rad_corner,
+                   radec_to_cartesian, radec_to_galactic)
 
 
-def run_pv_inference(model, model_args, print_summary=True, save_samples=True):
+def run_pv_inference(model, model_kwargs, print_summary=True,
+                     save_samples=True):
     """
     Run MCMC inference on the given PV model, post-process the samples,
     optionally compute the BIC, AIC, evidence and save the samples to an
@@ -57,11 +59,11 @@ def run_pv_inference(model, model_args, print_summary=True, save_samples=True):
     mcmc = MCMC(
         kernel, num_warmup=kwargs["num_warmup"],
         num_samples=kwargs["num_samples"], num_chains=kwargs["num_chains"],)
-    mcmc.run(jax.random.key(kwargs["seed"]), *model_args)
+    mcmc.run(jax.random.key(kwargs["seed"]), **model_kwargs)
 
     samples = mcmc.get_samples()
     if kwargs["compute_log_density"]:
-        log_density = get_log_density(samples, model, model_args)
+        log_density = get_log_density(samples, model, model_kwargs)
         log_density = log_density.reshape(kwargs["num_chains"], -1)
     else:
         log_density = None
@@ -73,7 +75,8 @@ def run_pv_inference(model, model_args, print_summary=True, save_samples=True):
         print_clean_summary(samples)
 
     if model.config["inference"]["compute_evidence"]:
-        bic, aic = BIC_AIC(samples, log_density)
+        ndata = len(model_kwargs["data"])
+        bic, aic = BIC_AIC(samples, log_density, ndata)
 
         samples_arr, names = dict_samples_to_array(
             samples, stack_chains=True)
@@ -106,11 +109,19 @@ def run_pv_inference(model, model_args, print_summary=True, save_samples=True):
 
     if save_samples:
         fname_out = model.config["io"]["fname_output"]
-        fprint(f"output directory is `{dirname(fname_out)}`.")
+        fprint(f"output directory is {dirname(fname_out)}.")
         save_mcmc_samples(samples, log_density, gof, fname_out)
 
         fname_plot = splitext(fname_out)[0] + ".png"
         plot_corner(samples, show_fig=False, filename=fname_plot,)
+
+        if model.with_radial_Vext:
+            fname_plot = splitext(fname_out)[0] + "_corner_Vext_rad.png"
+            plot_Vext_rad_corner(samples, show_fig=False, filename=fname_plot)
+
+            fname_plot = splitext(fname_out)[0] + "_profile_Vext_rad.png"
+            plot_radial_profiles(samples, model, show_fig=False,
+                                 filename=fname_plot)
 
     return samples, log_density
 
@@ -128,13 +139,13 @@ def run_magsel_inference(model, model_args, num_warmup=1000, num_samples=5000,
     return mcmc.get_samples()
 
 
-def get_log_density(samples, model, model_args, batch_size=5):
+def get_log_density(samples, model, model_kwargs, batch_size=5):
     """
     Compute the log density of the peculiar velocity validation model. The
     batch size cannot be much larger to prevent exhausting the memory.
     """
     def f(sample):
-        return log_density(model, model_args, {}, sample)[0]
+        return log_density(model, (), model_kwargs, sample)[0]
 
     f_vmap = vmap(f)
     f_vmap = jit(f_vmap)
@@ -177,23 +188,34 @@ def postprocess_samples(samples):
     elif "a_TFR_h" in keys and "a_TFR" not in keys:
         samples["a_TRF"] = samples.pop("a_TFR_h",)
 
-    # Convert the Vext samples to galactic coordinates
-    if any("Vext" in key for key in samples.keys()):
-        ell, b = radec_to_galactic(
-            np.rad2deg(samples.pop("Vext_phi")),
-            np.rad2deg(0.5 * np.pi - np.arccos(samples.pop("Vext_cos_theta"))),)  # noqa
-        samples["Vext_mag"] = samples.pop("Vext_mag")
-        samples["Vext_ell"] = ell
-        samples["Vext_b"] = b
+    # Convert Vext or Vext_rad samples to galactic coordinates
+    for prefix in ["Vext_rad", "Vext"]:  # ← more specific first
+        if f"{prefix}_phi" in samples and f"{prefix}_cos_theta" in samples:
+            phi = np.rad2deg(samples.pop(f"{prefix}_phi"))
+            theta = np.arccos(samples.pop(f"{prefix}_cos_theta"))
+            dec = np.rad2deg(0.5 * np.pi - theta)
 
-    # Convert aTFR dipole samples to galactic coordinates
-    if any("a_TFR_dipole" in key for key in samples.keys()):
-        ell, b = radec_to_galactic(
-            np.rad2deg(samples.pop("a_TFR_dipole_phi")),
-            np.rad2deg(0.5 * np.pi - np.arccos(samples.pop("a_TFR_dipole_cos_theta"))),)  # noqa
-        samples["a_TFR_dipole_mag"] = samples.pop("a_TFR_dipole_mag")
-        samples["a_TFR_dipole_ell"] = ell
-        samples["a_TFR_dipole_b"] = b
+            ell, b = radec_to_galactic(phi, dec)
+            samples[f"{prefix}_ell"] = ell
+            samples[f"{prefix}_b"] = b
+
+            if f"{prefix}_mag" in samples:
+                samples[f"{prefix}_mag"] = samples.pop(f"{prefix}_mag")
+            break
+
+    for prefix in ["a_TFR_dipole", "M_dipole"]:
+        if f"{prefix}_phi" in samples and f"{prefix}_cos_theta" in samples:
+            phi = np.rad2deg(samples.pop(f"{prefix}_phi"))
+            theta = np.arccos(samples.pop(f"{prefix}_cos_theta"))
+            dec = np.rad2deg(0.5 * np.pi - theta)
+
+            ell, b = radec_to_galactic(phi, dec)
+
+            samples[f"{prefix}_ell"] = ell
+            samples[f"{prefix}_b"] = b
+
+            if f"{prefix}_mag" in samples:
+                samples[f"{prefix}_mag"] = samples.pop(f"{prefix}_mag")
 
     return samples
 
@@ -246,4 +268,4 @@ def save_mcmc_samples(samples, log_density, gof, filename):
             for key, x in gof.items():
                 grp.create_dataset(key, data=x)
 
-    fprint(f"saved samples to `{filename}`.")
+    fprint(f"saved samples to {filename}.")

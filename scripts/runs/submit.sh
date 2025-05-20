@@ -7,7 +7,7 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
 #SBATCH --constraint=a100
-#SBATCH --time=01:00:00
+#SBATCH --time=00:30:00
 #SBATCH --job-name=candel
 #SBATCH --output=logs/logs-%j.out
 #SBATCH --error=logs/logs-%j.err
@@ -90,7 +90,8 @@ for line in "${task_lines[@]}"; do
         exit 4
     fi
 
-    export PYTHONPATH="$frozen_dir:$PYTHONPATH"
+    # export PYTHONPATH="$frozen_dir:$PYTHONPATH"
+    export PYTHONPATH="$frozen_dir:${PYTHONPATH:-}"
 
     echo "[INFO] Running main.py with config: $config_path"
     $python_exec main.py --config "$config_path"
