@@ -102,6 +102,11 @@ def generate_dynamic_tag(config, base_tag="default"):
     if isinstance(Vext_prior, dict) and Vext_prior.get("dist") == "delta":
         parts.append("noVext")
 
+    # Flag if sampling the dust prior
+    dust_model = get_nested(config, f"io/{catalogue}/dust_model", None)
+    if dust_model is not None and dust_model.lower() != "none":
+        parts.append(f"dust-{dust_model}")
+
     return "_".join(parts) if base_tag == "default" else base_tag
 
 
@@ -131,6 +136,7 @@ if __name__ == "__main__":
         "io/catalogue_name": "CF4_W1",
         "io/root_output": "results/TEST_CF4_H0_anisotropy",
         "pv_model/use_MNR": False,
+        # "io/CF4_W1/dust_model": "CSFD",
         # "io/Clusters/which_relation": ["LT", "LTY"],
         # "io/Clusters/which_relation": "LT",
         # "model/priors/beta": [
