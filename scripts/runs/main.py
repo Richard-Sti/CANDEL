@@ -58,6 +58,7 @@ if __name__ == "__main__":
            f"data `{data_name}`")
 
     model = candel.model.name2model(model_name)(args.config)
-    candel.run_pv_inference(model, (data,))
+    model_kwargs = {"data": data, }
+    candel.run_pv_inference(model, model_kwargs)
 
     insert_comment_at_top(args.config, "finished")
