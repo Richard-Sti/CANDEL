@@ -842,39 +842,19 @@ class Clusters_DistMarg(BaseModel):
         # Later make this choice more flexible.
         self.Om = 0.3
 
-        # Disable priors for some of the models.
-        if which_relation[0] == "L":
-            "L = A + B * logT + C * logY"
-            if not self.sample_T:
-                fprint("`logT` is not used in the model. Disabling its prior.")
-                self.priors["CL_B"] = Delta(jnp.asarray(0.0))
-                self.prior_dist_name["CL_B"] = "delta"
-            if not self.sample_Y:
-                fprint("`logY` is not used in the model. Disabling its prior.")
-                self.priors["CL_C"] = Delta(jnp.asarray(0.0))
-                self.prior_dist_name["CL_C"] = "delta"
+        # Disable priors only if the variable is not used in the relation.
+        used = set(which_relation)
+        prior_info = {
+            "T": ("sample_T", "logT", "CL_B"),
+            "Y": ("sample_Y", "logY", "CL_C"),
+        }
 
-        elif which_relation[0] == "Y":
-            "logY[kpc2] = A + B * logT + C * logF"
-            if not self.sample_T:
-                fprint("`logT` is not used in the model. Disabling its prior.")
-                self.priors["CL_B"] = Delta(jnp.asarray(0.0))
-                self.prior_dist_name["CL_B"] = "delta"
-            if not self.sample_F:
-                fprint("`logF` is not used in the model. Disabling its prior.")
-                self.priors["CL_C"] = Delta(jnp.asarray(0.0))
-                self.prior_dist_name["CL_C"] = "delta"
-
-        elif which_relation[0] == "T":
-            "logT = A + B * logF + C * logY"
-            if not self.sample_F:
-                fprint("`logF` is not used in the model. Disabling its prior.")
-                self.priors["CL_B"] = Delta(jnp.asarray(0.0))
-                self.prior_dist_name["CL_B"] = "delta"
-            if not self.sample_Y:
-                fprint("`logY` is not used in the model. Disabling its prior.")
-                self.priors["CL_C"] = Delta(jnp.asarray(0.0))
-                self.prior_dist_name["CL_C"] = "delta"
+        for var, (attr, name, key) in prior_info.items():
+            if var not in used and not getattr(self, attr, False):
+                fprint(
+                    f"`{name}` is not used in the model. Disabling its prior.")
+                self.priors[key] = Delta(jnp.asarray(0.0))
+                self.prior_dist_name[key] = "delta"
 
         if self.use_MNR:
             raise NotImplementedError(
@@ -933,7 +913,8 @@ class Clusters_DistMarg(BaseModel):
         bias_params = sample_galaxy_bias(self.priors, self.galaxy_bias)
         beta = rsample("beta", self.priors["beta"])
 
-        # For the distance marginalization, h is not sampled.
+        # For the distance marginalization, h is not sampled. Careful because
+        # the mapping to `mu` above assumes h = 1.
         h = 1.
 
         with plate("data", nsamples):
@@ -943,35 +924,33 @@ class Clusters_DistMarg(BaseModel):
                     "`use_MNR` to False in the config file.")
             else:
                 sigma_mu2 = jnp.ones(nsamples) * sigma_mu**2
+                rel = self.which_relation[0]
 
-                if self.which_relation[0] == "L":
-                    "LogL = A + B * logT + C * logY"
+                # Fixed contributions depending on relation type
+                if rel == "L":
+                    # LogL = A + B * logT + C * logY
                     logF = data["logF"]
                     sigma_mu2 += data["e2_logF"]
-                    if self.sample_T:
-                        logT = data["logT"]
-                        sigma_mu2 += B**2 * data["e2_logT"]
-                    else:
-                        logT = jnp.zeros(nsamples)
-                    if self.sample_Y:
-                        logY = data["logY"]
-                        sigma_mu2 += C**2 * data["e2_logY"]
-                    else:
-                        logY = jnp.zeros(nsamples)
-                elif self.which_relation[0] == "Y":
-                    "logY = A + B * logT + C * logF"
+                elif rel == "Y":
+                    # logY = A + B * logT + C * logF
                     logY = data["logY"]
                     sigma_mu2 += data["e2_logY"]
-                    if self.sample_T:
-                        logT = data["logT"]
-                        sigma_mu2 += B**2 * data["e2_logT"]
-                    else:
-                        logT = jnp.zeros(nsamples)
-                    if self.sample_F:
-                        logF = data["logF"]
-                        sigma_mu2 += C**2 * data["e2_logF"]
-                    else:
-                        logF = jnp.zeros(nsamples)
+                else:
+                    raise ValueError(
+                        f"Invalid scaling relation '{self.which_relation}'.")
+
+                # Conditional contributions based on sampling flags
+                if self.sample_T:
+                    logT = data["logT"]
+                    sigma_mu2 += B**2 * data["e2_logT"]
+
+                if self.sample_Y and rel == "L":
+                    logY = data["logY"]
+                    sigma_mu2 += C**2 * data["e2_logY"]
+
+                if self.sample_F and rel == "Y":
+                    logF = data["logF"]
+                    sigma_mu2 += C**2 * data["e2_logF"]
 
                 sigma_mu = jnp.sqrt(sigma_mu2)
 
@@ -984,7 +963,7 @@ class Clusters_DistMarg(BaseModel):
                 logL_pred = jnp.log10(Ez) + A + B * logT
                 mu_cluster = 2.5 * (logL_pred - logF) + 25
             elif self.which_relation[0] == "L":
-                theta = 0.5 * (jnp.log10(Ez) + A + B*logT + C*logY - logF)
+                theta = 0.5 * (jnp.log10(Ez) + A + B * logT + C * logY - logF)
                 mu_cluster = self.mu_from_LTY_calibration(theta, C)
             elif self.which_relation == "YT":
                 logDA = 0.5 * (jnp.log10(Ez) + A + B * logT - logY)
