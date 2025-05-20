@@ -906,9 +906,9 @@ class Clusters_DistMarg(BaseModel):
                 log_dA_grid=log_dA_grid, mu_grid=mu_grid)
             self.mu_from_LTY_calibration = vmap(
                 f_partial, in_axes=(0, None), out_axes=0)
-            
-        if which_relation ==  "YT":
-            self.mu_from_DAng = DistAng2Distmod()
+
+        if which_relation == "YT":
+            self.logangdist2distmod = LogAngularDiameterDistance2Distmod()
 
     def __call__(self, data):
         nsamples = len(data)
@@ -942,7 +942,7 @@ class Clusters_DistMarg(BaseModel):
                     "MNR for clusters is not implemented yet. Please set "
                     "`use_MNR` to False in the config file.")
             else:
-                sigma_mu2 = jnp.ones(nsamples) * sigma_mu**2 
+                sigma_mu2 = jnp.ones(nsamples) * sigma_mu**2
 
                 if self.which_relation[0] == "L":
                     "LogL = A + B * logT + C * logY"
@@ -988,7 +988,7 @@ class Clusters_DistMarg(BaseModel):
                 mu_cluster = self.mu_from_LTY_calibration(theta, C)
             elif self.which_relation == "YT":
                 logDA = 0.5 * (jnp.log10(Ez) + A + B * logT - logY)
-                mu_cluster = self.mu_from_DAng(10**logDA)
+                mu_cluster = self.logangdist2distmod(logDA, h=h)
             else:
                 raise ValueError(
                     f"Invalid scaling relation '{self.which_relation}'.")
@@ -1000,7 +1000,6 @@ class Clusters_DistMarg(BaseModel):
             ll = 2 * jnp.log(r_grid)
             ll += Normal(
                 mu_cluster[:, None], sigma_mu[:, None]).log_prob(mu_grid)
-            
 
             if data.has_precomputed_los:
                 # The shape is `(n_galaxies, num_steps.)`
@@ -1113,7 +1112,6 @@ class FPModel_DistMarg(BaseModel):
             zpec = (Vrad + Vext_rad) / SPEED_OF_LIGHT
             zcmb = self.distmod2redshift(mu_grid, h=h)
 
-            
             czpred = SPEED_OF_LIGHT * ((1 + zcmb) * (1 + zpec) - 1)
 
             ll += Normal(czpred, sigma_v).log_prob(data["czcmb"][:, None])
