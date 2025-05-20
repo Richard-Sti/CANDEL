@@ -340,9 +340,9 @@ def load_SH0ES_calibration(calibration_path, pgc_CF4):
 
 
 def load_CF4_data(root, which_band, best_mag_quality=True, eta_min=-0.3,
-                  zcmb_max=None, b_min=7.5, remove_outliers=True,
-                  calibration=None, los_data_path=None, return_all=False,
-                  dust_model=None, **kwargs):
+                  zcmb_min=None, zcmb_max=None, b_min=7.5,
+                  remove_outliers=True, calibration=None, los_data_path=None,
+                  return_all=False, dust_model=None, **kwargs):
     """
     Load CF4 TFR data and apply optional filters and dust correction removal.
     """
@@ -358,7 +358,12 @@ def load_CF4_data(root, which_band, best_mag_quality=True, eta_min=-0.3,
         pgc = grp["pgc"][...]
 
         # Remove extinction correction if requested
-        if which_band in ["w1", "w2"] and dust_model is not None:
+        if dust_model is not None:
+            if which_band not in ["w1", "w2"]:
+                raise ValueError(
+                    f"Band `{which_band}` is not supported for dust "
+                    f"correction removal. Only `w1` and `w2` are supported.")
+
             Ab_default = grp[f"A_{which_band}"][...]
             fprint(f"switching the dust model to `{dust_model}`.")
 
@@ -373,8 +378,7 @@ def load_CF4_data(root, which_band, best_mag_quality=True, eta_min=-0.3,
                 raise ValueError(
                     f"Non-finite E(B-V) values for dust map `{dust_model}`.")
         else:
-            raise ValueError(f"Dust models are only available for W1 and W2. "
-                             f"Got {which_band}.")
+            ebv = np.full_like(mag, np.nan)
 
     fprint(f"initially loaded {len(pgc)} galaxies from CF4 TFR data.")
 
@@ -395,6 +399,8 @@ def load_CF4_data(root, which_band, best_mag_quality=True, eta_min=-0.3,
     mask = eta > eta_min
     if best_mag_quality:
         mask &= mag_quality == 5
+    if zcmb_min is not None:
+        mask &= zcmb > zcmb_min
     if zcmb_max is not None:
         mask &= zcmb < zcmb_max
     if remove_outliers:
@@ -443,8 +449,8 @@ def load_CF4_mock(root, index):
     return data
 
 
-def load_PantheonPlus(root, zcmb_max=None, b_min=7.5, los_data_path=None,
-                      return_all=False, **kwargs):
+def load_PantheonPlus(root, zcmb_min=None, zcmb_max=None, b_min=7.5,
+                      los_data_path=None, return_all=False, **kwargs):
     """
     Load the Pantheon+ data from the given root directory, the covariance
     is expected to have peculiar velocity contribution removed.
@@ -472,6 +478,9 @@ def load_PantheonPlus(root, zcmb_max=None, b_min=7.5, los_data_path=None,
     C = np.reshape(covmat[1:], (size, size))
 
     mask = np.ones(len(data["zcmb"]), dtype=bool)
+
+    if zcmb_min is not None:
+        mask &= data["zcmb"] > zcmb_min
 
     if zcmb_max is not None:
         mask &= data["zcmb"] < zcmb_max
@@ -554,8 +563,8 @@ def load_SH0ES(root):
     return data
 
 
-def load_clusters(root, zcmb_max=0.2, los_data_path=None, return_all=False,
-                  **kwargs):
+def load_clusters(root, zcmb_min=None, zcmb_max=None, los_data_path=None,
+                  return_all=False, **kwargs):
     """
     Load the cluster scaling relation data from the given root directory.
 
@@ -620,6 +629,10 @@ def load_clusters(root, zcmb_max=0.2, los_data_path=None, return_all=False,
         return data
 
     mask = np.ones(len(z), dtype=bool)
+
+    if zcmb_min is not None:
+        mask &= z > zcmb_min
+
     if zcmb_max is not None:
         mask &= z < zcmb_max
 
@@ -649,8 +662,8 @@ def arcsec_to_radian(arcsec):
     return (arcsec * u.arcsec).to(u.radian).value
 
 
-def load_SDSS_FP(root, zcmb_max=None, b_min=7.5, los_data_path=None,
-                 return_all=False, **kwargs):
+def load_SDSS_FP(root, zcmb_min=None, zcmb_max=None, b_min=7.5,
+                 los_data_path=None, return_all=False, **kwargs):
     """Load the SDSS FP data from the given root directory."""
     fname = join(root, "SDSS_PV_public.dat")
     d_input = np.genfromtxt(fname, names=True, )
@@ -681,6 +694,10 @@ def load_SDSS_FP(root, zcmb_max=None, b_min=7.5, los_data_path=None,
         return data
 
     mask = np.ones(len(data["zcmb"]), dtype=bool)
+
+    if zcmb_min is not None:
+        mask &= data["zcmb"] > zcmb_min
+
     if zcmb_max is not None:
         mask &= data["zcmb"] < zcmb_max
 

@@ -28,9 +28,9 @@ import astropy.units as u
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
-import scienceplots  # noqa
 from astropy.coordinates import SkyCoord
 from corner import corner
+from h5py import File
 from jax import vmap
 from jax_cosmo.scipy.interpolate import InterpolatedUnivariateSpline
 
@@ -93,7 +93,8 @@ def convert_to_absolute_paths(config):
     return config
 
 
-def load_config(config_path, replace_none=True, fill_paths=True):
+def load_config(config_path, replace_none=True, fill_paths=True,
+                replace_los_prior=True):
     """
     Load a TOML configuration file and convert "none" strings to None.
     """
@@ -106,7 +107,7 @@ def load_config(config_path, replace_none=True, fill_paths=True):
 
     # Assign delta priors if not using an underlying reconstruction.
     kind = config.get("pv_model", {}).get("kind", "")
-    if not kind.startswith("precomputed_los"):
+    if replace_los_prior and not kind.startswith("precomputed_los"):
         config = replace_prior_with_delta(config, "alpha", 1.)
         config = replace_prior_with_delta(config, "beta", 0.)
 
@@ -403,3 +404,19 @@ def plot_radial_profiles(samples, model, r_eval_size=1000, show_fig=True,
         fig.show()
     else:
         plt.close(fig)
+
+
+def read_gof(fname, which):
+    """Read goodness-of-fit statistics from a file with samples."""
+    convert = which.startswith("logZ_")
+    key = which.replace("logZ_", "lnZ_") if convert else which
+
+    with File(fname, "r") as f:
+        try:
+            stat = float(f[f"gof/{key}"][...])
+        except KeyError as e:
+            raise KeyError(
+                f"`{key}` not found in the file. Available keys are: "
+                f"{list(f['gof'].keys())}") from e
+
+    return stat / np.log(10) if convert else stat
