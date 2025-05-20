@@ -35,7 +35,8 @@ from .util import (fprint, galactic_to_radec, plot_corner,
                    radec_to_cartesian, radec_to_galactic)
 
 
-def run_pv_inference(model, model_args, print_summary=True, save_samples=True):
+def run_pv_inference(model, model_kwargs, print_summary=True,
+                     save_samples=True):
     """
     Run MCMC inference on the given PV model, post-process the samples,
     optionally compute the BIC, AIC, evidence and save the samples to an
@@ -58,11 +59,11 @@ def run_pv_inference(model, model_args, print_summary=True, save_samples=True):
     mcmc = MCMC(
         kernel, num_warmup=kwargs["num_warmup"],
         num_samples=kwargs["num_samples"], num_chains=kwargs["num_chains"],)
-    mcmc.run(jax.random.key(kwargs["seed"]), *model_args)
+    mcmc.run(jax.random.key(kwargs["seed"]), **model_kwargs)
 
     samples = mcmc.get_samples()
     if kwargs["compute_log_density"]:
-        log_density = get_log_density(samples, model, model_args)
+        log_density = get_log_density(samples, model, model_kwargs)
         log_density = log_density.reshape(kwargs["num_chains"], -1)
     else:
         log_density = None
@@ -74,7 +75,8 @@ def run_pv_inference(model, model_args, print_summary=True, save_samples=True):
         print_clean_summary(samples)
 
     if model.config["inference"]["compute_evidence"]:
-        bic, aic = BIC_AIC(samples, log_density)
+        ndata = len(model_kwargs["data"])
+        bic, aic = BIC_AIC(samples, log_density, ndata)
 
         samples_arr, names = dict_samples_to_array(
             samples, stack_chains=True)
@@ -137,13 +139,13 @@ def run_magsel_inference(model, model_args, num_warmup=1000, num_samples=5000,
     return mcmc.get_samples()
 
 
-def get_log_density(samples, model, model_args, batch_size=5):
+def get_log_density(samples, model, model_kwargs, batch_size=5):
     """
     Compute the log density of the peculiar velocity validation model. The
     batch size cannot be much larger to prevent exhausting the memory.
     """
     def f(sample):
-        return log_density(model, model_args, {}, sample)[0]
+        return log_density(model, (), model_kwargs, sample)[0]
 
     f_vmap = vmap(f)
     f_vmap = jit(f_vmap)

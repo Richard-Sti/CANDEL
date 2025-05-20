@@ -18,7 +18,7 @@ import numpy as np
 from .util import fprint
 
 
-def BIC_AIC(samples, log_density, stack_chains=True):
+def BIC_AIC(samples, log_density, ndata, stack_chains=True):
     """
     Get the BIC/AIC of HMC samples from a Numpyro model.
 
@@ -28,6 +28,8 @@ def BIC_AIC(samples, log_density, stack_chains=True):
         Dictionary of samples from the Numpyro MCMC object.
     log_density: numpy array
         Log density of the samples.
+    ndata: int
+        Number of data points.
     stack_chains: bool, optional
         Whether to stack the chains. Must be `True` if the samples come from
         multiple chains.
@@ -55,8 +57,6 @@ def BIC_AIC(samples, log_density, stack_chains=True):
         else:
             # The first dimension is the number of steps.
             nparam += np.prod(x.shape[1:])
-
-        ndata = x.shape[-1]
 
     fprint(f"BIC & AIC calculation found {nparam} parameters and {ndata} "
            "data points.")
