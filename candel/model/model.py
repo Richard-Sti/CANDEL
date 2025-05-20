@@ -841,23 +841,17 @@ class Clusters_DistMarg(BaseModel):
 
                 sigma_mu = jnp.sqrt(sigma_mu2)
 
-
             # This should depend on the cosmological redshift, but the
             # corrections are small and subdominant to the noise in the cluster
             # scaling relations.
             Ez = get_Ez(data["zcmb"], Om=self.Om)
 
-            #if self.which_relation == "LT":
-            # Faster than mu_from_LTY_calibration btu gives same results
-                # logL_pred = jnp.log10(Ez) + A + B * logT
-                # mu_cluster = 2.5 * (logL_pred - logF) + 25
-            if self.which_relation[0] == "L":
+            if self.which_relation == "LT":
+                logL_pred = jnp.log10(Ez) + A + B * logT
+                mu_cluster = 2.5 * (logL_pred - logF) + 25
+            elif self.which_relation[0] == "L":
                 theta = 0.5 * (jnp.log10(Ez) + A + B*logT + C*logY - logF)
-                print(C)
-                print(theta)
                 mu_cluster = self.mu_from_LTY_calibration(theta, C)
-
-                print(mu_cluster)
             elif self.which_relation == "YT":
                 logDA = 0.5 * (jnp.log10(Ez) + A + B * logT - logY)
                 mu_cluster = self.mu_from_DAng(10**logDA)
