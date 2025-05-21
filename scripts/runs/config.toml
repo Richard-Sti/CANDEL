@@ -281,7 +281,7 @@ seed_subsample = 42
 root = "data/CF4"
 which_band = "i"  # Does not matter
 return_all = true
-los_file = "data/CF4/los_CF4_TFR_<X>.hdf5"
+los_file = "data/CF4/los_CF4_TFR_<X>_OLD.hdf5"
 
 [io.PV_main.PantheonPlus]
 root = "data/Pantheon+"
