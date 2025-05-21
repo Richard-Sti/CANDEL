@@ -1,10 +1,14 @@
-# root_main = "/Users/rstiskalek/Projects/CANDEL/"
-# python_exec = "/Users/rstiskalek/Projects/CANDEL/venv_candel/bin/python"
+root_main = "/Users/rstiskalek/Projects/CANDEL/"
+python_exec = "/Users/rstiskalek/Projects/CANDEL/venv_candel/bin/python"
+machine = "local"
+
+# root_main = "/Users/yasin/code/CANDEL/"
+# python_exec = "/Users/yasin/code/CANDEL/venv_candel/bin/python"
 # machine = "local"
 
-root_main = "/mnt/home/rstiskalek/ceph/CANDEL"
-python_exec="/mnt/home/rstiskalek/CANDEL/venv_gpu_candel/bin/python"
-machine="rusty"
+#root_main = "/mnt/home/rstiskalek/ceph/CANDEL"
+#python_exec="/mnt/home/rstiskalek/CANDEL/venv_gpu_candel/bin/python"
+#machine="rusty"
 
 
 ###############################################################################
@@ -12,9 +16,9 @@ machine="rusty"
 ###############################################################################
 
 [inference]
-model = "TFRModel_DistMarg"
+model = "Clusters_DistMarg"
 num_warmup = 500
-num_samples = 5000
+num_samples = 500
 num_chains = 1
 seed = 42
 compute_log_density = true
@@ -28,8 +32,8 @@ num_chains_harmonic = 5
 [pv_model]
 use_MNR = false
 # Default kind. This gets overwritten if using a submission script.
-kind = "precomputed_los_Carrick2015"
-# kind = "Vext"
+# kind = "precomputed_los_Carrick2015"
+kind = "Vext"
 galaxy_bias = "powerlaw"  # Ignored unless having an underlying density field
 
 
@@ -45,11 +49,9 @@ num_sigma = 5
 low_clip = 18.0
 high_clip = 42.0
 
-
 [model.mag_grid]
 num_sigma = 4
 num_points = 25
-
 
 [model.priors.h]
 dist = "delta"
@@ -70,6 +72,13 @@ dist = "uniform"
 low = 0.0
 high = 3.0
 
+[model.priors.sigma_mu]
+dist = "jeffreys"
+low = 0.01
+high = 1.5
+
+# TFR priors
+
 [model.priors.TFR_zeropoint]
 dist = "normal"
 loc = -20.0
@@ -81,18 +90,15 @@ loc = -9.0
 scale = 2.0
 
 [model.priors.TFR_curvature]
-dist = "norm"
+dist = "normal"
 loc = 10
 scale = 4.0
-
-[model.priors.sigma_mu]
-dist = "jeffreys"
-low = 0.01
-high = 1.0
 
 [model.priors.TFR_zeropoint_dipole]
 dist = "delta"
 value = [0.0, 0.0, 0.0]
+
+# SN priors
 
 [model.priors.SN_absmag]
 dist = "normal"
@@ -104,20 +110,24 @@ dist = "vector_uniform"
 low = 0.0
 high = 0.25
 
+## Cluster scaling relation priors
+
 [model.priors.CL_A]
-dist = "normal"
-loc = -0.3
-scale = 1
+dist = "uniform"
+low = -5
+high = 10
 
 [model.priors.CL_B]
-dist = "normal"
-loc = 2
-scale = 1
+dist = "uniform"
+low = 0
+high = 10
 
 [model.priors.CL_C]
-dist = "normal"
-loc = 0
-scale = 1
+dist = "uniform"
+low = -2.0
+high = 2.0
+
+# FP priors
 
 [model.priors.FP_a]
 dist = "normal"
@@ -134,11 +144,12 @@ dist = "normal"
 loc = -1
 scale = 1.0
 
+# Velocity priors
+
 [model.priors.sigma_v]
 dist = "jeffreys"
 low = 5
 high = 2500
-
 
 [model.priors.Vext]
 dist = "vector_uniform_fixed"
@@ -169,7 +180,7 @@ scale = 0.05
 root_output = "results"
 # Default catalogue name and output path. This gets overwritten
 # if using a submission script.
-catalogue_name = "CF4_W1"
+catalogue_name = "Clusters"
 
 fname_output = "results/test.hdf5"
 
@@ -301,8 +312,8 @@ los_file = "data/SDSS/los_SDSS_FP_<X>.hdf5"
 
 [io.reconstruction_main]
 rmin = 0.1
-rmax = 251
-num_steps = 251
+rmax = 751
+num_steps = 501
 
 [io.reconstruction_main.Carrick2015]
 path_density = "data/fields/carrick2015_twompp_density.npy"
