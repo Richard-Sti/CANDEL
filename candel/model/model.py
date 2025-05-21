@@ -830,27 +830,31 @@ class Clusters_DistMarg(BaseModel):
         super().__init__(config_path)
 
         which_relation = self.config["io"]["Clusters"]["which_relation"]
-        if which_relation not in ["LT", "LTY"]:
+        if which_relation not in ["LT", "LY", "LTY", "YT"]:
             raise ValueError(f"Invalid scaling relation '{which_relation}'. "
-                             "Choose either 'LT' or 'LTY'.")
+                             "Choose either 'LT' or 'LY' or 'LTY'.")
 
         self.which_relation = which_relation
         self.sample_T = "T" in which_relation
         self.sample_Y = "Y" in which_relation
+        self.sample_F = "L" in which_relation
 
         # Later make this choice more flexible.
         self.Om = 0.3
 
-        # Disable priors for some of the models.
-        if not self.sample_T:
-            fprint("`logT` is not used in the model. Disabling its prior.")
-            self.priors["CL_B"] = Delta(jnp.asarray(0.0))
-            self.prior_dist_name["CL_B"] = "delta"
+        # Disable priors only if the variable is not used in the relation.
+        used = set(which_relation)
+        prior_info = {
+            "T": ("sample_T", "logT", "CL_B"),
+            "Y": ("sample_Y", "logY", "CL_C"),
+        }
 
-        if not self.sample_Y:
-            fprint("`logY` is not used in the model. Disabling its prior.")
-            self.priors["CL_C"] = Delta(jnp.asarray(0.0))
-            self.prior_dist_name["CL_C"] = "delta"
+        for var, (attr, name, key) in prior_info.items():
+            if var not in used and not getattr(self, attr, False):
+                fprint(
+                    f"`{name}` is not used in the model. Disabling its prior.")
+                self.priors[key] = Delta(jnp.asarray(0.0))
+                self.prior_dist_name[key] = "delta"
 
         if self.use_MNR:
             raise NotImplementedError(
@@ -862,7 +866,7 @@ class Clusters_DistMarg(BaseModel):
         # If C is being sampled, then we need to precompute the grids to
         # relate `logDL - c * logDA = theta` to `mu`. Note that these are
         # h = 1 and with a hard-cded Om = 0.3 cosmology.
-        if which_relation == "LTY":
+        if which_relation[0] == 'L':
             d = self.config["io"]["Clusters"]
             z_grid = np.linspace(
                 d["zcmb_mapping_min"], d["zcmb_mapping_max"],
@@ -883,6 +887,9 @@ class Clusters_DistMarg(BaseModel):
             self.mu_from_LTY_calibration = vmap(
                 f_partial, in_axes=(0, None), out_axes=0)
 
+        if which_relation == "YT":
+            self.logangdist2distmod = LogAngularDiameterDistance2Distmod()
+
     def __call__(self, data):
         nsamples = len(data)
 
@@ -902,12 +909,12 @@ class Clusters_DistMarg(BaseModel):
         else:
             Vext = rsample("Vext", self.priors["Vext"])
         sigma_v = rsample("sigma_v", self.priors["sigma_v"])
-
         # Remaining parameters
         bias_params = sample_galaxy_bias(self.priors, self.galaxy_bias)
         beta = rsample("beta", self.priors["beta"])
 
-        # For the distance marginalization, h is not sampled.
+        # For the distance marginalization, h is not sampled. Careful because
+        # the mapping to `mu` above assumes h = 1.
         h = 1.
 
         with plate("data", nsamples):
@@ -916,16 +923,34 @@ class Clusters_DistMarg(BaseModel):
                     "MNR for clusters is not implemented yet. Please set "
                     "`use_MNR` to False in the config file.")
             else:
-                logF = data["logF"]
-                sigma_mu2 = jnp.ones_like(logF) * sigma_mu**2
+                sigma_mu2 = jnp.ones(nsamples) * sigma_mu**2
+                rel = self.which_relation[0]
 
+                # Fixed contributions depending on relation type
+                if rel == "L":
+                    # LogL = A + B * logT + C * logY
+                    logF = data["logF"]
+                    sigma_mu2 += data["e2_logF"]
+                elif rel == "Y":
+                    # logY = A + B * logT + C * logF
+                    logY = data["logY"]
+                    sigma_mu2 += data["e2_logY"]
+                else:
+                    raise ValueError(
+                        f"Invalid scaling relation '{self.which_relation}'.")
+
+                # Conditional contributions based on sampling flags
                 if self.sample_T:
                     logT = data["logT"]
                     sigma_mu2 += B**2 * data["e2_logT"]
 
-                if self.sample_Y:
+                if self.sample_Y and rel == "L":
                     logY = data["logY"]
-                    sigma_mu += C**2 * data["e2_logY"]
+                    sigma_mu2 += C**2 * data["e2_logY"]
+
+                if self.sample_F and rel == "Y":
+                    logF = data["logF"]
+                    sigma_mu2 += C**2 * data["e2_logF"]
 
                 sigma_mu = jnp.sqrt(sigma_mu2)
 
@@ -935,13 +960,14 @@ class Clusters_DistMarg(BaseModel):
             Ez = get_Ez(data["zcmb"], Om=self.Om)
 
             if self.which_relation == "LT":
-                # Luminosity predicted from temperature, turned into distance
-                # modulus.
                 logL_pred = jnp.log10(Ez) + A + B * logT
                 mu_cluster = 2.5 * (logL_pred - logF) + 25
-            elif self.which_relation == "LTY":
+            elif self.which_relation[0] == "L":
                 theta = 0.5 * (jnp.log10(Ez) + A + B * logT + C * logY - logF)
                 mu_cluster = self.mu_from_LTY_calibration(theta, C)
+            elif self.which_relation == "YT":
+                logDA = 0.5 * (jnp.log10(Ez) + A + B * logT - logY)
+                mu_cluster = self.logangdist2distmod(logDA, h=h)
             else:
                 raise ValueError(
                     f"Invalid scaling relation '{self.which_relation}'.")
@@ -1064,6 +1090,7 @@ class FPModel_DistMarg(BaseModel):
                 **self.kwargs_radial_Vext)
             zpec = (Vrad + Vext_rad) / SPEED_OF_LIGHT
             zcmb = self.distmod2redshift(mu_grid, h=h)
+
             czpred = SPEED_OF_LIGHT * ((1 + zcmb) * (1 + zpec) - 1)
 
             ll += Normal(czpred, sigma_v).log_prob(data["czcmb"][:, None])

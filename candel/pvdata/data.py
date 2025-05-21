@@ -131,7 +131,7 @@ class PVDataFrame:
         if "los_r" not in data:
             d = config_io["reconstruction_main"]
             fprint(f"setting the LOS radial grid from {d['rmin']} to "
-                   f"{d['rmax']} with {d['num_steps']} steps.")
+                   f"{d['rmax']} Mpc/h with {d['num_steps']} steps.")
             data["los_r"] = np.linspace(d["rmin"], d["rmax"], d["num_steps"])
 
         if "los_density" in data:
@@ -606,7 +606,7 @@ def load_clusters(root, zcmb_min=None, zcmb_max=None, los_data_path=None,
 
     e_logT = np.log10(np.e) * (Tmax - Tmin) / (2 * T)
     e_logF = np.log10(np.e) * (Lx * eL / 100) / Lx
-    e_logY = e_Y / Y_arcmin2 / np.log(10)
+    e_logY = np.log10(np.e) * e_Y / Y_arcmin2
 
     RA, dec = galactic_to_radec(data['Glon'], data['Glat'])
 
@@ -647,6 +647,9 @@ def load_clusters(root, zcmb_min=None, zcmb_max=None, los_data_path=None,
 
     fprint("subtracting the mean logY from the data.")
     data["logY"] -= np.mean(data["logY"])
+
+    # fprint("subtracting the mean logF from the data.")
+    # data["logF"] -= np.mean(data["logF"])
 
     if los_data_path is not None:
         data = load_los(los_data_path, data, mask=mask)
