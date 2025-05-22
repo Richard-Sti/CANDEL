@@ -943,14 +943,20 @@ class Clusters_DistMarg(BaseModel):
                 if self.sample_T:
                     logT = data["logT"]
                     sigma_mu2 += B**2 * data["e2_logT"]
+                else:
+                    logT = 0
 
                 if self.sample_Y and rel == "L":
                     logY = data["logY"]
                     sigma_mu2 += C**2 * data["e2_logY"]
+                else:
+                    logY = 0
 
                 if self.sample_F and rel == "Y":
                     logF = data["logF"]
                     sigma_mu2 += C**2 * data["e2_logF"]
+                else:
+                    logF = 0
 
                 sigma_mu = jnp.sqrt(sigma_mu2)
 
