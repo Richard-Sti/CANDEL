@@ -191,9 +191,9 @@ def postprocess_samples(samples):
     """Postprocess the MCMC samples."""
     # Convert Vext or Vext_rad samples to galactic coordinates
     for prefix in ["Vext_rad", "Vext"]:  # ← more specific first
-        if f"{prefix}_phi" in samples and f"{prefix}_theta" in samples:
+        if f"{prefix}_phi" in samples and f"{prefix}_cos_theta" in samples:
             phi = np.rad2deg(samples.pop(f"{prefix}_phi"))
-            theta = samples.pop(f"{prefix}_theta")
+            theta = np.arccos(samples.pop(f"{prefix}_cos_theta"))
             dec = np.rad2deg(0.5 * np.pi - theta)
 
             ell, b = radec_to_galactic(phi, dec)
@@ -205,9 +205,9 @@ def postprocess_samples(samples):
             break
 
     for prefix in ["a_TFR_dipole", "M_dipole"]:
-        if f"{prefix}_phi" in samples and f"{prefix}_theta" in samples:
+        if f"{prefix}_phi" in samples and f"{prefix}_cos_theta" in samples:
             phi = np.rad2deg(samples.pop(f"{prefix}_phi"))
-            theta = samples.pop(f"{prefix}_theta")
+            theta = np.arccos(samples.pop(f"{prefix}_cos_theta"))
             dec = np.rad2deg(0.5 * np.pi - theta)
 
             ell, b = radec_to_galactic(phi, dec)

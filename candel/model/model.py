@@ -86,30 +86,6 @@ class MagnitudeDistribution(Distribution):
         return jnp.where(in_bounds, logp, -jnp.inf)
 
 
-class PolarAngleDistribution(Distribution):
-    """
-    Distribution for polar angle θ ∈ [0, π], corresponding to a uniform
-    distribution in cos(θ) ∈ [-1, 1]. This gives a density ∝ sin(θ),
-    as commonly used in spherical coordinates.
-    """
-    support = constraints.interval(0.0, jnp.pi)
-    has_rsample = True
-
-    def __init__(self, validate_args=None):
-        batch_shape = ()
-        event_shape = ()
-        super().__init__(batch_shape, event_shape, validate_args=validate_args)
-
-    def sample(self, key, sample_shape=()):
-        u = random.uniform(key, shape=sample_shape, minval=-1.0, maxval=1.0)
-        return jnp.arccos(u)
-
-    @validate_sample
-    def log_prob(self, value):
-        eps = 1e-8
-        return jnp.log(jnp.clip(jnp.sin(value), a_min=eps)) - jnp.log(2.0)
-
-
 def sample_vector(name, mag_min, mag_max):
     """
     Sample a 3D vector uniformly in direction and magnitude.
@@ -123,9 +99,8 @@ def sample_vector(name, mag_min, mag_max):
         xdir = sample(f"xdir_{name}_skipZ", ProjectedNormal(jnp.zeros(3)))
 
     # Extract spherical coordinates from the unit vector
-    cos_theta = xdir[2]
+    cos_theta = deterministic(f"{name}_cos_theta", xdir[2])
     sin_theta = jnp.sqrt(1 - cos_theta**2)
-    deterministic(f"{name}_theta", jnp.arccos(cos_theta))
 
     phi = jnp.arctan2(xdir[1], xdir[0])
     phi = cond(phi < 0, lambda x: x + 2 * jnp.pi, lambda x: x, phi)
@@ -148,10 +123,8 @@ def sample_vector_fixed(name, mag_min, mag_max):
     `log_density` which is not the case for the `sample_vector` function
     because the unit vectors are drawn.
     """
-    theta = sample(f"{name}_theta", PolarAngleDistribution())
     phi = sample(f"{name}_phi", Uniform(0, 2 * jnp.pi))
-
-    cos_theta = jnp.cos(theta)
+    cos_theta = sample(f"{name}_cos_theta", Uniform(-1, 1))
     sin_theta = jnp.sqrt(1 - cos_theta**2)
 
     mag = sample(f"{name}_mag", Uniform(mag_min, mag_max))
@@ -171,8 +144,7 @@ def sample_spline_radial_vector(name, nval, low, high):
     """
     with plate(f"{name}_plate", nval):
         phi = sample(f"{name}_phi", Uniform(0, 2 * jnp.pi))
-        theta = sample(f"{name}_theta", PolarAngleDistribution())
-        cos_theta = jnp.cos(theta)
+        cos_theta = sample(f"{name}_cos_theta", Uniform(-1, 1))
         sin_theta = jnp.sqrt(1 - cos_theta**2)
 
         mag = sample(f"{name}_mag", Uniform(low, high))
