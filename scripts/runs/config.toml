@@ -1,14 +1,14 @@
-root_main = "/Users/rstiskalek/Projects/CANDEL/"
-python_exec = "/Users/rstiskalek/Projects/CANDEL/venv_candel/bin/python"
-machine = "local"
+# root_main = "/Users/rstiskalek/Projects/CANDEL/"
+# python_exec = "/Users/rstiskalek/Projects/CANDEL/venv_candel/bin/python"
+# machine = "local"
 
 # root_main = "/Users/yasin/code/CANDEL/"
 # python_exec = "/Users/yasin/code/CANDEL/venv_candel/bin/python"
 # machine = "local"
 
-#root_main = "/mnt/home/rstiskalek/ceph/CANDEL"
-#python_exec="/mnt/home/rstiskalek/CANDEL/venv_gpu_candel/bin/python"
-#machine="rusty"
+root_main = "/mnt/home/rstiskalek/ceph/CANDEL"
+python_exec="/mnt/home/rstiskalek/CANDEL/venv_gpu_candel/bin/python"
+machine="rusty"
 
 
 ###############################################################################
@@ -16,9 +16,9 @@ machine = "local"
 ###############################################################################
 
 [inference]
-model = "Clusters_DistMarg"
+model = "TFRModel_DistMarg"
 num_warmup = 500
-num_samples = 500
+num_samples = 4500
 num_chains = 1
 seed = 42
 compute_log_density = true
@@ -32,8 +32,8 @@ num_chains_harmonic = 5
 [pv_model]
 use_MNR = false
 # Default kind. This gets overwritten if using a submission script.
-# kind = "precomputed_los_Carrick2015"
-kind = "Vext"
+kind = "precomputed_los_Carrick2015"
+# kind = "Vext"
 galaxy_bias = "powerlaw"  # Ignored unless having an underlying density field
 
 
@@ -58,9 +58,9 @@ dist = "delta"
 value = 1.0
 
 [model.priors.alpha]
-dist = "uniform"
-low = 0.0
-high = 3.0
+dist = "normal"
+loc = 1.0
+scale = 1.0
 
 [model.priors.b1]
 dist = "normal"
@@ -70,29 +70,29 @@ scale = 1.0
 [model.priors.beta]
 dist = "uniform"
 low = 0.0
-high = 3.0
+high = 2.0
 
 [model.priors.sigma_mu]
 dist = "jeffreys"
-low = 0.01
-high = 1.5
+low = 0.005
+high = 1.0
 
 # TFR priors
 
 [model.priors.TFR_zeropoint]
 dist = "normal"
-loc = -20.0
-scale = 1.0
+loc = -19.8
+scale = 2.0
 
 [model.priors.TFR_slope]
 dist = "normal"
-loc = -9.0
+loc = -10.0
 scale = 2.0
 
 [model.priors.TFR_curvature]
 dist = "normal"
 loc = 10
-scale = 4.0
+scale = 5.0
 
 [model.priors.TFR_zeropoint_dipole]
 dist = "delta"
@@ -180,7 +180,7 @@ scale = 0.05
 root_output = "results"
 # Default catalogue name and output path. This gets overwritten
 # if using a submission script.
-catalogue_name = "Clusters"
+catalogue_name = "CF4_W1"
 
 fname_output = "results/test.hdf5"
 
