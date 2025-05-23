@@ -74,27 +74,25 @@ for line in "${task_lines[@]}"; do
         module load python
     fi
 
-    # Frozen package logic
+    # Set root of frozen package
     if [[ "$machine" == "rusty" ]]; then
-        frozen_dir="/mnt/home/${USER}/frozen_candel/current"
+        frozen_root="/mnt/home/${USER}/frozen_candel"
     elif [[ "$machine" == "local" ]]; then
-        frozen_dir="/Users/${USER}/Projects/CANDEL_frozen"
+        frozen_root="/Users/${USER}/Projects/CANDEL_frozen"
     else
         echo "[ERROR] Unknown machine: $machine"
         exit 3
     fi
 
-    if [[ ! -d "$frozen_dir" ]]; then
-        echo "[ERROR] Frozen package not found: $frozen_dir"
+    if [[ ! -d "$frozen_root" ]]; then
+        echo "[ERROR] Frozen package not found: $frozen_root"
         echo "Run freeze_candel.sh first."
         exit 4
     fi
 
-    # export PYTHONPATH="$frozen_dir:$PYTHONPATH"
-    export PYTHONPATH="$frozen_dir:${PYTHONPATH:-}"
-
     echo "[INFO] Running main.py with config: $config_path"
-    $python_exec main.py --config "$config_path"
+    export PYTHONPATH="$frozen_root:$PYTHONPATH"
+    "$python_exec" "$frozen_root/main.py" --config "$config_path"
 
     echo "[INFO] === Finished task $idx ==="
     echo

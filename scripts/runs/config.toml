@@ -1,14 +1,14 @@
-root_main = "/Users/rstiskalek/Projects/CANDEL/"
-python_exec = "/Users/rstiskalek/Projects/CANDEL/venv_candel/bin/python"
-machine = "local"
+# root_main = "/Users/rstiskalek/Projects/CANDEL/"
+# python_exec = "/Users/rstiskalek/Projects/CANDEL/venv_candel/bin/python"
+# machine = "local"
 
 # root_main = "/Users/yasin/code/CANDEL/"
 # python_exec = "/Users/yasin/code/CANDEL/venv_candel/bin/python"
 # machine = "local"
 
-# root_main = "/mnt/home/rstiskalek/ceph/CANDEL"
-# python_exec="/mnt/home/rstiskalek/CANDEL/venv_gpu_candel/bin/python"
-# machine="rusty"
+root_main = "/mnt/home/rstiskalek/ceph/CANDEL"
+python_exec="/mnt/home/rstiskalek/CANDEL/venv_gpu_candel/bin/python"
+machine="rusty"
 
 
 ###############################################################################
@@ -16,10 +16,9 @@ machine = "local"
 ###############################################################################
 
 [inference]
-# model = "TFRModel_DistMarg"
-model = "Clusters_DistMarg"
-num_warmup = 500
-num_samples = 500
+model = "TFRModel_DistMarg"
+num_warmup = 1500
+num_samples = 13500
 num_chains = 1
 seed = 42
 compute_log_density = true
@@ -33,8 +32,8 @@ num_chains_harmonic = 5
 [pv_model]
 use_MNR = false
 # Default kind. This gets overwritten if using a submission script.
-# kind = "precomputed_los_Carrick2015"
-kind = "Vext"
+kind = "precomputed_los_Carrick2015"
+# kind = "Vext"
 galaxy_bias = "powerlaw"  # Ignored unless having an underlying density field
 
 
@@ -268,7 +267,7 @@ zcmb_mapping_num_points = 1001
 
 los_file = "data/Clusters/los_Clusters_<X>.hdf5"
 
-nsamples_subsample = 50
+nsamples_subsample = "none"
 seed_subsample = 42
 
 [io.SDSS_FP]
@@ -278,7 +277,7 @@ zcmb_max = 0.05
 
 los_file = "data/SDSS/los_SDSS_FP_<X>.hdf5"
 
-nsamples_subsample = 250
+nsamples_subsample = "none"
 seed_subsample = 42
 
 
