@@ -11,7 +11,7 @@
 #SBATCH --job-name=candel
 #SBATCH --output=logs/logs-%A_%a.out
 #SBATCH --error=logs/logs-%A_%a.err
-#SBATCH --array=0-11%6
+#SBATCH --array=0-4%4
 
 set -e
 
