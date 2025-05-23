@@ -25,6 +25,8 @@ compute_log_density = true
 compute_evidence = true
 num_chains_harmonic = 5
 
+skip_if_exists = false
+
 ###############################################################################
 #                           Peculiar velocity model                           #
 ###############################################################################
