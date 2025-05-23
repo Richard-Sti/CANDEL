@@ -18,7 +18,7 @@ import numpy as np
 from .util import fprint
 
 
-def BIC_AIC(samples, log_density, ndata, stack_chains=True):
+def BIC_AIC(samples, log_density, ndata):
     """
     Get the BIC/AIC of HMC samples from a Numpyro model.
 
@@ -30,28 +30,16 @@ def BIC_AIC(samples, log_density, ndata, stack_chains=True):
         Log density of the samples.
     ndata: int
         Number of data points.
-    stack_chains: bool, optional
-        Whether to stack the chains. Must be `True` if the samples come from
-        multiple chains.
 
     Returns
     -------
     BIC, AIC: floats
     """
-    if stack_chains and log_density.ndim == 1:
-        stack_chains = False
-
-    if stack_chains:
-        log_density = log_density.reshape(-1, *log_density.shape[2:])
-
     kmax = np.argmax(log_density)
 
     # How many parameters?
     nparam = 0
     for x in samples.values():
-        if stack_chains:
-            x = x.reshape(-1, *x.shape[2:])
-
         if x.ndim == 1:
             nparam += 1
         else:
@@ -67,15 +55,12 @@ def BIC_AIC(samples, log_density, ndata, stack_chains=True):
     return float(BIC), float(AIC)
 
 
-def dict_samples_to_array(samples, stack_chains=True):
+def dict_samples_to_array(samples):
     """Convert a dictionary of samples to a 2-dimensional array."""
     data = []
     names = []
 
     for key, x in samples.items():
-        if stack_chains:
-            x = x.reshape(-1, *x.shape[2:])
-
         if x.ndim == 1:
             data.append(x)
             names.append(key)
@@ -139,7 +124,7 @@ def harmonic_evidence(samples_arr, log_density, temperature=0.8, epochs_num=20,
         raise ValueError("The samples_arr must be a 3-dimensional array of "
                          "shape `(nchains, nsamples_arr, ndim)`.")
 
-    if log_density.ndim != 2 and log_density.shape[:2] != samples_arr.shape[:2]:  # noqa
+    if log_density.ndim != 2 or log_density.shape[:2] != samples_arr.shape[:2]:
         raise ValueError("The log posterior must be a 2-dimensional "
                          "array of shape `(nchains, nsamples_arr)`.")
 
@@ -196,7 +181,7 @@ def laplace_evidence(samples_array, log_density):
     logZ = np.full(nchains, np.nan)
 
     for n in range(nchains):
-        C = np.cov(samples_array[0], rowvar=False)
+        C = np.cov(samples_array[n], rowvar=False)
         lp_max = np.max(log_density[n])
 
         logZ[n] = (lp_max + 0.5 * (np.sum(np.log(np.linalg.eigvalsh(C)))
