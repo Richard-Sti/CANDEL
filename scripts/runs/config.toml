@@ -1,14 +1,14 @@
-# root_main = "/Users/rstiskalek/Projects/CANDEL/"
-# python_exec = "/Users/rstiskalek/Projects/CANDEL/venv_candel/bin/python"
-# machine = "local"
+root_main = "/Users/rstiskalek/Projects/CANDEL/"
+python_exec = "/Users/rstiskalek/Projects/CANDEL/venv_candel/bin/python"
+machine = "local"
 
 # root_main = "/Users/yasin/code/CANDEL/"
 # python_exec = "/Users/yasin/code/CANDEL/venv_candel/bin/python"
 # machine = "local"
 
-root_main = "/mnt/home/rstiskalek/ceph/CANDEL"
-python_exec="/mnt/home/rstiskalek/CANDEL/venv_gpu_candel/bin/python"
-machine="rusty"
+# root_main = "/mnt/home/rstiskalek/ceph/CANDEL"
+# python_exec="/mnt/home/rstiskalek/CANDEL/venv_gpu_candel/bin/python"
+# machine="rusty"
 
 
 ###############################################################################
@@ -18,8 +18,8 @@ machine="rusty"
 [inference]
 # model = "TFRModel_DistMarg"
 model = "Clusters_DistMarg"
-num_warmup = 1000
-num_samples = 10000
+num_warmup = 500
+num_samples = 500
 num_chains = 1
 seed = 42
 compute_log_density = true
@@ -181,7 +181,7 @@ scale = 0.05
 root_output = "results"
 # Default catalogue name and output path. This gets overwritten
 # if using a submission script.
-catalogue_name = "CF4_W1"
+catalogue_name = "Clusters"
 
 fname_output = "results/test.hdf5"
 
@@ -268,7 +268,7 @@ zcmb_mapping_num_points = 1001
 
 los_file = "data/Clusters/los_Clusters_<X>.hdf5"
 
-nsamples_subsample = "none"
+nsamples_subsample = 50
 seed_subsample = 42
 
 [io.SDSS_FP]
