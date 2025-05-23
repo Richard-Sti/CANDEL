@@ -420,8 +420,6 @@ def plot_corner_getdist(samples_list, labels=None, show_fig=True,
 
         data = np.vstack(columns).T
         gds = MCSamples(
-            samples=data, names=present_params, labels=present_labels)
-        gds = MCSamples(
             samples=data,
             names=present_params,
             labels=present_labels,
@@ -444,6 +442,7 @@ def plot_corner_getdist(samples_list, labels=None, show_fig=True,
             params=param_names,
             filled=True,
             legend_labels=labels,
+            legend_loc="upper right",
         )
 
         if filename is not None:
