@@ -74,8 +74,9 @@ def filter_tasks(task_file, output_file):
             continue
 
     with open(output_file, "w") as f:
-        for line in kept_lines:
-            f.write(f"{line}\n")
+        for new_idx, line in enumerate(kept_lines):
+            _, config_path = line.split(maxsplit=1)
+            f.write(f"{new_idx} {config_path}\n")
 
     fprint(f"[INFO] Wrote {len(kept_lines)} tasks to: {output_file}")
 
