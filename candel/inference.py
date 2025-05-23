@@ -13,6 +13,7 @@
 # with this program; if not, write to the Free Software Foundation, Inc.,
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 """Running the MCMC inference for the model and some postprocessing."""
+from copy import deepcopy
 from os.path import dirname, splitext
 
 import jax
@@ -36,7 +37,7 @@ from .util import (fprint, galactic_to_radec, plot_corner,
 
 
 def run_pv_inference(model, model_kwargs, print_summary=True,
-                     save_samples=True):
+                     save_samples=True, return_original_samples=False):
     """
     Run MCMC inference on the given PV model, post-process the samples,
     optionally compute the BIC, AIC, evidence and save the samples to an
@@ -66,6 +67,9 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
         log_density = get_log_density(samples, model, model_kwargs)
     else:
         log_density = None
+
+    if return_original_samples:
+        original_samples = deepcopy(samples)
 
     samples = drop_deterministic(samples)
 
@@ -121,6 +125,9 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
             fname_plot = splitext(fname_out)[0] + "_profile_Vext_rad.png"
             plot_radial_profiles(samples, model, show_fig=False,
                                  filename=fname_plot)
+
+    if return_original_samples:
+        return samples, log_density, original_samples
 
     return samples, log_density
 
