@@ -38,27 +38,24 @@ if [[ -z "$machine" ]]; then
     exit 1
 fi
 
-# --- Choose frozen path based on machine ---
+# --- Choose frozen root based on machine ---
 if [[ "$machine" == "rusty" ]]; then
-    frozen_dir="/mnt/home/${USER}/frozen_candel/current"
+    frozen_root="/mnt/home/${USER}/frozen_candel"
 elif [[ "$machine" == "local" ]]; then
-    frozen_dir="/Users/${USER}/Projects/CANDEL_frozen"
+    frozen_root="/Users/${USER}/Projects/CANDEL_frozen"
 else
     echo "[ERROR] Unknown machine: $machine"
     exit 2
 fi
 
-mkdir -p "logs"
-
-# --- Use frozen package ---
-if [[ ! -d "$frozen_dir" ]]; then
-    echo "[ERROR] Frozen package not found: $frozen_dir"
-    echo "Run freeze_candel.sh first."
+if [[ ! -f "$frozen_root/main.py" ]]; then
+    echo "[ERROR] Frozen main.py not found in: $frozen_root"
+    echo "Did you run freeze_candel.sh?"
     exit 3
 fi
 
-echo "[INFO] Using frozen package from: $frozen_dir"
-export PYTHONPATH="$frozen_dir:$PYTHONPATH"
+echo "[INFO] Using frozen package from: $frozen_root"
+export PYTHONPATH="$frozen_root:$PYTHONPATH"
 
 # --- Validate config path ---
 if [[ -z "$config_path" ]]; then
@@ -87,4 +84,4 @@ fi
 # --- Run ---
 echo "[INFO] Submitting run with config: $config_path"
 echo "[INFO] Using Python: $python_exec"
-$python_exec main.py --config "$config_path"
+"$python_exec" "$frozen_root/main.py" --config "$config_path"

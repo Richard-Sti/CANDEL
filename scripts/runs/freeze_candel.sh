@@ -17,27 +17,50 @@ fi
 # --- Choose paths based on machine ---
 if [[ "$machine" == "rusty" ]]; then
     src_dir="/mnt/home/${USER}/CANDEL/candel"
-    frozen_dir="/mnt/home/${USER}/frozen_candel/current"
+    main_script="/mnt/home/${USER}/CANDEL/scripts/runs/main.py"
+    frozen_root="/mnt/home/${USER}/frozen_candel"
 elif [[ "$machine" == "local" ]]; then
     src_dir="/Users/${USER}/Projects/CANDEL/candel"
-    frozen_dir="/Users/${USER}/Projects/CANDEL_frozen"
+    main_script="/Users/${USER}/Projects/CANDEL/scripts/runs/main.py"
+    frozen_root="/Users/${USER}/Projects/CANDEL_frozen"
 else
     echo "[ERROR] Unknown machine: $machine"
     exit 3
 fi
 
-# --- Freeze package ---
-echo "[INFO] Freezing package for machine: $machine"
+# frozen_dir="${frozen_root}/"
+
+# # --- Freeze package ---
+# echo "[INFO] Freezing package for machine: $machine"
+# echo "[INFO] From: $src_dir"
+# echo "[INFO] To:   $frozen_dir"
+
+# if [[ ! -d "$src_dir" ]]; then
+#     echo "[ERROR] Source directory not found: $src_dir"
+#     exit 4
+# fi
+
+# rm -rf "$frozen_dir"
+# mkdir -p "$frozen_root"
+# rsync -a --exclude '__pycache__' --exclude '*.pyc' "$src_dir/" "$frozen_dir"
+
+frozen_dir="${frozen_root}"
+
+# Freeze
+echo "[INFO] Freezing candel package + main.py"
 echo "[INFO] From: $src_dir"
 echo "[INFO] To:   $frozen_dir"
-
-if [[ ! -d "$src_dir" ]]; then
-    echo "[ERROR] Source directory not found: $src_dir"
-    exit 4
-fi
-
 rm -rf "$frozen_dir"
-mkdir -p "$frozen_dir"
-rsync -a --exclude '__pycache__' --exclude '*.pyc' "$src_dir/" "$frozen_dir/"
+mkdir -p "$frozen_root"
 
-echo "$frozen_dir"
+# Copy the full candel/ package
+rsync -a --exclude '__pycache__' --exclude '*.pyc' "$src_dir" "$frozen_dir"
+
+# Copy or symlink main.py into frozen dir root
+cp "$main_script" "$frozen_dir/main.py"
+# Or if you prefer a symlink:
+# ln -s "$main_script" "$frozen_dir/main.py"
+
+# Done
+echo "[INFO] Frozen structure:"
+tree -L 2 "$frozen_dir"
