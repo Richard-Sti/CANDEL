@@ -205,7 +205,7 @@ def postprocess_samples(samples):
             break
 
     for prefix in ["a_TFR_dipole", "M_dipole"]:
-        if f"{prefix}_phi" in samples and f"{prefix}theta" in samples:
+        if f"{prefix}_phi" in samples and f"{prefix}_theta" in samples:
             phi = np.rad2deg(samples.pop(f"{prefix}_phi"))
             theta = samples.pop(f"{prefix}_theta")
             dec = np.rad2deg(0.5 * np.pi - theta)
