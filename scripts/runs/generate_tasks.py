@@ -139,7 +139,6 @@ if __name__ == "__main__":
 
     # Multiple override options → this creates a job per combination
     manual_overrides = {
-        "inference/skip_if_exists": True,
         "pv_model/kind": "Carrick2015",
         "io/catalogue_name": "CF4_W1",
         "io/root_output": "results/CF4_H0_anisotropy",
