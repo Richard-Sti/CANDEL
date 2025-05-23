@@ -147,8 +147,8 @@ def run_magsel_inference(model, model_args, num_warmup=1000, num_samples=5000,
 
 def get_log_density(samples, model, model_kwargs, batch_size=5):
     """
-    Compute the log density of the peculiar velocity validation model. The
-    batch size cannot be much larger to prevent exhausting the memory.
+    Compute the log density of NumPyro model. The batch size cannot be much
+    larger to prevent exhausting the memory.
     """
     def f(sample):
         return log_density(model, (), model_kwargs, sample)[0]
