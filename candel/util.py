@@ -230,7 +230,7 @@ def plot_corner(samples, show_fig=True, filename=None, smooth=1, keys=None):
     for k, v in samples.items():
         if keys is not None and k not in keys:
             continue
-        if v.ndim > 2:
+        if v.ndim > 1:
             continue
         flat_samples.append(v.reshape(-1))
         labels.append(name2label(k))
