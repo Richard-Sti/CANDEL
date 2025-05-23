@@ -42,6 +42,7 @@ from .inference import (                                                        
     run_pv_inference,                                                           # noqa
     run_magsel_inference,                                                       # noqa
     save_mcmc_samples,                                                          # noqa
+    get_log_density,                                                            # noqa
     )
 
 from .redshift2real import (                                                    # noqa

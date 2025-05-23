@@ -17,6 +17,7 @@ Prepare a director structure for new runs, including copying and overwriting
 the default configuration file.
 """
 
+from argparse import ArgumentParser
 from copy import deepcopy
 from itertools import product
 from os import makedirs
@@ -123,34 +124,41 @@ def expand_override_grid(overrides):
 
 
 if __name__ == "__main__":
+    parser = ArgumentParser()
+    parser.add_argument(
+        "tasks_index", type=int, nargs="?", default=0,
+        help="Index of the task to run (default: 0)")
+    args = parser.parse_args()
+
     config_path = "./config.toml"
     config = load_config(
         config_path, replace_none=False, replace_los_prior=False)
 
     tag = "default"
-    tasks_index = 0
+    tasks_index = args.tasks_index
 
     # Multiple override options → this creates a job per combination
     manual_overrides = {
-        "pv_model/kind": "Carrick2015",
-        "io/catalogue_name": "CF4_W1",
-        "io/root_output": "results/TEST_CF4_H0_anisotropy",
+        "pv_model/kind": "Vext",
+        "io/catalogue_name": "Clusters",
+        # "io/root_output": "results/CF4_H0_anisotropy",
+        "io/root_output": "results/Clusters_Anisotropy",
         "pv_model/use_MNR": False,
         # "io/CF4_W1/dust_model": "CSFD",
         # "io/Clusters/which_relation": ["LT", "LTY"],
-        # "io/Clusters/which_relation": "LT",
+        "io/Clusters/which_relation": "LT",
         # "model/priors/beta": [
         #     {"dist": "normal", "loc": 0.43, "scale": 0.1},
         #     {"dist": "delta", "value": 1.0},
         # ],
-        "model/priors/TFR_zeropoint_dipole": [
-            {"dist": "delta", "value": [0.0, 0.0, 0.0]},
-            {"dist": "vector_uniform_fixed", "low": 0.0, "high": 0.3},
-        ],
-        # "model/priors/Vext": [
+        # "model/priors/TFR_zeropoint_dipole": [
         #     {"dist": "delta", "value": [0.0, 0.0, 0.0]},
-        #     {"dist": "vector_uniform_fixed", "low": 0.0, "high": 2500.0},
+        #     {"dist": "vector_uniform_fixed", "low": 0.0, "high": 0.3},
         # ],
+        "model/priors/Vext": [
+            # {"dist": "delta", "value": [0.0, 0.0, 0.0]},
+            {"dist": "vector_uniform_fixed", "low": 0.0, "high": 2000.0},
+        ],
     }
 
     task_file = f"tasks_{tasks_index}.txt"
@@ -165,7 +173,7 @@ if __name__ == "__main__":
             for key, value in override_set.items():
                 # Special handling for kind: transform before writing
                 if key == "pv_model/kind":
-                    if value == "constant":
+                    if "Vext" in value:
                         config = replace_prior_with_delta(config, "alpha", 1.)
                         config = replace_prior_with_delta(config, "beta", 0.)
                     else:
