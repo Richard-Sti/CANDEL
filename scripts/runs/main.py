@@ -20,11 +20,15 @@ This script is expected to be run either from the command line or from a shell
 submission script.
 """
 
+import sys
 import time
 from argparse import ArgumentParser
+from os.path import exists
 
 import candel
 from candel import fprint
+
+from generate_tasks import get_nested
 
 
 def insert_comment_at_top(path: str, label: str):
@@ -50,6 +54,14 @@ if __name__ == "__main__":
 
     data = candel.pvdata.load_PV_dataframes(args.config)
     config = candel.load_config(args.config)
+
+    fname_out = get_nested(config, "io/fname_output")
+    skip_if_exists = get_nested(config, "inference/skip_if_exists", False)
+    if skip_if_exists and exists(fname_out):
+        fprint(f"Output file `{fname_out}` already exists. "
+               f"Skipping inference.")
+        insert_comment_at_top(args.config, "skipped")
+        sys.exit(0)
 
     model_name = config["inference"]["model"]
     data_name = config["io"]["catalogue_name"]
