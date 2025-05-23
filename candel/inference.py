@@ -13,6 +13,7 @@
 # with this program; if not, write to the Free Software Foundation, Inc.,
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 """Running the MCMC inference for the model and some postprocessing."""
+from copy import deepcopy
 from os.path import dirname, splitext
 
 import jax
@@ -36,7 +37,7 @@ from .util import (fprint, galactic_to_radec, plot_corner,
 
 
 def run_pv_inference(model, model_kwargs, print_summary=True,
-                     save_samples=True):
+                     save_samples=True, return_original_samples=False):
     """
     Run MCMC inference on the given PV model, post-process the samples,
     optionally compute the BIC, AIC, evidence and save the samples to an
@@ -64,22 +65,19 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
     samples = mcmc.get_samples()
     if kwargs["compute_log_density"]:
         log_density = get_log_density(samples, model, model_kwargs)
-        log_density = log_density.reshape(kwargs["num_chains"], -1)
     else:
         log_density = None
 
-    samples = mcmc.get_samples(group_by_chain=True)
-    samples = postprocess_samples(samples)
+    if return_original_samples:
+        original_samples = deepcopy(samples)
 
-    if print_summary:
-        print_clean_summary(samples)
+    samples = drop_deterministic(samples)
 
     if model.config["inference"]["compute_evidence"]:
         ndata = len(model_kwargs["data"])
         bic, aic = BIC_AIC(samples, log_density, ndata)
 
-        samples_arr, names = dict_samples_to_array(
-            samples, stack_chains=True)
+        samples_arr, names = dict_samples_to_array(samples)
         fprint(f"computing harmonic evidence from {len(names)} "
                f"parameters: {names}")
 
@@ -107,6 +105,11 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
     else:
         gof = None
 
+    samples = postprocess_samples(samples)
+
+    if print_summary:
+        print_clean_summary(samples)
+
     if save_samples:
         fname_out = model.config["io"]["fname_output"]
         fprint(f"output directory is {dirname(fname_out)}.")
@@ -122,6 +125,9 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
             fname_plot = splitext(fname_out)[0] + "_profile_Vext_rad.png"
             plot_radial_profiles(samples, model, show_fig=False,
                                  filename=fname_plot)
+
+    if return_original_samples:
+        return samples, log_density, original_samples
 
     return samples, log_density
 
@@ -164,11 +170,8 @@ def get_log_density(samples, model, model_kwargs, batch_size=5):
     return log_densities
 
 
-def postprocess_samples(samples):
-    """
-    Postprocess the samples from the MCMC run. Removes unused latent variables,
-    and converts Vext samples to galactic coordinates.
-    """
+def drop_deterministic(samples):
+    """Drop deterministic and latent variable samples."""
     for key in list(samples.keys()):
         # Remove unused, latent variables used for deterministic sampling
         if "skipZ" in key:
@@ -188,6 +191,11 @@ def postprocess_samples(samples):
     elif "a_TFR_h" in keys and "a_TFR" not in keys:
         samples["a_TRF"] = samples.pop("a_TFR_h",)
 
+    return samples
+
+
+def postprocess_samples(samples):
+    """Postprocess the MCMC samples."""
     # Convert Vext or Vext_rad samples to galactic coordinates
     for prefix in ["Vext_rad", "Vext"]:  # ← more specific first
         if f"{prefix}_phi" in samples and f"{prefix}_cos_theta" in samples:
@@ -227,7 +235,7 @@ def print_clean_summary(samples):
         if "_latent" in key:
             continue
 
-        samples_print[key] = x
+        samples_print[key] = x[None, ...]
 
     print_summary_numpyro(samples_print,)
 

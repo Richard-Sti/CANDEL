@@ -6,9 +6,9 @@ machine = "local"
 # python_exec = "/Users/yasin/code/CANDEL/venv_candel/bin/python"
 # machine = "local"
 
-#root_main = "/mnt/home/rstiskalek/ceph/CANDEL"
-#python_exec="/mnt/home/rstiskalek/CANDEL/venv_gpu_candel/bin/python"
-#machine="rusty"
+# root_main = "/mnt/home/rstiskalek/ceph/CANDEL"
+# python_exec="/mnt/home/rstiskalek/CANDEL/venv_gpu_candel/bin/python"
+# machine="rusty"
 
 
 ###############################################################################
@@ -16,6 +16,7 @@ machine = "local"
 ###############################################################################
 
 [inference]
+# model = "TFRModel_DistMarg"
 model = "Clusters_DistMarg"
 num_warmup = 500
 num_samples = 500
@@ -58,9 +59,9 @@ dist = "delta"
 value = 1.0
 
 [model.priors.alpha]
-dist = "uniform"
-low = 0.0
-high = 3.0
+dist = "normal"
+loc = 1.0
+scale = 1.0
 
 [model.priors.b1]
 dist = "normal"
@@ -70,29 +71,29 @@ scale = 1.0
 [model.priors.beta]
 dist = "uniform"
 low = 0.0
-high = 3.0
+high = 2.0
 
 [model.priors.sigma_mu]
 dist = "jeffreys"
-low = 0.01
-high = 1.5
+low = 0.005
+high = 1.0
 
 # TFR priors
 
 [model.priors.TFR_zeropoint]
 dist = "normal"
-loc = -20.0
-scale = 1.0
+loc = -19.8
+scale = 2.0
 
 [model.priors.TFR_slope]
 dist = "normal"
-loc = -9.0
+loc = -10.0
 scale = 2.0
 
 [model.priors.TFR_curvature]
 dist = "normal"
 loc = 10
-scale = 4.0
+scale = 5.0
 
 [model.priors.TFR_zeropoint_dipole]
 dist = "delta"
@@ -267,7 +268,7 @@ zcmb_mapping_num_points = 1001
 
 los_file = "data/Clusters/los_Clusters_<X>.hdf5"
 
-nsamples_subsample = "none"
+nsamples_subsample = 50
 seed_subsample = 42
 
 [io.SDSS_FP]
@@ -292,7 +293,7 @@ seed_subsample = 42
 root = "data/CF4"
 which_band = "i"  # Does not matter
 return_all = true
-los_file = "data/CF4/los_CF4_TFR_<X>.hdf5"
+los_file = "data/CF4/los_CF4_TFR_<X>_OLD.hdf5"
 
 [io.PV_main.PantheonPlus]
 root = "data/Pantheon+"

@@ -81,7 +81,6 @@ class MagnitudeDistribution(Distribution):
 
     @validate_sample
     def log_prob(self, value):
-        # Optional: hard truncate outside [xmin, xmax]
         in_bounds = (value >= self.xmin) & (value <= self.xmax)
         logp = self._lambda * value
         return jnp.where(in_bounds, logp, -jnp.inf)
@@ -125,7 +124,6 @@ def sample_vector_fixed(name, mag_min, mag_max):
     because the unit vectors are drawn.
     """
     phi = sample(f"{name}_phi", Uniform(0, 2 * jnp.pi))
-
     cos_theta = sample(f"{name}_cos_theta", Uniform(-1, 1))
     sin_theta = jnp.sqrt(1 - cos_theta**2)
 
