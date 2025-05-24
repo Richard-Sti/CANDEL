@@ -20,7 +20,7 @@ from h5py import File
 from candel import plot_corner_getdist, read_gof
 
 
-def compare_zeropoint_gof(fname, which):
+def compare_zeropoint_dipole_gof(fname, which):
     if "aTFRdipole" not in fname:
         raise ValueError("`aTFRdipole` not in filename.")
 
