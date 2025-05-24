@@ -6,12 +6,12 @@
 #SBATCH --gpus-per-task=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
-#SBATCH --time=08:00:00
+#SBATCH --time=04:00:00
 #SBATCH --constraint=a100
 #SBATCH --job-name=candel
 #SBATCH --output=logs/logs-%A_%a.out
 #SBATCH --error=logs/logs-%A_%a.err
-#SBATCH --array=0-119%20
+#SBATCH --array=0-139%20
 
 set -e
 
