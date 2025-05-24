@@ -83,7 +83,7 @@ for nsamples in nsample_list:
     for i in range(nseeds_per_nsample):
         seed = 1000 * nsamples + i
         fname = join(mock_dir, f"mock_{index}.hdf5")
-        print(f"[INFO] Preparing `{fname}`")
+        print(f"[INFO] Preparing `{fname}`", flush=True)
 
         mock = candel.mock.gen_CF4_TFR_mock(nsamples, seed=seed, **kwargs)
 
