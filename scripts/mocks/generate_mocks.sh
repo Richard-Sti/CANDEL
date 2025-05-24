@@ -2,7 +2,7 @@
 #SBATCH -p gen -C rome -N1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
-#SBATCH --mem=16G
+#SBATCH --mem=48G
 #SBATCH --time=24:00:00
 #SBATCH --job-name=gen_mocks
 #SBATCH --output=logs/generate_mocks-%j.out
