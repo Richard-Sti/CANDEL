@@ -45,7 +45,7 @@ kwargs = {
     'b_TFR': -10,
     'c_TFR': 12,
     'sigma_TFR': 0.32,
-    'a_TFR_dipole_mag': None,
+    'a_TFR_dipole_mag': 0.06,
     'a_TFR_dipole_ell': 142.0,
     'a_TFR_dipole_b': 52.0,
     'alpha': 1.5,
