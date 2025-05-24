@@ -447,7 +447,7 @@ def plot_corner_getdist(samples_list, labels=None, show_fig=True,
 
         if filename is not None:
             fprint(f"[INFO] Saving GetDist triangle plot to: {filename}")
-            g.export(filename, )
+            g.export(filename, dpi=450)
 
         if show_fig:
             plt.show()
