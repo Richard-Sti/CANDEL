@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH -p cpu
+#SBATCH -p gen -C rome -N1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=16G
