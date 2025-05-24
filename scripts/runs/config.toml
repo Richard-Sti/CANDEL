@@ -17,6 +17,7 @@ machine="rusty"
 
 [inference]
 model = "TFRModel_DistMarg"
+# model = "PantheonPlusModel_DistMarg"
 num_warmup = 1000
 num_samples = 5000
 num_chains = 1
