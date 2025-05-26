@@ -72,6 +72,8 @@ def generate_dynamic_tag(config, base_tag="default"):
     """Generate a descriptive tag string based on selected config values."""
     parts = []
 
+    model_name = get_nested(config, "inference/model", None)
+
     # Catalogue name
     catalogue = get_nested(config, "io/catalogue_name", None)
     if catalogue:
@@ -95,8 +97,12 @@ def generate_dynamic_tag(config, base_tag="default"):
 
     # aTFRdipole if it's not a delta distribution
     aTFRdip_prior = get_nested(config, "model/priors/TFR_zeropoint_dipole", {})
-    if isinstance(aTFRdip_prior, dict) and aTFRdip_prior.get("dist") != "delta":  # noqa
+    if isinstance(aTFRdip_prior, dict) and "TFR" in model_name and aTFRdip_prior.get("dist") != "delta":  # noqa
         parts.append("aTFRdipole")
+
+    Mdip_prior = get_nested(config, "model/priors/SN_absmag_dipole", {})
+    if isinstance(Mdip_prior, dict) and "Pantheon" in model_name and Mdip_prior.get("dist") != "delta":  # noqa
+        parts.append("Mdip_prior")
 
     # If Vext is a delta distribution (not sampled)
     Vext_prior = get_nested(config, "model/priors/Vext", {})
@@ -139,15 +145,21 @@ if __name__ == "__main__":
 
     # Multiple override options → this creates a job per combination
     manual_overrides = {
-        "pv_model/kind": "Carrick2015",
+        "pv_model/kind": "Vext",
+        # "io/catalogue_name": [f"CF4_mock_{n}" for n in range(70)],
         "io/catalogue_name": "CF4_W1",
+        # "io/root_output": "results/mock_CF4_H0_anisotropy",
         "io/root_output": "results/CF4_H0_anisotropy",
         "pv_model/use_MNR": [True, False],
-        "io/CF4_W1/dust_model": ["none", "default", "CSFD"],
+        # "io/CF4_W1/dust_model": ["none", "default", "CSFD"],
         # "io/Clusters/which_relation": ["LT", "LTY"],
         # "model/priors/beta": [
         #     {"dist": "normal", "loc": 0.43, "scale": 0.1},
         #     {"dist": "delta", "value": 1.0},
+        # ],
+        # "model/priors/TFR_zeropoint_dipole": [
+        #     # {"dist": "delta", "value": [0.0, 0.0, 0.0]},
+        #     {"dist": "vector_uniform_fixed", "low": 0.0, "high": 0.3},
         # ],
         "model/priors/TFR_zeropoint_dipole": [
             {"dist": "delta", "value": [0.0, 0.0, 0.0]},
