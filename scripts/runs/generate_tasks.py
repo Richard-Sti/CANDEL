@@ -145,11 +145,12 @@ if __name__ == "__main__":
 
     # Multiple override options → this creates a job per combination
     manual_overrides = {
-        "pv_model/kind": "Carrick2015",
-        "io/catalogue_name": [f"CF4_mock_{n}" for n in range(70)],
-        "io/root_output": "results/mock_CF4_H0_anisotropy",
-        # "io/root_output": "results/CF4_H0_anisotropy",
-        "pv_model/use_MNR": False,
+        "pv_model/kind": "Vext",
+        # "io/catalogue_name": [f"CF4_mock_{n}" for n in range(70)],
+        "io/catalogue_name": "CF4_W1",
+        # "io/root_output": "results/mock_CF4_H0_anisotropy",
+        "io/root_output": "results/CF4_H0_anisotropy",
+        "pv_model/use_MNR": [True, False],
         # "io/CF4_W1/dust_model": ["none", "default", "CSFD"],
         # "io/Clusters/which_relation": ["LT", "LTY"],
         # "model/priors/beta": [
