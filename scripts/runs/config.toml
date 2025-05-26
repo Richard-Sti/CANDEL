@@ -18,8 +18,8 @@ machine="rusty"
 [inference]
 model = "TFRModel_DistMarg"
 # model = "PantheonPlusModel_DistMarg"
-num_warmup = 1000
-num_samples = 5000
+num_warmup = 1500
+num_samples = 15000
 num_chains = 1
 seed = 42
 compute_log_density = true
@@ -38,7 +38,6 @@ use_MNR = false
 kind = "precomputed_los_Carrick2015"
 # kind = "Vext"
 galaxy_bias = "powerlaw"  # Ignored unless having an underlying density field
-
 
 ###############################################################################
 #                                 Model                                       #
