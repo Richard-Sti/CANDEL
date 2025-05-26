@@ -20,20 +20,21 @@ from h5py import File
 from candel import plot_corner_getdist, read_gof
 
 
-def compare_zeropoint_dipole_gof(fname, which):
+def compare_zeropoint_dipole_gof(fname, which, verbose=True):
     if "aTFRdipole" not in fname:
         raise ValueError("`aTFRdipole` not in filename.")
 
     gof_dipole = read_gof(fname, which)
     gof_no_dipole = read_gof(fname.replace("_aTFRdipole", ""), which)
 
-    print(f"[DIPOLE]:    {gof_dipole}")
-    print(f"[ISO]:       {gof_no_dipole}")
+    if verbose:
+        print(f"[DIPOLE]:    {gof_dipole}")
+        print(f"[ISO]:       {gof_no_dipole}")
 
-    # Report last modified time
-    mtime = Path(fname).stat().st_mtime
-    ts = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[INFO] File last modified: {ts}")
+        # Report last modified time
+        mtime = Path(fname).stat().st_mtime
+        ts = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
+        print(f"[INFO] File last modified: {ts}")
 
     return gof_dipole - gof_no_dipole
 
