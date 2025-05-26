@@ -30,6 +30,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from astropy.coordinates import SkyCoord
 from corner import corner
+from getdist import MCSamples, plots
 from h5py import File
 from jax import vmap
 from jax_cosmo.scipy.interpolate import InterpolatedUnivariateSpline
@@ -222,6 +223,62 @@ def name2label(name):
     return latex_labels.get(name, name)
 
 
+def name2labelgetdist(name):
+    """Return a GetDist-compatible LaTeX label (no $...$) for a parameter."""
+    labels = {
+        "a_TFR": r"a_\mathrm{TFR}",
+        "b_TFR": r"b_\mathrm{TFR}",
+        "c_TFR": r"c_\mathrm{TFR}",
+        "sigma_mu": r"\sigma_\mu",
+        "sigma_v": r"\sigma_v~\left[\mathrm{km}/\mathrm{s}\right]",
+        "alpha": r"\alpha",
+        "b1": r"b_1",
+        "b2": r"b_2",
+        "beta": r"\beta",
+        "Vext_mag": r"V_\mathrm{ext}~\left[\mathrm{km}/\mathrm{s}\right]",
+        "Vext_ell": r"\ell_\mathrm{ext}~\left[\mathrm{deg}\right]",
+        "Vext_b":   r"b_\mathrm{ext}~\left[\mathrm{deg}\right]",
+        "h": r"h",
+        "a": r"a",
+        "m1": r"m_1",
+        "m2": r"m_2",
+        "a_TFR_dipole_mag": r"a_\mathrm{TFR, dipole}",
+        "a_TFR_dipole_ell": r"\ell_\mathrm{TFR, dipole}~\left[\mathrm{deg}\right]",  # noqa
+        "a_TFR_dipole_b": r"b_\mathrm{TFR, dipole}~\left[\mathrm{deg}\right]",
+        "M_dipole_mag": r"M_\mathrm{dipole}",
+        "M_dipole_ell": r"\ell_\mathrm{dipole}~\left[\mathrm{deg}\right]",
+        "M_dipole_b": r"b_\mathrm{dipole}~\left[\mathrm{deg}\right]",
+        "eta_prior_mean": r"\hat{\eta}",
+        "eta_prior_std": r"w_\eta",
+        "A_CL": r"A_{\rm CL}",
+        "B_CL": r"B_{\rm CL}",
+        "C_CL": r"C_{\rm CL}",
+        "a_FP": r"a_{\rm FP}",
+        "b_FP": r"b_{\rm FP}",
+        "c_FP": r"c_{\rm FP}",
+        "R_dust": r"R_{\rm dust}",
+    }
+    return labels.get(name, name)
+
+
+def sort_params(keys):
+    order = [
+        "a_TFR", "b_TFR", "c_TFR",
+        "alpha", "beta",
+        "sigma_mu", "sigma_v",
+        "Vext", "Vext_mag", "Vext_ell", "Vext_b"
+    ]
+
+    def sort_key(k):
+        try:
+            return (order.index(k), k)
+        except ValueError:
+            # Put unlisted keys at the end, alphabetically
+            return (len(order), k)
+
+    return sorted(keys, key=sort_key)
+
+
 def plot_corner(samples, show_fig=True, filename=None, smooth=1, keys=None):
     """Plot a corner plot from posterior samples."""
     flat_samples = []
@@ -294,6 +351,108 @@ def plot_Vext_rad_corner(samples, show_fig=True, filename=None, smooth=1):
         plt.show()
     else:
         plt.close(fig)
+
+
+def plot_corner_getdist(samples_list, labels=None, show_fig=True,
+                        filename=None, keys=None, fontsize=None):
+    """Plot a GetDist triangle plot for one or more posterior samples."""
+    try:
+        import scienceplots  # noqa
+        use_scienceplots = True
+    except ImportError:
+        use_scienceplots = False
+
+    if isinstance(samples_list, dict):
+        samples_list = [samples_list]
+
+    if labels is not None and len(labels) != len(samples_list):
+        raise ValueError("Length of `labels` must match number of sample sets")
+
+    # Build candidate key list (user-specified or inferred)
+    if keys is not None:
+        candidate_keys = keys
+    else:
+        candidate_keys = [
+            k for k in samples_list[0] if samples_list[0][k].ndim == 1]
+
+    # Include keys that are present and 1D in at least one sample set
+    param_names = []
+    for k in candidate_keys:
+        for s in samples_list:
+            if k in s and s[k].ndim == 1:
+                param_names.append(k)
+                break
+            elif k in s and s[k].ndim > 1:
+                fprint(f"[SKIP] {k} has shape {s[k].shape}")
+                break
+
+    if keys is None:
+        param_names = sort_params(param_names)
+
+    ranges = {}
+    for k in param_names:
+        if "mag" in k:
+            ranges[k] = [0, None]
+
+        if "ell" in k:
+            ranges[k] = [0, 360]
+
+        if "b" in k:
+            ranges[k] = [-90, 90]
+
+    gdsamples_list = []
+
+    for samples in samples_list:
+        present_params = []
+        present_labels = []
+        columns = []
+
+        n_samples = len(next(iter(samples.values())))
+        for k in param_names:
+            if k in samples and samples[k].ndim == 1:
+                col = samples[k].reshape(-1)
+            else:
+                col = np.full(n_samples, np.nan)
+            if not np.all(np.isnan(col)):
+                present_params.append(k)
+                present_labels.append(name2labelgetdist(k))
+                columns.append(col)
+
+        data = np.vstack(columns).T
+        gds = MCSamples(
+            samples=data,
+            names=present_params,
+            labels=present_labels,
+            ranges={k: ranges[k] for k in present_params if k in ranges},
+            )
+        gdsamples_list.append(gds)
+
+    # Plot styling
+    settings = plots.GetDistPlotSettings()
+    if fontsize is not None:
+        settings.lab_fontsize = fontsize
+        settings.legend_fontsize = fontsize
+        settings.axes_fontsize = fontsize - 1
+        settings.title_limit_fontsize = fontsize - 1
+
+    with plt.style.context("science" if use_scienceplots else "default"):
+        g = plots.get_subplot_plotter(settings=settings)
+        g.triangle_plot(
+            gdsamples_list,
+            params=param_names,
+            filled=True,
+            legend_labels=labels,
+            legend_loc="upper right",
+        )
+
+        if filename is not None:
+            fprint(f"[INFO] Saving GetDist triangle plot to: {filename}")
+            g.export(filename, dpi=450)
+
+        if show_fig:
+            plt.show()
+        else:
+            plt.close()
 
 
 ###############################################################################
