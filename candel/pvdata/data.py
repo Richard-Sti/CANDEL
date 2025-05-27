@@ -93,6 +93,7 @@ class PVDataFrame:
         else:
             self.has_precomputed_los = False
 
+        self.has_calibrators = bool(self.num_calibrators > 0)
         self._cache = {}
 
     @classmethod
@@ -212,7 +213,7 @@ class PVDataFrame:
 
         indx_choice = np.where(~main_mask)[0]
         indx_choice = gen.choice(
-            indx_choice, nsamples - self.num_calibrators, replace=False)
+            indx_choice, nsamples - int(self.num_calibrators), replace=False)
         main_mask[indx_choice] = True
 
         keys_skip = [
@@ -273,7 +274,7 @@ class PVDataFrame:
     @property
     def num_calibrators(self):
         if "mu_cal" in self.data:
-            num_cal = np.sum(self.data["is_calibrator"])
+            num_cal = jnp.sum(self.data["is_calibrator"])
         else:
             num_cal = 0
 

@@ -562,7 +562,7 @@ class TFRModel(BaseModel):
 
             sample("obs", Normal(czpred, sigma_v), obs=data["czcmb"])
 
-        if data.num_calibrators > 0:
+        if data.has_calibrators > 0:
             mu_calibration = mu[data["is_calibrator"]]
             with plate("calibrators", len(mu_calibration)):
                 sample(
