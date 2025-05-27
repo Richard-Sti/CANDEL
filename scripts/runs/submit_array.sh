@@ -79,6 +79,8 @@ if [[ "$machine" == "rusty" ]]; then
     module load cuda
     module load python
     module list
+
+    export XLA_FLAGS="--xla_hlo_profile=false --xla_dump_to=/tmp/nowhere"
 fi
 
 # --- Run ---

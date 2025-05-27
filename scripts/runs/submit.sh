@@ -72,6 +72,8 @@ for line in "${task_lines[@]}"; do
         module load gcc
         module load cuda
         module load python
+
+        export XLA_FLAGS="--xla_hlo_profile=false --xla_dump_to=/tmp/nowhere"
     fi
 
     # Set root of frozen package
