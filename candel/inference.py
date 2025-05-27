@@ -59,7 +59,8 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
     kernel = NUTS(model, init_strategy=init_to_median(num_samples=5000))
     mcmc = MCMC(
         kernel, num_warmup=kwargs["num_warmup"],
-        num_samples=kwargs["num_samples"], num_chains=kwargs["num_chains"],)
+        num_samples=kwargs["num_samples"], num_chains=kwargs["num_chains"],
+        chain_method=kwargs["chain_method"])
     mcmc.run(jax.random.key(kwargs["seed"]), **model_kwargs)
 
     samples = mcmc.get_samples()
