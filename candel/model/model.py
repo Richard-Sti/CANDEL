@@ -818,7 +818,7 @@ def mu_from_CL_calibration(theta, c, log_dL_grid, log_dA_grid, mu_grid):
     return jnp.interp(0.0, res, mu_grid)
 
 
-class Clusters_DistMarg(BaseModel):
+class ClustersModel_DistMarg(BaseModel):
     """
     Cluster L-T-Y scaling relation peculiar velocity model with distance
     marginalization.

@@ -84,7 +84,7 @@ def generate_dynamic_tag(config, base_tag="default"):
     parts.append("MNR" if use_mnr else "noMNR")
 
     # Clusters scaling relation choice
-    if get_nested(config, "inference/model", None) == "Clusters_DistMarg":
+    if get_nested(config, "inference/model", None) == "ClustersModel_DistMarg":
         parts.append(get_nested(config, "io/Clusters/which_relation", None))
 
     # Fixed beta value from delta prior
