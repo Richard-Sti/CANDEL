@@ -7,7 +7,7 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
 #SBATCH --constraint=a100
-#SBATCH --time=00:30:00
+#SBATCH --time=02:00:00
 #SBATCH --job-name=candel
 #SBATCH --output=logs/logs-%j.out
 #SBATCH --error=logs/logs-%j.err
