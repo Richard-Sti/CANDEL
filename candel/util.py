@@ -218,7 +218,7 @@ def name2label(name):
         "a_FP": r"$a_{\rm FP}$",
         "b_FP": r"$b_{\rm FP}$",
         "c_FP": r"$c_{\rm FP}$",
-        "R_dust": r"$R_{\rm dust}$",
+        "R_dust": r"$R_{\rm W1}$",
     }
     return latex_labels.get(name, name)
 
@@ -256,7 +256,7 @@ def name2labelgetdist(name):
         "a_FP": r"a_{\rm FP}",
         "b_FP": r"b_{\rm FP}",
         "c_FP": r"c_{\rm FP}",
-        "R_dust": r"R_{\rm dust}",
+        "R_dust": r"R_{\rm W1}",
     }
     return labels.get(name, name)
 
@@ -354,7 +354,7 @@ def plot_Vext_rad_corner(samples, show_fig=True, filename=None, smooth=1):
 
 
 def plot_corner_getdist(samples_list, labels=None, show_fig=True,
-                        filename=None, keys=None, fontsize=None):
+                        filename=None, keys=None, fontsize=None, filled=True):
     """Plot a GetDist triangle plot for one or more posterior samples."""
     try:
         import scienceplots  # noqa
@@ -440,7 +440,7 @@ def plot_corner_getdist(samples_list, labels=None, show_fig=True,
         g.triangle_plot(
             gdsamples_list,
             params=param_names,
-            filled=True,
+            filled=filled,
             legend_labels=labels,
             legend_loc="upper right",
         )
