@@ -33,7 +33,8 @@ from .evidence import (BIC_AIC, dict_samples_to_array, harmonic_evidence,
                        laplace_evidence)
 from .util import (fprint, galactic_to_radec, plot_corner,
                    plot_radial_profiles, plot_Vext_rad_corner,
-                   radec_to_cartesian, radec_to_galactic)
+                   radec_cartesian_to_galactic, radec_to_cartesian,
+                   radec_to_galactic)
 
 
 def run_pv_inference(model, model_kwargs, print_summary=True,
@@ -196,9 +197,9 @@ def drop_deterministic(samples):
 
 
 def postprocess_samples(samples):
-    """Postprocess the MCMC samples."""
-    # Convert Vext or Vext_rad samples to galactic coordinates
-    for prefix in ["Vext_rad", "Vext"]:  # ← more specific first
+    """Postprocess MCMC samples."""
+    for prefix in ["Vext_rad", "Vext", "a_TFR_dipole", "M_dipole"]:
+        # Spherical form: phi + cos_theta (+ mag optional)
         if f"{prefix}_phi" in samples and f"{prefix}_cos_theta" in samples:
             phi = np.rad2deg(samples.pop(f"{prefix}_phi"))
             theta = np.arccos(samples.pop(f"{prefix}_cos_theta"))
@@ -210,21 +211,18 @@ def postprocess_samples(samples):
 
             if f"{prefix}_mag" in samples:
                 samples[f"{prefix}_mag"] = samples.pop(f"{prefix}_mag")
-            break
+            continue
 
-    for prefix in ["a_TFR_dipole", "M_dipole"]:
-        if f"{prefix}_phi" in samples and f"{prefix}_cos_theta" in samples:
-            phi = np.rad2deg(samples.pop(f"{prefix}_phi"))
-            theta = np.arccos(samples.pop(f"{prefix}_cos_theta"))
-            dec = np.rad2deg(0.5 * np.pi - theta)
+        # Cartesian form: x, y, z
+        if all(f"{prefix}_{c}" in samples for c in "xyz"):
+            x = samples.pop(f"{prefix}_x")
+            y = samples.pop(f"{prefix}_y")
+            z = samples.pop(f"{prefix}_z")
 
-            ell, b = radec_to_galactic(phi, dec)
-
+            r, ell, b = radec_cartesian_to_galactic(x, y, z)
+            samples[f"{prefix}_mag"] = r
             samples[f"{prefix}_ell"] = ell
             samples[f"{prefix}_b"] = b
-
-            if f"{prefix}_mag" in samples:
-                samples[f"{prefix}_mag"] = samples.pop(f"{prefix}_mag")
 
     return samples
 

@@ -86,6 +86,17 @@ class MagnitudeDistribution(Distribution):
         return jnp.where(in_bounds, logp, -jnp.inf)
 
 
+def sample_vector_components_uniform(name, low, high):
+    """
+    Sample a 3D vector by drawing each Cartesian component independently
+    from a uniform distribution over [xmin, xmax].
+    """
+    x = sample(f"{name}_x", Uniform(low, high))
+    y = sample(f"{name}_y", Uniform(low, high))
+    z = sample(f"{name}_z", Uniform(low, high))
+    return jnp.array([x, y, z])
+
+
 def sample_vector(name, mag_min, mag_max):
     """
     Sample a 3D vector uniformly in direction and magnitude.
@@ -178,6 +189,7 @@ def load_priors(config_priors):
         "vector_uniform": lambda p: {"type": "vector_uniform", "low": p["low"], "high": p["high"]},  # noqa
         "vector_uniform_fixed": lambda p: {"type": "vector_uniform_fixed", "low": p["low"], "high": p["high"],},  # noqa
         "vector_radial_spline_uniform": lambda p: {"type": "vector_radial_spline_uniform", "nval": len(p["rknot"]), "low": p["low"], "high": p["high"]},  # noqa
+        "vector_components_uniform": lambda p: {"type": "vector_components_uniform", "low": p["low"], "high": p["high"],},  # noqa
     }
     priors = {}
     prior_dist_name = {}
@@ -216,6 +228,10 @@ def rsample(name, dist):
 
     if isinstance(dist, dict) and dist.get("type") == "vector_uniform_fixed":
         return sample_vector_fixed(name, dist["low"], dist["high"])
+
+    if isinstance(dist, dict) and dist.get("type") == "vector_components_uniform":  # noqa
+        return sample_vector_components_uniform(
+            name, dist["low"], dist["high"])
 
     if isinstance(dist, dict) and dist.get("type") == "vector_radial_spline_uniform":  # noqa
         return sample_spline_radial_vector(
