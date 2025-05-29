@@ -40,7 +40,7 @@ def compare_zeropoint_dipole_gof(fname, which, verbose=True):
 
 
 def plot_corner_from_hdf5(fnames, keys=None, labels=None, fontsize=None,
-                          show_fig=True, filename=None):
+                          filled=True, show_fig=True, filename=None):
     """
     Plot a triangle plot from one or more HDF5 files containing posterior
     samples.
@@ -63,6 +63,7 @@ def plot_corner_from_hdf5(fnames, keys=None, labels=None, fontsize=None,
         labels=labels,
         keys=keys,
         fontsize=fontsize,
+        filled=filled,
         show_fig=show_fig,
         filename=filename
     )
