@@ -154,6 +154,11 @@ class PVDataFrame:
                 "e_mag_sample": frame["e_mag"],
                 }
 
+            frame.mag_dist_unif_kwargs = {
+                "low": frame["min_mag"] - 0.5 * frame["std_mag"],
+                "high": frame["max_mag"] + 0.5 * frame["std_mag"],
+            }
+
         # Magnitude selection hyperparameters.
         if mag_selection is not None:
             if config["add_mag_selection"]:
