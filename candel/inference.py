@@ -178,10 +178,11 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
 
 
 def run_magsel_inference(model, model_args, num_warmup=1000, num_samples=5000,
-                         seed=42, print_summary=True,):
+                         num_chains=1, seed=42, print_summary=True,):
     """Run MCMC inference on the given magnitude selection model."""
     kernel = NUTS(model, init_strategy=init_to_median(num_samples=5000))
-    mcmc = MCMC(kernel, num_warmup=num_warmup, num_samples=num_samples, )
+    mcmc = MCMC(kernel, num_warmup=num_warmup, num_samples=num_samples,
+                num_chains=num_chains,)
     mcmc.run(jax.random.key(seed), *model_args)
 
     if print_summary:
