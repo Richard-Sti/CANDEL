@@ -12,11 +12,13 @@
 # You should have received a copy of the GNU General Public License along
 # with this program; if not, write to the Free Software Foundation, Inc.,
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+import re
 from datetime import datetime
-from pathlib import Path
 from os.path import basename
+from pathlib import Path
 
 from h5py import File
+
 from candel import plot_corner_getdist, read_gof
 
 
@@ -25,7 +27,7 @@ def compare_zeropoint_dipole_gof(fname, which, verbose=True):
         raise ValueError("`aTFRdipole` not in filename.")
 
     gof_dipole = read_gof(fname, which)
-    gof_no_dipole = read_gof(fname.replace("_aTFRdipole", ""), which)
+    gof_no_dipole = read_gof(re.sub(r"_aTFRdipole(UnifComponents)?", "", fname), which)  # noqa
 
     if verbose:
         print(f"[DIPOLE]:    {gof_dipole}")
