@@ -22,7 +22,8 @@ except ModuleNotFoundError:
     import tomli as tomllib
 
 from datetime import datetime
-from os.path import abspath, isabs, join
+from os.path import abspath, basename, isabs, join
+from pathlib import Path
 
 import astropy.units as u
 import jax.numpy as jnp
@@ -453,6 +454,36 @@ def plot_corner_getdist(samples_list, labels=None, show_fig=True,
             plt.show()
         else:
             plt.close()
+
+
+def plot_corner_from_hdf5(fnames, keys=None, labels=None, fontsize=None,
+                          filled=True, show_fig=True, filename=None):
+    """
+    Plot a triangle plot from one or more HDF5 files containing posterior
+    samples.
+    """
+    if isinstance(fnames, (str, Path)):
+        fnames = [fnames]
+
+    samples_list = []
+    for fname in fnames:
+        with File(fname, 'r') as f:
+            grp = f["samples"]
+            samples = {key: grp[key][...] for key in grp.keys()}
+            samples_list.append(samples)
+
+            full_keys = list(grp.keys())
+            print(f"{basename(fname)}: {', '.join(full_keys)}")
+
+    plot_corner_getdist(
+        samples_list,
+        labels=labels,
+        keys=keys,
+        fontsize=fontsize,
+        filled=filled,
+        show_fig=show_fig,
+        filename=filename
+    )
 
 
 ###############################################################################

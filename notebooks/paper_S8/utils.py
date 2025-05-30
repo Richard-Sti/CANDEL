@@ -12,27 +12,16 @@
 # You should have received a copy of the GNU General Public License along
 # with this program; if not, write to the Free Software Foundation, Inc.,
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
-import re
-from datetime import datetime
-from pathlib import Path
 
-from candel import read_gof
+from h5py import File
 
 
-def compare_zeropoint_dipole_gof(fname, which, verbose=True):
-    if "aTFRdipole" not in fname:
-        raise ValueError("`aTFRdipole` not in filename.")
+def compute_S8_all(fnames, beta2cosmo):
+    S8_list = []
+    for fname in fnames:
+        with File(fname, 'r') as f:
+            beta = f["samples"]["beta"][...]
+        S8 = beta2cosmo.compute_S8(beta)
+        S8_list.append(S8)
 
-    gof_dipole = read_gof(fname, which)
-    gof_no_dipole = read_gof(re.sub(r"_aTFRdipole(UnifComponents)?", "", fname), which)  # noqa
-
-    if verbose:
-        print(f"[DIPOLE]:    {gof_dipole}")
-        print(f"[ISO]:       {gof_no_dipole}")
-
-        # Report last modified time
-        mtime = Path(fname).stat().st_mtime
-        ts = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
-        print(f"[INFO] File last modified: {ts}")
-
-    return gof_dipole - gof_no_dipole
+    return S8_list
