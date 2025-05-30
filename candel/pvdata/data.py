@@ -455,6 +455,59 @@ def load_CF4_mock(root, index):
     return data
 
 
+def load_2MTF(root, eta_min=-0.1, eta_max=0.2, zcmb_min=None, zcmb_max=None,
+              b_min=7.5, los_data_path=None, return_all=False, **kwargs):
+    """
+    Load the 2MTF data from the given root directory.
+    """
+    with File(join(root, "PV_compilation.hdf5"), 'r') as f:
+        grp = f["2MTF"]
+
+        zcmb = grp["z_CMB"][...]
+        RA = grp["RA"][...]
+        DEC = grp["DEC"][...]
+        mag = grp["mag"][...]
+        eta = grp["eta"][...]
+
+        e_eta = grp["e_eta"][...]
+        e_mag = grp["e_mag"][...]
+
+    fprint(f"initially loaded {len(zcmb)} galaxies from CF4 TFR data.")
+
+    data = dict(
+        zcmb=zcmb,
+        RA=RA,
+        dec=DEC,
+        mag=mag,
+        e_mag=e_mag,
+        eta=eta,
+        e_eta=e_eta,
+    )
+
+    if return_all:
+        return data
+
+    mask = (eta > eta_min) & (eta < eta_max)
+    if zcmb_min is not None:
+        mask &= zcmb > zcmb_min
+    if zcmb_max is not None:
+        mask &= zcmb < zcmb_max
+    if b_min is not None:
+        b = radec_to_galactic(RA, DEC)[1]
+        mask &= np.abs(b) > b_min
+
+    fprint(f"removed {len(zcmb) - np.sum(mask)} galaxies, thus "
+           f"{np.sum(mask)} remain.")
+
+    for k in data:
+        data[k] = data[k][mask]
+
+    if los_data_path:
+        data = load_los(los_data_path, data, mask=mask)
+
+    return data
+
+
 def load_PantheonPlus(root, zcmb_min=None, zcmb_max=None, b_min=7.5,
                       los_data_path=None, return_all=False, **kwargs):
     """
