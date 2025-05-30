@@ -27,6 +27,7 @@ from numpyro.diagnostics import print_summary as print_summary_numpyro
 from numpyro.infer import MCMC, NUTS
 from numpyro.infer.initialization import init_to_median
 from numpyro.infer.util import log_density
+from numpyro_ext import optim as optimx
 from tqdm import trange
 
 from .evidence import (BIC_AIC, dict_samples_to_array, harmonic_evidence,
@@ -35,6 +36,48 @@ from .util import (fprint, galactic_to_radec, plot_corner,
                    plot_radial_profiles, plot_Vext_rad_corner,
                    radec_cartesian_to_galactic, radec_to_cartesian,
                    radec_to_galactic)
+
+
+def run_pv_optimization(model, model_kwargs, num_steps=20, print_summary=True,
+                        save_samples=True):
+    """
+    Run MAP optimization on the given PV model, post-process the best-fit
+    parameters, and optionally save the results to an HDF5 file.
+    """
+    raise NotImplementedError("I cannot get the optimizer to consisntently "
+                              "converge, so I am disabling it for now.")
+    devices = jax.devices()
+    device_str = ", ".join(f"{d.device_kind}({d.platform})" for d in devices)
+    fprint(f"running optimization on devices: {device_str}")
+
+    if any(d.platform == "gpu" for d in devices):
+        set_platform("gpu")
+        fprint("using NumPyro platform: GPU")
+    else:
+        set_platform("cpu")
+        fprint("using NumPyro platform: CPU")
+
+    # Run optimization
+    key = jax.random.key(model.config["inference"]["seed"])
+    soln = optimx.optimize(model, num_steps=num_steps, return_info=True)(
+        key, **model_kwargs)
+    print(soln)
+
+    # Convert solution into samples-like dict
+    samples = {k: jnp.atleast_1d(v) for k, v in soln.items()}
+
+    samples = drop_deterministic(samples, check_all_equals=False)
+    samples = postprocess_samples(samples)
+
+    if print_summary:
+        print_optim_summary(samples)
+
+    if save_samples:
+        fname_out = model.config["io"]["fname_output"]
+        fprint(f"output directory is {dirname(fname_out)}.")
+        save_mcmc_samples(samples, None, None, fname_out)
+
+    return samples
 
 
 def run_pv_inference(model, model_kwargs, print_summary=True,
@@ -172,7 +215,7 @@ def get_log_density(samples, model, model_kwargs, batch_size=5):
     return log_densities
 
 
-def drop_deterministic(samples):
+def drop_deterministic(samples, check_all_equals=True):
     """Drop deterministic and latent variable samples."""
     for key in list(samples.keys()):
         # Remove unused, latent variables used for deterministic sampling
@@ -180,9 +223,13 @@ def drop_deterministic(samples):
             samples.pop(key,)
             continue
 
+        if key == "obs":
+            samples.pop(key,)
+            continue
+
         # Remove samples fixed to a single value (delta prior)
         x = samples[key]
-        if np.all(x.flatten()[0] == x):
+        if check_all_equals and np.all(x.flatten()[0] == x):
             samples.pop(key,)
             continue
 
@@ -237,6 +284,22 @@ def print_clean_summary(samples):
         samples_print[key] = x[None, ...]
 
     print_summary_numpyro(samples_print,)
+
+
+def print_optim_summary(soln):
+    """
+    Print a clean summary of optimized parameters from `optimx.optimize`.
+    """
+    print("MAP parameter estimates:\n")
+    for k, v in soln.items():
+        if "_latent" in k or k == "obs":
+            continue
+
+        v_scalar = jnp.atleast_1d(v).squeeze()
+        if v_scalar.size == 1:
+            print(f"  {k:<20s} = {float(v_scalar): .4f}")
+        else:
+            print(f"  {k:<20s} = {v_scalar}")
 
 
 def save_mcmc_samples(samples, log_density, gof, filename):
