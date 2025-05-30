@@ -53,6 +53,7 @@ from .util import (                                                             
     SPEED_OF_LIGHT,                                                             # noqa
     plot_corner,                                                                # noqa
     plot_corner_getdist,                                                        # noqa
+    plot_corner_from_hdf5,                                                      # noqa
     plot_radial_profiles,                                                       # noqa
     radec_to_cartesian,                                                         # noqa
     radec_to_galactic,                                                          # noqa
