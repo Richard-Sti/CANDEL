@@ -41,7 +41,7 @@ class Distmod2Distance:
         If `True`, the interpolator is not vectorized. This is useful for
         debugging, but should be set to `False` for performance.
     """
-    def __init__(self, Om0=0.3, zmin_interp=1e-8, zmax_interp=0.5,
+    def __init__(self, Om0=0.3, zmin_interp=1e-8, zmax_interp=1.0,
                  npoints_interp=1000, is_scalar=False):
         cosmo = FlatLambdaCDM(H0=100, Om0=Om0)
         z_grid = np.linspace(zmin_interp, zmax_interp, npoints_interp)
@@ -74,7 +74,7 @@ class Distance2Distmod:
     npoints_interp : int
         Number of points in the interpolation grid.
     """
-    def __init__(self, Om0=0.3, zmin_interp=1e-8, zmax_interp=0.5,
+    def __init__(self, Om0=0.3, zmin_interp=1e-8, zmax_interp=1.0,
                  npoints_interp=1000):
         cosmo = FlatLambdaCDM(H0=100, Om0=Om0)
         z_grid = np.linspace(zmin_interp, zmax_interp, npoints_interp)
@@ -102,7 +102,7 @@ class LogAngularDiameterDistance2Distmod:
     npoints_interp : int
         Number of points in the interpolation grid.
     """
-    def __init__(self, Om0=0.3, zmin_interp=1e-8, zmax_interp=0.5,
+    def __init__(self, Om0=0.3, zmin_interp=1e-8, zmax_interp=1.0,
                  npoints_interp=1000):
         cosmo = FlatLambdaCDM(H0=100, Om0=Om0)
         z_grid = np.linspace(zmin_interp, zmax_interp, npoints_interp)
@@ -131,7 +131,7 @@ class Distmod2Redshift:
     npoints_interp : int
         Number of points in the interpolation grid.
     """
-    def __init__(self, Om0=0.3, zmin_interp=1e-8, zmax_interp=0.5,
+    def __init__(self, Om0=0.3, zmin_interp=1e-8, zmax_interp=1.0,
                  npoints_interp=1000):
         cosmo = FlatLambdaCDM(H0=100, Om0=Om0)
         z_grid = np.linspace(zmin_interp, zmax_interp, npoints_interp)
@@ -160,7 +160,7 @@ class Redshift2Distance:
     npoints_interp : int
         Number of points in the interpolation grid.
     """
-    def __init__(self, Om0=0.3, zmin_interp=1e-8, zmax_interp=0.5,
+    def __init__(self, Om0=0.3, zmin_interp=1e-8, zmax_interp=1.0,
                  npoints_interp=1000, is_scalar=False):
         cosmo = FlatLambdaCDM(H0=100, Om0=Om0)
         z_grid = np.linspace(zmin_interp, zmax_interp, npoints_interp)
@@ -199,7 +199,7 @@ class Distance2Redshift:
     npoints_interp : int
         Number of points in the interpolation grid.
     """
-    def __init__(self, Om0=0.3, zmin_interp=1e-8, zmax_interp=0.5,
+    def __init__(self, Om0=0.3, zmin_interp=1e-8, zmax_interp=1.0,
                  npoints_interp=1000):
         cosmo = FlatLambdaCDM(H0=100, Om0=Om0)
         z_grid = np.linspace(zmin_interp, zmax_interp, npoints_interp)
@@ -228,7 +228,7 @@ class LogGrad_Distmod2ComovingDistance:
     npoints_interp : int
         Number of points in the interpolation grid.
     """
-    def __init__(self, Om0=0.3, zmin_interp=1e-8, zmax_interp=0.5,
+    def __init__(self, Om0=0.3, zmin_interp=1e-8, zmax_interp=1.0,
                  npoints_interp=1000):
         cosmo = FlatLambdaCDM(H0=100, Om0=Om0)
         z_grid = np.logspace(np.log10(zmin_interp), np.log10(zmax_interp),
