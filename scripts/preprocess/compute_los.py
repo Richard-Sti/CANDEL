@@ -36,6 +36,11 @@ def load_los(catalogue, config):
         los_file = d.pop("los_file")
         data = candel.pvdata.load_2MTF(**d)
         RA, dec = data["RA"], data["dec"]
+    elif catalogue == "SFI":
+        d = config["io"]["PV_main"][catalogue].copy()
+        los_file = d.pop("los_file")
+        data = candel.pvdata.load_SFI(**d)
+        RA, dec = data["RA"], data["dec"]
     elif catalogue == "PantheonPlus":
         d = config["io"]["PV_main"][catalogue].copy()
         los_file = d.pop("los_file")

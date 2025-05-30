@@ -114,6 +114,10 @@ class PVDataFrame:
             if dust_model is not None:
                 fprint(f"using `{dust_model}` for the dust model.")
                 sample_dust = True
+        elif name == "2MTF":
+            data = load_2MTF(root, **config)
+        elif name == "SFI":
+            data = load_SFI(root, **config)
         elif name == "SDSS_FP":
             data = load_SDSS_FP(root, **config)
         elif name == "PantheonPlus":
@@ -488,6 +492,59 @@ def load_2MTF(root, eta_min=-0.1, eta_max=0.2, zcmb_min=None, zcmb_max=None,
         return data
 
     mask = (eta > eta_min) & (eta < eta_max)
+    if zcmb_min is not None:
+        mask &= zcmb > zcmb_min
+    if zcmb_max is not None:
+        mask &= zcmb < zcmb_max
+    if b_min is not None:
+        b = radec_to_galactic(RA, DEC)[1]
+        mask &= np.abs(b) > b_min
+
+    fprint(f"removed {len(zcmb) - np.sum(mask)} galaxies, thus "
+           f"{np.sum(mask)} remain.")
+
+    for k in data:
+        data[k] = data[k][mask]
+
+    if los_data_path:
+        data = load_los(los_data_path, data, mask=mask)
+
+    return data
+
+
+def load_SFI(root, eta_min=-0.1, zcmb_min=None, zcmb_max=None,
+             b_min=7.5, los_data_path=None, return_all=False, **kwargs):
+    """
+    Load the SFI++ data from the given root directory.
+    """
+    with File(join(root, "PV_compilation.hdf5"), 'r') as f:
+        grp = f["SFI_gals"]
+
+        zcmb = grp["z_CMB"][...]
+        RA = grp["RA"][...]
+        DEC = grp["DEC"][...]
+        mag = grp["mag"][...]
+        eta = grp["eta"][...]
+
+        e_eta = grp["e_eta"][...]
+        e_mag = grp["e_mag"][...]
+
+    fprint(f"initially loaded {len(zcmb)} galaxies from CF4 TFR data.")
+
+    data = dict(
+        zcmb=zcmb,
+        RA=RA,
+        dec=DEC,
+        mag=mag,
+        e_mag=e_mag,
+        eta=eta,
+        e_eta=e_eta,
+    )
+
+    if return_all:
+        return data
+
+    mask = eta > eta_min
     if zcmb_min is not None:
         mask &= zcmb > zcmb_min
     if zcmb_max is not None:
