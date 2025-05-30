@@ -374,6 +374,11 @@ class BaseModel(ABC):
         self.mag_grid_kwargs = config["model"]["mag_grid"]
 
         self.use_MNR = config["pv_model"]["use_MNR"]
+        self.MNR_mag_prior = config["pv_model"]["MNR_mag_prior"]
+        if self.use_MNR and self.MNR_mag_prior not in ["uniform", "hubble"]:
+            raise ValueError(
+                f"Invalid MNR magnitude prior '{self.MNR_mag_prior}'. "
+                "Choose either 'uniform' or 'hubble'.")
 
         self.galaxy_bias = config["pv_model"]["galaxy_bias"]
         if self.galaxy_bias not in ["powerlaw", "linear"]:
@@ -491,9 +496,13 @@ class TFRModel(BaseModel):
         with plate("data", nsamples):
             if self.use_MNR:
                 # Magnitude hyperprior and selection.
-                mag = sample(
-                    "mag_latent",
-                    MagnitudeDistribution(**data.mag_dist_kwargs,))
+                if self.MNR_mag_prior == "uniform":
+                    mag = sample(
+                        "mag_latent", Uniform(**data.mag_dist_unif_kwargs))
+                else:
+                    mag = sample(
+                        "mag_latent",
+                        MagnitudeDistribution(**data.mag_dist_kwargs,))
                 if data.add_mag_selection:
                     # Magnitude selection at the true magnitude values.
                     log_Fm = log_magnitude_selection(
@@ -611,7 +620,8 @@ class TFRModel_DistMarg(BaseModel):
             "a_TFR_dipole", self.priors["TFR_zeropoint_dipole"])
 
         if data.sample_dust:
-            Rdust = rsample("R_dust", self.priors["Rdust"])
+            # Rdust = rsample("R_dust", self.priors["Rdust"])
+            Rdust = sample("R_dust", TruncatedNormal(0.186, 0.05, low=0.0))
             Ab = Rdust * data["ebv"]
         else:
             Ab = 0.
@@ -640,14 +650,18 @@ class TFRModel_DistMarg(BaseModel):
             if self.use_MNR:
                 # Magnitude hyperprior and selection, note the optional dust
                 # correction.
-                mag = sample(
-                    "mag_latent",
-                    MagnitudeDistribution(**data.mag_dist_kwargs,))
+                if data.sample_dust or self.MNR_mag_prior == "uniform":
+                    mag = sample(
+                        "mag_latent", Uniform(**data.mag_dist_unif_kwargs))
+                else:
+                    mag = sample(
+                        "mag_latent",
+                        MagnitudeDistribution(**data.mag_dist_kwargs,))
 
                 if data.add_mag_selection:
                     # Magnitude selection at the true magnitude values.
                     log_Fm = log_magnitude_selection(
-                        mag, **data.mag_selection_kwargs)
+                        data["mag"] - Ab, **data.mag_selection_kwargs)
 
                     # Magnitude selection normalization.
                     mag_grid = make_mag_grid(
@@ -667,7 +681,7 @@ class TFRModel_DistMarg(BaseModel):
                 # values (MNR parameters are sampled from an isotropic).
                 sample(
                     "mag_obs",
-                    Normal(mag + Ab, data["e_mag"]), obs=data["mag"])
+                    Normal(mag, data["e_mag"]), obs=data["mag"] - Ab)
 
                 # Linewidth hyperprior and selection.
                 eta = sample(
