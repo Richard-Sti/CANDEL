@@ -101,11 +101,8 @@ loc = 10
 scale = 5.0
 
 [model.priors.TFR_zeropoint_dipole]
-# dist = "delta"
-# value = [0.0, 0.0, 0.0]
-dist = "vector_uniform_fixed"
-low = 0.0
-high = 0.3
+dist = "delta"
+value = [0.0, 0.0, 0.0]
 
 
 # SN priors
