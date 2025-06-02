@@ -7,7 +7,7 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
 #SBATCH --constraint=a100
-#SBATCH --time=00:30:00
+#SBATCH --time=01:00:00
 #SBATCH --job-name=candel
 #SBATCH --output=logs/logs-%j.out
 #SBATCH --error=logs/logs-%j.err
@@ -80,6 +80,8 @@ for line in "${task_lines[@]}"; do
         module load gcc
         module load cuda
         module load python
+
+        export XLA_FLAGS="--xla_hlo_profile=false --xla_dump_to=/tmp/nowhere"
     fi
 
     # Set root of frozen package

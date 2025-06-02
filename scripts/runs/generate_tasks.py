@@ -135,7 +135,7 @@ def generate_dynamic_tag(config, base_tag="default"):
     parts.append("MNR" if use_mnr else "noMNR")
 
     # Clusters scaling relation choice
-    if get_nested(config, "inference/model", None) == "Clusters_DistMarg":
+    if get_nested(config, "inference/model", None) == "ClustersModel_DistMarg":
         parts.append(get_nested(config, "io/Clusters/which_relation", None))
 
     # Fixed beta value from delta prior
@@ -149,7 +149,11 @@ def generate_dynamic_tag(config, base_tag="default"):
     # aTFRdipole if it's not a delta distribution
     aTFRdip_prior = get_nested(config, "model/priors/TFR_zeropoint_dipole", {})
     if isinstance(aTFRdip_prior, dict) and "TFR" in model_name and aTFRdip_prior.get("dist") != "delta":  # noqa
-        parts.append("aTFRdipole")
+        dist_name = aTFRdip_prior.get("dist")
+        if dist_name == "vector_components_uniform":
+            parts.append("aTFRdipoleUnifComponents")
+        else:
+            parts.append("aTFRdipole")
 
     Mdip_prior = get_nested(config, "model/priors/SN_absmag_dipole", {})
     if isinstance(Mdip_prior, dict) and "Pantheon" in model_name and Mdip_prior.get("dist") != "delta":  # noqa

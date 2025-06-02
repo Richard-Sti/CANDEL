@@ -112,6 +112,17 @@ class MagnitudeDistribution(Distribution):
         return jnp.where(in_bounds, logp, -jnp.inf)
 
 
+def sample_vector_components_uniform(name, low, high):
+    """
+    Sample a 3D vector by drawing each Cartesian component independently
+    from a uniform distribution over [xmin, xmax].
+    """
+    x = sample(f"{name}_x", Uniform(low, high))
+    y = sample(f"{name}_y", Uniform(low, high))
+    z = sample(f"{name}_z", Uniform(low, high))
+    return jnp.array([x, y, z])
+
+
 def sample_vector(name, mag_min, mag_max):
     """
     Sample a 3D vector uniformly in direction and magnitude.
@@ -204,6 +215,7 @@ def load_priors(config_priors):
         "vector_uniform": lambda p: {"type": "vector_uniform", "low": p["low"], "high": p["high"]},  # noqa
         "vector_uniform_fixed": lambda p: {"type": "vector_uniform_fixed", "low": p["low"], "high": p["high"],},  # noqa
         "vector_radial_spline_uniform": lambda p: {"type": "vector_radial_spline_uniform", "nval": len(p["rknot"]), "low": p["low"], "high": p["high"]},  # noqa
+        "vector_components_uniform": lambda p: {"type": "vector_components_uniform", "low": p["low"], "high": p["high"],},  # noqa
     }
     priors = {}
     prior_dist_name = {}
@@ -242,6 +254,10 @@ def _rsample(name, dist):
 
     if isinstance(dist, dict) and dist.get("type") == "vector_uniform_fixed":
         return sample_vector_fixed(name, dist["low"], dist["high"])
+
+    if isinstance(dist, dict) and dist.get("type") == "vector_components_uniform":  # noqa
+        return sample_vector_components_uniform(
+            name, dist["low"], dist["high"])
 
     if isinstance(dist, dict) and dist.get("type") == "vector_radial_spline_uniform":  # noqa
         return sample_spline_radial_vector(
@@ -391,6 +407,11 @@ class BaseModel(ABC):
         self.mag_grid_kwargs = config["model"]["mag_grid"]
 
         self.use_MNR = config["pv_model"]["use_MNR"]
+        self.MNR_mag_prior = config["pv_model"]["MNR_mag_prior"]
+        if self.use_MNR and self.MNR_mag_prior not in ["uniform", "hubble"]:
+            raise ValueError(
+                f"Invalid MNR magnitude prior '{self.MNR_mag_prior}'. "
+                "Choose either 'uniform' or 'hubble'.")
 
         self.galaxy_bias = config["pv_model"]["galaxy_bias"]
         if self.galaxy_bias not in ["powerlaw", "linear"]:
@@ -509,9 +530,13 @@ class TFRModel(BaseModel):
         with plate("data", nsamples):
             if self.use_MNR:
                 # Magnitude hyperprior and selection.
-                mag = sample(
-                    "mag_latent",
-                    MagnitudeDistribution(**data.mag_dist_kwargs,))
+                if self.MNR_mag_prior == "uniform":
+                    mag = sample(
+                        "mag_latent", Uniform(**data.mag_dist_unif_kwargs))
+                else:
+                    mag = sample(
+                        "mag_latent",
+                        MagnitudeDistribution(**data.mag_dist_kwargs,))
                 if data.add_mag_selection:
                     # Magnitude selection at the true magnitude values.
                     log_Fm = log_magnitude_selection(
@@ -596,7 +621,7 @@ class TFRModel(BaseModel):
 
             sample("obs", Normal(czpred, sigma_v), obs=data["czcmb"])
 
-        if data.num_calibrators > 0:
+        if data.has_calibrators > 0:
             mu_calibration = mu[data["is_calibrator"]]
             with plate("calibrators", len(mu_calibration)):
                 sample(
@@ -660,14 +685,18 @@ class TFRModel_DistMarg(BaseModel):
             if self.use_MNR:
                 # Magnitude hyperprior and selection, note the optional dust
                 # correction.
-                mag = sample(
-                    "mag_latent",
-                    MagnitudeDistribution(**data.mag_dist_kwargs,))
+                if data.sample_dust or self.MNR_mag_prior == "uniform":
+                    mag = sample(
+                        "mag_latent", Uniform(**data.mag_dist_unif_kwargs))
+                else:
+                    mag = sample(
+                        "mag_latent",
+                        MagnitudeDistribution(**data.mag_dist_kwargs,))
 
                 if data.add_mag_selection:
                     # Magnitude selection at the true magnitude values.
                     log_Fm = log_magnitude_selection(
-                        mag, **data.mag_selection_kwargs)
+                        data["mag"] - Ab, **data.mag_selection_kwargs)
 
                     # Magnitude selection normalization.
                     mag_grid = make_mag_grid(
@@ -687,7 +716,7 @@ class TFRModel_DistMarg(BaseModel):
                 # values (MNR parameters are sampled from an isotropic).
                 sample(
                     "mag_obs",
-                    Normal(mag + Ab, data["e_mag"]), obs=data["mag"])
+                    Normal(mag, data["e_mag"]), obs=data["mag"] - Ab)
 
                 # Linewidth hyperprior and selection.
                 eta = sample(
@@ -857,7 +886,7 @@ def mu_from_CL_calibration(theta, c, log_dL_grid, log_dA_grid, mu_grid):
     return jnp.interp(0.0, res, mu_grid)
 
 
-class Clusters_DistMarg(BaseModel):
+class ClustersModel_DistMarg(BaseModel):
     """
     Cluster L-T-Y scaling relation peculiar velocity model with distance
     marginalization.
