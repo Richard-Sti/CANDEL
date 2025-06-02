@@ -17,6 +17,8 @@ machine="rusty"
 
 [inference]
 model = "TFRModel_DistMarg"
+shared_params = "none"
+
 # model = "PantheonPlusModel_DistMarg"
 num_warmup = 1500
 num_samples = 15000
@@ -182,7 +184,8 @@ scale = 0.05
 root_output = "results"
 # Default catalogue name and output path. This gets overwritten
 # if using a submission script.
-catalogue_name = "Clusters"
+# catalogue_name = ["CF4_W1", "CF4_i"]
+catalogue_name = "CF4_W1"
 
 fname_output = "results/test.hdf5"
 
