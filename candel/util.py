@@ -117,6 +117,10 @@ def load_config(config_path, replace_none=True, fill_paths=True,
     if fill_paths:
         config = convert_to_absolute_paths(config)
 
+    shared_params = config["inference"].get("shared_params", None)
+    if shared_params is not None:
+        config["inference"]["shared_params"] = shared_params.split(",")
+
     return config
 
 
