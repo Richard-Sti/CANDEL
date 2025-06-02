@@ -20,29 +20,44 @@ from .model import (                                                            
     PantheonPlusModel_DistMarg,                                                 # noqa
     Clusters_DistMarg,                                                          # noqa
     FPModel_DistMarg,                                                           # noqa
+    JointPVModel,                                                               # noqa
     )
-
-
 from .magnitude_selection import (                                              # noqa
     MagnitudeSelection,                                                         # noqa
     log_magnitude_selection,                                                    # noqa
     )
-
 from .interp import LOSInterpolator                                             # noqa
-
 from .simpson import ln_simpson                                                 # noqa
 
+from ..util import fprint
 
-def name2model(name):
+
+def name2model(name, shared_param=None, config=None):
     mapping = {
         "TFRModel": TFRModel,
         "TFRModel_DistMarg": TFRModel_DistMarg,
         "PantheonPlusModel_DistMarg": PantheonPlusModel_DistMarg,
         "Clusters_DistMarg": Clusters_DistMarg,
-        "FPModel_DistMarg": FPModel_DistMarg
-        }
+        "FPModel_DistMarg": FPModel_DistMarg,
+    }
 
-    if name not in mapping:
-        raise ValueError(f"Model name `{name}` not recognized.\n"
-                         f"Available models: {list(mapping.keys())}")
-    return mapping[name]
+    if isinstance(name, str):
+        if name not in mapping:
+            raise ValueError(f"Model name `{name}` not recognized.\n"
+                             f"Available models: {list(mapping.keys())}")
+        return mapping[name](config)
+
+    if isinstance(name, list):
+        unknown = [n for n in name if n not in mapping]
+        if unknown:
+            raise ValueError(f"Unknown model names: {unknown}\n"
+                             f"Available models: {list(mapping.keys())}")
+        if shared_param is None:
+            shared_param = []
+        else:
+            fprint(f"using shared parameters: `{shared_param}`")
+
+        submodels = [mapping[n](config) for n in name]
+        return JointPVModel(submodels, shared_param)
+
+    raise TypeError("`name` must be a string or a list of strings.")
