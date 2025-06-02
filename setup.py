@@ -50,8 +50,6 @@ setup(
         "tomli_w",
         "scienceplots",
         "jax-cosmo",
-        "numpyro-ext",
-        "jaxopt",
     ],
     include_package_data=True,
     zip_safe=False,
