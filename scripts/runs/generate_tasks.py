@@ -77,7 +77,10 @@ def generate_dynamic_tag(config, base_tag="default"):
     # Catalogue name
     catalogue = get_nested(config, "io/catalogue_name", None)
     if catalogue:
-        parts.append(catalogue)
+        if isinstance(catalogue, list):
+            parts.append(",".join(catalogue))
+        else:
+            parts.append(str(catalogue))
 
     # MNR flag
     use_mnr = get_nested(config, "pv_model/use_MNR", False)
@@ -118,15 +121,59 @@ def generate_dynamic_tag(config, base_tag="default"):
 
 
 def expand_override_grid(overrides):
-    """
-    Convert a dictionary with lists of override values into a list of flat
-    key-value combinations.
-    """
-    keys, values = zip(*[
-        (k, v if isinstance(v, list) else [v])
-        for k, v in overrides.items()
-    ])
-    return [dict(zip(keys, combo)) for combo in product(*values)]
+    """Expand override grid into a list of flat key-value combinations."""
+    model_key = "inference/model"
+    cat_key = "io/catalogue_name"
+
+    is_joint_model = (
+        model_key in overrides
+        and cat_key in overrides
+        and isinstance(overrides[model_key], list)
+        and isinstance(overrides[cat_key], list)
+        and len(overrides[model_key]) == len(overrides[cat_key])
+    )
+
+    if is_joint_model:
+        # Extract grouped keys
+        grouped_models = overrides[model_key]
+        grouped_cats = overrides[cat_key]
+
+        # Collect remaining keys
+        other_keys = {
+            k: v if isinstance(v, list) else [v]
+            for k, v in overrides.items()
+            if k not in (model_key, cat_key)
+        }
+
+        # Cartesian expansion over non-grouped keys
+        if not other_keys:
+            return [{
+                model_key: grouped_models,
+                cat_key: grouped_cats
+            }]
+
+        keys = list(other_keys.keys())
+        value_lists = list(other_keys.values())
+        combos = product(*value_lists)
+
+        results = []
+        for combo in combos:
+            entry = {
+                model_key: list(grouped_models),
+                cat_key: list(grouped_cats),
+            }
+            entry.update(dict(zip(keys, combo)))
+            results.append(entry)
+        return results
+
+    # Fallback: standard Cartesian product for everything
+    if not overrides:
+        return [{}]
+
+    keys = list(overrides.keys())
+    value_lists = [
+        v if isinstance(v, list) else [v] for v in overrides.values()]
+    return [dict(zip(keys, combo)) for combo in product(*value_lists)]
 
 
 if __name__ == "__main__":
@@ -147,10 +194,12 @@ if __name__ == "__main__":
     manual_overrides = {
         "pv_model/kind": "Vext",
         # "io/catalogue_name": [f"CF4_mock_{n}" for n in range(70)],
-        "io/catalogue_name": "CF4_W1",
+        "inference/shared_params": "beta,Vext,sigma_v",
+        "inference/model": ["TFRModel_DistMarg", "TFRModel_DistMarg"],
+        "io/catalogue_name": ["CF4_W1", "CF4_i"],
         # "io/root_output": "results/mock_CF4_H0_anisotropy",
         "io/root_output": "results/CF4_H0_anisotropy",
-        "pv_model/use_MNR": [True, False],
+        "pv_model/use_MNR": False,
         # "io/CF4_W1/dust_model": ["none", "default", "CSFD"],
         # "io/Clusters/which_relation": ["LT", "LTY"],
         # "model/priors/beta": [
@@ -161,10 +210,10 @@ if __name__ == "__main__":
         #     # {"dist": "delta", "value": [0.0, 0.0, 0.0]},
         #     {"dist": "vector_uniform_fixed", "low": 0.0, "high": 0.3},
         # ],
-        "model/priors/TFR_zeropoint_dipole": [
-            {"dist": "delta", "value": [0.0, 0.0, 0.0]},
-            {"dist": "vector_uniform_fixed", "low": 0.0, "high": 0.3},
-        ],
+        # "model/priors/TFR_zeropoint_dipole": [
+        #     {"dist": "delta", "value": [0.0, 0.0, 0.0]},
+        #     {"dist": "vector_uniform_fixed", "low": 0.0, "high": 0.3},
+        # ],
     }
 
     task_file = f"tasks_{tasks_index}.txt"
