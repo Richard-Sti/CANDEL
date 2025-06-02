@@ -13,10 +13,58 @@
 # with this program; if not, write to the Free Software Foundation, Inc.,
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 """
-Prepare a director structure for new runs, including copying and overwriting
-the default configuration file.
-"""
+Generate configuration files and task lists for batch parameter inference runs.
 
+This script automates the setup of parameter inference experiments for CANDEL
+by generating `.toml` configuration files based on a central config template
+and a set of parameter overrides. It also writes out a task list for downstream
+execution (e.g., with SLURM or local scripting).
+
+Main capabilities:
+------------------
+- Expand a grid of override parameters (single values or lists)
+- Apply overrides to nested config keys using slash-delimited paths (e.g.
+  "model/priors/beta")
+- Automatically generate descriptive output tags based on key config flags
+- Create output directories and write `.toml` configs to disk
+- Log all generated tasks in `tasks_<index>.txt` for batch submission
+
+Special handling for joint catalogues:
+--------------------------------------
+If *both* `inference/model` and `io/catalogue_name` are provided as lists of
+equal length, they are treated as **paired inputs**, representing joint
+likelihood models with separate data vectors and submodels per catalogue.
+
+For example:
+    "inference/model": ["TFRModel_DistMarg", "PantheonPlusModel_DistMarg"]
+    "io/catalogue_name": ["CF4_W1", "Pantheon"]
+
+This setup will yield a single configuration where the models and catalogues
+are interpreted jointly (e.g., by `JointPVModel`). All other override
+parameters (e.g. priors, flags) will be expanded via Cartesian product
+*independently* of the model/catalogue pair.
+
+Note:
+    If `inference/model` and `io/catalogue_name` are both lists but not of
+    equal length, the script will raise an error to prevent unintended
+    mismatches.
+
+Usage:
+------
+1. Edit the `manual_overrides` dictionary near the bottom of the script to
+   specify your sweep.
+2. Run the script:
+       $ python generate_tasks.py 0
+3. Use the generated `tasks_0.txt` with a SLURM script or manual loop to run
+   the tasks.
+
+Typical output:
+- One `.toml` file per combination of overrides
+- A summary task list with config paths for tracking and reproducibility
+
+This script is meant to streamline robust, reproducible inference workflows in
+CANDEL.
+"""
 from argparse import ArgumentParser
 from copy import deepcopy
 from itertools import product
