@@ -249,7 +249,6 @@ if __name__ == "__main__":
         "inference/shared_params": "beta,Vext,sigma_v",
         "inference/model": ["TFRModel_DistMarg", "TFRModel_DistMarg"],
         "io/catalogue_name": ["CF4_W1", "CF4_i"],
-        # "io/root_output": "results/mock_CF4_H0_anisotropy",
         "io/root_output": "results/CF4_H0_anisotropy",
         "pv_model/use_MNR": False,
         # "io/CF4_W1/dust_model": ["none", "default", "CSFD"],
