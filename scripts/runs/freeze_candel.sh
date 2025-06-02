@@ -28,22 +28,6 @@ else
     exit 3
 fi
 
-# frozen_dir="${frozen_root}/"
-
-# # --- Freeze package ---
-# echo "[INFO] Freezing package for machine: $machine"
-# echo "[INFO] From: $src_dir"
-# echo "[INFO] To:   $frozen_dir"
-
-# if [[ ! -d "$src_dir" ]]; then
-#     echo "[ERROR] Source directory not found: $src_dir"
-#     exit 4
-# fi
-
-# rm -rf "$frozen_dir"
-# mkdir -p "$frozen_root"
-# rsync -a --exclude '__pycache__' --exclude '*.pyc' "$src_dir/" "$frozen_dir"
-
 frozen_dir="${frozen_root}"
 
 # Freeze
@@ -58,9 +42,11 @@ rsync -a --exclude '__pycache__' --exclude '*.pyc' "$src_dir" "$frozen_dir"
 
 # Copy or symlink main.py into frozen dir root
 cp "$main_script" "$frozen_dir/main.py"
-# Or if you prefer a symlink:
-# ln -s "$main_script" "$frozen_dir/main.py"
 
-# Done
 echo "[INFO] Frozen structure:"
-tree -L 2 "$frozen_dir"
+if command -v tree >/dev/null 2>&1; then
+    tree -L 2 "$frozen_dir"
+else
+    echo "[INFO] (Skipping tree output: 'tree' not found)"
+    ls -l "$frozen_dir"
+fi

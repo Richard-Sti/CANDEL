@@ -13,10 +13,58 @@
 # with this program; if not, write to the Free Software Foundation, Inc.,
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 """
-Prepare a director structure for new runs, including copying and overwriting
-the default configuration file.
-"""
+Generate configuration files and task lists for batch parameter inference runs.
 
+This script automates the setup of parameter inference experiments for CANDEL
+by generating `.toml` configuration files based on a central config template
+and a set of parameter overrides. It also writes out a task list for downstream
+execution (e.g., with SLURM or local scripting).
+
+Main capabilities:
+------------------
+- Expand a grid of override parameters (single values or lists)
+- Apply overrides to nested config keys using slash-delimited paths (e.g.
+  "model/priors/beta")
+- Automatically generate descriptive output tags based on key config flags
+- Create output directories and write `.toml` configs to disk
+- Log all generated tasks in `tasks_<index>.txt` for batch submission
+
+Special handling for joint catalogues:
+--------------------------------------
+If *both* `inference/model` and `io/catalogue_name` are provided as lists of
+equal length, they are treated as **paired inputs**, representing joint
+likelihood models with separate data vectors and submodels per catalogue.
+
+For example:
+    "inference/model": ["TFRModel_DistMarg", "PantheonPlusModel_DistMarg"]
+    "io/catalogue_name": ["CF4_W1", "Pantheon"]
+
+This setup will yield a single configuration where the models and catalogues
+are interpreted jointly (e.g., by `JointPVModel`). All other override
+parameters (e.g. priors, flags) will be expanded via Cartesian product
+*independently* of the model/catalogue pair.
+
+Note:
+    If `inference/model` and `io/catalogue_name` are both lists but not of
+    equal length, the script will raise an error to prevent unintended
+    mismatches.
+
+Usage:
+------
+1. Edit the `manual_overrides` dictionary near the bottom of the script to
+   specify your sweep.
+2. Run the script:
+       $ python generate_tasks.py 0
+3. Use the generated `tasks_0.txt` with a SLURM script or manual loop to run
+   the tasks.
+
+Typical output:
+- One `.toml` file per combination of overrides
+- A summary task list with config paths for tracking and reproducibility
+
+This script is meant to streamline robust, reproducible inference workflows in
+CANDEL.
+"""
 from argparse import ArgumentParser
 from copy import deepcopy
 from itertools import product
@@ -77,7 +125,10 @@ def generate_dynamic_tag(config, base_tag="default"):
     # Catalogue name
     catalogue = get_nested(config, "io/catalogue_name", None)
     if catalogue:
-        parts.append(catalogue)
+        if isinstance(catalogue, list):
+            parts.append(",".join(catalogue))
+        else:
+            parts.append(str(catalogue))
 
     # MNR flag
     use_mnr = get_nested(config, "pv_model/use_MNR", False)
@@ -122,15 +173,59 @@ def generate_dynamic_tag(config, base_tag="default"):
 
 
 def expand_override_grid(overrides):
-    """
-    Convert a dictionary with lists of override values into a list of flat
-    key-value combinations.
-    """
-    keys, values = zip(*[
-        (k, v if isinstance(v, list) else [v])
-        for k, v in overrides.items()
-    ])
-    return [dict(zip(keys, combo)) for combo in product(*values)]
+    """Expand override grid into a list of flat key-value combinations."""
+    model_key = "inference/model"
+    cat_key = "io/catalogue_name"
+
+    is_joint_model = (
+        model_key in overrides
+        and cat_key in overrides
+        and isinstance(overrides[model_key], list)
+        and isinstance(overrides[cat_key], list)
+        and len(overrides[model_key]) == len(overrides[cat_key])
+    )
+
+    if is_joint_model:
+        # Extract grouped keys
+        grouped_models = overrides[model_key]
+        grouped_cats = overrides[cat_key]
+
+        # Collect remaining keys
+        other_keys = {
+            k: v if isinstance(v, list) else [v]
+            for k, v in overrides.items()
+            if k not in (model_key, cat_key)
+        }
+
+        # Cartesian expansion over non-grouped keys
+        if not other_keys:
+            return [{
+                model_key: grouped_models,
+                cat_key: grouped_cats
+            }]
+
+        keys = list(other_keys.keys())
+        value_lists = list(other_keys.values())
+        combos = product(*value_lists)
+
+        results = []
+        for combo in combos:
+            entry = {
+                model_key: list(grouped_models),
+                cat_key: list(grouped_cats),
+            }
+            entry.update(dict(zip(keys, combo)))
+            results.append(entry)
+        return results
+
+    # Fallback: standard Cartesian product for everything
+    if not overrides:
+        return [{}]
+
+    keys = list(overrides.keys())
+    value_lists = [
+        v if isinstance(v, list) else [v] for v in overrides.values()]
+    return [dict(zip(keys, combo)) for combo in product(*value_lists)]
 
 
 if __name__ == "__main__":
@@ -149,27 +244,30 @@ if __name__ == "__main__":
 
     # Multiple override options → this creates a job per combination
     manual_overrides = {
-        # "pv_model/kind": "Vext",
+        # "pv_model/kind": "precomputed_los_Carrick2015",
+        "pv_model/kind": "Vext",
         # "io/catalogue_name": [f"CF4_mock_{n}" for n in range(70)],
-        "io/catalogue_name": "CF4_W1",
-        # "io/root_output": "results/",
-        "io/root_output": "results/",
-        # "io/root_output": "results/mock_CF4_H0_anisotropy",
-        # "io/root_output": "results/H0_BHM",
+        "inference/shared_params": "beta,Vext,sigma_v",
+        "inference/model": ["TFRModel_DistMarg", "FPModel_DistMarg"],
+        "io/catalogue_name": ["CF4_W1", "SDSS_FP"],
         # "io/root_output": "results/S8_paper",
-        "pv_model/use_MNR": True,
-        # "pv_model/MNR_mag_prior": "uniform",
-        # "io/CF4_W1/dust_model": "default",
-        # "io/CF4_W1/dust_model": ["none", "default", "CSFD", "Planck2016"],
-        "io/CF4_W1/zcmb_min": 0.01,
+        "io/root_output": "results",
+        "pv_model/use_MNR": False,
+        # "io/CF4_i/exclude_W1": True,
+        # "io/CF4_W1/dust_model": ["none", "default", "CSFD"],
+        # "io/Clusters/which_relation": ["LT", "LTY"],
         # "model/priors/beta": [
         #     {"dist": "normal", "loc": 0.43, "scale": 0.1},
         #     {"dist": "delta", "value": 1.0},
         # ],
-        "model/priors/TFR_zeropoint_dipole": [
-            {"dist": "delta", "value": [0.0, 0.0, 0.0]},
-            {"dist": "vector_uniform_fixed", "low": 0.0, "high": 0.3},
-        ],
+        # "model/priors/TFR_zeropoint_dipole": [
+        #     # {"dist": "delta", "value": [0.0, 0.0, 0.0]},
+        #     {"dist": "vector_uniform_fixed", "low": 0.0, "high": 0.3},
+        # ],
+        # "model/priors/TFR_zeropoint_dipole": [
+        #     {"dist": "delta", "value": [0.0, 0.0, 0.0]},
+        #     {"dist": "vector_uniform_fixed", "low": 0.0, "high": 0.3},
+        # ],
     }
 
     task_file = f"tasks_{tasks_index}.txt"
