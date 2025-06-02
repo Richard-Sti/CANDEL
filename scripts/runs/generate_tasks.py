@@ -240,7 +240,7 @@ if __name__ == "__main__":
 
     # Multiple override options → this creates a job per combination
     manual_overrides = {
-        "pv_model/kind": "Vext",
+        "pv_model/kind": "precomputed_los_Carrick2015",
         # "io/catalogue_name": [f"CF4_mock_{n}" for n in range(70)],
         "inference/shared_params": "beta,Vext,sigma_v",
         "inference/model": ["TFRModel_DistMarg", "TFRModel_DistMarg"],
