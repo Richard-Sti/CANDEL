@@ -1,14 +1,14 @@
-# root_main = "/Users/rstiskalek/Projects/CANDEL/"
-# python_exec = "/Users/rstiskalek/Projects/CANDEL/venv_candel/bin/python"
-# machine = "local"
+root_main = "/Users/rstiskalek/Projects/CANDEL/"
+python_exec = "/Users/rstiskalek/Projects/CANDEL/venv_candel/bin/python"
+machine = "local"
 
 # root_main = "/Users/yasin/code/CANDEL/"
 # python_exec = "/Users/yasin/code/CANDEL/venv_candel/bin/python"
 # machine = "local"
 
-root_main = "/mnt/home/rstiskalek/ceph/CANDEL"
-python_exec="/mnt/home/rstiskalek/CANDEL/venv_gpu_candel/bin/python"
-machine="rusty"
+# root_main = "/mnt/home/rstiskalek/ceph/CANDEL"
+# python_exec="/mnt/home/rstiskalek/CANDEL/venv_gpu_candel/bin/python"
+# machine="rusty"
 
 
 ###############################################################################
@@ -184,8 +184,8 @@ scale = 0.05
 root_output = "results"
 # Default catalogue name and output path. This gets overwritten
 # if using a submission script.
-# catalogue_name = ["CF4_W1", "CF4_i"]
-catalogue_name = "CF4_W1"
+catalogue_name = ["CF4_W1", "CF4_i"]
+# catalogue_name = "CF4_W1"
 
 fname_output = "results/test.hdf5"
 
@@ -236,6 +236,8 @@ zcmb_max = 0.05
 b_min = 7.5
 remove_outliers = true
 calibration = "None"
+
+exclude_w1 = false
 
 add_mag_selection = true
 add_eta_selection = true
