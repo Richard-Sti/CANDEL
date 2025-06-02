@@ -345,7 +345,8 @@ def load_SH0ES_calibration(calibration_path, pgc_CF4):
 def load_CF4_data(root, which_band, best_mag_quality=True, eta_min=-0.3,
                   zcmb_min=None, zcmb_max=None, b_min=7.5,
                   remove_outliers=True, calibration=None, los_data_path=None,
-                  return_all=False, dust_model=None, **kwargs):
+                  return_all=False, dust_model=None, exclude_w1=False,
+                  **kwargs):
     """
     Load CF4 TFR data and apply optional filters and dust correction removal.
     """
@@ -360,7 +361,6 @@ def load_CF4_data(root, which_band, best_mag_quality=True, eta_min=-0.3,
         e_eta = grp["elgWi"][...]
         pgc = grp["pgc"][...]
 
-        # Remove extinction correction if requested
         if dust_model is not None:
             if which_band not in ["w1", "w2"]:
                 raise ValueError(
@@ -370,7 +370,6 @@ def load_CF4_data(root, which_band, best_mag_quality=True, eta_min=-0.3,
             Ab_default = grp[f"A_{which_band}"][...]
             fprint(f"switching the dust model to `{dust_model}`.")
 
-            # Remove applied correction; new E(B-V) model handled externally
             mag += Ab_default
             if dust_model == "default":
                 ebv = Ab_default / (0.186 if which_band == "w1" else 0.123)
@@ -416,6 +415,14 @@ def load_CF4_data(root, which_band, best_mag_quality=True, eta_min=-0.3,
     if b_min is not None:
         b = radec_to_galactic(RA, DEC)[1]
         mask &= np.abs(b) > b_min
+
+    if which_band == "i" and exclude_w1:
+        with File(join(root, "CF4_TFR.hdf5"), 'r') as f:
+            w1_quality = f["cf4"]["Qw"][...]
+            w1_mag = f["cf4"]["w1"][...]
+        fprint("excluding galaxies with W1 quality 5 or W1 mag < 5.")
+        exclude = (w1_quality == 5) | (w1_mag > 5)
+        mask &= ~exclude
 
     fprint(f"removed {len(pgc) - np.sum(mask)} galaxies, thus "
            f"{np.sum(mask)} remain.")
