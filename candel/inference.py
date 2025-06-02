@@ -27,7 +27,6 @@ from numpyro.diagnostics import print_summary as print_summary_numpyro
 from numpyro.infer import MCMC, NUTS
 from numpyro.infer.initialization import init_to_median
 from numpyro.infer.util import log_density
-from numpyro_ext import optim as optimx
 from tqdm import trange
 
 from .evidence import (BIC_AIC, dict_samples_to_array, harmonic_evidence,
@@ -46,6 +45,13 @@ def run_pv_optimization(model, model_kwargs, num_steps=20, print_summary=True,
     """
     raise NotImplementedError("I cannot get the optimizer to consisntently "
                               "converge, so I am disabling it for now.")
+
+    try:
+        from numpyro_ext import optim as optimx
+    except ImportError as e:
+        raise ImportError(
+            "Please install `numpyro-ext` to use the optimization.") from e
+
     devices = jax.devices()
     device_str = ", ".join(f"{d.device_kind}({d.platform})" for d in devices)
     fprint(f"running optimization on devices: {device_str}")

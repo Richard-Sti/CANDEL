@@ -69,7 +69,20 @@ if __name__ == "__main__":
     fprint(f"Loading model `{model_name}` from `{args.config}` for "
            f"data `{data_name}`")
 
-    model = candel.model.name2model(model_name)(args.config)
+    shared_param = get_nested(config, "inference/shared_params", None)
+    model = candel.model.name2model(model_name, shared_param, args.config)
+
+    if isinstance(data, list):
+        if not isinstance(model, candel.model.JointPVModel):
+            raise TypeError(
+                "You provided multiple datasets, but the selected model "
+                f"`{model.__class__.__name__}` is not JointPVModel.")
+
+        if len(data) != len(model.submodels):
+            raise ValueError(
+                f"Number of datasets ({len(data)}) does not match number "
+                f"of submodels ({len(model.submodels)}) in the joint model.")
+
     model_kwargs = {"data": data, }
     candel.run_pv_inference(model, model_kwargs)
 

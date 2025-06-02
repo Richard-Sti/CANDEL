@@ -112,10 +112,15 @@ def load_config(config_path, replace_none=True, fill_paths=True,
     if replace_los_prior and not kind.startswith("precomputed_los"):
         config = replace_prior_with_delta(config, "alpha", 1.)
         config = replace_prior_with_delta(config, "beta", 0.)
+        config = replace_prior_with_delta(config, "b1", 0.)
 
     # Convert relative paths to absolute paths
     if fill_paths:
         config = convert_to_absolute_paths(config)
+
+    shared_params = config["inference"].get("shared_params", None)
+    if shared_params is not None:
+        config["inference"]["shared_params"] = shared_params.split(",")
 
     return config
 
@@ -211,6 +216,10 @@ def dms_to_degrees(degrees, arcminutes=None, arcseconds=None):
 
 
 def name2label(name):
+    """
+    Map internal parameter names to LaTeX labels, optionally including
+    catalogue prefix.
+    """
     latex_labels = {
         "a_TFR": r"$a_\mathrm{TFR}$",
         "b_TFR": r"$b_\mathrm{TFR}$",
@@ -244,11 +253,24 @@ def name2label(name):
         "c_FP": r"$c_{\rm FP}$",
         "R_dust": r"$R_{\rm W1}$",
     }
+
+    if "/" in name:
+        prefix, base = name.split("/", 1)
+        base_label = latex_labels.get(base, base)
+        prefix_latex = prefix.replace("_", r"\,").replace(" ", "~")
+        return rf"$\mathrm{{{prefix_latex}}},\,{base_label.strip('$')}$"
+
     return latex_labels.get(name, name)
 
 
 def name2labelgetdist(name):
-    """Return a GetDist-compatible LaTeX label (no $...$) for a parameter."""
+    """
+    Return a GetDist-compatible LaTeX label (no $...$) for a parameter,
+    optionally prepending the catalogue name as plain text.
+
+    Example:
+        "CF4_W1/beta" → r"\mathrm{CF4~W1},\,\beta"
+    """
     labels = {
         "a_TFR": r"a_\mathrm{TFR}",
         "b_TFR": r"b_\mathrm{TFR}",
@@ -282,6 +304,13 @@ def name2labelgetdist(name):
         "c_FP": r"c_{\rm FP}",
         "R_dust": r"R_{\rm W1}",
     }
+
+    if "/" in name:
+        prefix, base = name.split("/", 1)
+        base_label = labels.get(base, base)
+        prefix_latex = prefix.replace("_", r"\,").replace(" ", "~")
+        return rf"\mathrm{{{prefix_latex}}},\,{base_label}"
+
     return labels.get(name, name)
 
 
