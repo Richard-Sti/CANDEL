@@ -355,7 +355,7 @@ def load_SH0ES_calibration(calibration_path, pgc_CF4):
 def load_CF4_data(root, which_band, best_mag_quality=True, eta_min=-0.3,
                   zcmb_min=None, zcmb_max=None, b_min=7.5,
                   remove_outliers=True, calibration=None, los_data_path=None,
-                  return_all=False, dust_model=None, exclude_w1=False,
+                  return_all=False, dust_model=None, exclude_W1=False,
                   **kwargs):
     """
     Load CF4 TFR data and apply optional filters and dust correction removal.
@@ -426,7 +426,7 @@ def load_CF4_data(root, which_band, best_mag_quality=True, eta_min=-0.3,
         b = radec_to_galactic(RA, DEC)[1]
         mask &= np.abs(b) > b_min
 
-    if which_band == "i" and exclude_w1:
+    if which_band == "i" and exclude_W1:
         with File(join(root, "CF4_TFR.hdf5"), 'r') as f:
             w1_quality = f["cf4"]["Qw"][...]
             w1_mag = f["cf4"]["w1"][...]
