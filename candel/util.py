@@ -192,6 +192,10 @@ def dms_to_degrees(degrees, arcminutes=None, arcseconds=None):
 
 
 def name2label(name):
+    """
+    Map internal parameter names to LaTeX labels, optionally including
+    catalogue prefix.
+    """
     latex_labels = {
         "a_TFR": r"$a_\mathrm{TFR}$",
         "b_TFR": r"$b_\mathrm{TFR}$",
@@ -225,11 +229,24 @@ def name2label(name):
         "c_FP": r"$c_{\rm FP}$",
         "R_dust": r"$R_{\rm W1}$",
     }
+
+    if "/" in name:
+        prefix, base = name.split("/", 1)
+        base_label = latex_labels.get(base, base)
+        prefix_latex = prefix.replace("_", r"\,").replace(" ", "~")
+        return rf"$\mathrm{{{prefix_latex}}},\,{base_label.strip('$')}$"
+
     return latex_labels.get(name, name)
 
 
 def name2labelgetdist(name):
-    """Return a GetDist-compatible LaTeX label (no $...$) for a parameter."""
+    """
+    Return a GetDist-compatible LaTeX label (no $...$) for a parameter,
+    optionally prepending the catalogue name as plain text.
+
+    Example:
+        "CF4_W1/beta" → r"\mathrm{CF4~W1},\,\beta"
+    """
     labels = {
         "a_TFR": r"a_\mathrm{TFR}",
         "b_TFR": r"b_\mathrm{TFR}",
@@ -263,6 +280,13 @@ def name2labelgetdist(name):
         "c_FP": r"c_{\rm FP}",
         "R_dust": r"R_{\rm W1}",
     }
+
+    if "/" in name:
+        prefix, base = name.split("/", 1)
+        base_label = labels.get(base, base)
+        prefix_latex = prefix.replace("_", r"\,").replace(" ", "~")
+        return rf"\mathrm{{{prefix_latex}}},\,{base_label}"
+
     return labels.get(name, name)
 
 
