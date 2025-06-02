@@ -112,6 +112,7 @@ def load_config(config_path, replace_none=True, fill_paths=True,
     if replace_los_prior and not kind.startswith("precomputed_los"):
         config = replace_prior_with_delta(config, "alpha", 1.)
         config = replace_prior_with_delta(config, "beta", 0.)
+        config = replace_prior_with_delta(config, "b1", 0.)
 
     # Convert relative paths to absolute paths
     if fill_paths:
