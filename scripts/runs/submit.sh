@@ -34,7 +34,15 @@ if [[ ! -f "$task_file" ]]; then
     exit 2
 fi
 
-mapfile -t task_lines < "$task_file"
+task_lines=()
+if command -v mapfile >/dev/null 2>&1 && mapfile -t < <(echo test) 2>/dev/null; then
+    mapfile -t task_lines < "$task_file"
+else
+    # Fallback: use portable read loop (for macOS or Bash <4)
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        task_lines+=("$line")
+    done < "$task_file"
+fi
 
 echo "[INFO] Preparing to run ${#task_lines[@]} tasks:"
 for line in "${task_lines[@]}"; do
