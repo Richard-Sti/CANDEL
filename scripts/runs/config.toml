@@ -18,13 +18,14 @@ machine="rusty"
 [inference]
 model = "TFRModel_DistMarg"
 # model = "PantheonPlusModel_DistMarg"
-num_warmup = 1500
-num_samples = 15000
+num_warmup = 500
+num_samples = 1000
 num_chains = 1
-seed = 42
+chain_method = "sequential"
+seed = 44
 compute_log_density = true
 compute_evidence = true
-num_chains_harmonic = 5
+num_chains_harmonic = 10
 
 skip_if_exists = false
 
@@ -34,10 +35,11 @@ skip_if_exists = false
 
 [pv_model]
 use_MNR = false
+MNR_mag_prior = "hubble"
 # Default kind. This gets overwritten if using a submission script.
 kind = "precomputed_los_Carrick2015"
 # kind = "Vext"
-galaxy_bias = "powerlaw"  # Ignored unless having an underlying density field
+galaxy_bias = "linear"  # Ignored unless having an underlying density field
 
 ###############################################################################
 #                                 Model                                       #
@@ -58,6 +60,8 @@ num_points = 25
 [model.priors.h]
 dist = "delta"
 value = 1.0
+# low = 0.25
+# high = 1.0
 
 [model.priors.alpha]
 dist = "normal"
@@ -99,6 +103,7 @@ scale = 5.0
 [model.priors.TFR_zeropoint_dipole]
 dist = "delta"
 value = [0.0, 0.0, 0.0]
+
 
 # SN priors
 
@@ -182,7 +187,7 @@ scale = 0.05
 root_output = "results"
 # Default catalogue name and output path. This gets overwritten
 # if using a submission script.
-catalogue_name = "Clusters"
+catalogue_name = "SFI"
 
 fname_output = "results/test.hdf5"
 
@@ -247,6 +252,45 @@ a = -0.17
 m1 = 12.21
 m2 = 13.9
 
+[io.2MTF]
+root = "data/2MTF"
+eta_min = -0.1
+eta_max = 0.2
+
+zcmb_min = "none"
+zcmb_max = 0.05
+b_min = 7.5
+
+# TODO: These need to be added.
+add_mag_selection = false
+add_eta_selection = false
+
+nsamples_subsample = "none"
+seed_subsample = 42
+
+los_file = "data/2MTF/los_2MTF_<X>.hdf5"
+
+[io.SFI]
+root = "data/SFI"
+eta_min = -0.1
+
+zcmb_min = "none"
+zcmb_max = 0.05
+b_min = 7.5
+
+add_mag_selection = true
+add_eta_selection = true
+
+nsamples_subsample = "none"
+seed_subsample = 42
+
+los_file = "data/SFI/los_SFI_<X>.hdf5"
+
+[io.SFI.mag_selection]
+a = -0.27
+m1 = 12.0
+m2 = 12.91
+
 [io.PantheonPlus]
 root = "data/Pantheon+"
 zcmb_min = "none"
@@ -294,7 +338,17 @@ seed_subsample = 42
 root = "data/CF4"
 which_band = "i"  # Does not matter
 return_all = true
-los_file = "data/CF4/los_CF4_TFR_<X>_OLD.hdf5"
+los_file = "data/CF4/los_CF4_TFR_<X>.hdf5"
+
+[io.PV_main.2MTF]
+root = "data/2MTF"
+return_all = true
+los_file = "data/2MTF/los_2MTF_<X>.hdf5"
+
+[io.PV_main.SFI]
+root = "data/SFI"
+return_all = true
+los_file = "data/SFI/los_SFI_<X>.hdf5"
 
 [io.PV_main.PantheonPlus]
 root = "data/Pantheon+"
@@ -314,7 +368,7 @@ los_file = "data/SDSS/los_SDSS_FP_<X>.hdf5"
 
 [io.reconstruction_main]
 rmin = 0.1
-rmax = 751
+rmax = 251
 num_steps = 501
 
 [io.reconstruction_main.Carrick2015]

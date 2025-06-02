@@ -27,13 +27,57 @@ from numpyro.diagnostics import print_summary as print_summary_numpyro
 from numpyro.infer import MCMC, NUTS
 from numpyro.infer.initialization import init_to_median
 from numpyro.infer.util import log_density
+from numpyro_ext import optim as optimx
 from tqdm import trange
 
 from .evidence import (BIC_AIC, dict_samples_to_array, harmonic_evidence,
                        laplace_evidence)
 from .util import (fprint, galactic_to_radec, plot_corner,
                    plot_radial_profiles, plot_Vext_rad_corner,
-                   radec_to_cartesian, radec_to_galactic)
+                   radec_cartesian_to_galactic, radec_to_cartesian,
+                   radec_to_galactic)
+
+
+def run_pv_optimization(model, model_kwargs, num_steps=20, print_summary=True,
+                        save_samples=True):
+    """
+    Run MAP optimization on the given PV model, post-process the best-fit
+    parameters, and optionally save the results to an HDF5 file.
+    """
+    raise NotImplementedError("I cannot get the optimizer to consisntently "
+                              "converge, so I am disabling it for now.")
+    devices = jax.devices()
+    device_str = ", ".join(f"{d.device_kind}({d.platform})" for d in devices)
+    fprint(f"running optimization on devices: {device_str}")
+
+    if any(d.platform == "gpu" for d in devices):
+        set_platform("gpu")
+        fprint("using NumPyro platform: GPU")
+    else:
+        set_platform("cpu")
+        fprint("using NumPyro platform: CPU")
+
+    # Run optimization
+    key = jax.random.key(model.config["inference"]["seed"])
+    soln = optimx.optimize(model, num_steps=num_steps, return_info=True)(
+        key, **model_kwargs)
+    print(soln)
+
+    # Convert solution into samples-like dict
+    samples = {k: jnp.atleast_1d(v) for k, v in soln.items()}
+
+    samples = drop_deterministic(samples, check_all_equals=False)
+    samples = postprocess_samples(samples)
+
+    if print_summary:
+        print_optim_summary(samples)
+
+    if save_samples:
+        fname_out = model.config["io"]["fname_output"]
+        fprint(f"output directory is {dirname(fname_out)}.")
+        save_mcmc_samples(samples, None, None, fname_out)
+
+    return samples
 
 
 def run_pv_inference(model, model_kwargs, print_summary=True,
@@ -59,7 +103,8 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
     kernel = NUTS(model, init_strategy=init_to_median(num_samples=5000))
     mcmc = MCMC(
         kernel, num_warmup=kwargs["num_warmup"],
-        num_samples=kwargs["num_samples"], num_chains=kwargs["num_chains"],)
+        num_samples=kwargs["num_samples"], num_chains=kwargs["num_chains"],
+        chain_method=kwargs["chain_method"])
     mcmc.run(jax.random.key(kwargs["seed"]), **model_kwargs)
 
     samples = mcmc.get_samples()
@@ -133,10 +178,11 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
 
 
 def run_magsel_inference(model, model_args, num_warmup=1000, num_samples=5000,
-                         seed=42, print_summary=True,):
+                         num_chains=1, seed=42, print_summary=True,):
     """Run MCMC inference on the given magnitude selection model."""
     kernel = NUTS(model, init_strategy=init_to_median(num_samples=5000))
-    mcmc = MCMC(kernel, num_warmup=num_warmup, num_samples=num_samples, )
+    mcmc = MCMC(kernel, num_warmup=num_warmup, num_samples=num_samples,
+                num_chains=num_chains,)
     mcmc.run(jax.random.key(seed), *model_args)
 
     if print_summary:
@@ -170,7 +216,7 @@ def get_log_density(samples, model, model_kwargs, batch_size=5):
     return log_densities
 
 
-def drop_deterministic(samples):
+def drop_deterministic(samples, check_all_equals=True):
     """Drop deterministic and latent variable samples."""
     for key in list(samples.keys()):
         # Remove unused, latent variables used for deterministic sampling
@@ -178,9 +224,13 @@ def drop_deterministic(samples):
             samples.pop(key,)
             continue
 
+        if key == "obs":
+            samples.pop(key,)
+            continue
+
         # Remove samples fixed to a single value (delta prior)
         x = samples[key]
-        if np.all(x.flatten()[0] == x):
+        if check_all_equals and np.all(x.flatten()[0] == x):
             samples.pop(key,)
             continue
 
@@ -195,9 +245,9 @@ def drop_deterministic(samples):
 
 
 def postprocess_samples(samples):
-    """Postprocess the MCMC samples."""
-    # Convert Vext or Vext_rad samples to galactic coordinates
-    for prefix in ["Vext_rad", "Vext"]:  # ← more specific first
+    """Postprocess MCMC samples."""
+    for prefix in ["Vext_rad", "Vext", "a_TFR_dipole", "M_dipole"]:
+        # Spherical form: phi + cos_theta (+ mag optional)
         if f"{prefix}_phi" in samples and f"{prefix}_cos_theta" in samples:
             phi = np.rad2deg(samples.pop(f"{prefix}_phi"))
             theta = np.arccos(samples.pop(f"{prefix}_cos_theta"))
@@ -209,21 +259,18 @@ def postprocess_samples(samples):
 
             if f"{prefix}_mag" in samples:
                 samples[f"{prefix}_mag"] = samples.pop(f"{prefix}_mag")
-            break
+            continue
 
-    for prefix in ["a_TFR_dipole", "M_dipole"]:
-        if f"{prefix}_phi" in samples and f"{prefix}_cos_theta" in samples:
-            phi = np.rad2deg(samples.pop(f"{prefix}_phi"))
-            theta = np.arccos(samples.pop(f"{prefix}_cos_theta"))
-            dec = np.rad2deg(0.5 * np.pi - theta)
+        # Cartesian form: x, y, z
+        if all(f"{prefix}_{c}" in samples for c in "xyz"):
+            x = samples.pop(f"{prefix}_x")
+            y = samples.pop(f"{prefix}_y")
+            z = samples.pop(f"{prefix}_z")
 
-            ell, b = radec_to_galactic(phi, dec)
-
+            r, ell, b = radec_cartesian_to_galactic(x, y, z)
+            samples[f"{prefix}_mag"] = r
             samples[f"{prefix}_ell"] = ell
             samples[f"{prefix}_b"] = b
-
-            if f"{prefix}_mag" in samples:
-                samples[f"{prefix}_mag"] = samples.pop(f"{prefix}_mag")
 
     return samples
 
@@ -238,6 +285,22 @@ def print_clean_summary(samples):
         samples_print[key] = x[None, ...]
 
     print_summary_numpyro(samples_print,)
+
+
+def print_optim_summary(soln):
+    """
+    Print a clean summary of optimized parameters from `optimx.optimize`.
+    """
+    print("MAP parameter estimates:\n")
+    for k, v in soln.items():
+        if "_latent" in k or k == "obs":
+            continue
+
+        v_scalar = jnp.atleast_1d(v).squeeze()
+        if v_scalar.size == 1:
+            print(f"  {k:<20s} = {float(v_scalar): .4f}")
+        else:
+            print(f"  {k:<20s} = {v_scalar}")
 
 
 def save_mcmc_samples(samples, log_density, gof, filename):

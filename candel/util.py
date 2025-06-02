@@ -29,7 +29,7 @@ import astropy.units as u
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
-from astropy.coordinates import SkyCoord
+from astropy.coordinates import CartesianRepresentation, SkyCoord
 from corner import corner
 from getdist import MCSamples, plots
 from h5py import File
@@ -170,6 +170,29 @@ def galactic_to_radec_cartesian(ell, b):
     xyz = icrs.cartesian.xyz.value.T
 
     return xyz[0] if np.isscalar(ell) and np.isscalar(b) else xyz
+
+
+def radec_cartesian_to_galactic(x, y, z):
+    """
+    Convert ICRS Cartesian vectors (x, y, z) to Galactic coordinates (ell, b)
+    in degrees, and return the vector magnitude.
+    """
+    x = np.atleast_1d(x)
+    y = np.atleast_1d(y)
+    z = np.atleast_1d(z)
+
+    r = np.sqrt(x**2 + y**2 + z**2)
+
+    rep = CartesianRepresentation(x * u.one, y * u.one, z * u.one)
+    c_icrs = SkyCoord(rep, frame='icrs')
+    gal = c_icrs.galactic
+
+    ell = gal.l.deg
+    b = gal.b.deg
+
+    if r.size == 1:
+        return r[0], ell[0], b[0]
+    return r, ell, b
 
 
 def hms_to_degrees(hours, minutes=None, seconds=None):
