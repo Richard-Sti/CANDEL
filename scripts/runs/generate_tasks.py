@@ -249,8 +249,9 @@ if __name__ == "__main__":
         "inference/shared_params": "beta,Vext,sigma_v",
         "inference/model": ["TFRModel_DistMarg", "TFRModel_DistMarg"],
         "io/catalogue_name": ["CF4_W1", "CF4_i"],
-        "io/root_output": "results/CF4_H0_anisotropy",
-        "pv_model/use_MNR": False,
+        "io/root_output": "results/S8_paper",
+        "pv_model/use_MNR": True,
+        "io/CF4_i/exclude_W1": True,
         # "io/CF4_W1/dust_model": ["none", "default", "CSFD"],
         # "io/Clusters/which_relation": ["LT", "LTY"],
         # "model/priors/beta": [
