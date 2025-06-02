@@ -244,14 +244,16 @@ if __name__ == "__main__":
 
     # Multiple override options → this creates a job per combination
     manual_overrides = {
-        "pv_model/kind": "precomputed_los_Carrick2015",
+        # "pv_model/kind": "precomputed_los_Carrick2015",
+        "pv_model/kind": "Vext",
         # "io/catalogue_name": [f"CF4_mock_{n}" for n in range(70)],
         "inference/shared_params": "beta,Vext,sigma_v",
-        "inference/model": ["TFRModel_DistMarg", "TFRModel_DistMarg"],
-        "io/catalogue_name": ["CF4_W1", "CF4_i"],
-        "io/root_output": "results/S8_paper",
-        "pv_model/use_MNR": True,
-        "io/CF4_i/exclude_W1": True,
+        "inference/model": ["TFRModel_DistMarg", "FPModel_DistMarg"],
+        "io/catalogue_name": ["CF4_W1", "SDSS_FP"],
+        # "io/root_output": "results/S8_paper",
+        "io/root_output": "results",
+        "pv_model/use_MNR": False,
+        # "io/CF4_i/exclude_W1": True,
         # "io/CF4_W1/dust_model": ["none", "default", "CSFD"],
         # "io/Clusters/which_relation": ["LT", "LTY"],
         # "model/priors/beta": [
