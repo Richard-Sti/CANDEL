@@ -47,6 +47,7 @@ def load_PV_dataframes(config_path):
         names = [names]
 
     dfs = []
+    fprint(f"loading {len(names)} PV dataframes: {names}")
     for name in names:
         is_mock = name.startswith("CF4_mock")
         if is_mock:
@@ -79,6 +80,7 @@ class PVDataFrame:
 
     def __init__(self, data, los_method="linear", los_extrap=True):
         self.data = {k: jnp.asarray(v) for k, v in data.items()}
+        self.name = None
 
         if "los_velocity" in self.data:
             self.has_precomputed_los = True
@@ -189,6 +191,7 @@ class PVDataFrame:
         else:
             frame.eta_max = None
 
+        frame.name = name
         return frame
 
     def subsample(self, nsamples, seed=42):
