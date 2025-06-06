@@ -19,6 +19,7 @@ from .data import ( # noqa                                                      
     load_2MTF,                                                                  # noqa
     load_SFI,                                                                   # noqa
     load_SH0ES,                                                                 # noqa
+    load_SH0ES_separated,                                                       # noqa
     load_clusters,                                                              # noqa
     load_SDSS_FP,                                                               # noqa
     load_PantheonPlus,                                                          # noqa
