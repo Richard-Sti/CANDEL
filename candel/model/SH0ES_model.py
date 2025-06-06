@@ -18,7 +18,7 @@ import jax.numpy as jnp
 import numpy as np
 from jax.scipy.linalg import solve_triangular
 from numpyro import factor, plate, sample
-from numpyro.distributions import Normal, Uniform, MultivariateNormal
+from numpyro.distributions import Normal, Uniform
 
 from ..util import fprint
 
@@ -52,14 +52,16 @@ class SH0ESModel:
 
         fprint(f"set the following attributes: {', '.join(attrs_set)}")
 
-    def __call__(self,):
-        M_B = sample("M_B", Normal(-19.24, 0.5))
-        H0 = sample("H0", Uniform(0, 100))
+    def __call__(self, include_SN=True):
+        if include_SN:
+            M_B = sample("M_B", Normal(-19.24, 0.5))
+            H0 = sample("H0", Uniform(0, 100))
+
         M_W = sample("M_W", Normal(-6, 1))
         b_W = sample("b_W", Normal(-3, 1))
         Z_W = sample("Z_W", Normal(0, 1))
 
-        # HST and Gaia zero-point calibration
+        # HST and Gaia zero-point calibration of MW Cepheids.
         sample("M_W_HST", Normal(M_W, self.e_M_HST), obs=self.M_HST)
         sample("M_W_Gaia", Normal(M_W, self.e_M_Gaia), obs=self.M_Gaia)
 
@@ -98,24 +100,13 @@ class SH0ESModel:
             )
 
         # Distances to the host that have both supernovae and Cepheids
-        mu_SN_Cepheid = self.L_SN_Cepheid_dist @ mu_host
-        mag_SN_Cepheid = mu_SN_Cepheid + M_B
+        if include_SN:
+            mu_SN_Cepheid = self.L_SN_Cepheid_dist @ mu_host
+            mag_SN_Cepheid = mu_SN_Cepheid + M_B
 
-        Y_SN_flow = jnp.ones(self.num_flow_SN) * (M_B - 5 * jnp.log10(H0))
-
-        Y_SN = jnp.concatenate([mag_SN_Cepheid, Y_SN_flow])
-        # factor(
-        #     "ll_SN",
-        #     mvn_logpdf_cholesky(self.Y_SN, Y_SN, self.L_SN)
-        #     )
-
-        # factor(
-        #     "ll_SN_Cepheid",
-        #     mvn_logpdf_cholesky(self.Y_SN_Cepheid, mag_SN_Cepheid, self.L_SN_Cepheid)  # noqa
-        #     )
-        e_mu = sample("e_mu", Uniform(0, 1))
-        C_total = self.C_SN + e_mu**2 * jnp.eye(self.C_SN.shape[0])
-
-        sample("ll_SN_Cepheid",
-               MultivariateNormal(Y_SN, C_total),
-               obs=self.Y_SN)
+            Y_SN_flow = jnp.ones(self.num_flow_SN) * (M_B - 5 * jnp.log10(H0))
+            Y_SN = jnp.concatenate([mag_SN_Cepheid, Y_SN_flow])
+            factor(
+                "ll_SN",
+                mvn_logpdf_cholesky(self.Y_SN, Y_SN, self.L_SN)
+                )
