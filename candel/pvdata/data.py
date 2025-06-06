@@ -26,6 +26,7 @@ from ..model.interp import LOSInterpolator
 from ..util import (SPEED_OF_LIGHT, fprint, galactic_to_radec, load_config,
                     radec_to_cartesian, radec_to_galactic)
 from .dust import read_dustmap
+from scipy.linalg import cholesky
 
 ###############################################################################
 #                             Data frames                                     #
@@ -687,6 +688,137 @@ def load_SH0ES(root):
             data[key] = jnp.asarray(data[key], dtype=jnp.float32)
 
     return data
+
+
+def load_SH0ES_separated(root):
+    """
+    Load the separated SH0ES data, separating the Cepheid and supernovae and
+    covariance matrices.
+
+    Structure of the covariance matrix indices:
+    ------------------------------------------
+    - Indices < 2150: Cepheid hosts without geometric anchors.
+    - Index 2150: Start of NGC 4258 Cepheid hosts.
+    - Index 2593: Start of M31 Cepheid hosts.
+    - Index 2648: Start of LMC Cepheid hosts.
+    - Index 3130: Beginning of supernovae in Cepheid host galaxies.
+
+    - Indices 3130–3206: Rung two supernovae (in Cepheid hosts).
+
+    - Index 3207: Uncertainty on HST zeropoint (sigma_HST).
+    - Index 3208: Uncertainty on Gaia zeropoint (sigma_Gaia).
+    - Index 3209: Prior on metallicity coefficient Z_W.
+    - Index 3210: Unused term (likely placeholder).
+    - Index 3211: Ground-based photometry systematic uncertainty (sigma_grnd).
+    - Index 3212: Prior on P–L relation slope b_W.
+    - Index 3213: Constraint on NGC 4258 anchor offset (delta_mu_N4258).
+    - Index 3214: Constraint on LMC anchor offset (delta_mu_LMC).
+
+    - Indices ≥ 3215: Hubble flow supernovae (rung three).
+    """
+    # Unpack the SH0ES data.
+    data = load_SH0ES(root)
+    Y = np.array(data['Y'], copy=True)
+    C = np.array(data['C'], copy=True)
+    L = np.array(data['L'].T, copy=True)
+
+    # Cepheid data and covariance matrix.
+    OH = L[:, -4][:3130]
+    logP = L[:, -6][:3130]
+    mag_cepheid = Y[:3130]
+    C_Cepheid = C[:3130, :3130]
+    L_Cepheid = cholesky(C_Cepheid, lower=True)
+
+    # Undo the removal of a slope of -3.285
+    mag_cepheid += -3.285 * logP
+
+    # N4258 and LMC anchors.
+    mu_N4258_anchor = 29.398
+    e_mu_N4258_anchor = 0.032
+
+    mu_LMC_anchor = 18.477
+    e_mu_LMC_anchor = 0.0263
+
+    # Undo the anchor offsets.
+    mag_cepheid[2150:2593] += mu_N4258_anchor
+    mag_cepheid[2648:] += mu_LMC_anchor
+
+    # SN data and covariance matrix.
+    C_SN = C[3130:, 3130:]
+    # Indices of the external constraints which we want to mask out.
+    m_SN = ~np.isin(
+        np.arange(len(C)),
+        [3207, 3208, 3209, 3210, 3211, 3212, 3213, 3214])[3130:]
+    C_SN = C_SN[m_SN, :][:, m_SN]
+    Y_SN = Y[3130:][m_SN]
+
+    C_SN_Cepheid = C[3130:3207, 3130:3207]
+    Y_SN_Cepheid = Y[3130:3207]
+    L_SN_Cepheid = cholesky(C_SN_Cepheid, lower=True)
+
+    # HST and Gaia zero-points
+    M_HST = Y[3207]
+    e_M_HST = C[3207, 3207]**0.5
+
+    M_Gaia = Y[3208]
+    e_M_Gaia = C[3208, 3208]**0.5
+
+    # Systematic uncertainties btw ground-based and HST photometry.
+    sigma_grnd = C[3211, 3211]**0.5
+
+    q_names = np.asanyarray(
+        ['mu_M101', 'mu_M1337', 'mu_N0691', 'mu_N1015', 'mu_N0105',
+         'mu_N1309', 'mu_N1365', 'mu_N1448', 'mu_N1559', 'mu_N2442',
+         'mu_N2525', 'mu_N2608', 'mu_N3021', 'mu_N3147', 'mu_N3254',
+         'mu_N3370', 'mu_N3447', 'mu_N3583', 'mu_N3972', 'mu_N3982',
+         'mu_N4038', 'mu_N4424', 'mu_N4536', 'mu_N4639', 'mu_N4680',
+         'mu_N5468', 'mu_N5584', 'mu_N5643', 'mu_N5728', 'mu_N5861',
+         'mu_N5917', 'mu_N7250', 'mu_N7329', 'mu_N7541', 'mu_N7678',
+         'mu_N0976', 'mu_U9391', 'Delta_mu_N4258', 'M_H1_W',
+         'Delta_mu_LMC', 'mu_M31', 'b_W', 'MB0', 'Z_W', 'undefined',
+         'Delta_zp', 'log10_H0'])
+
+    # This will organise the host distances as
+    # `[Host with Cepheids but no geometric anchors, NGC4258, LMC, M31]`. There
+    # are 37 of the former, so in total there are 40 distances to be inferred.
+    L_dist = np.hstack([L[:, :37], L[:, [37, 39, 40]]])
+    L_Cepheid_host_dist = L_dist[:3130]
+
+    L_SN_Cepheid_dist = L_dist[3130:3207]
+    L_SN_dist = L_dist[3215:]
+
+    num_hosts = L_Cepheid_host_dist.shape[1] - 3
+    num_cepheids = len(mag_cepheid)
+
+    return {
+        "OH": OH,
+        "logP": logP,
+        "mag_cepheid": mag_cepheid,
+        "C_Cepheid": C_Cepheid,
+        "L_Cepheid": L_Cepheid,
+        "L_Cepheid_host_dist": L_Cepheid_host_dist,
+        "L_SN_Cepheid_dist": L_SN_Cepheid_dist,
+        "L_SN_dist": L_SN_dist,
+        "C_SN_Cephed": C_SN_Cepheid,
+        "Y_SN_Cepheid": Y_SN_Cepheid,
+        "L_SN_Cepheid": L_SN_Cepheid,
+        "mu_N4258_anchor": mu_N4258_anchor,
+        "e_mu_N4258_anchor": e_mu_N4258_anchor,
+        "mu_LMC_anchor": mu_LMC_anchor,
+        "e_mu_LMC_anchor": e_mu_LMC_anchor,
+        "Y_SN": Y_SN,
+        "C_SN": C_SN,
+        "L_SN": cholesky(C_SN, lower=True),
+        "M_HST": M_HST,
+        "e_M_HST": e_M_HST,
+        "M_Gaia": M_Gaia,
+        "e_M_Gaia": e_M_Gaia,
+        "sigma_grnd": sigma_grnd,
+        "q_names": q_names,
+        "num_hosts": num_hosts,
+        "num_cepheids": num_cepheids,
+        "num_flow_SN": len(L_SN_dist),
+        }
 
 
 def load_clusters(root, zcmb_min=None, zcmb_max=None, los_data_path=None,
