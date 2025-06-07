@@ -89,7 +89,7 @@ class MagnitudeDistribution(Distribution):
     reparametrized_params = ["xmin", "xmax"]
     support = constraints.real  # change to interval if you want hard clipping
 
-    def __init__(self, xmin, xmax, mag_sample, e_mag_sample,
+    def __init__(self, xmin, xmax, mag_sample=None, e_mag_sample=None,
                  validate_args=None):
         self.xmin = xmin
         self.xmax = xmax
@@ -102,6 +102,10 @@ class MagnitudeDistribution(Distribution):
                          validate_args=validate_args)
 
     def sample(self, key, sample_shape=()):
+        if self.mag_sample is None or self.e_mag_sample is None:
+            u = random.uniform(key, shape=sample_shape + self.batch_shape)
+            return self.xmin + (self.xmax - self.xmin) * u
+
         u = random.normal(key, shape=sample_shape + self.batch_shape)
         return self.mag_sample + self.e_mag_sample * u
 
