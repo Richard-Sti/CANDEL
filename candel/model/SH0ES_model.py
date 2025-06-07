@@ -20,6 +20,8 @@ from jax.scipy.linalg import solve_triangular
 from numpyro import factor, plate, sample
 from numpyro.distributions import Normal, Uniform
 
+from .model import MagnitudeDistribution
+
 from ..util import fprint
 
 
@@ -52,26 +54,25 @@ class SH0ESModel:
 
         fprint(f"set the following attributes: {', '.join(attrs_set)}")
 
-    def __call__(self, include_SN=True):
-        if include_SN:
-            M_B = sample("M_B", Normal(-19.24, 0.5))
-            H0 = sample("H0", Uniform(0, 100))
+    def sample_distance_moduli(self, use_uniform_mu_priors=False):
+        """Sample distance moduli for host galaxies."""
+        if use_uniform_mu_priors:
+            host_dist = Uniform(25, 40)
+            N4258_dist = Uniform(25, 35)
+            LMC_dist = Uniform(15, 23)
+            M31_dist = Uniform(20, 30)
+        else:
+            host_dist = MagnitudeDistribution(25, 40)
+            N4258_dist = MagnitudeDistribution(25, 35)
+            LMC_dist = MagnitudeDistribution(15, 23)
+            M31_dist = MagnitudeDistribution(20, 30)
 
-        M_W = sample("M_W", Normal(-6, 1))
-        b_W = sample("b_W", Normal(-3, 1))
-        Z_W = sample("Z_W", Normal(0, 1))
-
-        # HST and Gaia zero-point calibration of MW Cepheids.
-        sample("M_W_HST", Normal(M_W, self.e_M_HST), obs=self.M_HST)
-        sample("M_W_Gaia", Normal(M_W, self.e_M_Gaia), obs=self.M_Gaia)
-
-        # TODO: Exchange these for non-informative priors.
         with plate("hosts", self.num_hosts):
-            mu_host = sample("mu_host", Normal(25, 5))
+            mu_host = sample("mu_host", host_dist)
 
-        mu_N4258 = sample("mu_N4258", Normal(25, 5))
-        mu_LMC = sample("mu_LMC", Normal(25, 5))
-        mu_M31 = sample("mu_M31", Normal(25, 5))
+        mu_N4258 = sample("mu_N4258", N4258_dist)
+        mu_LMC = sample("mu_LMC", LMC_dist)
+        mu_M31 = sample("mu_M31", M31_dist)
 
         sample("mu_N4258_ll",
                Normal(self.mu_N4258_anchor, self.e_mu_N4258_anchor),
@@ -79,6 +80,24 @@ class SH0ESModel:
         sample("mu_LMC_ll",
                Normal(self.mu_LMC_anchor, self.e_mu_LMC_anchor),
                obs=mu_LMC)
+
+        return mu_host, mu_N4258, mu_LMC, mu_M31
+
+    def __call__(self, include_SN=True, use_uniform_mu_priors=False):
+        if include_SN:
+            M_B = sample("M_B", Uniform(-20, -18))
+            H0 = sample("H0", Uniform(0, 100))
+
+        M_W = sample("M_W", Uniform(-7, -5))
+        b_W = sample("b_W", Uniform(-6, 0))
+        Z_W = sample("Z_W", Uniform(-2, 2))
+
+        # HST and Gaia zero-point calibration of MW Cepheids.
+        sample("M_W_HST", Normal(M_W, self.e_M_HST), obs=self.M_HST)
+        sample("M_W_Gaia", Normal(M_W, self.e_M_Gaia), obs=self.M_Gaia)
+
+        mu_host, mu_N4258, mu_LMC, mu_M31 = self.sample_distance_moduli(
+            use_uniform_mu_priors)
 
         dZP = sample("dZP", Normal(0, self.sigma_grnd))
         mu_host_cepheid = jnp.concatenate(
@@ -93,7 +112,7 @@ class SH0ESModel:
         # Now assign these host distances to each Cepheid.
         mu_cepheid = self.L_Cepheid_host_dist @ mu_host_cepheid
         # Predict the Cepheid magnitudes and compute their likelihood.
-        mag_cepheid = mu_cepheid + (M_W + b_W * self.logP + Z_W * self.OH)
+        mag_cepheid = mu_cepheid + M_W + b_W * self.logP + Z_W * self.OH
         factor(
             "ll_cepheid",
             mvn_logpdf_cholesky(self.mag_cepheid, mag_cepheid, self.L_Cepheid)
