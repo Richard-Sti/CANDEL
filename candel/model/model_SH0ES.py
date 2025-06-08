@@ -20,7 +20,7 @@ from jax.scipy.linalg import solve_triangular
 from numpyro import factor, plate, sample
 from numpyro.distributions import Normal, Uniform
 
-from .model import MagnitudeDistribution
+from .model import MagnitudeDistribution, JeffreysPrior
 
 from ..util import fprint
 
@@ -83,10 +83,11 @@ class SH0ESModel:
 
         return mu_host, mu_N4258, mu_LMC, mu_M31
 
-    def __call__(self, include_SN=True, use_uniform_mu_priors=False):
+    def __call__(self, include_SN=False, use_uniform_mu_priors=False):
         if include_SN:
             M_B = sample("M_B", Uniform(-20, -18))
-            H0 = sample("H0", Uniform(0, 100))
+
+        H0 = sample("H0", Uniform(0, 100))
 
         M_W = sample("M_W", Uniform(-7, -5))
         b_W = sample("b_W", Uniform(-6, 0))
@@ -105,7 +106,7 @@ class SH0ESModel:
              jnp.array([mu_N4258, mu_LMC + dZP, mu_M31])]
             )
 
-        mu_host = jnp.concatenate(
+        mu_host_all = jnp.concatenate(
             [mu_host, jnp.array([mu_N4258, mu_LMC, mu_M31])]
             )
 
@@ -118,9 +119,16 @@ class SH0ESModel:
             mvn_logpdf_cholesky(self.mag_cepheid, mag_cepheid, self.L_Cepheid)
             )
 
+        sigma_v = sample("sigma_v", JeffreysPrior(0.1, 2500))
+
+        with plate("Cepheid_anchors_redsihift", self.num_hosts):
+            cz_pred = H0 * jnp.power(10.0, mu_host / 5 - 5)
+            sample("cz_pred", Normal(cz_pred, sigma_v),
+                   obs=self.czcmb_cepheid_host)
+
         # Distances to the host that have both supernovae and Cepheids
         if include_SN:
-            mu_SN_Cepheid = self.L_SN_Cepheid_dist @ mu_host
+            mu_SN_Cepheid = self.L_SN_Cepheid_dist @ mu_host_all
             mag_SN_Cepheid = mu_SN_Cepheid + M_B
 
             Y_SN_flow = jnp.ones(self.num_flow_SN) * (M_B - 5 * jnp.log10(H0))
