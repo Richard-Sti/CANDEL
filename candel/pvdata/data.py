@@ -645,8 +645,11 @@ def load_clusters(root, zcmb_min=None, zcmb_max=None, los_data_path=None,
     fprint("subtracting the mean logT from the data.")
     data["logT"] -= np.mean(data["logT"])
 
+    mask = ~np.isnan(data["logY"])
+    mean_logY = np.mean(data["logY"][mask])
+
     fprint("subtracting the mean logY from the data.")
-    data["logY"] -= np.mean(data["logY"])
+    data["logY"] -= mean_logY
 
     # fprint("subtracting the mean logF from the data.")
     # data["logF"] -= np.mean(data["logF"])

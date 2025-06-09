@@ -19,7 +19,7 @@ from functools import partial
 import jax.numpy as jnp
 import numpy as np
 from astropy.cosmology import FlatLambdaCDM
-from jax import random, vmap
+from jax import random, vmap, debug
 from jax.lax import cond
 from jax.scipy.stats import norm
 from jax_cosmo.scipy.interpolate import InterpolatedUnivariateSpline
@@ -43,7 +43,6 @@ from .simpson import ln_simpson
 ###############################################################################
 #                                Priors                                       #
 ###############################################################################
-
 
 class JeffreysPrior(Uniform):
     """
@@ -827,6 +826,11 @@ class Clusters_DistMarg(BaseModel):
     def __init__(self, config_path):
         super().__init__(config_path)
 
+        self.sample_mu = self.config["inference"]["sample_mu"]
+
+        if self.sample_mu:
+            print('Sampling mu!')
+
         which_relation = self.config["io"]["Clusters"]["which_relation"]
         if which_relation not in ["LT", "LY", "LTY", "YT"]:
             raise ValueError(f"Invalid scaling relation '{which_relation}'. "
@@ -836,7 +840,7 @@ class Clusters_DistMarg(BaseModel):
         self.sample_T = "T" in which_relation
         self.sample_Y = "Y" in which_relation
         self.sample_F = "L" in which_relation
-
+        
         # Later make this choice more flexible.
         self.Om = 0.3
 
@@ -915,6 +919,9 @@ class Clusters_DistMarg(BaseModel):
         # the mapping to `mu` above assumes h = 1.
         h = 1.
 
+        if self.sample_mu:
+            mu_MNR_mean = sample("mu_MNR_mean", Uniform(30,40))
+            mu_MNR_sigma = sample("mu_MNR_sigma", Uniform(0,10))
         with plate("data", nsamples):
             if self.use_MNR:
                 raise NotImplementedError(
@@ -941,22 +948,23 @@ class Clusters_DistMarg(BaseModel):
                 if self.sample_T:
                     logT = data["logT"]
                     sigma_mu2 += B**2 * data["e2_logT"]
-                else:
-                    logT = 0
 
                 if self.sample_Y and rel == "L":
                     logY = data["logY"]
                     sigma_mu2 += C**2 * data["e2_logY"]
-                else:
-                    logY = 0
 
                 if self.sample_F and rel == "Y":
                     logF = data["logF"]
                     sigma_mu2 += C**2 * data["e2_logF"]
-                else:
-                    logF = 0
-
+                    
                 sigma_mu = jnp.sqrt(sigma_mu2)
+
+            if not self.sample_T:
+                logT = 0.
+            if not self.sample_Y:
+                logY = 0.
+            if not self.sample_F:
+                logF = 0.
 
             # This should depend on the cosmological redshift, but the
             # corrections are small and subdominant to the noise in the cluster
@@ -975,37 +983,74 @@ class Clusters_DistMarg(BaseModel):
             else:
                 raise ValueError(
                     f"Invalid scaling relation '{self.which_relation}'.")
-
+                                 
             # From now on it is standard calculations.
-            r_grid = data["los_r"][None, :] / h
-            mu_grid = self.distance2distmod(r_grid, h=h)
+            if self.sample_mu:
 
-            ll = 2 * jnp.log(r_grid)
-            ll += Normal(
-                mu_cluster[:, None], sigma_mu[:, None]).log_prob(mu_grid)
+                #mu = sample("mu_latent", Normal(mu_cluster, sigma_mu))
+                mu= sample("mu_latent", Normal(mu_MNR_mean,mu_MNR_sigma))
+                #mu= sample("mu_latent", Uniform(20,42))
 
-            if data.has_precomputed_los:
-                # The shape is `(n_galaxies, num_steps.)`
-                Vrad = beta * data["los_velocity"]
-                ll += lp_galaxy_bias(
-                    data["los_delta"], data["los_log_density"], bias_params,
-                    self.galaxy_bias)
-            else:
+                r = self.distmod2distance(mu, h=h)
+                log_pmu = 2 * jnp.log(r) + self.log_grad_distmod2distance(mu, h=h)
+                # rlower, rupper = self.distmod2distance(jnp.array([20.,41.]), h=h) 
+                # pmu_norm = 1/3 * (rupper**3 - rlower**3)
+                log_pmu_norm = 0 #jnp.log(pmu_norm) # normalisation not needed for basic case
+
                 Vrad = 0.
 
-            ll_norm = ln_simpson(ll, x=r_grid, axis=-1)
+                # # Homogeneous Malmquist bias
+                # log_pmu_norm = log_norm_pmu(
+                #     mu_cluster, sigma_mu, self.distmod2distance,
+                #     **self.num_norm_kwargs, h=h)
 
-            Vext_rad = compute_Vext_radial(
-                data, Vext, with_radial_Vext=self.with_radial_Vext,
-                **self.kwargs_radial_Vext)
-            zpec = (Vrad + Vext_rad) / SPEED_OF_LIGHT
-            zcmb = self.distmod2redshift(mu_grid, h=h)
-            czpred = SPEED_OF_LIGHT * ((1 + zcmb) * (1 + zpec) - 1)
+                factor("mu_norm", log_pmu - log_pmu_norm)
 
-            ll += Normal(czpred, sigma_v).log_prob(data["czcmb"][:, None])
-            ll = ln_simpson(ll, x=r_grid, axis=-1) - ll_norm
+                Vext_rad = jnp.sum(data["rhat"] * Vext, axis=1)
+                zpec = (Vrad + Vext_rad) / SPEED_OF_LIGHT
+                zcmb = self.distmod2redshift(mu, h=h)
+                czpred = SPEED_OF_LIGHT * ((1 + zcmb) * (1 + zpec) - 1)
 
-            factor("obs", ll)
+                zpec = (Vrad + Vext_rad) / SPEED_OF_LIGHT
+                zcmb = self.distmod2redshift(mu, h=h)
+
+                deterministic("zpred", zcmb)
+
+                czpred = SPEED_OF_LIGHT * ((1 + zcmb) * (1 + zpec) - 1)
+
+                sample("obs", Normal(czpred, sigma_v), obs=data["czcmb"])
+
+            else:
+
+                r_grid = data["los_r"][None, :] / h
+                mu_grid = self.distance2distmod(r_grid, h=h)
+
+                ll = 2 * jnp.log(r_grid)
+                ll += Normal(
+                    mu_cluster[:, None], sigma_mu[:, None]).log_prob(mu_grid)
+
+                if data.has_precomputed_los:
+                    # The shape is `(n_galaxies, num_steps.)`
+                    Vrad = beta * data["los_velocity"]
+                    ll += lp_galaxy_bias(
+                        data["los_delta"], data["los_log_density"], bias_params,
+                        self.galaxy_bias)
+                else:
+                    Vrad = 0.
+
+                ll_norm = ln_simpson(ll, x=r_grid, axis=-1)
+
+                Vext_rad = compute_Vext_radial(
+                    data, Vext, with_radial_Vext=self.with_radial_Vext,
+                    **self.kwargs_radial_Vext)
+                zpec = (Vrad + Vext_rad) / SPEED_OF_LIGHT
+                zcmb = self.distmod2redshift(mu_grid, h=h)
+                czpred = SPEED_OF_LIGHT * ((1 + zcmb) * (1 + zpec) - 1)
+
+                ll += Normal(czpred, sigma_v).log_prob(data["czcmb"][:, None])
+                ll = ln_simpson(ll, x=r_grid, axis=-1) - ll_norm
+
+                factor("obs", ll)
 
 
 ###############################################################################
