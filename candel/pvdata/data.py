@@ -790,6 +790,10 @@ def load_SH0ES_separated(root):
     num_hosts = L_Cepheid_host_dist.shape[1] - 3
     num_cepheids = len(mag_cepheid)
 
+    data_cepheid_host_redshift = np.load(
+        join(root, "processed", "Cepheid_anchors_redshifts.npy"),
+        allow_pickle=True)
+
     return {
         "OH": OH,
         "logP": logP,
@@ -818,6 +822,10 @@ def load_SH0ES_separated(root):
         "num_hosts": num_hosts,
         "num_cepheids": num_cepheids,
         "num_flow_SN": len(L_SN_dist),
+        "czcmb_cepheid_host": data_cepheid_host_redshift["zCMB"] * SPEED_OF_LIGHT,  # noqa
+        "e_czcmb_cepheid_host": data_cepheid_host_redshift["zCMBERR"],
+        "RA_host": data_cepheid_host_redshift["RA"],
+        "dec_host": data_cepheid_host_redshift["DEC"],
         }
 
 
