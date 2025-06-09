@@ -407,7 +407,8 @@ def plot_Vext_rad_corner(samples, show_fig=True, filename=None, smooth=1):
 
 
 def plot_corner_getdist(samples_list, labels=None, show_fig=True,
-                        filename=None, keys=None, fontsize=None, filled=True):
+                        filename=None, keys=None, fontsize=None, filled=True,
+                        points=None):
     """Plot a GetDist triangle plot for one or more posterior samples."""
     try:
         import scienceplots  # noqa
@@ -498,6 +499,21 @@ def plot_corner_getdist(samples_list, labels=None, show_fig=True,
             legend_loc="upper right",
         )
 
+        if points is not None:
+            plotted_pairs = set()
+            for (x_param, y_param), (x_val, y_val) in points.items():
+                if x_param not in param_names or y_param not in param_names:
+                    continue
+                ix = param_names.index(x_param)
+                iy = param_names.index(y_param)
+                if iy > ix and (ix, iy) not in plotted_pairs:
+                    ax = g.subplots[iy, ix]
+                    ax.plot(x_val, y_val, "x", color="red", markersize=10)
+                    __, labels_ = ax.get_legend_handles_labels()
+                    if "Reference" not in labels_:
+                        ax.legend()
+                    plotted_pairs.add((ix, iy))
+
         if filename is not None:
             fprint(f"[INFO] Saving GetDist triangle plot to: {filename}")
             g.export(filename, dpi=450)
@@ -509,7 +525,8 @@ def plot_corner_getdist(samples_list, labels=None, show_fig=True,
 
 
 def plot_corner_from_hdf5(fnames, keys=None, labels=None, fontsize=None,
-                          filled=True, show_fig=True, filename=None):
+                          filled=True, show_fig=True, filename=None,
+                          points=None):
     """
     Plot a triangle plot from one or more HDF5 files containing posterior
     samples.
@@ -534,7 +551,8 @@ def plot_corner_from_hdf5(fnames, keys=None, labels=None, fontsize=None,
         fontsize=fontsize,
         filled=filled,
         show_fig=show_fig,
-        filename=filename
+        filename=filename,
+        points=points,
     )
 
 
