@@ -130,11 +130,8 @@ class SH0ESModel:
             )
 
         sigma_v = sample("sigma_v", JeffreysPrior(0.1, 2500))
-        # Vmono = sample("Vmono", Uniform(-1000, 1000))
         Vext = sample_vector("Vext", 0, 1000)
-
         Vext_rad = jnp.sum(Vext[None, :] * self.rhat_host, axis=1)
-        # Vext_rad += Vmono
 
         z_cosmo = H0 * jnp.power(10.0, mu_host / 5 - 5) / SPEED_OF_LIGHT
         cz_pred = (1 + z_cosmo) * (1 + Vext_rad / SPEED_OF_LIGHT) - 1
