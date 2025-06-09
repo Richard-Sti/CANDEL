@@ -20,9 +20,8 @@ from jax.scipy.linalg import solve_triangular
 from numpyro import factor, plate, sample
 from numpyro.distributions import Normal, Uniform
 
-from .model import MagnitudeDistribution, JeffreysPrior
-
-from ..util import fprint
+from ..util import SPEED_OF_LIGHT, fprint, radec_to_cartesian
+from .model import JeffreysPrior, MagnitudeDistribution, sample_vector
 
 
 def mvn_logpdf_cholesky(y, mu, L):
@@ -51,6 +50,17 @@ class SH0ESModel:
 
             setattr(self, k, v)
             attrs_set.append(k)
+
+            if k.startswith("e_"):
+                k = k.replace("e_", "e2_")
+                setattr(self, k, v * v)
+                attrs_set.append(k)
+
+        if "RA_host" in data and "dec_host" in data:
+            fprint("Converting host RA/dec to Cartesian coordinates.")
+            rhat = radec_to_cartesian(data["RA_host"], data["dec_host"])
+            self.rhat_host = rhat / np.linalg.norm(rhat, axis=1)[:, None]
+            attrs_set.append("rhat_host")
 
         fprint(f"set the following attributes: {', '.join(attrs_set)}")
 
@@ -120,10 +130,20 @@ class SH0ESModel:
             )
 
         sigma_v = sample("sigma_v", JeffreysPrior(0.1, 2500))
+        # Vmono = sample("Vmono", Uniform(-1000, 1000))
+        Vext = sample_vector("Vext", 0, 1000)
+
+        Vext_rad = jnp.sum(Vext[None, :] * self.rhat_host, axis=1)
+        # Vext_rad += Vmono
+
+        z_cosmo = H0 * jnp.power(10.0, mu_host / 5 - 5) / SPEED_OF_LIGHT
+        cz_pred = (1 + z_cosmo) * (1 + Vext_rad / SPEED_OF_LIGHT) - 1
+        cz_pred *= SPEED_OF_LIGHT
+
+        e_cz = jnp.sqrt(self.e2_czcmb_cepheid_host + sigma_v**2)
 
         with plate("Cepheid_anchors_redsihift", self.num_hosts):
-            cz_pred = H0 * jnp.power(10.0, mu_host / 5 - 5)
-            sample("cz_pred", Normal(cz_pred, sigma_v),
+            sample("cz_pred", Normal(cz_pred, e_cz),
                    obs=self.czcmb_cepheid_host)
 
         # Distances to the host that have both supernovae and Cepheids
