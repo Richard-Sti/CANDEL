@@ -21,12 +21,12 @@ from astropy.cosmology import FlatLambdaCDM
 from astropy.io import fits
 from h5py import File
 from jax import numpy as jnp
+from scipy.linalg import cholesky
 
 from ..model.interp import LOSInterpolator
 from ..util import (SPEED_OF_LIGHT, fprint, galactic_to_radec, load_config,
                     radec_to_cartesian, radec_to_galactic)
 from .dust import read_dustmap
-from scipy.linalg import cholesky
 
 ###############################################################################
 #                             Data frames                                     #
@@ -827,6 +827,12 @@ def load_SH0ES_separated(root):
         "RA_host": data_cepheid_host_redshift["RA"],
         "dec_host": data_cepheid_host_redshift["DEC"],
         }
+
+
+def load_SH0ES_from_config(config_path):
+    config = load_config(config_path)
+    root = config["io"]["SH0ES"]["root"]
+    return load_SH0ES_separated(root)
 
 
 def load_clusters(root, zcmb_min=None, zcmb_max=None, los_data_path=None,
