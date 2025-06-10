@@ -183,6 +183,50 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
     return samples, log_density
 
 
+def run_SH0ES_inference(model, model_kwargs={}, print_summary=True,
+                        save_samples=True):
+    """
+    Run MCMC inference on the SH0ES model, post-process the samples,
+    plot the corner plot and optionally save the samples to an HDF5 file.
+    """
+    devices = jax.devices()
+    device_str = ", ".join(f"{d.device_kind}({d.platform})" for d in devices)
+    fprint(f"running inference on devices: {device_str}")
+
+    if any(d.platform == "gpu" for d in devices):
+        set_platform("gpu")
+        fprint("using NumPyro platform: GPU")
+    else:
+        set_platform("cpu")
+        fprint("using NumPyro platform: CPU")
+
+    kwargs = model.config["inference"]
+
+    kernel = NUTS(model, init_strategy=init_to_median(num_samples=5000))
+    mcmc = MCMC(
+        kernel, num_warmup=kwargs["num_warmup"],
+        num_samples=kwargs["num_samples"], num_chains=kwargs["num_chains"],
+        chain_method=kwargs["chain_method"])
+    mcmc.run(jax.random.key(kwargs["seed"]), **model_kwargs)
+
+    samples = mcmc.get_samples()
+    samples = drop_deterministic(samples)
+    samples = postprocess_samples(samples)
+
+    if print_summary:
+        print_clean_summary(samples)
+
+    if save_samples:
+        fname_out = model.config["io"]["fname_output"]
+        fprint(f"output directory is {dirname(fname_out)}.")
+        save_mcmc_samples(samples, None, None, fname_out)
+
+        fname_plot = splitext(fname_out)[0] + ".png"
+        plot_corner(samples, show_fig=False, filename=fname_plot,)
+
+    return samples
+
+
 def run_magsel_inference(model, model_args, num_warmup=1000, num_samples=5000,
                          num_chains=1, seed=42, print_summary=True,):
     """Run MCMC inference on the given magnitude selection model."""
