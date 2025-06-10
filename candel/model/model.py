@@ -270,7 +270,7 @@ def _rsample(name, dist):
     return sample(name, dist)
 
 
-def rsample(name, dist, shared_params):
+def rsample(name, dist, shared_params=None):
     """Sample a parameter from `dist`, unless provided in `shared_params`."""
     if shared_params is not None and name in shared_params:
         return shared_params[name]
