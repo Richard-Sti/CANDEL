@@ -27,9 +27,9 @@ num_chains_harmonic = 10
 
 [model]
 
-use_SNe_HF = false
-use_Cepheid_host_redshift = true
 use_uniform_mu_host_priors = false
+use_Cepheid_host_redshift = true
+use_SNe_HF = false
 
 # SN absolute magnitude (only if including supernovae)
 [model.priors.M_B]
@@ -78,8 +78,8 @@ high = 2500
 ################################################################################
 
 [io]
-root_output = "SH0ES"
-fname_output = "SH0ES/test.hdf5"
+root_output = "results/SH0ES"
+fname_output = "results/SH0ES/test.hdf5"
 
 
 [io.SH0ES]
