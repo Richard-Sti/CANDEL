@@ -317,6 +317,10 @@ def name2labelgetdist(name):
         "b_FP": r"b_{\rm FP}",
         "c_FP": r"c_{\rm FP}",
         "R_dust": r"R_{\rm W1}",
+        "mu_LMC": r"\mu_{\rm LMC}",
+        "mu_M31": r"\mu_{\rm M31}",
+        "mu_N4258": r"\mu_{\rm NGC4258}",
+        "H0": r"H_0~\left[\mathrm{km}/\mathrm{s}/\mathrm{Mpc}\right]",
     }
 
     if "/" in name:
