@@ -794,6 +794,10 @@ def load_SH0ES_separated(root):
         join(root, "processed", "Cepheid_anchors_redshifts.npy"),
         allow_pickle=True)
 
+    PV_covmat_cepheid_host = np.load(
+        join(root, "processed", "PV_covmat_cepheid_hosts_fiducial.npy"),
+        allow_pickle=True)
+
     return {
         "OH": OH,
         "logP": logP,
@@ -826,6 +830,7 @@ def load_SH0ES_separated(root):
         "e_czcmb_cepheid_host": data_cepheid_host_redshift["zCMBERR"],
         "RA_host": data_cepheid_host_redshift["RA"],
         "dec_host": data_cepheid_host_redshift["DEC"],
+        "PV_covmat_cepheid_host": PV_covmat_cepheid_host,
         }
 
 
