@@ -389,4 +389,4 @@ def save_mcmc_samples(samples, log_density, gof, filename):
             for key, x in gof.items():
                 grp.create_dataset(key, data=x)
 
-    fprint(f"saved samples to {filename}.")
+    fprint(f"saved samples to {filename}")
