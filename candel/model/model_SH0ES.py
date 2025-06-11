@@ -190,6 +190,8 @@ class SH0ESModel(BaseSH0ESModel):
 
             e2_cz = self.e2_czcmb_cepheid_host + sigma_v**2
             if self.use_fiducial_Cepheid_host_PV_covariance:
+                # Because we're adding sigma_v^2 to the diagonal, we cannot
+                # use the Cholesky factorization of the covariance matrix.
                 C = self.PV_covmat_cepheid_host.at[jnp.diag_indices(len(e2_cz))].add(e2_cz)  # noqa
                 sample("cz_pred", MultivariateNormal(cz_pred, C),
                        obs=self.czcmb_cepheid_host)
