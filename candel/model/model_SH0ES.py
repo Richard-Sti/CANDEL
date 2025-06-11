@@ -74,19 +74,14 @@ class BaseSH0ESModel(ABC):
             config, "model/use_Cepheid_host_redshift", False)
 
         if not use_SNe_HF:
-            fprint("Not using SNe_HF, replacing prior on M_B with a "
-                   "delta function.")
             replace_prior_with_delta(config, "M_B", -19.25)
 
-        if not (use_Cepheid_host_redshift or use_SNe_HF):
-            fprint("Not using Cepheid host redshift, replacing prior on "
-                   "H0 with a delta function.")
-            replace_prior_with_delta(config, "H0", 73.04)
-
-            fprint("Not using redshift information, "
-                   "disabling Vext and sigma_v.")
+        if not use_Cepheid_host_redshift:
             replace_prior_with_delta(config, "Vext", [0., 0., 0.])
             replace_prior_with_delta(config, "sigma_v", 100.0)
+
+        if not (use_Cepheid_host_redshift or use_SNe_HF):
+            replace_prior_with_delta(config, "H0", 73.04)
 
         return config
 
@@ -140,9 +135,7 @@ class BaseSH0ESModel(ABC):
 
 
 class SH0ESModel(BaseSH0ESModel):
-    """
-    A version of the SH0ES inference turned into a forward model.
-    """
+    """A version of the SH0ES inference turned into a forward model."""
     def __init__(self, config_path, data):
         super().__init__(config_path, data)
 
