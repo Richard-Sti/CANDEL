@@ -19,11 +19,20 @@ from h5py import File
 
 
 def read_samples(root, fname, keys=None):
+    return_single = False
+
+    if isinstance(keys, str):
+        return_single = True
+        keys = [keys]
+
     fname = join(root, fname)
     with File(fname, "r") as f:
         if keys is None:
             keys = f["samples"].keys()
 
         samples = {key: f[f"samples/{key}"][...] for key in keys}
+
+    if return_single:
+        return samples[keys[0]]
 
     return samples
