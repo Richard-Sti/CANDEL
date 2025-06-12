@@ -21,9 +21,11 @@ from jax.scipy.linalg import solve_triangular
 from numpyro import factor, plate, sample
 from numpyro.distributions import MultivariateNormal, Normal, Uniform
 
+from ..cosmography import (Distmod2Distance, Distmod2Redshift,
+                           LogGrad_Distmod2ComovingDistance)
 from ..util import (SPEED_OF_LIGHT, fprint, get_nested, load_config,
                     radec_to_cartesian, replace_prior_with_delta)
-from .model import MagnitudeDistribution, load_priors, rsample
+from .model import load_priors, rsample
 
 
 def mvn_logpdf_cholesky(y, mu, L):
@@ -52,17 +54,20 @@ class BaseSH0ESModel(ABC):
         # any other conversions.
         self.set_data(data)
 
+        # Initialize the interpolators
+        Om = get_nested(config, "model/Om0", 0.3)
+        self.distmod2redshift = Distmod2Redshift(Om0=Om)
+        self.distmod2distance = Distmod2Distance(Om0=Om,)
+        self.log_grad_distmod2comoving_distance = LogGrad_Distmod2ComovingDistance(Om0=Om)  # noqa
+
         self.use_SNe_HF = get_nested(config, "model/use_SNe_HF", False)
         fprint(f"use_SNe_HF set to {self.use_SNe_HF}")
-
         self.use_Cepheid_host_redshift = get_nested(
             config, "model/use_Cepheid_host_redshift", False)
         fprint(f"use_Cepheid_host_redshift set to {self.use_Cepheid_host_redshift}")  # noqa
-
         self.use_uniform_mu_host_priors = get_nested(
             config, "model/use_uniform_mu_host_priors", True)
         fprint(f"use_uniform_mu_host_priors set to {self.use_uniform_mu_host_priors}")  # noqa
-
         self.use_fiducial_Cepheid_host_PV_covariance = get_nested(
             config, "model/use_fiducial_Cepheid_host_PV_covariance", True)
         fprint(f"use_fiducial_Cepheid_host_PV_covariance set to {self.use_fiducial_Cepheid_host_PV_covariance}")  # noqa
@@ -111,11 +116,13 @@ class BaseSH0ESModel(ABC):
         fprint(f"set the following attributes: {', '.join(attrs_set)}")
 
     def sample_host_distmod(self):
-        """Sample distance moduli for host galaxies."""
-        if self.use_uniform_mu_host_priors:
-            dist = Uniform(15, 43)
-        else:
-            dist = MagnitudeDistribution(15, 43)
+        """
+        Sample distance moduli for host galaxies, with a uniform prior in the
+        distance modulus. The log PDF of the prior if r^2 gets added directly
+        within the model. Includes the geometric anchor information for
+        NGC 4258 and the LMC.
+        """
+        dist = Uniform(*self.config["model"]["distmod_limits"])
 
         with plate("hosts", self.num_hosts):
             mu_host = sample("mu_host", dist)
@@ -166,6 +173,13 @@ class SH0ESModel(BaseSH0ESModel):
             [mu_host, jnp.array([mu_N4258, mu_LMC, mu_M31])]
             )
 
+        if not self.use_uniform_mu_host_priors:
+            log_r = self.distmod2distance(
+                mu_host_all, h=H0 / 100, return_log=True)
+            log_drdmu = self.log_grad_distmod2comoving_distance(
+                mu_host_all, h=H0 / 100)
+            factor("lp_r2", 2 * log_r + log_drdmu)
+
         # Now assign these host distances to each Cepheid.
         mu_cepheid = self.L_Cepheid_host_dist @ mu_host_cepheid
         # Predict the Cepheid magnitudes and compute their likelihood.
@@ -177,7 +191,8 @@ class SH0ESModel(BaseSH0ESModel):
 
         if self.use_Cepheid_host_redshift:
             Vext_rad = jnp.sum(Vext[None, :] * self.rhat_host, axis=1)
-            z_cosmo = H0 * jnp.power(10.0, mu_host / 5 - 5) / SPEED_OF_LIGHT
+            z_cosmo = self.distmod2redshift(mu_host, h=H0 / 100)
+
             cz_pred = (1 + z_cosmo) * (1 + Vext_rad / SPEED_OF_LIGHT) - 1
             cz_pred *= SPEED_OF_LIGHT
 
