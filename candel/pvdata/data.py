@@ -787,6 +787,8 @@ def load_SH0ES_separated(root):
     L_SN_Cepheid_dist = L_dist[3130:3207]
     L_SN_dist = L_dist[3215:]
 
+    Y_SN_HF = Y[3215:]
+
     num_hosts = L_Cepheid_host_dist.shape[1] - 3
     num_cepheids = len(mag_cepheid)
 
@@ -817,6 +819,7 @@ def load_SH0ES_separated(root):
         "Y_SN": Y_SN,
         "C_SN": C_SN,
         "L_SN": cholesky(C_SN, lower=True),
+        "Y_SN_HF": Y_SN_HF,
         "M_HST": M_HST,
         "e_M_HST": e_M_HST,
         "M_Gaia": M_Gaia,
