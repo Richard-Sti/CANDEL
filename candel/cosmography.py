@@ -73,15 +73,21 @@ class Distance2Distmod:
         Minimum and maximum redshift for the interpolation grid.
     npoints_interp : int
         Number of points in the interpolation grid.
+    is_scalar : bool
+        If `True`, the interpolator is not vectorized. This is useful for
+        debugging, but should be set to `False` for performance.
     """
     def __init__(self, Om0=0.3, zmin_interp=1e-8, zmax_interp=0.5,
-                 npoints_interp=1000):
+                 npoints_interp=1000, is_scalar=False):
         cosmo = FlatLambdaCDM(H0=100, Om0=Om0)
         z_grid = np.linspace(zmin_interp, zmax_interp, npoints_interp)
         r_grid = cosmo.comoving_distance(z_grid).value
         mu_grid = cosmo.distmod(z_grid).value
 
-        self._f = vmap(Interpolator1D(jnp.log(r_grid), mu_grid, extrap=False))
+        f = Interpolator1D(jnp.log(r_grid), mu_grid, extrap=False)
+        if not is_scalar:
+            f = vmap(f)
+        self._f = f
 
     def __call__(self, r, h=1,):
         return self._f(jnp.log(r * h)) - 5 * jnp.log10(h)
