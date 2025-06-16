@@ -30,6 +30,7 @@ from .cosmography import (                                                      
     Redshift2Distance,                                                          # noqa
     Redshift2Distmod,                                                           # noqa
     LogGrad_Distmod2ComovingDistance,                                           # noqa
+    redshift_to_dL_cosmography,                                                 # noqa
     )
 
 from .evidence import (                                                         # noqa

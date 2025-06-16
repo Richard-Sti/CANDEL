@@ -276,3 +276,20 @@ class LogGrad_Distmod2ComovingDistance:
 
     def __call__(self, mu, h=1):
         return self._f(mu + 5 * jnp.log10(h)) - jnp.log(h)
+
+
+###############################################################################
+#                           Cosmographic expansion                            #
+###############################################################################
+
+
+def redshift_to_dL_cosmography(z, H0, q0=-0.55, j0=1):
+    """
+    Calculate the luminosity distance for a given redshift using cosmographic
+    expansion up to second order in redshift.
+    """
+    return (SPEED_OF_LIGHT * z) / H0 * (
+        1
+        + 0.5 * (1 - q0) * z
+        - (1/6) * (1 - q0 - 3 * q0**2 + j0) * z**2
+        )
