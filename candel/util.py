@@ -283,7 +283,7 @@ def name2labelgetdist(name):
     optionally prepending the catalogue name as plain text.
 
     Example:
-        "CF4_W1/beta" → r"\mathrm{CF4~W1},\,\beta"
+        "CF4_W1/beta" → r"\\mathrm{CF4~W1}, \\beta"
     """
     labels = {
         "a_TFR": r"a_\mathrm{TFR}",
