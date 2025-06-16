@@ -190,6 +190,33 @@ class Redshift2Distance:
         return self._f(z) / h
 
 
+class Redshift2Distmod:
+    """
+    Class to build an interpolator to convert redshift to distance
+    modulus. Choice of `h` is determined when calling the
+    `__call__` method.
+
+    Parameters
+    ----------
+    Om0 : float
+        Matter density parameter.
+    zmin_interp, zmax_interp : float
+        Minimum and maximum redshift for the interpolation grid.
+    npoints_interp : int
+        Number of points in the interpolation grid.
+    """
+    def __init__(self, Om0=0.3, zmin_interp=1e-8, zmax_interp=0.5,
+                 npoints_interp=1000):
+        cosmo = FlatLambdaCDM(H0=100, Om0=Om0)
+        z_grid = np.linspace(zmin_interp, zmax_interp, npoints_interp)
+        mu_grid = cosmo.distmod(z_grid).value
+
+        self._f = vmap(Interpolator1D(jnp.log(z_grid), mu_grid, extrap=False))
+
+    def __call__(self, z, h=1, ):
+        return self._f(jnp.log(z)) - 5 * jnp.log10(h)
+
+
 class Distance2Redshift:
     """
     Class to build an interpolator to convert comoving distance in `Mpc`
