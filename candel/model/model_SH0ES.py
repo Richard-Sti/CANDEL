@@ -19,7 +19,8 @@ import jax.numpy as jnp
 import numpy as np
 from jax.scipy.linalg import solve_triangular
 from numpyro import factor, plate, sample
-from numpyro.distributions import MultivariateNormal, Normal, Uniform
+from numpyro.distributions import (HalfNormal, MultivariateNormal, Normal,
+                                   Uniform)
 
 from ..cosmography import (Distance2Distmod, Distmod2Distance,
                            Distmod2Redshift, LogGrad_Distmod2ComovingDistance)
@@ -75,6 +76,8 @@ class BaseSH0ESModel(ABC):
             raise ValueError(
                 "Cannot use both `use_SNe_HF_SH0ES` and `use_SNe_HF_Bayes`.")
 
+        self.use_MNR = get_nested(config, "model/use_MNR", False)
+        fprint(f"use_MNR set to {self.use_MNR}")
         self.use_Cepheid_host_redshift = get_nested(
             config, "model/use_Cepheid_host_redshift", False)
         fprint(f"use_Cepheid_host_redshift set to {self.use_Cepheid_host_redshift}")  # noqa
@@ -87,6 +90,13 @@ class BaseSH0ESModel(ABC):
         self.use_PV_covmat_scaling = get_nested(
             config, "model/use_PV_covmat_scaling", False)
         fprint(f"use_PV_covmat_scaling set to {self.use_PV_covmat_scaling}")
+
+        # Precompute min-max for MNR priors.
+        self.logP_min = jnp.min(data["logP"])
+        self.logP_max = jnp.max(data["logP"])
+
+        self.OH_min = jnp.min(data["OH"])
+        self.OH_max = jnp.max(data["OH"])
 
         if data["Cepheids_only"] and (self.use_SNe_HF_SH0ES or self.use_SNe_HF_Bayes):  # noqa
             raise ValueError(
@@ -211,8 +221,35 @@ class SH0ESModel(BaseSH0ESModel):
 
         # Now assign these host distances to each Cepheid.
         mu_cepheid = self.L_Cepheid_host_dist @ mu_host_cepheid
+
+        if self.use_MNR:
+            # Global hyperpriors for host-level mean logP
+            mean_logP_all = sample(
+                "mean_logP_all", Uniform(self.logP_min, self.logP_max))
+            std_logP_all = sample(
+                "std_logP_all", Uniform(1e-4, self.logP_max - self.logP_min))
+
+            # Global hyperprior for host-level std logP
+            mean_std_logP = sample("mean_std_logP", Uniform(0.01, 2.0))
+
+            # Per-host parameters
+            with plate("MNR_Cepheid", len(mu_host_all)):
+                mean_logP_per_host = sample(
+                    "mean_logP_per_host", Normal(mean_logP_all, std_logP_all))
+                std_logP_per_host = sample(
+                    "std_logP_per_host", HalfNormal(mean_std_logP))
+
+            mean_logP = self.L_Cepheid_host_dist @ mean_logP_per_host
+            std_logP = self.L_Cepheid_host_dist @ std_logP_per_host
+
+            with plate("Cepheid_true_params", self.num_cepheids):
+                logP = sample(
+                    "logP", Normal(mean_logP, std_logP), obs=self.logP)
+        else:
+            logP = self.logP
+
         # Predict the Cepheid magnitudes and compute their likelihood.
-        mag_cepheid = mu_cepheid + M_W + b_W * self.logP + Z_W * self.OH
+        mag_cepheid = mu_cepheid + M_W + b_W * logP + Z_W * self.OH
         factor(
             "ll_cepheid",
             mvn_logpdf_cholesky(self.mag_cepheid, mag_cepheid, self.L_Cepheid)
