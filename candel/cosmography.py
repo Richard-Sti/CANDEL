@@ -283,7 +283,7 @@ class LogGrad_Distmod2ComovingDistance:
 ###############################################################################
 
 
-def redshift_to_dL_cosmography(z, H0, q0=-0.55, j0=1):
+def redshift_to_dL_cosmography(z, H0, q0=-0.55, j0=1, s0=0.055):
     """
     Calculate the luminosity distance for a given redshift using cosmographic
     expansion up to second order in redshift.
@@ -291,5 +291,6 @@ def redshift_to_dL_cosmography(z, H0, q0=-0.55, j0=1):
     return (SPEED_OF_LIGHT * z) / H0 * (
         1
         + 0.5 * (1 - q0) * z
-        - (1/6) * (1 - q0 - 3 * q0**2 + j0) * z**2
+        - (1 / 6) * (1 - q0 - 3 * q0**2 + j0) * z**2
+        + (1 / 24) * (2 - 2 * q0 - 15 * q0**2 - 15 * q0**3 + 5 * j0 + 10 * q0 *  j0 + s0) * z**3  # noqa
         )
