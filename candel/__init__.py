@@ -28,6 +28,7 @@ from .cosmography import (                                                      
     Distance2Distmod,                                                           # noqa
     Distance2Redshift,                                                          # noqa
     Redshift2Distance,                                                          # noqa
+    Redshift2Distmod,                                                           # noqa
     LogGrad_Distmod2ComovingDistance,                                           # noqa
     )
 
@@ -59,6 +60,7 @@ from .util import (                                                             
     plot_radial_profiles,                                                       # noqa
     radec_to_cartesian,                                                         # noqa
     radec_to_galactic,                                                          # noqa
+    radec_cartesian_to_galactic,                                                # noqa
     galactic_to_radec,                                                          # noqa
     galactic_to_radec_cartesian,                                                # noqa
     load_config,                                                                # noqa
