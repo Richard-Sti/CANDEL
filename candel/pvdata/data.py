@@ -690,7 +690,7 @@ def load_SH0ES(root):
     return data
 
 
-def load_SH0ES_separated(root):
+def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None):
     """
     Load the separated SH0ES data, separating the Cepheid and supernovae and
     covariance matrices.
@@ -727,10 +727,15 @@ def load_SH0ES_separated(root):
     logP = L[:, -6][:3130]
     mag_cepheid = Y[:3130]
     C_Cepheid = C[:3130, :3130]
-    L_Cepheid = cholesky(C_Cepheid, lower=True)
 
     # Undo the removal of a slope of -3.285
     mag_cepheid += -3.285 * logP
+
+    # This will organise the host distances as
+    # `[Host with Cepheids but no geometric anchors, NGC4258, LMC, M31]`. There
+    # are 37 of the former, so in total there are 40 distances to be inferred.
+    L_dist = np.hstack([L[:, :37], L[:, [37, 39, 40]]])
+    L_Cepheid_host_dist = L_dist[:3130]
 
     # N4258 and LMC anchors.
     mu_N4258_anchor = 29.398
@@ -754,7 +759,6 @@ def load_SH0ES_separated(root):
 
     C_SN_Cepheid = C[3130:3207, 3130:3207]
     Y_SN_Cepheid = Y[3130:3207]
-    L_SN_Cepheid = cholesky(C_SN_Cepheid, lower=True)
 
     # HST and Gaia zero-points
     M_HST = Y[3207]
@@ -778,12 +782,6 @@ def load_SH0ES_separated(root):
          'Delta_mu_LMC', 'mu_M31', 'b_W', 'MB0', 'Z_W', 'undefined',
          'Delta_zp', 'log10_H0'])
 
-    # This will organise the host distances as
-    # `[Host with Cepheids but no geometric anchors, NGC4258, LMC, M31]`. There
-    # are 37 of the former, so in total there are 40 distances to be inferred.
-    L_dist = np.hstack([L[:, :37], L[:, [37, 39, 40]]])
-    L_Cepheid_host_dist = L_dist[:3130]
-
     L_SN_Cepheid_dist = L_dist[3130:3207]
     L_SN_dist = L_dist[3215:]
 
@@ -800,18 +798,29 @@ def load_SH0ES_separated(root):
         join(root, "processed", "PV_covmat_cepheid_hosts_fiducial.npy"),
         allow_pickle=True)
 
-    return {
+
+    # f = np.load("/Users/rstiskalek/Projects/CANDEL/data/SH0ES/processed/PP_SN_matched_to_SH0ES.npz")  # noqa
+    # pp = f["pp_matched"]
+    # C_SN_from_pp = f["cov"]
+    # m_calibrator = pp["IS_CALIBRATOR"] == 1
+    # m_HF = pp["USED_IN_SH0ES_HF"] == 1
+
+    # # print(pp[m_calibrator]["m_b_corr"] - Y_SN_Cepheid)
+    # C_SN = C_SN_from_pp
+    # Y_SN = pp["m_b_corr"]
+
+    data = {
         "OH": OH,
         "logP": logP,
         "mag_cepheid": mag_cepheid,
         "C_Cepheid": C_Cepheid,
-        "L_Cepheid": L_Cepheid,
+        "L_Cepheid": cholesky(C_Cepheid, lower=True),
         "L_Cepheid_host_dist": L_Cepheid_host_dist,
         "L_SN_Cepheid_dist": L_SN_Cepheid_dist,
         "L_SN_dist": L_SN_dist,
-        "C_SN_Cephed": C_SN_Cepheid,
+        "C_SN_Cepheid": C_SN_Cepheid,
         "Y_SN_Cepheid": Y_SN_Cepheid,
-        "L_SN_Cepheid": L_SN_Cepheid,
+        "L_SN_Cepheid": cholesky(C_SN_Cepheid, lower=True),
         "mu_N4258_anchor": mu_N4258_anchor,
         "e_mu_N4258_anchor": e_mu_N4258_anchor,
         "mu_LMC_anchor": mu_LMC_anchor,
@@ -834,13 +843,66 @@ def load_SH0ES_separated(root):
         "RA_host": data_cepheid_host_redshift["RA"],
         "dec_host": data_cepheid_host_redshift["DEC"],
         "PV_covmat_cepheid_host": PV_covmat_cepheid_host,
+        "Cepheids_only": False,
+        #
+        # "czcmb_SN_HF": pp["zHD"][m_HF] * SPEED_OF_LIGHT,
+        # "e_czcmb_SN_HF": pp["zHDERR"][m_HF] * SPEED_OF_LIGHT,
+        # "num_SN_HF": np.sum(m_HF),
+        # "Y_SN_new": Y_SN_new,
         }
+
+    if cepheid_host_cz_cmb_max is not None:
+        if cepheid_host_cz_cmb_max < 1000:
+            raise ValueError(
+                f"`cz_cmb_max` must be larger than 1000 km/s, got "
+                f"{cepheid_host_cz_cmb_max} km/s. Otherwise could eliminate "
+                "some geometric anchors.")
+
+        # Switch this flag so that these runs cannot be done jointly with SNe
+        # since some shapes might not be correct.
+        data["Cepheids_only"] = True
+
+        cz_host = data["czcmb_cepheid_host"]
+        cz_host_all = np.hstack([data["czcmb_cepheid_host"], [667, 327, -582]])
+        cz_cepheid = data["L_Cepheid_host_dist"] @ cz_host_all
+
+        mask_host = cz_host < cepheid_host_cz_cmb_max
+        mask_host_all = cz_host_all < cepheid_host_cz_cmb_max
+        mask_cepheid = cz_cepheid < cepheid_host_cz_cmb_max
+
+        fprint(f"Masking Cepheids with cz_cmb > {cepheid_host_cz_cmb_max} "
+               f"km/s: Keeping {np.sum(mask_host)} out of {len(mask_host)}.")
+
+        data["OH"] = data["OH"][mask_cepheid]
+        data["logP"] = data["logP"][mask_cepheid]
+        data["mag_cepheid"] = data["mag_cepheid"][mask_cepheid]
+        data["C_Cepheid"] = data["C_Cepheid"][mask_cepheid][:, mask_cepheid]
+        data["L_Cepheid"] = data["L_Cepheid"][mask_cepheid][:, mask_cepheid]
+
+        data["L_Cepheid_host_dist"] = data["L_Cepheid_host_dist"][mask_cepheid][:, mask_host_all]  # noqa
+        data["czcmb_cepheid_host"] = data["czcmb_cepheid_host"][mask_host]
+        data["e_czcmb_cepheid_host"] = data["e_czcmb_cepheid_host"][mask_host]
+        data["RA_host"] = data["RA_host"][mask_host]
+        data["dec_host"] = data["dec_host"][mask_host]
+        data["PV_covmat_cepheid_host"] = data["PV_covmat_cepheid_host"][mask_host][:, mask_host]  # noqa
+
+        data["num_hosts"] = np.sum(mask_host)
+        data["num_cepheids"] = np.sum(mask_cepheid)
+
+        for key, val in data.items():
+            if "SN" in key and isinstance(val, np.ndarray):
+                data[key] = np.full_like(val, np.nan, dtype=val.dtype)
+
+    return data
 
 
 def load_SH0ES_from_config(config_path):
     config = load_config(config_path)
-    root = config["io"]["SH0ES"]["root"]
-    return load_SH0ES_separated(root)
+    d = config["io"]["SH0ES"]
+    root = d["root"]
+    cepheid_host_cz_cmb_max = d.get("cepheid_host_cz_cmb_max", None)
+
+    return load_SH0ES_separated(root, cepheid_host_cz_cmb_max)
 
 
 def load_clusters(root, zcmb_min=None, zcmb_max=None, los_data_path=None,
