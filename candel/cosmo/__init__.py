@@ -14,3 +14,8 @@
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 from .growth_rate import Beta2Cosmology                                         # noqa
+from .pv_covariance import (                                                    # noqa
+    get_Pk_CAMB,                                                                # noqa
+    compute_dD_dtau,                                                            # noqa
+    compute_covariance_matrix,                                                  # noqa
+    )
