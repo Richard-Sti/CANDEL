@@ -17,5 +17,6 @@ from .growth_rate import Beta2Cosmology                                         
 from .pv_covariance import (                                                    # noqa
     get_Pk_CAMB,                                                                # noqa
     compute_dD_dtau,                                                            # noqa
+    compute_Fuv,                                                                # noqa
     compute_covariance_matrix,                                                  # noqa
     )
