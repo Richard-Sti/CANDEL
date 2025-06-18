@@ -25,8 +25,8 @@ from ..util import radec_to_cartesian
 
 
 def get_Pk_CAMB(H0=67.4, Om0=0.3153, Ombh2=0.0224, As=2.100549e-9, ns=0.965,
-                kmax=20.0):
-    """Get matter power spectrum from CAMB in `Mpc / h` units."""
+                kmax=20.0, nonlinear=True):
+    """Get (non-linear) matter power spectrum from CAMB in `Mpc / h` units."""
     try:
         import camb
     except ImportError:
@@ -38,11 +38,10 @@ def get_Pk_CAMB(H0=67.4, Om0=0.3153, Ombh2=0.0224, As=2.100549e-9, ns=0.965,
 
     pars.set_cosmology(H0=H0, ombh2=Ombh2, omch2=omch2)
     pars.InitPower.set_params(As=As, ns=ns)
-    pars.set_matter_power(redshifts=[0], kmax=kmax)
+    pars.set_matter_power(redshifts=[0], kmax=kmax, nonlinear=nonlinear)
 
     results = camb.get_results(pars)
-    k, __, Pk = results.get_linear_matter_power_spectrum(
-        hubble_units=False, k_hunit=True)
+    k, __, Pk = results.get_linear_matter_power_spectrum(nonlinear=nonlinear)
     return k, Pk[0]
 
 
@@ -58,7 +57,7 @@ def compute_Fuv(u, v, cos_theta, ell_min=0, ell_max=100):
     return np.sum((2 * ells + 1) * j_u * j_v * P)
 
 
-def compute_dD_dtau(a=1, Omega_m=0.3, Omega_L=0.7, H0=67.4):
+def compute_dD_dtau(a=1, Omega_m=0.315, Omega_L=0.685, H0=67.4):
     """
     Compute the derivative of the linear growth factor D with respect to
     conformal time τ.
@@ -109,7 +108,7 @@ def _compute_covariance_element(i, j, rhat, r, k, Pk, dDdtau, ell_min,
 
 
 def compute_covariance_matrix(r, RA, dec, k, Pk, dDdtau, ell_min=0,
-                              ell_max=200, n_jobs=1):
+                              ell_max=2000, n_jobs=1):
     """
     Compute the velocity covariance matrix for objects at positions
     (r, RA, dec).
