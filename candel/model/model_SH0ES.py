@@ -131,6 +131,14 @@ class BaseSH0ESModel(ABC):
         return config
 
     def set_data(self, data):
+        keys_popped = []
+        for key in list(data.keys()):
+            if data[key] is None:
+                keys_popped.append(key)
+                del data[key]
+        fprint("Popped the following keys with `None` values from data: "
+               f"{', '.join(keys_popped)}")
+
         attrs_set = []
         for k, v in data.items():
             if k in ["q_names", "host_map"]:
