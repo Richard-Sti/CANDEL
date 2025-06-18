@@ -691,7 +691,7 @@ def load_SH0ES(root):
 
 
 def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
-                         replace_SN_HF_from_PP=False):
+                         replace_SN_HF_from_PP=False, los_data_path=None):
     """
     Load the separated SH0ES data, separating the Cepheid and supernovae and
     covariance matrices.
@@ -801,6 +801,18 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
         join(root, "processed", "PV_covmat_cepheid_hosts_fiducial.npy"),
         allow_pickle=True)
 
+    if los_data_path is not None:
+        data_host_los = {}
+        data_host_los = load_los(
+            los_data_path, data_host_los)
+        host_los_density = data_host_los["los_density"][0]
+        host_los_velocity = data_host_los["los_velocity"][0]
+        host_los_r = data_host_los["los_r"]
+    else:
+        host_los_density = None
+        host_los_velocity = None
+        host_los_r = None
+
     # SH0ES-Antonio's approach for predicting H0 from Cepheid host redshifts,
     # the error propagation is biased when z -> 0.
     # zHD = data_cepheid_host_redshift["zHD"]
@@ -871,6 +883,9 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
         "RA_host": data_cepheid_host_redshift["RA"],
         "dec_host": data_cepheid_host_redshift["DEC"],
         "PV_covmat_cepheid_host": PV_covmat_cepheid_host,
+        "host_los_density": host_los_density,
+        "host_los_velocity": host_los_velocity,
+        "host_los_r": host_los_r,
         # # SH0ES-Antonio's approach for predicting H0 from Cepheid host zs
         # "Y_Cepheid_new": Y_Cepheid_new,
         # "Y_Cepheid_new_err": Y_Cepheid_new_err
@@ -922,14 +937,22 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
 
 
 def load_SH0ES_from_config(config_path):
-    config = load_config(config_path)
+    config = load_config(config_path, replace_los_prior=False)
     d = config["io"]["SH0ES"]
     root = d["root"]
     cepheid_host_cz_cmb_max = d.get("cepheid_host_cz_cmb_max", None)
     replace_SN_HF_from_PP = d.get("replace_SN_HF_from_PP", False)
 
+    which_host_los = d.get("which_host_los", None)
+    if which_host_los is not None:
+        los_data_path = config["io"]["PV_main"]["SH0ES"]["los_file"].replace(
+            "<X>", which_host_los)
+    else:
+        los_data_path = None
+
     return load_SH0ES_separated(
-        root, cepheid_host_cz_cmb_max, replace_SN_HF_from_PP)
+        root, cepheid_host_cz_cmb_max, replace_SN_HF_from_PP,
+        los_data_path=los_data_path)
 
 
 def load_clusters(root, zcmb_min=None, zcmb_max=None, los_data_path=None,
