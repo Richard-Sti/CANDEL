@@ -690,7 +690,8 @@ def load_SH0ES(root):
     return data
 
 
-def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None):
+def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
+                         replace_SN_HF_from_PP=False):
     """
     Load the separated SH0ES data, separating the Cepheid and supernovae and
     covariance matrices.
@@ -716,6 +717,9 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None):
 
     - Indices ≥ 3215: Hubble flow supernovae (rung three).
     """
+    if replace_SN_HF_from_PP:
+        fprint("replacing SH0ES SN Hubble flow data with Pantheon+ data.")
+
     # Unpack the SH0ES data.
     data = load_SH0ES(root)
     Y = np.array(data['Y'], copy=True)
@@ -783,72 +787,93 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None):
          'Delta_zp', 'log10_H0'])
 
     L_SN_Cepheid_dist = L_dist[3130:3207]
-    L_SN_dist = L_dist[3215:]
 
     Y_SN_HF = Y[3215:]
 
     num_hosts = L_Cepheid_host_dist.shape[1] - 3
     num_cepheids = len(mag_cepheid)
 
+    # Cepheid host redshifts and the PV covariance matrix.
     data_cepheid_host_redshift = np.load(
         join(root, "processed", "Cepheid_anchors_redshifts.npy"),
         allow_pickle=True)
-
     PV_covmat_cepheid_host = np.load(
         join(root, "processed", "PV_covmat_cepheid_hosts_fiducial.npy"),
         allow_pickle=True)
 
+    # SH0ES-Antonio's approach for predicting H0 from Cepheid host redshifts,
+    # the error propagation is biased when z -> 0.
+    # zHD = data_cepheid_host_redshift["zHD"]
+    # q0 = -0.55
+    # c = SPEED_OF_LIGHT
+    # Y_Cepheid_new = 5 * np.log10((c * zHD) * (
+    #     1 +  0.5 * (1 - q0) * zHD)) + 25
+    # v_pec = 250
+    # Y_Cepheid_new_err = (5 / np.log(10)
+    #                      * (1 + (1 - q0) * zHD) / (1 + 0.5 * (1 - q0) * zHD)
+    #                      * v_pec / (c * zHD))
 
-    # f = np.load("/Users/rstiskalek/Projects/CANDEL/data/SH0ES/processed/PP_SN_matched_to_SH0ES.npz")  # noqa
-    # pp = f["pp_matched"]
-    # C_SN_from_pp = f["cov"]
-    # m_calibrator = pp["IS_CALIBRATOR"] == 1
-    # m_HF = pp["USED_IN_SH0ES_HF"] == 1
-
-    # # print(pp[m_calibrator]["m_b_corr"] - Y_SN_Cepheid)
-    # C_SN = C_SN_from_pp
-    # Y_SN = pp["m_b_corr"]
+    if replace_SN_HF_from_PP:
+        f = np.load("/Users/rstiskalek/Projects/CANDEL/data/SH0ES/processed/PP_SN_matched_to_SH0ES.npz")  # noqa
+        pp = f["pp_matched"]
+        m_HF = pp["USED_IN_SH0ES_HF"] == 1
+        C_SN = f["cov"]
+        Y_SN = pp["m_b_corr"]
+        czcmb_SN_HF = pp["zCMB"][m_HF] * SPEED_OF_LIGHT
+        e_czcmb_SN_HF = pp["zCMBERR"][m_HF] * SPEED_OF_LIGHT
+        RA_SN_HF = pp["RA"][m_HF]
+        dec_SN_HF = pp["DEC"][m_HF]
+    else:
+        czcmb_SN_HF, e_czcmb_SN_HF = None, None
+        RA_SN_HF, dec_SN_HF = None, None
 
     data = {
-        "OH": OH,
-        "logP": logP,
+        # Individual Cepheid data, covariance matrix and host association.
         "mag_cepheid": mag_cepheid,
+        "logP": logP,
+        "OH": OH,
         "C_Cepheid": C_Cepheid,
         "L_Cepheid": cholesky(C_Cepheid, lower=True),
         "L_Cepheid_host_dist": L_Cepheid_host_dist,
-        "L_SN_Cepheid_dist": L_SN_Cepheid_dist,
-        "L_SN_dist": L_SN_dist,
-        "C_SN_Cepheid": C_SN_Cepheid,
+        "Cepheids_only": False,
+        "num_cepheids": num_cepheids,
+        "num_hosts": num_hosts,
+        # SNe in Cepheid host galaxies, covariance matrix and host association.
         "Y_SN_Cepheid": Y_SN_Cepheid,
+        "C_SN_Cepheid": C_SN_Cepheid,
         "L_SN_Cepheid": cholesky(C_SN_Cepheid, lower=True),
+        "L_SN_Cepheid_dist": L_SN_Cepheid_dist,
+        # SNe in the Hubble flow and covariance matrix.
+        "Y_SN_HF": Y_SN_HF,
+        "num_flow_SN": len(Y_SN_HF),
+        "czcmb_SN_HF": czcmb_SN_HF,
+        "e_czcmb_SN_HF": e_czcmb_SN_HF,
+        "RA_SN_HF": RA_SN_HF,
+        "dec_SN_HF": dec_SN_HF,
+        # All SNe together.
+        "Y_SN": Y_SN,
+        "C_SN": C_SN,
+        "L_SN": cholesky(C_SN, lower=True),
+        # External constraints/priors.
         "mu_N4258_anchor": mu_N4258_anchor,
         "e_mu_N4258_anchor": e_mu_N4258_anchor,
         "mu_LMC_anchor": mu_LMC_anchor,
         "e_mu_LMC_anchor": e_mu_LMC_anchor,
-        "Y_SN": Y_SN,
-        "C_SN": C_SN,
-        "L_SN": cholesky(C_SN, lower=True),
-        "Y_SN_HF": Y_SN_HF,
         "M_HST": M_HST,
         "e_M_HST": e_M_HST,
         "M_Gaia": M_Gaia,
         "e_M_Gaia": e_M_Gaia,
         "sigma_grnd": sigma_grnd,
+        # Cepheid host galaxy information.
         "q_names": q_names,
-        "num_hosts": num_hosts,
-        "num_cepheids": num_cepheids,
-        "num_flow_SN": len(L_SN_dist),
         "czcmb_cepheid_host": data_cepheid_host_redshift["zCMB"] * SPEED_OF_LIGHT,  # noqa
         "e_czcmb_cepheid_host": data_cepheid_host_redshift["zCMBERR"],
         "RA_host": data_cepheid_host_redshift["RA"],
         "dec_host": data_cepheid_host_redshift["DEC"],
         "PV_covmat_cepheid_host": PV_covmat_cepheid_host,
-        "Cepheids_only": False,
-        #
-        # "czcmb_SN_HF": pp["zHD"][m_HF] * SPEED_OF_LIGHT,
-        # "e_czcmb_SN_HF": pp["zHDERR"][m_HF] * SPEED_OF_LIGHT,
-        # "num_SN_HF": np.sum(m_HF),
-        # "Y_SN_new": Y_SN_new,
+        # # SH0ES-Antonio's approach for predicting H0 from Cepheid host zs
+        # "Y_Cepheid_new": Y_Cepheid_new,
+        # "Y_Cepheid_new_err": Y_Cepheid_new_err
         }
 
     if cepheid_host_cz_cmb_max is not None:
@@ -901,8 +926,10 @@ def load_SH0ES_from_config(config_path):
     d = config["io"]["SH0ES"]
     root = d["root"]
     cepheid_host_cz_cmb_max = d.get("cepheid_host_cz_cmb_max", None)
+    replace_SN_HF_from_PP = d.get("replace_SN_HF_from_PP", False)
 
-    return load_SH0ES_separated(root, cepheid_host_cz_cmb_max)
+    return load_SH0ES_separated(
+        root, cepheid_host_cz_cmb_max, replace_SN_HF_from_PP)
 
 
 def load_clusters(root, zcmb_min=None, zcmb_max=None, los_data_path=None,
