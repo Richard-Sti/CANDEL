@@ -12,10 +12,10 @@ machine = "local"
 ###############################################################################
 
 [inference]
-num_warmup = 50
-num_samples = 50
-num_chains = 1
-chain_method = "sequential"
+num_warmup = 250
+num_samples = 750
+num_chains = 10
+chain_method = "parallel"
 seed = 44
 compute_log_density = true
 compute_evidence = true
@@ -27,9 +27,17 @@ num_chains_harmonic = 10
 
 [model]
 
+Om = 0.315
+use_MNR = false
 use_uniform_mu_host_priors = false
 use_Cepheid_host_redshift = true
-use_SNe_HF = false
+use_fiducial_Cepheid_host_PV_covariance = true
+use_PV_covmat_scaling = false
+
+use_SNe_HF_SH0ES = false
+use_SNe_HF_Bayes = false
+
+distmod_limits = [15, 43]
 
 # SN absolute magnitude (only if including supernovae)
 [model.priors.M_B]
@@ -40,7 +48,7 @@ high = -18
 # Hubble constant
 [model.priors.H0]
 dist = "uniform"
-low = 0
+low = 10
 high = 100
 
 # Cepheid absolute magnitude at P=10d, solar metallicity
@@ -66,11 +74,22 @@ high = 2
 dist = "jeffreys"
 low = 5
 high = 2500
+# dist = "delta"
+# value = 250
+
+[model.priors.A_covmat]
+dist = "truncated_normal"
+low = 0.0
+mean = 1.0
+scale = 2.5
+
 
 [model.priors.Vext]
-dist = "vector_uniform_fixed"
-low = 0.0
-high = 2500
+dist = "delta"
+value = [0.0, 0.0, 0.0]
+# dist = "vector_uniform_fixed"
+# low = 0.0
+# high = 2500
 
 
 ################################################################################
@@ -84,6 +103,8 @@ fname_output = "results/SH0ES/test.hdf5"
 
 [io.SH0ES]
 root = "data/SH0ES"
+cepheid_host_cz_cmb_max = "none"
+replace_SN_HF_from_PP = true
 
 
 ########
