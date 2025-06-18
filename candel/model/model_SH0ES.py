@@ -26,7 +26,7 @@ from ..cosmography import (Distance2Distmod, Distmod2Distance,
                            Distmod2Redshift, LogGrad_Distmod2ComovingDistance)
 from ..util import (SPEED_OF_LIGHT, fprint, get_nested, load_config,
                     radec_to_cartesian, replace_prior_with_delta)
-from .model import load_priors, rsample
+from .model import JeffreysPrior, MagnitudeDistribution, load_priors, rsample
 
 
 def mvn_logpdf_cholesky(y, mu, L):
@@ -37,6 +37,10 @@ def mvn_logpdf_cholesky(y, mu, L):
     z = solve_triangular(L, y - mu, lower=True)
     log_det = jnp.sum(jnp.log(jnp.diag(L)))
     return -0.5 * (len(y) * jnp.log(2 * jnp.pi) + 2 * log_det + jnp.dot(z, z))
+
+
+def predict_cz(zcosmo, Vrad):
+    return SPEED_OF_LIGHT * ((1 + zcosmo) * (1 + Vrad / SPEED_OF_LIGHT) - 1)
 
 
 class BaseSH0ESModel(ABC):
@@ -105,7 +109,7 @@ class BaseSH0ESModel(ABC):
 
     def replace_priors(self, config):
         """Replace priors on parameters that are not used in the model."""
-        use_SNe_HF = (
+        use_SNe = (
             get_nested(config, "model/use_SNe_HF_SH0ES", False)
             or get_nested(config, "model/use_SNe_HF_Bayes", False))
         use_Cepheid_host_redshift = get_nested(
@@ -113,15 +117,13 @@ class BaseSH0ESModel(ABC):
         use_PV_covmat_scaling = get_nested(
             config, "model/use_PV_covmat_scaling", False)
 
-        if not use_SNe_HF:
+        if not use_SNe:
             replace_prior_with_delta(config, "M_B", -19.25)
 
-        if not use_Cepheid_host_redshift:
+        if not (use_Cepheid_host_redshift or use_SNe):
+            replace_prior_with_delta(config, "H0", 73.04)
             replace_prior_with_delta(config, "Vext", [0., 0., 0.])
             replace_prior_with_delta(config, "sigma_v", 100.0)
-
-        if not (use_Cepheid_host_redshift or use_SNe_HF):
-            replace_prior_with_delta(config, "H0", 73.04)
 
         if not use_PV_covmat_scaling:
             replace_prior_with_delta(config, "A_covmat", 1.0)
@@ -150,6 +152,12 @@ class BaseSH0ESModel(ABC):
             rhat = radec_to_cartesian(data["RA_host"], data["dec_host"])
             self.rhat_host = rhat / np.linalg.norm(rhat, axis=1)[:, None]
             attrs_set.append("rhat_host")
+
+        if "RA_SN_HF" in data and "dec_SN_HF" in data:
+            fprint("Converting SN_HF RA/dec to Cartesian coordinates.")
+            rhat = radec_to_cartesian(data["RA_SN_HF"], data["dec_SN_HF"])
+            self.rhat_SN_HF = rhat / np.linalg.norm(rhat, axis=1)[:, None]
+            attrs_set.append("rhat_SN_HF")
 
         fprint(f"set the following attributes: {', '.join(attrs_set)}")
 
@@ -223,14 +231,21 @@ class SH0ESModel(BaseSH0ESModel):
         mu_cepheid = self.L_Cepheid_host_dist @ mu_host_cepheid
 
         if self.use_MNR:
-            # Global hyperpriors for host-level mean logP
+            # Global hyperpriors for host-level logP mean and std
             mean_logP_all = sample(
                 "mean_logP_all", Uniform(self.logP_min, self.logP_max))
             std_logP_all = sample(
-                "std_logP_all", Uniform(1e-4, self.logP_max - self.logP_min))
+                "std_logP_all", Uniform(1e-5, self.logP_max - self.logP_min))
+            mean_std_logP = sample(
+                "mean_std_logP", Uniform(1e-5, self.logP_max - self.logP_min))
 
-            # Global hyperprior for host-level std logP
-            mean_std_logP = sample("mean_std_logP", Uniform(0.01, 2.0))
+            # Global hyperprior for host-level OH mean and std
+            mean_OH_all = sample(
+                "mean_OH_all", Uniform(self.OH_min, self.OH_max))
+            std_OH_all = sample(
+                "std_OH_all", Uniform(1e-5, self.OH_max - self.OH_min))
+            mean_std_OH = sample(
+                "mean_std_OH", Uniform(1e-5, self.OH_max - self.OH_min))
 
             # Per-host parameters
             with plate("MNR_Cepheid", len(mu_host_all)):
@@ -239,28 +254,46 @@ class SH0ESModel(BaseSH0ESModel):
                 std_logP_per_host = sample(
                     "std_logP_per_host", HalfNormal(mean_std_logP))
 
+                mean_OH_per_host = sample(
+                    "mean_OH_per_host", Normal(mean_OH_all, std_OH_all))
+                std_OH_per_host = sample(
+                    "std_OH_per_host", HalfNormal(mean_std_OH))
+
+            # Per-Cepheid parameters
             mean_logP = self.L_Cepheid_host_dist @ mean_logP_per_host
             std_logP = self.L_Cepheid_host_dist @ std_logP_per_host
+
+            mean_OH = self.L_Cepheid_host_dist @ mean_OH_per_host
+            std_OH = self.L_Cepheid_host_dist @ std_OH_per_host
 
             with plate("Cepheid_true_params", self.num_cepheids):
                 logP = sample(
                     "logP", Normal(mean_logP, std_logP), obs=self.logP)
+                OH = sample(
+                    "OH", Normal(mean_OH, std_OH), obs=self.OH)
         else:
             logP = self.logP
+            OH = self.OH
 
         # Predict the Cepheid magnitudes and compute their likelihood.
-        mag_cepheid = mu_cepheid + M_W + b_W * logP + Z_W * self.OH
+        mag_cepheid = mu_cepheid + M_W + b_W * logP + Z_W * OH
         factor(
             "ll_cepheid",
             mvn_logpdf_cholesky(self.mag_cepheid, mag_cepheid, self.L_Cepheid)
             )
 
         if self.use_Cepheid_host_redshift:
-            Vext_rad = jnp.sum(Vext[None, :] * self.rhat_host, axis=1)
-            z_cosmo = self.distmod2redshift(mu_host, h=H0 / 100)
+            # # SH0ES-Antonio approach
+            # Y_Cepheid = mu_host + 5 * jnp.log10(H0)
+            # with plate("Cepheid_host_redshift", self.num_hosts):
+            #     sample("Y_Cepheid",
+            #            Normal(Y_Cepheid, self.Y_Cepheid_new_err),
+            #            obs=self.Y_Cepheid_new)
 
-            cz_pred = (1 + z_cosmo) * (1 + Vext_rad / SPEED_OF_LIGHT) - 1
-            cz_pred *= SPEED_OF_LIGHT
+            Vext_rad = jnp.sum(Vext[None, :] * self.rhat_host, axis=1)
+            cz_pred = predict_cz(
+                self.distmod2redshift(mu_host, h=H0 / 100),
+                Vext_rad)
 
             e2_cz = self.e2_czcmb_cepheid_host + sigma_v**2
             if self.use_fiducial_Cepheid_host_PV_covariance:
@@ -287,34 +320,40 @@ class SH0ESModel(BaseSH0ESModel):
                 "ll_SN",
                 mvn_logpdf_cholesky(self.Y_SN, Y_SN, self.L_SN)
                 )
+        elif self.use_SNe_HF_Bayes:
+            # TODO: this is still not fully understood.
 
-        if self.use_SNe_HF_Bayes:
-            raise NotImplementedError(
-                "The SH0ES model with SNe_HF_Bayes is not implemented yet.")
+            # Distances to the host that have both supernovae and Cepheids
+            # and their true apparent magnitudes.
+            mu_SN_Cepheid = self.L_SN_Cepheid_dist @ mu_host_all
+            mag_true_SN_Cepheid = mu_SN_Cepheid + M_B
 
-            # with plate("SN_HF", self.num_SN_HF):
-            #     mu_SN = sample("mu_SN_HF", Uniform(*self.distmod_limits))
-            # mu_SN_Cepheid = self.L_SN_Cepheid_dist @ mu_host_all
-            # mag_SN_Cepheid = mu_SN_Cepheid + M_B
+            # TODO: add a prior for this in the config. Can we use something
+            # without infinite mass at zero?
+            e_mu = sample("e_mu", JeffreysPrior(0.001, 0.5))
 
-            # mag_SN_HF = mu_SN + M_B
+            # Sample the true apparent magnitudes of the Cepheid hosts, from
+            # a r^2 prior effectively.
+            with plate("SN_mag", self.num_SN_HF):
+                mag_true_HF = sample(
+                    "mag_true",
+                    MagnitudeDistribution(5, 25, self.Y_SN[77:], e_mu))
 
-            # # Y_SN_flow = jnp.ones(self.num_flow_SN) * (
-            # M_B - 5 * jnp.log10(H0))
-            # Y_SN = jnp.concatenate([mag_SN_Cepheid, mag_SN_HF])
-            # # factor(
-            # #     "ll_SN",
-            # #     mvn_logpdf_cholesky(self.Y_SN, Y_SN, self.L_SN)
-            # #     )
-            # with plate('test', len(Y_SN)):
-            #     sample("Y_SN", Normal(Y_SN, 0.2), obs=self.Y_SN)
+            mag_true_SN = jnp.concatenate([mag_true_SN_Cepheid, mag_true_HF])
 
-            # # Now the redshift likelihood
-            # z_cosmo = self.distmod2redshift(mu_SN, h=H0 / 100)
+            factor(
+                "ll_SN_HF",
+                mvn_logpdf_cholesky(self.Y_SN, mag_true_SN, self.L_SN)
+                )
 
-            # # cz_pred = (1 + z_cosmo) * (1 + Vext_rad / SPEED_OF_LIGHT) - 1
-            # cz_pred = z_cosmo * SPEED_OF_LIGHT
-            # e_cz = jnp.sqrt(self.e2_czcmb_SN_HF + sigma_v**2)
-            # with plate("SN_redshift", self.num_SN_HF):
-            #     sample("cz_pred2", Normal(cz_pred, sigma_v),
-            #            obs=self.czcmb_SN_HF)
+            mu_SN = mag_true_HF - M_B
+
+            # Now the redshift likelihood
+            Vext_rad_SN = jnp.sum(Vext[None, :] * self.rhat_SN_HF, axis=1)
+            cz_pred_SN = predict_cz(
+                self.distmod2redshift(mu_SN, h=H0 / 100),
+                Vext_rad_SN)
+            e_cz = jnp.sqrt(self.e2_czcmb_SN_HF + sigma_v**2)
+            with plate("SN_redshift", self.num_SN_HF):
+                sample("cz_pred2", Normal(cz_pred_SN, e_cz),
+                       obs=self.czcmb_SN_HF)
