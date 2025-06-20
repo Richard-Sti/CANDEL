@@ -929,6 +929,8 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
         data["num_hosts"] = np.sum(mask_host)
         data["num_cepheids"] = np.sum(mask_cepheid)
 
+        data["mask_host"] = mask_host
+
         for key, val in data.items():
             if "SN" in key and isinstance(val, np.ndarray):
                 data[key] = np.full_like(val, np.nan, dtype=val.dtype)

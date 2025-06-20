@@ -222,15 +222,22 @@ class BaseSH0ESModel(ABC):
                                   los_extrap=False):
         if "host_los_r":
             fprint("loading host galaxy LOS interpolators.")
-            self.host_los_delta = data["host_los_density"] - 1
+
+            host_los_delta = data["host_los_density"] - 1
+            host_los_velocity = data["host_los_velocity"]
+            host_los_r = data["host_los_r"]
+
+            if "mask_host" in data:
+                m = data["mask_host"]
+                host_los_delta = host_los_delta[m]
+                host_los_velocity = host_los_velocity[m]
 
             self.has_host_los = True
             kwargs = {"method": los_method, "extrap": los_extrap}
             self.f_host_los_delta = LOSInterpolator(
-                data["host_los_r"], self.host_los_delta, **kwargs)
+                host_los_r, host_los_delta, **kwargs)
             self.f_host_los_velocity = LOSInterpolator(
-                data["host_los_r"],
-                data["host_los_velocity"], **kwargs)
+                host_los_r, host_los_velocity, **kwargs)
         else:
             self.has_host_los = False
 
