@@ -297,6 +297,7 @@ def name2labelgetdist(name):
         "beta": r"\beta",
         "Vext_mag": r"V_\mathrm{ext}~\left[\mathrm{km}/\mathrm{s}\right]",
         "Vext_ell": r"\ell_\mathrm{ext}~\left[\mathrm{deg}\right]",
+        "Vext_ell_offset": r"\ell_\mathrm{ext} - 180~\left[\mathrm{deg}\right]",  # noqa
         "Vext_b":   r"b_\mathrm{ext}~\left[\mathrm{deg}\right]",
         "h": r"h",
         "a": r"a",
@@ -321,6 +322,7 @@ def name2labelgetdist(name):
         "mu_M31": r"\mu_{\rm M31} ~ [\mathrm{mag}]",
         "mu_N4258": r"\mu_{\rm NGC4258} ~ [\mathrm{mag}]",
         "H0": r"H_0~\left[\mathrm{km}/\mathrm{s}/\mathrm{Mpc}\right]",
+        "dZP": r"\Delta_{\rm ZP}~\left[\mathrm{mag}\right]",
     }
 
     if "/" in name:
@@ -426,7 +428,8 @@ def plot_Vext_rad_corner(samples, show_fig=True, filename=None, smooth=1):
 
 def plot_corner_getdist(samples_list, labels=None, show_fig=True,
                         filename=None, keys=None, fontsize=None, filled=True,
-                        points=None):
+                        apply_ell_offset=False, mag_range=[0, None],
+                        ell_range=[0, 360], b_range=[-90, 90], points=None):
     """Plot a GetDist triangle plot for one or more posterior samples."""
     try:
         import scienceplots  # noqa
@@ -463,14 +466,14 @@ def plot_corner_getdist(samples_list, labels=None, show_fig=True,
 
     ranges = {}
     for k in param_names:
-        if "mag" in k:
-            ranges[k] = [0, None]
+        if "_mag" in k:
+            ranges[k] = mag_range
 
-        if "ell" in k:
-            ranges[k] = [0, 360]
+        if "_ell" in k:
+            ranges[k] = ell_range
 
-        if "b" in k:
-            ranges[k] = [-90, 90]
+        if "_b" in k:
+            ranges[k] = b_range
 
     gdsamples_list = []
 
@@ -485,9 +488,16 @@ def plot_corner_getdist(samples_list, labels=None, show_fig=True,
                 col = samples[k].reshape(-1)
             else:
                 col = np.full(n_samples, np.nan)
+
             if not np.all(np.isnan(col)):
+                if "_ell" in k and apply_ell_offset:
+                    col = (col - 180) % 360
+                    label = name2labelgetdist(k + "_offset")
+                else:
+                    label = name2labelgetdist(k)
+
                 present_params.append(k)
-                present_labels.append(name2labelgetdist(k))
+                present_labels.append(label)
                 columns.append(col)
 
         data = np.vstack(columns).T
@@ -544,7 +554,8 @@ def plot_corner_getdist(samples_list, labels=None, show_fig=True,
 
 def plot_corner_from_hdf5(fnames, keys=None, labels=None, fontsize=None,
                           filled=True, show_fig=True, filename=None,
-                          points=None):
+                          apply_ell_offset=False, mag_range=[0, None],
+                          ell_range=[0, 360], b_range=[-90, 90], points=None):
     """
     Plot a triangle plot from one or more HDF5 files containing posterior
     samples.
@@ -570,6 +581,10 @@ def plot_corner_from_hdf5(fnames, keys=None, labels=None, fontsize=None,
         filled=filled,
         show_fig=show_fig,
         filename=filename,
+        apply_ell_offset=apply_ell_offset,
+        mag_range=mag_range,
+        ell_range=ell_range,
+        b_range=b_range,
         points=points,
     )
 
