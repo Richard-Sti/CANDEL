@@ -12,9 +12,9 @@ machine = "local"
 ###############################################################################
 
 [inference]
-num_warmup = 250
-num_samples = 750
-num_chains = 10
+num_warmup = 1000
+num_samples = 3000
+num_chains = 12
 chain_method = "parallel"
 seed = 44
 num_chains_harmonic = 10
@@ -82,13 +82,13 @@ high = 2500
 [model.priors.beta]
 dist = "normal"
 loc = 0.43
-scale = 0.05
+scale = 0.02
 
 [model.priors.A_covmat]
 dist = "truncated_normal"
 low = 0.0
 mean = 1.0
-scale = 2.5
+scale = 0.5
 
 
 [model.priors.Vext]
@@ -104,8 +104,8 @@ high = 2500
 ################################################################################
 
 [io]
-root_output = "results/SH0ES"
-fname_output = "results/SH0ES/test.hdf5"
+root_output = "results/"
+fname_output = "results/test.hdf5"
 
 
 [io.SH0ES]
