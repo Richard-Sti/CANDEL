@@ -919,9 +919,9 @@ class Clusters_DistMarg(BaseModel):
         # the mapping to `mu` above assumes h = 1.
         h = 1.
 
-        if self.sample_mu:
-            mu_MNR_mean = sample("mu_MNR_mean", Uniform(30,40))
-            mu_MNR_sigma = sample("mu_MNR_sigma", Uniform(0,10))
+        # if self.sample_mu:
+        #     mu_MNR_mean = sample("mu_MNR_mean", Uniform(30,40))
+        #     mu_MNR_sigma = sample("mu_MNR_sigma", Uniform(0,10))
         with plate("data", nsamples):
             if self.use_MNR:
                 raise NotImplementedError(
@@ -987,17 +987,23 @@ class Clusters_DistMarg(BaseModel):
             # From now on it is standard calculations.
             if self.sample_mu:
 
-                #mu = sample("mu_latent", Normal(mu_cluster, sigma_mu))
-                mu= sample("mu_latent", Normal(mu_MNR_mean,mu_MNR_sigma))
-                #mu= sample("mu_latent", Uniform(20,42))
+                mu = sample("mu_latent", Normal(mu_cluster, sigma_mu))
+                #mu= sample("mu_latent", Normal(mu_MNR_mean,mu_MNR_sigma))
+                # mu= sample("mu_latent", Uniform(20,42))
 
                 r = self.distmod2distance(mu, h=h)
                 log_pmu = 2 * jnp.log(r) + self.log_grad_distmod2distance(mu, h=h)
+                Vrad = 0.
+                # Homogeneous Malmquist bias
+                log_pmu_norm = log_norm_pmu(
+                    mu_cluster, sigma_mu, self.distmod2distance,
+                    **self.num_norm_kwargs, h=h)
+                
                 # rlower, rupper = self.distmod2distance(jnp.array([20.,41.]), h=h) 
                 # pmu_norm = 1/3 * (rupper**3 - rlower**3)
                 log_pmu_norm = 0 #jnp.log(pmu_norm) # normalisation not needed for basic case
-
-                Vrad = 0.
+                #=log_pmu = 0.
+                Vrad = 0. # ADD Vrad
 
                 # # Homogeneous Malmquist bias
                 # log_pmu_norm = log_norm_pmu(
