@@ -889,6 +889,7 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
         # # SH0ES-Antonio's approach for predicting H0 from Cepheid host zs
         # "Y_Cepheid_new": Y_Cepheid_new,
         # "Y_Cepheid_new_err": Y_Cepheid_new_err
+        "q_names": q_names,
         }
 
     if cepheid_host_cz_cmb_max is not None:
