@@ -840,7 +840,9 @@ class Clusters_DistMarg(BaseModel):
         self.sample_T = "T" in which_relation
         self.sample_Y = "Y" in which_relation
         self.sample_F = "L" in which_relation
-        
+
+        self.all_data = self.config["io"]["Clusters"]["all_data"]
+
         # Later make this choice more flexible.
         self.Om = 0.3
 
@@ -905,6 +907,15 @@ class Clusters_DistMarg(BaseModel):
         C = rsample("C_CL", self.priors["CL_C"])
         sigma_mu = rsample("sigma_mu", self.priors["sigma_mu"])
 
+        if self.all_data:
+            #debug.print('hi')
+            A_LT = rsample("A_LT_CL", self.priors["CL_A"])
+            B_LT = rsample("B_LT_CL", self.priors["CL_B"])
+            sigma_mu_LT = rsample("sigma_mu_LT", self.priors["sigma_mu"])
+
+        #debug.print('{} {} {}', A,B,C)
+        #debug.print('{} {} {}',A_LT, B_LT, sigma_mu_LT)
+
         # Sample velocity field parameters.
         if self.with_radial_Vext:
             Vext = rsample("Vext_rad", self.priors["Vext_radial"])
@@ -959,6 +970,10 @@ class Clusters_DistMarg(BaseModel):
                     
                 sigma_mu = jnp.sqrt(sigma_mu2)
 
+                if self.all_data:
+                    sigma_mu2_LT = jnp.ones(nsamples) * sigma_mu_LT**2 + data['e2_logF'] + B**2*data['e2_logT']
+                    sigma_mu_LT = jnp.sqrt(sigma_mu2_LT)
+
             if not self.sample_T:
                 logT = 0.
             if not self.sample_Y:
@@ -983,7 +998,18 @@ class Clusters_DistMarg(BaseModel):
             else:
                 raise ValueError(
                     f"Invalid scaling relation '{self.which_relation}'.")
-                                 
+            
+            if self.all_data:
+                logL_pred = jnp.log10(Ez) + A_LT + B_LT * logT
+                mu_cluster_LT = 2.5 * (logL_pred - logF) + 25
+
+                # debug.print('no {}', mu_cluster)
+                # debug.print('LT {}', mu_cluster_LT)
+
+                mu_cluster = jnp.where(jnp.isnan(logY), mu_cluster_LT, mu_cluster)# Sample the distance modulus.
+
+                #debug.print('LT {}', mu_cluster)
+
             # From now on it is standard calculations.
             if self.sample_mu:
 
@@ -1032,8 +1058,17 @@ class Clusters_DistMarg(BaseModel):
                 mu_grid = self.distance2distmod(r_grid, h=h)
 
                 ll = 2 * jnp.log(r_grid)
-                ll += Normal(
+                ll_mu = Normal(
                     mu_cluster[:, None], sigma_mu[:, None]).log_prob(mu_grid)
+
+                if self.all_data:
+                    ll_mu_LT = Normal(
+                        mu_cluster_LT[:, None], sigma_mu_LT[:, None]
+                    ).log_prob(mu_grid)
+
+                    cond_bcast = jnp.isnan(logY)[:, None]
+                    ll_mu = jnp.where(cond_bcast, ll_mu_LT, ll_mu)
+                ll += ll_mu
 
                 if data.has_precomputed_los:
                     # The shape is `(n_galaxies, num_steps.)`
@@ -1055,6 +1090,8 @@ class Clusters_DistMarg(BaseModel):
 
                 ll += Normal(czpred, sigma_v).log_prob(data["czcmb"][:, None])
                 ll = ln_simpson(ll, x=r_grid, axis=-1) - ll_norm
+
+                #debug.print('{}', np.sum(ll))
 
                 factor("obs", ll)
 

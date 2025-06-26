@@ -25,7 +25,7 @@ from jax import vmap
 from numpyro import set_platform
 from numpyro.diagnostics import print_summary as print_summary_numpyro
 from numpyro.infer import MCMC, NUTS
-from numpyro.infer.initialization import init_to_median
+from numpyro.infer.initialization import init_to_median, init_to_value
 from numpyro.infer.util import log_density
 from tqdm import trange
 
@@ -55,6 +55,17 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
         fprint("using NumPyro platform: CPU")
 
     kwargs = model.config["inference"]
+
+    test_samples = {'A_CL': jnp.array([-2.63]),
+                'A_LT_CL': jnp.array([-2.63]),
+                'B_CL': jnp.array([0.52]),
+                'C_CL': jnp.array([0.1]),
+                'B_LT_CL': jnp.array([0.52]),
+                'sigma_mu': jnp.array([0.5]),
+                'sigma_mu_LT': jnp.array([0.5]),
+                'sigma_v': jnp.array([100.])}
+    
+    #kernel = NUTS(model, init_strategy=init_to_value(values=test_samples))
 
     kernel = NUTS(model, init_strategy=init_to_median(num_samples=5000))
     mcmc = MCMC(
