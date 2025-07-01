@@ -56,17 +56,6 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
 
     kwargs = model.config["inference"]
 
-    test_samples = {'A_CL': jnp.array([-2.63]),
-                'A_LT_CL': jnp.array([-2.63]),
-                'B_CL': jnp.array([0.52]),
-                'C_CL': jnp.array([0.1]),
-                'B_LT_CL': jnp.array([0.52]),
-                'sigma_mu': jnp.array([0.5]),
-                'sigma_mu_LT': jnp.array([0.5]),
-                'sigma_v': jnp.array([100.])}
-    
-    #kernel = NUTS(model, init_strategy=init_to_value(values=test_samples))
-
     kernel = NUTS(model, init_strategy=init_to_median(num_samples=5000))
     mcmc = MCMC(
         kernel, num_warmup=kwargs["num_warmup"],

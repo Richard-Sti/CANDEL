@@ -23,7 +23,7 @@ from jax import random, vmap, debug
 from jax.lax import cond
 from jax.scipy.stats import norm
 from jax_cosmo.scipy.interpolate import InterpolatedUnivariateSpline
-from numpyro import deterministic, factor, plate, sample
+from numpyro import deterministic, factor, handlers, plate, sample
 from numpyro.distributions import (Delta, Distribution, MultivariateNormal,
                                    Normal, ProjectedNormal, TruncatedNormal,
                                    Uniform, constraints)
@@ -39,6 +39,32 @@ from ..cosmography import (Distance2Distmod, Distmod2Distance,
 from ..util import SPEED_OF_LIGHT, fprint, load_config
 from .magnitude_selection import log_magnitude_selection
 from .simpson import ln_simpson
+
+import hashlib
+import json
+
+###############################################################################
+#                         Configuration file checks                           #
+###############################################################################
+
+
+def make_json_safe(obj):
+    if isinstance(obj, dict):
+        return {k: make_json_safe(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return [make_json_safe(x) for x in obj]
+    elif isinstance(obj, (jnp.ndarray, np.ndarray)):
+        return obj.tolist()
+    elif hasattr(obj, 'item') and isinstance(obj.item(), (int, float, bool, str)):  # noqa
+        return obj.item()
+    else:
+        return obj
+
+
+def config_hash(cfg):
+    safe_cfg = make_json_safe(cfg)
+    json_str = json.dumps(safe_cfg, sort_keys=True)
+    return hashlib.sha256(json_str.encode()).hexdigest()
 
 ###############################################################################
 #                                Priors                                       #
@@ -200,7 +226,7 @@ def load_priors(config_priors):
 ###############################################################################
 
 
-def rsample(name, dist):
+def _rsample(name, dist):
     """
     Samples from `dist` unless it is a delta function or vector directive.
     """
@@ -216,11 +242,22 @@ def rsample(name, dist):
     if isinstance(dist, dict) and dist.get("type") == "vector_uniform_fixed":
         return sample_vector_fixed(name, dist["low"], dist["high"])
 
+    if isinstance(dist, dict) and dist.get("type") == "vector_components_uniform":  # noqa
+        return sample_vector_components_uniform(
+            name, dist["low"], dist["high"])
+
     if isinstance(dist, dict) and dist.get("type") == "vector_radial_spline_uniform":  # noqa
         return sample_spline_radial_vector(
             name, dist["nval"], dist["low"], dist["high"], )
 
     return sample(name, dist)
+
+
+def rsample(name, dist, shared_params):
+    """Sample a parameter from `dist`, unless provided in `shared_params`."""
+    if shared_params is not None and name in shared_params:
+        return shared_params[name]
+    return _rsample(name, dist)
 
 
 def log_norm_pmu(mu_TFR, sigma_mu, distmod2distance, num_points=30,
@@ -371,15 +408,15 @@ class BaseModel(ABC):
         pass
 
 
-def sample_galaxy_bias(priors, galaxy_bias):
+def sample_galaxy_bias(priors, galaxy_bias, shared_params=None):
     """
     Sample a vector of galaxy bias parameters based on the specified model.
     """
     if galaxy_bias == "powerlaw":
-        alpha = rsample("alpha", priors["alpha"])
+        alpha = rsample("alpha", priors["alpha"],shared_params)
         bias_params = [alpha,]
     elif galaxy_bias == "linear":
-        b1 = rsample("b1", priors["b1"])
+        b1 = rsample("b1", priors["b1"],shared_params)
         bias_params = [b1,]
     else:
         raise ValueError(f"Invalid galaxy bias model '{galaxy_bias}'.")
@@ -700,6 +737,7 @@ class TFRModel_DistMarg(BaseModel):
             ll += Normal(czpred, sigma_v).log_prob(data["czcmb"][:, None])
             ll = ln_simpson(ll, x=r_grid, axis=-1) - ll_norm
 
+
             factor("obs", ll)
 
 
@@ -841,8 +879,6 @@ class Clusters_DistMarg(BaseModel):
         self.sample_Y = "Y" in which_relation
         self.sample_F = "L" in which_relation
 
-        self.all_data = self.config["io"]["Clusters"]["all_data"]
-
         # Later make this choice more flexible.
         self.Om = 0.3
 
@@ -894,7 +930,7 @@ class Clusters_DistMarg(BaseModel):
         if which_relation == "YT":
             self.logangdist2distmod = LogAngularDiameterDistance2Distmod()
 
-    def __call__(self, data):
+    def __call__(self, data, shared_params=None):
         nsamples = len(data)
 
         if data.sample_dust:
@@ -902,29 +938,23 @@ class Clusters_DistMarg(BaseModel):
                 "Dust sampling is not implemented for `TFRModel`.")
 
         # Sample the cluster scaling parameters.
-        A = rsample("A_CL", self.priors["CL_A"])
-        B = rsample("B_CL", self.priors["CL_B"])
-        C = rsample("C_CL", self.priors["CL_C"])
-        sigma_mu = rsample("sigma_mu", self.priors["sigma_mu"])
-
-        if self.all_data:
-            #debug.print('hi')
-            A_LT = rsample("A_LT_CL", self.priors["CL_A"])
-            B_LT = rsample("B_LT_CL", self.priors["CL_B"])
-            sigma_mu_LT = rsample("sigma_mu_LT", self.priors["sigma_mu"])
+        A = rsample("A_CL", self.priors["CL_A"],shared_params)
+        B = rsample("B_CL", self.priors["CL_B"],shared_params)
+        C = rsample("C_CL", self.priors["CL_C"],shared_params)
+        sigma_mu = rsample("sigma_mu", self.priors["sigma_mu"],shared_params)
 
         #debug.print('{} {} {}', A,B,C)
         #debug.print('{} {} {}',A_LT, B_LT, sigma_mu_LT)
 
         # Sample velocity field parameters.
         if self.with_radial_Vext:
-            Vext = rsample("Vext_rad", self.priors["Vext_radial"])
+            Vext = rsample("Vext_rad", self.priors["Vext_radial"],shared_params)
         else:
-            Vext = rsample("Vext", self.priors["Vext"])
-        sigma_v = rsample("sigma_v", self.priors["sigma_v"])
+            Vext = rsample("Vext", self.priors["Vext"],shared_params)
+        sigma_v = rsample("sigma_v", self.priors["sigma_v"],shared_params)
         # Remaining parameters
         bias_params = sample_galaxy_bias(self.priors, self.galaxy_bias)
-        beta = rsample("beta", self.priors["beta"])
+        beta = rsample("beta", self.priors["beta"],shared_params)
 
         # For the distance marginalization, h is not sampled. Careful because
         # the mapping to `mu` above assumes h = 1.
@@ -970,10 +1000,6 @@ class Clusters_DistMarg(BaseModel):
                     
                 sigma_mu = jnp.sqrt(sigma_mu2)
 
-                if self.all_data:
-                    sigma_mu2_LT = jnp.ones(nsamples) * sigma_mu_LT**2 + data['e2_logF'] + B**2*data['e2_logT']
-                    sigma_mu_LT = jnp.sqrt(sigma_mu2_LT)
-
             if not self.sample_T:
                 logT = 0.
             if not self.sample_Y:
@@ -998,17 +1024,6 @@ class Clusters_DistMarg(BaseModel):
             else:
                 raise ValueError(
                     f"Invalid scaling relation '{self.which_relation}'.")
-            
-            if self.all_data:
-                logL_pred = jnp.log10(Ez) + A_LT + B_LT * logT
-                mu_cluster_LT = 2.5 * (logL_pred - logF) + 25
-
-                # debug.print('no {}', mu_cluster)
-                # debug.print('LT {}', mu_cluster_LT)
-
-                mu_cluster = jnp.where(jnp.isnan(logY), mu_cluster_LT, mu_cluster)# Sample the distance modulus.
-
-                #debug.print('LT {}', mu_cluster)
 
             # From now on it is standard calculations.
             if self.sample_mu:
@@ -1058,17 +1073,8 @@ class Clusters_DistMarg(BaseModel):
                 mu_grid = self.distance2distmod(r_grid, h=h)
 
                 ll = 2 * jnp.log(r_grid)
-                ll_mu = Normal(
+                ll += Normal(
                     mu_cluster[:, None], sigma_mu[:, None]).log_prob(mu_grid)
-
-                if self.all_data:
-                    ll_mu_LT = Normal(
-                        mu_cluster_LT[:, None], sigma_mu_LT[:, None]
-                    ).log_prob(mu_grid)
-
-                    cond_bcast = jnp.isnan(logY)[:, None]
-                    ll_mu = jnp.where(cond_bcast, ll_mu_LT, ll_mu)
-                ll += ll_mu
 
                 if data.has_precomputed_los:
                     # The shape is `(n_galaxies, num_steps.)`
@@ -1090,11 +1096,58 @@ class Clusters_DistMarg(BaseModel):
 
                 ll += Normal(czpred, sigma_v).log_prob(data["czcmb"][:, None])
                 ll = ln_simpson(ll, x=r_grid, axis=-1) - ll_norm
+                #ll = jnp.where(jnp.isnan(logY), 0, ll)
 
                 #debug.print('{}', np.sum(ll))
+                # debug.print('A_CL {}', A)
+                # debug.print('B_CL {}', B)
+                # debug.print('C_CL {}', C)
+                # debug.print('sigma_mu {}', sigma_mu[0])
+                # debug.print('sigma_v {}', sigma_v)
+                # debug.print('A_LT_CL {}', A_LT)
+                # debug.print('B_LT_CL {}', B_LT)
+                # debug.print('sigma_mu_LT {}', sigma_mu_LT[0])
 
                 factor("obs", ll)
 
+
+class Clusters_DistMarg_LT_from_LTY(Clusters_DistMarg):
+    """
+    Cluster L-T-Y scaling relation peculiar velocity model with distance
+    marginalization.
+    """
+    
+    def __init__(self, config_path):
+        super().__init__(config_path)
+
+        which_relation = 'LT'
+        if which_relation not in ["LT", "LY", "LTY", "YT"]:
+            raise ValueError(f"Invalid scaling relation '{which_relation}'. "
+                             "Choose either 'LT' or 'LY' or 'LTY'.")
+
+        self.which_relation = which_relation
+        self.sample_T = "T" in which_relation
+        self.sample_Y = "Y" in which_relation
+        self.sample_F = "L" in which_relation
+
+        # Disable priors only if the variable is not used in the relation.
+        used = set(which_relation)
+        prior_info = {
+            "T": ("sample_T", "logT", "CL_B"),
+            "Y": ("sample_Y", "logY", "CL_C"),
+        }
+
+        for var, (attr, name, key) in prior_info.items():
+            if var not in used and not getattr(self, attr, False):
+                fprint(
+                    f"`{name}` is not used in the model. Disabling its prior.")
+                self.priors[key] = Delta(jnp.asarray(0.0))
+                self.prior_dist_name[key] = "delta"
+
+    def __call__(self, data, shared_params=None):
+        super().__call__(data, shared_params)
+
+print(Clusters_DistMarg_LT_from_LTY.__mro__)
 
 ###############################################################################
 #                                FP models                                    #
@@ -1189,3 +1242,60 @@ class FPModel_DistMarg(BaseModel):
             ll = ln_simpson(ll, x=r_grid, axis=-1) - ll_norm
 
             factor("obs", ll)
+
+
+
+###############################################################################
+#                           Sampling utilities                                #
+###############################################################################
+
+def sample_vector_components_uniform(name, low, high):
+    """
+    Sample a 3D vector by drawing each Cartesian component independently
+    from a uniform distribution over [xmin, xmax].
+    """
+    x = sample(f"{name}_x", Uniform(low, high))
+    y = sample(f"{name}_y", Uniform(low, high))
+    z = sample(f"{name}_z", Uniform(low, high))
+    return jnp.array([x, y, z])
+
+
+
+###############################################################################
+#                               Joint model                                   #
+###############################################################################
+
+class JointPVModel:
+    """
+    A joint probabilistic velocity (PV) model that runs multiple submodels
+    (e.g., TFR models) on independent datasets, while sharing a subset of
+    parameters across all submodels.
+    """
+
+    def __init__(self, submodels, shared_param_names):
+        self.submodels = submodels
+        self.shared_param_names = shared_param_names
+
+        # Check that all submodels have the same config.
+        ref_hash = config_hash(submodels[0].config)
+        for i, model in enumerate(submodels[1:], start=1):
+            if config_hash(model.config) != ref_hash:
+                raise ValueError(f"Submodel {i} has a different config hash.")
+
+        self.config = submodels[0].config
+        self.with_radial_Vext = submodels[0].with_radial_Vext
+
+    def _sample_shared_params(self, priors):
+        shared = {}
+        for name in self.shared_param_names:
+            shared[name] = _rsample(name, priors[name])
+        return shared
+
+    def __call__(self, data):
+        assert len(data) == len(self.submodels)
+        shared_params = self._sample_shared_params(self.submodels[0].priors)
+
+        for i, (submodel, data_i) in enumerate(zip(self.submodels, data)):
+            name = data_i.name if data_i is not None else f"dataset_{i}"
+            with handlers.scope(prefix=name):
+                submodel(data_i, shared_params=shared_params)

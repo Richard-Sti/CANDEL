@@ -20,8 +20,11 @@ from .model import (                                                            
     PantheonPlusModel_DistMarg,                                                 # noqa
     Clusters_DistMarg,                                                          # noqa
     FPModel_DistMarg,                                                           # noqa
+    Clusters_DistMarg_LT_from_LTY,                                              # noqa
+    JointPVModel                                                                # noqa
     )
 
+print('lol' , Clusters_DistMarg_LT_from_LTY.__mro__)
 
 from .magnitude_selection import (                                              # noqa
     MagnitudeSelection,                                                         # noqa
@@ -39,7 +42,9 @@ def name2model(name):
         "TFRModel_DistMarg": TFRModel_DistMarg,
         "PantheonPlusModel_DistMarg": PantheonPlusModel_DistMarg,
         "Clusters_DistMarg": Clusters_DistMarg,
-        "FPModel_DistMarg": FPModel_DistMarg
+        "Clusters_Distmarg_LT_from_LTY": Clusters_DistMarg_LT_from_LTY,
+        "FPModel_DistMarg": FPModel_DistMarg,
+        "JointPVModel": JointPVModel
         }
 
     if name not in mapping:
