@@ -429,7 +429,8 @@ def plot_Vext_rad_corner(samples, show_fig=True, filename=None, smooth=1):
 def plot_corner_getdist(samples_list, labels=None, show_fig=True,
                         filename=None, keys=None, fontsize=None, filled=True,
                         apply_ell_offset=False, mag_range=[0, None],
-                        ell_range=[0, 360], b_range=[-90, 90], points=None):
+                        ell_range=[0, 360], b_range=[-90, 90], points=None,
+                        truths=None):
     """Plot a GetDist triangle plot for one or more posterior samples."""
     try:
         import scienceplots  # noqa
@@ -542,6 +543,38 @@ def plot_corner_getdist(samples_list, labels=None, show_fig=True,
                         ax.legend()
                     plotted_pairs.add((ix, iy))
 
+        if truths is not None:
+            # 1D panels: vertical truth lines
+            for i, param in enumerate(param_names):
+                lw = 1.5 * plt.rcParams["lines.linewidth"]
+                if param in truths:
+                    val = truths[param]
+                    ax = g.subplots[i, i]
+                    ax.axvline(val, color="red", linestyle="--", lw=lw)
+                    __, labels_ = ax.get_legend_handles_labels()
+                    if "Reference" not in labels_:
+                        ax.legend()
+
+            # 2D panels: vertical/horizontal lines and crosses
+            for i, x_param in enumerate(param_names):
+                for j, y_param in enumerate(param_names):
+                    if j > i:
+                        ax = g.subplots[j, i]
+
+                        x_in = x_param in truths
+                        y_in = y_param in truths
+
+                        # Vertical line for x truth
+                        if x_in:
+                            x_val = truths[x_param]
+                            ax.axvline(
+                                x_val, color="red", linestyle="--", lw=lw)
+                        # Horizontal line for y truth
+                        if y_in:
+                            y_val = truths[y_param]
+                            ax.axhline(
+                                y_val, color="red", linestyle="--", lw=lw)
+
         if filename is not None:
             fprint(f"[INFO] Saving GetDist triangle plot to: {filename}")
             g.export(filename, dpi=450)
@@ -555,7 +588,8 @@ def plot_corner_getdist(samples_list, labels=None, show_fig=True,
 def plot_corner_from_hdf5(fnames, keys=None, labels=None, fontsize=None,
                           filled=True, show_fig=True, filename=None,
                           apply_ell_offset=False, mag_range=[0, None],
-                          ell_range=[0, 360], b_range=[-90, 90], points=None):
+                          ell_range=[0, 360], b_range=[-90, 90], points=None,
+                          truths=None):
     """
     Plot a triangle plot from one or more HDF5 files containing posterior
     samples.
@@ -586,6 +620,7 @@ def plot_corner_from_hdf5(fnames, keys=None, labels=None, fontsize=None,
         ell_range=ell_range,
         b_range=b_range,
         points=points,
+        truths=truths,
     )
 
 
