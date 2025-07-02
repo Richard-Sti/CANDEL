@@ -25,12 +25,12 @@ num_chains_harmonic = 10
 
 [model]
 
-Om = 0.315
+Om = 0.3
 use_MNR = false
 use_uniform_mu_host_priors = false
 use_Cepheid_host_redshift = true
-use_reconstruction = true
-use_fiducial_Cepheid_host_PV_covariance = false
+use_reconstruction = false
+use_fiducial_Cepheid_host_PV_covariance = true
 use_PV_covmat_scaling = false
 
 use_SNe_HF_SH0ES = false
