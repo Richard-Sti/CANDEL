@@ -20,9 +20,8 @@ import argparse
 import sys
 from pathlib import Path
 
-from candel import fprint, load_config
+from candel import fprint, load_config, get_nested
 
-from generate_tasks import get_nested
 
 
 def exists(path):

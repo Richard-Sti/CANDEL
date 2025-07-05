@@ -56,6 +56,11 @@ def load_los(catalogue, config):
         los_file = d.pop("los_file")
         data = candel.pvdata.load_SDSS_FP(**d)
         RA, dec = data["RA"], data["dec"]
+    elif catalogue == "SH0ES":
+        d = config["io"]["PV_main"][catalogue].copy()
+        los_file = d.pop("los_file")
+        data = candel.pvdata.load_SH0ES_separated(**d)
+        RA, dec = data["RA_host"], data["dec_host"]
     else:
         raise ValueError(f"Catalogue {catalogue} not supported. Please add "
                          "support for it.")

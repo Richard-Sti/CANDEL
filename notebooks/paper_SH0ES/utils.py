@@ -1,4 +1,4 @@
-# Copyright (C) 2024 Richard Stiskalek, Deaglan Bartlett
+# Copyright (C) 2025 Richard Stiskalek
 # This program is free software; you can redistribute it and/or modify it
 # under the terms of the GNU General Public License as published by the
 # Free Software Foundation; either version 3 of the License, or (at your
@@ -13,10 +13,22 @@
 # with this program; if not, write to the Free Software Foundation, Inc.,
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
-from .growth_rate import Beta2Cosmology                                         # noqa
-from .pv_covariance import (                                                    # noqa
-    get_Pk_CAMB,                                                                # noqa
-    compute_dD_dtau,                                                            # noqa
-    compute_Fuv,                                                                # noqa
-    compute_covariance_matrix,                                                  # noqa
-    )
+from os.path import join
+
+from h5py import File
+
+
+def read_samples(root, fname, keys=None):
+    fname = join(root, fname)
+
+    with File(fname, "r") as f:
+        if keys is None:
+            keys = list(f["samples"].keys())
+        elif isinstance(keys, str):
+            keys = [keys]
+
+        samples = {key: f[f"samples/{key}"][...] for key in keys}
+
+    if isinstance(keys, list) and len(keys) == 1:
+        return samples[keys[0]]
+    return samples

@@ -73,15 +73,21 @@ class Distance2Distmod:
         Minimum and maximum redshift for the interpolation grid.
     npoints_interp : int
         Number of points in the interpolation grid.
+    is_scalar : bool
+        If `True`, the interpolator is not vectorized. This is useful for
+        debugging, but should be set to `False` for performance.
     """
     def __init__(self, Om0=0.3, zmin_interp=1e-8, zmax_interp=0.5,
-                 npoints_interp=1000):
+                 npoints_interp=1000, is_scalar=False):
         cosmo = FlatLambdaCDM(H0=100, Om0=Om0)
         z_grid = np.linspace(zmin_interp, zmax_interp, npoints_interp)
         r_grid = cosmo.comoving_distance(z_grid).value
         mu_grid = cosmo.distmod(z_grid).value
 
-        self._f = vmap(Interpolator1D(jnp.log(r_grid), mu_grid, extrap=False))
+        f = Interpolator1D(jnp.log(r_grid), mu_grid, extrap=False)
+        if not is_scalar:
+            f = vmap(f)
+        self._f = f
 
     def __call__(self, r, h=1,):
         return self._f(jnp.log(r * h)) - 5 * jnp.log10(h)
@@ -184,6 +190,33 @@ class Redshift2Distance:
         return self._f(z) / h
 
 
+class Redshift2Distmod:
+    """
+    Class to build an interpolator to convert redshift to distance
+    modulus. Choice of `h` is determined when calling the
+    `__call__` method.
+
+    Parameters
+    ----------
+    Om0 : float
+        Matter density parameter.
+    zmin_interp, zmax_interp : float
+        Minimum and maximum redshift for the interpolation grid.
+    npoints_interp : int
+        Number of points in the interpolation grid.
+    """
+    def __init__(self, Om0=0.3, zmin_interp=1e-8, zmax_interp=0.5,
+                 npoints_interp=1000):
+        cosmo = FlatLambdaCDM(H0=100, Om0=Om0)
+        z_grid = np.linspace(zmin_interp, zmax_interp, npoints_interp)
+        mu_grid = cosmo.distmod(z_grid).value
+
+        self._f = vmap(Interpolator1D(jnp.log(z_grid), mu_grid, extrap=False))
+
+    def __call__(self, z, h=1, ):
+        return self._f(jnp.log(z)) - 5 * jnp.log10(h)
+
+
 class Distance2Redshift:
     """
     Class to build an interpolator to convert comoving distance in `Mpc`
@@ -243,3 +276,21 @@ class LogGrad_Distmod2ComovingDistance:
 
     def __call__(self, mu, h=1):
         return self._f(mu + 5 * jnp.log10(h)) - jnp.log(h)
+
+
+###############################################################################
+#                           Cosmographic expansion                            #
+###############################################################################
+
+
+def redshift_to_dL_cosmography(z, H0, q0=-0.55, j0=1, s0=0.055):
+    """
+    Calculate the luminosity distance for a given redshift using cosmographic
+    expansion up to second order in redshift.
+    """
+    return (SPEED_OF_LIGHT * z) / H0 * (
+        1
+        + 0.5 * (1 - q0) * z
+        - (1 / 6) * (1 - q0 - 3 * q0**2 + j0) * z**2
+        + (1 / 24) * (2 - 2 * q0 - 15 * q0**2 - 15 * q0**3 + 5 * j0 + 10 * q0 *  j0 + s0) * z**3  # noqa
+        )

@@ -31,13 +31,18 @@ class LOSInterpolator:
     defined on a shared radial grid `los_r`, allowing efficient evaluation
     at per-galaxy query positions `r[i]`.
 
-    The expected shapes are `los_r` of `(n_steps, )`, and `f` of
+    The expected shapes are `los_r` of `(n_steps,)`, and `f` of
     `(n_galaxies, n_steps)`, where `n_steps` is the number of radial steps
     and `n_galaxies` is the number of galaxies. The interpolator can then be
-    queried with a radial position `r` of shape `(n_galaxies, )`.
+    queried with a radial position `r` of shape `(n_galaxies,)`.
+
+    Note: the method `interp_many_steps_per_galaxy` supports extrapolation
+    beyond the last `los_r` value using an exponential decay
+    `f(r) ∝ exp(-r / r₀)` with a fixed decay scale `r₀`.
     """
 
-    def __init__(self, los_r, f, method="cubic", extrap=False):
+    def __init__(self, los_r, f, method="cubic", r0_decay_many_steps=5,
+                 extrap=False):
         assert f.ndim == 2 and los_r.ndim == 1
         assert f.shape[1] == los_r.shape[0]
 
@@ -48,17 +53,19 @@ class LOSInterpolator:
         self._batched_interp = jax.vmap(single_interp, in_axes=(0, 0))
         self._los_r = los_r
         self._frozen_f = f
+        self.r0_decay_many_steps = r0_decay_many_steps
 
     @partial(jax.jit, static_argnums=0)
     def interp_many_steps_per_galaxy(self, r_eval):
-        """
-        Interpolate a set of steps `r_eval` of shape (`n_gal, n_eval`) for a
-        set of LOS densities `los_density` of shape (`n_gal, n_steps`) at the
-        radial positions `los_r` of shape (`n_steps, `). Returns an array of
-        shape (`n_gal, n_eval`).
-        """
-        return vmap(
-            lambda y, rq: jnp.interp(rq, self._los_r, y))(self._frozen_f, r_eval)  # noqa
+        r_max = self._los_r[-1]
+        y_interp = vmap(lambda y, rq: jnp.interp(rq, self._los_r, y))(
+            self._frozen_f, r_eval)
+
+        # Use the last value at r_max as amplitude A
+        A = self._frozen_f[:, -1]
+        extrap = A[:, None] * jnp.exp(
+            -(r_eval - r_max) / self.r0_decay_many_steps)
+        return jnp.where(r_eval > r_max, extrap, y_interp)
 
     @partial(jax.jit, static_argnums=0)
     def __call__(self, r):

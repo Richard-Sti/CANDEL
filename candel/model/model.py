@@ -89,7 +89,7 @@ class MagnitudeDistribution(Distribution):
     reparametrized_params = ["xmin", "xmax"]
     support = constraints.real  # change to interval if you want hard clipping
 
-    def __init__(self, xmin, xmax, mag_sample, e_mag_sample,
+    def __init__(self, xmin, xmax, mag_sample=None, e_mag_sample=None,
                  validate_args=None):
         self.xmin = xmin
         self.xmax = xmax
@@ -102,6 +102,10 @@ class MagnitudeDistribution(Distribution):
                          validate_args=validate_args)
 
     def sample(self, key, sample_shape=()):
+        if self.mag_sample is None or self.e_mag_sample is None:
+            u = random.uniform(key, shape=sample_shape + self.batch_shape)
+            return self.xmin + (self.xmax - self.xmin) * u
+
         u = random.normal(key, shape=sample_shape + self.batch_shape)
         return self.mag_sample + self.e_mag_sample * u
 
@@ -209,6 +213,7 @@ def load_priors(config_priors):
     """Load a dictionary of NumPyro distributions from a TOML file."""
     _DIST_MAP = {
         "normal": lambda p: Normal(p["loc"], p["scale"]),
+        "truncated_normal": lambda p: TruncatedNormal(p["mean"], p["scale"], low=p.get("low", None), high= p.get("high", None)),  # noqa
         "uniform": lambda p: Uniform(p["low"], p["high"]),
         "delta": lambda p: Delta(p["value"]),
         "jeffreys": lambda p: JeffreysPrior(p["low"], p["high"]),
@@ -266,7 +271,7 @@ def _rsample(name, dist):
     return sample(name, dist)
 
 
-def rsample(name, dist, shared_params):
+def rsample(name, dist, shared_params=None):
     """Sample a parameter from `dist`, unless provided in `shared_params`."""
     if shared_params is not None and name in shared_params:
         return shared_params[name]

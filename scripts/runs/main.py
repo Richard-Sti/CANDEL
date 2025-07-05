@@ -26,9 +26,7 @@ from argparse import ArgumentParser
 from os.path import exists
 
 import candel
-from candel import fprint
-
-from generate_tasks import get_nested
+from candel import fprint, get_nested
 
 
 def insert_comment_at_top(path: str, label: str):

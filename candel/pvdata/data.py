@@ -21,6 +21,7 @@ from astropy.cosmology import FlatLambdaCDM
 from astropy.io import fits
 from h5py import File
 from jax import numpy as jnp
+from scipy.linalg import cholesky
 
 from ..model.interp import LOSInterpolator
 from ..util import (SPEED_OF_LIGHT, fprint, galactic_to_radec, load_config,
@@ -687,6 +688,274 @@ def load_SH0ES(root):
             data[key] = jnp.asarray(data[key], dtype=jnp.float32)
 
     return data
+
+
+def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
+                         replace_SN_HF_from_PP=False, los_data_path=None):
+    """
+    Load the separated SH0ES data, separating the Cepheid and supernovae and
+    covariance matrices.
+
+    Structure of the covariance matrix indices:
+    ------------------------------------------
+    - Indices < 2150: Cepheid hosts without geometric anchors.
+    - Index 2150: Start of NGC 4258 Cepheid hosts.
+    - Index 2593: Start of M31 Cepheid hosts.
+    - Index 2648: Start of LMC Cepheid hosts.
+    - Index 3130: Beginning of supernovae in Cepheid host galaxies.
+
+    - Indices 3130–3206: Rung two supernovae (in Cepheid hosts).
+
+    - Index 3207: Uncertainty on HST zeropoint (sigma_HST).
+    - Index 3208: Uncertainty on Gaia zeropoint (sigma_Gaia).
+    - Index 3209: Prior on metallicity coefficient Z_W.
+    - Index 3210: Unused term (likely placeholder).
+    - Index 3211: Ground-based photometry systematic uncertainty (sigma_grnd).
+    - Index 3212: Prior on P–L relation slope b_W.
+    - Index 3213: Constraint on NGC 4258 anchor offset (delta_mu_N4258).
+    - Index 3214: Constraint on LMC anchor offset (delta_mu_LMC).
+
+    - Indices ≥ 3215: Hubble flow supernovae (rung three).
+    """
+    if replace_SN_HF_from_PP:
+        fprint("replacing SH0ES SN Hubble flow data with Pantheon+ data.")
+
+    # Unpack the SH0ES data.
+    data = load_SH0ES(root)
+    Y = np.array(data['Y'], copy=True)
+    C = np.array(data['C'], copy=True)
+    L = np.array(data['L'].T, copy=True)
+
+    # Cepheid data and covariance matrix.
+    OH = L[:, -4][:3130]
+    logP = L[:, -6][:3130]
+    mag_cepheid = Y[:3130]
+    C_Cepheid = C[:3130, :3130]
+
+    # Undo the removal of a slope of -3.285
+    mag_cepheid += -3.285 * logP
+
+    # This will organise the host distances as
+    # `[Host with Cepheids but no geometric anchors, NGC4258, LMC, M31]`. There
+    # are 37 of the former, so in total there are 40 distances to be inferred.
+    L_dist = np.hstack([L[:, :37], L[:, [37, 39, 40]]])
+    L_Cepheid_host_dist = L_dist[:3130]
+
+    # N4258 and LMC anchors.
+    mu_N4258_anchor = 29.398
+    e_mu_N4258_anchor = 0.032
+
+    mu_LMC_anchor = 18.477
+    e_mu_LMC_anchor = 0.0263
+
+    # Undo the anchor offsets.
+    mag_cepheid[2150:2593] += mu_N4258_anchor
+    mag_cepheid[2648:] += mu_LMC_anchor
+
+    # SN data and covariance matrix.
+    C_SN = C[3130:, 3130:]
+    # Indices of the external constraints which we want to mask out.
+    m_SN = ~np.isin(
+        np.arange(len(C)),
+        [3207, 3208, 3209, 3210, 3211, 3212, 3213, 3214])[3130:]
+    C_SN = C_SN[m_SN, :][:, m_SN]
+    Y_SN = Y[3130:][m_SN]
+
+    C_SN_Cepheid = C[3130:3207, 3130:3207]
+    Y_SN_Cepheid = Y[3130:3207]
+
+    # HST and Gaia zero-points
+    M_HST = Y[3207]
+    e_M_HST = C[3207, 3207]**0.5
+
+    M_Gaia = Y[3208]
+    e_M_Gaia = C[3208, 3208]**0.5
+
+    # Systematic uncertainties btw ground-based and HST photometry.
+    sigma_grnd = C[3211, 3211]**0.5
+
+    q_names = np.asanyarray(
+        ['mu_M101', 'mu_M1337', 'mu_N0691', 'mu_N1015', 'mu_N0105',
+         'mu_N1309', 'mu_N1365', 'mu_N1448', 'mu_N1559', 'mu_N2442',
+         'mu_N2525', 'mu_N2608', 'mu_N3021', 'mu_N3147', 'mu_N3254',
+         'mu_N3370', 'mu_N3447', 'mu_N3583', 'mu_N3972', 'mu_N3982',
+         'mu_N4038', 'mu_N4424', 'mu_N4536', 'mu_N4639', 'mu_N4680',
+         'mu_N5468', 'mu_N5584', 'mu_N5643', 'mu_N5728', 'mu_N5861',
+         'mu_N5917', 'mu_N7250', 'mu_N7329', 'mu_N7541', 'mu_N7678',
+         'mu_N0976', 'mu_U9391', 'Delta_mu_N4258', 'M_H1_W',
+         'Delta_mu_LMC', 'mu_M31', 'b_W', 'MB0', 'Z_W', 'undefined',
+         'Delta_zp', 'log10_H0'])
+
+    L_SN_Cepheid_dist = L_dist[3130:3207]
+
+    Y_SN_HF = Y[3215:]
+
+    num_hosts = L_Cepheid_host_dist.shape[1] - 3
+    num_cepheids = len(mag_cepheid)
+
+    # Cepheid host redshifts and the PV covariance matrix.
+    data_cepheid_host_redshift = np.load(
+        join(root, "processed", "Cepheid_anchors_redshifts.npy"),
+        allow_pickle=True)
+    PV_covmat_cepheid_host = np.load(
+        join(root, "processed", "PV_covmat_cepheid_hosts_fiducial.npy"),
+        allow_pickle=True)
+
+    if los_data_path is not None:
+        data_host_los = {}
+        data_host_los = load_los(
+            los_data_path, data_host_los)
+        host_los_density = data_host_los["los_density"][0]
+        host_los_velocity = data_host_los["los_velocity"][0]
+        host_los_r = data_host_los["los_r"]
+    else:
+        host_los_density = None
+        host_los_velocity = None
+        host_los_r = None
+
+    # SH0ES-Antonio's approach for predicting H0 from Cepheid host redshifts,
+    # the error propagation is biased when z -> 0.
+    # zHD = data_cepheid_host_redshift["zHD"]
+    # q0 = -0.55
+    # c = SPEED_OF_LIGHT
+    # Y_Cepheid_new = 5 * np.log10((c * zHD) * (
+    #     1 +  0.5 * (1 - q0) * zHD)) + 25
+    # v_pec = 250
+    # Y_Cepheid_new_err = (5 / np.log(10)
+    #                      * (1 + (1 - q0) * zHD) / (1 + 0.5 * (1 - q0) * zHD)
+    #                      * v_pec / (c * zHD))
+
+    if replace_SN_HF_from_PP:
+        f = np.load("/Users/rstiskalek/Projects/CANDEL/data/SH0ES/processed/PP_SN_matched_to_SH0ES.npz")  # noqa
+        pp = f["pp_matched"]
+        m_HF = pp["USED_IN_SH0ES_HF"] == 1
+        C_SN = f["cov"]
+        Y_SN = pp["m_b_corr"]
+        czcmb_SN_HF = pp["zCMB"][m_HF] * SPEED_OF_LIGHT
+        e_czcmb_SN_HF = pp["zCMBERR"][m_HF] * SPEED_OF_LIGHT
+        RA_SN_HF = pp["RA"][m_HF]
+        dec_SN_HF = pp["DEC"][m_HF]
+    else:
+        czcmb_SN_HF, e_czcmb_SN_HF = None, None
+        RA_SN_HF, dec_SN_HF = None, None
+
+    data = {
+        # Individual Cepheid data, covariance matrix and host association.
+        "mag_cepheid": mag_cepheid,
+        "logP": logP,
+        "OH": OH,
+        "C_Cepheid": C_Cepheid,
+        "L_Cepheid": cholesky(C_Cepheid, lower=True),
+        "L_Cepheid_host_dist": L_Cepheid_host_dist,
+        "Cepheids_only": False,
+        "num_cepheids": num_cepheids,
+        "num_hosts": num_hosts,
+        # SNe in Cepheid host galaxies, covariance matrix and host association.
+        "Y_SN_Cepheid": Y_SN_Cepheid,
+        "C_SN_Cepheid": C_SN_Cepheid,
+        "L_SN_Cepheid": cholesky(C_SN_Cepheid, lower=True),
+        "L_SN_Cepheid_dist": L_SN_Cepheid_dist,
+        # SNe in the Hubble flow and covariance matrix.
+        "Y_SN_HF": Y_SN_HF,
+        "num_flow_SN": len(Y_SN_HF),
+        "czcmb_SN_HF": czcmb_SN_HF,
+        "e_czcmb_SN_HF": e_czcmb_SN_HF,
+        "RA_SN_HF": RA_SN_HF,
+        "dec_SN_HF": dec_SN_HF,
+        # All SNe together.
+        "Y_SN": Y_SN,
+        "C_SN": C_SN,
+        "L_SN": cholesky(C_SN, lower=True),
+        # External constraints/priors.
+        "mu_N4258_anchor": mu_N4258_anchor,
+        "e_mu_N4258_anchor": e_mu_N4258_anchor,
+        "mu_LMC_anchor": mu_LMC_anchor,
+        "e_mu_LMC_anchor": e_mu_LMC_anchor,
+        "M_HST": M_HST,
+        "e_M_HST": e_M_HST,
+        "M_Gaia": M_Gaia,
+        "e_M_Gaia": e_M_Gaia,
+        "sigma_grnd": sigma_grnd,
+        # Cepheid host galaxy information.
+        "q_names": q_names,
+        "czcmb_cepheid_host": data_cepheid_host_redshift["zCMB"] * SPEED_OF_LIGHT,  # noqa
+        "e_czcmb_cepheid_host": data_cepheid_host_redshift["zCMBERR"],
+        "RA_host": data_cepheid_host_redshift["RA"],
+        "dec_host": data_cepheid_host_redshift["DEC"],
+        "PV_covmat_cepheid_host": PV_covmat_cepheid_host,
+        "host_los_density": host_los_density,
+        "host_los_velocity": host_los_velocity,
+        "host_los_r": host_los_r,
+        # # SH0ES-Antonio's approach for predicting H0 from Cepheid host zs
+        # "Y_Cepheid_new": Y_Cepheid_new,
+        # "Y_Cepheid_new_err": Y_Cepheid_new_err
+        "q_names": q_names,
+        }
+
+    if cepheid_host_cz_cmb_max is not None:
+        if cepheid_host_cz_cmb_max < 1000:
+            raise ValueError(
+                f"`cz_cmb_max` must be larger than 1000 km/s, got "
+                f"{cepheid_host_cz_cmb_max} km/s. Otherwise could eliminate "
+                "some geometric anchors.")
+
+        # Switch this flag so that these runs cannot be done jointly with SNe
+        # since some shapes might not be correct.
+        data["Cepheids_only"] = True
+
+        cz_host = data["czcmb_cepheid_host"]
+        cz_host_all = np.hstack([data["czcmb_cepheid_host"], [667, 327, -582]])
+        cz_cepheid = data["L_Cepheid_host_dist"] @ cz_host_all
+
+        mask_host = cz_host < cepheid_host_cz_cmb_max
+        mask_host_all = cz_host_all < cepheid_host_cz_cmb_max
+        mask_cepheid = cz_cepheid < cepheid_host_cz_cmb_max
+
+        fprint(f"Masking Cepheids with cz_cmb > {cepheid_host_cz_cmb_max} "
+               f"km/s: Keeping {np.sum(mask_host)} out of {len(mask_host)}.")
+
+        data["OH"] = data["OH"][mask_cepheid]
+        data["logP"] = data["logP"][mask_cepheid]
+        data["mag_cepheid"] = data["mag_cepheid"][mask_cepheid]
+        data["C_Cepheid"] = data["C_Cepheid"][mask_cepheid][:, mask_cepheid]
+        data["L_Cepheid"] = data["L_Cepheid"][mask_cepheid][:, mask_cepheid]
+
+        data["L_Cepheid_host_dist"] = data["L_Cepheid_host_dist"][mask_cepheid][:, mask_host_all]  # noqa
+        data["czcmb_cepheid_host"] = data["czcmb_cepheid_host"][mask_host]
+        data["e_czcmb_cepheid_host"] = data["e_czcmb_cepheid_host"][mask_host]
+        data["RA_host"] = data["RA_host"][mask_host]
+        data["dec_host"] = data["dec_host"][mask_host]
+        data["PV_covmat_cepheid_host"] = data["PV_covmat_cepheid_host"][mask_host][:, mask_host]  # noqa
+
+        data["num_hosts"] = np.sum(mask_host)
+        data["num_cepheids"] = np.sum(mask_cepheid)
+
+        data["mask_host"] = mask_host
+
+        for key, val in data.items():
+            if "SN" in key and isinstance(val, np.ndarray):
+                data[key] = np.full_like(val, np.nan, dtype=val.dtype)
+
+    return data
+
+
+def load_SH0ES_from_config(config_path):
+    config = load_config(config_path, replace_los_prior=False)
+    d = config["io"]["SH0ES"]
+    root = d["root"]
+    cepheid_host_cz_cmb_max = d.get("cepheid_host_cz_cmb_max", None)
+    replace_SN_HF_from_PP = d.get("replace_SN_HF_from_PP", False)
+
+    which_host_los = d.get("which_host_los", None)
+    if which_host_los is not None:
+        los_data_path = config["io"]["PV_main"]["SH0ES"]["los_file"].replace(
+            "<X>", which_host_los)
+    else:
+        los_data_path = None
+
+    return load_SH0ES_separated(
+        root, cepheid_host_cz_cmb_max, replace_SN_HF_from_PP,
+        los_data_path=los_data_path)
 
 
 def load_clusters(root, zcmb_min=None, zcmb_max=None, los_data_path=None,

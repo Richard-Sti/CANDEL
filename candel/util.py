@@ -62,6 +62,9 @@ def convert_none_strings(d):
 
 def replace_prior_with_delta(config, param, value):
     """Replace the prior of `param` with a delta distribution at `value`."""
+    if param not in config.get("model", {}).get("priors", {}):
+        return config
+
     fprint(f"replacing prior of `{param}` with a delta function.")
     priors = config.setdefault("model", {}).setdefault("priors", {})
     priors.pop(param, None)
@@ -123,6 +126,17 @@ def load_config(config_path, replace_none=True, fill_paths=True,
         config["inference"]["shared_params"] = shared_params.split(",")
 
     return config
+
+
+def get_nested(config, key_path, default=None):
+    """Recursively access a nested value using a slash-separated key."""
+    keys = key_path.split("/")
+    current = config
+    for k in keys:
+        if not isinstance(current, dict) or k not in current:
+            return default
+        current = current[k]
+    return current
 
 
 ###############################################################################
@@ -237,12 +251,12 @@ def name2label(name):
         "a": r"$a$",
         "m1": r"$m_1$",
         "m2": r"$m_2$",
-        "a_TFR_dipole_mag": r"$a_\mathrm{TFR, dipole}$",
-        "a_TFR_dipole_ell": r"$\ell_\mathrm{TFR, dipole}$",
-        "a_TFR_dipole_b": r"$b_\mathrm{TFR, dipole}$",
-        "M_dipole_mag": r"$M_\mathrm{dipole}$",
-        "M_dipole_ell": r"$\ell_\mathrm{dipole}$",
-        "M_dipole_b": r"$b_\mathrm{dipole}$",
+        "a_TFR_dipole_mag": r"$\Delta a_\mathrm{TFR}$",
+        "a_TFR_dipole_ell": r"$\ell_{\Delta a_{\rm TFR}}$",
+        "a_TFR_dipole_b": r"$b_{\Delta a_{\rm TFR}}$",
+        "M_dipole_mag": r"$\Delta M_\mathrm{SN}$",
+        "M_dipole_ell": r"$\ell_{\Delta M_{\rm SN}}$",
+        "M_dipole_b": r"$b_{\Delta M_{\rm SN}}$",
         "eta_prior_mean": r"$\hat{\eta}$",
         "eta_prior_std": r"$w_\eta$",
         "A_CL": r"$A_{\rm CL}$",
@@ -269,13 +283,13 @@ def name2labelgetdist(name):
     optionally prepending the catalogue name as plain text.
 
     Example:
-        "CF4_W1/beta" → r"\mathrm{CF4~W1},\,\beta"
+        "CF4_W1/beta" → r"\\mathrm{CF4~W1}, \\beta"
     """
     labels = {
         "a_TFR": r"a_\mathrm{TFR}",
         "b_TFR": r"b_\mathrm{TFR}",
         "c_TFR": r"c_\mathrm{TFR}",
-        "sigma_mu": r"\sigma_\mu",
+        "sigma_mu": r"\sigma_\mu~\left[\mathrm{mag}\right]",
         "sigma_v": r"\sigma_v~\left[\mathrm{km}/\mathrm{s}\right]",
         "alpha": r"\alpha",
         "b1": r"b_1",
@@ -283,17 +297,18 @@ def name2labelgetdist(name):
         "beta": r"\beta",
         "Vext_mag": r"V_\mathrm{ext}~\left[\mathrm{km}/\mathrm{s}\right]",
         "Vext_ell": r"\ell_\mathrm{ext}~\left[\mathrm{deg}\right]",
+        "Vext_ell_offset": r"\ell_\mathrm{ext} - 180~\left[\mathrm{deg}\right]",  # noqa
         "Vext_b":   r"b_\mathrm{ext}~\left[\mathrm{deg}\right]",
         "h": r"h",
         "a": r"a",
         "m1": r"m_1",
         "m2": r"m_2",
-        "a_TFR_dipole_mag": r"a_\mathrm{TFR, dipole}",
-        "a_TFR_dipole_ell": r"\ell_\mathrm{TFR, dipole}~\left[\mathrm{deg}\right]",  # noqa
-        "a_TFR_dipole_b": r"b_\mathrm{TFR, dipole}~\left[\mathrm{deg}\right]",
-        "M_dipole_mag": r"M_\mathrm{dipole}",
-        "M_dipole_ell": r"\ell_\mathrm{dipole}~\left[\mathrm{deg}\right]",
-        "M_dipole_b": r"b_\mathrm{dipole}~\left[\mathrm{deg}\right]",
+        "a_TFR_dipole_mag": r"\Delta a_\mathrm{TFR}~\left[\mathrm{mag}\right]",  # noqa
+        "a_TFR_dipole_ell": r"\ell_{\Delta a_{\rm TFR}}~\left[\mathrm{deg}\right]",  # noqa
+        "a_TFR_dipole_b": r"b_{\Delta a_{\rm TFR}}~\left[\mathrm{deg}\right]",
+        "M_dipole_mag": r"\Delta M_\mathrm{SN}~[\mathrm{mag}]",
+        "M_dipole_ell": r"\ell_{\Delta M_{\rm SN}}~\left[\mathrm{deg}\right]",
+        "M_dipole_b": r"b_{\Delta M_{\rm SN}}~\left[\mathrm{deg}\right]",
         "eta_prior_mean": r"\hat{\eta}",
         "eta_prior_std": r"w_\eta",
         "A_CL": r"A_{\rm CL}",
@@ -303,6 +318,11 @@ def name2labelgetdist(name):
         "b_FP": r"b_{\rm FP}",
         "c_FP": r"c_{\rm FP}",
         "R_dust": r"R_{\rm W1}",
+        "mu_LMC": r"\mu_{\rm LMC} ~ [\mathrm{mag}]",
+        "mu_M31": r"\mu_{\rm M31} ~ [\mathrm{mag}]",
+        "mu_N4258": r"\mu_{\rm NGC4258} ~ [\mathrm{mag}]",
+        "H0": r"H_0~\left[\mathrm{km}/\mathrm{s}/\mathrm{Mpc}\right]",
+        "dZP": r"\Delta_{\rm ZP}~\left[\mathrm{mag}\right]",
     }
 
     if "/" in name:
@@ -407,7 +427,10 @@ def plot_Vext_rad_corner(samples, show_fig=True, filename=None, smooth=1):
 
 
 def plot_corner_getdist(samples_list, labels=None, show_fig=True,
-                        filename=None, keys=None, fontsize=None, filled=True):
+                        filename=None, keys=None, fontsize=None, filled=True,
+                        apply_ell_offset=False, mag_range=[0, None],
+                        ell_range=[0, 360], b_range=[-90, 90], points=None,
+                        truths=None):
     """Plot a GetDist triangle plot for one or more posterior samples."""
     try:
         import scienceplots  # noqa
@@ -444,14 +467,14 @@ def plot_corner_getdist(samples_list, labels=None, show_fig=True,
 
     ranges = {}
     for k in param_names:
-        if "mag" in k:
-            ranges[k] = [0, None]
+        if "_mag" in k:
+            ranges[k] = mag_range
 
-        if "ell" in k:
-            ranges[k] = [0, 360]
+        if "_ell" in k:
+            ranges[k] = ell_range
 
-        if "b" in k:
-            ranges[k] = [-90, 90]
+        if "_b" in k:
+            ranges[k] = b_range
 
     gdsamples_list = []
 
@@ -466,9 +489,16 @@ def plot_corner_getdist(samples_list, labels=None, show_fig=True,
                 col = samples[k].reshape(-1)
             else:
                 col = np.full(n_samples, np.nan)
+
             if not np.all(np.isnan(col)):
+                if "_ell" in k and apply_ell_offset:
+                    col = (col - 180) % 360
+                    label = name2labelgetdist(k + "_offset")
+                else:
+                    label = name2labelgetdist(k)
+
                 present_params.append(k)
-                present_labels.append(name2labelgetdist(k))
+                present_labels.append(label)
                 columns.append(col)
 
         data = np.vstack(columns).T
@@ -498,6 +528,56 @@ def plot_corner_getdist(samples_list, labels=None, show_fig=True,
             legend_loc="upper right",
         )
 
+        if points is not None:
+            plotted_pairs = set()
+            for (x_param, y_param), (x_val, y_val) in points.items():
+                if x_param not in param_names or y_param not in param_names:
+                    continue
+                ix = param_names.index(x_param)
+                iy = param_names.index(y_param)
+                if iy > ix and (ix, iy) not in plotted_pairs:
+                    ax = g.subplots[iy, ix]
+                    ax.plot(x_val, y_val, "x", color="red", markersize=10)
+                    __, labels_ = ax.get_legend_handles_labels()
+                    if "Reference" not in labels_:
+                        ax.legend()
+                    plotted_pairs.add((ix, iy))
+
+        if truths is not None:
+            lw = 1.5 * plt.rcParams["lines.linewidth"]
+            for truth_set in truths:
+                truths = truth_set["dict"]
+                color = truth_set.get("color", "red")
+                linestyle = truth_set.get("linestyle", "--")
+
+                # 1D panels: vertical lines
+                for i, param in enumerate(param_names):
+                    if param in truths:
+                        val = truths[param]
+                        ax = g.subplots[i, i]
+                        ax.axvline(
+                            val, color=color, linestyle=linestyle,
+                            lw=lw, label=label)
+
+                # 2D panels: vertical/horizontal lines and crosses
+                for i, x_param in enumerate(param_names):
+                    for j, y_param in enumerate(param_names):
+                        if j > i:
+                            ax = g.subplots[j, i]
+                            x_in = x_param in truths
+                            y_in = y_param in truths
+
+                            if x_in:
+                                x_val = truths[x_param]
+                                ax.axvline(
+                                    x_val, color=color, linestyle=linestyle,
+                                    lw=lw, label=label)
+                            if y_in:
+                                y_val = truths[y_param]
+                                ax.axhline(
+                                    y_val, color=color, linestyle=linestyle,
+                                    lw=lw, label=label)
+
         if filename is not None:
             fprint(f"[INFO] Saving GetDist triangle plot to: {filename}")
             g.export(filename, dpi=450)
@@ -509,7 +589,10 @@ def plot_corner_getdist(samples_list, labels=None, show_fig=True,
 
 
 def plot_corner_from_hdf5(fnames, keys=None, labels=None, fontsize=None,
-                          filled=True, show_fig=True, filename=None):
+                          filled=True, show_fig=True, filename=None,
+                          apply_ell_offset=False, mag_range=[0, None],
+                          ell_range=[0, 360], b_range=[-90, 90], points=None,
+                          truths=None):
     """
     Plot a triangle plot from one or more HDF5 files containing posterior
     samples.
@@ -534,7 +617,13 @@ def plot_corner_from_hdf5(fnames, keys=None, labels=None, fontsize=None,
         fontsize=fontsize,
         filled=filled,
         show_fig=show_fig,
-        filename=filename
+        filename=filename,
+        apply_ell_offset=apply_ell_offset,
+        mag_range=mag_range,
+        ell_range=ell_range,
+        b_range=b_range,
+        points=points,
+        truths=truths,
     )
 
 
