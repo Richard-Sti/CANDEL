@@ -73,7 +73,7 @@ from os.path import exists, join, splitext
 
 import tomli_w
 
-from candel import fprint, load_config, replace_prior_with_delta
+from candel import fprint, load_config, replace_prior_with_delta, get_nested
 
 
 def overwrite_config(config, key, value):
@@ -103,17 +103,6 @@ def overwrite_subtree(config, key_path, subtree):
     d[keys[-1]] = subtree
     fprint(f"overwriting subtree config['{'/'.join(keys)}'] = {subtree}")
     return new_config
-
-
-def get_nested(config, key_path, default=None):
-    """Recursively access a nested value using a slash-separated key."""
-    keys = key_path.split("/")
-    current = config
-    for k in keys:
-        if not isinstance(current, dict) or k not in current:
-            return default
-        current = current[k]
-    return current
 
 
 def generate_dynamic_tag(config, base_tag="default"):

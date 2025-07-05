@@ -26,6 +26,7 @@ from .magnitude_selection import (                                              
     MagnitudeSelection,                                                         # noqa
     log_magnitude_selection,                                                    # noqa
     )
+from .model_SH0ES import SH0ESModel                                             # noqa
 from .interp import LOSInterpolator                                             # noqa
 from .simpson import ln_simpson                                                 # noqa
 

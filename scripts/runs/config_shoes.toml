@@ -1,0 +1,137 @@
+root_main = "/Users/rstiskalek/Projects/CANDEL/"
+python_exec = "/Users/rstiskalek/Projects/CANDEL/venv_candel/bin/python"
+machine = "local"
+
+# root_main = "/mnt/home/rstiskalek/ceph/CANDEL"
+# python_exec="/mnt/home/rstiskalek/CANDEL/venv_gpu_candel/bin/python"
+# machine="rusty"
+
+
+###############################################################################
+#                               Inference                                     #
+###############################################################################
+
+[inference]
+num_warmup = 1000
+num_samples = 1000
+num_chains = 12
+chain_method = "parallel"
+seed = 44
+num_chains_harmonic = 10
+
+###############################################################################
+#                                 Model                                       #
+###############################################################################
+
+[model]
+
+Om = 0.3
+use_MNR = false
+use_uniform_mu_host_priors = false
+use_Cepheid_host_redshift = true
+use_reconstruction = true
+use_fiducial_Cepheid_host_PV_covariance = false
+use_PV_covmat_scaling = false
+
+use_SNe_HF_SH0ES = false
+use_SNe_HF_Bayes = false
+
+r_limits_malmquist = [0.01, 150]
+num_points_malmquist = 251
+distmod_limits = [15, 43]
+galaxy_bias_min_clip = 1e-5
+
+# SN absolute magnitude (only if including supernovae)
+[model.priors.M_B]
+dist = "uniform"
+low = -20
+high = -18
+
+# Hubble constant
+[model.priors.H0]
+dist = "uniform"
+low = 10
+high = 100
+
+# Cepheid absolute magnitude at P=10d, solar metallicity
+[model.priors.M_W]
+dist = "uniform"
+low = -7
+high = -5
+
+# Cepheid period-luminosity slope
+[model.priors.b_W]
+dist = "uniform"
+low = -6
+high = 0
+
+# Cepheid metallicity dependence
+[model.priors.Z_W]
+dist = "uniform"
+low = -2
+high = 2
+
+# Small-scale peculiar velocity dispersion
+[model.priors.sigma_v]
+dist = "jeffreys"
+low = 5
+high = 2500
+# dist = "delta"
+# value = 250
+
+[model.priors.beta]
+dist = "normal"
+loc = 0.43
+scale = 0.02
+
+[model.priors.A_covmat]
+dist = "truncated_normal"
+low = 0.0
+mean = 1.0
+scale = 0.5
+
+
+[model.priors.Vext]
+# dist = "delta"
+# value = [0.0, 0.0, 0.0]
+dist = "vector_uniform_fixed"
+low = 0.0
+high = 2500
+
+
+################################################################################
+#                                  Data                                        #
+################################################################################
+
+[io]
+root_output = "results/"
+fname_output = "results/test.hdf5"
+
+
+[io.SH0ES]
+root = "data/SH0ES"
+cepheid_host_cz_cmb_max = "none"
+replace_SN_HF_from_PP = false
+which_host_los = "Carrick2015"
+
+
+########
+# Static paths to define a general acces to the catalogues and reconstruction
+# fields without applying any cuts etc.
+########
+
+[io.PV_main]
+
+[io.PV_main.SH0ES]
+root = "data/SH0ES"
+los_file = "data/SH0ES/los_SH0ES_TFR_<X>.hdf5"
+
+
+[io.reconstruction_main]
+rmin = 0.1
+rmax = 100
+num_steps = 501
+
+[io.reconstruction_main.Carrick2015]
+path_density = "data/fields/carrick2015_twompp_density.npy"
+path_velocity = "data/fields/carrick2015_twompp_velocity.npy"
