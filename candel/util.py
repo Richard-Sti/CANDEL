@@ -544,36 +544,39 @@ def plot_corner_getdist(samples_list, labels=None, show_fig=True,
                     plotted_pairs.add((ix, iy))
 
         if truths is not None:
-            # 1D panels: vertical truth lines
-            for i, param in enumerate(param_names):
-                lw = 1.5 * plt.rcParams["lines.linewidth"]
-                if param in truths:
-                    val = truths[param]
-                    ax = g.subplots[i, i]
-                    ax.axvline(val, color="red", linestyle="--", lw=lw)
-                    __, labels_ = ax.get_legend_handles_labels()
-                    if "Reference" not in labels_:
-                        ax.legend()
+            lw = 1.5 * plt.rcParams["lines.linewidth"]
+            for truth_set in truths:
+                truths = truth_set["dict"]
+                color = truth_set.get("color", "red")
+                linestyle = truth_set.get("linestyle", "--")
 
-            # 2D panels: vertical/horizontal lines and crosses
-            for i, x_param in enumerate(param_names):
-                for j, y_param in enumerate(param_names):
-                    if j > i:
-                        ax = g.subplots[j, i]
+                # 1D panels: vertical lines
+                for i, param in enumerate(param_names):
+                    if param in truths:
+                        val = truths[param]
+                        ax = g.subplots[i, i]
+                        ax.axvline(
+                            val, color=color, linestyle=linestyle,
+                            lw=lw, label=label)
 
-                        x_in = x_param in truths
-                        y_in = y_param in truths
+                # 2D panels: vertical/horizontal lines and crosses
+                for i, x_param in enumerate(param_names):
+                    for j, y_param in enumerate(param_names):
+                        if j > i:
+                            ax = g.subplots[j, i]
+                            x_in = x_param in truths
+                            y_in = y_param in truths
 
-                        # Vertical line for x truth
-                        if x_in:
-                            x_val = truths[x_param]
-                            ax.axvline(
-                                x_val, color="red", linestyle="--", lw=lw)
-                        # Horizontal line for y truth
-                        if y_in:
-                            y_val = truths[y_param]
-                            ax.axhline(
-                                y_val, color="red", linestyle="--", lw=lw)
+                            if x_in:
+                                x_val = truths[x_param]
+                                ax.axvline(
+                                    x_val, color=color, linestyle=linestyle,
+                                    lw=lw, label=label)
+                            if y_in:
+                                y_val = truths[y_param]
+                                ax.axhline(
+                                    y_val, color=color, linestyle=linestyle,
+                                    lw=lw, label=label)
 
         if filename is not None:
             fprint(f"[INFO] Saving GetDist triangle plot to: {filename}")
