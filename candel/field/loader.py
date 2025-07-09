@@ -16,8 +16,10 @@ Scripts to load the existing 3D density and velocity fields so that they can
 be interpolated along the line of sight of galaxies.
 """
 from abc import ABC, abstractmethod
+from os.path import join
 
 import numpy as np
+from h5py import File
 
 
 class BaseFieldLoader(ABC):
@@ -54,7 +56,7 @@ class Carrick2015_FieldLoader(BaseFieldLoader):
         Path to the Carrick+2015 velocity field.
     """
 
-    def __init__(self, path_density, path_velocity):
+    def __init__(self, path_density, path_velocity, **kwargs):
         self.path_density = path_density
         self.path_velocity = path_velocity
 
@@ -85,109 +87,44 @@ class Carrick2015_FieldLoader(BaseFieldLoader):
 
 
 class Manticore_FieldLoader(BaseFieldLoader):
+    """
+    Manticore field loader class.
 
-    def __init__(self, fpath):
-        pass
+    Parameters
+    ----------
+    nsim : int
+        Simulation index.
+    paths : Paths, optional
+        Paths object. By default, the paths are set to the `glamdring` paths.
+    """
 
+    def __init__(self, nsim, fpath_root):
+        self.fname = join(fpath_root, f"mcmc_{nsim}.hdf5")
 
-#         class CSiBORG2XField(BaseField):
-#     """
-#     CSiBORG2X `z = 0` field class based on the Manticore ICs.
-#
-#     Parameters
-#     ----------
-#     nsim : int
-#         Simulation index.
-#     version : str
-#         Manticore version index.
-#     paths : Paths, optional
-#         Paths object. By default, the paths are set to the `glamdring` paths.
-#     """
-#     def __init__(self, nsim, version, paths=None):
-#         self.version = version
-#         if version == 0:
-#             self.nametag = "csiborg2X"
-#         elif version == 1:
-#             self.nametag = "manticore_2MPP_N128_DES_V1"
-#         elif version == 2:
-#             self.nametag = "manticore_2MPP_MULTIBIN_N128_DES_V1"
-#         elif version == 3:
-#             self.nametag = "manticore_2MPP_MULTIBIN_N128_DES_V2"
-#         elif version == 4:
-#             self.nametag = "manticore_2MPP_MULTIBIN_N256_DES_V2"
-#         else:
-#             raise ValueError("Invalid Manticore version.")
-#
-#         super().__init__(nsim, paths, False)
-#
-#     def overdensity_field(self, **kwargs):
-#         if self.version == 0:
-#             fpath = self.paths.field(
-#                 "overdensity", None, None, self.nsim, self.nametag)
-#             with File(fpath, "r") as f:
-#                 field = f["delta_cic"][...].astype(np.float32)
-#         else:
-#             raise ValueError("Invalid Manticore version to read the "
-#                              "overdensity field.")
-#
-#         return field
-#
-#     def density_field(self, **kwargs):
-#         if self.version == 0:
-#             field = self.overdensity_field()
-#             omega0 = simname2Omega_m(self.nametag)
-#             rho_mean = omega0 * 277.53662724583074  # Msun / kpc^3
-#             field += 1
-#             field *= rho_mean
-#         elif self.version in [1, 2, 3, 4]:
-#             MAS = kwargs["MAS"]
-#             grid = kwargs["grid"]
-#             fpath = self.paths.field(
-#                 "density", MAS, grid, self.nsim, self.nametag)
-#
-#             if MAS == "SPH":
-#                 with File(fpath, "r") as f:
-#                     field = f["density"][:]
-#
-#                 field /= (681.1 * 1e3 / grid)**3  # Convert to h^2 Msun / kpc^3
-#             else:
-#                 field = np.load(fpath)
-#         else:
-#             raise ValueError("Invalid Manticore version to read the "
-#                              "density field.")
-#
-#         return field
-#
-#     def velocity_field(self, **kwargs):
-#         if self.version == 0:
-#             fpath = self.paths.field(
-#                 "velocity", None, None, self.nsim, "csiborg2X")
-#             with File(fpath, "r") as f:
-#                 v0 = f["v_0"][...]
-#                 v1 = f["v_1"][...]
-#                 v2 = f["v_2"][...]
-#                 field = np.array([v0, v1, v2])
-#         elif self.version in [1, 2, 3, 4]:
-#             MAS = kwargs["MAS"]
-#             grid = kwargs["grid"]
-#             fpath = self.paths.field(
-#                 "velocity", MAS, grid, self.nsim, self.nametag)
-#
-#             if MAS:
-#                 with File(fpath, "r") as f:
-#                     density = f["density"][:]
-#                     v0 = f["p0"][:] / density
-#                     v1 = f["p1"][:] / density
-#                     v2 = f["p2"][:] / density
-#                 field = np.array([v0, v1, v2])
-#             else:
-#                 field = np.load(fpath)
-#
-#         return field
-#
-#     def radial_velocity_field(self, **kwargs):
-#         raise RuntimeError("The radial velocity field is not available.")
+        self.coordinate_frame = "icrs"
+        self.boxsize = 681.1  # Mpc / h
+        self.Omega_m = 0.3111
 
+        x0 = 0.5 * self.boxsize
+        self.observer_pos = np.array([x0, x0, x0], dtype=np.float32)
+
+    def density_field(self, **kwargs):
+        with File(self.fname, "r") as f:
+            field = f["density"][:]
+
+        # Convert to h^2 Msun / kpc^3
+        grid = field.shape[0]
+        field /= (self.boxsize * 1e3 / grid)**3
+
+        return field
+
+    def velocity_field(self, **kwargs):
+        with File(self.fname, "r") as f:
+            density = f["density"][:]
+            v0 = f["p0"][:] / density
+            v1 = f["p1"][:] / density
+            v2 = f["p2"][:] / density
+        return np.array([v0, v1, v2])
 
 
 ###############################################################################
@@ -211,5 +148,7 @@ def name2field_loader(name):
     """
     if name == "Carrick2015":
         return Carrick2015_FieldLoader
+    elif name.lower().startswith("manticore"):
+        return Manticore_FieldLoader
     else:
         raise ValueError(f"Unknown field loader: {name}")
