@@ -91,8 +91,9 @@ def convert_to_absolute_paths(config):
         for k, v in d.items():
             if isinstance(v, dict):
                 _recurse(v)
-            elif k in path_keys and isinstance(v, str) and not isabs(v):
-                d[k] = abspath(join(root, v))
+            elif k in path_keys and isinstance(v, str):
+                if not v.startswith("/") and not isabs(v):
+                    d[k] = abspath(join(root, v))
 
     _recurse(config)
     return config
