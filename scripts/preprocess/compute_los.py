@@ -81,6 +81,13 @@ if __name__ == "__main__":
 
     config = candel.load_config(args.config)
 
+    if args.reconstruction == "Carrick2015":
+        nsims = [0,]
+    elif args.reconstruction.lower().startswith("manticore"):
+        nsims = list(range(50))
+    else:
+        raise ValueError(f"Reconstruction `{args.reconstruction}` not supported. ")  # noqa
+
     d = config["io"]["reconstruction_main"]
     fprint(f"settin the radial grid from {d['rmin']} to {d['rmax']} with "
            f"{d['num_steps']} steps.")
@@ -89,12 +96,21 @@ if __name__ == "__main__":
     fprint(f"loading the catalogue `{args.catalogue}` with "
            f"reconstruction `{args.reconstruction}`.")
     RA, dec, los_file = load_los(args.catalogue, config)
-    loader = candel.field.name2field_loader(
-        args.reconstruction)(**config["io"]["reconstruction_main"][args.reconstruction])  # noqa
     fprint(f"loaded {len(RA)} galaxies from the catalogue.")
 
-    los_density, los_velocity = candel.field.interpolate_los_density_velocity(
-        loader, r, RA, dec)
+    los_density = np.full(
+        (len(nsims), len(RA), len(r)), np.nan, dtype=np.float32)
+    los_velocity = np.full_like(los_density, np.nan, dtype=np.float32)
+
+    for i, nsim in enumerate(nsims):
+        fprint(f"loading the reconstruction `{args.reconstruction}` for "
+               f"simulation {nsim}.")
+        loader = candel.field.name2field_loader(
+            args.reconstruction)(
+                nsim=nsim,
+                **config["io"]["reconstruction_main"][args.reconstruction])
+        los_density[i], los_velocity[i] = candel.field.interpolate_los_density_velocity(  # noqa
+            loader, r, RA, dec)
 
     los_file = los_file.replace("<X>", args.reconstruction)
     fprint(f"saving the line of sight data to `{los_file}`.")
