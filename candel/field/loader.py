@@ -108,7 +108,7 @@ class Manticore_FieldLoader(BaseFieldLoader):
         x0 = 0.5 * self.boxsize
         self.observer_pos = np.array([x0, x0, x0], dtype=np.float32)
 
-    def density_field(self, **kwargs):
+    def load_density(self):
         with File(self.fname, "r") as f:
             field = f["density"][:]
 
@@ -118,7 +118,7 @@ class Manticore_FieldLoader(BaseFieldLoader):
 
         return field
 
-    def velocity_field(self, **kwargs):
+    def load_velocity(self):
         with File(self.fname, "r") as f:
             density = f["density"][:]
             v0 = f["p0"][:] / density
