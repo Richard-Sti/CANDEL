@@ -18,6 +18,7 @@ from abc import ABC
 import jax.numpy as jnp
 import numpy as np
 from jax.scipy.linalg import solve_triangular
+from jax.scipy.special import logsumexp
 from numpyro import factor, plate, sample
 from numpyro.distributions import (HalfNormal, MultivariateNormal, Normal,
                                    Uniform)
@@ -109,6 +110,9 @@ class BaseSH0ESModel(ABC):
         self.use_reconstruction = get_nested(
             config, "model/use_reconstruction", False)
         fprint(f"use_reconstruction set to {self.use_reconstruction}")
+        self.which_bias = get_nested(
+            config, "model/which_bias", "linear")
+        fprint(f"which_bias set to {self.which_bias}")
 
         if self.use_reconstruction and self.use_fiducial_Cepheid_host_PV_covariance:  # noqa
             raise ValueError(
@@ -133,7 +137,7 @@ class BaseSH0ESModel(ABC):
             fprint(f"setting radial range from {r_limits_malmquist[0]} to "
                    f"{r_limits_malmquist[1]} Mpc with {num_points_malmquist} "
                    f"points for the Cepheid host galaxies.")
-            self.r_host_range = jnp.tile(r_range, (self.num_hosts, 1))
+            self.r_host_range = r_range
             self.r2_host_range = self.r_host_range**2
 
             self.br_min_clip = get_nested(
@@ -313,35 +317,67 @@ class SH0ESModel(BaseSH0ESModel):
         if self.use_uniform_mu_host_priors:
             lp_host_dist = jnp.zeros(self.num_hosts)
         else:
+            # We will add the log-likelihood of this either below or together
+            # with the reconstruction likelihood.
             lp_all_host_dist = 2 * jnp.log(r_host_all)
             lp_all_host_dist += self.log_grad_distmod2comoving_distance(
                 mu_host_all, h=h)
-
             lp_host_dist = lp_all_host_dist[:self.num_hosts]
-            lp_anchor_dist = lp_all_host_dist[self.num_hosts:]
 
+            # This one can be added already now.
+            lp_anchor_dist = lp_all_host_dist[self.num_hosts:]
             factor("lp_anchor_dist", lp_anchor_dist)
 
-        # Do we have a reconstruction for inhomogeneous Malmquist bias?
         if self.use_reconstruction:
-            # This normalization is not well-understood.
-            los_delta = self.f_host_los_delta(rh_host)
-            b1 = self.Om**0.55 / beta  # f / beta with f = Om^0.55
-            lp_host_dist += jnp.log(
-                jnp.clip(1 + b1 * los_delta, self.br_min_clip))
+            ll_reconstruction = lp_host_dist[None, :]
+            # Compute LOS delta from reconstruction at host distances (Mpc/h),
+            # shape is (n_fields, n_galaxies).
+            los_delta_host = self.f_host_los_delta(rh_host)
 
-            # The radial range is in Mpc, needs to be converted to Mpc / h
-            # when querying the reconstruction.
-            los_delta = self.f_host_los_delta.interp_many_steps_per_galaxy(
+            if self.which_bias == "linear":
+                b1 = self.Om ** 0.55 / beta
+
+                def log_bias_fn(delta):
+                    return jnp.log(jnp.clip(1 + b1 * delta, self.br_min_clip))
+
+                def bias_fn(delta):
+                    return jnp.clip(1 + b1 * delta, self.br_min_clip)
+
+            elif self.which_bias == "powerlaw":
+                alpha = rsample("alpha", self.priors["alpha"])
+
+                def log_bias_fn(delta):
+                    return alpha * jnp.log(1 + delta)
+
+                def bias_fn(delta):
+                    return (1 + delta)**alpha
+
+            else:
+                raise ValueError(f"Unknown bias model: {self.which_bias}")
+
+            # (n_fields, n_galaxies)
+            ll_reconstruction += log_bias_fn(los_delta_host)
+
+            # Evaluate LOS density contrast over radial grid (Mpc/h)
+            # Result: (n_fields, n_galaxies, n_steps)
+            los_delta_profile = self.f_host_los_delta.interp_many_steps_per_galaxy(  # noqa
                 self.r_host_range * h)
 
-            # Now compute the LOS normalization term
-            lp_host_norm = self.r2_host_range * jnp.clip(
-                1 + b1 * los_delta, self.br_min_clip)
-            lp_host_dist -= jnp.log(
-                simpson(lp_host_norm, x=self.r_host_range, axis=-1))
+            # Compute integrand for normalization
+            # Shape: (n_fields, n_galaxies, n_steps)
+            lp_host_dist_norm = self.r2_host_range[None, :] * bias_fn(
+                los_delta_profile)
 
-        factor("lp_host_dist", lp_host_dist)
+            # Simpson integral over radial steps, per field and galaxy
+            lp_host_dist_norm = simpson(
+                lp_host_dist_norm, x=self.r_host_range[None, None, ...],
+                axis=-1)
+
+            # Subtract normalization term
+            ll_reconstruction -= jnp.log(lp_host_dist_norm)
+        else:
+            # The distance prior is handled already now
+            factor("lp_host_dist", lp_host_dist)
 
         # Now assign these host distances to each Cepheid.
         mu_cepheid = self.L_Cepheid_host_dist @ mu_host_cepheid
@@ -400,21 +436,37 @@ class SH0ESModel(BaseSH0ESModel):
 
         if self.use_Cepheid_host_redshift:
             Vext_rad = jnp.sum(Vext[None, :] * self.rhat_host, axis=1)
-            if self.use_reconstruction:
-                # The reconstruction is assumed to be in Mpc / h.
-                Vext_rad += beta * self.f_host_los_velocity(rh_host)
-
-            cz_pred = predict_cz(self.distmod2redshift(mu_host, h=h), Vext_rad)
-
+            z_cosmo = self.distmod2redshift(mu_host, h=h)
             e2_cz = self.e2_czcmb_cepheid_host + sigma_v**2
+
             if self.use_fiducial_Cepheid_host_PV_covariance:
+                cz_pred = predict_cz(z_cosmo, Vext_rad)
                 # Because we're adding sigma_v^2 to the diagonal, we cannot
                 # use the Cholesky factorization of the covariance matrix.
                 C = A_covmat * self.PV_covmat_cepheid_host
                 C = C.at[jnp.diag_indices(len(e2_cz))].add(e2_cz)
                 sample("cz_pred", MultivariateNormal(cz_pred, C),
                        obs=self.czcmb_cepheid_host)
+            elif self.use_reconstruction:
+                # The reconstruction is assumed to be in Mpc / h. The shape
+                # becomes `(n_fields, n_galaxies)`
+                Vpec = beta * self.f_host_los_velocity(rh_host)
+                Vpec += Vext_rad[None, :]
+                cz_pred = predict_cz(z_cosmo[None, :], Vpec)
+                e_cz = jnp.sqrt(e2_cz)
+
+                ll_reconstruction += Normal(
+                    cz_pred, e_cz[None, :]).log_prob(
+                        self.czcmb_cepheid_host[None, :])
+
+                # Here compute the average log-density of the Cepheid hosts,
+                # averaged over the field realizations, so that the final
+                # shape is `(n_galaxies,)`.
+                ll_reconstruction = logsumexp(ll_reconstruction, axis=0)
+                ll_reconstruction -= jnp.log(len(ll_reconstruction))
+                factor("ll_reconstruction", ll_reconstruction)
             else:
+                cz_pred = predict_cz(z_cosmo, Vext_rad)
                 e_cz = jnp.sqrt(e2_cz)
                 with plate("Cepheid_anchors_redshift", self.num_hosts):
                     sample("cz_pred", Normal(cz_pred, e_cz),
