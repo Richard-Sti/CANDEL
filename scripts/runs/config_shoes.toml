@@ -14,7 +14,7 @@ machine = "local"
 [inference]
 num_warmup = 1000
 num_samples = 1000
-num_chains = 12
+num_chains = 1
 chain_method = "parallel"
 seed = 44
 num_chains_harmonic = 10
@@ -30,6 +30,7 @@ use_MNR = false
 use_uniform_mu_host_priors = false
 use_Cepheid_host_redshift = true
 use_reconstruction = true
+which_bias = "linear"
 use_fiducial_Cepheid_host_PV_covariance = false
 use_PV_covmat_scaling = false
 
@@ -83,6 +84,11 @@ high = 2500
 dist = "normal"
 loc = 0.43
 scale = 0.02
+
+[model.priors.alpha]
+dist = "normal"
+loc = 1.0
+scale = 0.5
 
 [model.priors.A_covmat]
 dist = "truncated_normal"
