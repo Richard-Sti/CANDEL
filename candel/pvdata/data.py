@@ -320,6 +320,10 @@ def load_los(los_data_path, data, mask=None):
         assert np.all(data["los_density"] > 0)
         assert np.all(np.isfinite(data["los_velocity"]))
 
+    if "manticore" in los_data_path.lower():
+        fprint("normalizing the Manticore LOS density.")
+        data["los_density"] /= 0.3111 * 275.4  # Manticore normalization
+
     return data
 
 
