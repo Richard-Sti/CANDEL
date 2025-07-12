@@ -65,7 +65,7 @@ class BaseSH0ESModel(ABC):
 
         # Load the host galaxy LOS interpolators if available.
         self.get_host_los_interpolator(
-            data, los_method="cubic", los_extrap=False)
+            data, los_method="linear", los_extrap=False)
 
         # Load the data, set attributes, convert to JAX arrays and do
         # any other conversions.
@@ -142,6 +142,9 @@ class BaseSH0ESModel(ABC):
 
             self.br_min_clip = get_nested(
                 config, "model/galaxy_bias_min_clip", 1e-5)
+
+            fprint(f"marginalizing over {len(self.host_los_velocity)} "
+                   "field realizations.")
 
         # Precompute min-max for MNR priors.
         self.logP_min = jnp.min(data["logP"])
@@ -222,7 +225,7 @@ class BaseSH0ESModel(ABC):
 
         fprint(f"set the following attributes: {', '.join(attrs_set)}")
 
-    def get_host_los_interpolator(self, data, los_method="cubic",
+    def get_host_los_interpolator(self, data, los_method="linear",
                                   los_extrap=False):
         if "host_los_r":
             fprint("loading host galaxy LOS interpolators.")
@@ -344,13 +347,17 @@ class SH0ESModel(BaseSH0ESModel):
                     return jnp.clip(1 + b1 * delta, self.br_min_clip)
 
             elif self.which_bias == "powerlaw":
-                alpha = rsample("alpha", self.priors["alpha"])
+                alpha = 0.65
+                rho_exp = 0.4
+                eps = 1.5
 
                 def log_bias_fn(delta):
-                    return alpha * jnp.log(1 + delta)
+                    x = 1 + delta
+                    return alpha * jnp.log(x) - (x / rho_exp)**(-eps)
 
                 def bias_fn(delta):
-                    return (1 + delta)**alpha
+                    x = 1 + delta
+                    return x**alpha * jnp.exp(- (x / rho_exp)**(-eps))
 
             else:
                 raise ValueError(f"Unknown bias model: {self.which_bias}")
