@@ -19,17 +19,19 @@ import jax.numpy as jnp
 import numpy as np
 from jax.scipy.linalg import solve_triangular
 from jax.scipy.special import logsumexp
+from jax.scipy.stats import norm as norm_jax
 from numpyro import factor, plate, sample
 from numpyro.distributions import (HalfNormal, MultivariateNormal, Normal,
                                    Uniform)
-from quadax import simpson
 
-from ..cosmography import (Distance2Distmod, Distmod2Distance,
-                           Distmod2Redshift, LogGrad_Distmod2ComovingDistance)
+from ..cosmography import (Distance2Distmod, Distance2Redshift,
+                           Distmod2Distance, Distmod2Redshift,
+                           LogGrad_Distmod2ComovingDistance)
 from ..util import (SPEED_OF_LIGHT, fprint, get_nested, load_config,
                     radec_to_cartesian, replace_prior_with_delta)
 from .interp import LOSInterpolator
 from .model import JeffreysPrior, MagnitudeDistribution, load_priors, rsample
+from .simpson import ln_simpson
 
 
 def mvn_logpdf_cholesky(y, mu, L):
@@ -70,6 +72,10 @@ class BaseSH0ESModel(ABC):
         # Load the data, set attributes, convert to JAX arrays and do
         # any other conversions.
         self.set_data(data)
+        self.cz_lim_selection = get_nested(
+            config, "model/cz_lim_selection", 3300)
+        self.mag_lim_SN = get_nested(config, "model/mag_lim_SN", 15.0)
+        self.e_mag_SN = get_nested(config, "model/e_mag_SN", 0.15)
 
         # Initialize the interpolators
         self.Om = get_nested(config, "model/Om0", 0.3)
@@ -79,6 +85,7 @@ class BaseSH0ESModel(ABC):
         self.distance2distmod_scalar = Distance2Distmod(
             Om0=self.Om, is_scalar=True)
         self.distance2distmod = Distance2Distmod(Om0=self.Om)
+        self.distance2redshift = Distance2Redshift(Om0=self.Om)
 
         self.log_grad_distmod2comoving_distance = LogGrad_Distmod2ComovingDistance(Om0=self.Om)  # noqa
 
@@ -95,6 +102,9 @@ class BaseSH0ESModel(ABC):
 
         self.use_MNR = get_nested(config, "model/use_MNR", False)
         fprint(f"use_MNR set to {self.use_MNR}")
+        self.which_selection = get_nested(
+            config, "model/which_selection", None)
+        fprint(f"which_selection set to {self.which_selection}")
         self.use_Cepheid_host_redshift = get_nested(
             config, "model/use_Cepheid_host_redshift", False)
         fprint(f"use_Cepheid_host_redshift set to {self.use_Cepheid_host_redshift}")  # noqa
@@ -125,21 +135,32 @@ class BaseSH0ESModel(ABC):
                              "`host_los_r` and `host_los_density` "
                              "in the data.")
 
+        if self.which_selection not in ["redshift", "SN_magnitude", None]:
+            raise ValueError(
+                f"Unknown `which_selection`: {self.which_selection}. "
+                "Expected one of ['redshift', 'SN_magnitude', None].")
+
+        if self.which_selection == "redshift" and not self.use_Cepheid_host_redshift:  # noqa
+            raise ValueError(
+                "If `which_selection` is set to 'redshift', "
+                "`use_Cepheid_host_redshift` must be set to True.")
+
+        r_limits_malmquist = get_nested(
+            config, "model/r_limits_malmquist", [0.01, 350])
+        num_points_malmquist = get_nested(
+            config, "model/num_points_malmquist", 251)
+        r_range = jnp.linspace(
+            r_limits_malmquist[0], r_limits_malmquist[1],
+            num_points_malmquist)
+
+        fprint(f"setting radial range from {r_limits_malmquist[0]} to "
+               f"{r_limits_malmquist[1]} Mpc with {num_points_malmquist} "
+               f"points for the Cepheid host galaxies.")
+        self.r_host_range = r_range
+        self.log_r2_host_range = 2 * jnp.log(self.r_host_range)
+        self.Rmax = jnp.max(self.r_host_range)
+
         if self.use_reconstruction:
-            r_limits_malmquist = get_nested(
-                config, "model/r_limits_malmquist", [0.01, 350])
-            num_points_malmquist = get_nested(
-                config, "model/num_points_malmquist", 251)
-            r_range = jnp.linspace(
-                r_limits_malmquist[0], r_limits_malmquist[1],
-                num_points_malmquist)
-
-            fprint(f"setting radial range from {r_limits_malmquist[0]} to "
-                   f"{r_limits_malmquist[1]} Mpc with {num_points_malmquist} "
-                   f"points for the Cepheid host galaxies.")
-            self.r_host_range = r_range
-            self.r2_host_range = self.r_host_range**2
-
             self.br_min_clip = get_nested(
                 config, "model/galaxy_bias_min_clip", 1e-5)
 
@@ -169,8 +190,10 @@ class BaseSH0ESModel(ABC):
             config, "model/use_PV_covmat_scaling", False)
         use_reconstruction = get_nested(
             config, "model/use_reconstruction", False)
+        which_selection = get_nested(
+            config, "model/which_selection", None)
 
-        if not use_SNe:
+        if not use_SNe and not which_selection == "SN_magnitude":
             replace_prior_with_delta(config, "M_B", -19.25)
 
         if not (use_Cepheid_host_redshift or use_SNe):
@@ -236,8 +259,8 @@ class BaseSH0ESModel(ABC):
 
             if "mask_host" in data:
                 m = data["mask_host"]
-                host_los_delta = host_los_delta[m]
-                host_los_velocity = host_los_velocity[m]
+                host_los_delta = host_los_delta[:, m, ...]
+                host_los_velocity = host_los_velocity[:, m, ...]
 
             self.has_host_los = True
             kwargs = {"method": los_method, "extrap": los_extrap}
@@ -279,6 +302,27 @@ class SH0ESModel(BaseSH0ESModel):
     def __init__(self, config_path, data):
         super().__init__(config_path, data)
 
+    def log_S_cz(self, lp_r, Vpec, H0, sigma_v):
+        """Probability of detection term if redshift-truncated."""
+        # Cosmological redshift of shape `(n_steps,)`
+        zcosmo = self.distance2redshift(self.r_host_range, h=H0 / 100)
+        cz_r = predict_cz(zcosmo[None, None, :], Vpec)
+        log_cdf = norm_jax.logcdf((self.cz_lim_selection - cz_r) / sigma_v)
+
+        # The expected output is of the shape `(n_fields, n_galaxies,)`,
+        return ln_simpson(
+            lp_r + log_cdf, x=self.r_host_range[None, None, :], axis=-1)
+
+    def log_S_mag(self, lp_r, M_SN, H0):
+        """Probability of detection term if magnitude-truncated."""
+        mag = self.distance2distmod(self.r_host_range, h=H0 / 100) + M_SN
+
+        log_cdf = norm_jax.logcdf((self.mag_lim_SN - mag) / self.e_mag_SN)
+        # The expected output is of the shape `(n_fields, n_galaxies,)`,
+        return ln_simpson(
+            lp_r + log_cdf[None, None, :],
+            x=self.r_host_range[None, None, :], axis=-1)
+
     def __call__(self, ):
         M_B = rsample("M_B", self.priors["M_B"])
         H0 = rsample("H0", self.priors["H0"])
@@ -291,6 +335,7 @@ class SH0ESModel(BaseSH0ESModel):
         beta = rsample("beta", self.priors["beta"])
 
         h = H0 / 100
+        Vext_rad_host = jnp.sum(Vext[None, :] * self.rhat_host, axis=1)
 
         # HST and Gaia zero-point calibration of MW Cepheids.
         sample("M_W_HST", Normal(M_W, self.e_M_HST), obs=self.M_HST)
@@ -312,9 +357,9 @@ class SH0ESModel(BaseSH0ESModel):
 
         # Comoving distances to all hosts in Mpc and in Mpc / h.
         r_host_all = self.distmod2distance(mu_host_all, h=h)
+        r_host = r_host_all[:self.num_hosts]
         if self.has_host_los:
-            rh_host_all = r_host_all * h
-            rh_host = rh_host_all[:self.num_hosts]
+            rh_host = r_host * h
 
         # Do we use a r^2 prior on the host distance moduli?
         if self.use_uniform_mu_host_priors:
@@ -331,8 +376,13 @@ class SH0ESModel(BaseSH0ESModel):
             lp_anchor_dist = lp_all_host_dist[self.num_hosts:]
             factor("lp_anchor_dist", lp_anchor_dist)
 
+        # Prepare the grid of r^2 prior of shape (eventually)
+        # `(n_fields, n_galaxies, n_steps)`.
+        lp_host_dist_grid = (self.log_r2_host_range[None, None, :]
+                             - 3 * jnp.log(self.Rmax))
+
         if self.use_reconstruction:
-            ll_reconstruction = lp_host_dist[None, :]
+            lp_host_dist = lp_host_dist[None, :]
             # Compute LOS delta from reconstruction at host distances (Mpc/h),
             # shape is (n_fields, n_galaxies).
             los_delta_host = self.f_host_los_delta(rh_host)
@@ -343,48 +393,77 @@ class SH0ESModel(BaseSH0ESModel):
                 def log_bias_fn(delta):
                     return jnp.log(jnp.clip(1 + b1 * delta, self.br_min_clip))
 
-                def bias_fn(delta):
-                    return jnp.clip(1 + b1 * delta, self.br_min_clip)
-
             elif self.which_bias == "powerlaw":
-                alpha = 0.65
-                rho_exp = 0.4
-                eps = 1.5
 
                 def log_bias_fn(delta):
+                    # Neyrinck+2014 model.
+                    alpha = 0.65
+                    rho_exp = 0.4
+                    eps = 1.5
+
                     x = 1 + delta
                     return alpha * jnp.log(x) - (x / rho_exp)**(-eps)
-
-                def bias_fn(delta):
-                    x = 1 + delta
-                    return x**alpha * jnp.exp(- (x / rho_exp)**(-eps))
 
             else:
                 raise ValueError(f"Unknown bias model: {self.which_bias}")
 
             # (n_fields, n_galaxies)
-            ll_reconstruction += log_bias_fn(los_delta_host)
+            lp_host_dist += log_bias_fn(los_delta_host)
 
-            # Evaluate LOS density contrast over radial grid (Mpc/h)
-            # Result: (n_fields, n_galaxies, n_steps)
-            los_delta_profile = self.f_host_los_delta.interp_many_steps_per_galaxy(  # noqa
+            # Evaluate LOS overdensity and peculiar velocity over a radial grid
+            # which is in Mpc / h: `(n_fields, n_galaxies, n_steps)``
+            los_delta_grid = self.f_host_los_delta.interp_many_steps_per_galaxy(  # noqa
+                self.r_host_range * h)
+            los_Vpec_grid = self.f_host_los_velocity.interp_many_steps_per_galaxy(  # noqa
                 self.r_host_range * h)
 
             # Compute integrand for normalization
             # Shape: (n_fields, n_galaxies, n_steps)
-            lp_host_dist_norm = self.r2_host_range[None, :] * bias_fn(
-                los_delta_profile)
+            lp_host_dist_grid += log_bias_fn(los_delta_grid)
 
             # Simpson integral over radial steps, per field and galaxy
-            lp_host_dist_norm = simpson(
-                lp_host_dist_norm, x=self.r_host_range[None, None, ...],
+            lp_host_dist_norm = ln_simpson(
+                lp_host_dist_grid, x=self.r_host_range[None, None, ...],
                 axis=-1)
 
-            # Subtract normalization term
-            ll_reconstruction -= jnp.log(lp_host_dist_norm)
+            ll_reconstruction = lp_host_dist - lp_host_dist_norm
         else:
-            # The distance prior is handled already now
+            los_Vpec_grid = 0.
+            # Track the distance prior already now if not using any
+            # reconstruction, otherwise it is done later as it is averaged
+            # together with the redshift likelihood.
             factor("lp_host_dist", lp_host_dist)
+
+        # Selection function of shape `(n_fields, n_galaxies, )`.
+        if self.which_selection == "redshift":
+            Vpec_grid = Vext_rad_host[None, :, None] + los_Vpec_grid
+            log_S = self.log_S_cz(lp_host_dist_grid, Vpec_grid, H0, sigma_v)
+        elif self.which_selection == "SN_magnitude":
+            # Assign distance moduli to the SN hosts.
+            mu_SN = self.L_SN_unique_Cepheid_host_dist @ mu_host_all
+            mag_SN = mu_SN + M_B
+
+            log_S = self.log_S_mag(lp_host_dist_grid, M_B, H0)
+
+            # Since the selection is in supernova apparent magnitude, must
+            # constrain their absolute magnitude and thus also forward model
+            # the supernova apparent magnitudes.
+            factor(
+                "ll_SN",
+                mvn_logpdf_cholesky(
+                    self.mag_SN_unique_Cepheid_host, mag_SN,
+                    self.L_SN_unique_Cepheid_host)
+                )
+        else:
+            log_S = jnp.zeros((1, self.num_hosts))
+
+        if self.use_reconstruction:
+            ll_reconstruction -= log_S
+        else:
+            # If not using a reconstruction, can already start tracking the
+            # selection function here. Since the shape is `(1, n_galaxies)`,
+            # we can slice and factor.
+            factor("neg_log_S_correction", -log_S[0, :])
 
         # Now assign these host distances to each Cepheid.
         mu_cepheid = self.L_Cepheid_host_dist @ mu_host_cepheid
@@ -442,12 +521,11 @@ class SH0ESModel(BaseSH0ESModel):
             )
 
         if self.use_Cepheid_host_redshift:
-            Vext_rad = jnp.sum(Vext[None, :] * self.rhat_host, axis=1)
             z_cosmo = self.distmod2redshift(mu_host, h=h)
             e2_cz = self.e2_czcmb_cepheid_host + sigma_v**2
 
             if self.use_fiducial_Cepheid_host_PV_covariance:
-                cz_pred = predict_cz(z_cosmo, Vext_rad)
+                cz_pred = predict_cz(z_cosmo, Vext_rad_host)
                 # Because we're adding sigma_v^2 to the diagonal, we cannot
                 # use the Cholesky factorization of the covariance matrix.
                 C = A_covmat * self.PV_covmat_cepheid_host
@@ -458,7 +536,7 @@ class SH0ESModel(BaseSH0ESModel):
                 # The reconstruction is assumed to be in Mpc / h. The shape
                 # becomes `(n_fields, n_galaxies)`
                 Vpec = beta * self.f_host_los_velocity(rh_host)
-                Vpec += Vext_rad[None, :]
+                Vpec += Vext_rad_host[None, :]
                 cz_pred = predict_cz(z_cosmo[None, :], Vpec)
                 e_cz = jnp.sqrt(e2_cz)
 
@@ -473,7 +551,7 @@ class SH0ESModel(BaseSH0ESModel):
                 ll_reconstruction -= jnp.log(len(ll_reconstruction))
                 factor("ll_reconstruction", ll_reconstruction)
             else:
-                cz_pred = predict_cz(z_cosmo, Vext_rad)
+                cz_pred = predict_cz(z_cosmo, Vext_rad_host)
                 e_cz = jnp.sqrt(e2_cz)
                 with plate("Cepheid_anchors_redshift", self.num_hosts):
                     sample("cz_pred", Normal(cz_pred, e_cz),
