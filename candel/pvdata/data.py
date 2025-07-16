@@ -843,6 +843,21 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
         czcmb_SN_HF, e_czcmb_SN_HF = None, None
         RA_SN_HF, dec_SN_HF = None, None
 
+    # Pick one SN per Cepheid host galaxy
+    mag_SN = np.zeros(40)
+    unique_ks = []
+    for i in range(len(Y_SN_Cepheid)):
+        j = np.where(L_SN_Cepheid_dist[i] == 1)[0][0]
+
+        if mag_SN[j] == 0:
+            mag_SN[j] = Y_SN_Cepheid[i]
+            unique_ks.append(i)
+
+    unique_ks = np.asarray(unique_ks)
+    mag_SN_unique_Cepheid_host = Y_SN_Cepheid[unique_ks]
+    C_SN_unique_Cepheid_host = C_SN_Cepheid[unique_ks][:, unique_ks]
+    L_SN_unique_Cepheid_host_dist = L_SN_Cepheid_dist[unique_ks]
+
     data = {
         # Individual Cepheid data, covariance matrix and host association.
         "mag_cepheid": mag_cepheid,
@@ -859,6 +874,12 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
         "C_SN_Cepheid": C_SN_Cepheid,
         "L_SN_Cepheid": cholesky(C_SN_Cepheid, lower=True),
         "L_SN_Cepheid_dist": L_SN_Cepheid_dist,
+        # Unique SNe in Cepheid host galaxies.
+        "mag_SN_unique_Cepheid_host": mag_SN_unique_Cepheid_host,
+        "C_SN_unique_Cepheid_host": C_SN_unique_Cepheid_host,
+        "L_SN_unique_Cepheid_host": cholesky(C_SN_unique_Cepheid_host,
+                                             lower=True),
+        "L_SN_unique_Cepheid_host_dist": L_SN_unique_Cepheid_host_dist,
         # SNe in the Hubble flow and covariance matrix.
         "Y_SN_HF": Y_SN_HF,
         "num_flow_SN": len(Y_SN_HF),
