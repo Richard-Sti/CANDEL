@@ -931,10 +931,13 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
         cz_host = data["czcmb_cepheid_host"]
         cz_host_all = np.hstack([data["czcmb_cepheid_host"], [667, 327, -582]])
         cz_cepheid = data["L_Cepheid_host_dist"] @ cz_host_all
+        cz_unique_SN_Cepheid_host = data["L_SN_unique_Cepheid_host_dist"] @ cz_host_all  # noqa
 
         mask_host = cz_host < cepheid_host_cz_cmb_max
         mask_host_all = cz_host_all < cepheid_host_cz_cmb_max
         mask_cepheid = cz_cepheid < cepheid_host_cz_cmb_max
+        mask_cz_unique_SN_Cepheid_host = (
+            cz_unique_SN_Cepheid_host < cepheid_host_cz_cmb_max)
 
         fprint(f"Masking Cepheids with cz_cmb > {cepheid_host_cz_cmb_max} "
                f"km/s: Keeping {np.sum(mask_host)} out of {len(mask_host)}.")
@@ -943,7 +946,7 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
         data["logP"] = data["logP"][mask_cepheid]
         data["mag_cepheid"] = data["mag_cepheid"][mask_cepheid]
         data["C_Cepheid"] = data["C_Cepheid"][mask_cepheid][:, mask_cepheid]
-        data["L_Cepheid"] = data["L_Cepheid"][mask_cepheid][:, mask_cepheid]
+        data["L_Cepheid"] = cholesky(data["C_Cepheid"], lower=True)
 
         data["L_Cepheid_host_dist"] = data["L_Cepheid_host_dist"][mask_cepheid][:, mask_host_all]  # noqa
         data["czcmb_cepheid_host"] = data["czcmb_cepheid_host"][mask_host]
@@ -952,13 +955,18 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
         data["dec_host"] = data["dec_host"][mask_host]
         data["PV_covmat_cepheid_host"] = data["PV_covmat_cepheid_host"][mask_host][:, mask_host]  # noqa
 
+        data["L_SN_unique_Cepheid_host_dist"] = data["L_SN_unique_Cepheid_host_dist"][mask_cz_unique_SN_Cepheid_host][:, mask_host_all]  # noqa
+        data["mag_SN_unique_Cepheid_host"] = data["mag_SN_unique_Cepheid_host"][mask_cz_unique_SN_Cepheid_host]  # noqa
+        data["C_SN_unique_Cepheid_host"] = data["C_SN_unique_Cepheid_host"][mask_cz_unique_SN_Cepheid_host][:, mask_cz_unique_SN_Cepheid_host]  # noqa
+        data["L_SN_unique_Cepheid_host"] = cholesky(data["C_SN_unique_Cepheid_host"], lower=True)  # noqa
+
         data["num_hosts"] = np.sum(mask_host)
         data["num_cepheids"] = np.sum(mask_cepheid)
 
         data["mask_host"] = mask_host
 
         for key, val in data.items():
-            if "SN" in key and isinstance(val, np.ndarray):
+            if "SN" in key and "SN_unique" not in key and isinstance(val, np.ndarray):  # noqa
                 data[key] = np.full_like(val, np.nan, dtype=val.dtype)
 
     return data
