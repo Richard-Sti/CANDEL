@@ -145,6 +145,11 @@ class BaseSH0ESModel(ABC):
                 "If `which_selection` is set to 'redshift', "
                 "`use_Cepheid_host_redshift` must be set to True.")
 
+        if self.which_selection is not None and self.use_uniform_mu_host_priors:  # noqa
+            raise ValueError(
+                "If `which_selection` is set, "
+                "`use_uniform_mu_host_priors` must be set to False.")
+
         r_limits_malmquist = get_nested(
             config, "model/r_limits_malmquist", [0.01, 350])
         num_points_malmquist = get_nested(
@@ -178,6 +183,10 @@ class BaseSH0ESModel(ABC):
             raise ValueError(
                 "Cannot use SNe_HF with Cepheids only data. Likely because of "
                 "imposing a redshift threshold on the Cepheid hosts.")
+
+        fname_out = get_nested(config, "io/fname_output", None)
+        if fname_out is not None:
+            fprint(f"output will be saved to `{fname_out}`.")
 
     def replace_priors(self, config):
         """Replace priors on parameters that are not used in the model."""
