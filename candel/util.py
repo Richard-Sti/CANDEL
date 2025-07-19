@@ -322,7 +322,7 @@ def name2labelgetdist(name):
         "mu_LMC": r"\mu_{\rm LMC} ~ [\mathrm{mag}]",
         "mu_M31": r"\mu_{\rm M31} ~ [\mathrm{mag}]",
         "mu_N4258": r"\mu_{\rm NGC4258} ~ [\mathrm{mag}]",
-        "H0": r"H_0~\left[\mathrm{km}/\mathrm{s}/\mathrm{Mpc}\right]",
+        "H0": r"H_0~\left[\mathrm{km}\,\mathrm{s}^{-1}\,\mathrm{Mpc}^{-1}\right]",  # noqa
         "dZP": r"\Delta_{\rm ZP}~\left[\mathrm{mag}\right]",
     }
 
