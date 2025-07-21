@@ -877,6 +877,8 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
         # Unique SNe in Cepheid host galaxies.
         "mag_SN_unique_Cepheid_host": mag_SN_unique_Cepheid_host,
         "C_SN_unique_Cepheid_host": C_SN_unique_Cepheid_host,
+        "std_mag_SN_unique_Cepheid_host": np.sqrt(
+            np.diag(C_SN_unique_Cepheid_host)),
         "L_SN_unique_Cepheid_host": cholesky(C_SN_unique_Cepheid_host,
                                              lower=True),
         "L_SN_unique_Cepheid_host_dist": L_SN_unique_Cepheid_host_dist,
@@ -968,6 +970,9 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
         for key, val in data.items():
             if "SN" in key and "SN_unique" not in key and isinstance(val, np.ndarray):  # noqa
                 data[key] = np.full_like(val, np.nan, dtype=val.dtype)
+
+    data["mean_logP"] = np.mean(data["logP"])
+    data["mean_OH"] = np.mean(data["OH"])
 
     return data
 
