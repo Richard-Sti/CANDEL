@@ -20,6 +20,7 @@ import numpy as np
 from jax.scipy.linalg import solve_triangular
 from jax.scipy.special import logsumexp
 from jax.scipy.stats import norm as norm_jax
+from jax.debug import print as jprint                                           # noqa
 from numpyro import factor, plate, sample
 from numpyro.distributions import (HalfNormal, MultivariateNormal, Normal,
                                    Uniform)
@@ -75,7 +76,10 @@ class BaseSH0ESModel(ABC):
         self.cz_lim_selection = get_nested(
             config, "model/cz_lim_selection", 3300)
         self.mag_lim_SN = get_nested(config, "model/mag_lim_SN", 15.0)
-        self.e_mag_SN = get_nested(config, "model/e_mag_SN", 0.15)
+        self.mag_lim_Cepheid = get_nested(
+            config, "model/mag_lim_Cepheid", 24.0)
+        self.e_mag_Cepheid = get_nested(
+            config, "model/e_mag_Cepheid", 0.1)
 
         # Initialize the interpolators
         self.Om = get_nested(config, "model/Om0", 0.3)
@@ -135,12 +139,12 @@ class BaseSH0ESModel(ABC):
                              "`host_los_r` and `host_los_density` "
                              "in the data.")
 
-        if self.which_selection not in ["redshift", "SN_magnitude", None]:
+        if self.which_selection not in ["redshift", "SN_magnitude", "Cepheid_magnitude", "SN_magnitude_redshift", None]:  # noqa
             raise ValueError(
                 f"Unknown `which_selection`: {self.which_selection}. "
-                "Expected one of ['redshift', 'SN_magnitude', None].")
+                "Expected one of ['redshift', 'SN_magnitude', 'Cepheid_magnitude', 'SN_magnitude_redshift', None].")  # noqa
 
-        if self.which_selection == "redshift" and not self.use_Cepheid_host_redshift:  # noqa
+        if self.which_selection in ["redshift", "SN_magnitude_redshift"] and not self.use_Cepheid_host_redshift:  # noqa
             raise ValueError(
                 "If `which_selection` is set to 'redshift', "
                 "`use_Cepheid_host_redshift` must be set to True.")
@@ -202,7 +206,7 @@ class BaseSH0ESModel(ABC):
         which_selection = get_nested(
             config, "model/which_selection", None)
 
-        if not use_SNe and not which_selection == "SN_magnitude":
+        if not use_SNe and not which_selection in ["SN_magnitude", "SN_magnitude_redshift"]:  # noqa
             replace_prior_with_delta(config, "M_B", -19.25)
 
         if not (use_Cepheid_host_redshift or use_SNe):
@@ -322,15 +326,41 @@ class SH0ESModel(BaseSH0ESModel):
         return ln_simpson(
             lp_r + log_cdf, x=self.r_host_range[None, None, :], axis=-1)
 
-    def log_S_mag(self, lp_r, M_SN, H0):
-        """Probability of detection term if magnitude-truncated."""
+    def log_S_SN_mag(self, lp_r, M_SN, H0):
+        """Probability of detection term if supernova magnitude-truncated."""
         mag = self.distance2distmod(self.r_host_range, h=H0 / 100) + M_SN
 
-        log_cdf = norm_jax.logcdf((self.mag_lim_SN - mag) / self.e_mag_SN)
+        log_cdf = norm_jax.logcdf(
+            (self.mag_lim_SN - mag[None, None, :]) / self.std_mag_SN_unique_Cepheid_host[None, :, None])  # noqa
         # The expected output is of the shape `(n_fields, n_galaxies,)`,
         return ln_simpson(
-            lp_r + log_cdf[None, None, :],
-            x=self.r_host_range[None, None, :], axis=-1)
+            lp_r + log_cdf, x=self.r_host_range[None, None, :], axis=-1)
+
+    def log_S_SN_mag_cz(self, lp_r, Vpec, M_SN, H0, sigma_v):
+        """
+        Probability of detection term if supernova magnitude and
+        redshift-truncated.
+        """
+        zcosmo = self.distance2redshift(self.r_host_range, h=H0 / 100)
+        cz_r = predict_cz(zcosmo[None, None, :], Vpec)
+        mag = self.distance2distmod(self.r_host_range, h=H0 / 100) + M_SN
+
+        log_cdf = norm_jax.logcdf(
+            (self.mag_lim_SN - mag[None, None, :]) / self.std_mag_SN_unique_Cepheid_host[None, :, None])  # noqa
+        log_cdf += norm_jax.logcdf(
+            (self.cz_lim_selection - cz_r) / sigma_v)
+        return ln_simpson(
+            lp_r + log_cdf, x=self.r_host_range[None, None, :], axis=-1)
+
+    def log_S_Cepheid_mag(self, lp_r, M_W, b_W, Z_W, H0):
+        """Probability of detection term if Cepheid magnitude-truncated."""
+        mu = self.distance2distmod(self.r_host_range, h=H0 / 100)
+        mag = mu[None, :] + M_W + b_W * self.mean_logP + Z_W * self.mean_OH
+
+        log_cdf = norm_jax.logcdf(
+            (self.mag_lim_Cepheid - mag[None, ...]) / self.e_mag_Cepheid)
+        return ln_simpson(
+            lp_r + log_cdf, x=self.r_host_range[None, None, :], axis=-1)
 
     def __call__(self, ):
         M_B = rsample("M_B", self.priors["M_B"])
@@ -436,8 +466,13 @@ class SH0ESModel(BaseSH0ESModel):
                 axis=-1)
 
             ll_reconstruction = lp_host_dist - lp_host_dist_norm
+            # NOTE testing this addition
+            lp_host_dist_grid -= lp_host_dist_norm[:, :, None]
         else:
             los_Vpec_grid = 0.
+            # Repeat the grid over all host galaxies.
+            lp_host_dist_grid = jnp.repeat(
+                lp_host_dist_grid, self.num_hosts, axis=1)
             # Track the distance prior already now if not using any
             # reconstruction, otherwise it is done later as it is averaged
             # together with the redshift likelihood.
@@ -452,7 +487,7 @@ class SH0ESModel(BaseSH0ESModel):
             mu_SN = self.L_SN_unique_Cepheid_host_dist @ mu_host_all
             mag_SN = mu_SN + M_B
 
-            log_S = self.log_S_mag(lp_host_dist_grid, M_B, H0)
+            log_S = self.log_S_SN_mag(lp_host_dist_grid, M_B, H0)
 
             # Since the selection is in supernova apparent magnitude, must
             # constrain their absolute magnitude and thus also forward model
@@ -463,6 +498,24 @@ class SH0ESModel(BaseSH0ESModel):
                     self.mag_SN_unique_Cepheid_host, mag_SN,
                     self.L_SN_unique_Cepheid_host)
                 )
+        elif self.which_selection == "SN_magnitude_redshift":
+            Vpec_grid = Vext_rad_host[None, :, None] + los_Vpec_grid
+            log_S = self.log_S_SN_mag_cz(
+                lp_host_dist_grid, Vpec_grid, M_B, H0, sigma_v)
+
+            # Assign distance moduli to the SN hosts.
+            mu_SN = self.L_SN_unique_Cepheid_host_dist @ mu_host_all
+            mag_SN = mu_SN + M_B
+
+            factor(
+                "ll_SN",
+                mvn_logpdf_cholesky(
+                    self.mag_SN_unique_Cepheid_host, mag_SN,
+                    self.L_SN_unique_Cepheid_host)
+                )
+        elif self.which_selection == "Cepheid_magnitude":
+            log_S = self.log_S_Cepheid_mag(
+                lp_host_dist_grid, M_W, b_W, Z_W, H0)
         else:
             log_S = jnp.zeros((1, self.num_hosts))
 
@@ -528,6 +581,11 @@ class SH0ESModel(BaseSH0ESModel):
             "ll_cepheid",
             mvn_logpdf_cholesky(self.mag_cepheid, mag_cepheid, self.L_Cepheid)
             )
+        # with plate("Cepheid_magnitudes", self.num_cepheids):
+        #     sample(
+        #         "mag_cepheid",
+        #         Normal(mag_cepheid, np.diag(self.C_Cepheid)**0.5),
+        #         obs=self.mag_cepheid)
 
         if self.use_Cepheid_host_redshift:
             z_cosmo = self.distmod2redshift(mu_host, h=h)
