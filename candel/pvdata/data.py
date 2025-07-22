@@ -959,6 +959,7 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
 
         data["L_SN_unique_Cepheid_host_dist"] = data["L_SN_unique_Cepheid_host_dist"][mask_cz_unique_SN_Cepheid_host][:, mask_host_all]  # noqa
         data["mag_SN_unique_Cepheid_host"] = data["mag_SN_unique_Cepheid_host"][mask_cz_unique_SN_Cepheid_host]  # noqa
+        data["std_mag_SN_unique_Cepheid_host"] = data["std_mag_SN_unique_Cepheid_host"][mask_cz_unique_SN_Cepheid_host]  # noqa
         data["C_SN_unique_Cepheid_host"] = data["C_SN_unique_Cepheid_host"][mask_cz_unique_SN_Cepheid_host][:, mask_cz_unique_SN_Cepheid_host]  # noqa
         data["L_SN_unique_Cepheid_host"] = cholesky(data["C_SN_unique_Cepheid_host"], lower=True)  # noqa
 
