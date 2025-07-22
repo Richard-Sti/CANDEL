@@ -14,7 +14,7 @@ machine = "local"
 [inference]
 num_warmup = 1000
 num_samples = 2000
-num_chains = 12
+num_chains = 10
 chain_method = "parallel"
 seed = 44
 num_chains_harmonic = 10
@@ -27,13 +27,13 @@ num_chains_harmonic = 10
 
 Om = 0.3
 use_MNR = false
-which_selection = "SN_magnitude"
+which_selection = "redshift"
 use_uniform_mu_host_priors = false
 use_Cepheid_host_redshift = true
-use_reconstruction = false
+use_reconstruction = true
 which_bias = "linear"
-use_fiducial_Cepheid_host_PV_covariance = true
-use_PV_covmat_scaling = true
+use_fiducial_Cepheid_host_PV_covariance = false
+use_PV_covmat_scaling = false
 
 use_SNe_HF_SH0ES = false
 use_SNe_HF_Bayes = false
@@ -109,11 +109,11 @@ scale = 0.5
 
 
 [model.priors.Vext]
-dist = "delta"
-value = [0.0, 0.0, 0.0]
-# dist = "vector_uniform_fixed"
-# low = 0.0
-# high = 2500
+# dist = "delta"
+# value = [0.0, 0.0, 0.0]
+dist = "vector_uniform_fixed"
+low = 0.0
+high = 2500
 
 
 ################################################################################
@@ -124,8 +124,8 @@ value = [0.0, 0.0, 0.0]
 # root_output = "results/"
 # fname_output = "results/test.hdf5"
 root_output = "results/CH0"
-fname_output = "results/CH0/Cepheid_H0_scaled_PV_covmat_SN_sel.hdf5"
-# fname_output = "results/CH0/test.hdf5"
+# fname_output = "results/CH0/Cepheid_H0_C15_joint_sel.hdf5"
+fname_output = "results/CH0/test.hdf5"
 
 
 [io.SH0ES]
