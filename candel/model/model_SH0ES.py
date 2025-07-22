@@ -466,7 +466,6 @@ class SH0ESModel(BaseSH0ESModel):
                 axis=-1)
 
             ll_reconstruction = lp_host_dist - lp_host_dist_norm
-            # NOTE testing this addition
             lp_host_dist_grid -= lp_host_dist_norm[:, :, None]
         else:
             los_Vpec_grid = 0.
