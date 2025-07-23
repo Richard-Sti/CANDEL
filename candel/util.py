@@ -428,7 +428,8 @@ def plot_Vext_rad_corner(samples, show_fig=True, filename=None, smooth=1):
 
 
 def plot_corner_getdist(samples_list, labels=None, show_fig=True,
-                        filename=None, keys=None, fontsize=None, filled=True,
+                        filename=None, keys=None, fontsize=None,
+                        legend_fontsize=None, filled=True,
                         apply_ell_offset=False, mag_range=[0, None],
                         ell_range=[0, 360], b_range=[-90, 90], points=None,
                         truths=None):
@@ -515,7 +516,7 @@ def plot_corner_getdist(samples_list, labels=None, show_fig=True,
     settings = plots.GetDistPlotSettings()
     if fontsize is not None:
         settings.lab_fontsize = fontsize
-        settings.legend_fontsize = fontsize
+        settings.legend_fontsize = legend_fontsize if legend_fontsize is not None else fontsize  # noqa
         settings.axes_fontsize = fontsize - 1
         settings.title_limit_fontsize = fontsize - 1
 
@@ -590,10 +591,10 @@ def plot_corner_getdist(samples_list, labels=None, show_fig=True,
 
 
 def plot_corner_from_hdf5(fnames, keys=None, labels=None, fontsize=None,
-                          filled=True, show_fig=True, filename=None,
-                          apply_ell_offset=False, mag_range=[0, None],
-                          ell_range=[0, 360], b_range=[-90, 90], points=None,
-                          truths=None):
+                          legend_fontsize=None, filled=True, show_fig=True,
+                          filename=None, apply_ell_offset=False,
+                          mag_range=[0, None], ell_range=[0, 360],
+                          b_range=[-90, 90], points=None, truths=None):
     """
     Plot a triangle plot from one or more HDF5 files containing posterior
     samples.
@@ -616,6 +617,7 @@ def plot_corner_from_hdf5(fnames, keys=None, labels=None, fontsize=None,
         labels=labels,
         keys=keys,
         fontsize=fontsize,
+        legend_fontsize=legend_fontsize,
         filled=filled,
         show_fig=show_fig,
         filename=filename,
