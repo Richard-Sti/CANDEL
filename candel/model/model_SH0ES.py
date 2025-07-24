@@ -127,6 +127,10 @@ class BaseSH0ESModel(ABC):
         self.which_bias = get_nested(
             config, "model/which_bias", "linear")
         fprint(f"which_bias set to {self.which_bias}")
+        self.weight_selection_by_covmat_Neff = get_nested(
+            config, "model/weight_selection_by_covmat_Neff", False)
+        fprint(f"weight_selection_by_covmat_Neff set to "
+               f"{self.weight_selection_by_covmat_Neff}")
 
         if self.use_reconstruction and self.use_fiducial_Cepheid_host_PV_covariance:  # noqa
             raise ValueError(
@@ -153,6 +157,11 @@ class BaseSH0ESModel(ABC):
             raise ValueError(
                 "If `which_selection` is set, "
                 "`use_uniform_mu_host_priors` must be set to False.")
+
+        if not self.use_fiducial_Cepheid_host_PV_covariance and self.weight_selection_by_covmat_Neff:  # noqa
+            raise ValueError(
+                "Cannot use `weight_selection_by_covmat_Neff` without "
+                "`use_fiducial_Cepheid_host_PV_covariance` set to True.")
 
         r_limits_malmquist = get_nested(
             config, "model/r_limits_malmquist", [0.01, 350])
@@ -481,12 +490,18 @@ class SH0ESModel(BaseSH0ESModel):
         if self.which_selection == "redshift":
             Vpec_grid = Vext_rad_host[None, :, None] + los_Vpec_grid
             log_S = self.log_S_cz(lp_host_dist_grid, Vpec_grid, H0, sigma_v)
+
+            if self.weight_selection_by_covmat_Neff:
+                log_S *= self.Neff_PV_covmat_cepheid_host / self.num_hosts
         elif self.which_selection == "SN_magnitude":
             # Assign distance moduli to the SN hosts.
             mu_SN = self.L_SN_unique_Cepheid_host_dist @ mu_host_all
             mag_SN = mu_SN + M_B
 
             log_S = self.log_S_SN_mag(lp_host_dist_grid, M_B, H0)
+
+            if self.weight_selection_by_covmat_Neff:
+                log_S *= self.Neff_C_SN_unique_Cepheid_host / self.num_hosts
 
             # Since the selection is in supernova apparent magnitude, must
             # constrain their absolute magnitude and thus also forward model
@@ -506,6 +521,9 @@ class SH0ESModel(BaseSH0ESModel):
             mu_SN = self.L_SN_unique_Cepheid_host_dist @ mu_host_all
             mag_SN = mu_SN + M_B
 
+            if self.weight_selection_by_covmat_Neff:
+                log_S *= self.Neff_PV_covmat_cepheid_host / self.num_hosts
+
             factor(
                 "ll_SN",
                 mvn_logpdf_cholesky(
@@ -515,6 +533,9 @@ class SH0ESModel(BaseSH0ESModel):
         elif self.which_selection == "Cepheid_magnitude":
             log_S = self.log_S_Cepheid_mag(
                 lp_host_dist_grid, M_W, b_W, Z_W, H0)
+
+            if self.weight_selection_by_covmat_Neff:
+                log_S *= self.Neff_C_Cepheid / self.num_hosts
         else:
             log_S = jnp.zeros((1, self.num_hosts))
 
