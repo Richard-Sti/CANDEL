@@ -27,13 +27,15 @@ num_chains_harmonic = 10
 
 Om = 0.3
 use_MNR = false
-which_selection = "SN_magnitude"
+which_selection = "SN_magnitude_redshift"
 use_uniform_mu_host_priors = false
 use_Cepheid_host_redshift = true
-use_reconstruction = true
-which_bias = "powerlaw"
-use_fiducial_Cepheid_host_PV_covariance = false
-use_PV_covmat_scaling = false
+use_reconstruction = false
+which_bias = "linear"
+
+use_fiducial_Cepheid_host_PV_covariance = true
+use_PV_covmat_scaling = true
+weight_selection_by_covmat_Neff = true
 
 use_SNe_HF_SH0ES = false
 use_SNe_HF_Bayes = false
@@ -92,11 +94,11 @@ high = 2500
 # value = 250
 
 [model.priors.beta]
-# dist = "normal"
-# loc = 0.43
-# scale = 0.02
-dist = "delta"
-value = 1.0
+dist = "normal"
+loc = 0.43
+scale = 0.02
+# dist = "delta"
+# value = 1.0
 # dist = "normal"
 # loc = 1.0
 # scale = 0.25
@@ -109,11 +111,11 @@ scale = 0.5
 
 
 [model.priors.Vext]
-# dist = "delta"
-# value = [0.0, 0.0, 0.0]
-dist = "vector_uniform_fixed"
-low = 0.0
-high = 2500
+dist = "delta"
+value = [0.0, 0.0, 0.0]
+# dist = "vector_uniform_fixed"
+# low = 0.0
+# high = 2500
 
 
 ################################################################################
@@ -124,7 +126,7 @@ high = 2500
 # root_output = "results/"
 # fname_output = "results/test.hdf5"
 root_output = "results/CH0"
-fname_output = "results/CH0/Cepheid_H0_Manticore_SN_sel.hdf5"
+fname_output = "results/CH0/Cepheid_H0_scaled_PV_covmat_joint_sel.hdf5"
 # fname_output = "results/CH0/test.hdf5"
 
 
@@ -132,8 +134,8 @@ fname_output = "results/CH0/Cepheid_H0_Manticore_SN_sel.hdf5"
 root = "data/SH0ES"
 cepheid_host_cz_cmb_max = "none"
 replace_SN_HF_from_PP = false
-# which_host_los = "Carrick2015"
-which_host_los = "manticore_2MPP_MULTIBIN_N256_DES_V2"
+which_host_los = "Carrick2015"
+# which_host_los = "manticore_2MPP_MULTIBIN_N256_DES_V2"
 
 
 ########
