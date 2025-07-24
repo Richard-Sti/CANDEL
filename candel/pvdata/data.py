@@ -28,6 +28,21 @@ from ..util import (SPEED_OF_LIGHT, fprint, galactic_to_radec, load_config,
                     radec_to_cartesian, radec_to_galactic)
 from .dust import read_dustmap
 
+
+def effective_rank_entropy(C):
+    """
+    Compute the entropy-based effective rank (Shannon effective rank) of C.
+
+    https://www.eurasip.org/Proceedings/Eusipco/Eusipco2007/Papers/a5p-h05.pdf
+    """
+    w = np.linalg.eigvalsh(C)
+    # Remove negative eigenvalues (numerical artefacts)
+    w = w[w > 0]
+    p = w / np.sum(w)
+    p_nonzero = p[p > 0]
+    return np.exp(-np.sum(p_nonzero * np.log(p_nonzero)))
+
+
 ###############################################################################
 #                             Data frames                                     #
 ###############################################################################
@@ -974,6 +989,10 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
 
     data["mean_logP"] = np.mean(data["logP"])
     data["mean_OH"] = np.mean(data["OH"])
+
+    data["Neff_C_SN_unique_Cepheid_host"] = effective_rank_entropy(data["C_SN_unique_Cepheid_host"]) # noqa
+    data["Neff_PV_covmat_cepheid_host"] = effective_rank_entropy(data["PV_covmat_cepheid_host"])     # noqa
+    data["Neff_C_Cepheid"] = effective_rank_entropy(data["C_Cepheid"])
 
     return data
 
