@@ -32,41 +32,67 @@ class LOSInterpolator:
     at per-galaxy query positions `r[i]`.
 
     The expected shapes are `los_r` of `(n_steps,)`, and `f` of
-    `(n_galaxies, n_steps)`, where `n_steps` is the number of radial steps
-    and `n_galaxies` is the number of galaxies. The interpolator can then be
-    queried with a radial position `r` of shape `(n_galaxies,)`.
+    `(n_fields, n_galaxies, n_steps)`, where `n_steps` is the number of radial
+    steps and `n_galaxies` is the number of galaxies. The interpolator can then
+    be queried with a radial position `r` of shape `(n_galaxies, )` to return
+    an array of shape `(n_fields, n_galaxies)`.
 
     Note: the method `interp_many_steps_per_galaxy` supports extrapolation
     beyond the last `los_r` value using an exponential decay
     `f(r) ∝ exp(-r / r₀)` with a fixed decay scale `r₀`.
     """
-
-    def __init__(self, los_r, f, method="cubic", r0_decay_many_steps=5,
+    def __init__(self, los_r, f, method="linear", r0_decay_many_steps=5,
                  extrap=False):
-        assert f.ndim == 2 and los_r.ndim == 1
-        assert f.shape[1] == los_r.shape[0]
+        assert los_r.ndim == 1
+        assert f.ndim == 3
+        assert f.shape[-1] == los_r.shape[0]
 
-        def single_interp(fi, ri):
-            interp = Interpolator1D(los_r, fi, method=method, extrap=extrap)
-            return interp(ri)
+        self.los_r = los_r
+        self.f = f
+        self.method = method
+        self.extrap = extrap
+        self.r0_decay = r0_decay_many_steps
 
-        self._batched_interp = jax.vmap(single_interp, in_axes=(0, 0))
-        self._los_r = los_r
-        self._frozen_f = f
-        self.r0_decay_many_steps = r0_decay_many_steps
+        # store dimensions
+        self.n_field, self.n_gal, self.n_steps = f.shape
 
-    @partial(jax.jit, static_argnums=0)
-    def interp_many_steps_per_galaxy(self, r_eval):
-        r_max = self._los_r[-1]
-        y_interp = vmap(lambda y, rq: jnp.interp(rq, self._los_r, y))(
-            self._frozen_f, r_eval)
+        # Define single interpolation
+        def single_interp(f_line, r_val):
+            return Interpolator1D(
+                los_r, f_line, method=method, extrap=extrap)(r_val)
 
-        # Use the last value at r_max as amplitude A
-        A = self._frozen_f[:, -1]
-        extrap = A[:, None] * jnp.exp(
-            -(r_eval - r_max) / self.r0_decay_many_steps)
-        return jnp.where(r_eval > r_max, extrap, y_interp)
+        # Inner vmap over galaxy axis
+        vmap_gal = vmap(single_interp, in_axes=(0, 0))
+        # Outer vmap over field axis, r is shared
+        self._batched_interp = vmap(vmap_gal, in_axes=(0, None))
 
     @partial(jax.jit, static_argnums=0)
     def __call__(self, r):
-        return self._batched_interp(self._frozen_f, r)
+        return self._batched_interp(self.f, r)
+
+    @partial(jax.jit, static_argnums=0)
+    def interp_many_steps_per_galaxy(self, r_eval):
+        if r_eval.ndim != 1:
+            raise ValueError(
+                f"Expected r_eval to be 1D (n_eval,), got {r_eval.shape}")
+
+        r_max = self.los_r[-1]
+        A = self.f[..., -1][..., None]  # shape (n_field, n_gal, 1)
+
+        # define interpolation over one LOS profile
+        def interp_profile(y):
+            return jnp.interp(r_eval, self.los_r, y)  # (n_eval,)
+
+        # vmap over galaxies
+        vmap_gal = vmap(interp_profile, in_axes=0)
+        # vmap over fields
+        batched_interp = vmap(vmap_gal, in_axes=0)
+
+        y_interp = batched_interp(self.f)  # (n_field, n_gal, n_eval)
+
+        # Exponential extrapolation
+        decay = jnp.exp(-(r_eval - r_max) / self.r0_decay)  # (n_eval,)
+        extrap = A * decay  # (n_field, n_gal, n_eval)
+
+        mask = r_eval > r_max  # (n_eval,)
+        return jnp.where(mask, extrap, y_interp)

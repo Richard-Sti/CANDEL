@@ -28,6 +28,21 @@ from ..util import (SPEED_OF_LIGHT, fprint, galactic_to_radec, load_config,
                     radec_to_cartesian, radec_to_galactic)
 from .dust import read_dustmap
 
+
+def effective_rank_entropy(C):
+    """
+    Compute the entropy-based effective rank (Shannon effective rank) of C.
+
+    https://www.eurasip.org/Proceedings/Eusipco/Eusipco2007/Papers/a5p-h05.pdf
+    """
+    w = np.linalg.eigvalsh(C)
+    # Remove negative eigenvalues (numerical artefacts)
+    w = w[w > 0]
+    p = w / np.sum(w)
+    p_nonzero = p[p > 0]
+    return np.exp(-np.sum(p_nonzero * np.log(p_nonzero)))
+
+
 ###############################################################################
 #                             Data frames                                     #
 ###############################################################################
@@ -319,6 +334,10 @@ def load_los(los_data_path, data, mask=None):
 
         assert np.all(data["los_density"] > 0)
         assert np.all(np.isfinite(data["los_velocity"]))
+
+    if "manticore" in los_data_path.lower():
+        fprint("normalizing the Manticore LOS density.")
+        data["los_density"] /= 0.3111 * 275.4  # Manticore normalization
 
     return data
 
@@ -839,6 +858,21 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
         czcmb_SN_HF, e_czcmb_SN_HF = None, None
         RA_SN_HF, dec_SN_HF = None, None
 
+    # Pick one SN per Cepheid host galaxy
+    mag_SN = np.zeros(40)
+    unique_ks = []
+    for i in range(len(Y_SN_Cepheid)):
+        j = np.where(L_SN_Cepheid_dist[i] == 1)[0][0]
+
+        if mag_SN[j] == 0:
+            mag_SN[j] = Y_SN_Cepheid[i]
+            unique_ks.append(i)
+
+    unique_ks = np.asarray(unique_ks)
+    mag_SN_unique_Cepheid_host = Y_SN_Cepheid[unique_ks]
+    C_SN_unique_Cepheid_host = C_SN_Cepheid[unique_ks][:, unique_ks]
+    L_SN_unique_Cepheid_host_dist = L_SN_Cepheid_dist[unique_ks]
+
     data = {
         # Individual Cepheid data, covariance matrix and host association.
         "mag_cepheid": mag_cepheid,
@@ -855,6 +889,14 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
         "C_SN_Cepheid": C_SN_Cepheid,
         "L_SN_Cepheid": cholesky(C_SN_Cepheid, lower=True),
         "L_SN_Cepheid_dist": L_SN_Cepheid_dist,
+        # Unique SNe in Cepheid host galaxies.
+        "mag_SN_unique_Cepheid_host": mag_SN_unique_Cepheid_host,
+        "C_SN_unique_Cepheid_host": C_SN_unique_Cepheid_host,
+        "std_mag_SN_unique_Cepheid_host": np.sqrt(
+            np.diag(C_SN_unique_Cepheid_host)),
+        "L_SN_unique_Cepheid_host": cholesky(C_SN_unique_Cepheid_host,
+                                             lower=True),
+        "L_SN_unique_Cepheid_host_dist": L_SN_unique_Cepheid_host_dist,
         # SNe in the Hubble flow and covariance matrix.
         "Y_SN_HF": Y_SN_HF,
         "num_flow_SN": len(Y_SN_HF),
@@ -906,10 +948,13 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
         cz_host = data["czcmb_cepheid_host"]
         cz_host_all = np.hstack([data["czcmb_cepheid_host"], [667, 327, -582]])
         cz_cepheid = data["L_Cepheid_host_dist"] @ cz_host_all
+        cz_unique_SN_Cepheid_host = data["L_SN_unique_Cepheid_host_dist"] @ cz_host_all  # noqa
 
         mask_host = cz_host < cepheid_host_cz_cmb_max
         mask_host_all = cz_host_all < cepheid_host_cz_cmb_max
         mask_cepheid = cz_cepheid < cepheid_host_cz_cmb_max
+        mask_cz_unique_SN_Cepheid_host = (
+            cz_unique_SN_Cepheid_host < cepheid_host_cz_cmb_max)
 
         fprint(f"Masking Cepheids with cz_cmb > {cepheid_host_cz_cmb_max} "
                f"km/s: Keeping {np.sum(mask_host)} out of {len(mask_host)}.")
@@ -918,7 +963,7 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
         data["logP"] = data["logP"][mask_cepheid]
         data["mag_cepheid"] = data["mag_cepheid"][mask_cepheid]
         data["C_Cepheid"] = data["C_Cepheid"][mask_cepheid][:, mask_cepheid]
-        data["L_Cepheid"] = data["L_Cepheid"][mask_cepheid][:, mask_cepheid]
+        data["L_Cepheid"] = cholesky(data["C_Cepheid"], lower=True)
 
         data["L_Cepheid_host_dist"] = data["L_Cepheid_host_dist"][mask_cepheid][:, mask_host_all]  # noqa
         data["czcmb_cepheid_host"] = data["czcmb_cepheid_host"][mask_host]
@@ -927,14 +972,27 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
         data["dec_host"] = data["dec_host"][mask_host]
         data["PV_covmat_cepheid_host"] = data["PV_covmat_cepheid_host"][mask_host][:, mask_host]  # noqa
 
+        data["L_SN_unique_Cepheid_host_dist"] = data["L_SN_unique_Cepheid_host_dist"][mask_cz_unique_SN_Cepheid_host][:, mask_host_all]  # noqa
+        data["mag_SN_unique_Cepheid_host"] = data["mag_SN_unique_Cepheid_host"][mask_cz_unique_SN_Cepheid_host]  # noqa
+        data["std_mag_SN_unique_Cepheid_host"] = data["std_mag_SN_unique_Cepheid_host"][mask_cz_unique_SN_Cepheid_host]  # noqa
+        data["C_SN_unique_Cepheid_host"] = data["C_SN_unique_Cepheid_host"][mask_cz_unique_SN_Cepheid_host][:, mask_cz_unique_SN_Cepheid_host]  # noqa
+        data["L_SN_unique_Cepheid_host"] = cholesky(data["C_SN_unique_Cepheid_host"], lower=True)  # noqa
+
         data["num_hosts"] = np.sum(mask_host)
         data["num_cepheids"] = np.sum(mask_cepheid)
 
         data["mask_host"] = mask_host
 
         for key, val in data.items():
-            if "SN" in key and isinstance(val, np.ndarray):
+            if "SN" in key and "SN_unique" not in key and isinstance(val, np.ndarray):  # noqa
                 data[key] = np.full_like(val, np.nan, dtype=val.dtype)
+
+    data["mean_logP"] = np.mean(data["logP"])
+    data["mean_OH"] = np.mean(data["OH"])
+
+    data["Neff_C_SN_unique_Cepheid_host"] = effective_rank_entropy(data["C_SN_unique_Cepheid_host"]) # noqa
+    data["Neff_PV_covmat_cepheid_host"] = effective_rank_entropy(data["PV_covmat_cepheid_host"])     # noqa
+    data["Neff_C_Cepheid"] = effective_rank_entropy(data["C_Cepheid"])
 
     return data
 
