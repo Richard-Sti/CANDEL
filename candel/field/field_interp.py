@@ -35,7 +35,7 @@ def build_regular_interpolator(field, boxsize, fill_value=None):
         method="linear",)
 
 
-def interpolate_los_density_velocity(field_loader, r, RA, dec):
+def interpolate_los_density_velocity(field_loader, r, RA, dec, verbose=True):
     """
     Interpolate the density and velocity fields along the line of sight
     specified by `RA` and `dec` at radial steps `r` from the observer. The
@@ -60,7 +60,7 @@ def interpolate_los_density_velocity(field_loader, r, RA, dec):
     pos_flat = pos.reshape(-1, 3)
 
     # Interpolate density
-    fprint("interpolating the density field...")
+    fprint("interpolating the density field...", verbose=verbose)
     eps = 1e-4
     density = np.log(field_loader.load_density() + eps)
     fill_value = np.log(1 + eps)
@@ -73,7 +73,7 @@ def interpolate_los_density_velocity(field_loader, r, RA, dec):
     assert np.all(los_density > 0)
 
     # Interpolate velocity components one at a time
-    fprint("interpolating the velocity field...")
+    fprint("interpolating the velocity field...", verbose=verbose)
     velocity = field_loader.load_velocity()  # shape (3, ngrid, ngrid, ngrid)
     v_interp = np.empty((pos_flat.shape[0], 3), dtype=np.float32)
 
