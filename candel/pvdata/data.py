@@ -710,7 +710,8 @@ def load_SH0ES(root):
 
 
 def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
-                         replace_SN_HF_from_PP=False, los_data_path=None):
+                         replace_SN_HF_from_PP=False, los_data_path=None,
+                         rand_los_data_path=None):
     """
     Load the separated SH0ES data, separating the Cepheid and supernovae and
     covariance matrices.
@@ -832,6 +833,18 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
         host_los_velocity = None
         host_los_r = None
 
+    if rand_los_data_path is not None:
+        data_rand_los = {}
+        data_rand_los = load_los(
+            rand_los_data_path, data_rand_los)
+        rand_los_density = data_rand_los["los_density"][0]
+        rand_los_velocity = data_rand_los["los_velocity"][0]
+        rand_los_r = data_rand_los["los_r"]
+    else:
+        rand_los_density = None
+        rand_los_velocity = None
+        rand_los_r = None
+
     # SH0ES-Antonio's approach for predicting H0 from Cepheid host redshifts,
     # the error propagation is biased when z -> 0.
     # zHD = data_cepheid_host_redshift["zHD"]
@@ -932,6 +945,10 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
         # "Y_Cepheid_new": Y_Cepheid_new,
         # "Y_Cepheid_new_err": Y_Cepheid_new_err
         "q_names": q_names,
+        # Random LOS for modelling selection
+        "rand_los_density": rand_los_density,
+        "rand_los_velocity": rand_los_velocity,
+        "rand_los_r": rand_los_r,
         }
 
     if cepheid_host_cz_cmb_max is not None:
@@ -1006,14 +1023,25 @@ def load_SH0ES_from_config(config_path):
 
     which_host_los = d.get("which_host_los", None)
     if which_host_los is not None:
-        los_data_path = config["io"]["PV_main"]["SH0ES"]["los_file"].replace(
-            "<X>", which_host_los)
+        if config["io"]["load_host_los"]:
+            los_data_path = config["io"]["PV_main"]["SH0ES"]["los_file"].replace(  # noqa
+                "<X>", which_host_los)
+        else:
+            los_data_path = None
+
+        if config["io"]["load_rand_los"]:
+            rand_los_data_path = config["io"]["los_file_random"].replace(
+                "<X>", which_host_los)
+        else:
+            rand_los_data_path = None
+
     else:
         los_data_path = None
+        rand_los_data_path = None
 
     return load_SH0ES_separated(
         root, cepheid_host_cz_cmb_max, replace_SN_HF_from_PP,
-        los_data_path=los_data_path)
+        los_data_path=los_data_path, rand_los_data_path=rand_los_data_path)
 
 
 def load_clusters(root, zcmb_min=None, zcmb_max=None, los_data_path=None,

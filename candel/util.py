@@ -82,6 +82,7 @@ def convert_to_absolute_paths(config):
     path_keys = {
         "fname_output",
         "los_file",
+        "los_file_random",
         "root",
         "path_density",
         "path_velocity",
