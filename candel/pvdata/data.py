@@ -331,6 +331,8 @@ def load_los(los_data_path, data, mask=None):
         data["los_density"] = f['los_density'][...][mask, ...]
         data["los_velocity"] = f['los_velocity'][...][mask, ...]
         data["los_r"] = f['r'][...]
+        data["los_RA"] = f["RA"][...]
+        data["los_dec"] = f["dec"][...]
 
         assert np.all(data["los_density"] > 0)
         assert np.all(np.isfinite(data["los_velocity"]))
@@ -840,10 +842,16 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
         rand_los_density = data_rand_los["los_density"][0]
         rand_los_velocity = data_rand_los["los_velocity"][0]
         rand_los_r = data_rand_los["los_r"]
+        rand_los_RA = data_rand_los["los_RA"]
+        rand_los_dec = data_rand_los["los_dec"]
+        has_rand_los = True
     else:
         rand_los_density = None
         rand_los_velocity = None
         rand_los_r = None
+        rand_los_RA = None
+        rand_los_dec = None
+        has_rand_los = False
 
     # SH0ES-Antonio's approach for predicting H0 from Cepheid host redshifts,
     # the error propagation is biased when z -> 0.
@@ -871,19 +879,23 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
         czcmb_SN_HF, e_czcmb_SN_HF = None, None
         RA_SN_HF, dec_SN_HF = None, None
 
-    # Pick one SN per Cepheid host galaxy
-    mag_SN = np.zeros(40)
-    unique_ks = []
-    for i in range(len(Y_SN_Cepheid)):
+    # Keep the brightest (lowest magnitude) SN per Cepheid host galaxy
+    n_hosts = L_SN_Cepheid_dist.shape[1]
+    best_mag = np.full(n_hosts, np.inf)
+    best_idx = np.full(n_hosts, -1, dtype=int)
+
+    for i, y in enumerate(Y_SN_Cepheid):
+        # Assuming one-hot host assignment per SN
         j = np.where(L_SN_Cepheid_dist[i] == 1)[0][0]
+        if y < best_mag[j]:    # use '>' if working in flux (higher = brighter)
+            best_mag[j] = y
+            best_idx[j] = i
 
-        if mag_SN[j] == 0:
-            mag_SN[j] = Y_SN_Cepheid[i]
-            unique_ks.append(i)
+    valid = best_idx >= 0
+    unique_ks = best_idx[valid]
 
-    unique_ks = np.asarray(unique_ks)
     mag_SN_unique_Cepheid_host = Y_SN_Cepheid[unique_ks]
-    C_SN_unique_Cepheid_host = C_SN_Cepheid[unique_ks][:, unique_ks]
+    C_SN_unique_Cepheid_host = C_SN_Cepheid[np.ix_(unique_ks, unique_ks)]
     L_SN_unique_Cepheid_host_dist = L_SN_Cepheid_dist[unique_ks]
 
     data = {
@@ -905,8 +917,7 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
         # Unique SNe in Cepheid host galaxies.
         "mag_SN_unique_Cepheid_host": mag_SN_unique_Cepheid_host,
         "C_SN_unique_Cepheid_host": C_SN_unique_Cepheid_host,
-        "std_mag_SN_unique_Cepheid_host": np.sqrt(
-            np.diag(C_SN_unique_Cepheid_host)),
+        "mean_std_mag_SN_unique_Cepheid_host": np.mean(np.sqrt(np.diag(C_SN_unique_Cepheid_host))),  # noqa
         "L_SN_unique_Cepheid_host": cholesky(C_SN_unique_Cepheid_host,
                                              lower=True),
         "L_SN_unique_Cepheid_host_dist": L_SN_unique_Cepheid_host_dist,
@@ -946,9 +957,13 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
         # "Y_Cepheid_new_err": Y_Cepheid_new_err
         "q_names": q_names,
         # Random LOS for modelling selection
+        "has_rand_los": has_rand_los,
+        "num_rand_los": rand_los_density.shape[1],
         "rand_los_density": rand_los_density,
         "rand_los_velocity": rand_los_velocity,
         "rand_los_r": rand_los_r,
+        "rand_los_RA": rand_los_RA,
+        "rand_los_dec": rand_los_dec
         }
 
     if cepheid_host_cz_cmb_max is not None:
@@ -1003,9 +1018,6 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
         for key, val in data.items():
             if "SN" in key and "SN_unique" not in key and isinstance(val, np.ndarray):  # noqa
                 data[key] = np.full_like(val, np.nan, dtype=val.dtype)
-
-    data["mean_logP"] = np.mean(data["logP"])
-    data["mean_OH"] = np.mean(data["OH"])
 
     data["Neff_C_SN_unique_Cepheid_host"] = effective_rank_entropy(data["C_SN_unique_Cepheid_host"]) # noqa
     data["Neff_PV_covmat_cepheid_host"] = effective_rank_entropy(data["PV_covmat_cepheid_host"])     # noqa
