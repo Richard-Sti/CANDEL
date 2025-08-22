@@ -598,14 +598,21 @@ def load_SFI(root, eta_min=-0.1, zcmb_min=None, zcmb_max=None,
 
 
 def load_PantheonPlus(root, zcmb_min=None, zcmb_max=None, b_min=7.5,
-                      los_data_path=None, return_all=False, **kwargs):
+                      los_data_path=None, return_all=False,
+                      removed_PV_from_covmat=True, **kwargs):
     """
     Load the Pantheon+ data from the given root directory, the covariance
     is expected to have peculiar velocity contribution removed.
     """
+    if removed_PV_from_covmat:
+        arr_fname = "Pantheon+SH0ES_zsel.dat"
+        covmat_fname = "Pantheon+SH0ES_zsel_STAT+SYS_noPV.cov"
+    else:
+        arr_fname = "Pantheon+SH0ES.dat"
+        covmat_fname = "Pantheon+SH0ES_STAT+SYS.cov"
+
     arr = np.genfromtxt(
-        join(root, "Pantheon+SH0ES_zsel.dat"), names=True, dtype=None,
-        encoding=None)
+        join(root, arr_fname), names=True, dtype=None, encoding=None)
 
     fprint(f"initially loaded {len(arr)} galaxies from Pantheon+ data.")
 
@@ -620,8 +627,7 @@ def load_PantheonPlus(root, zcmb_min=None, zcmb_max=None, b_min=7.5,
     if return_all:
         return data
 
-    covmat = np.loadtxt(
-        join(root, "Pantheon+SH0ES_zsel_STAT+SYS_noPV.cov"), delimiter=",")
+    covmat = np.loadtxt(join(root, covmat_fname), delimiter=",")
     size = int(covmat[0])
     C = np.reshape(covmat[1:], (size, size))
 
@@ -958,7 +964,7 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
         "q_names": q_names,
         # Random LOS for modelling selection
         "has_rand_los": has_rand_los,
-        "num_rand_los": rand_los_density.shape[1],
+        "num_rand_los": rand_los_density.shape[1] if rand_los_density is not None else 1,  # noqa
         "rand_los_density": rand_los_density,
         "rand_los_velocity": rand_los_velocity,
         "rand_los_r": rand_los_r,
@@ -1006,7 +1012,6 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
 
         data["L_SN_unique_Cepheid_host_dist"] = data["L_SN_unique_Cepheid_host_dist"][mask_cz_unique_SN_Cepheid_host][:, mask_host_all]  # noqa
         data["mag_SN_unique_Cepheid_host"] = data["mag_SN_unique_Cepheid_host"][mask_cz_unique_SN_Cepheid_host]  # noqa
-        data["std_mag_SN_unique_Cepheid_host"] = data["std_mag_SN_unique_Cepheid_host"][mask_cz_unique_SN_Cepheid_host]  # noqa
         data["C_SN_unique_Cepheid_host"] = data["C_SN_unique_Cepheid_host"][mask_cz_unique_SN_Cepheid_host][:, mask_cz_unique_SN_Cepheid_host]  # noqa
         data["L_SN_unique_Cepheid_host"] = cholesky(data["C_SN_unique_Cepheid_host"], lower=True)  # noqa
 
