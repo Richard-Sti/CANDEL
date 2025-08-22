@@ -60,12 +60,13 @@ def convert_none_strings(d):
     return d
 
 
-def replace_prior_with_delta(config, param, value):
+def replace_prior_with_delta(config, param, value, verbose=True):
     """Replace the prior of `param` with a delta distribution at `value`."""
     if param not in config.get("model", {}).get("priors", {}):
         return config
 
-    fprint(f"replacing prior of `{param}` with a delta function.")
+    fprint(f"replacing prior of `{param}` with a delta function.",
+           verbose=verbose)
     priors = config.setdefault("model", {}).setdefault("priors", {})
     priors.pop(param, None)
     priors[param] = {
