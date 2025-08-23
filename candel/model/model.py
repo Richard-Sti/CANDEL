@@ -75,6 +75,9 @@ class JeffreysPrior(Uniform):
     """
     Wrapper around Uniform that keeps Uniform sampling but overrides
     log_prob to behave like a Jeffreys prior.
+
+    Sometimes this is also called a reference prior, or a scale-invariant
+    prior.
     """
 
     def log_prob(self, value):
