@@ -1082,7 +1082,7 @@ def load_clusters(root, zcmb_min=None, zcmb_max=None, los_data_path=None,
     ]
 
     data = np.genfromtxt(fname, dtype=dtype, skip_header=1)
-    data = data[(data['Y_nr_no_ksz'] != -1.0)]
+    # data = data[(data['Y_nr_no_ksz'] != -1.0)]
     fprint(f"initially loaded {len(data)} clusters.")
 
     z = data['z']
