@@ -58,6 +58,7 @@ def load_PV_dataframes(config_path):
         los_reconstruction = None
 
     config_io = config["io"]
+    config_pv_model = config["pv_model"]
     names = config_io.pop("catalogue_name")
     if isinstance(names, str):
         names = [names]
@@ -79,7 +80,8 @@ def load_PV_dataframes(config_path):
                 f"loading existing LOS data from {kwargs['los_data_path']}.")
 
         df = PVDataFrame.from_config_dict(
-            kwargs, name, try_pop_los=try_pop_los, config_io=config_io)
+            kwargs, name, try_pop_los=try_pop_los,
+            config_pv_model=config_pv_model)
         dfs.append(df)
 
     if len(dfs) == 1:
@@ -94,13 +96,13 @@ class PVDataFrame:
     add_mag_selection = False
     mag_selection_kwargs = None
 
-    def __init__(self, data, los_method="linear", los_extrap=True):
+    def __init__(self, data, los_radial_decay_scale=5):
         self.data = {k: jnp.asarray(v) for k, v in data.items()}
         self.name = None
 
         if "los_velocity" in self.data:
             self.has_precomputed_los = True
-            kwargs = {"method": los_method, "extrap": los_extrap}
+            kwargs = {"r0_decay_scale": los_radial_decay_scale}
             self.f_los_delta = LOSInterpolator(
                 self.data["los_r"], self.data["los_delta"], **kwargs)
             self.f_los_log_density = LOSInterpolator(
@@ -108,6 +110,10 @@ class PVDataFrame:
                 **kwargs)
             self.f_los_velocity = LOSInterpolator(
                 self.data["los_r"], self.data["los_velocity"], **kwargs)
+
+            self.data["los_delta_r_grid"] = self.f_los_delta.interp_many_steps_per_galaxy(self.data["r_grid"])              # noqa
+            self.data["los_velocity_r_grid"] = self.f_los_velocity.interp_many_steps_per_galaxy(self.data["r_grid"])        # noqa
+            self.data["los_log_density_r_grid"] = self.f_los_log_density.interp_many_steps_per_galaxy(self.data["r_grid"])  # noqa
         else:
             self.has_precomputed_los = False
 
@@ -115,7 +121,7 @@ class PVDataFrame:
         self._cache = {}
 
     @classmethod
-    def from_config_dict(cls, config, name, try_pop_los, config_io):
+    def from_config_dict(cls, config, name, try_pop_los, config_pv_model):
         root = config.pop("root")
         nsamples_subsample = config.pop("nsamples_subsample", None)
         seed_subsample = config.pop("seed_subsample", 42)
@@ -151,11 +157,11 @@ class PVDataFrame:
                     fprint(f"removing `{key}` from data.")
                     data.pop(key, None)
 
-        if "los_r" not in data:
-            d = config_io["reconstruction_main"]
-            fprint(f"setting the LOS radial grid from {d['rmin']} to "
-                   f"{d['rmax']} Mpc/h with {d['num_steps']} steps.")
-            data["los_r"] = np.linspace(d["rmin"], d["rmax"], d["num_steps"])
+        rmin, rmax = config_pv_model["r_limits_malmquist"]
+        num_points = config_pv_model["num_points_malmquist"]
+        fprint(f"setting the LOS radial grid from {rmin} to {rmax} with "
+               f"{num_points} points.")
+        data["r_grid"] = np.linspace(rmin, rmax, num_points)
 
         if "los_density" in data:
             data["los_log_density"] = np.log(data["los_density"])
@@ -246,14 +252,19 @@ class PVDataFrame:
 
         keys_skip = [
             "is_calibrator", "mu_cal", "C_mu_cal", "std_mu_cal", "los_r",
-            "mag_covmat"]
+            "mag_covmat",
+            "los_density", "los_delta", "los_velocity", "los_log_density",
+            "r_grid", "los_delta_r_grid", "los_velocity_r_grid",
+            "los_log_density_r_grid"]
 
         subsampled = {key: self[key][main_mask]
                       for key in self.keys() if key not in keys_skip}
 
         for key in keys_skip:
             if key in self.data:
-                if key == "is_calibrator":
+                if key.startswith("los_") and key != "los_r":
+                    subsampled[key] = self[key][:, main_mask, ...]
+                elif key == "is_calibrator":
                     subsampled[key] = self[key][main_mask]
                 elif key == "mag_covmat":
                     subsampled[key] = self.data[key][main_mask][:, main_mask]
@@ -328,11 +339,11 @@ class PVDataFrame:
 
 def load_los(los_data_path, data, mask=None):
     with File(los_data_path, 'r') as f:
-        data["los_density"] = f['los_density'][...][mask, ...]
-        data["los_velocity"] = f['los_velocity'][...][mask, ...]
+        data["los_density"] = f['los_density'][...][:, mask, ...]
+        data["los_velocity"] = f['los_velocity'][...][:, mask, ...]
         data["los_r"] = f['r'][...]
-        data["los_RA"] = f["RA"][...]
-        data["los_dec"] = f["dec"][...]
+        data["los_RA"] = f["RA"][...][mask]
+        data["los_dec"] = f["dec"][...][mask]
 
         assert np.all(data["los_density"] > 0)
         assert np.all(np.isfinite(data["los_velocity"]))
