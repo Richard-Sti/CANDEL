@@ -17,10 +17,10 @@ from abc import ABC
 
 import jax.numpy as jnp
 import numpy as np
+from jax.debug import print as jprint  # noqa
 from jax.scipy.linalg import solve_triangular
-from jax.scipy.special import logsumexp
+from jax.scipy.special import gammainc, gammaln, logsumexp
 from jax.scipy.stats import norm as norm_jax
-from jax.debug import print as jprint                                           # noqa
 from numpyro import factor, plate, sample
 from numpyro.distributions import (HalfNormal, MultivariateNormal, Normal,
                                    Uniform)
@@ -47,6 +47,39 @@ def mvn_logpdf_cholesky(y, mu, L):
 
 def predict_cz(zcosmo, Vrad):
     return SPEED_OF_LIGHT * ((1 + zcosmo) * (1 + Vrad / SPEED_OF_LIGHT) - 1)
+
+
+def log_prior_r_empirical(r, R, p, n, Rmax):
+    """
+    Log of the (empirical) truncated prior:
+        π(r) ∝ r^p * exp(-(r/R)^n),   0 < r ≤ Rmax
+    Normalized by Z = [R^(1+p) * γ(a, x)] / n with a = (1+p)/n, x = (Rmax/R)^n
+    """
+    a = (1.0 + p) / n
+    x = (Rmax / R) ** n
+
+    # log γ(a, x) = log Γ(a) + log P(a, x), P = regularized lower γ
+    log_gamma_lower = gammaln(a) + jnp.log(jnp.clip(gammainc(a, x), 1e-300, 1.0))  # noqa
+    log_norm = (1.0 + p) * jnp.log(R) - jnp.log(n) + log_gamma_lower
+
+    logpdf = p * jnp.log(r) - (r / R) ** n - log_norm
+    valid = (r > 0) & (r <= Rmax)
+    return jnp.where(valid, logpdf, -jnp.inf)
+
+
+def log_integral_gauss_pdf_times_cdf(mu, sigma, t, w):
+    """
+    Log of ∫ N(x|mu, sigma^2) Φ((t - x)/w) dx.
+    Closed form: Φ((mu - t)/sqrt(sigma^2 + w^2))
+    """
+    return norm_jax.logcdf((t - mu) / jnp.sqrt(sigma**2 + w**2))
+
+
+def log_prob_integrand_sel(x, e_x, lim, lim_width):
+    if lim_width is None:
+        return norm_jax.logcdf((lim - x) / e_x)
+    else:
+        return log_integral_gauss_pdf_times_cdf(x, e_x, lim, lim_width)
 
 
 class BaseSH0ESModel(ABC):
@@ -80,8 +113,14 @@ class BaseSH0ESModel(ABC):
         # any other conversions.
         self.set_data(data)
         self.cz_lim_selection = get_nested(
-            config, "model/cz_lim_selection", 3300)
+            config, "model/cz_lim_selection", 3300.0)
+        self.cz_lim_selection_width = get_nested(
+            config, "model/cz_lim_selection_width", None)
+
         self.mag_lim_SN = get_nested(config, "model/mag_lim_SN", 14.0)
+        self.mag_lim_SN_width = get_nested(
+            config, "model/mag_lim_SN_width", None)
+
         self.mag_lim_Cepheid = get_nested(
             config, "model/mag_lim_Cepheid", 24.0)
         self.e_mag_Cepheid = get_nested(
@@ -121,6 +160,9 @@ class BaseSH0ESModel(ABC):
         self.use_uniform_mu_host_priors = get_nested(
             config, "model/use_uniform_mu_host_priors", True)
         fprint(f"use_uniform_mu_host_priors set to {self.use_uniform_mu_host_priors}")  # noqa
+        self.which_distance_prior = get_nested(
+            config, "model/which_distance_prior", "volume")
+        fprint(f"which_distance_prior set to {self.which_distance_prior}")
         self.use_fiducial_Cepheid_host_PV_covariance = get_nested(
             config, "model/use_fiducial_Cepheid_host_PV_covariance", True)
         fprint(f"use_fiducial_Cepheid_host_PV_covariance set to {self.use_fiducial_Cepheid_host_PV_covariance}")  # noqa
@@ -188,7 +230,6 @@ class BaseSH0ESModel(ABC):
                f"{r_limits_malmquist[1]} Mpc with {num_points_malmquist} "
                f"points for the Cepheid host galaxies.")
         self.r_host_range = r_range
-        self.log_r2_host_range = 2 * jnp.log(self.r_host_range)
         self.Rmax = jnp.max(self.r_host_range)
 
         if not self.use_reconstruction and self.apply_sel:
@@ -242,6 +283,8 @@ class BaseSH0ESModel(ABC):
             config, "model/use_reconstruction", False)
         which_selection = get_nested(
             config, "model/which_selection", None)
+        which_distance_prior = get_nested(
+            config, "model/which_distance_prior", "volume")
 
         if not use_SNe and not which_selection in ["SN_magnitude", "SN_magnitude_redshift"]:  # noqa
             replace_prior_with_delta(config, "M_B", -19.25)
@@ -257,6 +300,13 @@ class BaseSH0ESModel(ABC):
         if not use_reconstruction:
             replace_prior_with_delta(config, "beta", 0.0)
 
+        if which_distance_prior != "empirical":
+            fprint("not using empirical distance prior. Disabling "
+                   "its parameters.")
+            app = "dist_emp"
+            replace_prior_with_delta(config, f"R_{app}", 1., verbose=False)
+            replace_prior_with_delta(config, f"p_{app}", 2., verbose=False)
+            replace_prior_with_delta(config, f"n_{app}", 1., verbose=False)
         return config
 
     def set_data(self, data):
@@ -369,21 +419,23 @@ class SH0ESModel(BaseSH0ESModel):
         # Cosmological redshift of shape `(n_steps,)`
         zcosmo = self.distance2redshift(self.r_host_range, h=H0 / 100)
         cz_r = predict_cz(zcosmo[None, None, :], Vpec)
-        log_cdf = norm_jax.logcdf((self.cz_lim_selection - cz_r) / sigma_v)
-
+        log_prob = log_prob_integrand_sel(
+            cz_r, sigma_v, self.cz_lim_selection, self.cz_lim_selection_width)
         # The expected output is of the shape `(n_fields, n_galaxies,)`,
         return ln_simpson(
-            lp_r + log_cdf, x=self.r_host_range[None, None, :], axis=-1)
+            lp_r + log_prob, x=self.r_host_range[None, None, :], axis=-1)
 
     def log_S_SN_mag(self, lp_r, M_SN, H0):
         """Probability of detection term if supernova magnitude-truncated."""
         mag = self.distance2distmod(self.r_host_range, h=H0 / 100) + M_SN
 
-        log_cdf = norm_jax.logcdf(
-            (self.mag_lim_SN - mag[None, None, :]) / self.mean_std_mag_SN_unique_Cepheid_host)  # noqa
+        log_prob = log_prob_integrand_sel(
+            mag[None, None, :], self.mean_std_mag_SN_unique_Cepheid_host,
+            self.mag_lim_SN, self.mag_lim_SN_width)
+
         # The expected output is of the shape `(n_fields, n_galaxies,)`,
         return ln_simpson(
-            lp_r + log_cdf, x=self.r_host_range[None, None, :], axis=-1)
+            lp_r + log_prob, x=self.r_host_range[None, None, :], axis=-1)
 
     def log_S_SN_mag_cz(self, lp_r, Vpec, M_SN, H0, sigma_v):
         """
@@ -394,15 +446,18 @@ class SH0ESModel(BaseSH0ESModel):
         cz_r = predict_cz(zcosmo[None, None, :], Vpec)
         mag = self.distance2distmod(self.r_host_range, h=H0 / 100) + M_SN
 
-        log_cdf = norm_jax.logcdf(
-            (self.mag_lim_SN - mag[None, None, :]) / self.mean_std_mag_SN_unique_Cepheid_host)  # noqa
-        log_cdf += norm_jax.logcdf(
-            (self.cz_lim_selection - cz_r) / sigma_v)
+        log_prob = log_prob_integrand_sel(
+            mag[None, None, :], self.mean_std_mag_SN_unique_Cepheid_host,
+            self.mag_lim_SN, self.mag_lim_SN_width)
+        log_prob += log_prob_integrand_sel(
+            cz_r, sigma_v, self.cz_lim_selection, self.cz_lim_selection_width)
         return ln_simpson(
-            lp_r + log_cdf, x=self.r_host_range[None, None, :], axis=-1)
+            lp_r + log_prob, x=self.r_host_range[None, None, :], axis=-1)
 
     def log_S_Cepheid_mag(self, lp_r, M_W, b_W, Z_W, H0):
         """Probability of detection term if Cepheid magnitude-truncated."""
+        raise NotImplementedError(
+            "Cepheid selection is not understood well enough..")
         mu = self.distance2distmod(self.r_host_range, h=H0 / 100)
         mag = mu[None, :] + M_W + b_W * self.mean_logP + Z_W * self.mean_OH
 
@@ -411,18 +466,55 @@ class SH0ESModel(BaseSH0ESModel):
         return ln_simpson(
             lp_r + log_cdf, x=self.r_host_range[None, None, :], axis=-1)
 
+    def log_prior_distance(self, r, **kwargs):
+        """Log prior on the (physical distance)."""
+        if self.which_distance_prior == "volume":
+            return 2 * jnp.log(r) - 3 * jnp.log(self.Rmax) + jnp.log(3)
+        elif self.which_distance_prior == "empirical":
+            return log_prior_r_empirical(
+                r, kwargs["R"], kwargs["p"], kwargs["n"], self.Rmax)
+        else:
+            raise ValueError(
+                f"Unknown distance prior: `{self.which_distance_prior}`")
+
+    def log_galaxy_bias(self, delta, beta):
+        if self.which_bias == "linear":
+            b1 = self.Om ** 0.55 / beta
+            return jnp.log(jnp.clip(1 + b1 * delta, self.br_min_clip))
+        elif self.which_bias == "powerlaw":
+            # Neyrinck+2014 model.
+            alpha = 0.65
+            rho_exp = 0.4
+            eps = 1.5
+
+            x = 1 + delta
+            return alpha * jnp.log(x) - (x / rho_exp)**(-eps)
+        else:
+            raise ValueError(
+                f"Unknown galaxy bias model: `{self.which_bias}`.")
+
     def __call__(self, ):
-        M_B = rsample("M_B", self.priors["M_B"])
+        # Hubble constant
         H0 = rsample("H0", self.priors["H0"])
+        # CPLR calibration
         M_W = rsample("M_W", self.priors["M_W"])
         b_W = rsample("b_W", self.priors["b_W"])
         Z_W = rsample("Z_W", self.priors["Z_W"])
+        # SN calibration
+        M_B = rsample("M_B", self.priors["M_B"])
+        # Velocity field calibration
         Vext = rsample("Vext", self.priors["Vext"])
         sigma_v = rsample("sigma_v", self.priors["sigma_v"])
         A_covmat = rsample("A_covmat", self.priors["A_covmat"])
         beta = rsample("beta", self.priors["beta"])
+        # Empirical distance prior calibration
+        R_dist_emp = rsample("R_dist_emp", self.priors["R_dist_emp"])
+        p_dist_emp = rsample("p_dist_emp", self.priors["p_dist_emp"])
+        n_dist_emp = rsample("n_dist_emp", self.priors["n_dist_emp"])
+        kwargs_dist = {"R": R_dist_emp, "p": p_dist_emp, "n": n_dist_emp}
 
         h = H0 / 100
+        # Project Vext along the LOS to each host.
         Vext_rad_host = jnp.sum(Vext[None, :] * self.rhat_host, axis=1)
 
         # HST and Gaia zero-point calibration of MW Cepheids.
@@ -455,7 +547,8 @@ class SH0ESModel(BaseSH0ESModel):
         else:
             # We will add the log-likelihood of this either below or together
             # with the reconstruction likelihood.
-            lp_all_host_dist = 2 * jnp.log(r_host_all)
+            lp_all_host_dist = self.log_prior_distance(
+                r_host_all, **kwargs_dist)
             lp_all_host_dist += self.log_grad_distmod2comoving_distance(
                 mu_host_all, h=h)
             lp_host_dist = lp_all_host_dist[:self.num_hosts]
@@ -466,8 +559,8 @@ class SH0ESModel(BaseSH0ESModel):
 
         # Prepare the grid of r^2 prior of shape (eventually)
         # `(n_fields, n_galaxies, n_steps)`.
-        lp_host_dist_grid = (self.log_r2_host_range[None, None, :]
-                             - 3 * jnp.log(self.Rmax) + jnp.log(3))
+        lp_host_dist_grid = self.log_prior_distance(
+            self.r_host_range, **kwargs_dist)[None, None, :]
 
         # Copy the homogeneous Malmquist bias for the random LOS
         if self.apply_sel:
@@ -483,28 +576,8 @@ class SH0ESModel(BaseSH0ESModel):
             # shape is (n_fields, n_galaxies).
             los_delta_host = self.f_host_los_delta(rh_host)
 
-            if self.which_bias == "linear":
-
-                def log_bias_fn(delta):
-                    b1 = self.Om ** 0.55 / beta
-                    return jnp.log(jnp.clip(1 + b1 * delta, self.br_min_clip))
-
-            elif self.which_bias == "powerlaw":
-
-                def log_bias_fn(delta):
-                    # Neyrinck+2014 model.
-                    alpha = 0.65
-                    rho_exp = 0.4
-                    eps = 1.5
-
-                    x = 1 + delta
-                    return alpha * jnp.log(x) - (x / rho_exp)**(-eps)
-
-            else:
-                raise ValueError(f"Unknown bias model: {self.which_bias}")
-
             # Add the inhomogeneous Malmquist bias (n_fields, n_galaxies)
-            lp_host_dist += log_bias_fn(los_delta_host)
+            lp_host_dist += self.log_galaxy_bias(los_delta_host, beta=beta)
 
             # Evaluate LOS overdensity over a radial grid in Mpc / h:
             # `(n_fields, n_galaxies, n_steps)``
@@ -513,7 +586,8 @@ class SH0ESModel(BaseSH0ESModel):
 
             # Compute integrand for normalization
             # Shape: (n_fields, n_galaxies, n_steps)
-            lp_host_dist_grid += log_bias_fn(los_delta_grid)
+            lp_host_dist_grid += self.log_galaxy_bias(
+                los_delta_grid, beta=beta)
 
             # Simpson integral over radial steps, per field and galaxy
             lp_host_dist_norm = ln_simpson(
@@ -531,7 +605,8 @@ class SH0ESModel(BaseSH0ESModel):
                     self.r_host_range * h)
                 # Compute the inhomogeneous Malmquist bias
                 # (previously computed homogeneous)
-                lp_rand_dist_grid += log_bias_fn(rand_los_delta_grid)
+                lp_rand_dist_grid += self.log_galaxy_bias(
+                    rand_los_delta_grid, beta=beta)
                 # Compute the normalization constant
                 lp_rand_dist_grid -= ln_simpson(
                     lp_rand_dist_grid, x=self.r_host_range[None, None, ...],
