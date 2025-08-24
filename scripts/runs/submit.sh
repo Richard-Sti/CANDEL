@@ -22,11 +22,16 @@ fi
 set -e
 
 if [[ -z "$1" ]]; then
-    echo "Usage: sbatch $0 <task_index> (e.g., 0 for tasks_0.txt)"
+    echo "Usage: sbatch $0 <task_index> [ncpus]"
     exit 1
 fi
 
 task_index="$1"
+ncpus="${2:-1}"
+
+echo "[INFO] Task index: $task_index"
+echo "[INFO] Using $ncpus CPU threads (may be overwritten by SBATCH)"
+
 task_file="tasks_${task_index}.txt"
 
 if [[ ! -f "$task_file" ]]; then
@@ -81,6 +86,12 @@ for line in "${task_lines[@]}"; do
         module load cuda
         module load python
 
+        # Override ncpus to what SLURM gave us
+        if [[ -n "$SLURM_CPUS_PER_TASK" ]]; then
+            ncpus="$SLURM_CPUS_PER_TASK"
+            echo "[INFO] Overriding ncpus to SLURM_CPUS_PER_TASK=$ncpus"
+        fi
+
         export XLA_FLAGS="--xla_hlo_profile=false --xla_dump_to=/tmp/nowhere"
     fi
 
@@ -102,7 +113,7 @@ for line in "${task_lines[@]}"; do
 
     echo "[INFO] Running main.py with config: $config_path"
     export PYTHONPATH="$frozen_root:$PYTHONPATH"
-    "$python_exec" "$frozen_root/main.py" --config "$config_path"
+    "$python_exec" "$frozen_root/main.py" --config "$config_path" --host-devices "$ncpus"
 
     echo "[INFO] === Finished task $idx ==="
     echo

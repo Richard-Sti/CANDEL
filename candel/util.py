@@ -60,12 +60,13 @@ def convert_none_strings(d):
     return d
 
 
-def replace_prior_with_delta(config, param, value):
+def replace_prior_with_delta(config, param, value, verbose=True):
     """Replace the prior of `param` with a delta distribution at `value`."""
     if param not in config.get("model", {}).get("priors", {}):
         return config
 
-    fprint(f"replacing prior of `{param}` with a delta function.")
+    fprint(f"replacing prior of `{param}` with a delta function.",
+           verbose=verbose)
     priors = config.setdefault("model", {}).setdefault("priors", {})
     priors.pop(param, None)
     priors[param] = {
@@ -82,6 +83,7 @@ def convert_to_absolute_paths(config):
     path_keys = {
         "fname_output",
         "los_file",
+        "los_file_random",
         "root",
         "path_density",
         "path_velocity",
@@ -123,7 +125,7 @@ def load_config(config_path, replace_none=True, fill_paths=True,
         config = convert_to_absolute_paths(config)
 
     shared_params = config["inference"].get("shared_params", None)
-    if shared_params is not None:
+    if shared_params and str(shared_params).lower() != "none":
         config["inference"]["shared_params"] = shared_params.split(",")
 
     return config
@@ -266,7 +268,12 @@ def name2label(name):
         "a_FP": r"$a_{\rm FP}$",
         "b_FP": r"$b_{\rm FP}$",
         "c_FP": r"$c_{\rm FP}$",
+        "sigma_log_theta": r"$\sigma_{\log \theta}$",
         "R_dust": r"$R_{\rm W1}$",
+        "R_dist_emp": r"$R_{\rm dist}$",
+        "n_dist_emp": r"$n_{\rm dist}$",
+        "p_dist_emp": r"$p_{\rm dist}$",
+        "Rmax_dist_emp": r"$R_{\rm max, dist}$"
     }
 
     if "/" in name:

@@ -12,8 +12,8 @@ machine = "local"
 ###############################################################################
 
 [inference]
-num_warmup = 1000
-num_samples = 1000
+num_warmup = 500
+num_samples = 500
 num_chains = 10
 chain_method = "parallel"
 seed = 44
@@ -27,24 +27,33 @@ num_chains_harmonic = 10
 
 Om = 0.3
 use_MNR = false
-which_selection = "SN_magnitude_redshift"
+which_selection = "redshift"
 use_uniform_mu_host_priors = false
+which_distance_prior = "volume"
+
 use_Cepheid_host_redshift = true
-use_reconstruction = false
+
+use_reconstruction = true
 which_bias = "linear"
 
-use_fiducial_Cepheid_host_PV_covariance = true
-use_PV_covmat_scaling = true
-weight_selection_by_covmat_Neff = true
+use_fiducial_Cepheid_host_PV_covariance = false
+use_PV_covmat_scaling = false
+weight_selection_by_covmat_Neff = false
 
 use_SNe_HF_SH0ES = false
 use_SNe_HF_Bayes = false
 
+# Selection parameters
 cz_lim_selection = 3300
-mag_lim_SN = 15.0
+cz_lim_selection_width = 300
+
+mag_lim_SN = 14.0
+mag_lim_SN_width = 0.15
+
 mag_lim_Cepheid = 24.0
 e_mag_Cepheid = 0.1
 
+# Homogeneous and inghomogeneous Malmquist bias gridding
 r_limits_malmquist = [0.01, 150]
 num_points_malmquist = 251
 distmod_limits = [15, 43]
@@ -111,11 +120,28 @@ scale = 0.5
 
 
 [model.priors.Vext]
-dist = "delta"
-value = [0.0, 0.0, 0.0]
-# dist = "vector_uniform_fixed"
-# low = 0.0
-# high = 2500
+# dist = "delta"
+# value = [0.0, 0.0, 0.0]
+dist = "vector_uniform_fixed"
+low = 0.0
+high = 2500
+
+[model.priors.R_dist_emp]
+dist = "uniform"
+low = 1.0
+high = 100
+
+[model.priors.p_dist_emp]
+dist = "truncated_normal"
+low = 0.0
+mean = 2.0
+scale = 0.1
+
+[model.priors.n_dist_emp]
+dist = "truncated_normal"
+low = 0.0
+mean = 1.0
+scale = 3
 
 
 ################################################################################
@@ -126,13 +152,20 @@ value = [0.0, 0.0, 0.0]
 # root_output = "results/"
 # fname_output = "results/test.hdf5"
 root_output = "results/CH0"
-fname_output = "results/CH0/Cepheid_H0_scaled_PV_covmat_joint_sel.hdf5"
-# fname_output = "results/CH0/test.hdf5"
+# fname_output = "results/CH0/Cepheid_H0_scaled_PV_covmat_joint_sel.hdf5"
+fname_output = "results/CH0/test.hdf5"
+
+load_host_los = true
+load_rand_los = true
+
+los_file_random = "data/los_random_<X>.hdf5"
+
+los_r0_decay_scale = 5
 
 
 [io.SH0ES]
 root = "data/SH0ES"
-cepheid_host_cz_cmb_max = "none"
+cepheid_host_cz_cmb_max = 3300
 replace_SN_HF_from_PP = false
 which_host_los = "Carrick2015"
 # which_host_los = "manticore_2MPP_MULTIBIN_N256_DES_V2"
@@ -153,7 +186,7 @@ los_file = "data/SH0ES/los_SH0ES_TFR_<X>.hdf5"
 [io.reconstruction_main]
 rmin = 0.1
 rmax = 100
-num_steps = 501
+num_steps = 201
 
 [io.reconstruction_main.Carrick2015]
 path_density = "data/fields/carrick2015_twompp_density.npy"

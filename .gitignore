@@ -5,6 +5,7 @@ candel.egg-info/
 __pycache__/
 data/
 results/
+results_test/
 
 
 notebooks/test.ipynb

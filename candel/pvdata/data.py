@@ -58,6 +58,7 @@ def load_PV_dataframes(config_path):
         los_reconstruction = None
 
     config_io = config["io"]
+    config_pv_model = config["pv_model"]
     names = config_io.pop("catalogue_name")
     if isinstance(names, str):
         names = [names]
@@ -79,7 +80,8 @@ def load_PV_dataframes(config_path):
                 f"loading existing LOS data from {kwargs['los_data_path']}.")
 
         df = PVDataFrame.from_config_dict(
-            kwargs, name, try_pop_los=try_pop_los, config_io=config_io)
+            kwargs, name, try_pop_los=try_pop_los,
+            config_pv_model=config_pv_model)
         dfs.append(df)
 
     if len(dfs) == 1:
@@ -91,16 +93,17 @@ def load_PV_dataframes(config_path):
 class PVDataFrame:
     """Lightweight container for PV data."""
     add_eta_truncation = False
-    add_mag_selection = False
-    mag_selection_kwargs = None
 
-    def __init__(self, data, los_method="linear", los_extrap=True):
+    def __init__(self, data, los_radial_decay_scale=5):
         self.data = {k: jnp.asarray(v) for k, v in data.items()}
         self.name = None
 
         if "los_velocity" in self.data:
             self.has_precomputed_los = True
-            kwargs = {"method": los_method, "extrap": los_extrap}
+            self.num_fields = self.data["los_delta"].shape[0]
+            fprint(f"marginalising over {self.num_fields} field realisations.")
+
+            kwargs = {"r0_decay_scale": los_radial_decay_scale}
             self.f_los_delta = LOSInterpolator(
                 self.data["los_r"], self.data["los_delta"], **kwargs)
             self.f_los_log_density = LOSInterpolator(
@@ -108,23 +111,29 @@ class PVDataFrame:
                 **kwargs)
             self.f_los_velocity = LOSInterpolator(
                 self.data["los_r"], self.data["los_velocity"], **kwargs)
+
+            self.data["los_delta_r_grid"] = self.f_los_delta.interp_many_steps_per_galaxy(self.data["r_grid"])              # noqa
+            self.data["los_velocity_r_grid"] = self.f_los_velocity.interp_many_steps_per_galaxy(self.data["r_grid"])        # noqa
+            self.data["los_log_density_r_grid"] = self.f_los_log_density.interp_many_steps_per_galaxy(self.data["r_grid"])  # noqa
         else:
+            self.num_fields = 1
             self.has_precomputed_los = False
 
         self.has_calibrators = bool(self.num_calibrators > 0)
         self._cache = {}
 
     @classmethod
-    def from_config_dict(cls, config, name, try_pop_los, config_io):
+    def from_config_dict(cls, config, name, try_pop_los, config_pv_model):
         root = config.pop("root")
         nsamples_subsample = config.pop("nsamples_subsample", None)
         seed_subsample = config.pop("seed_subsample", 42)
-        mag_selection = config.pop("mag_selection", None)
         sample_dust = False
 
         if "CF4_mock" in name:
             index = name.split("_")[-1]
             data = load_CF4_mock(root, index)
+        elif name == "CF4_calibrated":
+            data = load_CF4_calibrated(root, **config)
         elif "CF4_" in name:
             data = load_CF4_data(root, **config)
 
@@ -151,11 +160,11 @@ class PVDataFrame:
                     fprint(f"removing `{key}` from data.")
                     data.pop(key, None)
 
-        if "los_r" not in data:
-            d = config_io["reconstruction_main"]
-            fprint(f"setting the LOS radial grid from {d['rmin']} to "
-                   f"{d['rmax']} Mpc/h with {d['num_steps']} steps.")
-            data["los_r"] = np.linspace(d["rmin"], d["rmax"], d["num_steps"])
+        rmin, rmax = config_pv_model["r_limits_malmquist"]
+        num_points = config_pv_model["num_points_malmquist"]
+        fprint(f"setting the LOS radial grid from {rmin} to {rmax} with "
+               f"{num_points} points.")
+        data["r_grid"] = np.linspace(rmin, rmax, num_points)
 
         if "los_density" in data:
             data["los_log_density"] = np.log(data["los_density"])
@@ -181,14 +190,6 @@ class PVDataFrame:
                 "high": frame["max_mag"] + 0.5 * frame["std_mag"],
             }
 
-        # Magnitude selection hyperparameters.
-        if mag_selection is not None:
-            if config["add_mag_selection"]:
-                frame.mag_selection_kwargs = mag_selection
-            else:
-                frame.mag_selection_kwargs = None
-                fprint(f"disabling magnitude selection for `{name}`.")
-        frame.add_mag_selection = frame.mag_selection_kwargs is not None
         frame.sample_dust = sample_dust
 
         # Hyperparameters for the TFR linewidth selection.
@@ -207,6 +208,9 @@ class PVDataFrame:
                     f"eta value of {np.min(frame['eta'])}.")
         else:
             frame.eta_min = None
+
+        if "sample_Rmax" in config:
+            frame.sample_Rmax = config["sample_Rmax"]
 
         if "eta_max" in config:
             frame.eta_max = config["eta_max"]
@@ -246,14 +250,19 @@ class PVDataFrame:
 
         keys_skip = [
             "is_calibrator", "mu_cal", "C_mu_cal", "std_mu_cal", "los_r",
-            "mag_covmat"]
+            "mag_covmat",
+            "los_density", "los_delta", "los_velocity", "los_log_density",
+            "r_grid", "los_delta_r_grid", "los_velocity_r_grid",
+            "los_log_density_r_grid"]
 
         subsampled = {key: self[key][main_mask]
                       for key in self.keys() if key not in keys_skip}
 
         for key in keys_skip:
             if key in self.data:
-                if key == "is_calibrator":
+                if key.startswith("los_") and key != "los_r":
+                    subsampled[key] = self[key][:, main_mask, ...]
+                elif key == "is_calibrator":
                     subsampled[key] = self[key][main_mask]
                 elif key == "mag_covmat":
                     subsampled[key] = self.data[key][main_mask][:, main_mask]
@@ -328,9 +337,11 @@ class PVDataFrame:
 
 def load_los(los_data_path, data, mask=None):
     with File(los_data_path, 'r') as f:
-        data["los_density"] = f['los_density'][...][mask, ...]
-        data["los_velocity"] = f['los_velocity'][...][mask, ...]
+        data["los_density"] = f['los_density'][...][:, mask, ...]
+        data["los_velocity"] = f['los_velocity'][...][:, mask, ...]
         data["los_r"] = f['r'][...]
+        data["los_RA"] = f["RA"][...][mask]
+        data["los_dec"] = f["dec"][...][mask]
 
         assert np.all(data["los_density"] > 0)
         assert np.all(np.isfinite(data["los_velocity"]))
@@ -596,14 +607,21 @@ def load_SFI(root, eta_min=-0.1, zcmb_min=None, zcmb_max=None,
 
 
 def load_PantheonPlus(root, zcmb_min=None, zcmb_max=None, b_min=7.5,
-                      los_data_path=None, return_all=False, **kwargs):
+                      los_data_path=None, return_all=False,
+                      removed_PV_from_covmat=True, **kwargs):
     """
     Load the Pantheon+ data from the given root directory, the covariance
     is expected to have peculiar velocity contribution removed.
     """
+    if removed_PV_from_covmat:
+        arr_fname = "Pantheon+SH0ES_zsel.dat"
+        covmat_fname = "Pantheon+SH0ES_zsel_STAT+SYS_noPV.cov"
+    else:
+        arr_fname = "Pantheon+SH0ES.dat"
+        covmat_fname = "Pantheon+SH0ES_STAT+SYS.cov"
+
     arr = np.genfromtxt(
-        join(root, "Pantheon+SH0ES_zsel.dat"), names=True, dtype=None,
-        encoding=None)
+        join(root, arr_fname), names=True, dtype=None, encoding=None)
 
     fprint(f"initially loaded {len(arr)} galaxies from Pantheon+ data.")
 
@@ -618,8 +636,7 @@ def load_PantheonPlus(root, zcmb_min=None, zcmb_max=None, b_min=7.5,
     if return_all:
         return data
 
-    covmat = np.loadtxt(
-        join(root, "Pantheon+SH0ES_zsel_STAT+SYS_noPV.cov"), delimiter=",")
+    covmat = np.loadtxt(join(root, covmat_fname), delimiter=",")
     size = int(covmat[0])
     C = np.reshape(covmat[1:], (size, size))
 
@@ -710,7 +727,8 @@ def load_SH0ES(root):
 
 
 def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
-                         replace_SN_HF_from_PP=False, los_data_path=None):
+                         replace_SN_HF_from_PP=False, los_data_path=None,
+                         rand_los_data_path=None):
     """
     Load the separated SH0ES data, separating the Cepheid and supernovae and
     covariance matrices.
@@ -832,6 +850,24 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
         host_los_velocity = None
         host_los_r = None
 
+    if rand_los_data_path is not None:
+        data_rand_los = {}
+        data_rand_los = load_los(
+            rand_los_data_path, data_rand_los)
+        rand_los_density = data_rand_los["los_density"][0]
+        rand_los_velocity = data_rand_los["los_velocity"][0]
+        rand_los_r = data_rand_los["los_r"]
+        rand_los_RA = data_rand_los["los_RA"]
+        rand_los_dec = data_rand_los["los_dec"]
+        has_rand_los = True
+    else:
+        rand_los_density = None
+        rand_los_velocity = None
+        rand_los_r = None
+        rand_los_RA = None
+        rand_los_dec = None
+        has_rand_los = False
+
     # SH0ES-Antonio's approach for predicting H0 from Cepheid host redshifts,
     # the error propagation is biased when z -> 0.
     # zHD = data_cepheid_host_redshift["zHD"]
@@ -858,19 +894,23 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
         czcmb_SN_HF, e_czcmb_SN_HF = None, None
         RA_SN_HF, dec_SN_HF = None, None
 
-    # Pick one SN per Cepheid host galaxy
-    mag_SN = np.zeros(40)
-    unique_ks = []
-    for i in range(len(Y_SN_Cepheid)):
+    # Keep the brightest (lowest magnitude) SN per Cepheid host galaxy
+    n_hosts = L_SN_Cepheid_dist.shape[1]
+    best_mag = np.full(n_hosts, np.inf)
+    best_idx = np.full(n_hosts, -1, dtype=int)
+
+    for i, y in enumerate(Y_SN_Cepheid):
+        # Assuming one-hot host assignment per SN
         j = np.where(L_SN_Cepheid_dist[i] == 1)[0][0]
+        if y < best_mag[j]:    # use '>' if working in flux (higher = brighter)
+            best_mag[j] = y
+            best_idx[j] = i
 
-        if mag_SN[j] == 0:
-            mag_SN[j] = Y_SN_Cepheid[i]
-            unique_ks.append(i)
+    valid = best_idx >= 0
+    unique_ks = best_idx[valid]
 
-    unique_ks = np.asarray(unique_ks)
     mag_SN_unique_Cepheid_host = Y_SN_Cepheid[unique_ks]
-    C_SN_unique_Cepheid_host = C_SN_Cepheid[unique_ks][:, unique_ks]
+    C_SN_unique_Cepheid_host = C_SN_Cepheid[np.ix_(unique_ks, unique_ks)]
     L_SN_unique_Cepheid_host_dist = L_SN_Cepheid_dist[unique_ks]
 
     data = {
@@ -892,8 +932,7 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
         # Unique SNe in Cepheid host galaxies.
         "mag_SN_unique_Cepheid_host": mag_SN_unique_Cepheid_host,
         "C_SN_unique_Cepheid_host": C_SN_unique_Cepheid_host,
-        "std_mag_SN_unique_Cepheid_host": np.sqrt(
-            np.diag(C_SN_unique_Cepheid_host)),
+        "mean_std_mag_SN_unique_Cepheid_host": np.mean(np.sqrt(np.diag(C_SN_unique_Cepheid_host))),  # noqa
         "L_SN_unique_Cepheid_host": cholesky(C_SN_unique_Cepheid_host,
                                              lower=True),
         "L_SN_unique_Cepheid_host_dist": L_SN_unique_Cepheid_host_dist,
@@ -932,6 +971,14 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
         # "Y_Cepheid_new": Y_Cepheid_new,
         # "Y_Cepheid_new_err": Y_Cepheid_new_err
         "q_names": q_names,
+        # Random LOS for modelling selection
+        "has_rand_los": has_rand_los,
+        "num_rand_los": rand_los_density.shape[1] if rand_los_density is not None else 1,  # noqa
+        "rand_los_density": rand_los_density,
+        "rand_los_velocity": rand_los_velocity,
+        "rand_los_r": rand_los_r,
+        "rand_los_RA": rand_los_RA,
+        "rand_los_dec": rand_los_dec
         }
 
     if cepheid_host_cz_cmb_max is not None:
@@ -974,7 +1021,6 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
 
         data["L_SN_unique_Cepheid_host_dist"] = data["L_SN_unique_Cepheid_host_dist"][mask_cz_unique_SN_Cepheid_host][:, mask_host_all]  # noqa
         data["mag_SN_unique_Cepheid_host"] = data["mag_SN_unique_Cepheid_host"][mask_cz_unique_SN_Cepheid_host]  # noqa
-        data["std_mag_SN_unique_Cepheid_host"] = data["std_mag_SN_unique_Cepheid_host"][mask_cz_unique_SN_Cepheid_host]  # noqa
         data["C_SN_unique_Cepheid_host"] = data["C_SN_unique_Cepheid_host"][mask_cz_unique_SN_Cepheid_host][:, mask_cz_unique_SN_Cepheid_host]  # noqa
         data["L_SN_unique_Cepheid_host"] = cholesky(data["C_SN_unique_Cepheid_host"], lower=True)  # noqa
 
@@ -986,9 +1032,6 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
         for key, val in data.items():
             if "SN" in key and "SN_unique" not in key and isinstance(val, np.ndarray):  # noqa
                 data[key] = np.full_like(val, np.nan, dtype=val.dtype)
-
-    data["mean_logP"] = np.mean(data["logP"])
-    data["mean_OH"] = np.mean(data["OH"])
 
     data["Neff_C_SN_unique_Cepheid_host"] = effective_rank_entropy(data["C_SN_unique_Cepheid_host"]) # noqa
     data["Neff_PV_covmat_cepheid_host"] = effective_rank_entropy(data["PV_covmat_cepheid_host"])     # noqa
@@ -1006,14 +1049,25 @@ def load_SH0ES_from_config(config_path):
 
     which_host_los = d.get("which_host_los", None)
     if which_host_los is not None:
-        los_data_path = config["io"]["PV_main"]["SH0ES"]["los_file"].replace(
-            "<X>", which_host_los)
+        if config["io"]["load_host_los"]:
+            los_data_path = config["io"]["PV_main"]["SH0ES"]["los_file"].replace(  # noqa
+                "<X>", which_host_los)
+        else:
+            los_data_path = None
+
+        if config["io"]["load_rand_los"]:
+            rand_los_data_path = config["io"]["los_file_random"].replace(
+                "<X>", which_host_los)
+        else:
+            rand_los_data_path = None
+
     else:
         los_data_path = None
+        rand_los_data_path = None
 
     return load_SH0ES_separated(
         root, cepheid_host_cz_cmb_max, replace_SN_HF_from_PP,
-        los_data_path=los_data_path)
+        los_data_path=los_data_path, rand_los_data_path=rand_los_data_path)
 
 
 def load_clusters(root, zcmb_min=None, zcmb_max=None, los_data_path=None,
@@ -1037,7 +1091,7 @@ def load_clusters(root, zcmb_min=None, zcmb_max=None, los_data_path=None,
     ]
 
     data = np.genfromtxt(fname, dtype=dtype, skip_header=1)
-    data = data[(data['Y_nr_no_ksz'] != -1.0)]
+    # data = data[(data['Y_nr_no_ksz'] != -1.0)]
     fprint(f"initially loaded {len(data)} clusters.")
 
     z = data['z']
@@ -1169,5 +1223,47 @@ def load_SDSS_FP(root, zcmb_min=None, zcmb_max=None, b_min=7.5,
 
     if los_data_path is not None:
         data = load_los(los_data_path, data, mask=mask)
+
+    return data
+
+
+def load_CF4_calibrated(root, zcmb_min=None, zcmb_max=None, bmin=None,
+                        los_data_path=None, return_all=False, **kwargs):
+    """Load the CF4 calibrated data."""
+    d_input = np.load(join(root, "CF4_TF_subset_noselection.npy"))
+
+    ndata = len(d_input)
+    data = {
+        "zcmb": d_input[:, 0] / SPEED_OF_LIGHT,
+        "mu": d_input[:, 1],
+        "e_mu": d_input[:, 2],
+        # Dummy values for sky position.
+        "RA": np.zeros(ndata),
+        "dec": np.zeros(ndata),
+    }
+
+    if return_all:
+        return data
+
+    mask = np.ones(len(data["zcmb"]), dtype=bool)
+
+    if zcmb_min is not None:
+        mask &= data["zcmb"] > zcmb_min
+
+    if zcmb_max is not None:
+        mask &= data["zcmb"] < zcmb_max
+
+    if bmin is not None:
+        raise ValueError("bmin is not supported.")
+
+    fprint(f"removed {len(mask) - np.sum(mask)} galaxies, thus "
+           f"{len(data['RA'][mask])} remain.")
+
+    for key in data:
+        data[key] = data[key][mask]
+
+    if los_data_path is not None:
+        raise ValueError("LOS for CF4 calibrated data is not supported.")
+        # data = load_los(los_data_path, data, mask=mask)
 
     return data
