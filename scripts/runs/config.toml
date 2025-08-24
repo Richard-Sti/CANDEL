@@ -16,17 +16,17 @@ machine = "local"
 ###############################################################################
 
 [inference]
-model = "TFRModel_DistMarg"
+model = "CalibratedDistanceModel_DistMarg"
 shared_params = "none"
 
 # model = "PantheonPlusModel_DistMarg"
-num_warmup = 1500
-num_samples = 5000
-num_chains = 1
-chain_method = "sequential"
+num_warmup = 500
+num_samples = 500
+num_chains = 8
+chain_method = "parallel"
 seed = 44
-compute_log_density = true
-compute_evidence = true
+compute_log_density = false
+compute_evidence = false
 num_chains_harmonic = 10
 
 skip_if_exists = false
@@ -37,11 +37,15 @@ skip_if_exists = false
 
 [pv_model]
 use_MNR = false
-MNR_mag_prior = "hubble"
 # Default kind. This gets overwritten if using a submission script.
-kind = "precomputed_los_Carrick2015"
-# kind = "Vext"
-galaxy_bias = "linear"  # Ignored unless having an underlying density field
+# kind = "precomputed_los_Carrick2015"
+kind = "Vext"
+galaxy_bias = "linear_from_beta"  # Ignored unless having an underlying density field
+# galaxy_bias = "linear"  # Ignored unless having an underlying density field
+
+# (Inhomogeneus Malmquist bias settings and extrapolation), in units of Mpc / h
+r_limits_malmquist = [0.1, 301]
+num_points_malmquist = 251
 
 ###############################################################################
 #                                 Model                                       #
@@ -49,21 +53,26 @@ galaxy_bias = "linear"  # Ignored unless having an underlying density field
 
 [model]
 
+Om = 0.3
+
 [model.mu_norm]
 num_points = 31
 num_sigma = 5
 low_clip = 18.0
 high_clip = 42.0
 
-[model.mag_grid]
-num_sigma = 4
-num_points = 25
-
 [model.priors.h]
-dist = "delta"
-value = 1.0
-# low = 0.25
-# high = 1.0
+# dist = "delta"
+# value = 1.0
+dist = "uniform"
+low = 0.25
+high = 1.0
+
+[model.priors.Om]
+# Currently sampled only for the CF4 calibrated data.
+dist = "uniform"
+low = 0.01
+high = 0.99
 
 [model.priors.alpha]
 dist = "normal"
@@ -76,14 +85,22 @@ loc = 0
 scale = 1.0
 
 [model.priors.beta]
-dist = "uniform"
-low = 0.0
-high = 2.0
+# dist = "uniform"
+# low = 0.0
+# high = 2.0
+dist = "normal"
+loc = 0.43
+scale = 0.1
 
 [model.priors.sigma_mu]
 dist = "jeffreys"
 low = 0.005
 high = 1.0
+
+[model.priors.sigma_log_theta]
+dist = "jeffreys"
+low = 0.001
+high = 0.5
 
 # TFR priors
 
@@ -105,10 +122,12 @@ scale = 5.0
 [model.priors.TFR_zeropoint_dipole]
 dist = "delta"
 value = [0.0, 0.0, 0.0]
+# dist = "vector_uniform_fixed"
+# low = 0.0
+# high = 0.3
 
 
 # SN priors
-
 [model.priors.SN_absmag]
 dist = "normal"
 loc = -18.5
@@ -163,9 +182,11 @@ low = 5
 high = 2500
 
 [model.priors.Vext]
-dist = "vector_uniform_fixed"
-low = 0.0
-high = 2500
+# dist = "vector_uniform_fixed"
+# low = 0.0
+# high = 2500
+dist = "delta"
+value = [0.0, 0.0, 0.0]
 
 [model.priors.Vext_radial]
 dist = "vector_radial_spline_uniform"
@@ -183,6 +204,23 @@ dist = "normal"
 loc = 0.19
 scale = 0.05
 
+[model.priors.R_dist_emp]
+dist = "uniform"
+low = 1.0
+high = 300
+
+[model.priors.p_dist_emp]
+dist = "truncated_normal"
+low = 0.0
+mean = 2.0
+scale = 0.1
+
+[model.priors.n_dist_emp]
+dist = "truncated_normal"
+low = 0.0
+mean = 1.0
+scale = 30
+
 ################################################################################
 #                                  Data                                        #
 ################################################################################
@@ -192,26 +230,18 @@ root_output = "results"
 # Default catalogue name and output path. This gets overwritten
 # if using a submission script.
 # catalogue_name = ["CF4_W1", "CF4_i"]
-catalogue_name = "CF4_W1"
+catalogue_name = "CF4_calibrated"
 
 fname_output = "results/test.hdf5"
 
 [io.CF4_mock]
 root = "data/CF4_mock"
-
-add_mag_selection = true
 add_eta_selection = true
-
-[io.CF4_mock.mag_selection]
-a = -0.17
-m1 = 12.21
-m2 = 13.9
-
 
 [io.CF4_W1]
 root = "data/CF4"
 which_band = "w1"
-best_mag_quality = false
+best_mag_quality = true
 eta_min = -0.3
 zcmb_min = "none"
 zcmb_max = 0.05
@@ -220,7 +250,6 @@ remove_outliers = true
 calibration = "None"
 dust_model = "none"
 
-add_mag_selection = true
 add_eta_selection = true
 
 nsamples_subsample = "none"
@@ -228,10 +257,6 @@ seed_subsample = 42
 
 los_file = "data/CF4/los_CF4_TFR_<X>.hdf5"
 
-[io.CF4_W1.mag_selection]
-a = -0.16
-m1 = 11.32
-m2 = 13.23
 
 [io.CF4_i]
 root = "data/CF4"
@@ -246,18 +271,12 @@ calibration = "None"
 
 exclude_W1 = false
 
-add_mag_selection = true
 add_eta_selection = true
 
 nsamples_subsample = "none"
 seed_subsample = 42
 
 los_file = "data/CF4/los_CF4_TFR_<X>.hdf5"
-
-[io.CF4_i.mag_selection]
-a = -0.17
-m1 = 12.21
-m2 = 13.9
 
 [io.2MTF]
 root = "data/2MTF"
@@ -269,7 +288,6 @@ zcmb_max = 0.05
 b_min = 7.5
 
 # TODO: These need to be added.
-add_mag_selection = false
 add_eta_selection = false
 
 nsamples_subsample = "none"
@@ -285,18 +303,12 @@ zcmb_min = "none"
 zcmb_max = 0.05
 b_min = 7.5
 
-add_mag_selection = true
 add_eta_selection = true
 
 nsamples_subsample = "none"
 seed_subsample = 42
 
 los_file = "data/SFI/los_SFI_<X>.hdf5"
-
-[io.SFI.mag_selection]
-a = -0.27
-m1 = 12.0
-m2 = 12.91
 
 [io.PantheonPlus]
 root = "data/Pantheon+"
@@ -327,11 +339,23 @@ seed_subsample = 42
 root = "data/SDSS"
 zcmb_min = "none"
 zcmb_max = 0.05
+sample_Rmax = true
 
 los_file = "data/SDSS/los_SDSS_FP_<X>.hdf5"
 
-nsamples_subsample = "none"
+nsamples_subsample = 250
 seed_subsample = 42
+
+[io.CF4_calibrated]
+root = "data/CF4_calibrated"
+zcmb_min = "none"
+zcmb_max = "none"
+b_min = "none"
+
+nsamples_subsample = 2000
+seed_subsample = 42
+
+los_file = "none"
 
 
 ########
@@ -374,9 +398,10 @@ los_file = "data/SDSS/los_SDSS_FP_<X>.hdf5"
 
 
 [io.reconstruction_main]
-rmin = 0.1
-rmax = 251
-num_steps = 501
+# Distance over which to interpolate the 3D grids along the source LOS.
+rmin = 0.001
+rmax = 201
+num_steps = 251
 
 [io.reconstruction_main.Carrick2015]
 path_density = "data/fields/carrick2015_twompp_density.npy"
