@@ -326,8 +326,6 @@ class BaseModel(ABC):
             self.kwargs_radial_Vext = {}
 
         self.priors, self.prior_dist_name = load_priors(priors)
-        self.num_norm_kwargs = config["model"]["mu_norm"]
-
         self.use_MNR = config["pv_model"]["use_MNR"]
 
         self.galaxy_bias = config["pv_model"]["galaxy_bias"]

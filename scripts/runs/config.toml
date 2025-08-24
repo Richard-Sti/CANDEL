@@ -55,12 +55,6 @@ num_points_malmquist = 251
 
 Om = 0.3
 
-[model.mu_norm]
-num_points = 31
-num_sigma = 5
-low_clip = 18.0
-high_clip = 42.0
-
 [model.priors.h]
 # dist = "delta"
 # value = 1.0
@@ -343,7 +337,7 @@ sample_Rmax = true
 
 los_file = "data/SDSS/los_SDSS_FP_<X>.hdf5"
 
-nsamples_subsample = 250
+nsamples_subsample = "none"
 seed_subsample = 42
 
 [io.CF4_calibrated]
@@ -352,7 +346,7 @@ zcmb_min = "none"
 zcmb_max = "none"
 b_min = "none"
 
-nsamples_subsample = 2000
+nsamples_subsample = "none"
 seed_subsample = 42
 
 los_file = "none"
