@@ -19,33 +19,48 @@ from the configuration file and runs the inference.
 This script is expected to be run either from the command line or from a shell
 submission script.
 """
-
 import sys
 import time
 from argparse import ArgumentParser
 from os.path import exists
 
-import candel
-from candel import fprint, get_nested
+# ---- Pre-parse device args BEFORE importing anything that pulls JAX/NumPyro
+_pre = ArgumentParser(add_help=False)
+_pre.add_argument(
+    "--host-devices", type=int,
+    help="Set NumPyro host device count before importing candel."
+)
+_pre_args, _ = _pre.parse_known_args()
+
+if _pre_args.host_devices:
+    import numpyro  # safe to import here; must be before candel/JAX use
+    if _pre_args.host_devices:
+        numpyro.set_host_device_count(_pre_args.host_devices)
+
+# Only now import candel (which may import jax/numpyro internally)
+import candel                                                                   # noqa
+from candel import fprint, get_nested                                           # noqa
 
 
 def insert_comment_at_top(path: str, label: str):
-    """Insert a comment line with a timestamp at the top of a file."""
     timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
     comment = f"# Job {label} at: {timestamp}\n"
-
     with open(path, "r") as f:
         original = f.readlines()
-
     with open(path, "w") as f:
         f.write(comment)
         f.writelines(original)
 
 
 if __name__ == "__main__":
-    parser = ArgumentParser(description="Run inference on a PV model.")
+    parser = ArgumentParser(
+        description="Run inference on a PV model."
+    )
     parser.add_argument("--config", type=str, required=True,
                         help="Path to the configuration file.")
+    # Re-expose the pre-parsed options so they show up in --help
+    parser.add_argument("--host-devices", type=int,
+                        help="NumPyro host device count (handled pre-import).")
     args = parser.parse_args()
 
     insert_comment_at_top(args.config, "started")
@@ -57,15 +72,14 @@ if __name__ == "__main__":
     skip_if_exists = get_nested(config, "inference/skip_if_exists", False)
     if skip_if_exists and exists(fname_out):
         fprint(f"Output file `{fname_out}` already exists. "
-               f"Skipping inference.")
+               "Skipping inference.")
         insert_comment_at_top(args.config, "skipped")
         sys.exit(0)
 
     model_name = config["inference"]["model"]
     data_name = config["io"]["catalogue_name"]
-
-    fprint(f"Loading model `{model_name}` from `{args.config}` for "
-           f"data `{data_name}`")
+    fprint(f"Loading model `{model_name}` from `{args.config}` "
+           f"for data `{data_name}`")
 
     shared_param = get_nested(config, "inference/shared_params", None)
     model = candel.model.name2model(model_name, shared_param, args.config)
@@ -74,14 +88,15 @@ if __name__ == "__main__":
         if not isinstance(model, candel.model.JointPVModel):
             raise TypeError(
                 "You provided multiple datasets, but the selected model "
-                f"`{model.__class__.__name__}` is not JointPVModel.")
-
+                f"`{model.__class__.__name__}` is not JointPVModel."
+            )
         if len(data) != len(model.submodels):
             raise ValueError(
-                f"Number of datasets ({len(data)}) does not match number "
-                f"of submodels ({len(model.submodels)}) in the joint model.")
+                f"Number of datasets ({len(data)}) does not match number of "
+                f"submodels ({len(model.submodels)}) in the joint model."
+            )
 
-    model_kwargs = {"data": data, }
+    model_kwargs = {"data": data}
     candel.run_pv_inference(model, model_kwargs)
 
     insert_comment_at_top(args.config, "finished")
