@@ -19,7 +19,7 @@ import jax.numpy as jnp
 import numpy as np
 from jax.debug import print as jprint  # noqa
 from jax.scipy.linalg import solve_triangular
-from jax.scipy.special import gammainc, gammaln, logsumexp
+from jax.scipy.special import logsumexp
 from jax.scipy.stats import norm as norm_jax
 from numpyro import factor, plate, sample
 from numpyro.distributions import (HalfNormal, MultivariateNormal, Normal,
@@ -28,10 +28,11 @@ from numpyro.distributions import (HalfNormal, MultivariateNormal, Normal,
 from ..cosmography import (Distance2Distmod, Distance2Redshift,
                            Distmod2Distance, Distmod2Redshift,
                            LogGrad_Distmod2ComovingDistance)
-from ..util import (SPEED_OF_LIGHT, fprint, get_nested, load_config,
+from ..util import (fprint, get_nested, load_config,
                     radec_to_cartesian, replace_prior_with_delta)
 from .interp import LOSInterpolator
-from .model import JeffreysPrior, MagnitudeDistribution, load_priors, rsample
+from .model import (JeffreysPrior, load_priors, rsample,
+                    log_prior_r_empirical, predict_cz)
 from .simpson import ln_simpson
 
 
@@ -43,28 +44,6 @@ def mvn_logpdf_cholesky(y, mu, L):
     z = solve_triangular(L, y - mu, lower=True)
     log_det = jnp.sum(jnp.log(jnp.diag(L)))
     return -0.5 * (len(y) * jnp.log(2 * jnp.pi) + 2 * log_det + jnp.dot(z, z))
-
-
-def predict_cz(zcosmo, Vrad):
-    return SPEED_OF_LIGHT * ((1 + zcosmo) * (1 + Vrad / SPEED_OF_LIGHT) - 1)
-
-
-def log_prior_r_empirical(r, R, p, n, Rmax):
-    """
-    Log of the (empirical) truncated prior:
-        π(r) ∝ r^p * exp(-(r/R)^n),   0 < r ≤ Rmax
-    Normalized by Z = [R^(1+p) * γ(a, x)] / n with a = (1+p)/n, x = (Rmax/R)^n
-    """
-    a = (1.0 + p) / n
-    x = (Rmax / R) ** n
-
-    # log γ(a, x) = log Γ(a) + log P(a, x), P = regularized lower γ
-    log_gamma_lower = gammaln(a) + jnp.log(jnp.clip(gammainc(a, x), 1e-300, 1.0))  # noqa
-    log_norm = (1.0 + p) * jnp.log(R) - jnp.log(n) + log_gamma_lower
-
-    logpdf = p * jnp.log(r) - (r / R) ** n - log_norm
-    valid = (r > 0) & (r <= Rmax)
-    return jnp.where(valid, logpdf, -jnp.inf)
 
 
 def log_integral_gauss_pdf_times_cdf(mu, sigma, t, w):
@@ -472,7 +451,7 @@ class SH0ESModel(BaseSH0ESModel):
             return 2 * jnp.log(r) - 3 * jnp.log(self.Rmax) + jnp.log(3)
         elif self.which_distance_prior == "empirical":
             return log_prior_r_empirical(
-                r, kwargs["R"], kwargs["p"], kwargs["n"], self.Rmax)
+                r, kwargs["R"], kwargs["p"], kwargs["n"], Rmax_grid=self.Rmax)
         else:
             raise ValueError(
                 f"Unknown distance prior: `{self.which_distance_prior}`")
@@ -822,10 +801,13 @@ class SH0ESModel(BaseSH0ESModel):
 
             # Sample the true apparent magnitudes of the Cepheid hosts, from
             # a r^2 prior effectively.
-            with plate("SN_mag", self.num_SN_HF):
-                mag_true_HF = sample(
-                    "mag_true",
-                    MagnitudeDistribution(5, 25, self.Y_SN[77:], e_mu))
+            # TODO: this needs to  be added/fixed
+            # with plate("SN_mag", self.num_SN_HF):
+            #     mag_true_HF = sample(
+            #         "mag_true",
+            #         MagnitudeDistribution(5, 25, self.Y_SN[77:], e_mu))
+            # Replace eventually... placeholder
+            mag_true_HF = 0 + e_mu
 
             mag_true_SN = jnp.concatenate([mag_true_SN_Cepheid, mag_true_HF])
 
