@@ -116,6 +116,7 @@ class PVDataFrame:
             self.data["los_velocity_r_grid"] = self.f_los_velocity.interp_many_steps_per_galaxy(self.data["r_grid"])        # noqa
             self.data["los_log_density_r_grid"] = self.f_los_log_density.interp_many_steps_per_galaxy(self.data["r_grid"])  # noqa
         else:
+            self.num_fields = 1
             self.has_precomputed_los = False
 
         self.has_calibrators = bool(self.num_calibrators > 0)
@@ -131,6 +132,8 @@ class PVDataFrame:
         if "CF4_mock" in name:
             index = name.split("_")[-1]
             data = load_CF4_mock(root, index)
+        elif name == "CF4_calibrated":
+            data = load_CF4_calibrated(root, **config)
         elif "CF4_" in name:
             data = load_CF4_data(root, **config)
 
@@ -205,6 +208,9 @@ class PVDataFrame:
                     f"eta value of {np.min(frame['eta'])}.")
         else:
             frame.eta_min = None
+
+        if "sample_Rmax" in config:
+            frame.sample_Rmax = config["sample_Rmax"]
 
         if "eta_max" in config:
             frame.eta_max = config["eta_max"]
@@ -1217,5 +1223,47 @@ def load_SDSS_FP(root, zcmb_min=None, zcmb_max=None, b_min=7.5,
 
     if los_data_path is not None:
         data = load_los(los_data_path, data, mask=mask)
+
+    return data
+
+
+def load_CF4_calibrated(root, zcmb_min=None, zcmb_max=None, bmin=None,
+                        los_data_path=None, return_all=False, **kwargs):
+    """Load the CF4 calibrated data."""
+    d_input = np.load(join(root, "CF4_TF_subset_noselection.npy"))
+
+    ndata = len(d_input)
+    data = {
+        "zcmb": d_input[:, 0] / SPEED_OF_LIGHT,
+        "mu": d_input[:, 1],
+        "e_mu": d_input[:, 2],
+        # Dummy values for sky position.
+        "RA": np.zeros(ndata),
+        "dec": np.zeros(ndata),
+    }
+
+    if return_all:
+        return data
+
+    mask = np.ones(len(data["zcmb"]), dtype=bool)
+
+    if zcmb_min is not None:
+        mask &= data["zcmb"] > zcmb_min
+
+    if zcmb_max is not None:
+        mask &= data["zcmb"] < zcmb_max
+
+    if bmin is not None:
+        raise ValueError("bmin is not supported.")
+
+    fprint(f"removed {len(mask) - np.sum(mask)} galaxies, thus "
+           f"{len(data['RA'][mask])} remain.")
+
+    for key in data:
+        data[key] = data[key][mask]
+
+    if los_data_path is not None:
+        raise ValueError("LOS for CF4 calibrated data is not supported.")
+        # data = load_los(los_data_path, data, mask=mask)
 
     return data
