@@ -27,6 +27,7 @@ from .cosmography import (                                                      
     Distmod2Distance,                                                           # noqa
     Distance2Distmod,                                                           # noqa
     Distance2Redshift,                                                          # noqa
+    Distance2LogAngDist,                                                        # noqa
     Redshift2Distance,                                                          # noqa
     Redshift2Distmod,                                                           # noqa
     LogGrad_Distmod2ComovingDistance,                                           # noqa

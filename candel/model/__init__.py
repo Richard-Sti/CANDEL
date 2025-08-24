@@ -20,6 +20,7 @@ from .model import (                                                            
     PantheonPlusModel_DistMarg,                                                 # noqa
     ClustersModel_DistMarg,                                                     # noqa
     FPModel_DistMarg,                                                           # noqa
+    CalibratedDistanceModel_DistMarg,                                           # noqa
     JointPVModel,                                                               # noqa
     )
 from .model_SH0ES import SH0ESModel                                             # noqa
@@ -34,7 +35,8 @@ def name2model(name, shared_param=None, config=None):
         "TFRModel_DistMarg": TFRModel_DistMarg,
         "PantheonPlusModel_DistMarg": PantheonPlusModel_DistMarg,
         "ClustersModel_DistMarg": ClustersModel_DistMarg,
-        "FPModel_DistMarg": FPModel_DistMarg
+        "FPModel_DistMarg": FPModel_DistMarg,
+        "CalibratedDistanceModel_DistMarg": CalibratedDistanceModel_DistMarg,
         }
 
     if isinstance(name, str):
