@@ -268,10 +268,12 @@ def name2label(name):
         "a_FP": r"$a_{\rm FP}$",
         "b_FP": r"$b_{\rm FP}$",
         "c_FP": r"$c_{\rm FP}$",
+        "sigma_log_theta": r"$\sigma_{\log \theta}$",
         "R_dust": r"$R_{\rm W1}$",
         "R_dist_emp": r"$R_{\rm dist}$",
         "n_dist_emp": r"$n_{\rm dist}$",
         "p_dist_emp": r"$p_{\rm dist}$",
+        "Rmax_dist_emp": r"$R_{\rm max, dist}$"
     }
 
     if "/" in name:
