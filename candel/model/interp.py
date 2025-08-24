@@ -18,48 +18,73 @@ Interpolator for line-of-sight (LOS) data using `interpax`.
 from functools import partial
 
 import jax
-from interpax import Interpolator1D
 from jax import numpy as jnp
 from jax import vmap
 
 
 class LOSInterpolator:
     """
-    Vectorized 1D interpolator for line-of-sight (LOS) data using interpax.
+    Vectorized 1D interpolator for line-of-sight (LOS) data using JAX.
 
     This class precomputes interpolation functions for a batch of LOS profiles
     defined on a shared radial grid `los_r`, allowing efficient evaluation
     at per-galaxy query positions `r[i]`.
 
-    The expected shapes are `los_r` of `(n_steps,)`, and `f` of
-    `(n_fields, n_galaxies, n_steps)`, where `n_steps` is the number of radial
-    steps and `n_galaxies` is the number of galaxies. The interpolator can then
-    be queried with a radial position `r` of shape `(n_galaxies, )` to return
-    an array of shape `(n_fields, n_galaxies)`.
+    The expected shapes are:
+      - `los_r`: array of shape `(n_steps,)`
+      - `f`: array of shape `(n_fields, n_galaxies, n_steps)`
 
-    Note: the method `interp_many_steps_per_galaxy` supports extrapolation
-    beyond the last `los_r` value using an exponential decay
-    `f(r) ∝ exp(-r / r₀)` with a fixed decay scale `r₀`.
+    Here `n_steps` is the number of radial samples per LOS profile, and
+    `n_galaxies` is the number of profiles being interpolated in parallel.
+    The interpolator can then be queried with a set of galaxy radii
+    `r` of shape `(n_galaxies,)` to return values of shape
+    `(n_fields, n_galaxies)`.
+
+    Extrapolation behavior:
+    -----------------------
+    For `r > los_r[-1]` the values follow an exponential
+    approach to a constant `C = extrap_constant`:
+
+        f(r) = C + (A - C) * exp(-(r - r_max) / r₀),
+
+    where `A` is the last tabulated value at `r_max = los_r[-1]`, and `r₀`
+    is the decay scale `r0_decay_scale`.
+
+    This ensures that the extrapolated curve matches continuously at `r_max`
+    and tends smoothly toward `C` as `r → ∞`. By default, `C = 0`, giving
+    a pure exponential decay to zero.
+
+    The method `interp_many_steps_per_galaxy` applies the same rule to
+    batched arrays of evaluation radii, returning arrays of shape
+    `(n_fields, n_galaxies, n_eval)` for input `r_eval` of shape `(n_eval,)`.
     """
-    def __init__(self, los_r, f, method="linear", r0_decay_many_steps=5,
-                 extrap=False):
+    def __init__(self, los_r, f, r0_decay_scale=5, extrap_constant=0.):
         assert los_r.ndim == 1
         assert f.ndim == 3
         assert f.shape[-1] == los_r.shape[0]
 
         self.los_r = los_r
         self.f = f
-        self.method = method
-        self.extrap = extrap
-        self.r0_decay = r0_decay_many_steps
+        self.r0_decay_scale = r0_decay_scale
+        self.extrap_constant = extrap_constant
 
-        # store dimensions
+        # Store dimensions
         self.n_field, self.n_gal, self.n_steps = f.shape
 
         # Define single interpolation
+        r_max = self.los_r[-1]
+
+        # Single LOS, single scalar r
         def single_interp(f_line, r_val):
-            return Interpolator1D(
-                los_r, f_line, method=method, extrap=extrap)(r_val)
+            # Linear interp inside [los_r[0], r_max]; edge rule of jnp.interp
+            y_lin = jnp.interp(r_val, self.los_r, f_line)
+
+            # Exponential tail for r > r_max with amplitude fixed at last
+            # sample.
+            A = f_line[-1]
+            C = self.extrap_constant
+            y_exp = C + (A - C) * jnp.exp(-(r_val - r_max) / self.r0_decay_scale)  # noqa
+            return jnp.where(r_val > r_max, y_exp, y_lin)
 
         # Inner vmap over galaxy axis
         vmap_gal = vmap(single_interp, in_axes=(0, 0))
@@ -91,8 +116,9 @@ class LOSInterpolator:
         y_interp = batched_interp(self.f)  # (n_field, n_gal, n_eval)
 
         # Exponential extrapolation
-        decay = jnp.exp(-(r_eval - r_max) / self.r0_decay)  # (n_eval,)
-        extrap = A * decay  # (n_field, n_gal, n_eval)
+        C = self.extrap_constant
+        decay = jnp.exp(-(r_eval - r_max) / self.r0_decay_scale)  # (n_eval,)
+        extrap = C + (A - C) * decay  # shape (n_field, n_gal, n_eval)
 
         mask = r_eval > r_max  # (n_eval,)
         return jnp.where(mask, extrap, y_interp)

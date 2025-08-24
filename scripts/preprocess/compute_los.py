@@ -26,7 +26,16 @@ from candel import fprint
 
 
 def load_los(catalogue, config):
-    if catalogue == "CF4":
+    if "random_" in catalogue:
+        d = config["io"].copy()
+        los_file = d.pop("los_file_random")
+
+        npoints = int(catalogue.replace("random_", ''))
+        # This could, in principle, account for the ZoA mask.
+        gen = np.random.default_rng(42)
+        RA = gen.uniform(0, 360, size=npoints)
+        dec = np.arcsin(gen.uniform(-1, 1, size=npoints)) * 180 / np.pi
+    elif catalogue == "CF4":
         d = config["io"]["PV_main"][catalogue].copy()
         los_file = d.pop("los_file")
         data = candel.pvdata.load_CF4_data(**d)
@@ -84,9 +93,10 @@ if __name__ == "__main__":
     if args.reconstruction == "Carrick2015":
         nsims = [0,]
     elif args.reconstruction.lower().startswith("manticore"):
-        nsims = list(range(50))
+        nsims = list(range(30))
     else:
-        raise ValueError(f"Reconstruction `{args.reconstruction}` not supported. ")  # noqa
+        raise ValueError(
+            f"Reconstruction `{args.reconstruction}` not supported. ")
 
     d = config["io"]["reconstruction_main"]
     fprint(f"settin the radial grid from {d['rmin']} to {d['rmax']} with "
