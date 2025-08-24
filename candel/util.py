@@ -125,7 +125,7 @@ def load_config(config_path, replace_none=True, fill_paths=True,
         config = convert_to_absolute_paths(config)
 
     shared_params = config["inference"].get("shared_params", None)
-    if shared_params is not None:
+    if shared_params and str(shared_params).lower() != "none":
         config["inference"]["shared_params"] = shared_params.split(",")
 
     return config
@@ -269,6 +269,9 @@ def name2label(name):
         "b_FP": r"$b_{\rm FP}$",
         "c_FP": r"$c_{\rm FP}$",
         "R_dust": r"$R_{\rm W1}$",
+        "R_dist_emp": r"$R_{\rm dist}$",
+        "n_dist_emp": r"$n_{\rm dist}$",
+        "p_dist_emp": r"$p_{\rm dist}$",
     }
 
     if "/" in name:
