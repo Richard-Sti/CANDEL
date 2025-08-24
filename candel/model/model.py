@@ -36,7 +36,8 @@ from numpyro.infer.reparam import ProjectedNormalReparam
 
 from ..cosmography import (Distance2Distmod, Distance2LogAngDist,
                            Distance2Redshift,
-                           LogAngularDiameterDistance2Distmod)
+                           LogAngularDiameterDistance2Distmod,
+                           Distance2Distmod_withOm, Distance2Redshift_withOm)
 from ..util import SPEED_OF_LIGHT, fprint, get_nested, load_config
 from .simpson import ln_simpson
 
@@ -986,6 +987,8 @@ class CalibratedDistanceModel_DistMarg(BaseModel):
                 "Must sample `h` for `CalibratedDistanceModel_DistMarg`. "
                 "Currently set to a delta-function prior.")
 
+        self.distance2distmod_with_Om = Distance2Distmod_withOm()
+        self.distance2redshift_with_Om = Distance2Redshift_withOm()
 
     def __call__(self, data, shared_params=None):
         nsamples = len(data)
@@ -996,6 +999,7 @@ class CalibratedDistanceModel_DistMarg(BaseModel):
 
         # Sample the FP parameters.
         h = rsample("h", self.priors["h"], shared_params)
+        Om = rsample("Om", self.priors["Om"], shared_params)
         sigma_mu = rsample("sigma_mu", self.priors["sigma_mu"], shared_params)
 
         R_dist_emp = rsample("R_dist_emp", self.priors["R_dist_emp"])
@@ -1014,7 +1018,7 @@ class CalibratedDistanceModel_DistMarg(BaseModel):
         # Remaining parameters
         beta = rsample("beta", self.priors["beta"], shared_params)
         bias_params = sample_galaxy_bias(
-            self.priors, self.galaxy_bias, shared_params, Om=self.Om,
+            self.priors, self.galaxy_bias, shared_params, Om=Om,
             beta=beta)
 
         if self.use_MNR:
@@ -1026,7 +1030,7 @@ class CalibratedDistanceModel_DistMarg(BaseModel):
 
             # Convert the distance grid from `Mpc / h` to `Mpc``
             r_grid = data["r_grid"] / h
-            mu_grid = self.distance2distmod(r_grid, h=h)
+            mu_grid = self.distance2distmod_with_Om(r_grid, Om=Om, h=h)
 
             # Homogeneous Malmqusit distance prior, `(n_field, n_gal, n_rbin)`
             lp_dist = log_prior_r_empirical(
@@ -1059,7 +1063,7 @@ class CalibratedDistanceModel_DistMarg(BaseModel):
                 data, r_grid, Vext, with_radial_Vext=self.with_radial_Vext,
                 **self.kwargs_radial_Vext)
             czpred = predict_cz(
-                self.distance2redshift(r_grid, h=h)[None, None, :],
+                self.distance2redshift_with_Om(r_grid, Om=Om, h=h)[None, None, :],
                 Vrad + Vext_rad)
             ll += Normal(czpred, sigma_v).log_prob(
                 data["czcmb"][None, :, None])
