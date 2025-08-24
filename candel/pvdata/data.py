@@ -93,8 +93,6 @@ def load_PV_dataframes(config_path):
 class PVDataFrame:
     """Lightweight container for PV data."""
     add_eta_truncation = False
-    add_mag_selection = False
-    mag_selection_kwargs = None
 
     def __init__(self, data, los_radial_decay_scale=5):
         self.data = {k: jnp.asarray(v) for k, v in data.items()}
@@ -102,6 +100,9 @@ class PVDataFrame:
 
         if "los_velocity" in self.data:
             self.has_precomputed_los = True
+            self.num_fields = self.data["los_delta"].shape[0]
+            fprint(f"marginalising over {self.num_fields} field realisations.")
+
             kwargs = {"r0_decay_scale": los_radial_decay_scale}
             self.f_los_delta = LOSInterpolator(
                 self.data["los_r"], self.data["los_delta"], **kwargs)
@@ -125,7 +126,6 @@ class PVDataFrame:
         root = config.pop("root")
         nsamples_subsample = config.pop("nsamples_subsample", None)
         seed_subsample = config.pop("seed_subsample", 42)
-        mag_selection = config.pop("mag_selection", None)
         sample_dust = False
 
         if "CF4_mock" in name:
@@ -187,14 +187,6 @@ class PVDataFrame:
                 "high": frame["max_mag"] + 0.5 * frame["std_mag"],
             }
 
-        # Magnitude selection hyperparameters.
-        if mag_selection is not None:
-            if config["add_mag_selection"]:
-                frame.mag_selection_kwargs = mag_selection
-            else:
-                frame.mag_selection_kwargs = None
-                fprint(f"disabling magnitude selection for `{name}`.")
-        frame.add_mag_selection = frame.mag_selection_kwargs is not None
         frame.sample_dust = sample_dust
 
         # Hyperparameters for the TFR linewidth selection.
