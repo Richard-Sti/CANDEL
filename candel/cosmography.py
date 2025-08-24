@@ -15,7 +15,7 @@
 """Various cosmography functions for converting between distance indicators."""
 import numpy as np
 from astropy.cosmology import FlatLambdaCDM
-from interpax import Interpolator1D
+from interpax import Interpolator1D, Interpolator2D, interp1d
 from jax import numpy as jnp
 from jax import vmap
 from scipy.interpolate import CubicSpline
@@ -309,6 +309,87 @@ class LogGrad_Distmod2ComovingDistance:
 
     def __call__(self, mu, h=1):
         return self._f(mu + 5 * jnp.log10(h)) - jnp.log(h)
+
+
+###############################################################################
+#                   Interpolators sampling Om as well                         #
+###############################################################################
+
+class Distance2Distmod_withOm:
+    """
+    Interpolator to convert distance in `Mpc` to distance modulus, as a
+    function of `h` and `Om`, which are specified on the fly.
+    """
+    def __init__(self, rmin=1e-3, rmax=500, nr=500,
+                 Om_min=0.01, Om_max=0.99, nOm=500,
+                 zmin_outer=1e-9, zmax_outer=0.3, method='cubic'):
+        r_grid = jnp.logspace(np.log10(rmin), np.log10(rmax), nr)
+        Om_grid = jnp.linspace(Om_min, Om_max, nOm)
+        # z_grid = np.linspace(zmin_outer, zmax_outer, nr)
+        z_grid = np.logspace(np.log10(zmin_outer), np.log10(zmax_outer), nr)
+
+        # Precompute distance modulus grid
+        mu_grid = np.empty((nr, nOm))
+        for j, Om in enumerate(Om_grid):
+            cosmo = FlatLambdaCDM(H0=100, Om0=Om)
+            r = jnp.asarray(cosmo.comoving_distance(z_grid).value)
+            mu = jnp.asarray(cosmo.distmod(z_grid).value)
+
+            mu_grid[:, j] = interp1d(r_grid, r, mu, method=method)
+            if np.any(np.isnan(mu_grid[:, j])):
+                raise ValueError(
+                    "The distance grid is not fully covered for "
+                    f"Om = {Om:.2f}. Try increasing `redshift ranges`.")
+
+        # Build the interpolator: f(z, Om) -> mu
+        self._interp = Interpolator2D(
+            x=r_grid,
+            y=Om_grid,
+            f=jnp.asarray(mu_grid),
+            method=method,
+            extrap=False,
+        )
+
+    def __call__(self, r, Om, h):
+        return self._interp(r * h, Om) - 5 * jnp.log10(h)
+
+
+class Distance2Redshift_withOm:
+    """
+    Interpolator to convert distance in `Mpc` to redshift, as a
+    function of `h` and `Om`, which are specified on the fly.
+    """
+    def __init__(self, rmin=1e-3, rmax=500, nr=500,
+                 Om_min=0.01, Om_max=0.99, nOm=500,
+                 zmin_outer=1e-9, zmax_outer=0.3, method='cubic'):
+        r_grid = jnp.logspace(np.log10(rmin), np.log10(rmax), nr)
+        Om_grid = jnp.linspace(Om_min, Om_max, nOm)
+        z_grid_fixed = np.logspace(
+            np.log10(zmin_outer), np.log10(zmax_outer), nr)
+
+        # Precompute distance modulus grid
+        z_grid = np.empty((nr, nOm))
+        for j, Om in enumerate(Om_grid):
+            cosmo = FlatLambdaCDM(H0=100, Om0=Om)
+
+            r = jnp.asarray(cosmo.comoving_distance(z_grid_fixed).value)
+            z_grid[:, j] = interp1d(r_grid, r, z_grid_fixed, method=method)
+            if np.any(np.isnan(z_grid[:, j])):
+                raise ValueError(
+                    "The distance grid is not fully covered for "
+                    f"Om = {Om:.2f}. Try increasing `redshift ranges`.")
+
+        # Build the interpolator: f(z, Om) -> mu
+        self._interp = Interpolator2D(
+            x=r_grid,
+            y=Om_grid,
+            f=jnp.asarray(z_grid),
+            method=method,
+            extrap=False,
+        )
+
+    def __call__(self, r, Om, h):
+        return self._interp(r * h, Om)
 
 
 ###############################################################################
