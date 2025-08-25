@@ -18,7 +18,6 @@ from abc import ABC
 import jax.numpy as jnp
 import numpy as np
 from jax.debug import print as jprint  # noqa
-from jax.scipy.linalg import solve_triangular
 from jax.scipy.special import logsumexp
 from jax.scipy.stats import norm as norm_jax
 from numpyro import factor, plate, sample
@@ -28,22 +27,12 @@ from numpyro.distributions import (HalfNormal, MultivariateNormal, Normal,
 from ..cosmography import (Distance2Distmod, Distance2Redshift,
                            Distmod2Distance, Distmod2Redshift,
                            LogGrad_Distmod2ComovingDistance)
-from ..util import (fprint, get_nested, load_config,
-                    radec_to_cartesian, replace_prior_with_delta)
+from ..util import (fprint, get_nested, load_config, radec_to_cartesian,
+                    replace_prior_with_delta)
 from .interp import LOSInterpolator
-from .model import (JeffreysPrior, load_priors, rsample,
-                    log_prior_r_empirical, predict_cz)
+from .model import (JeffreysPrior, load_priors, log_prior_r_empirical,
+                    mvn_logpdf_cholesky, predict_cz, rsample)
 from .simpson import ln_simpson
-
-
-def mvn_logpdf_cholesky(y, mu, L):
-    """
-    Log-pdf of a multivariate normal using Cholesky factor L (lower
-    triangular).
-    """
-    z = solve_triangular(L, y - mu, lower=True)
-    log_det = jnp.sum(jnp.log(jnp.diag(L)))
-    return -0.5 * (len(y) * jnp.log(2 * jnp.pi) + 2 * log_det + jnp.dot(z, z))
 
 
 def log_integral_gauss_pdf_times_cdf(mu, sigma, t, w):
