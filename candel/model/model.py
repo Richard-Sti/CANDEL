@@ -299,6 +299,7 @@ def get_linear_sigma_mag_TFR(data, sigma_int, b_TFR, c_TFR):
             data["eta"] > 0, c_TFR, 0) * data["eta"])**2 * data["e2_eta"]
         + sigma_int**2)
 
+
 def make_adaptive_grid(x_obs, e_x, k_sigma, n_grid):
     """
     Construct an adaptive uniform grid for a latent variable x.
@@ -627,6 +628,8 @@ class SNModel(BaseModel):
         M_SN = rsample("SN_absmag", self.priors["SN_absmag"], shared_params)
         alpha_SN = rsample("SN_alpha", self.priors["SN_alpha"], shared_params)
         beta_SN = rsample("SN_beta", self.priors["SN_beta"], shared_params)
+        dM = rsample("M_dipole", self.priors["M_dipole"], shared_params)
+        M_SN = M_SN + jnp.sum(dM * data["rhat"], axis=1)
         sigma_int = rsample(
             "sigma_int", self.priors["sigma_int"], shared_params)
 
@@ -770,8 +773,7 @@ class PantheonPlusModel(BaseModel):
 
         # Sample the SN parameters.
         M = rsample("M", self.priors["SN_absmag"], shared_params)
-        dM = rsample(
-            "M_dipole", self.priors["SN_absmag_dipole"], shared_params)
+        dM = rsample("M_dipole", self.priors["M_dipole"], shared_params)
         M = M + jnp.sum(dM * data["rhat"], axis=1)
         sigma_int = rsample(
             "sigma_int", self.priors["sigma_int"], shared_params)
@@ -836,8 +838,8 @@ class PantheonPlusModel(BaseModel):
             sample(
                 "mag_obs", MultivariateNormal(dX, C), obs=jnp.zeros_like(dX))
         else:
-            # Track the likelihood of the predicted magnitudes, add any intrinsic
-            # scatter to the covariance matrix.
+            # Track the likelihood of the predicted magnitudes, add any
+            # intrinsic scatter to the covariance matrix.
             C = (data["mag_covmat"]
                  + jnp.eye(data["mag_covmat"].shape[0]) * sigma_int**2)
             sample("mag_obs", MultivariateNormal(mu + M, C), obs=data["mag"])
@@ -980,7 +982,8 @@ class ClustersModel(BaseModel):
         A = rsample("A_CL", self.priors["CL_A"], shared_params)
         B = rsample("B_CL", self.priors["CL_B"], shared_params)
         C = rsample("C_CL", self.priors["CL_C"], shared_params)
-        sigma_int = rsample("sigma_int", self.priors["sigma_int"], shared_params)
+        sigma_int = rsample(
+            "sigma_int", self.priors["sigma_int"], shared_params)
 
         # Sample velocity field parameters.
         if self.with_radial_Vext:
