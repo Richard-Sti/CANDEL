@@ -33,13 +33,6 @@ def _basic_ln_simpson(ln_y: jax.Array, stop: int, x: jax.Array, axis: int) -> ja
     slice2 = tupleset(slice_all, axis, slice(2, stop + 2, step))
 
     # Account for possibly different spacings.
-    #    Simpson's rule changes a bit.
-    # print("x ", x)
-    # print("x.shape ", x.shape)
-    # print("slice0 ", slice0)
-    # print("slice1 ", slice1)
-    # print("slice2 ", slice2)
-
     h = jnp.diff(x, axis=axis)
     h0 = h[slice0]
     h1 = h[slice1]
