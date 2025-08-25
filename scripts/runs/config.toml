@@ -51,7 +51,7 @@ num_points_malmquist = 251
 ###############################################################################
 
 [model]
-use_MNR = true
+use_MNR = false
 marginalize_eta = false
 Om = 0.3
 
@@ -130,12 +130,12 @@ dist = "normal"
 loc = -18.5
 scale = 0.5
 
-[model.priors.SN_absmag_dipole]
-dist = "delta"
-value = [0.0, 0.0, 0.0]
-# dist = "vector_uniform"
-# low = 0.0
-# high = 0.25
+[model.priors.M_dipole]
+# dist = "delta"
+# value = [0.0, 0.0, 0.0]
+dist = "vector_uniform"
+low = 0.0
+high = 0.25
 
 [model.priors.SN_alpha]
 dist = "normal"
@@ -189,11 +189,11 @@ low = 5
 high = 2500
 
 [model.priors.Vext]
-# dist = "vector_uniform_fixed"
-# low = 0.0
-# high = 2500
-dist = "delta"
-value = [0.0, 0.0, 0.0]
+dist = "vector_uniform_fixed"
+low = 0.0
+high = 2500
+# dist = "delta"
+# value = [0.0, 0.0, 0.0]
 
 [model.priors.Vext_radial]
 dist = "vector_radial_spline_uniform"
