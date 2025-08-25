@@ -153,6 +153,8 @@ class PVDataFrame:
             data = load_Foundation(root, **config)
         elif name == "PantheonPlus":
             data = load_PantheonPlus(root, **config)
+        elif name == "PantheonPlusLane":
+            data = load_PantheonPlus_Lane(root, **config)
         elif name == "Clusters":
             data = load_clusters(root, **config)
         else:
@@ -175,6 +177,11 @@ class PVDataFrame:
             data["los_delta"] = data["los_density"] - 1
 
         if nsamples_subsample is not None:
+            if name == "PantheonPlusLane":
+                raise ValueError(
+                    "Subsampling for Pantheon+ Lane is not supported because "
+                    "of the complicated covariance matrix.")
+
             frame = cls(data)
             frame = frame.subsample(nsamples_subsample, seed=seed_subsample)
         else:
@@ -220,6 +227,7 @@ class PVDataFrame:
             frame.c_min = jnp.min(frame["c"])
             frame.c_max = jnp.max(frame["c"])
 
+        frame.with_lane_covmat = name == "PantheonPlusLane"
         frame.name = name
         return frame
 
@@ -675,6 +683,59 @@ def load_Foundation(root, zcmb_min=None, zcmb_max=None, b_min=7.5,
         "Foundation", root, zcmb_min=zcmb_min, zcmb_max=zcmb_max,
         b_min=b_min, los_data_path=los_data_path, return_all=return_all,
         **kwargs)
+
+
+def load_PantheonPlus_Lane(root, zcmb_min=None, zcmb_max=None, b_min=7.5,
+                           los_data_path=None, return_all=False, **kwargs):
+    if zcmb_max is not None and zcmb_max > 0.075:
+        raise ValueError(f"`zcmb_max` of {zcmb_max} is too high for the "
+                         "LOWZ sample which goes only up to 0.075.")
+    fname = join(root, "full_ps1_input_LOWZ.csv")
+    x = np.genfromtxt(fname, delimiter=",", names=True, dtype=None,
+                      encoding=None)
+
+    fprint(f"initially loaded {len(x)} galaxies from Pantheon+Lane data.")
+
+    data = dict(
+        zcmb=x["zCMB"],
+        RA=x["RA"],
+        dec=x["DEC"],
+        mag=x["mB"],
+        x1=x["x1"],
+        c=x["c"],
+    )
+
+    if return_all:
+        return data
+
+    C = np.loadtxt(join(root, "PP_cov_new_LOWZ.txt"))
+
+    mask = np.ones(len(data["zcmb"]), dtype=bool)
+    if zcmb_min is not None:
+        mask &= data["zcmb"] > zcmb_min
+
+    if zcmb_max is not None:
+        mask &= data["zcmb"] < zcmb_max
+
+    if b_min is not None:
+        b = radec_to_galactic(data["RA"], data["dec"])[1]
+        mask &= np.abs(b) > b_min
+
+    fprint(f"removed {len(mask) - np.sum(mask)} galaxies, thus "
+           f"{len(x[mask])} remain.")
+
+    for key in data:
+        data[key] = data[key][mask]
+
+
+    C_idx = (3 * np.where(mask)[0][:, None] + np.arange(3)).ravel()
+    C = C[C_idx][:, C_idx]
+    data["mag_covmat"] = C
+
+    if los_data_path is not None:
+        data = load_los(los_data_path, data, mask=mask)
+
+    return data
 
 
 def load_PantheonPlus(root, zcmb_min=None, zcmb_max=None, b_min=7.5,

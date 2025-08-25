@@ -26,6 +26,7 @@ from .data import (                                                             
     load_clusters,                                                              # noqa
     load_SDSS_FP,                                                               # noqa
     load_PantheonPlus,                                                          # noqa
+    load_PantheonPlus_Lane,                                                     # noqa
     PVDataFrame,                                                                # noqa
     load_PV_dataframes,                                                         # noqa
     )
