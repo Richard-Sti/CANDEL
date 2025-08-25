@@ -26,6 +26,7 @@ from astropy.cosmology import FlatLambdaCDM
 from jax import vmap
 from jax.debug import print as jprint  # noqa
 from jax.lax import cond
+from jax.scipy.linalg import solve_triangular
 from jax.scipy.special import gammainc, gammaln, logsumexp
 from jax_cosmo.scipy.interpolate import InterpolatedUnivariateSpline
 from numpyro import deterministic, factor, handlers, plate, sample
@@ -34,10 +35,10 @@ from numpyro.distributions import (Delta, MultivariateNormal, Normal,
 from numpyro.handlers import reparam
 from numpyro.infer.reparam import ProjectedNormalReparam
 
-from ..cosmography import (Distance2Distmod, Distance2LogAngDist,
-                           Distance2Redshift,
-                           LogAngularDiameterDistance2Distmod,
-                           Distance2Distmod_withOm, Distance2Redshift_withOm)
+from ..cosmography import (Distance2Distmod, Distance2Distmod_withOm,
+                           Distance2LogAngDist, Distance2Redshift,
+                           Distance2Redshift_withOm,
+                           LogAngularDiameterDistance2Distmod)
 from ..util import SPEED_OF_LIGHT, fprint, get_nested, load_config
 from .simpson import ln_simpson
 
@@ -71,6 +72,16 @@ def config_hash(cfg):
 
 def predict_cz(zcosmo, Vrad):
     return SPEED_OF_LIGHT * ((1 + zcosmo) * (1 + Vrad / SPEED_OF_LIGHT) - 1)
+
+
+def mvn_logpdf_cholesky(y, mu, L):
+    """
+    Log-pdf of a multivariate normal using Cholesky factor L (lower
+    triangular).
+    """
+    z = solve_triangular(L, y - mu, lower=True)
+    log_det = jnp.sum(jnp.log(jnp.diag(L)))
+    return -0.5 * (len(y) * jnp.log(2 * jnp.pi) + 2 * log_det + jnp.dot(z, z))
 
 
 ###############################################################################
@@ -586,6 +597,11 @@ class TFRModel(BaseModel):
                    logsumexp(ll, axis=0) - jnp.log(data.num_fields))
 
 
+###############################################################################
+#                           Supernova models                                 #
+###############################################################################
+
+
 class SNModel(BaseModel):
     """
     A SNe forward model: the distance is numerically marginalized at each MCMC
@@ -710,9 +726,17 @@ class SNModel(BaseModel):
                    logsumexp(ll, axis=0) - jnp.log(data.num_fields))
 
 
-###############################################################################
-#                           Supernova models                                 #
-###############################################################################
+def add_sigma_mag_to_lane_cov(sigma_mag, Sigma_d):
+    """
+    Add the intrinsic magnitude scatter to the Lane covariance matrix. It is
+    added along the diagonal and the indices corresponding to the magnitude
+    residuals.
+    """
+    n3 = Sigma_d.shape[0]
+    N = n3 // 3
+    idx = 3 * jnp.arange(N)
+    diag_D = jnp.zeros(n3).at[idx].set(sigma_mag**2)
+    return Sigma_d + jnp.diag(diag_D)
 
 
 class PantheonPlusModel(BaseModel):
@@ -749,6 +773,13 @@ class PantheonPlusModel(BaseModel):
         M = M + jnp.sum(dM * data["rhat"], axis=1)
         sigma_mu = rsample("sigma_mu", self.priors["sigma_mu"], shared_params)
 
+        # For the Lane covariance we sample the Tripp params.
+        if data.with_lane_covmat:
+            alpha_SN = rsample("SN_alpha", self.priors["SN_alpha"], shared_params)
+            beta_SN = rsample("SN_beta", self.priors["SN_beta"], shared_params)
+            x1 = data["x1"]
+            c = data["c"]
+
         R_dist_emp = rsample("R_dist_emp", self.priors["R_dist_emp"])
         p_dist_emp = rsample("p_dist_emp", self.priors["p_dist_emp"])
         n_dist_emp = rsample("n_dist_emp", self.priors["n_dist_emp"])
@@ -767,7 +798,9 @@ class PantheonPlusModel(BaseModel):
             Om=self.Om, beta=beta)
 
         # For the distance marginalization, h is not sampled. Watch out for
-        # the width of the uniform distribution of h is sampled.
+        # the width of the uniform distribution of h is sampled. A grid
+        # is still required to normalize the inhomogeneous Malmquist bias
+        # distribution.
         h = 1.
         r_grid = data["r_grid"] / h
         Rmax = r_grid[-1]
@@ -776,17 +809,34 @@ class PantheonPlusModel(BaseModel):
         with plate("plate_distance", nsamples):
             r = sample("r_latent", Uniform(0, Rmax))
 
+        mu = self.distance2distmod(r, h=h)  # (n_gal,)
+
         # Precompute the homogeneous distance prior, `(n_field, n_galaxies)`
         lp_dist = log_prior_r_empirical(
             r, **kwargs_dist, Rmax_grid=Rmax)[None, :]
 
-        # Predicted SN magnitudes, `(n_galaxies)`
-        mag = self.distance2distmod(r, h=h) + M
-        # Track the likelihood of the predicted magnitudes, add any intrinsic
-        # scatter to the covariance matrix.
-        C = (data["mag_covmat"]
-             + jnp.eye(data["mag_covmat"].shape[0]) * sigma_mu**2)
-        sample("mag_obs", MultivariateNormal(mag, C), obs=data["mag"])
+        if data.with_lane_covmat:
+            # Lane covariance is 3N x 3N where the values in the data vector
+            # are `magnitude residual, 0, 0` repeated for all hosts.
+            C = add_sigma_mag_to_lane_cov(sigma_mu, data["mag_covmat"])
+
+            # Compute the magnitude residuals.
+            M_eff = (M - alpha_SN * x1 + beta_SN * c)         # (n_gal,)
+            dx = data["mag"] - (mu + M_eff)
+
+            # Compute the magnitude difference vector
+            # [mag_res_i, 0, 0, mag_res_i + 1, 0, 0, etc...]
+            dX = jnp.zeros((3 * dx.size,), dtype=dx.dtype)
+            dX = dX.at[0::3].set(dx)
+            # Finally, track the likelihood of the magnitudes
+            sample(
+                "mag_obs", MultivariateNormal(dX, C), obs=jnp.zeros_like(dX))
+        else:
+            # Track the likelihood of the predicted magnitudes, add any intrinsic
+            # scatter to the covariance matrix.
+            C = (data["mag_covmat"]
+                 + jnp.eye(data["mag_covmat"].shape[0]) * sigma_mu**2)
+            sample("mag_obs", MultivariateNormal(mu + M, C), obs=data["mag"])
 
         if data.has_precomputed_los:
             # Evaluate the radial velocity and the galaxy bias at the sampled
