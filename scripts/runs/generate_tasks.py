@@ -36,7 +36,7 @@ equal length, they are treated as **paired inputs**, representing joint
 likelihood models with separate data vectors and submodels per catalogue.
 
 For example:
-    "inference/model": ["TFRModel_DistMarg", "PantheonPlusModel_DistMarg"]
+    "inference/model": ["TFRModel", "PantheonPlusModel"]
     "io/catalogue_name": ["CF4_W1", "Pantheon"]
 
 This setup will yield a single configuration where the models and catalogues
@@ -124,7 +124,7 @@ def generate_dynamic_tag(config, base_tag="default"):
     parts.append("MNR" if use_mnr else "noMNR")
 
     # Clusters scaling relation choice
-    if get_nested(config, "inference/model", None) == "ClustersModel_DistMarg":
+    if get_nested(config, "inference/model", None) == "ClustersModel":
         parts.append(get_nested(config, "io/Clusters/which_relation", None))
 
     # Fixed beta value from delta prior
@@ -237,7 +237,7 @@ if __name__ == "__main__":
         # "pv_model/kind": "Vext",
         # "io/catalogue_name": [f"CF4_mock_{n}" for n in range(70)],
         # "inference/shared_params": "beta,Vext,sigma_v",
-        # "inference/model": ["TFRModel_DistMarg", "FPModel_DistMarg"],
+        # "inference/model": ["TFRModel", "FPModel"],
         # "io/catalogue_name": ["CF4_W1", "SDSS_FP"],
         # "io/root_output": "results/S8_paper",
         "io/root_output": "results_test",

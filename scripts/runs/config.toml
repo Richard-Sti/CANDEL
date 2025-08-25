@@ -16,12 +16,12 @@ machine = "local"
 ###############################################################################
 
 [inference]
-model = "CalibratedDistanceModel_DistMarg"
+model = "TFRModel"
 shared_params = "none"
 
-# model = "PantheonPlusModel_DistMarg"
+# model = "PantheonPlusModel"
 num_warmup = 500
-num_samples = 500
+num_samples = 1000
 num_chains = 8
 chain_method = "parallel"
 seed = 44
@@ -36,10 +36,9 @@ skip_if_exists = false
 ###############################################################################
 
 [pv_model]
-use_MNR = false
 # Default kind. This gets overwritten if using a submission script.
-# kind = "precomputed_los_Carrick2015"
-kind = "Vext"
+kind = "precomputed_los_Carrick2015"
+# kind = "Vext"
 galaxy_bias = "linear_from_beta"  # Ignored unless having an underlying density field
 # galaxy_bias = "linear"  # Ignored unless having an underlying density field
 
@@ -52,8 +51,13 @@ num_points_malmquist = 251
 ###############################################################################
 
 [model]
-
+use_MNR = true
+marginalize_eta = false
 Om = 0.3
+
+[model.eta_grid]
+k_sigma = 5
+n_grid = 51
 
 [model.priors.h]
 # dist = "delta"
@@ -224,7 +228,7 @@ root_output = "results"
 # Default catalogue name and output path. This gets overwritten
 # if using a submission script.
 # catalogue_name = ["CF4_W1", "CF4_i"]
-catalogue_name = "CF4_calibrated"
+catalogue_name = "CF4_W1"
 
 fname_output = "results/test.hdf5"
 
@@ -246,7 +250,7 @@ dust_model = "none"
 
 add_eta_selection = true
 
-nsamples_subsample = "none"
+nsamples_subsample = 100
 seed_subsample = 42
 
 los_file = "data/CF4/los_CF4_TFR_<X>.hdf5"
