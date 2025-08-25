@@ -4,6 +4,7 @@ venv_gpu_candel/
 candel.egg-info/
 __pycache__/
 data/
+data_heavy/
 results/
 results_test/
 
