@@ -260,6 +260,7 @@ def name2label(name):
         "M_dipole_mag": r"$\Delta M_\mathrm{SN}$",
         "M_dipole_ell": r"$\ell_{\Delta M_{\rm SN}}$",
         "M_dipole_b": r"$b_{\Delta M_{\rm SN}}$",
+        "SN_absmag": r"$M_{\rm SN}$",
         "SN_alpha": r"$\mathcal{A}$",
         "SN_beta": r"$\mathcal{B}$",
         "eta_prior_mean": r"$\hat{\eta}$",
