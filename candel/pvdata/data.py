@@ -147,6 +147,10 @@ class PVDataFrame:
             data = load_SFI(root, **config)
         elif name == "SDSS_FP":
             data = load_SDSS_FP(root, **config)
+        elif name == "LOSS":
+            data = load_LOSS(root, **config)
+        elif name == "Foundation":
+            data = load_Foundation(root, **config)
         elif name == "PantheonPlus":
             data = load_PantheonPlus(root, **config)
         elif name == "Clusters":
@@ -176,23 +180,9 @@ class PVDataFrame:
         else:
             frame = cls(data)
 
-        # Keyword arguments for the magnitude hyperprior.
-        if "mag" in data:
-            frame.mag_dist_kwargs = {
-                "xmin": frame["min_mag"] - 0.5 * frame["std_mag"],
-                "xmax": frame["max_mag"] + 0.5 * frame["std_mag"],
-                "mag_sample": frame["mag"],
-                "e_mag_sample": frame["e_mag"],
-                }
-
-            frame.mag_dist_unif_kwargs = {
-                "low": frame["min_mag"] - 0.5 * frame["std_mag"],
-                "high": frame["max_mag"] + 0.5 * frame["std_mag"],
-            }
-
         frame.sample_dust = sample_dust
 
-        # Hyperparameters for the TFR linewidth selection.
+        # Hyperparameters for the TFR linewidth modelling
         if "eta_min" in config or "eta_max" in config:
             if config["add_eta_selection"]:
                 frame.add_eta_truncation = True
@@ -220,6 +210,15 @@ class PVDataFrame:
                     f"eta value of {np.max(frame['eta'])}.")
         else:
             frame.eta_max = None
+
+        # Hyperparameters for the SNe modelling
+        if "x1" in frame.keys():
+            frame.x1_min = jnp.min(frame["x1"])
+            frame.x1_max = jnp.max(frame["x1"])
+
+        if "c" in frame.keys():
+            frame.c_min = jnp.min(frame["c"])
+            frame.c_max = jnp.max(frame["c"])
 
         frame.name = name
         return frame
@@ -517,7 +516,7 @@ def load_2MTF(root, eta_min=-0.1, eta_max=0.2, zcmb_min=None, zcmb_max=None,
         e_eta = grp["e_eta"][...]
         e_mag = grp["e_mag"][...]
 
-    fprint(f"initially loaded {len(zcmb)} galaxies from CF4 TFR data.")
+    fprint(f"initially loaded {len(zcmb)} galaxies from 2MTF data.")
 
     data = dict(
         zcmb=zcmb,
@@ -570,7 +569,7 @@ def load_SFI(root, eta_min=-0.1, zcmb_min=None, zcmb_max=None,
         e_eta = grp["e_eta"][...]
         e_mag = grp["e_mag"][...]
 
-    fprint(f"initially loaded {len(zcmb)} galaxies from CF4 TFR data.")
+    fprint(f"initially loaded {len(zcmb)} galaxies from SFI++ data.")
 
     data = dict(
         zcmb=zcmb,
@@ -604,6 +603,78 @@ def load_SFI(root, eta_min=-0.1, zcmb_min=None, zcmb_max=None,
         data = load_los(los_data_path, data, mask=mask)
 
     return data
+
+
+def _load_LOSS_Foundation(which, root, zcmb_min=None, zcmb_max=None,
+                          b_min=7.5, los_data_path=None, return_all=False, **kwargs):
+    """
+    Load the LOSS or Foundation SNe data from the given root directory.
+    """
+    with File(join(root, "PV_compilation.hdf5"), 'r') as f:
+        grp = f[which]
+
+        zcmb = grp["z_CMB"][...]
+        RA = grp["RA"][...]
+        DEC = grp["DEC"][...]
+        mag = grp["mB"][...]
+        c = grp["c"][...]
+        x1 = grp["x1"][...]
+
+        e_mag = grp["e_mB"][...]
+        e_c = grp["e_c"][...]
+        e_x1 = grp["e_x1"][...]
+
+    fprint(f"initially loaded {len(zcmb)} galaxies from CF4 TFR data.")
+
+    data = dict(
+        zcmb=zcmb,
+        RA=RA,
+        dec=DEC,
+        mag=mag,
+        c=c,
+        x1=x1,
+        e_mag=e_mag,
+        e_c=e_c,
+        e_x1=e_x1
+    )
+
+    if return_all:
+        return data
+
+    mask = np.ones(len(zcmb), dtype=bool)
+    if zcmb_min is not None:
+        mask &= zcmb > zcmb_min
+    if zcmb_max is not None:
+        mask &= zcmb < zcmb_max
+    if b_min is not None:
+        b = radec_to_galactic(RA, DEC)[1]
+        mask &= np.abs(b) > b_min
+
+    fprint(f"removed {len(zcmb) - np.sum(mask)} galaxies, thus "
+           f"{np.sum(mask)} remain.")
+
+    for k in data:
+        data[k] = data[k][mask]
+
+    if los_data_path:
+        data = load_los(los_data_path, data, mask=mask)
+
+    return data
+
+def load_LOSS(root, zcmb_min=None, zcmb_max=None, b_min=7.5,
+              los_data_path=None, return_all=False, **kwargs):
+    return _load_LOSS_Foundation(
+        "LOSS", root, zcmb_min=zcmb_min, zcmb_max=zcmb_max,
+        b_min=b_min, los_data_path=los_data_path, return_all=return_all,
+        **kwargs)
+
+
+def load_Foundation(root, zcmb_min=None, zcmb_max=None, b_min=7.5,
+                    los_data_path=None, return_all=False, **kwargs):
+    return _load_LOSS_Foundation(
+        "Foundation", root, zcmb_min=zcmb_min, zcmb_max=zcmb_max,
+        b_min=b_min, los_data_path=los_data_path, return_all=return_all,
+        **kwargs)
 
 
 def load_PantheonPlus(root, zcmb_min=None, zcmb_max=None, b_min=7.5,

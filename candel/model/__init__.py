@@ -16,10 +16,11 @@
 from .model import (                                                            # noqa
     load_priors,                                                                # noqa
     log_prior_r_empirical,                                                      # noqa
-    TFRModel,                                                          # noqa
-    PantheonPlusModel,                                                 # noqa
-    ClustersModel,                                                     # noqa
-    FPModel,                                                           # noqa
+    TFRModel,                                                                   # noqa
+    SNModel,                                                                    # noqa
+    PantheonPlusModel,                                                          # noqa
+    ClustersModel,                                                              # noqa
+    FPModel,                                                                    # noqa
     CalibratedDistanceModel_DistMarg,                                           # noqa
     JointPVModel,                                                               # noqa
     )
@@ -33,6 +34,7 @@ from ..util import fprint
 def name2model(name, shared_param=None, config=None):
     mapping = {
         "TFRModel": TFRModel,
+        "SNModel": SNModel,
         "PantheonPlusModel": PantheonPlusModel,
         "ClustersModel": ClustersModel,
         "FPModel": FPModel,

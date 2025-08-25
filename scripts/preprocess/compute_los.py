@@ -55,6 +55,16 @@ def load_los(catalogue, config):
         los_file = d.pop("los_file")
         data = candel.pvdata.load_PantheonPlus(**d)
         RA, dec = data["RA"], data["dec"]
+    elif catalogue == "Foundation":
+        d = config["io"]["PV_main"][catalogue].copy()
+        los_file = d.pop("los_file")
+        data = candel.pvdata.load_Foundation(**d)
+        RA, dec = data["RA"], data["dec"]
+    elif catalogue == "LOSS":
+        d = config["io"]["PV_main"][catalogue].copy()
+        los_file = d.pop("los_file")
+        data = candel.pvdata.load_LOSS(**d)
+        RA, dec = data["RA"], data["dec"]
     elif catalogue == "Clusters":
         d = config["io"]["PV_main"][catalogue].copy()
         los_file = d.pop("los_file")

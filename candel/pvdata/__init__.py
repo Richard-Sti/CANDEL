@@ -18,6 +18,8 @@ from .data import (                                                             
     load_CF4_mock,                                                              # noqa
     load_2MTF,                                                                  # noqa
     load_SFI,                                                                   # noqa
+    load_LOSS,                                                                  # noqa
+    load_Foundation,                                                            # noqa
     load_SH0ES,                                                                 # noqa
     load_SH0ES_separated,                                                       # noqa
     load_SH0ES_from_config,                                                     # noqa
