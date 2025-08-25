@@ -292,12 +292,12 @@ def get_absmag_TFR(eta, a_TFR, b_TFR, c_TFR=0.0):
     return a_TFR + b_TFR * eta + jnp.where(eta > 0, c_TFR * eta**2, 0.0)
 
 
-def get_linear_sigma_mag_TFR(data, sigma_mu, b_TFR, c_TFR):
+def get_linear_sigma_mag_TFR(data, sigma_int, b_TFR, c_TFR):
     return jnp.sqrt(
         data["e2_mag"]
         + (b_TFR + 2 * jnp.where(
             data["eta"] > 0, c_TFR, 0) * data["eta"])**2 * data["e2_eta"]
-        + sigma_mu**2)
+        + sigma_int**2)
 
 def make_adaptive_grid(x_obs, e_x, k_sigma, n_grid):
     """
@@ -450,7 +450,8 @@ class TFRModel(BaseModel):
         a_TFR = rsample("a_TFR", self.priors["TFR_zeropoint"], shared_params)
         b_TFR = rsample("b_TFR", self.priors["TFR_slope"], shared_params)
         c_TFR = rsample("c_TFR", self.priors["TFR_curvature"], shared_params)
-        sigma_mu = rsample("sigma_mu", self.priors["sigma_mu"], shared_params)
+        sigma_int = rsample(
+            "sigma_int", self.priors["sigma_int"], shared_params)
         a_TFR_dipole = rsample(
             "a_TFR_dipole", self.priors["TFR_zeropoint_dipole"], shared_params)
         a_TFR = a_TFR + jnp.sum(a_TFR_dipole * data["rhat"], axis=1)
@@ -522,10 +523,10 @@ class TFRModel(BaseModel):
                         sample("eta", Normal(
                             eta, data["e_eta"]), obs=data["eta"])
 
-                e_mag = jnp.sqrt(sigma_mu**2 + data["e2_mag"])
+                e_mag = jnp.sqrt(sigma_int**2 + data["e2_mag"])
             else:
                 eta = data["eta"]
-                e_mag = get_linear_sigma_mag_TFR(data, sigma_mu, b_TFR, c_TFR)
+                e_mag = get_linear_sigma_mag_TFR(data, sigma_int, b_TFR, c_TFR)
 
             r_grid = data["r_grid"] / h
 
@@ -626,7 +627,8 @@ class SNModel(BaseModel):
         M_SN = rsample("SN_absmag", self.priors["SN_absmag"], shared_params)
         alpha_SN = rsample("SN_alpha", self.priors["SN_alpha"], shared_params)
         beta_SN = rsample("SN_beta", self.priors["SN_beta"], shared_params)
-        sigma_mu = rsample("sigma_mu", self.priors["sigma_mu"], shared_params)
+        sigma_int = rsample(
+            "sigma_int", self.priors["sigma_int"], shared_params)
 
         # Distance marginalization does not sample h.
         h = 1.0
@@ -671,14 +673,14 @@ class SNModel(BaseModel):
                 sample("c_obs", Normal(c, data["e_c"]), obs=data["c"])
 
                 # Magnitude scatter does NOT re-propagate x1/c obs errors.
-                e_mag = jnp.sqrt(sigma_mu**2 + data["e2_mag"])
+                e_mag = jnp.sqrt(sigma_int**2 + data["e2_mag"])
             else:
                 # Use measured x1, c; propagate their errors into μ.
                 x1 = data["x1"]
                 c = data["c"]
                 e_mag = jnp.sqrt(
                     data["e2_mag"] + (alpha_SN**2) * data["e2_x1"]
-                    + (beta_SN**2) * data["e2_c"] + sigma_mu**2)
+                    + (beta_SN**2) * data["e2_c"] + sigma_int**2)
 
             # ----- r grid -----
             r_grid = data["r_grid"] / h  # (n_r,)
@@ -771,11 +773,13 @@ class PantheonPlusModel(BaseModel):
         dM = rsample(
             "M_dipole", self.priors["SN_absmag_dipole"], shared_params)
         M = M + jnp.sum(dM * data["rhat"], axis=1)
-        sigma_mu = rsample("sigma_mu", self.priors["sigma_mu"], shared_params)
+        sigma_int = rsample(
+            "sigma_int", self.priors["sigma_int"], shared_params)
 
         # For the Lane covariance we sample the Tripp params.
         if data.with_lane_covmat:
-            alpha_SN = rsample("SN_alpha", self.priors["SN_alpha"], shared_params)
+            alpha_SN = rsample(
+                "SN_alpha", self.priors["SN_alpha"], shared_params)
             beta_SN = rsample("SN_beta", self.priors["SN_beta"], shared_params)
             x1 = data["x1"]
             c = data["c"]
@@ -818,7 +822,7 @@ class PantheonPlusModel(BaseModel):
         if data.with_lane_covmat:
             # Lane covariance is 3N x 3N where the values in the data vector
             # are `magnitude residual, 0, 0` repeated for all hosts.
-            C = add_sigma_mag_to_lane_cov(sigma_mu, data["mag_covmat"])
+            C = add_sigma_mag_to_lane_cov(sigma_int, data["mag_covmat"])
 
             # Compute the magnitude residuals.
             M_eff = (M - alpha_SN * x1 + beta_SN * c)         # (n_gal,)
@@ -835,7 +839,7 @@ class PantheonPlusModel(BaseModel):
             # Track the likelihood of the predicted magnitudes, add any intrinsic
             # scatter to the covariance matrix.
             C = (data["mag_covmat"]
-                 + jnp.eye(data["mag_covmat"].shape[0]) * sigma_mu**2)
+                 + jnp.eye(data["mag_covmat"].shape[0]) * sigma_int**2)
             sample("mag_obs", MultivariateNormal(mu + M, C), obs=data["mag"])
 
         if data.has_precomputed_los:
@@ -976,7 +980,7 @@ class ClustersModel(BaseModel):
         A = rsample("A_CL", self.priors["CL_A"], shared_params)
         B = rsample("B_CL", self.priors["CL_B"], shared_params)
         C = rsample("C_CL", self.priors["CL_C"], shared_params)
-        sigma_mu = rsample("sigma_mu", self.priors["sigma_mu"], shared_params)
+        sigma_int = rsample("sigma_int", self.priors["sigma_int"], shared_params)
 
         # Sample velocity field parameters.
         if self.with_radial_Vext:
@@ -1000,18 +1004,18 @@ class ClustersModel(BaseModel):
                     "MNR for clusters is not implemented yet. Please set "
                     "`use_MNR` to False in the config file.")
             else:
-                sigma_mu2 = jnp.ones(nsamples) * sigma_mu**2
+                sigma_int2 = jnp.ones(nsamples) * sigma_int**2
                 rel = self.which_relation[0]
 
                 # Fixed contributions depending on relation type
                 if rel == "L":
                     # LogL = A + B * logT + C * logY
                     logF = data["logF"]
-                    sigma_mu2 += data["e2_logF"]
+                    sigma_int2 += data["e2_logF"]
                 elif rel == "Y":
                     # logY = A + B * logT + C * logF
                     logY = data["logY"]
-                    sigma_mu2 += data["e2_logY"]
+                    sigma_int2 += data["e2_logY"]
                 else:
                     raise ValueError(
                         f"Invalid scaling relation '{self.which_relation}'.")
@@ -1019,17 +1023,17 @@ class ClustersModel(BaseModel):
                 # Conditional contributions based on sampling flags
                 if self.sample_T:
                     logT = data["logT"]
-                    sigma_mu2 += B**2 * data["e2_logT"]
+                    sigma_int2 += B**2 * data["e2_logT"]
 
                 if self.sample_Y and rel == "L":
                     logY = data["logY"]
-                    sigma_mu2 += C**2 * data["e2_logY"]
+                    sigma_int2 += C**2 * data["e2_logY"]
 
                 if self.sample_F and rel == "Y":
                     logF = data["logF"]
-                    sigma_mu2 += C**2 * data["e2_logF"]
+                    sigma_int2 += C**2 * data["e2_logF"]
 
-                sigma_mu = jnp.sqrt(sigma_mu2)
+                sigma_int = jnp.sqrt(sigma_int2)
 
             # This should depend on the cosmological redshift, but the
             # corrections are small and subdominant to the noise in the cluster
@@ -1055,7 +1059,7 @@ class ClustersModel(BaseModel):
 
             ll = 2 * jnp.log(r_grid)
             ll += Normal(
-                mu_cluster[:, None], sigma_mu[:, None]).log_prob(mu_grid)
+                mu_cluster[:, None], sigma_int[:, None]).log_prob(mu_grid)
 
             if data.has_precomputed_los:
                 # The shape is `(n_galaxies, num_steps.)`
@@ -1241,7 +1245,8 @@ class CalibratedDistanceModel_DistMarg(BaseModel):
         # Sample the FP parameters.
         h = rsample("h", self.priors["h"], shared_params)
         Om = rsample("Om", self.priors["Om"], shared_params)
-        sigma_mu = rsample("sigma_mu", self.priors["sigma_mu"], shared_params)
+        sigma_int = rsample(
+            "sigma_int", self.priors["sigma_int"], shared_params)
 
         R_dist_emp = rsample("R_dist_emp", self.priors["R_dist_emp"])
         p_dist_emp = rsample("p_dist_emp", self.priors["p_dist_emp"])
@@ -1278,7 +1283,7 @@ class CalibratedDistanceModel_DistMarg(BaseModel):
                 r_grid, **kwargs_dist, Rmax_grid=r_grid[-1])[None, None, :]
 
             # Likelihood of the 'obs' dist moduli, `(n_field, n_gal, n_rbin)`
-            sigma_mu = jnp.sqrt(sigma_mu**2 + data["e2_mu"])
+            sigma_mu = jnp.sqrt(sigma_int**2 + data["e2_mu"])
             ll = Normal(
                 mu_grid[None, :], sigma_mu[:, None]).log_prob(
                 data["mu"][:, None])[None, ...]
@@ -1304,8 +1309,8 @@ class CalibratedDistanceModel_DistMarg(BaseModel):
                 data, r_grid, Vext, with_radial_Vext=self.with_radial_Vext,
                 **self.kwargs_radial_Vext)
             czpred = predict_cz(
-                self.distance2redshift_with_Om(r_grid, Om=Om, h=h)[None, None, :],
-                Vrad + Vext_rad)
+                self.distance2redshift_with_Om(
+                    r_grid, Om=Om, h=h)[None, None, :], Vrad + Vext_rad)
             ll += Normal(czpred, sigma_v).log_prob(
                 data["czcmb"][None, :, None])
 

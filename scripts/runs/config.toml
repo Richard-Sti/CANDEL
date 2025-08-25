@@ -16,13 +16,13 @@ machine = "local"
 ###############################################################################
 
 [inference]
-model = "SNModel"
+model = "PantheonPlusModel"
 shared_params = "none"
 
 # model = "PantheonPlusModel"
 num_warmup = 500
-num_samples = 1500
-num_chains = 1
+num_samples = 500
+num_chains = 8
 chain_method = "parallel"
 seed = 44
 compute_log_density = false
@@ -51,7 +51,7 @@ num_points_malmquist = 251
 ###############################################################################
 
 [model]
-use_MNR = false
+use_MNR = true
 marginalize_eta = false
 Om = 0.3
 
@@ -90,7 +90,7 @@ dist = "normal"
 loc = 0.43
 scale = 0.1
 
-[model.priors.sigma_mu]
+[model.priors.sigma_int]
 dist = "jeffreys"
 low = 0.005
 high = 1.0
@@ -237,7 +237,7 @@ root_output = "results"
 # Default catalogue name and output path. This gets overwritten
 # if using a submission script.
 # catalogue_name = ["CF4_W1", "CF4_i"]
-catalogue_name = "LOSS"
+catalogue_name = "PantheonPlusLane"
 
 fname_output = "results/test.hdf5"
 
@@ -352,6 +352,17 @@ seed_subsample = 42
 
 los_file = "data/Pantheon+/los_CF4_Pantheon+_<X>.hdf5"
 
+[io.PantheonPlusLane]
+root = "data/Pantheon+_Lane"
+zcmb_min = "none"
+zcmb_max = 0.015
+b_min = 7.5
+
+nsamples_subsample = "none"
+seed_subsample = 42
+
+los_file = "data/Pantheon+_Lane/los_CF4_PantheonPlusLane_<X>.hdf5"
+
 [io.Clusters]
 root = "data/Clusters"
 zcmb_max = 0.2
@@ -426,6 +437,11 @@ los_file = "data/LOSS/los_LOSS_<X>.hdf5"
 root = "data/Pantheon+"
 return_all = true
 los_file = "data/Pantheon+/los_CF4_Pantheon+_<X>.hdf5"
+
+[io.PV_main.PantheonPlusLane]
+root = "data/Pantheon+_Lane"
+return_all = true
+los_file = "data/Pantheon+_Lane/los_CF4_PantheonPlusLane_<X>.hdf5"
 
 [io.PV_main.Clusters]
 root = "data/Clusters"
