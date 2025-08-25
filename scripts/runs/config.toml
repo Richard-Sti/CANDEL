@@ -16,13 +16,13 @@ machine = "local"
 ###############################################################################
 
 [inference]
-model = "TFRModel"
+model = "SNModel"
 shared_params = "none"
 
 # model = "PantheonPlusModel"
 num_warmup = 500
-num_samples = 1000
-num_chains = 8
+num_samples = 1500
+num_chains = 1
 chain_method = "parallel"
 seed = 44
 compute_log_density = false
@@ -43,7 +43,7 @@ galaxy_bias = "linear_from_beta"  # Ignored unless having an underlying density 
 # galaxy_bias = "linear"  # Ignored unless having an underlying density field
 
 # (Inhomogeneus Malmquist bias settings and extrapolation), in units of Mpc / h
-r_limits_malmquist = [0.1, 301]
+r_limits_malmquist = [0.1, 251]
 num_points_malmquist = 251
 
 ###############################################################################
@@ -51,7 +51,7 @@ num_points_malmquist = 251
 ###############################################################################
 
 [model]
-use_MNR = true
+use_MNR = false
 marginalize_eta = false
 Om = 0.3
 
@@ -124,7 +124,6 @@ value = [0.0, 0.0, 0.0]
 # low = 0.0
 # high = 0.3
 
-
 # SN priors
 [model.priors.SN_absmag]
 dist = "normal"
@@ -138,8 +137,18 @@ value = [0.0, 0.0, 0.0]
 # low = 0.0
 # high = 0.25
 
-## Cluster scaling relation priors
+[model.priors.SN_alpha]
+dist = "normal"
+loc = 0.15
+scale = 1.0
 
+[model.priors.SN_beta]
+dist = "normal"
+loc = 3.0
+scale = 1.0
+
+
+## Cluster scaling relation priors
 [model.priors.CL_A]
 dist = "uniform"
 low = -5
@@ -228,7 +237,7 @@ root_output = "results"
 # Default catalogue name and output path. This gets overwritten
 # if using a submission script.
 # catalogue_name = ["CF4_W1", "CF4_i"]
-catalogue_name = "CF4_W1"
+catalogue_name = "LOSS"
 
 fname_output = "results/test.hdf5"
 
@@ -250,7 +259,7 @@ dust_model = "none"
 
 add_eta_selection = true
 
-nsamples_subsample = 100
+nsamples_subsample = 500
 seed_subsample = 42
 
 los_file = "data/CF4/los_CF4_TFR_<X>.hdf5"
@@ -307,6 +316,30 @@ nsamples_subsample = "none"
 seed_subsample = 42
 
 los_file = "data/SFI/los_SFI_<X>.hdf5"
+
+[io.Foundation]
+root = "data/Foundation"
+
+zcmb_min = "none"
+zcmb_max = 0.05
+b_min = 7.5
+
+nsamples_subsample = "none"
+seed_subsample = 42
+
+los_file = "data/Foundation/los_Foundation_<X>.hdf5"
+
+[io.LOSS]
+root = "data/LOSS"
+
+zcmb_min = "none"
+zcmb_max = 0.05
+b_min = 7.5
+
+nsamples_subsample = "none"
+seed_subsample = 42
+
+los_file = "data/LOSS/los_LOSS_<X>.hdf5"
 
 [io.PantheonPlus]
 root = "data/Pantheon+"
@@ -378,6 +411,16 @@ los_file = "data/2MTF/los_2MTF_<X>.hdf5"
 root = "data/SFI"
 return_all = true
 los_file = "data/SFI/los_SFI_<X>.hdf5"
+
+[io.PV_main.Foundation]
+root = "data/Foundation"
+return_all = true
+los_file = "data/Foundation/los_Foundation_<X>.hdf5"
+
+[io.PV_main.LOSS]
+root = "data/LOSS"
+return_all = true
+los_file = "data/LOSS/los_LOSS_<X>.hdf5"
 
 [io.PV_main.PantheonPlus]
 root = "data/Pantheon+"
