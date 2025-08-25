@@ -614,7 +614,8 @@ def load_SFI(root, eta_min=-0.1, zcmb_min=None, zcmb_max=None,
 
 
 def _load_LOSS_Foundation(which, root, zcmb_min=None, zcmb_max=None,
-                          b_min=7.5, los_data_path=None, return_all=False, **kwargs):
+                          b_min=7.5, los_data_path=None, return_all=False,
+                          **kwargs):
     """
     Load the LOSS or Foundation SNe data from the given root directory.
     """
@@ -668,6 +669,7 @@ def _load_LOSS_Foundation(which, root, zcmb_min=None, zcmb_max=None,
         data = load_los(los_data_path, data, mask=mask)
 
     return data
+
 
 def load_LOSS(root, zcmb_min=None, zcmb_max=None, b_min=7.5,
               los_data_path=None, return_all=False, **kwargs):
@@ -726,7 +728,6 @@ def load_PantheonPlus_Lane(root, zcmb_min=None, zcmb_max=None, b_min=7.5,
 
     for key in data:
         data[key] = data[key][mask]
-
 
     C_idx = (3 * np.where(mask)[0][:, None] + np.arange(3)).ravel()
     C = C[C_idx][:, C_idx]
