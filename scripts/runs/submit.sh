@@ -1,13 +1,31 @@
 #!/bin/bash
-#SBATCH -p gpu
-#SBATCH --mail-user=rstiskalek@flatironinstitute.org
-#SBATCH --mail-type=FAIL,END
+### ------------------ SLURM settings: choose cluster ------------------
+
+# ### Rusty
+# #SBATCH -p gpu
+# #SBATCH --mail-user=rstiskalek@flatironinstitute.org
+# #SBATCH --mail-type=BEGIN,FAIL,END
+# #SBATCH --ntasks=1
+# #SBATCH --gpus-per-task=1
+# #SBATCH --cpus-per-task=4
+# #SBATCH --mem=32G
+# #SBATCH --constraint=a100
+# #SBATCH --time=01:00:00
+# #SBATCH --job-name=candel
+# #SBATCH --output=logs/logs-%j.out
+# #SBATCH --error=logs/logs-%j.err
+
+## ARC HTC
+
+#SBATCH --partition=short
+#SBATCH --mail-user=richard.stiskalek@physics.ox.ac.uk
+#SBATCH --mail-type=BEGIN,FAIL,END
+#SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --gpus-per-task=1
+#SBATCH --gres=gpu:1 --constraint="cpu_gen:Cascade_Lake|cpu_gen:Skylake"
 #SBATCH --cpus-per-task=4
+#SBATCH --time=12:00:00
 #SBATCH --mem=32G
-#SBATCH --constraint=a100
-#SBATCH --time=01:00:00
 #SBATCH --job-name=candel
 #SBATCH --output=logs/logs-%j.out
 #SBATCH --error=logs/logs-%j.err
@@ -93,11 +111,31 @@ for line in "${task_lines[@]}"; do
         fi
 
         export XLA_FLAGS="--xla_hlo_profile=false --xla_dump_to=/tmp/nowhere"
+    elif [[ "$machine" == "arc" ]]; then
+        echo "[INFO] Loading modules for machine: arc"
+        module --force purge
+        module add Python/3.11.3-GCCcore-12.3.0
+
+        # Override ncpus to what SLURM gave us
+        if [[ -n "$SLURM_CPUS_PER_TASK" ]]; then
+            ncpus="$SLURM_CPUS_PER_TASK"
+            echo "[INFO] Overriding ncpus to SLURM_CPUS_PER_TASK=$ncpus"
+        fi
+    fi
+
+    # Override ncpus from SLURM if running with SBATCH
+    if [[ "$machine" == "rusty" || "$machine" == "arc" ]]; then
+        if [[ -n "$SLURM_CPUS_PER_TASK" ]]; then
+            ncpus="$SLURM_CPUS_PER_TASK"
+            echo "[INFO] Overriding ncpus to SLURM_CPUS_PER_TASK=$ncpus"
+        fi
     fi
 
     # Set root of frozen package
     if [[ "$machine" == "rusty" ]]; then
         frozen_root="/mnt/home/${USER}/frozen_candel"
+    elif [[ "$machine" == "arc" ]]; then
+        frozen_root="/home/${USER}/frozen_candel"
     elif [[ "$machine" == "local" ]]; then
         frozen_root="/Users/${USER}/Projects/CANDEL_frozen"
     else
