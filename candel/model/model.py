@@ -440,7 +440,7 @@ class TFRModel(BaseModel):
     def __init__(self, config_path):
         super().__init__(config_path)
 
-        if self.use_MNR:
+        if self.use_MNR and not self.marginalize_eta:
             fprint("setting `compute_evidence` to False.")
             self.config["inference"]["compute_evidence"] = False
 
