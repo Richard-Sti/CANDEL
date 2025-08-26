@@ -23,10 +23,9 @@ machine = "arc"
 model = "PantheonPlusModel"
 shared_params = "none"
 
-# model = "PantheonPlusModel"
 num_warmup = 500
 num_samples = 500
-num_chains = 8
+num_chains = 1
 chain_method = "parallel"
 seed = 44
 compute_log_density = false
