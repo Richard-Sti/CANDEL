@@ -156,7 +156,10 @@ def generate_dynamic_tag(config, base_tag="default"):
     if dust_model is not None and dust_model.lower() != "none":
         parts.append(f"dust-{dust_model}")
 
-    return "_".join(parts) if base_tag == "default" else base_tag
+    if base_tag != "default":
+        parts.append(base_tag)
+
+    return "_".join(parts)
 
 
 def expand_override_grid(overrides):
@@ -226,7 +229,7 @@ if __name__ == "__main__":
     config = load_config(
         config_path, replace_none=False, replace_los_prior=False)
 
-    tag = "default"
+    tag = "bad_photo_too"
     tasks_index = args.tasks_index
 
     # Multiple override options → this creates a job per combination
@@ -235,26 +238,25 @@ if __name__ == "__main__":
         # "pv_model/kind": "Vext",
         # "io/catalogue_name": [f"CF4_mock_{n}" for n in range(70)],
         "io/catalogue_name": "CF4_W1",
-        "inference/shared_params": "none",
+        # "inference/shared_params": "none",
         "inference/model": "TFRModel",
         "io/root_output": "results/dH0",
         # "model/use_MNR": True,
         # "model/marginalize_eta": True,
         # "io/CF4_i/exclude_W1": True,
-        # "io/CF4_W1/dust_model": ["none", "default", "CSFD"],
+        "io/CF4_W1/best_mag_quality": False,
+        # "io/CF4_W1/zcmb_min": 0.01,
+        # "io/CF4_W1/dust_model": ["none", "default", "SFD", "CSFD", "Planck2016"],
         # "io/Clusters/which_relation": ["LT", "LTY"],
         # "model/priors/beta": [
         #     {"dist": "normal", "loc": 0.43, "scale": 0.1},
         #     {"dist": "delta", "value": 1.0},
         # ],
-        # "model/priors/TFR_zeropoint_dipole": [
-        #     # {"dist": "delta", "value": [0.0, 0.0, 0.0]},
-        #     {"dist": "vector_uniform_fixed", "low": 0.0, "high": 0.3},
-        # ],
-        # "model/priors/TFR_zeropoint_dipole": [
-        #     {"dist": "delta", "value": [0.0, 0.0, 0.0]},
-        #     {"dist": "vector_uniform_fixed", "low": 0.0, "high": 0.3},
-        # ],
+        "model/priors/zeropoint_dipole": [
+            {"dist": "delta", "value": [0.0, 0.0, 0.0]},
+            {"dist": "vector_uniform_fixed", "low": 0.0, "high": 0.3},
+            # {"dist": "vector_components_uniform", "low": -0.3, "high": 0.3},
+        ],
     }
 
     task_file = f"tasks_{tasks_index}.txt"

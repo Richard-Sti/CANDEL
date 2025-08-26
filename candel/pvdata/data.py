@@ -449,6 +449,9 @@ def load_CF4_data(root, which_band, best_mag_quality=True, eta_min=-0.3,
     mask = eta > eta_min
     if best_mag_quality:
         mask &= mag_quality == 5
+    else:
+        mask &= mag > 5
+
     if zcmb_min is not None:
         mask &= zcmb > zcmb_min
     if zcmb_max is not None:

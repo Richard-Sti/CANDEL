@@ -20,12 +20,9 @@
 #SBATCH --partition=short
 #SBATCH --mail-user=richard.stiskalek@physics.ox.ac.uk
 #SBATCH --mail-type=BEGIN,FAIL,END
-#######SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --gres=gpu:1
-#####SBATCH --gres=gpu:1 --constraint="cpu_gen:Cascade_Lake|cpu_gen:Skylake"
-#####SBATCH --cpus-per-task=4
-#SBATCH --time=12:00:00
+#SBATCH --gres=gpu:1 --constraint="cpu_gen:Cascade_Lake|cpu_gen:Skylake"
+#SBATCH --time=02:00:00
 #SBATCH --mem=32G
 #SBATCH --job-name=candel
 #SBATCH --output=logs/logs-%j.out
