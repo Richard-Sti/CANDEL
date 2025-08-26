@@ -239,7 +239,7 @@ if __name__ == "__main__":
         "inference/model": "TFRModel",
         "io/root_output": "results_test",
         "model/use_MNR": True,
-        "model/marginalize_eta": [False, True]
+        "model/marginalize_eta": True,
         # "io/CF4_i/exclude_W1": True,
         # "io/CF4_W1/dust_model": ["none", "default", "CSFD"],
         # "io/Clusters/which_relation": ["LT", "LTY"],

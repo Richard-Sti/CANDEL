@@ -1,6 +1,6 @@
-root_main = "/Users/rstiskalek/Projects/CANDEL/"
-python_exec = "/Users/rstiskalek/Projects/CANDEL/venv_candel/bin/python"
-machine = "local"
+# root_main = "/Users/rstiskalek/Projects/CANDEL/"
+# python_exec = "/Users/rstiskalek/Projects/CANDEL/venv_candel/bin/python"
+# machine = "local"
 
 # root_main = "/Users/yasin/code/CANDEL/"
 # python_exec = "/Users/yasin/code/CANDEL/venv_candel/bin/python"
@@ -10,9 +10,9 @@ machine = "local"
 # python_exec="/mnt/home/rstiskalek/CANDEL/venv_gpu_candel/bin/python"
 # machine="rusty"
 
-# root_main = "/home/phys1997/CANDEL/"
-# python_exec = "/home/phys1997/CANDEL/venv_candel/bin/python"
-# machine = "arc"
+root_main = "/home/phys1997/CANDEL/"
+python_exec = "/home/phys1997/CANDEL/venv_candel/bin/python"
+machine = "arc"
 
 
 ###############################################################################
@@ -24,8 +24,8 @@ model = "PantheonPlusModel"
 shared_params = "none"
 
 num_warmup = 500
-num_samples = 500
-num_chains = 8
+num_samples = 4000
+num_chains = 1
 chain_method = "parallel"
 seed = 44
 compute_log_density = false
@@ -256,7 +256,7 @@ dust_model = "none"
 
 add_eta_selection = true
 
-nsamples_subsample = 301
+nsamples_subsample = "none"
 seed_subsample = 42
 
 los_file = "data/CF4/los_CF4_TFR_<X>.hdf5"
