@@ -24,12 +24,12 @@ model = "PantheonPlusModel"
 shared_params = "none"
 
 num_warmup = 500
-num_samples = 4000
-num_chains = 1
+num_samples = 5000
+num_chains = 4
 chain_method = "parallel"
-seed = 44
-compute_log_density = false
-compute_evidence = false
+seed = 42
+compute_log_density = true
+compute_evidence = true
 num_chains_harmonic = 10
 
 skip_if_exists = false
@@ -71,9 +71,11 @@ value = 1.0
 
 [model.priors.Om]
 # Currently sampled only for the CF4 calibrated data.
-dist = "uniform"
-low = 0.01
-high = 0.99
+dist = "delta"
+value = 0.3
+# dist = "uniform"
+# low = 0.01
+# high = 0.99
 
 [model.priors.alpha]
 dist = "normal"
@@ -104,7 +106,6 @@ low = 0.001
 high = 0.5
 
 # TFR priors
-
 [model.priors.TFR_zeropoint]
 dist = "normal"
 loc = -19.8
@@ -131,7 +132,7 @@ value = [0.0, 0.0, 0.0]
 [model.priors.SN_absmag]
 dist = "normal"
 loc = -18.5
-scale = 0.5
+scale = 2.0
 
 [model.priors.SN_alpha]
 dist = "normal"
@@ -161,7 +162,6 @@ low = -2.0
 high = 2.0
 
 # FP priors
-
 [model.priors.FP_a]
 dist = "normal"
 loc = 1.0
@@ -181,7 +181,7 @@ scale = 1.0
 
 [model.priors.sigma_v]
 dist = "jeffreys"
-low = 5
+low = 1
 high = 2500
 
 [model.priors.Vext]
