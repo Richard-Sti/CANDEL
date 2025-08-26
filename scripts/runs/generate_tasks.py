@@ -229,22 +229,24 @@ if __name__ == "__main__":
     config = load_config(
         config_path, replace_none=False, replace_los_prior=False)
 
-    tag = "bad_photo_too"
+    tag = "default"
     tasks_index = args.tasks_index
 
     # Multiple override options → this creates a job per combination
     manual_overrides = {
+        "inference/num_samples": 1000,
+        "inference/num_chains": 2,
         "pv_model/kind": "precomputed_los_Carrick2015",
         # "pv_model/kind": "Vext",
         # "io/catalogue_name": [f"CF4_mock_{n}" for n in range(70)],
         "io/catalogue_name": "CF4_W1",
         # "inference/shared_params": "none",
         "inference/model": "TFRModel",
-        "io/root_output": "results/dH0",
+        "io/root_output": "results_test/",
         # "model/use_MNR": True,
         # "model/marginalize_eta": True,
         # "io/CF4_i/exclude_W1": True,
-        "io/CF4_W1/best_mag_quality": False,
+        # "io/CF4_W1/best_mag_quality": False,
         # "io/CF4_W1/zcmb_min": 0.01,
         # "io/CF4_W1/dust_model": ["none", "default", "SFD", "CSFD", "Planck2016"],
         # "io/Clusters/which_relation": ["LT", "LTY"],
@@ -254,7 +256,7 @@ if __name__ == "__main__":
         # ],
         "model/priors/zeropoint_dipole": [
             {"dist": "delta", "value": [0.0, 0.0, 0.0]},
-            {"dist": "vector_uniform_fixed", "low": 0.0, "high": 0.3},
+            # {"dist": "vector_uniform_fixed", "low": 0.0, "high": 0.3},
             # {"dist": "vector_components_uniform", "low": -0.3, "high": 0.3},
         ],
     }
