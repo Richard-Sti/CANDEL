@@ -258,7 +258,7 @@ def _rsample(name, dist):
     """
     Samples from `dist` unless it is a delta function or vector directive.
     """
-    if name == "zeropoint_dipole" and dist.get("dist") == "delta":
+    if isinstance(dist, Delta) and name == "zeropoint_dipole":
         return jnp.zeros(3)
 
     if isinstance(dist, Delta):
