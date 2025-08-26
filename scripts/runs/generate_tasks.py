@@ -134,18 +134,17 @@ def generate_dynamic_tag(config, base_tag="default"):
             if val is not None:
                 parts.append(f"beta{val}")
 
-    # aTFRdipole if it's not a delta distribution
-    aTFRdip_prior = get_nested(config, "model/priors/TFR_zeropoint_dipole", {})
-    if isinstance(aTFRdip_prior, dict) and "TFR" in model_name and aTFRdip_prior.get("dist") != "delta":  # noqa
-        dist_name = aTFRdip_prior.get("dist")
-        if dist_name == "vector_components_uniform":
-            parts.append("aTFRdipoleUnifComponents")
-        else:
-            parts.append("aTFRdipole")
+    if "TFR" in model_name and use_mnr and not get_nested(config, "model/marginalize_eta", True):  # noqa
+        parts.append("eta_sampled")
 
-    Mdip_prior = get_nested(config, "model/priors/SN_absmag_dipole", {})
-    if isinstance(Mdip_prior, dict) and "Pantheon" in model_name and Mdip_prior.get("dist") != "delta":  # noqa
-        parts.append("Mdip_prior")
+    # Zeropoint dipole if it's not a delta distribution
+    zeropoint_dip_prior = get_nested(config, "model/priors/zeropoint_dipole", {})  # noqa
+    if isinstance(zeropoint_dip_prior, dict) and zeropoint_dip_prior.get("dist") != "delta":  # noqa
+        dist_name = zeropoint_dip_prior.get("dist")
+        if dist_name == "vector_components_uniform":
+            parts.append("zeropoint_dipole_UnifComponents")
+        else:
+            parts.append("zeropoint_dipole")
 
     # If Vext is a delta distribution (not sampled)
     Vext_prior = get_nested(config, "model/priors/Vext", {})

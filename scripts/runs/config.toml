@@ -1,6 +1,6 @@
-# root_main = "/Users/rstiskalek/Projects/CANDEL/"
-# python_exec = "/Users/rstiskalek/Projects/CANDEL/venv_candel/bin/python"
-# machine = "local"
+root_main = "/Users/rstiskalek/Projects/CANDEL/"
+python_exec = "/Users/rstiskalek/Projects/CANDEL/venv_candel/bin/python"
+machine = "local"
 
 # root_main = "/Users/yasin/code/CANDEL/"
 # python_exec = "/Users/yasin/code/CANDEL/venv_candel/bin/python"
@@ -10,9 +10,9 @@
 # python_exec="/mnt/home/rstiskalek/CANDEL/venv_gpu_candel/bin/python"
 # machine="rusty"
 
-root_main = "/home/phys1997/CANDEL/"
-python_exec = "/home/phys1997/CANDEL/venv_candel/bin/python"
-machine = "arc"
+# root_main = "/home/phys1997/CANDEL/"
+# python_exec = "/home/phys1997/CANDEL/venv_candel/bin/python"
+# machine = "arc"
 
 
 ###############################################################################
@@ -25,7 +25,7 @@ shared_params = "none"
 
 num_warmup = 500
 num_samples = 500
-num_chains = 1
+num_chains = 8
 chain_method = "parallel"
 seed = 44
 compute_log_density = false
@@ -54,20 +54,20 @@ num_points_malmquist = 251
 ###############################################################################
 
 [model]
-use_MNR = false
-marginalize_eta = false
 Om = 0.3
+use_MNR = true
+marginalize_eta = true
 
 [model.eta_grid]
 k_sigma = 5
-n_grid = 51
+n_grid = 31
 
 [model.priors.h]
-# dist = "delta"
-# value = 1.0
-dist = "uniform"
-low = 0.25
-high = 1.0
+dist = "delta"
+value = 1.0
+# dist = "uniform"
+# low = 0.25
+# high = 1.0
 
 [model.priors.Om]
 # Currently sampled only for the CF4 calibrated data.
@@ -82,7 +82,7 @@ scale = 1.0
 
 [model.priors.b1]
 dist = "normal"
-loc = 0
+loc = 1
 scale = 1.0
 
 [model.priors.beta]
@@ -120,7 +120,7 @@ dist = "normal"
 loc = 10
 scale = 5.0
 
-[model.priors.TFR_zeropoint_dipole]
+[model.priors.zeropoint_dipole]
 dist = "delta"
 value = [0.0, 0.0, 0.0]
 # dist = "vector_uniform_fixed"
@@ -132,13 +132,6 @@ value = [0.0, 0.0, 0.0]
 dist = "normal"
 loc = -18.5
 scale = 0.5
-
-[model.priors.M_dipole]
-# dist = "delta"
-# value = [0.0, 0.0, 0.0]
-dist = "vector_uniform"
-low = 0.0
-high = 0.25
 
 [model.priors.SN_alpha]
 dist = "normal"
@@ -241,12 +234,13 @@ root_output = "results"
 # if using a submission script.
 # catalogue_name = ["CF4_W1", "CF4_i"]
 catalogue_name = "PantheonPlusLane"
-
 fname_output = "results/test.hdf5"
+
 
 [io.CF4_mock]
 root = "data/CF4_mock"
 add_eta_selection = true
+
 
 [io.CF4_W1]
 root = "data/CF4"
@@ -262,7 +256,7 @@ dust_model = "none"
 
 add_eta_selection = true
 
-nsamples_subsample = 500
+nsamples_subsample = 301
 seed_subsample = 42
 
 los_file = "data/CF4/los_CF4_TFR_<X>.hdf5"
@@ -287,6 +281,7 @@ nsamples_subsample = "none"
 seed_subsample = 42
 
 los_file = "data/CF4/los_CF4_TFR_<X>.hdf5"
+
 
 [io.2MTF]
 root = "data/2MTF"
@@ -358,7 +353,7 @@ los_file = "data/Pantheon+/los_CF4_Pantheon+_<X>.hdf5"
 [io.PantheonPlusLane]
 root = "data/Pantheon+_Lane"
 zcmb_min = "none"
-zcmb_max = 0.015
+zcmb_max = 0.05
 b_min = 7.5
 
 nsamples_subsample = "none"
