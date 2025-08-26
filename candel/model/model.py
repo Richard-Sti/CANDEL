@@ -258,7 +258,7 @@ def _rsample(name, dist):
     """
     Samples from `dist` unless it is a delta function or vector directive.
     """
-    if name == "TFR_zeropoint_dipole" and dist.get("dist") == "delta":
+    if name == "zeropoint_dipole" and dist.get("dist") == "delta":
         return jnp.zeros(3)
 
     if isinstance(dist, Delta):
@@ -454,7 +454,7 @@ class TFRModel(BaseModel):
         sigma_int = rsample(
             "sigma_int", self.priors["sigma_int"], shared_params)
         a_TFR_dipole = rsample(
-            "a_TFR_dipole", self.priors["TFR_zeropoint_dipole"], shared_params)
+            "zeropoint_dipole", self.priors["zeropoint_dipole"], shared_params)
         a_TFR = a_TFR + jnp.sum(a_TFR_dipole * data["rhat"], axis=1)
 
         # For the distance marginalization, h is not sampled.
@@ -628,7 +628,8 @@ class SNModel(BaseModel):
         M_SN = rsample("SN_absmag", self.priors["SN_absmag"], shared_params)
         alpha_SN = rsample("SN_alpha", self.priors["SN_alpha"], shared_params)
         beta_SN = rsample("SN_beta", self.priors["SN_beta"], shared_params)
-        dM = rsample("M_dipole", self.priors["M_dipole"], shared_params)
+        dM = rsample(
+            "zeropoint_dipole", self.priors["zeropoint_dipole"], shared_params)
         M_SN = M_SN + jnp.sum(dM * data["rhat"], axis=1)
         sigma_int = rsample(
             "sigma_int", self.priors["sigma_int"], shared_params)
@@ -773,7 +774,8 @@ class PantheonPlusModel(BaseModel):
 
         # Sample the SN parameters.
         M = rsample("M", self.priors["SN_absmag"], shared_params)
-        dM = rsample("M_dipole", self.priors["M_dipole"], shared_params)
+        dM = rsample(
+            "zeropoint_dipole", self.priors["zeropoint_dipole"], shared_params)
         M = M + jnp.sum(dM * data["rhat"], axis=1)
         sigma_int = rsample(
             "sigma_int", self.priors["sigma_int"], shared_params)

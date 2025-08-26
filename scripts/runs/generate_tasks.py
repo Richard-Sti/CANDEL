@@ -119,8 +119,7 @@ def generate_dynamic_tag(config, base_tag="default"):
         else:
             parts.append(str(catalogue))
 
-    # MNR flag
-    use_mnr = get_nested(config, "pv_model/use_MNR", False)
+    use_mnr = get_nested(config, "model/use_MNR", False)
     parts.append("MNR" if use_mnr else "noMNR")
 
     # Clusters scaling relation choice
@@ -233,16 +232,15 @@ if __name__ == "__main__":
 
     # Multiple override options → this creates a job per combination
     manual_overrides = {
-        # "pv_model/kind": "precomputed_los_Carrick2015",
+        "pv_model/kind": "precomputed_los_Carrick2015",
         # "pv_model/kind": "Vext",
         # "io/catalogue_name": [f"CF4_mock_{n}" for n in range(70)],
-        "io/catalogue_name": ["LOSS", "Foundation"],
-        "inference/shared_params": "beta,Vext,sigma_v,M_dipole",
-        "inference/model": ["SNModel", "SNModel"],
-        # "io/catalogue_name": ["CF4_W1", "SDSS_FP"],
-        # "io/root_output": "results/S8_paper",
+        "io/catalogue_name": "CF4_W1",
+        "inference/shared_params": "none",
+        "inference/model": "TFRModel",
         "io/root_output": "results_test",
-        # "pv_model/use_MNR": False,
+        "model/use_MNR": True,
+        "model/marginalize_eta": [False, True]
         # "io/CF4_i/exclude_W1": True,
         # "io/CF4_W1/dust_model": ["none", "default", "CSFD"],
         # "io/Clusters/which_relation": ["LT", "LTY"],
@@ -275,6 +273,7 @@ if __name__ == "__main__":
                     if "Vext" in value:
                         config = replace_prior_with_delta(config, "alpha", 1.)
                         config = replace_prior_with_delta(config, "beta", 0.)
+                        config = replace_prior_with_delta(config, "b1", 0.)
                     else:
                         value = f"precomputed_los_{value}"
                         fprint(f"transformed kind override to: {value}")
