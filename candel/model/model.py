@@ -28,6 +28,7 @@ from jax.debug import print as jprint  # noqa
 from jax.lax import cond
 from jax.scipy.linalg import solve_triangular
 from jax.scipy.special import gammainc, gammaln, logsumexp
+from jax.scipy.stats.norm import cdf as jax_norm_cdf
 from jax_cosmo.scipy.interpolate import InterpolatedUnivariateSpline
 from numpyro import deterministic, factor, handlers, plate, sample
 from numpyro.distributions import (Delta, MultivariateNormal, Normal,
@@ -432,6 +433,26 @@ def compute_Vext_radial(data, r_grid, Vext, with_radial_Vext=False,
 #                              TFR models                                     #
 ###############################################################################
 
+def log_p_S_TFR_eta(eta_mean, w_eta, e_eta, eta_min, eta_max, ):
+    """
+    Compute the fraction of samples given a truncation in linewidth
+    distribution, whose hyperprior is assumed to be Gaussian.
+    """
+    denom = jnp.sqrt(e_eta**2 + w_eta**2)
+    if eta_min is not None and eta_max is not None:
+        a = jax_norm_cdf((eta_max - eta_mean) / denom)
+        b = jax_norm_cdf((eta_min - eta_mean) / denom)
+        p = a - b
+    elif eta_max is not None:
+        p = jax_norm_cdf((eta_max - eta_mean) / denom)
+    elif eta_min is not None:
+        p = jax_norm_cdf((eta_mean - eta_min) / denom)
+    else:
+        raise ValueError("Invalid eta_min/eta_max configuration.")
+
+    return jnp.log(jnp.clip(p, 1e-300, 1.0))  # guard against log(0)
+
+
 class TFRModel(BaseModel):
     """
     A TFR forward model, distance is numerically marginalized out at each MCMC
@@ -503,26 +524,22 @@ class TFRModel(BaseModel):
 
                     # Evaluate the likelihood of the observed data given the
                     # grid, `(n_gal, n_eta_grid)`
-                    if data.add_eta_truncation:
-                        lp_eta += TruncatedNormal(
-                            eta_grid, data["e_eta"][:, None], low=data.eta_min,
-                            high=data.eta_max).log_prob(data["eta"][:, None])
-                    else:
-                        lp_eta += Normal(
-                            eta_grid, data["e_eta"][:, None]).log_prob(
-                                data["eta"][:, None])
+                    lp_eta += Normal(
+                        eta_grid, data["e_eta"][:, None]).log_prob(
+                            data["eta"][:, None])
                 else:
                     # Sample the galaxy linewidth from a Gaussian hyperprior.
                     eta = sample(
                         "eta_latent", Normal(eta_prior_mean, eta_prior_std))
-                    # Track the likelihood of the observed linewidths.
-                    if data.add_eta_truncation:
-                        sample("eta", TruncatedNormal(
-                            eta, data["e_eta"], low=data.eta_min,
-                            high=data.eta_max), obs=data["eta"])
-                    else:
-                        sample("eta", Normal(
-                            eta, data["e_eta"]), obs=data["eta"])
+                    sample("eta", Normal(eta, data["e_eta"]), obs=data["eta"])
+
+                # Track the likelihood of the observed linewidths.
+                if data.add_eta_truncation:
+                    factor(
+                        "neg_log_S_eta",
+                        -log_p_S_TFR_eta(
+                            eta_prior_mean, eta_prior_std, data["e_eta"],
+                            data.eta_min, data.eta_max))
 
                 e_mag = jnp.sqrt(sigma_int**2 + data["e2_mag"])
             else:
