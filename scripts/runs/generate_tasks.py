@@ -192,8 +192,6 @@ def generate_dynamic_tag(config, base_tag="default"):
     if base_tag != "default":
         parts.append(base_tag)
 
-    print(parts)
-
     return "_".join(p for p in parts if p is not None)
 
 
@@ -302,20 +300,21 @@ if __name__ == "__main__":
     manual_overrides = {
         "io/root_output": "results/CH0",
         "model/which_selection": ["none", "redshift", "SN_magnitude", "SN_magnitude_redshift", "empirical"],  # noqa
-        "model/use_reconstruction": False,
-        "model/use_fiducial_Cepheid_host_PV_covariance": False,
-        "model/use_PV_covmat_scaling": False,
-        "model/weight_selection_by_covmat_Neff": False,  # Only for redshift sel!  # noqa
+        "model/use_reconstruction": True,
+        # "model/use_fiducial_Cepheid_host_PV_covariance": True,
+        # "model/use_PV_covmat_scaling": [False, True],
+        # "model/weight_selection_by_covmat_Neff": True,  # Only for redshift sel!  # noqa
         # "io/SH0ES/which_host_los": "Carrick2015",
-        # "model/priors/Vext": [
-        #     {"dist": "vector_uniform_fixed", "low": 0.0, "high": 2500},
-        #     {"dist": "delta", "value": [0., 0., 0.]},
-        # ],
-        # "model/priors/beta": [
-        #     {"dist": "normal", "loc": 0.43, "scale": 0.02},
-        #     {"dist": "normal", "loc": 1.0, "scale": 0.5},
-        #     {"dist": "delta", "value": 1.0},
-        # ],
+        "io/SH0ES/which_host_los": "manticore_2MPP_MULTIBIN_N256_DES_V2",
+        "model/priors/Vext": [
+            {"dist": "vector_uniform_fixed", "low": 0.0, "high": 2500},
+            # {"dist": "delta", "value": [0., 0., 0.]},
+        ],
+        "model/priors/beta": [
+            # {"dist": "normal", "loc": 0.43, "scale": 0.02},
+            {"dist": "delta", "value": 1.0},
+            {"dist": "normal", "loc": 1.0, "scale": 0.5},
+        ],
     }
 
     # manticore_2MPP_MULTIBIN_N256_DES_V2
