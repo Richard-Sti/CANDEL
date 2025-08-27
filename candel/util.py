@@ -297,7 +297,7 @@ def name2labelgetdist(name):
         "a_TFR": r"a_\mathrm{TFR}",
         "b_TFR": r"b_\mathrm{TFR}",
         "c_TFR": r"c_\mathrm{TFR}",
-        "sigma_mu": r"\sigma_\mu~\left[\mathrm{mag}\right]",
+        "sigma_int": r"\sigma_{\rm int}~\left[\mathrm{mag}\right]",
         "sigma_v": r"\sigma_v~\left[\mathrm{km}/\mathrm{s}\right]",
         "alpha": r"\alpha",
         "b1": r"b_1",
@@ -311,9 +311,9 @@ def name2labelgetdist(name):
         "a": r"a",
         "m1": r"m_1",
         "m2": r"m_2",
-        "a_TFR_dipole_mag": r"\Delta a_\mathrm{TFR}~\left[\mathrm{mag}\right]",  # noqa
-        "a_TFR_dipole_ell": r"\ell_{\Delta a_{\rm TFR}}~\left[\mathrm{deg}\right]",  # noqa
-        "a_TFR_dipole_b": r"b_{\Delta a_{\rm TFR}}~\left[\mathrm{deg}\right]",
+        "zeropoint_dipole_mag": r"\Delta_\mathrm{ZP}~\left[\mathrm{mag}\right]",         # noqa
+        "zeropoint_dipole_ell": r"\ell_{\Delta_\mathrm{ZP}}~\left[\mathrm{deg}\right]",  # noqa
+        "zeropoint_dipole_b": r"b_{\Delta_\mathrm{ZP}}~\left[\mathrm{deg}\right]",       # noqa
         "M_dipole_mag": r"\Delta M_\mathrm{SN}~[\mathrm{mag}]",
         "M_dipole_ell": r"\ell_{\Delta M_{\rm SN}}~\left[\mathrm{deg}\right]",
         "M_dipole_b": r"b_{\Delta M_{\rm SN}}~\left[\mathrm{deg}\right]",
@@ -331,6 +331,9 @@ def name2labelgetdist(name):
         "mu_N4258": r"\mu_{\rm NGC4258} ~ [\mathrm{mag}]",
         "H0": r"H_0~\left[\mathrm{km}\,\mathrm{s}^{-1}\,\mathrm{Mpc}^{-1}\right]",  # noqa
         "dZP": r"\Delta_{\rm ZP}~\left[\mathrm{mag}\right]",
+        "R_dist_emp": r"R~\left[h^{-1}\,\mathrm{Mpc}\right]",
+        "n_dist_emp": r"n",
+        "p_dist_emp": r"p",
     }
 
     if "/" in name:
