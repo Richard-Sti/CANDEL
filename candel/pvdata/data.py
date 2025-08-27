@@ -20,6 +20,7 @@ from astropy import units as u
 from astropy.cosmology import FlatLambdaCDM
 from astropy.io import fits
 from h5py import File
+from jax import core as jcore
 from jax import numpy as jnp
 from scipy.linalg import cholesky
 
@@ -280,7 +281,7 @@ class PVDataFrame:
 
     def __getitem__(self, key):
         if key in self._cache:
-            return self._cache[key]
+            return jnp.asarray(self._cache[key])
 
         stat_funcs = {
             "mean": np.mean,
@@ -309,7 +310,19 @@ class PVDataFrame:
         else:
             return self.data[key]
 
-        self._cache[key] = jnp.asarray(val)
+        # If val is a tracer (or contains one), skip caching.
+        is_tracer = isinstance(val, jcore.Tracer)
+        if not is_tracer:
+            try:
+                val_np = np.asarray(val)
+                self._cache[key] = val_np
+                return jnp.asarray(val_np)
+            except Exception:
+                # Conversion failed (likely because it's a tracer inside
+                # a pytree)
+                pass
+
+        # Traced value path: do NOT mutate cache; just return it.
         return val
 
     def keys(self):
