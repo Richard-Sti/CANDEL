@@ -302,11 +302,11 @@ if __name__ == "__main__":
     manual_overrides = {
         "io/root_output": "results/CH0",
         "model/which_selection": ["none", "redshift", "SN_magnitude", "SN_magnitude_redshift", "empirical"],  # noqa
-        "model/use_reconstruction": True,
+        "model/use_reconstruction": False,
         "model/use_fiducial_Cepheid_host_PV_covariance": False,
         "model/use_PV_covmat_scaling": False,
         "model/weight_selection_by_covmat_Neff": False,  # Only for redshift sel!  # noqa
-        "io/SH0ES/which_host_los": "Carrick2015",
+        # "io/SH0ES/which_host_los": "Carrick2015",
         # "model/priors/Vext": [
         #     {"dist": "vector_uniform_fixed", "low": 0.0, "high": 2500},
         #     {"dist": "delta", "value": [0., 0., 0.]},

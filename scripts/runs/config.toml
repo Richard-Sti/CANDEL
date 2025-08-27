@@ -298,8 +298,7 @@ zcmb_min = "none"
 zcmb_max = 0.05
 b_min = 7.5
 
-# TODO: These need to be added.
-add_eta_selection = false
+add_eta_selection = true
 
 nsamples_subsample = "none"
 seed_subsample = 42
