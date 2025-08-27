@@ -948,18 +948,6 @@ def get_Ez(z, Om):
     return jnp.sqrt(Om * (1 + z)**3 + (1 - Om))
 
 
-def mu_from_CL_calibration(theta, c, log_dL_grid, log_dA_grid, mu_grid):
-    """
-    Solve for which distance modulus solves the equation
-    `log_dL - c * log_dA = theta`. Takes advantage of pre-computing `mu`
-    and `log_dL` and `log_dA` grids.
-    """
-
-    y = log_dL_grid - c * log_dA_grid
-    res = y - theta
-    return jnp.interp(0.0, res, mu_grid)
-
-
 class ClustersModel(BaseModel):
     """
     Cluster LTY scaling relation with explicit distance marginalization.
@@ -967,17 +955,18 @@ class ClustersModel(BaseModel):
     def __init__(self, config_path):
         super().__init__(config_path)
 
-        which_relation = self.config["io"]["Clusters"]["which_relation"]
-        if which_relation not in ["LT", "LY", "LTY"]:
-            raise ValueError(f"Invalid scaling relation '{which_relation}'. "
-                             "Choose either 'LT' or 'LY' or 'LTY'.")
+        self.which_relation = self.config["io"]["Clusters"]["which_relation"]
+        if self.which_relation not in ["LT", "LY", "LTY"]:
+            raise ValueError(
+                f"Invalid scaling relation '{self.which_relation}'. "
+                "Choose either 'LT' or 'LY' or 'LTY'.")
 
         self.distance2logda = Distance2LogAngDist(Om0=self.Om)
         self.distance2logdl = Distance2LogLumDist(Om0=self.Om)
 
-        if which_relation == "LT":
+        if self.which_relation == "LT":
             self.priors["CL_C"] = Delta(jnp.asarray(0.0))
-        if which_relation == "LY":
+        if self.which_relation == "LY":
             self.priors["CL_B"] = Delta(jnp.asarray(0.0))
 
         if self.use_MNR:
