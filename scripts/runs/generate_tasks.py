@@ -301,7 +301,7 @@ if __name__ == "__main__":
     # --- CH0 overrides ---
     manual_overrides = {
         "io/root_output": "results/CH0",
-        "model/which_selection": ["none", "redshift", "SN_magnitude", "empirical"],  # noqa
+        "model/which_selection": ["none", "redshift", "SN_magnitude", "SN_magnitude_redshift", "empirical"],  # noqa
         "model/use_reconstruction": True,
         "model/use_fiducial_Cepheid_host_PV_covariance": False,
         "model/use_PV_covmat_scaling": False,
