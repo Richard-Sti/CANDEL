@@ -194,6 +194,7 @@ class PVDataFrame:
         if "eta_min" in config or "eta_max" in config:
             if config["add_eta_selection"]:
                 frame.add_eta_truncation = True
+                assert len(frame["e_eta"]) == len(frame)
             else:
                 frame.add_eta_truncation = False
                 fprint(f"disabling eta truncation for `{name}`.")
