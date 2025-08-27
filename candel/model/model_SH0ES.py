@@ -124,11 +124,7 @@ class BaseSH0ESModel(ABC):
         fprint(f"which_distance_prior set to {self.which_distance_prior}")
         self.which_selection = get_nested(
             config, "model/which_selection", None)
-        if self.which_selection == "empirical":
-            fprint("selected `empirical` selection. Switching the distance "
-                   "prior.")
-            self.which_distance_prior = "empirical"
-            self.which_selection = None
+        fprint(f"which_selection set to {self.which_selection}")
         self.use_Cepheid_host_redshift = get_nested(
             config, "model/use_Cepheid_host_redshift", False)
         fprint(f"use_Cepheid_host_redshift set to {self.use_Cepheid_host_redshift}")  # noqa
@@ -257,6 +253,14 @@ class BaseSH0ESModel(ABC):
             config, "model/which_selection", None)
         which_distance_prior = get_nested(
             config, "model/which_distance_prior", "volume")
+
+        if which_selection == "empirical":
+            fprint("selected `empirical` selection. Switching the distance "
+                   "prior.")
+            which_selection = None
+            config["model"]["which_selection"] = None
+            which_distance_prior = "empirical"
+            config["model"]["which_distance_prior"] = "empirical"
 
         if not use_SNe and not which_selection in ["SN_magnitude", "SN_magnitude_redshift"]:  # noqa
             replace_prior_with_delta(config, "M_B", -19.25)
