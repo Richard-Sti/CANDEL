@@ -619,8 +619,8 @@ class SH0ESModel(BaseSH0ESModel):
 
             log_S = self.log_S_SN_mag(lp_rand_dist_grid, M_B, H0)
 
-            if self.weight_selection_by_covmat_Neff:
-                log_S *= self.Neff_C_SN_unique_Cepheid_host / self.num_hosts
+            # if self.weight_selection_by_covmat_Neff:
+            #     log_S *= self.Neff_C_SN_unique_Cepheid_host / self.num_hosts
 
             # Since the selection is in supernova apparent magnitude, must
             # constrain their absolute magnitude and thus also forward model
@@ -663,8 +663,8 @@ class SH0ESModel(BaseSH0ESModel):
             log_S = self.log_S_Cepheid_mag(
                 lp_host_dist_grid, M_W, b_W, Z_W, H0)
 
-            if self.weight_selection_by_covmat_Neff:
-                log_S *= self.Neff_C_Cepheid / self.num_hosts
+            # if self.weight_selection_by_covmat_Neff:
+            #     log_S *= self.Neff_C_Cepheid / self.num_hosts
         else:
             log_S = jnp.zeros((1, self.num_hosts))
 
