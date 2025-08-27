@@ -357,12 +357,20 @@ class PVDataFrame:
 
 
 def load_los(los_data_path, data, mask=None):
+    print(los_data_path, mask)
     with File(los_data_path, 'r') as f:
-        data["los_density"] = f['los_density'][...][:, mask, ...]
-        data["los_velocity"] = f['los_velocity'][...][:, mask, ...]
-        data["los_r"] = f['r'][...]
-        data["los_RA"] = f["RA"][...][mask]
-        data["los_dec"] = f["dec"][...][mask]
+        if mask is None:
+            data["los_density"] = f['los_density'][...]
+            data["los_velocity"] = f['los_velocity'][...]
+            data["los_r"] = f['r'][...]
+            data["los_RA"] = f["RA"][...]
+            data["los_dec"] = f["dec"][...]
+        else:
+            data["los_density"] = f['los_density'][...][:, mask, ...]
+            data["los_velocity"] = f['los_velocity'][...][:, mask, ...]
+            data["los_r"] = f['r'][...]
+            data["los_RA"] = f["RA"][...][mask]
+            data["los_dec"] = f["dec"][...][mask]
 
         assert np.all(data["los_density"] > 0)
         assert np.all(np.isfinite(data["los_velocity"]))
@@ -992,8 +1000,8 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
         data_host_los = {}
         data_host_los = load_los(
             los_data_path, data_host_los)
-        host_los_density = data_host_los["los_density"][0]
-        host_los_velocity = data_host_los["los_velocity"][0]
+        host_los_density = data_host_los["los_density"]
+        host_los_velocity = data_host_los["los_velocity"]
         host_los_r = data_host_los["los_r"]
     else:
         host_los_density = None
@@ -1004,8 +1012,8 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
         data_rand_los = {}
         data_rand_los = load_los(
             rand_los_data_path, data_rand_los)
-        rand_los_density = data_rand_los["los_density"][0]
-        rand_los_velocity = data_rand_los["los_velocity"][0]
+        rand_los_density = data_rand_los["los_density"]
+        rand_los_velocity = data_rand_los["los_velocity"]
         rand_los_r = data_rand_los["los_r"]
         rand_los_RA = data_rand_los["los_RA"]
         rand_los_dec = data_rand_los["los_dec"]

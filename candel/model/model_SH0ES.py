@@ -326,6 +326,7 @@ class BaseSH0ESModel(ABC):
         for attr, (ra_key, dec_key), label in specs:
             if ra_key in data and dec_key in data:
                 fprint(f"Converting {label} RA/dec to Cartesian coordinates.")
+                assert data[ra_key].ndim == 1 and data[dec_key].ndim == 1
                 rhat = radec_to_cartesian(data[ra_key], data[dec_key])
                 # Store normalized Cartesian unit vectors as attributes
                 setattr(self, attr, _normalize_rows(rhat))
