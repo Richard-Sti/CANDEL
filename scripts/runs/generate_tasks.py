@@ -108,19 +108,23 @@ def overwrite_subtree(config, key_path, subtree):
 def generate_dynamic_tag(config, base_tag="default"):
     """Generate a descriptive tag string based on selected config values."""
     parts = []
+    is_CH0 = get_nested(config, "model/is_CH0", False)
 
-    model_name = get_nested(config, "inference/model", None)
+    if is_CH0:
+        model_name = "CH0"
+        catalogue = "CH0"
+        parts.append("CH0")
+    else:
+        model_name = get_nested(config, "inference/model", None)
+        catalogue = get_nested(config, "io/catalogue_name", None)
+        if catalogue:
+            if isinstance(catalogue, list):
+                parts.append(",".join(catalogue))
+            else:
+                parts.append(str(catalogue))
 
-    # Catalogue name
-    catalogue = get_nested(config, "io/catalogue_name", None)
-    if catalogue:
-        if isinstance(catalogue, list):
-            parts.append(",".join(catalogue))
-        else:
-            parts.append(str(catalogue))
-
-    use_mnr = get_nested(config, "model/use_MNR", False)
-    parts.append("MNR" if use_mnr else "noMNR")
+        use_mnr = get_nested(config, "model/use_MNR", False)
+        parts.append("MNR" if use_mnr else "noMNR")
 
     # Clusters scaling relation choice
     if get_nested(config, "inference/model", None) == "ClustersModel":
@@ -138,7 +142,7 @@ def generate_dynamic_tag(config, base_tag="default"):
         parts.append("eta_sampled")
 
     # Zeropoint dipole if it's not a delta distribution
-    zeropoint_dip_prior = get_nested(config, "model/priors/zeropoint_dipole", {})  # noqa
+    zeropoint_dip_prior = get_nested(config, "model/priors/zeropoint_dipole", None)  # noqa
     if isinstance(zeropoint_dip_prior, dict) and zeropoint_dip_prior.get("dist") != "delta":  # noqa
         dist_name = zeropoint_dip_prior.get("dist")
         if dist_name == "vector_components_uniform":
@@ -156,10 +160,41 @@ def generate_dynamic_tag(config, base_tag="default"):
     if dust_model is not None and dust_model.lower() != "none":
         parts.append(f"dust-{dust_model}")
 
+    if is_CH0:
+        # Which selection
+        which_sel = get_nested(config, "model/which_selection", None)
+        if which_sel is not None and which_sel != "none":
+            parts.append(f"sel-{which_sel}")
+
+        if get_nested(config, "model/use_uniform_mu_host_priors", False):
+            parts.append("uniform_mu_host")
+
+        r_prior = get_nested(config, "model/which_distance_prior", "volume")
+        if r_prior != "volume":
+            parts.append(r_prior)
+
+        if not get_nested(config, "model/use_Cepheid_host_redshift", True):
+            parts.append("no_Cepheid_redshift")
+
+        use_reconstruction = get_nested(config, "model/use_reconstruction", False)  # noqa
+        if use_reconstruction:
+            parts.append(get_nested(config, "io/SH0ES/which_host_los", None))
+
+        if get_nested(config, "model/use_fiducial_Cepheid_host_PV_covariance", False):  # noqa
+            parts.append("PV_covmat")
+
+        if get_nested(config, "model/use_PV_covmat_scaling", False):
+            parts.append("PV_covmat_scaling")
+
+        if get_nested(config, "model/weight_selection_by_covmat_Neff", False):
+            parts.append("weight_by_Neff")
+
     if base_tag != "default":
         parts.append(base_tag)
 
-    return "_".join(parts)
+    print(parts)
+
+    return "_".join(p for p in parts if p is not None)
 
 
 def expand_override_grid(overrides):
@@ -225,7 +260,7 @@ if __name__ == "__main__":
         help="Index of the task to run (default: 0)")
     args = parser.parse_args()
 
-    config_path = "./config.toml"
+    config_path = "./config_shoes.toml"
     config = load_config(
         config_path, replace_none=False, replace_los_prior=False)
 
@@ -233,33 +268,57 @@ if __name__ == "__main__":
     tasks_index = args.tasks_index
 
     # Multiple override options → this creates a job per combination
+    # # --- TFR/SN/FP/Cluster flow model over-rides ---
+    # manual_overrides = {
+    #     "inference/num_samples": 1000,
+    #     "inference/num_chains": 1,
+    #     # "pv_model/kind": "precomputed_los_Carrick2015",
+    #     "pv_model/kind": "Vext",
+    #     # "io/catalogue_name": [f"CF4_mock_{n}" for n in range(70)],
+    #     "io/catalogue_name": "Clusters",
+    #     # "inference/shared_params": "none",
+    #     "inference/model": "ClustersModel",
+    #     "io/root_output": "results_test/",
+    #     "io/Clusters/which_relation": "LTY",
+    #     "model/use_MNR": False,
+    #     # "model/marginalize_eta": True,
+    #     # "io/CF4_i/exclude_W1": True,
+    #     # "io/CF4_W1/best_mag_quality": False,
+    #     # "io/CF4_W1/zcmb_min": 0.01,
+    #     # "io/CF4_W1/dust_model": ["none", "default", "SFD", "CSFD", "Planck2016"],  # noqa
+    #     # "io/Clusters/which_relation": ["LT", "LTY"],
+    #     # "model/priors/beta": [
+    #     #     {"dist": "normal", "loc": 0.43, "scale": 0.1},
+    #     #     {"dist": "delta", "value": 1.0},
+    #     # ],
+    #     # "model/priors/zeropoint_dipole": [
+    #     #     {"dist": "delta", "value": [0.0, 0.0, 0.0]},
+    #     #     # {"dist": "vector_uniform_fixed", "low": 0.0, "high": 0.3},
+    #     #     # {"dist": "vector_components_uniform", "low": -0.3, "high": 0.3},  # noqa
+    #     # ],
+    # }
+
+    # --- CH0 overrides ---
     manual_overrides = {
-        "inference/num_samples": 1000,
-        "inference/num_chains": 2,
-        "pv_model/kind": "precomputed_los_Carrick2015",
-        # "pv_model/kind": "Vext",
-        # "io/catalogue_name": [f"CF4_mock_{n}" for n in range(70)],
-        "io/catalogue_name": "CF4_W1",
-        # "inference/shared_params": "none",
-        "inference/model": "TFRModel",
-        "io/root_output": "results_test/",
-        # "model/use_MNR": True,
-        # "model/marginalize_eta": True,
-        # "io/CF4_i/exclude_W1": True,
-        # "io/CF4_W1/best_mag_quality": False,
-        # "io/CF4_W1/zcmb_min": 0.01,
-        # "io/CF4_W1/dust_model": ["none", "default", "SFD", "CSFD", "Planck2016"],
-        # "io/Clusters/which_relation": ["LT", "LTY"],
+        "io/root_output": "results/CH0",
+        "model/which_selection": ["none", "redshift", "SN_magnitude", "empirical"],  # noqa
+        "model/use_reconstruction": True,
+        "model/use_fiducial_Cepheid_host_PV_covariance": False,
+        "model/use_PV_covmat_scaling": False,
+        "model/weight_selection_by_covmat_Neff": False,  # Only for redshift sel!  # noqa
+        "io/SH0ES/which_host_los": "Carrick2015",
+        # "model/priors/Vext": [
+        #     {"dist": "vector_uniform_fixed", "low": 0.0, "high": 2500},
+        #     {"dist": "delta", "value": [0., 0., 0.]},
+        # ],
         # "model/priors/beta": [
-        #     {"dist": "normal", "loc": 0.43, "scale": 0.1},
+        #     {"dist": "normal", "loc": 0.43, "scale": 0.02},
+        #     {"dist": "normal", "loc": 1.0, "scale": 0.5},
         #     {"dist": "delta", "value": 1.0},
         # ],
-        "model/priors/zeropoint_dipole": [
-            {"dist": "delta", "value": [0.0, 0.0, 0.0]},
-            # {"dist": "vector_uniform_fixed", "low": 0.0, "high": 0.3},
-            # {"dist": "vector_components_uniform", "low": -0.3, "high": 0.3},
-        ],
     }
+
+    # manticore_2MPP_MULTIBIN_N256_DES_V2
 
     task_file = f"tasks_{tasks_index}.txt"
     log_dir = f"logs_{tasks_index}"
@@ -295,12 +354,15 @@ if __name__ == "__main__":
 
             dynamic_tag = generate_dynamic_tag(local_config, base_tag=tag)
 
-            kind = get_nested(local_config, "pv_model/kind", "unknown")
+            kind = get_nested(local_config, "pv_model/kind", None)
+            if kind is None:
+                fname_out = join(
+                    local_config["io"]["root_output"], f"{dynamic_tag}.hdf5")
+            else:
+                fname_out = join(
+                    local_config["io"]["root_output"],
+                    f"{kind}_{dynamic_tag}.hdf5")
 
-            fname_out = join(
-                local_config["io"]["root_output"],
-                f"{kind}_{dynamic_tag}.hdf5"
-            )
             local_config = overwrite_config(
                 local_config, "io/fname_output", fname_out)
 
