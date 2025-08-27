@@ -22,7 +22,7 @@
 #SBATCH --mail-type=BEGIN,FAIL,END
 #SBATCH --ntasks=1
 #SBATCH --gres=gpu:1 --constraint="cpu_gen:Cascade_Lake|cpu_gen:Skylake"
-#SBATCH --time=02:00:00
+#SBATCH --time=6:00:00
 #SBATCH --mem=32G
 #SBATCH --job-name=candel
 #SBATCH --output=logs/logs-%j.out
@@ -102,23 +102,15 @@ for line in "${task_lines[@]}"; do
         module load cuda
         module load python
 
-        # Override ncpus to what SLURM gave us
-        if [[ -n "$SLURM_CPUS_PER_TASK" ]]; then
-            ncpus="$SLURM_CPUS_PER_TASK"
-            echo "[INFO] Overriding ncpus to SLURM_CPUS_PER_TASK=$ncpus"
-        fi
-
         export XLA_FLAGS="--xla_hlo_profile=false --xla_dump_to=/tmp/nowhere"
     elif [[ "$machine" == "arc" ]]; then
         echo "[INFO] Loading modules for machine: arc"
         module --force purge
         module add Python/3.11.3-GCCcore-12.3.0
+        module add CUDA/11.8.0
 
-        # Override ncpus to what SLURM gave us
-        if [[ -n "$SLURM_CPUS_PER_TASK" ]]; then
-            ncpus="$SLURM_CPUS_PER_TASK"
-            echo "[INFO] Overriding ncpus to SLURM_CPUS_PER_TASK=$ncpus"
-        fi
+        export XLA_FLAGS="--xla_hlo_profile=false --xla_dump_to=/tmp/nowhere"
+
     fi
 
     # Override ncpus from SLURM if running with SBATCH
