@@ -119,18 +119,22 @@ class BaseSH0ESModel(ABC):
 
         self.use_MNR = get_nested(config, "model/use_MNR", False)
         fprint(f"use_MNR set to {self.use_MNR}")
+        self.which_distance_prior = get_nested(
+            config, "model/which_distance_prior", "volume")
+        fprint(f"which_distance_prior set to {self.which_distance_prior}")
         self.which_selection = get_nested(
             config, "model/which_selection", None)
-        fprint(f"which_selection set to {self.which_selection}")
+        if self.which_selection == "empirical":
+            fprint("selected `empirical` selection. Switching the distance "
+                   "prior.")
+            self.which_distance_prior = "empirical"
+            self.which_selection = None
         self.use_Cepheid_host_redshift = get_nested(
             config, "model/use_Cepheid_host_redshift", False)
         fprint(f"use_Cepheid_host_redshift set to {self.use_Cepheid_host_redshift}")  # noqa
         self.use_uniform_mu_host_priors = get_nested(
             config, "model/use_uniform_mu_host_priors", True)
         fprint(f"use_uniform_mu_host_priors set to {self.use_uniform_mu_host_priors}")  # noqa
-        self.which_distance_prior = get_nested(
-            config, "model/which_distance_prior", "volume")
-        fprint(f"which_distance_prior set to {self.which_distance_prior}")
         self.use_fiducial_Cepheid_host_PV_covariance = get_nested(
             config, "model/use_fiducial_Cepheid_host_PV_covariance", True)
         fprint(f"use_fiducial_Cepheid_host_PV_covariance set to {self.use_fiducial_Cepheid_host_PV_covariance}")  # noqa
