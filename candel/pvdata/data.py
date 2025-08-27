@@ -1221,7 +1221,7 @@ def load_SH0ES_from_config(config_path):
 
 
 def load_clusters(root, zcmb_min=None, zcmb_max=None, los_data_path=None,
-                  return_all=False, **kwargs):
+                  finite_logY=True, return_all=False, **kwargs):
     """
     Load the cluster scaling relation data from the given root directory.
 
@@ -1267,9 +1267,6 @@ def load_clusters(root, zcmb_min=None, zcmb_max=None, los_data_path=None,
 
     RA, dec = galactic_to_radec(data['Glon'], data['Glat'])
 
-    # Add the factor of 4 \pi to the logF to avoid having to add it every time.
-    logF += np.log10(4 * np.pi)
-
     data = {
         "zcmb": z,
         "RA": RA,
@@ -1280,12 +1277,16 @@ def load_clusters(root, zcmb_min=None, zcmb_max=None, los_data_path=None,
         "e_logF": e_logF,
         "logY": logY,
         "e_logY": e_logY,
+        "Y": Y_arcmin2,
     }
 
     if return_all:
         return data
 
     mask = np.ones(len(z), dtype=bool)
+
+    if finite_logY:
+        mask &= np.isfinite(logY)
 
     if zcmb_min is not None:
         mask &= z > zcmb_min
@@ -1304,9 +1305,6 @@ def load_clusters(root, zcmb_min=None, zcmb_max=None, los_data_path=None,
 
     fprint("subtracting the mean logY from the data.")
     data["logY"] -= np.mean(data["logY"])
-
-    # fprint("subtracting the mean logF from the data.")
-    # data["logF"] -= np.mean(data["logF"])
 
     if los_data_path is not None:
         data = load_los(los_data_path, data, mask=mask)
