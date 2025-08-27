@@ -151,9 +151,14 @@ def generate_dynamic_tag(config, base_tag="default"):
             parts.append("zeropoint_dipole")
 
     # If Vext is a delta distribution (not sampled)
-    Vext_prior = get_nested(config, "model/priors/Vext", {})
+    Vext_prior = get_nested(config, "model/priors/Vext", None)
     if isinstance(Vext_prior, dict) and Vext_prior.get("dist") == "delta":
         parts.append("noVext")
+
+    beta_prior = get_nested(config, "model/priors/beta", None)
+    if isinstance(beta_prior, dict) and beta_prior.get("dist") == "delta":
+        val = beta_prior.get("value")
+        parts.append(f"beta_{val}")
 
     # Flag if sampling the dust prior
     dust_model = get_nested(config, f"io/{catalogue}/dust_model", None)
