@@ -23,7 +23,7 @@ machine = "arc"
 model = "PantheonPlusModel"
 shared_params = "none"
 
-num_warmup = 500
+num_warmup = 1000
 num_samples = 5000
 num_chains = 4
 chain_method = "parallel"
@@ -376,10 +376,6 @@ root = "data/Clusters"
 zcmb_max = 0.2
 which_relation = "LT"
 finite_logY = true
-
-zcmb_mapping_min = 1e-5
-zcmb_mapping_max = 0.3
-zcmb_mapping_num_points = 1001
 
 los_file = "data/Clusters/los_Clusters_<X>.hdf5"
 
