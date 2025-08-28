@@ -405,7 +405,8 @@ class BaseModel(ABC):
                 f"n_grid = {self.eta_grid_kwargs['n_grid']} (if TFR).")
 
         self.galaxy_bias = config["pv_model"]["galaxy_bias"]
-        if self.galaxy_bias not in ["powerlaw", "linear", "linear_from_beta"]:
+        if self.galaxy_bias not in ["powerlaw", "linear", "linear_from_beta",
+                                    "linear_from_beta_stochastic"]:
             raise ValueError(
                 f"Invalid galaxy bias model '{self.galaxy_bias}'.")
 
@@ -429,6 +430,11 @@ def sample_galaxy_bias(priors, galaxy_bias, shared_params=None, **kwargs):
     elif galaxy_bias == "linear_from_beta":
         b1 = kwargs["Om"]**0.55 / kwargs["beta"]
         bias_params = [b1,]
+    elif galaxy_bias == "linear_from_beta_stochastic":
+        b1_mean = kwargs["Om"]**0.55 / kwargs["beta"]
+        delta_b1 = rsample("delta_b1_skipZ", priors["delta_b1"], shared_params)
+        b1 = deterministic("b1", b1_mean + delta_b1)
+        bias_params = [b1,]
     else:
         raise ValueError(f"Invalid galaxy bias model '{galaxy_bias}'.")
 
@@ -441,7 +447,7 @@ def lp_galaxy_bias(delta, log_rho, bias_params, galaxy_bias):
     """
     if galaxy_bias == "powerlaw":
         lp = bias_params[0] * log_rho
-    elif galaxy_bias in ["linear", "linear_from_beta"]:
+    elif "linear" in galaxy_bias:
         lp = jnp.log(jnp.clip(1 + bias_params[0] * delta, 1e-5))
     else:
         raise ValueError(f"Invalid galaxy bias model '{galaxy_bias}'.")

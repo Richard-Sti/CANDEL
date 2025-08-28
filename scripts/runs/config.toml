@@ -87,6 +87,11 @@ dist = "normal"
 loc = 1
 scale = 1.0
 
+[model.priors.delta_b1]
+dist = "normal"
+loc = 0.0
+scale = 0.04
+
 [model.priors.beta]
 # dist = "uniform"
 # low = 0.0
