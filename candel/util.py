@@ -119,6 +119,7 @@ def load_config(config_path, replace_none=True, fill_paths=True,
         config = replace_prior_with_delta(config, "alpha", 1.)
         config = replace_prior_with_delta(config, "beta", 0.)
         config = replace_prior_with_delta(config, "b1", 0.)
+        config = replace_prior_with_delta(config, "delta_b1", 0.)
 
     # Convert relative paths to absolute paths
     if fill_paths:
