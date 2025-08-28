@@ -23,6 +23,11 @@ elif [[ "$machine" == "local" ]]; then
     src_dir="/Users/${USER}/Projects/CANDEL/candel"
     main_script="/Users/${USER}/Projects/CANDEL/scripts/runs/main.py"
     frozen_root="/Users/${USER}/Projects/CANDEL_frozen"
+elif [[ "$machine" == "arc" ]]; then
+    ARC_USER="${USER:-phys1997}"
+    src_dir="/home/${ARC_USER}/CANDEL/candel"
+    main_script="/home/${ARC_USER}/CANDEL/scripts/runs/main.py"
+    frozen_root="/home/${ARC_USER}/frozen_candel"
 else
     echo "[ERROR] Unknown machine: $machine"
     exit 3

@@ -20,6 +20,7 @@ from astropy import units as u
 from astropy.cosmology import FlatLambdaCDM
 from astropy.io import fits
 from h5py import File
+from jax import core as jcore
 from jax import numpy as jnp
 from scipy.linalg import cholesky
 
@@ -147,8 +148,14 @@ class PVDataFrame:
             data = load_SFI(root, **config)
         elif name == "SDSS_FP":
             data = load_SDSS_FP(root, **config)
+        elif name == "LOSS":
+            data = load_LOSS(root, **config)
+        elif name == "Foundation":
+            data = load_Foundation(root, **config)
         elif name == "PantheonPlus":
             data = load_PantheonPlus(root, **config)
+        elif name == "PantheonPlusLane":
+            data = load_PantheonPlus_Lane(root, **config)
         elif name == "Clusters":
             data = load_clusters(root, **config)
         else:
@@ -171,31 +178,23 @@ class PVDataFrame:
             data["los_delta"] = data["los_density"] - 1
 
         if nsamples_subsample is not None:
+            if name == "PantheonPlusLane":
+                raise ValueError(
+                    "Subsampling for Pantheon+ Lane is not supported because "
+                    "of the complicated covariance matrix.")
+
             frame = cls(data)
             frame = frame.subsample(nsamples_subsample, seed=seed_subsample)
         else:
             frame = cls(data)
 
-        # Keyword arguments for the magnitude hyperprior.
-        if "mag" in data:
-            frame.mag_dist_kwargs = {
-                "xmin": frame["min_mag"] - 0.5 * frame["std_mag"],
-                "xmax": frame["max_mag"] + 0.5 * frame["std_mag"],
-                "mag_sample": frame["mag"],
-                "e_mag_sample": frame["e_mag"],
-                }
-
-            frame.mag_dist_unif_kwargs = {
-                "low": frame["min_mag"] - 0.5 * frame["std_mag"],
-                "high": frame["max_mag"] + 0.5 * frame["std_mag"],
-            }
-
         frame.sample_dust = sample_dust
 
-        # Hyperparameters for the TFR linewidth selection.
+        # Hyperparameters for the TFR linewidth modelling
         if "eta_min" in config or "eta_max" in config:
             if config["add_eta_selection"]:
                 frame.add_eta_truncation = True
+                assert len(frame["e_eta"]) == len(frame)
             else:
                 frame.add_eta_truncation = False
                 fprint(f"disabling eta truncation for `{name}`.")
@@ -221,6 +220,16 @@ class PVDataFrame:
         else:
             frame.eta_max = None
 
+        # Hyperparameters for the SNe modelling
+        if "x1" in frame.keys():
+            frame.x1_min = jnp.min(frame["x1"])
+            frame.x1_max = jnp.max(frame["x1"])
+
+        if "c" in frame.keys():
+            frame.c_min = jnp.min(frame["c"])
+            frame.c_max = jnp.max(frame["c"])
+
+        frame.with_lane_covmat = name == "PantheonPlusLane"
         frame.name = name
         return frame
 
@@ -273,7 +282,7 @@ class PVDataFrame:
 
     def __getitem__(self, key):
         if key in self._cache:
-            return self._cache[key]
+            return jnp.asarray(self._cache[key])
 
         stat_funcs = {
             "mean": np.mean,
@@ -302,7 +311,19 @@ class PVDataFrame:
         else:
             return self.data[key]
 
-        self._cache[key] = jnp.asarray(val)
+        # If val is a tracer (or contains one), skip caching.
+        is_tracer = isinstance(val, jcore.Tracer)
+        if not is_tracer:
+            try:
+                val_np = np.asarray(val)
+                self._cache[key] = val_np
+                return jnp.asarray(val_np)
+            except Exception:
+                # Conversion failed (likely because it's a tracer inside
+                # a pytree)
+                pass
+
+        # Traced value path: do NOT mutate cache; just return it.
         return val
 
     def keys(self):
@@ -337,11 +358,18 @@ class PVDataFrame:
 
 def load_los(los_data_path, data, mask=None):
     with File(los_data_path, 'r') as f:
-        data["los_density"] = f['los_density'][...][:, mask, ...]
-        data["los_velocity"] = f['los_velocity'][...][:, mask, ...]
-        data["los_r"] = f['r'][...]
-        data["los_RA"] = f["RA"][...][mask]
-        data["los_dec"] = f["dec"][...][mask]
+        if mask is None:
+            data["los_density"] = f['los_density'][...]
+            data["los_velocity"] = f['los_velocity'][...]
+            data["los_r"] = f['r'][...]
+            data["los_RA"] = f["RA"][...]
+            data["los_dec"] = f["dec"][...]
+        else:
+            data["los_density"] = f['los_density'][...][:, mask, ...]
+            data["los_velocity"] = f['los_velocity'][...][:, mask, ...]
+            data["los_r"] = f['r'][...]
+            data["los_RA"] = f["RA"][...][mask]
+            data["los_dec"] = f["dec"][...][mask]
 
         assert np.all(data["los_density"] > 0)
         assert np.all(np.isfinite(data["los_velocity"]))
@@ -442,6 +470,9 @@ def load_CF4_data(root, which_band, best_mag_quality=True, eta_min=-0.3,
     mask = eta > eta_min
     if best_mag_quality:
         mask &= mag_quality == 5
+    else:
+        mask &= mag > 5
+
     if zcmb_min is not None:
         mask &= zcmb > zcmb_min
     if zcmb_max is not None:
@@ -517,7 +548,7 @@ def load_2MTF(root, eta_min=-0.1, eta_max=0.2, zcmb_min=None, zcmb_max=None,
         e_eta = grp["e_eta"][...]
         e_mag = grp["e_mag"][...]
 
-    fprint(f"initially loaded {len(zcmb)} galaxies from CF4 TFR data.")
+    fprint(f"initially loaded {len(zcmb)} galaxies from 2MTF data.")
 
     data = dict(
         zcmb=zcmb,
@@ -570,7 +601,7 @@ def load_SFI(root, eta_min=-0.1, zcmb_min=None, zcmb_max=None,
         e_eta = grp["e_eta"][...]
         e_mag = grp["e_mag"][...]
 
-    fprint(f"initially loaded {len(zcmb)} galaxies from CF4 TFR data.")
+    fprint(f"initially loaded {len(zcmb)} galaxies from SFI++ data.")
 
     data = dict(
         zcmb=zcmb,
@@ -601,6 +632,132 @@ def load_SFI(root, eta_min=-0.1, zcmb_min=None, zcmb_max=None,
         data[k] = data[k][mask]
 
     if los_data_path:
+        data = load_los(los_data_path, data, mask=mask)
+
+    return data
+
+
+def _load_LOSS_Foundation(which, root, zcmb_min=None, zcmb_max=None,
+                          b_min=7.5, los_data_path=None, return_all=False,
+                          **kwargs):
+    """
+    Load the LOSS or Foundation SNe data from the given root directory.
+    """
+    with File(join(root, "PV_compilation.hdf5"), 'r') as f:
+        grp = f[which]
+
+        zcmb = grp["z_CMB"][...]
+        RA = grp["RA"][...]
+        DEC = grp["DEC"][...]
+        mag = grp["mB"][...]
+        c = grp["c"][...]
+        x1 = grp["x1"][...]
+
+        e_mag = grp["e_mB"][...]
+        e_c = grp["e_c"][...]
+        e_x1 = grp["e_x1"][...]
+
+    fprint(f"initially loaded {len(zcmb)} galaxies from CF4 TFR data.")
+
+    data = dict(
+        zcmb=zcmb,
+        RA=RA,
+        dec=DEC,
+        mag=mag,
+        c=c,
+        x1=x1,
+        e_mag=e_mag,
+        e_c=e_c,
+        e_x1=e_x1
+    )
+
+    if return_all:
+        return data
+
+    mask = np.ones(len(zcmb), dtype=bool)
+    if zcmb_min is not None:
+        mask &= zcmb > zcmb_min
+    if zcmb_max is not None:
+        mask &= zcmb < zcmb_max
+    if b_min is not None:
+        b = radec_to_galactic(RA, DEC)[1]
+        mask &= np.abs(b) > b_min
+
+    fprint(f"removed {len(zcmb) - np.sum(mask)} galaxies, thus "
+           f"{np.sum(mask)} remain.")
+
+    for k in data:
+        data[k] = data[k][mask]
+
+    if los_data_path:
+        data = load_los(los_data_path, data, mask=mask)
+
+    return data
+
+
+def load_LOSS(root, zcmb_min=None, zcmb_max=None, b_min=7.5,
+              los_data_path=None, return_all=False, **kwargs):
+    return _load_LOSS_Foundation(
+        "LOSS", root, zcmb_min=zcmb_min, zcmb_max=zcmb_max,
+        b_min=b_min, los_data_path=los_data_path, return_all=return_all,
+        **kwargs)
+
+
+def load_Foundation(root, zcmb_min=None, zcmb_max=None, b_min=7.5,
+                    los_data_path=None, return_all=False, **kwargs):
+    return _load_LOSS_Foundation(
+        "Foundation", root, zcmb_min=zcmb_min, zcmb_max=zcmb_max,
+        b_min=b_min, los_data_path=los_data_path, return_all=return_all,
+        **kwargs)
+
+
+def load_PantheonPlus_Lane(root, zcmb_min=None, zcmb_max=None, b_min=7.5,
+                           los_data_path=None, return_all=False, **kwargs):
+    if zcmb_max is not None and zcmb_max > 0.075:
+        raise ValueError(f"`zcmb_max` of {zcmb_max} is too high for the "
+                         "LOWZ sample which goes only up to 0.075.")
+    fname = join(root, "full_ps1_input_LOWZ.csv")
+    x = np.genfromtxt(fname, delimiter=",", names=True, dtype=None,
+                      encoding=None)
+
+    fprint(f"initially loaded {len(x)} galaxies from Pantheon+Lane data.")
+
+    data = dict(
+        zcmb=x["zCMB"],
+        RA=x["RA"],
+        dec=x["DEC"],
+        mag=x["mB"],
+        x1=x["x1"],
+        c=x["c"],
+    )
+
+    if return_all:
+        return data
+
+    C = np.loadtxt(join(root, "PP_cov_new_LOWZ.txt"))
+
+    mask = np.ones(len(data["zcmb"]), dtype=bool)
+    if zcmb_min is not None:
+        mask &= data["zcmb"] > zcmb_min
+
+    if zcmb_max is not None:
+        mask &= data["zcmb"] < zcmb_max
+
+    if b_min is not None:
+        b = radec_to_galactic(data["RA"], data["dec"])[1]
+        mask &= np.abs(b) > b_min
+
+    fprint(f"removed {len(mask) - np.sum(mask)} galaxies, thus "
+           f"{len(x[mask])} remain.")
+
+    for key in data:
+        data[key] = data[key][mask]
+
+    C_idx = (3 * np.where(mask)[0][:, None] + np.arange(3)).ravel()
+    C = C[C_idx][:, C_idx]
+    data["mag_covmat"] = C
+
+    if los_data_path is not None:
         data = load_los(los_data_path, data, mask=mask)
 
     return data
@@ -842,8 +999,8 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
         data_host_los = {}
         data_host_los = load_los(
             los_data_path, data_host_los)
-        host_los_density = data_host_los["los_density"][0]
-        host_los_velocity = data_host_los["los_velocity"][0]
+        host_los_density = data_host_los["los_density"]
+        host_los_velocity = data_host_los["los_velocity"]
         host_los_r = data_host_los["los_r"]
     else:
         host_los_density = None
@@ -854,8 +1011,8 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
         data_rand_los = {}
         data_rand_los = load_los(
             rand_los_data_path, data_rand_los)
-        rand_los_density = data_rand_los["los_density"][0]
-        rand_los_velocity = data_rand_los["los_velocity"][0]
+        rand_los_density = data_rand_los["los_density"]
+        rand_los_velocity = data_rand_los["los_velocity"]
         rand_los_r = data_rand_los["los_r"]
         rand_los_RA = data_rand_los["los_RA"]
         rand_los_dec = data_rand_los["los_dec"]
@@ -1071,7 +1228,7 @@ def load_SH0ES_from_config(config_path):
 
 
 def load_clusters(root, zcmb_min=None, zcmb_max=None, los_data_path=None,
-                  return_all=False, **kwargs):
+                  finite_logY=True, return_all=False, **kwargs):
     """
     Load the cluster scaling relation data from the given root directory.
 
@@ -1117,9 +1274,6 @@ def load_clusters(root, zcmb_min=None, zcmb_max=None, los_data_path=None,
 
     RA, dec = galactic_to_radec(data['Glon'], data['Glat'])
 
-    # Add the factor of 4 \pi to the logF to avoid having to add it every time.
-    logF += np.log10(4 * np.pi)
-
     data = {
         "zcmb": z,
         "RA": RA,
@@ -1130,12 +1284,16 @@ def load_clusters(root, zcmb_min=None, zcmb_max=None, los_data_path=None,
         "e_logF": e_logF,
         "logY": logY,
         "e_logY": e_logY,
+        "Y": Y_arcmin2,
     }
 
     if return_all:
         return data
 
     mask = np.ones(len(z), dtype=bool)
+
+    if finite_logY:
+        mask &= np.isfinite(logY)
 
     if zcmb_min is not None:
         mask &= z > zcmb_min
@@ -1154,9 +1312,6 @@ def load_clusters(root, zcmb_min=None, zcmb_max=None, los_data_path=None,
 
     fprint("subtracting the mean logY from the data.")
     data["logY"] -= np.mean(data["logY"])
-
-    # fprint("subtracting the mean logF from the data.")
-    # data["logF"] -= np.mean(data["logF"])
 
     if los_data_path is not None:
         data = load_los(los_data_path, data, mask=mask)

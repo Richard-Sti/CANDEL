@@ -18,12 +18,15 @@ from .data import (                                                             
     load_CF4_mock,                                                              # noqa
     load_2MTF,                                                                  # noqa
     load_SFI,                                                                   # noqa
+    load_LOSS,                                                                  # noqa
+    load_Foundation,                                                            # noqa
     load_SH0ES,                                                                 # noqa
     load_SH0ES_separated,                                                       # noqa
     load_SH0ES_from_config,                                                     # noqa
     load_clusters,                                                              # noqa
     load_SDSS_FP,                                                               # noqa
     load_PantheonPlus,                                                          # noqa
+    load_PantheonPlus_Lane,                                                     # noqa
     PVDataFrame,                                                                # noqa
     load_PV_dataframes,                                                         # noqa
     )

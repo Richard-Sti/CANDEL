@@ -20,11 +20,11 @@ from candel import read_gof
 
 
 def compare_zeropoint_dipole_gof(fname, which, verbose=True):
-    if "aTFRdipole" not in fname:
-        raise ValueError("`aTFRdipole` not in filename.")
+    if "zeropoint_dipole" not in fname:
+        raise ValueError("`zeropoint_dipole` not in filename.")
 
     gof_dipole = read_gof(fname, which)
-    gof_no_dipole = read_gof(re.sub(r"_aTFRdipole(UnifComponents)?", "", fname), which)  # noqa
+    gof_no_dipole = read_gof(re.sub(r"_zeropoint_dipole(UnifComponents)?", "", fname), which)  # noqa
 
     if verbose:
         print(f"[DIPOLE]:    {gof_dipole}")

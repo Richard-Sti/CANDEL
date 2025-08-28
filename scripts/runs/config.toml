@@ -1,6 +1,6 @@
-root_main = "/Users/rstiskalek/Projects/CANDEL/"
-python_exec = "/Users/rstiskalek/Projects/CANDEL/venv_candel/bin/python"
-machine = "local"
+# root_main = "/Users/rstiskalek/Projects/CANDEL/"
+# python_exec = "/Users/rstiskalek/Projects/CANDEL/venv_candel/bin/python"
+# machine = "local"
 
 # root_main = "/Users/yasin/code/CANDEL/"
 # python_exec = "/Users/yasin/code/CANDEL/venv_candel/bin/python"
@@ -10,23 +10,26 @@ machine = "local"
 # python_exec="/mnt/home/rstiskalek/CANDEL/venv_gpu_candel/bin/python"
 # machine="rusty"
 
+root_main = "/home/phys1997/CANDEL/"
+python_exec = "/home/phys1997/CANDEL/venv_candel/bin/python"
+machine = "arc"
+
 
 ###############################################################################
 #                               Inference                                     #
 ###############################################################################
 
 [inference]
-model = "CalibratedDistanceModel_DistMarg"
+model = "PantheonPlusModel"
 shared_params = "none"
 
-# model = "PantheonPlusModel_DistMarg"
 num_warmup = 500
-num_samples = 500
-num_chains = 8
+num_samples = 5000
+num_chains = 4
 chain_method = "parallel"
-seed = 44
-compute_log_density = false
-compute_evidence = false
+seed = 42
+compute_log_density = true
+compute_evidence = true
 num_chains_harmonic = 10
 
 skip_if_exists = false
@@ -36,15 +39,14 @@ skip_if_exists = false
 ###############################################################################
 
 [pv_model]
-use_MNR = false
 # Default kind. This gets overwritten if using a submission script.
-# kind = "precomputed_los_Carrick2015"
-kind = "Vext"
+kind = "precomputed_los_Carrick2015"
+# kind = "Vext"
 galaxy_bias = "linear_from_beta"  # Ignored unless having an underlying density field
 # galaxy_bias = "linear"  # Ignored unless having an underlying density field
 
 # (Inhomogeneus Malmquist bias settings and extrapolation), in units of Mpc / h
-r_limits_malmquist = [0.1, 301]
+r_limits_malmquist = [0.1, 251]
 num_points_malmquist = 251
 
 ###############################################################################
@@ -52,27 +54,28 @@ num_points_malmquist = 251
 ###############################################################################
 
 [model]
-
 Om = 0.3
+use_MNR = true
+marginalize_eta = true
 
-[model.mu_norm]
-num_points = 31
-num_sigma = 5
-low_clip = 18.0
-high_clip = 42.0
+[model.eta_grid]
+k_sigma = 5
+n_grid = 31
 
 [model.priors.h]
-# dist = "delta"
-# value = 1.0
-dist = "uniform"
-low = 0.25
-high = 1.0
+dist = "delta"
+value = 1.0
+# dist = "uniform"
+# low = 0.25
+# high = 1.0
 
 [model.priors.Om]
 # Currently sampled only for the CF4 calibrated data.
-dist = "uniform"
-low = 0.01
-high = 0.99
+dist = "delta"
+value = 0.3
+# dist = "uniform"
+# low = 0.01
+# high = 0.99
 
 [model.priors.alpha]
 dist = "normal"
@@ -81,8 +84,13 @@ scale = 1.0
 
 [model.priors.b1]
 dist = "normal"
-loc = 0
+loc = 1
 scale = 1.0
+
+[model.priors.delta_b1]
+dist = "normal"
+loc = 0.0
+scale = 0.04
 
 [model.priors.beta]
 # dist = "uniform"
@@ -92,7 +100,7 @@ dist = "normal"
 loc = 0.43
 scale = 0.1
 
-[model.priors.sigma_mu]
+[model.priors.sigma_int]
 dist = "jeffreys"
 low = 0.005
 high = 1.0
@@ -103,7 +111,6 @@ low = 0.001
 high = 0.5
 
 # TFR priors
-
 [model.priors.TFR_zeropoint]
 dist = "normal"
 loc = -19.8
@@ -119,46 +126,52 @@ dist = "normal"
 loc = 10
 scale = 5.0
 
-[model.priors.TFR_zeropoint_dipole]
+[model.priors.zeropoint_dipole]
 dist = "delta"
 value = [0.0, 0.0, 0.0]
 # dist = "vector_uniform_fixed"
 # low = 0.0
 # high = 0.3
 
-
 # SN priors
 [model.priors.SN_absmag]
 dist = "normal"
 loc = -18.5
-scale = 0.5
+scale = 2.0
 
-[model.priors.SN_absmag_dipole]
-dist = "delta"
-value = [0.0, 0.0, 0.0]
-# dist = "vector_uniform"
-# low = 0.0
-# high = 0.25
+[model.priors.SN_alpha]
+dist = "normal"
+loc = 0.15
+scale = 1.0
+
+[model.priors.SN_beta]
+dist = "normal"
+loc = 3.0
+scale = 1.0
+
 
 ## Cluster scaling relation priors
-
 [model.priors.CL_A]
 dist = "uniform"
-low = -5
+low = -10
 high = 10
 
 [model.priors.CL_B]
 dist = "uniform"
-low = 0
-high = 10
+low = -5
+high = 5
 
 [model.priors.CL_C]
 dist = "uniform"
-low = -2.0
-high = 2.0
+low = -5.0
+high = 5.0
+
+[model.priors.CL_C_intercept]
+dist = "uniform"
+low = -5.0
+high = 5.0
 
 # FP priors
-
 [model.priors.FP_a]
 dist = "normal"
 loc = 1.0
@@ -175,18 +188,19 @@ loc = -1
 scale = 1.0
 
 # Velocity priors
-
 [model.priors.sigma_v]
-dist = "jeffreys"
-low = 5
-high = 2500
+# dist = "jeffreys"
+# low = 1
+# high = 2500
+dist = "maxwell"
+scale = 200
 
 [model.priors.Vext]
-# dist = "vector_uniform_fixed"
-# low = 0.0
-# high = 2500
-dist = "delta"
-value = [0.0, 0.0, 0.0]
+dist = "vector_uniform_fixed"
+low = 0.0
+high = 2500
+# dist = "delta"
+# value = [0.0, 0.0, 0.0]
 
 [model.priors.Vext_radial]
 dist = "vector_radial_spline_uniform"
@@ -230,13 +244,14 @@ root_output = "results"
 # Default catalogue name and output path. This gets overwritten
 # if using a submission script.
 # catalogue_name = ["CF4_W1", "CF4_i"]
-catalogue_name = "CF4_calibrated"
-
+catalogue_name = "PantheonPlusLane"
 fname_output = "results/test.hdf5"
+
 
 [io.CF4_mock]
 root = "data/CF4_mock"
 add_eta_selection = true
+
 
 [io.CF4_W1]
 root = "data/CF4"
@@ -278,6 +293,7 @@ seed_subsample = 42
 
 los_file = "data/CF4/los_CF4_TFR_<X>.hdf5"
 
+
 [io.2MTF]
 root = "data/2MTF"
 eta_min = -0.1
@@ -287,8 +303,7 @@ zcmb_min = "none"
 zcmb_max = 0.05
 b_min = 7.5
 
-# TODO: These need to be added.
-add_eta_selection = false
+add_eta_selection = true
 
 nsamples_subsample = "none"
 seed_subsample = 42
@@ -310,6 +325,30 @@ seed_subsample = 42
 
 los_file = "data/SFI/los_SFI_<X>.hdf5"
 
+[io.Foundation]
+root = "data/Foundation"
+
+zcmb_min = "none"
+zcmb_max = 0.05
+b_min = 7.5
+
+nsamples_subsample = "none"
+seed_subsample = 42
+
+los_file = "data/Foundation/los_Foundation_<X>.hdf5"
+
+[io.LOSS]
+root = "data/LOSS"
+
+zcmb_min = "none"
+zcmb_max = 0.05
+b_min = 7.5
+
+nsamples_subsample = "none"
+seed_subsample = 42
+
+los_file = "data/LOSS/los_LOSS_<X>.hdf5"
+
 [io.PantheonPlus]
 root = "data/Pantheon+"
 zcmb_min = "none"
@@ -321,10 +360,22 @@ seed_subsample = 42
 
 los_file = "data/Pantheon+/los_CF4_Pantheon+_<X>.hdf5"
 
+[io.PantheonPlusLane]
+root = "data/Pantheon+_Lane"
+zcmb_min = "none"
+zcmb_max = 0.05
+b_min = 7.5
+
+nsamples_subsample = "none"
+seed_subsample = 42
+
+los_file = "data/Pantheon+_Lane/los_CF4_PantheonPlusLane_<X>.hdf5"
+
 [io.Clusters]
 root = "data/Clusters"
 zcmb_max = 0.2
 which_relation = "LT"
+finite_logY = true
 
 zcmb_mapping_min = 1e-5
 zcmb_mapping_max = 0.3
@@ -343,7 +394,7 @@ sample_Rmax = true
 
 los_file = "data/SDSS/los_SDSS_FP_<X>.hdf5"
 
-nsamples_subsample = 250
+nsamples_subsample = "none"
 seed_subsample = 42
 
 [io.CF4_calibrated]
@@ -352,7 +403,7 @@ zcmb_min = "none"
 zcmb_max = "none"
 b_min = "none"
 
-nsamples_subsample = 2000
+nsamples_subsample = "none"
 seed_subsample = 42
 
 los_file = "none"
@@ -381,10 +432,25 @@ root = "data/SFI"
 return_all = true
 los_file = "data/SFI/los_SFI_<X>.hdf5"
 
+[io.PV_main.Foundation]
+root = "data/Foundation"
+return_all = true
+los_file = "data/Foundation/los_Foundation_<X>.hdf5"
+
+[io.PV_main.LOSS]
+root = "data/LOSS"
+return_all = true
+los_file = "data/LOSS/los_LOSS_<X>.hdf5"
+
 [io.PV_main.PantheonPlus]
 root = "data/Pantheon+"
 return_all = true
 los_file = "data/Pantheon+/los_CF4_Pantheon+_<X>.hdf5"
+
+[io.PV_main.PantheonPlusLane]
+root = "data/Pantheon+_Lane"
+return_all = true
+los_file = "data/Pantheon+_Lane/los_CF4_PantheonPlusLane_<X>.hdf5"
 
 [io.PV_main.Clusters]
 root = "data/Clusters"

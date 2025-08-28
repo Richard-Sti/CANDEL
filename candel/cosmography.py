@@ -126,6 +126,39 @@ class Distance2LogAngDist:
         return self._f(jnp.log(r))
 
 
+class Distance2LogLumDist:
+    """
+    Class to build an interpolator to convert distance in `Mpc` to log
+    luminosity distance. `h` is assumed to be one.
+
+    Parameters
+    ----------
+    Om0 : float
+        Matter density parameter.
+    zmin_interp, zmax_interp : float
+        Minimum and maximum redshift for the interpolation grid.
+    npoints_interp : int
+        Number of points in the interpolation grid.
+    is_scalar : bool
+        If `True`, the interpolator is not vectorized. This is useful for
+        debugging, but should be set to `False` for performance.
+    """
+    def __init__(self, Om0=0.3, zmin_interp=1e-8, zmax_interp=0.5,
+                 npoints_interp=1000, is_scalar=False):
+        cosmo = FlatLambdaCDM(H0=100, Om0=Om0)
+        z_grid = np.linspace(zmin_interp, zmax_interp, npoints_interp)
+        r_grid = cosmo.comoving_distance(z_grid).value
+        log_dl_grid = jnp.log10(cosmo.luminosity_distance(z_grid).value)
+
+        f = Interpolator1D(jnp.log(r_grid), log_dl_grid, extrap=False)
+        if not is_scalar:
+            f = vmap(f)
+        self._f = f
+
+    def __call__(self, r):
+        return self._f(jnp.log(r))
+
+
 class LogAngularDiameterDistance2Distmod:
     """
     Class to build an interpolator to convert log angular diameter distance in
