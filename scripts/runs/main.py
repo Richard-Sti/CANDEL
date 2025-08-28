@@ -65,7 +65,6 @@ if __name__ == "__main__":
 
     insert_comment_at_top(args.config, "started")
 
-    data = candel.pvdata.load_PV_dataframes(args.config)
     config = candel.load_config(args.config)
 
     fname_out = get_nested(config, "io/fname_output")
@@ -76,27 +75,37 @@ if __name__ == "__main__":
         insert_comment_at_top(args.config, "skipped")
         sys.exit(0)
 
-    model_name = config["inference"]["model"]
-    data_name = config["io"]["catalogue_name"]
-    fprint(f"Loading model `{model_name}` from `{args.config}` "
-           f"for data `{data_name}`")
+    is_CH0 = get_nested(config, "model/is_CH0", False)
+    if is_CH0:
+        fprint("selected `CH0` model.")
+        data = candel.pvdata.load_SH0ES_from_config(args.config, )
+        model = candel.model.SH0ESModel(args.config, data)
+        candel.run_SH0ES_inference(model, )
+    else:
+        data = candel.pvdata.load_PV_dataframes(args.config)
 
-    shared_param = get_nested(config, "inference/shared_params", None)
-    model = candel.model.name2model(model_name, shared_param, args.config)
+        model_name = config["inference"]["model"]
+        data_name = config["io"]["catalogue_name"]
+        fprint(f"Loading model `{model_name}` from `{args.config}` "
+               f"for data `{data_name}`")
 
-    if isinstance(data, list):
-        if not isinstance(model, candel.model.JointPVModel):
-            raise TypeError(
-                "You provided multiple datasets, but the selected model "
-                f"`{model.__class__.__name__}` is not JointPVModel."
-            )
-        if len(data) != len(model.submodels):
-            raise ValueError(
-                f"Number of datasets ({len(data)}) does not match number of "
-                f"submodels ({len(model.submodels)}) in the joint model."
-            )
+        shared_param = get_nested(config, "inference/shared_params", None)
+        model = candel.model.name2model(model_name, shared_param, args.config)
 
-    model_kwargs = {"data": data}
-    candel.run_pv_inference(model, model_kwargs)
+        if isinstance(data, list):
+            if not isinstance(model, candel.model.JointPVModel):
+                raise TypeError(
+                    "You provided multiple datasets, but the selected model "
+                    f"`{model.__class__.__name__}` is not JointPVModel."
+                )
+            if len(data) != len(model.submodels):
+                raise ValueError(
+                    f"Number of datasets ({len(data)}) does not match "
+                    f"number of submodels ({len(model.submodels)}) in the "
+                    "joint model."
+                )
 
-    insert_comment_at_top(args.config, "finished")
+        model_kwargs = {"data": data}
+        candel.run_pv_inference(model, model_kwargs)
+
+        insert_comment_at_top(args.config, "finished")

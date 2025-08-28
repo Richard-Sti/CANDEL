@@ -4,8 +4,10 @@ venv_gpu_candel/
 candel.egg-info/
 __pycache__/
 data/
+data_heavy/
 results/
 results_test/
+tasks_list*/
 
 
 notebooks/test.ipynb
@@ -18,3 +20,5 @@ scripts/runs/tasks_*.txt
 scripts/runs/logs
 scripts/runs/logs
 scripts/mocks/logs/
+
+modules_arc.sh

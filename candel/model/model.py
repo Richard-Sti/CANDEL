@@ -18,26 +18,26 @@ TFR, FP, SNe ... forward models (typically no absolute distance calibration).
 import hashlib
 import json
 from abc import ABC, abstractmethod
-from functools import partial
 
 import jax.numpy as jnp
 import numpy as np
-from astropy.cosmology import FlatLambdaCDM
-from jax import vmap
+from jax import random, vmap
 from jax.debug import print as jprint  # noqa
 from jax.lax import cond
+from jax.scipy.linalg import solve_triangular
 from jax.scipy.special import gammainc, gammaln, logsumexp
+from jax.scipy.stats.norm import cdf as jax_norm_cdf
 from jax_cosmo.scipy.interpolate import InterpolatedUnivariateSpline
 from numpyro import deterministic, factor, handlers, plate, sample
-from numpyro.distributions import (Delta, MultivariateNormal, Normal,
-                                   ProjectedNormal, TruncatedNormal, Uniform)
+from numpyro.distributions import (Delta, Distribution, MultivariateNormal,
+                                   Normal, ProjectedNormal, TruncatedNormal,
+                                   Uniform, constraints)
 from numpyro.handlers import reparam
 from numpyro.infer.reparam import ProjectedNormalReparam
 
-from ..cosmography import (Distance2Distmod, Distance2LogAngDist,
-                           Distance2Redshift,
-                           LogAngularDiameterDistance2Distmod,
-                           Distance2Distmod_withOm, Distance2Redshift_withOm)
+from ..cosmography import (Distance2Distmod, Distance2Distmod_withOm,
+                           Distance2LogAngDist, Distance2LogLumDist,
+                           Distance2Redshift, Distance2Redshift_withOm)
 from ..util import SPEED_OF_LIGHT, fprint, get_nested, load_config
 from .simpson import ln_simpson
 
@@ -71,6 +71,16 @@ def config_hash(cfg):
 
 def predict_cz(zcosmo, Vrad):
     return SPEED_OF_LIGHT * ((1 + zcosmo) * (1 + Vrad / SPEED_OF_LIGHT) - 1)
+
+
+def mvn_logpdf_cholesky(y, mu, L):
+    """
+    Log-pdf of a multivariate normal using Cholesky factor L (lower
+    triangular).
+    """
+    z = solve_triangular(L, y - mu, lower=True)
+    log_det = jnp.sum(jnp.log(jnp.diag(L)))
+    return -0.5 * (len(y) * jnp.log(2 * jnp.pi) + 2 * log_det + jnp.dot(z, z))
 
 
 ###############################################################################
@@ -113,6 +123,46 @@ class JeffreysPrior(Uniform):
     def log_prob(self, value):
         in_bounds = (value >= self.low) & (value <= self.high)
         return jnp.where(in_bounds, -jnp.log(value), -jnp.inf)
+
+
+class Maxwell(Distribution):
+    r"""
+    Maxwell–Boltzmann (speed) distribution in 3D.
+
+    PDF:
+        f(x; a) = sqrt(2/pi) * x^2 * exp(-x^2 / (2 a^2)) / a^3,  x >= 0,  a > 0
+    where `a = sqrt(kT/m)` is the scale parameter.
+
+    Args:
+        scale (float or array): positive scale parameter `a`.
+
+    Notes:
+        This is the chi distribution with k=3 degrees of freedom and scale `a`.
+    """
+    arg_constraints = {"scale": constraints.positive}
+    support = constraints.nonnegative
+    reparametrized_params = ["scale"]
+
+    def __init__(self, scale=1.0, validate_args=None):
+        self.scale = jnp.asarray(scale)
+        batch_shape = jnp.shape(self.scale)
+        super().__init__(batch_shape=batch_shape, validate_args=validate_args)
+
+    def sample(self, key, sample_shape=()):
+        shape = sample_shape + self.batch_shape
+        z = random.normal(key, shape + (3,)) * self.scale[..., None]
+        return jnp.linalg.norm(z, axis=-1)
+
+    def log_prob(self, value):
+        a = self.scale
+        x = jnp.asarray(value)
+
+        in_support = (x >= 0)
+        # log(sqrt(2/pi)) = 0.5*(log 2 - log pi)
+        log_c = 0.5 * (jnp.log(2.0) - jnp.log(jnp.pi))
+        lp = (log_c + 2.0 * jnp.log(x)
+              - (x * x) / (2.0 * a * a) - 3.0 * jnp.log(a))
+        return jnp.where(in_support, lp, -jnp.inf)
 
 
 def sample_vector_components_uniform(name, low, high):
@@ -216,6 +266,7 @@ def load_priors(config_priors):
         "uniform": lambda p: Uniform(p["low"], p["high"]),
         "delta": lambda p: Delta(p["value"]),
         "jeffreys": lambda p: JeffreysPrior(p["low"], p["high"]),
+        "maxwell": lambda p: Maxwell(p["scale"]),
         "vector_uniform": lambda p: {"type": "vector_uniform", "low": p["low"], "high": p["high"]},  # noqa
         "vector_uniform_fixed": lambda p: {"type": "vector_uniform_fixed", "low": p["low"], "high": p["high"],},  # noqa
         "vector_radial_spline_uniform": lambda p: {"type": "vector_radial_spline_uniform", "nval": len(p["rknot"]), "low": p["low"], "high": p["high"]},  # noqa
@@ -247,7 +298,7 @@ def _rsample(name, dist):
     """
     Samples from `dist` unless it is a delta function or vector directive.
     """
-    if name == "TFR_zeropoint_dipole" and dist.get("dist") == "delta":
+    if isinstance(dist, Delta) and name == "zeropoint_dipole":
         return jnp.zeros(3)
 
     if isinstance(dist, Delta):
@@ -281,12 +332,29 @@ def get_absmag_TFR(eta, a_TFR, b_TFR, c_TFR=0.0):
     return a_TFR + b_TFR * eta + jnp.where(eta > 0, c_TFR * eta**2, 0.0)
 
 
-def get_linear_sigma_mag_TFR(data, sigma_mu, b_TFR, c_TFR):
+def get_linear_sigma_mag_TFR(data, sigma_int, b_TFR, c_TFR):
     return jnp.sqrt(
         data["e2_mag"]
         + (b_TFR + 2 * jnp.where(
             data["eta"] > 0, c_TFR, 0) * data["eta"])**2 * data["e2_eta"]
-        + sigma_mu**2)
+        + sigma_int**2)
+
+
+def make_adaptive_grid(x_obs, e_x, k_sigma, n_grid):
+    """
+    Construct an adaptive uniform grid for a latent variable x.
+
+    The grid is centred on the observed value x_obs with extent
+    ± k_sigma * e_x, where e_x is the measurement uncertainty, and the output
+    shape is `(n_obj, n_grid)`.
+    """
+    half_span = k_sigma * e_x
+    a = x_obs - half_span
+    b = x_obs + half_span
+    eps = jnp.finfo(jnp.float32).eps
+    b = jnp.maximum(b, a + eps)
+    t = jnp.linspace(0.0, 1.0, n_grid)
+    return a[:, None] + (b - a)[:, None] * t[None, :]
 
 
 ###############################################################################
@@ -326,12 +394,19 @@ class BaseModel(ABC):
             self.kwargs_radial_Vext = {}
 
         self.priors, self.prior_dist_name = load_priors(priors)
-        self.num_norm_kwargs = config["model"]["mu_norm"]
-
-        self.use_MNR = config["pv_model"]["use_MNR"]
+        self.use_MNR = get_nested(config, "model/use_MNR", False)
+        self.marginalize_eta = get_nested(
+            config, "model/marginalize_eta", True)
+        if self.marginalize_eta:
+            self.eta_grid_kwargs = config["model"]["eta_grid"]
+            fprint(
+                "marginalizing eta with "
+                f"k_sigma = {self.eta_grid_kwargs['k_sigma']} and "
+                f"n_grid = {self.eta_grid_kwargs['n_grid']} (if TFR).")
 
         self.galaxy_bias = config["pv_model"]["galaxy_bias"]
-        if self.galaxy_bias not in ["powerlaw", "linear", "linear_from_beta"]:
+        if self.galaxy_bias not in ["powerlaw", "linear", "linear_from_beta",
+                                    "linear_from_beta_stochastic"]:
             raise ValueError(
                 f"Invalid galaxy bias model '{self.galaxy_bias}'.")
 
@@ -355,6 +430,11 @@ def sample_galaxy_bias(priors, galaxy_bias, shared_params=None, **kwargs):
     elif galaxy_bias == "linear_from_beta":
         b1 = kwargs["Om"]**0.55 / kwargs["beta"]
         bias_params = [b1,]
+    elif galaxy_bias == "linear_from_beta_stochastic":
+        b1_mean = kwargs["Om"]**0.55 / kwargs["beta"]
+        delta_b1 = rsample("delta_b1_skipZ", priors["delta_b1"], shared_params)
+        b1 = deterministic("b1", b1_mean + delta_b1)
+        bias_params = [b1,]
     else:
         raise ValueError(f"Invalid galaxy bias model '{galaxy_bias}'.")
 
@@ -367,7 +447,7 @@ def lp_galaxy_bias(delta, log_rho, bias_params, galaxy_bias):
     """
     if galaxy_bias == "powerlaw":
         lp = bias_params[0] * log_rho
-    elif galaxy_bias in ["linear", "linear_from_beta"]:
+    elif "linear" in galaxy_bias:
         lp = jnp.log(jnp.clip(1 + bias_params[0] * delta, 1e-5))
     else:
         raise ValueError(f"Invalid galaxy bias model '{galaxy_bias}'.")
@@ -398,15 +478,35 @@ def compute_Vext_radial(data, r_grid, Vext, with_radial_Vext=False,
 #                              TFR models                                     #
 ###############################################################################
 
-class TFRModel_DistMarg(BaseModel):
+def log_p_S_TFR_eta(eta_mean, w_eta, e_eta, eta_min, eta_max, ):
     """
-    A TFR model where the distance modulus μ is integrated out using a grid,
-    instead of being sampled as a latent variable.
+    Compute the fraction of samples given a truncation in linewidth
+    distribution, whose hyperprior is assumed to be Gaussian.
+    """
+    denom = jnp.sqrt(e_eta**2 + w_eta**2)
+    if eta_min is not None and eta_max is not None:
+        a = jax_norm_cdf((eta_max - eta_mean) / denom)
+        b = jax_norm_cdf((eta_min - eta_mean) / denom)
+        p = a - b
+    elif eta_max is not None:
+        p = jax_norm_cdf((eta_max - eta_mean) / denom)
+    elif eta_min is not None:
+        p = jax_norm_cdf((eta_mean - eta_min) / denom)
+    else:
+        raise ValueError("Invalid eta_min/eta_max configuration.")
+
+    return jnp.log(jnp.clip(p, 1e-300, 1.0))  # guard against log(0)
+
+
+class TFRModel(BaseModel):
+    """
+    A TFR forward model, distance is numerically marginalized out at each MCMC
+    step instead of being sampled as a latent variable.
     """
     def __init__(self, config_path):
         super().__init__(config_path)
 
-        if self.use_MNR:
+        if self.use_MNR and not self.marginalize_eta:
             fprint("setting `compute_evidence` to False.")
             self.config["inference"]["compute_evidence"] = False
 
@@ -417,9 +517,10 @@ class TFRModel_DistMarg(BaseModel):
         a_TFR = rsample("a_TFR", self.priors["TFR_zeropoint"], shared_params)
         b_TFR = rsample("b_TFR", self.priors["TFR_slope"], shared_params)
         c_TFR = rsample("c_TFR", self.priors["TFR_curvature"], shared_params)
-        sigma_mu = rsample("sigma_mu", self.priors["sigma_mu"], shared_params)
+        sigma_int = rsample(
+            "sigma_int", self.priors["sigma_int"], shared_params)
         a_TFR_dipole = rsample(
-            "a_TFR_dipole", self.priors["TFR_zeropoint_dipole"], shared_params)
+            "zeropoint_dipole", self.priors["zeropoint_dipole"], shared_params)
         a_TFR = a_TFR + jnp.sum(a_TFR_dipole * data["rhat"], axis=1)
 
         # For the distance marginalization, h is not sampled.
@@ -458,34 +559,43 @@ class TFRModel_DistMarg(BaseModel):
 
         with plate("data", nsamples):
             if self.use_MNR:
-                # Linewidth hyperprior and selection.
-                eta = sample(
-                    "eta_latent", Normal(eta_prior_mean, eta_prior_std))
-                if data.add_eta_truncation:
-                    sample("eta_obs", TruncatedNormal(
-                        eta, data["e_eta"], low=data.eta_min,
-                        high=data.eta_max), obs=data["eta"])
-                else:
-                    sample("eta_obs", Normal(
-                        eta, data["e_eta"]), obs=data["eta"])
+                if self.marginalize_eta:
+                    # 2D grid of eta, `(n_gal, n_eta_grid)`
+                    eta_grid = make_adaptive_grid(
+                        data["eta"], data["e_eta"], k_sigma=4, n_grid=11)
+                    # Evaluate the corresponding MNR hyperprior for the grid
+                    lp_eta = Normal(
+                        eta_prior_mean, eta_prior_std).log_prob(eta_grid)
 
-                e_mag = jnp.sqrt(sigma_mu**2 + data["e2_mag"])
+                    # Evaluate the likelihood of the observed data given the
+                    # grid, `(n_gal, n_eta_grid)`
+                    lp_eta += Normal(
+                        eta_grid, data["e_eta"][:, None]).log_prob(
+                            data["eta"][:, None])
+                else:
+                    # Sample the galaxy linewidth from a Gaussian hyperprior.
+                    eta = sample(
+                        "eta_latent", Normal(eta_prior_mean, eta_prior_std))
+                    sample("eta", Normal(eta, data["e_eta"]), obs=data["eta"])
+
+                # Track the likelihood of the observed linewidths.
+                if data.add_eta_truncation:
+                    factor(
+                        "neg_log_S_eta",
+                        -log_p_S_TFR_eta(
+                            eta_prior_mean, eta_prior_std, data["e_eta"],
+                            data.eta_min, data.eta_max))
+
+                e_mag = jnp.sqrt(sigma_int**2 + data["e2_mag"])
             else:
                 eta = data["eta"]
-                e_mag = get_linear_sigma_mag_TFR(data, sigma_mu, b_TFR, c_TFR)
+                e_mag = get_linear_sigma_mag_TFR(data, sigma_int, b_TFR, c_TFR)
 
             r_grid = data["r_grid"] / h
 
             # Log-prior on the galaxy distance, `(n_field, n_gal, n_step)`
             lp_dist = log_prior_r_empirical(
                 r_grid, **kwargs_dist, Rmax_grid=r_grid[-1])[None, None, :]
-
-            # Likelihood of the apparent magnitudes, `(n_field, n_gal, n_grid)`
-            ll = Normal(
-                self.distance2distmod(r_grid, h=h)[None, :]
-                + get_absmag_TFR(eta, a_TFR, b_TFR, c_TFR)[:, None],
-                e_mag[:, None]).log_prob(
-                    (data["mag"] - Ab)[:, None])[None, ...]
 
             if data.has_precomputed_los:
                 # Reconstruction LOS velocity `(n_field, n_gal, n_step)`
@@ -501,8 +611,6 @@ class TFRModel_DistMarg(BaseModel):
             else:
                 Vrad = 0.
 
-            # Add the distance prior to the tracked likelihood
-            ll += lp_dist
             # Likelihood of the observed redshifts, `(n_field, n_gal, n_rbins)`
             Vext_rad = compute_Vext_radial(
                 data, r_grid, Vext, with_radial_Vext=self.with_radial_Vext,
@@ -510,13 +618,47 @@ class TFRModel_DistMarg(BaseModel):
             czpred = predict_cz(
                 self.distance2redshift(r_grid, h=h)[None, None, :],
                 Vrad + Vext_rad)
-            ll += Normal(czpred, sigma_v).log_prob(
+            ll_cz = Normal(czpred, sigma_v).log_prob(
                 data["czcmb"][None, :, None])
 
-            # Marginalise over the radial distance, average over realisations
-            # and track the log-density.
-            ll = ln_simpson(ll, x=r_grid[None, None, :], axis=-1)
-            factor("ll_obs", logsumexp(ll, axis=0) - jnp.log(data.num_fields))
+            # Likelihood of the observed magnitudes.
+            if self.use_MNR and self.marginalize_eta:
+                # Absolute magnitude grid, `(n_gal, n_eta_grid)
+                M_eta = get_absmag_TFR(eta_grid, a_TFR[:, None], b_TFR, c_TFR)
+                # Radial grid converted to distance modulus, `(n_gal,)`
+                mu_grid = self.distance2distmod(r_grid, h=h)
+
+                # Likelihood of magnitudes `(n_gal, n_rbin, n_eta_grid)`
+                ll_mag = Normal(
+                    mu_grid[None, :, None] + M_eta[:, None, :],
+                    e_mag[:, None, None]).log_prob(
+                        (data["mag"] - Ab)[:, None, None])
+
+                # Add the log-prior and log-likelihood of linewidth, the shape
+                # remains `(n_gal, n_rbin, n_eta_grid)`
+                if self.marginalize_eta:
+                    ll_mag += lp_eta[:, None, :]
+
+                # Add all ... `(n_field, n_gal, nrbins, n_eta_grid)`
+                ll = (ll_cz + lp_dist)[..., None] + ll_mag[None, ...]
+                # Marginalize over the eta grid, `(n_field, n_gal, nrbins)`
+                ll = ln_simpson(ll, x=eta_grid[None, :, None, :], axis=-1)
+                # Marginalize over the radial distance `(n_field, n_gal)`
+                ll = ln_simpson(ll, x=r_grid[None, None, :], axis=-1)
+            else:
+                # Likelihood ... `(n_field, n_gal, n_grid)`
+                ll_mag = Normal(
+                    self.distance2distmod(r_grid, h=h)[None, :] +
+                    get_absmag_TFR(eta, a_TFR, b_TFR, c_TFR)[:, None],
+                    e_mag[:, None]).log_prob(
+                        (data["mag"] - Ab)[:, None])[None, ...]
+                ll = ll_cz + ll_mag + lp_dist
+                # Marginalise over the radial distance, `(n_field, n_gal)`
+                ll = ln_simpson(ll, x=r_grid[None, None, :], axis=-1)
+
+            # Average over realizations and track the log-density.
+            factor("ll_obs",
+                   logsumexp(ll, axis=0) - jnp.log(data.num_fields))
 
 
 ###############################################################################
@@ -524,10 +666,151 @@ class TFRModel_DistMarg(BaseModel):
 ###############################################################################
 
 
-class PantheonPlusModel_DistMarg(BaseModel):
+class SNModel(BaseModel):
     """
-    Pantheon+ model with numerical distance marginalisation. Uses the
-    precomputed magnitude covariance matrix.
+    A SNe forward model: the distance is numerically marginalized at each MCMC
+    step. The Tripp coefficients are sampled. In the MNR branch, x1 and c are
+    sampled explicitly.
+    """
+    def __init__(self, config_path):
+        super().__init__(config_path)
+
+        if self.use_MNR:
+            fprint("setting `compute_evidence` to False.")
+            self.config["inference"]["compute_evidence"] = False
+
+    def __call__(self, data, shared_params=None):
+        nsamples = len(data)
+
+        if data.sample_dust:
+            raise NotImplementedError(
+                "Dust sampling is not implemented for `SNModel`.")
+
+        # --- Tripp (SALT2) parameters ---
+        M_SN = rsample("SN_absmag", self.priors["SN_absmag"], shared_params)
+        alpha_SN = rsample("SN_alpha", self.priors["SN_alpha"], shared_params)
+        beta_SN = rsample("SN_beta", self.priors["SN_beta"], shared_params)
+        dM = rsample(
+            "zeropoint_dipole", self.priors["zeropoint_dipole"], shared_params)
+        M_SN = M_SN + jnp.sum(dM * data["rhat"], axis=1)
+        sigma_int = rsample(
+            "sigma_int", self.priors["sigma_int"], shared_params)
+
+        # Distance marginalization does not sample h.
+        h = 1.0
+
+        # Empirical p(r) hyperparameters
+        R_dist_emp = rsample("R_dist_emp", self.priors["R_dist_emp"])
+        p_dist_emp = rsample("p_dist_emp", self.priors["p_dist_emp"])
+        n_dist_emp = rsample("n_dist_emp", self.priors["n_dist_emp"])
+        kwargs_dist = {"R": R_dist_emp, "p": p_dist_emp, "n": n_dist_emp}
+
+        # --- Velocity field / selection nuisance ---
+        if self.with_radial_Vext:
+            Vext = rsample("Vext_rad", self.priors["Vext_radial"],
+                           shared_params)
+        else:
+            Vext = rsample("Vext", self.priors["Vext"], shared_params)
+        sigma_v = rsample("sigma_v", self.priors["sigma_v"], shared_params)
+        beta = rsample("beta", self.priors["beta"], shared_params)
+
+        bias_params = sample_galaxy_bias(self.priors, self.galaxy_bias,
+                                         shared_params, Om=self.Om, beta=beta)
+
+        # Optional MNR hyperpriors for x1, c (only used if self.use_MNR)
+        if self.use_MNR:
+            x1_prior_mean = sample(
+                "x1_prior_mean", Uniform(data["min_x1"], data["max_x1"]))
+            x1_prior_std = sample(
+                "x1_prior_std",
+                Uniform(0.0, data["max_x1"] - data["min_x1"]))
+            c_prior_mean = sample(
+                "c_prior_mean", Uniform(data["min_c"], data["max_c"]))
+            c_prior_std = sample(
+                "c_prior_std", Uniform(0.0, data["max_c"] - data["min_c"]))
+
+        with plate("data", nsamples):
+            if self.use_MNR:
+                # Sample latent x1, c and condition on their measurements.
+                x1 = sample("x1_latent", Normal(x1_prior_mean, x1_prior_std))
+                c = sample("c_latent", Normal(c_prior_mean, c_prior_std))
+
+                sample("x1_obs", Normal(x1, data["e_x1"]), obs=data["x1"])
+                sample("c_obs", Normal(c, data["e_c"]), obs=data["c"])
+
+                # Magnitude scatter does NOT re-propagate x1/c obs errors.
+                e_mag = jnp.sqrt(sigma_int**2 + data["e2_mag"])
+            else:
+                # Use measured x1, c; propagate their errors into μ.
+                x1 = data["x1"]
+                c = data["c"]
+                e_mag = jnp.sqrt(
+                    data["e2_mag"] + (alpha_SN**2) * data["e2_x1"]
+                    + (beta_SN**2) * data["e2_c"] + sigma_int**2)
+
+            # ----- r grid -----
+            r_grid = data["r_grid"] / h  # (n_r,)
+
+            # Log-prior on r: (n_field, n_gal, n_r)
+            lp_dist = log_prior_r_empirical(
+                r_grid, **kwargs_dist, Rmax_grid=r_grid[-1])[None, None, :]
+
+            if data.has_precomputed_los:
+                Vrad = beta * data["los_velocity_r_grid"]
+                lp_dist += lp_galaxy_bias(
+                    data["los_delta_r_grid"],
+                    data["los_log_density_r_grid"],
+                    bias_params, self.galaxy_bias)
+
+                lp_dist -= ln_simpson(
+                    lp_dist, x=r_grid[None, None, :], axis=-1)[..., None]
+            else:
+                Vrad = 0.0
+
+            # Predicted cz (n_field, n_gal, n_r)
+            Vext_rad = compute_Vext_radial(
+                data, r_grid, Vext, with_radial_Vext=self.with_radial_Vext,
+                **self.kwargs_radial_Vext)
+            czpred = predict_cz(
+                self.distance2redshift(r_grid, h=h)[None, None, :],
+                Vrad + Vext_rad)
+            ll_cz = Normal(czpred, sigma_v).log_prob(
+                data["czcmb"][None, :, None])
+
+            # ----- Magnitude likelihood -----
+            # Tripp: m_obs ~ Normal( μ(r) + M - α x1 + β c , e_mag )
+            mu_r = self.distance2distmod(r_grid, h=h)[None, :]   # (1, n_r)
+            M_eff = (M_SN - alpha_SN * x1 + beta_SN * c)         # (n_gal,)
+            ll_mag = Normal(
+                loc=mu_r + M_eff[:, None], scale=e_mag[:, None]).log_prob(
+                    data["mag"][:, None])[None, ...]    # (1,n_gal,n_r)
+
+            # Combine and integrate over r
+            ll = ll_cz + ll_mag + lp_dist
+            ll = ln_simpson(ll, x=r_grid[None, None, :], axis=-1)
+
+            # Average over realizations and contribute to joint density
+            factor("ll_obs",
+                   logsumexp(ll, axis=0) - jnp.log(data.num_fields))
+
+
+def add_sigma_mag_to_lane_cov(sigma_mag, Sigma_d):
+    """
+    Add the intrinsic magnitude scatter to the Lane covariance matrix. It is
+    added along the diagonal and the indices corresponding to the magnitude
+    residuals.
+    """
+    n3 = Sigma_d.shape[0]
+    N = n3 // 3
+    idx = 3 * jnp.arange(N)
+    diag_D = jnp.zeros(n3).at[idx].set(sigma_mag**2)
+    return Sigma_d + jnp.diag(diag_D)
+
+
+class PantheonPlusModel(BaseModel):
+    """
+    Pantheon+ forward model, the distance is numerically marginalized out at
+    each MCMC step instead of being sampled as a latent variable.
     """
     def __init__(self, config_path):
         super().__init__(config_path)
@@ -539,7 +822,7 @@ class PantheonPlusModel_DistMarg(BaseModel):
 
         if self.with_radial_Vext:
             raise ValueError("Radial velocity extension is not supported "
-                             "for `PantheonPlusModel_DistMarg`")
+                             "for `PantheonPlusModel`")
 
         fprint("setting `compute_evidence` to False.")
         self.config["inference"]["compute_evidence"] = False
@@ -554,9 +837,18 @@ class PantheonPlusModel_DistMarg(BaseModel):
         # Sample the SN parameters.
         M = rsample("M", self.priors["SN_absmag"], shared_params)
         dM = rsample(
-            "M_dipole", self.priors["SN_absmag_dipole"], shared_params)
+            "zeropoint_dipole", self.priors["zeropoint_dipole"], shared_params)
         M = M + jnp.sum(dM * data["rhat"], axis=1)
-        sigma_mu = rsample("sigma_mu", self.priors["sigma_mu"], shared_params)
+        sigma_int = rsample(
+            "sigma_int", self.priors["sigma_int"], shared_params)
+
+        # For the Lane covariance we sample the Tripp params.
+        if data.with_lane_covmat:
+            alpha_SN = rsample(
+                "SN_alpha", self.priors["SN_alpha"], shared_params)
+            beta_SN = rsample("SN_beta", self.priors["SN_beta"], shared_params)
+            x1 = data["x1"]
+            c = data["c"]
 
         R_dist_emp = rsample("R_dist_emp", self.priors["R_dist_emp"])
         p_dist_emp = rsample("p_dist_emp", self.priors["p_dist_emp"])
@@ -576,7 +868,9 @@ class PantheonPlusModel_DistMarg(BaseModel):
             Om=self.Om, beta=beta)
 
         # For the distance marginalization, h is not sampled. Watch out for
-        # the width of the uniform distribution of h is sampled.
+        # the width of the uniform distribution of h is sampled. A grid
+        # is still required to normalize the inhomogeneous Malmquist bias
+        # distribution.
         h = 1.
         r_grid = data["r_grid"] / h
         Rmax = r_grid[-1]
@@ -585,17 +879,34 @@ class PantheonPlusModel_DistMarg(BaseModel):
         with plate("plate_distance", nsamples):
             r = sample("r_latent", Uniform(0, Rmax))
 
+        mu = self.distance2distmod(r, h=h)  # (n_gal,)
+
         # Precompute the homogeneous distance prior, `(n_field, n_galaxies)`
         lp_dist = log_prior_r_empirical(
             r, **kwargs_dist, Rmax_grid=Rmax)[None, :]
 
-        # Predicted SN magnitudes, `(n_galaxies)`
-        mag = self.distance2distmod(r, h=h) + M
-        # Track the likelihood of the predicted magnitudes, add any intrinsic
-        # scatter to the covariance matrix.
-        C = (data["mag_covmat"]
-             + jnp.eye(data["mag_covmat"].shape[0]) * sigma_mu**2)
-        sample("mag_obs", MultivariateNormal(mag, C), obs=data["mag"])
+        if data.with_lane_covmat:
+            # Lane covariance is 3N x 3N where the values in the data vector
+            # are `magnitude residual, 0, 0` repeated for all hosts.
+            C = add_sigma_mag_to_lane_cov(sigma_int, data["mag_covmat"])
+
+            # Compute the magnitude residuals.
+            M_eff = (M - alpha_SN * x1 + beta_SN * c)         # (n_gal,)
+            dx = data["mag"] - (mu + M_eff)
+
+            # Compute the magnitude difference vector
+            # [mag_res_i, 0, 0, mag_res_i + 1, 0, 0, etc...]
+            dX = jnp.zeros((3 * dx.size,), dtype=dx.dtype)
+            dX = dX.at[0::3].set(dx)
+            # Finally, track the likelihood of the magnitudes
+            sample(
+                "mag_obs", MultivariateNormal(dX, C), obs=jnp.zeros_like(dX))
+        else:
+            # Track the likelihood of the predicted magnitudes, add any
+            # intrinsic scatter to the covariance matrix.
+            C = (data["mag_covmat"]
+                 + jnp.eye(data["mag_covmat"].shape[0]) * sigma_int**2)
+            sample("mag_obs", MultivariateNormal(mu + M, C), obs=data["mag"])
 
         if data.has_precomputed_los:
             # Evaluate the radial velocity and the galaxy bias at the sampled
@@ -643,99 +954,56 @@ def get_Ez(z, Om):
     return jnp.sqrt(Om * (1 + z)**3 + (1 - Om))
 
 
-def mu_from_CL_calibration(theta, c, log_dL_grid, log_dA_grid, mu_grid):
+class ClustersModel(BaseModel):
     """
-    Solve for which distance modulus solves the equation
-    `log_dL - c * log_dA = theta`. Takes advantage of pre-computing `mu`
-    and `log_dL` and `log_dA` grids.
+    Cluster LTY scaling relation with explicit distance marginalization.
     """
-
-    y = log_dL_grid - c * log_dA_grid
-    res = y - theta
-    return jnp.interp(0.0, res, mu_grid)
-
-
-class ClustersModel_DistMarg(BaseModel):
-    """
-    Cluster L-T-Y scaling relation peculiar velocity model with distance
-    marginalization.
-    """
-
     def __init__(self, config_path):
         super().__init__(config_path)
 
-        which_relation = self.config["io"]["Clusters"]["which_relation"]
-        if which_relation not in ["LT", "LY", "LTY", "YT"]:
-            raise ValueError(f"Invalid scaling relation '{which_relation}'. "
-                             "Choose either 'LT' or 'LY' or 'LTY'.")
+        self.which_relation = self.config["io"]["Clusters"]["which_relation"]
+        if self.which_relation not in ["LT", "LY", "LTY"]:
+            raise ValueError(
+                f"Invalid scaling relation '{self.which_relation}'. "
+                "Choose either 'LT' or 'LY' or 'LTY'.")
 
-        self.which_relation = which_relation
-        self.sample_T = "T" in which_relation
-        self.sample_Y = "Y" in which_relation
-        self.sample_F = "L" in which_relation
+        self.distance2logda = Distance2LogAngDist(Om0=self.Om)
+        self.distance2logdl = Distance2LogLumDist(Om0=self.Om)
 
-        # Disable priors only if the variable is not used in the relation.
-        used = set(which_relation)
-        prior_info = {
-            "T": ("sample_T", "logT", "CL_B"),
-            "Y": ("sample_Y", "logY", "CL_C"),
-        }
-
-        for var, (attr, name, key) in prior_info.items():
-            if var not in used and not getattr(self, attr, False):
-                fprint(
-                    f"`{name}` is not used in the model. Disabling its prior.")
-                self.priors[key] = Delta(jnp.asarray(0.0))
-                self.prior_dist_name[key] = "delta"
+        if self.which_relation == "LT":
+            self.priors["CL_C"] = Delta(jnp.asarray(0.0))
+        if self.which_relation == "LY":
+            self.priors["CL_B"] = Delta(jnp.asarray(0.0))
 
         if self.use_MNR:
             raise NotImplementedError(
                 "MNR for clusters is not implemented yet. Please set "
                 "`use_MNR` to False in the config file.")
-            # fprint("setting `compute_evidence` to False.")
-            # self.config["inference"]["compute_evidence"] = False
-
-        # If C is being sampled, then we need to precompute the grids to
-        # relate `logDL - c * logDA = theta` to `mu`. Note that these are
-        # h = 1 and with a hard-cded Om = 0.3 cosmology.
-        if which_relation[0] == 'L':
-            d = self.config["io"]["Clusters"]
-            z_grid = np.linspace(
-                d["zcmb_mapping_min"], d["zcmb_mapping_max"],
-                d["zcmb_mapping_num_points"])
-            fprint("precomputing the distance grid for z in "
-                   f"[{d['zcmb_mapping_min']}, {d['zcmb_mapping_max']}] with "
-                   f"{d['zcmb_mapping_num_points']} points.")
-
-            cs = FlatLambdaCDM(H0=100, Om0=self.Om)
-            mu_grid = cs.distmod(z_grid).value
-            log_dA_grid = jnp.log10(cs.angular_diameter_distance(z_grid).value)
-            log_dL_grid = jnp.log10(cs.luminosity_distance(z_grid).value)
-            mu_grid = jnp.asarray(mu_grid)
-
-            f_partial = partial(
-                mu_from_CL_calibration, log_dL_grid=log_dL_grid,
-                log_dA_grid=log_dA_grid, mu_grid=mu_grid)
-            self.mu_from_LTY_calibration = vmap(
-                f_partial, in_axes=(0, None), out_axes=0)
-
-        if which_relation == "YT":
-            self.logangdist2distmod = LogAngularDiameterDistance2Distmod()
+            fprint("setting `compute_evidence` to False.")
+            self.config["inference"]["compute_evidence"] = False
 
     def __call__(self, data, shared_params=None):
-        raise NotImplementedError("Must be updated after chatting with Tariq.")
         nsamples = len(data)
 
         if data.sample_dust:
             raise NotImplementedError(
                 "Dust sampling is not implemented for "
-                "`ClustersModel_DistMarg`.")
+                "`ClustersModel`.")
 
         # Sample the cluster scaling parameters.
         A = rsample("A_CL", self.priors["CL_A"], shared_params)
         B = rsample("B_CL", self.priors["CL_B"], shared_params)
         C = rsample("C_CL", self.priors["CL_C"], shared_params)
-        sigma_mu = rsample("sigma_mu", self.priors["sigma_mu"], shared_params)
+        sigma_int = rsample(
+            "sigma_int", self.priors["sigma_int"], shared_params)
+
+        # For the distance marginalization, h is not sampled.
+        h = 1.
+
+        R_dist_emp = rsample("R_dist_emp", self.priors["R_dist_emp"])
+        p_dist_emp = rsample("p_dist_emp", self.priors["p_dist_emp"])
+        n_dist_emp = rsample("n_dist_emp", self.priors["n_dist_emp"])
+        kwargs_dist = {"R": R_dist_emp, "p": p_dist_emp, "n": n_dist_emp}
 
         # Sample velocity field parameters.
         if self.with_radial_Vext:
@@ -744,100 +1012,72 @@ class ClustersModel_DistMarg(BaseModel):
         else:
             Vext = rsample("Vext", self.priors["Vext"], shared_params)
         sigma_v = rsample("sigma_v", self.priors["sigma_v"], shared_params)
-        # Remaining parameters
-        bias_params = sample_galaxy_bias(
-            self.priors, self.galaxy_bias, shared_params)
-        beta = rsample("beta", self.priors["beta"], shared_params)
 
-        # For the distance marginalization, h is not sampled. Careful because
-        # the mapping to `mu` above assumes h = 1.
-        h = 1.
+        # Remaining parameters
+        beta = rsample("beta", self.priors["beta"], shared_params)
+        bias_params = sample_galaxy_bias(
+            self.priors, self.galaxy_bias, shared_params, Om=self.Om,
+            beta=beta)
 
         with plate("data", nsamples):
             if self.use_MNR:
                 raise NotImplementedError(
-                    "MNR for clusters is not implemented yet. Please set "
-                    "`use_MNR` to False in the config file.")
+                    "MNR for clusters is not implemented yet.")
             else:
-                sigma_mu2 = jnp.ones(nsamples) * sigma_mu**2
-                rel = self.which_relation[0]
+                logT = data["logT"]
+                logY = data["logY"]
+                sigma_logF = jnp.sqrt(
+                    data["e2_logF"] + sigma_int**2
+                    + B**2 * data["e2_logT"] + C**2 * data["e2_logY"])
 
-                # Fixed contributions depending on relation type
-                if rel == "L":
-                    # LogL = A + B * logT + C * logY
-                    logF = data["logF"]
-                    sigma_mu2 += data["e2_logF"]
-                elif rel == "Y":
-                    # logY = A + B * logT + C * logF
-                    logY = data["logY"]
-                    sigma_mu2 += data["e2_logY"]
-                else:
-                    raise ValueError(
-                        f"Invalid scaling relation '{self.which_relation}'.")
+            r_grid = data["r_grid"] / h
+            logdl_grid = self.distance2logdl(r_grid)
+            logda_grid = self.distance2logda(r_grid)
 
-                # Conditional contributions based on sampling flags
-                if self.sample_T:
-                    logT = data["logT"]
-                    sigma_mu2 += B**2 * data["e2_logT"]
+            # Homogeneous Malmqusit distance prior, `(n_field, n_gal, n_rbin)`
+            lp_dist = log_prior_r_empirical(
+                r_grid, **kwargs_dist, Rmax_grid=r_grid[-1])[None, None, :]
 
-                if self.sample_Y and rel == "L":
-                    logY = data["logY"]
-                    sigma_mu2 += C**2 * data["e2_logY"]
+            # Predict logF from the scaling relation, `(ngal, nrbin)``
+            # TODO: Where to add the E(z) term?
+            logF_pred = (A + B * logT[:, None]
+                         + C * (logY[:, None] + 2 * logda_grid[None, :])
+                         - jnp.log10(4 * jnp.pi) - 2 * logdl_grid[None, :])
 
-                if self.sample_F and rel == "Y":
-                    logF = data["logF"]
-                    sigma_mu2 += C**2 * data["e2_logF"]
-
-                sigma_mu = jnp.sqrt(sigma_mu2)
-
-            # This should depend on the cosmological redshift, but the
-            # corrections are small and subdominant to the noise in the cluster
-            # scaling relations.
-            Ez = get_Ez(data["zcmb"], Om=self.Om)
-
-            if self.which_relation == "LT":
-                logL_pred = jnp.log10(Ez) + A + B * logT
-                mu_cluster = 2.5 * (logL_pred - logF) + 25
-            elif self.which_relation[0] == "L":
-                theta = 0.5 * (jnp.log10(Ez) + A + B * logT + C * logY - logF)
-                mu_cluster = self.mu_from_LTY_calibration(theta, C)
-            elif self.which_relation == "YT":
-                logDA = 0.5 * (jnp.log10(Ez) + A + B * logT - logY)
-                mu_cluster = self.logangdist2distmod(logDA, h=h)
-            else:
-                raise ValueError(
-                    f"Invalid scaling relation '{self.which_relation}'.")
-
-            # From now on it is standard calculations.
-            r_grid = data["los_r"][None, :] / h
-            mu_grid = self.distance2distmod(r_grid, h=h)
-
-            ll = 2 * jnp.log(r_grid)
-            ll += Normal(
-                mu_cluster[:, None], sigma_mu[:, None]).log_prob(mu_grid)
+            # Likelihood of logF , `(n_field, n_gal, n_rbin)`
+            ll = Normal(logF_pred, sigma_logF[:, None]).log_prob(
+                data["logF"][:, None])[None, ...]
 
             if data.has_precomputed_los:
-                # The shape is `(n_galaxies, num_steps.)`
-                Vrad = beta * data["los_velocity"]
-                ll += lp_galaxy_bias(
-                    data["los_delta"], data["los_log_density"], bias_params,
-                    self.galaxy_bias)
+                # Reconstruction LOS velocity `(n_field, n_gal, n_step)`
+                Vrad = beta * data["los_velocity_r_grid"]
+                # Add inhomogeneous Malmquist bias and normalize the r prior
+                lp_dist += lp_galaxy_bias(
+                    data["los_delta_r_grid"],
+                    data["los_log_density_r_grid"],
+                    bias_params, self.galaxy_bias
+                    )
+                lp_dist -= ln_simpson(
+                    lp_dist, x=r_grid[None, None, :], axis=-1)[..., None]
             else:
                 Vrad = 0.
 
-            ll_norm = ln_simpson(ll, x=r_grid, axis=-1)
-
+            # Add the distance prior to the tracked likelihood
+            ll += lp_dist
+            # Likelihood of the observed redshifts, `(n_field, n_gal, n_rbins)`
             Vext_rad = compute_Vext_radial(
-                data, Vext, with_radial_Vext=self.with_radial_Vext,
+                data, r_grid, Vext, with_radial_Vext=self.with_radial_Vext,
                 **self.kwargs_radial_Vext)
-            zpec = (Vrad + Vext_rad) / SPEED_OF_LIGHT
-            zcmb = self.distmod2redshift(mu_grid, h=h)
-            czpred = SPEED_OF_LIGHT * ((1 + zcmb) * (1 + zpec) - 1)
+            czpred = predict_cz(
+                self.distance2redshift(r_grid, h=h)[None, None, :],
+                Vrad + Vext_rad)
+            ll += Normal(czpred, sigma_v).log_prob(
+                data["czcmb"][None, :, None])
 
-            ll += Normal(czpred, sigma_v).log_prob(data["czcmb"][:, None])
-            ll = ln_simpson(ll, x=r_grid, axis=-1) - ll_norm
-
-            factor("obs", ll)
+            # Marginalise over the radial distance, average over realisations
+            # and track the log-density.
+            ll = ln_simpson(ll, x=r_grid[None, None, :], axis=-1)
+            factor("ll_obs", logsumexp(ll, axis=0) - jnp.log(data.num_fields))
 
 
 ###############################################################################
@@ -845,7 +1085,7 @@ class ClustersModel_DistMarg(BaseModel):
 ###############################################################################
 
 
-class FPModel_DistMarg(BaseModel):
+class FPModel(BaseModel):
     """
     A FP model where the distance modulus μ is integrated out using a grid,
     instead of being sampled as a latent variable.
@@ -867,7 +1107,7 @@ class FPModel_DistMarg(BaseModel):
 
         if data.sample_dust:
             raise NotImplementedError(
-                "Dust sampling is not implemented for `FPModel_DistMarg`.")
+                "Dust sampling is not implemented for `FPModel`.")
 
         # Sample the FP parameters.
         a_FP = rsample("a_FP", self.priors["FP_a"], shared_params)
@@ -995,12 +1235,13 @@ class CalibratedDistanceModel_DistMarg(BaseModel):
 
         if data.sample_dust:
             raise NotImplementedError(
-                "Dust sampling is not implemented for `FPModel_DistMarg`.")
+                "Dust sampling is not implemented for `FPModel`.")
 
         # Sample the FP parameters.
         h = rsample("h", self.priors["h"], shared_params)
         Om = rsample("Om", self.priors["Om"], shared_params)
-        sigma_mu = rsample("sigma_mu", self.priors["sigma_mu"], shared_params)
+        sigma_int = rsample(
+            "sigma_int", self.priors["sigma_int"], shared_params)
 
         R_dist_emp = rsample("R_dist_emp", self.priors["R_dist_emp"])
         p_dist_emp = rsample("p_dist_emp", self.priors["p_dist_emp"])
@@ -1037,7 +1278,7 @@ class CalibratedDistanceModel_DistMarg(BaseModel):
                 r_grid, **kwargs_dist, Rmax_grid=r_grid[-1])[None, None, :]
 
             # Likelihood of the 'obs' dist moduli, `(n_field, n_gal, n_rbin)`
-            sigma_mu = jnp.sqrt(sigma_mu**2 + data["e2_mu"])
+            sigma_mu = jnp.sqrt(sigma_int**2 + data["e2_mu"])
             ll = Normal(
                 mu_grid[None, :], sigma_mu[:, None]).log_prob(
                 data["mu"][:, None])[None, ...]
@@ -1063,8 +1304,8 @@ class CalibratedDistanceModel_DistMarg(BaseModel):
                 data, r_grid, Vext, with_radial_Vext=self.with_radial_Vext,
                 **self.kwargs_radial_Vext)
             czpred = predict_cz(
-                self.distance2redshift_with_Om(r_grid, Om=Om, h=h)[None, None, :],
-                Vrad + Vext_rad)
+                self.distance2redshift_with_Om(
+                    r_grid, Om=Om, h=h)[None, None, :], Vrad + Vext_rad)
             ll += Normal(czpred, sigma_v).log_prob(
                 data["czcmb"][None, :, None])
 

@@ -296,7 +296,7 @@ def drop_deterministic(samples, check_all_equals=True):
 
 def postprocess_samples(samples):
     """Postprocess MCMC samples."""
-    for prefix in ["Vext_rad", "Vext", "a_TFR_dipole", "M_dipole"]:
+    for prefix in ["Vext_rad", "Vext", "zeropoint_dipole"]:
         # Spherical form: phi + cos_theta (+ mag optional)
         if f"{prefix}_phi" in samples and f"{prefix}_cos_theta" in samples:
             phi = np.rad2deg(samples.pop(f"{prefix}_phi"))

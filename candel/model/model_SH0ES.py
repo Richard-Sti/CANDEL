@@ -18,7 +18,6 @@ from abc import ABC
 import jax.numpy as jnp
 import numpy as np
 from jax.debug import print as jprint  # noqa
-from jax.scipy.linalg import solve_triangular
 from jax.scipy.special import logsumexp
 from jax.scipy.stats import norm as norm_jax
 from numpyro import factor, plate, sample
@@ -28,22 +27,12 @@ from numpyro.distributions import (HalfNormal, MultivariateNormal, Normal,
 from ..cosmography import (Distance2Distmod, Distance2Redshift,
                            Distmod2Distance, Distmod2Redshift,
                            LogGrad_Distmod2ComovingDistance)
-from ..util import (fprint, get_nested, load_config,
-                    radec_to_cartesian, replace_prior_with_delta)
+from ..util import (fprint, get_nested, load_config, radec_to_cartesian,
+                    replace_prior_with_delta)
 from .interp import LOSInterpolator
-from .model import (JeffreysPrior, load_priors, rsample,
-                    log_prior_r_empirical, predict_cz)
+from .model import (JeffreysPrior, load_priors, log_prior_r_empirical,
+                    mvn_logpdf_cholesky, predict_cz, rsample)
 from .simpson import ln_simpson
-
-
-def mvn_logpdf_cholesky(y, mu, L):
-    """
-    Log-pdf of a multivariate normal using Cholesky factor L (lower
-    triangular).
-    """
-    z = solve_triangular(L, y - mu, lower=True)
-    log_det = jnp.sum(jnp.log(jnp.diag(L)))
-    return -0.5 * (len(y) * jnp.log(2 * jnp.pi) + 2 * log_det + jnp.dot(z, z))
 
 
 def log_integral_gauss_pdf_times_cdf(mu, sigma, t, w):
@@ -130,6 +119,9 @@ class BaseSH0ESModel(ABC):
 
         self.use_MNR = get_nested(config, "model/use_MNR", False)
         fprint(f"use_MNR set to {self.use_MNR}")
+        self.which_distance_prior = get_nested(
+            config, "model/which_distance_prior", "volume")
+        fprint(f"which_distance_prior set to {self.which_distance_prior}")
         self.which_selection = get_nested(
             config, "model/which_selection", None)
         fprint(f"which_selection set to {self.which_selection}")
@@ -139,9 +131,6 @@ class BaseSH0ESModel(ABC):
         self.use_uniform_mu_host_priors = get_nested(
             config, "model/use_uniform_mu_host_priors", True)
         fprint(f"use_uniform_mu_host_priors set to {self.use_uniform_mu_host_priors}")  # noqa
-        self.which_distance_prior = get_nested(
-            config, "model/which_distance_prior", "volume")
-        fprint(f"which_distance_prior set to {self.which_distance_prior}")
         self.use_fiducial_Cepheid_host_PV_covariance = get_nested(
             config, "model/use_fiducial_Cepheid_host_PV_covariance", True)
         fprint(f"use_fiducial_Cepheid_host_PV_covariance set to {self.use_fiducial_Cepheid_host_PV_covariance}")  # noqa
@@ -265,6 +254,14 @@ class BaseSH0ESModel(ABC):
         which_distance_prior = get_nested(
             config, "model/which_distance_prior", "volume")
 
+        if which_selection == "empirical":
+            fprint("selected `empirical` selection. Switching the distance "
+                   "prior.")
+            which_selection = None
+            config["model"]["which_selection"] = None
+            which_distance_prior = "empirical"
+            config["model"]["which_distance_prior"] = "empirical"
+
         if not use_SNe and not which_selection in ["SN_magnitude", "SN_magnitude_redshift"]:  # noqa
             replace_prior_with_delta(config, "M_B", -19.25)
 
@@ -329,6 +326,7 @@ class BaseSH0ESModel(ABC):
         for attr, (ra_key, dec_key), label in specs:
             if ra_key in data and dec_key in data:
                 fprint(f"Converting {label} RA/dec to Cartesian coordinates.")
+                assert data[ra_key].ndim == 1 and data[dec_key].ndim == 1
                 rhat = radec_to_cartesian(data[ra_key], data[dec_key])
                 # Store normalized Cartesian unit vectors as attributes
                 setattr(self, attr, _normalize_rows(rhat))
@@ -622,8 +620,8 @@ class SH0ESModel(BaseSH0ESModel):
 
             log_S = self.log_S_SN_mag(lp_rand_dist_grid, M_B, H0)
 
-            if self.weight_selection_by_covmat_Neff:
-                log_S *= self.Neff_C_SN_unique_Cepheid_host / self.num_hosts
+            # if self.weight_selection_by_covmat_Neff:
+            #     log_S *= self.Neff_C_SN_unique_Cepheid_host / self.num_hosts
 
             # Since the selection is in supernova apparent magnitude, must
             # constrain their absolute magnitude and thus also forward model
@@ -666,8 +664,8 @@ class SH0ESModel(BaseSH0ESModel):
             log_S = self.log_S_Cepheid_mag(
                 lp_host_dist_grid, M_W, b_W, Z_W, H0)
 
-            if self.weight_selection_by_covmat_Neff:
-                log_S *= self.Neff_C_Cepheid / self.num_hosts
+            # if self.weight_selection_by_covmat_Neff:
+            #     log_S *= self.Neff_C_Cepheid / self.num_hosts
         else:
             log_S = jnp.zeros((1, self.num_hosts))
 

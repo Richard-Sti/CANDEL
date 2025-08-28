@@ -1,10 +1,14 @@
-root_main = "/Users/rstiskalek/Projects/CANDEL/"
-python_exec = "/Users/rstiskalek/Projects/CANDEL/venv_candel/bin/python"
-machine = "local"
+# root_main = "/Users/rstiskalek/Projects/CANDEL/"
+# python_exec = "/Users/rstiskalek/Projects/CANDEL/venv_candel/bin/python"
+# machine = "local"
 
 # root_main = "/mnt/home/rstiskalek/ceph/CANDEL"
 # python_exec="/mnt/home/rstiskalek/CANDEL/venv_gpu_candel/bin/python"
 # machine="rusty"
+
+root_main = "/home/phys1997/CANDEL/"
+python_exec = "/home/phys1997/CANDEL/venv_candel/bin/python"
+machine = "arc"
 
 
 ###############################################################################
@@ -12,9 +16,9 @@ machine = "local"
 ###############################################################################
 
 [inference]
-num_warmup = 500
-num_samples = 500
-num_chains = 10
+num_warmup = 1000
+num_samples = 5000
+num_chains = 5
 chain_method = "parallel"
 seed = 44
 num_chains_harmonic = 10
@@ -24,9 +28,11 @@ num_chains_harmonic = 10
 ###############################################################################
 
 [model]
+is_CH0 = true
 
 Om = 0.3
 use_MNR = false
+# Make "empirical" selection tag
 which_selection = "redshift"
 use_uniform_mu_host_priors = false
 which_distance_prior = "volume"
