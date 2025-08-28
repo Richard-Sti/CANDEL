@@ -357,7 +357,6 @@ class PVDataFrame:
 
 
 def load_los(los_data_path, data, mask=None):
-    print(los_data_path, mask)
     with File(los_data_path, 'r') as f:
         if mask is None:
             data["los_density"] = f['los_density'][...]
