@@ -304,7 +304,9 @@ if __name__ == "__main__":
     # --- CH0 overrides ---
     manual_overrides = {
         "io/root_output": "results/CH0",
-        "model/which_selection": ["none", "redshift", "SN_magnitude", "SN_magnitude_redshift", "empirical"],  # noqa
+        # "model/which_selection": ["none", "redshift", "SN_magnitude", "SN_magnitude_redshift", "empirical"],  # noqa
+        # "model/which_selection": ["none", "redshift", "SN_magnitude"],  # noqa
+        "model/which_selection": ["SN_magnitude_redshift", "empirical"],  # noqa
         "model/use_reconstruction": True,
         # "model/use_fiducial_Cepheid_host_PV_covariance": True,
         # "model/use_PV_covmat_scaling": [False, True],
@@ -318,7 +320,7 @@ if __name__ == "__main__":
         "model/priors/beta": [
             # {"dist": "normal", "loc": 0.43, "scale": 0.02},
             {"dist": "delta", "value": 1.0},
-            {"dist": "normal", "loc": 1.0, "scale": 0.5},
+            #{"dist": "normal", "loc": 1.0, "scale": 0.5},
         ],
     }
 
