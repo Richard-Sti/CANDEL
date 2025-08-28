@@ -267,8 +267,8 @@ if __name__ == "__main__":
     # --- TFR/SN/FP/Cluster flow model over-rides ---
     manual_overrides = {
         # "pv_model/kind": ["Vext", "precomputed_los_Carrick2015"],
-        "pv_model/kind": "Vext",
-        # "pv_model/galaxy_bias": "linear",
+        "pv_model/kind": "precomputed_los_manticore_2MPP_MULTIBIN_N256_DES_V2",
+        "pv_model/galaxy_bias": "powerlaw",
         # "io/catalogue_name": [f"CF4_mock_{n}" for n in range(70)],
         "io/catalogue_name": "Clusters",
         "inference/model": "ClustersModel",
@@ -283,10 +283,10 @@ if __name__ == "__main__":
         # "io/CF4_W1/zcmb_min": 0.01,
         # "io/CF4_W1/dust_model": ["none", "default", "SFD", "CSFD", "Planck2016"],  # noqa
         # "io/Clusters/which_relation": ["LT", "LTY"],
-        # "model/priors/beta": [
-        #     {"dist": "normal", "loc": 0.43, "scale": 0.1},
-        #     {"dist": "delta", "value": 1.0},
-        # ],
+        "model/priors/beta": [
+            # {"dist": "normal", "loc": 0.43, "scale": 0.1},
+            {"dist": "delta", "value": 1.0},
+        ],
         # "model/priors/zeropoint_dipole": [
         #     {"dist": "delta", "value": [0.0, 0.0, 0.0]},
         #     # {"dist": "vector_uniform_fixed", "low": 0.0, "high": 0.3},
