@@ -21,10 +21,9 @@ from .model import (                                                            
     Clusters_DistMarg,                                                          # noqa
     FPModel_DistMarg,                                                           # noqa
     Clusters_DistMarg_LT_from_LTY,                                              # noqa
-    JointPVModel                                                                # noqa
+    JointPVModel,
+    get_Ez                                                          # noqa
     )
-
-print('lol' , Clusters_DistMarg_LT_from_LTY.__mro__)
 
 from .magnitude_selection import (                                              # noqa
     MagnitudeSelection,                                                         # noqa

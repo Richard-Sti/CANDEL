@@ -48,9 +48,10 @@ def load_PV_dataframes(config_path):
 
     dfs = []
     for name in names:
-        is_mock = name.startswith("CF4_mock")
+        is_mock = name.startswith("CF4_mock") or name.startswith("Clusters_mock")
         if is_mock:
-            kwargs = config_io["CF4_mock"].copy()
+            key = "CF4_mock" if name.startswith("CF4_mock") else "Clusters_mock"
+            kwargs = config_io[key].copy()
         else:
             kwargs = config_io[name].copy()
 
@@ -119,6 +120,9 @@ class PVDataFrame:
             data = load_PantheonPlus(root, **config)
         elif name == "Clusters":
             data = load_clusters(root, **config)
+        elif "Clusters_mock" in name:
+            index = name.split("_")[-1]
+            data = load_clusters_mock(root, index)
         else:
             raise ValueError(f"Unknown catalogue name: {name}")
 
@@ -298,6 +302,7 @@ class PVDataFrame:
 
 
 def load_los(los_data_path, data, mask=None):
+    print(los_data_path)
     with File(los_data_path, 'r') as f:
         data["los_density"] = f['los_density'][...][mask, ...]
         data["los_velocity"] = f['los_velocity'][...][mask, ...]
@@ -448,6 +453,12 @@ def load_CF4_mock(root, index):
         data = {key: grp[key][...] for key in grp.keys()}
     return data
 
+def load_clusters_mock(root, index):
+    fname = join(root, f"mock_{index}.hdf5")
+    with File(fname, 'r') as f:
+        grp = f["mock"]
+        data = {key: grp[key][...] for key in grp.keys()}
+    return data
 
 def load_PantheonPlus(root, zcmb_min=None, zcmb_max=None, b_min=7.5,
                       los_data_path=None, return_all=False, **kwargs):
@@ -563,7 +574,7 @@ def load_SH0ES(root):
     return data
 
 
-def load_clusters(root, zcmb_min=None, zcmb_max=None, all_data=False, los_data_path=None,
+def load_clusters(root, zcmb_min=None, zcmb_max=None, remove_noY=False, los_data_path=None,
                   return_all=False, **kwargs):
     """
     Load the cluster scaling relation data from the given root directory.
@@ -584,9 +595,6 @@ def load_clusters(root, zcmb_min=None, zcmb_max=None, all_data=False, los_data_p
     ]
 
     data = np.genfromtxt(fname, dtype=dtype, skip_header=1)
-    if not all_data:
-        data = data[(data['Y_nr_no_ksz'] != -1.0)]
-    fprint(f"initially loaded {len(data)} clusters.")
 
     z = data['z']
     T = data['T']
@@ -596,6 +604,7 @@ def load_clusters(root, zcmb_min=None, zcmb_max=None, all_data=False, los_data_p
     Tmin = data['Tmin']
     Y_arcmin2 = data['Y_arcmin2']
     e_Y = data['e_Y']
+    has_Y = data['Y_nr_no_ksz'] != -1.0
 
     # The file assumes a cosmology with H0 = 70 km/s/Mpc and Omega_m = 0.3
     cosmo = FlatLambdaCDM(H0=70, Om0=0.3)
@@ -629,15 +638,27 @@ def load_clusters(root, zcmb_min=None, zcmb_max=None, all_data=False, los_data_p
     if return_all:
         return data
 
+
     mask = np.ones(len(z), dtype=bool)
 
+    fprint(f"initially loaded {len(mask)} clusters.")
+
+    if remove_noY:
+        mask &= has_Y
+    
+    fprint(f'Removed clusters {len(mask) - np.sum(mask)} without Y_nr_no_ksz.')
+
+    zmask = np.ones(len(z), dtype=bool)
+
     if zcmb_min is not None:
-        mask &= z > zcmb_min
+        zmask &= z > zcmb_min
 
     if zcmb_max is not None:
-        mask &= z < zcmb_max
+        zmask &= z < zcmb_max
 
-    fprint(f"removed {len(mask) - np.sum(mask)} clusters, thus "
+    mask &= zmask
+
+    fprint(f"removed {len(zmask) - np.sum(zmask)} clusters based on redshift, thus "
            f"{len(data['RA'][mask])} remain.")
 
     for key in data:
@@ -646,10 +667,8 @@ def load_clusters(root, zcmb_min=None, zcmb_max=None, all_data=False, los_data_p
     fprint("subtracting the mean logT from the data.")
     data["logT"] -= np.mean(data["logT"])
 
-    mask = ~np.isnan(data["logY"])
-    mean_logY = np.mean(data["logY"][mask])
-
     fprint("subtracting the mean logY from the data.")
+    mean_logY = np.mean(data["logY"][~np.isnan(data["logY"])])
     data["logY"] -= mean_logY
 
     # fprint("subtracting the mean logF from the data.")

@@ -222,15 +222,22 @@ def name2label(name):
     return latex_labels.get(name, name)
 
 
-def plot_corner(samples, show_fig=True, filename=None, smooth=1, keys=None):
+def plot_corner(samples, show_fig=True, filename=None, smooth=1, keys=None,max_latent=10,
+                fig=None, color=None):
     """Plot a corner plot from posterior samples."""
     flat_samples = []
     labels = []
 
     for k, v in samples.items():
+
         if keys is not None and k not in keys:
             continue
         if v.ndim > 2:
+            continue
+        if v.ndim == 2:
+            for i in range(max_latent):
+                flat_samples.append(v[:, i].reshape(-1))
+                labels.append(f"{name2label(k)}_{i}")
             continue
         flat_samples.append(v.reshape(-1))
         labels.append(name2label(k))
@@ -244,7 +251,7 @@ def plot_corner(samples, show_fig=True, filename=None, smooth=1, keys=None):
         data,
         labels=labels,
         show_titles=True,
-        smooth=smooth,
+        smooth=smooth,fig=fig,color=color
     )
 
     if filename is not None:
@@ -255,6 +262,8 @@ def plot_corner(samples, show_fig=True, filename=None, smooth=1, keys=None):
         fig.show()
     else:
         plt.close(fig)
+
+    return fig
 
 
 def plot_Vext_rad_corner(samples, show_fig=True, filename=None, smooth=1):

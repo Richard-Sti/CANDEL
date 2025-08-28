@@ -20,7 +20,6 @@ from ..util import (SPEED_OF_LIGHT, galactic_to_radec,
                     galactic_to_radec_cartesian, radec_to_cartesian, fprint)
 from ..field import interpolate_los_density_velocity
 
-
 def reject_sample_distance(mu_TFR, sigma_TFR, h, distmod2dist,
                            log_grad_distmod2distance, r_h_density_grid,
                            log_los_density_grid, num_sigma=5, n_points=501,
@@ -148,6 +147,7 @@ def gen_CF4_TFR_mock(nsamples, Vext_mag, Vext_ell, Vext_b, sigma_v, alpha,
     Vext_rad = np.sum(Vext[None, :] * rhat, axis=1)
 
     zpec = (los_velocity + Vext_rad) / SPEED_OF_LIGHT
+
     sigma_cz = sigma_v / SPEED_OF_LIGHT
     zcmb_true = (1 + zcosmo) * (1 + zpec) - 1
     zcmb = gen.normal(zcmb_true, sigma_cz, size=nsamples)
@@ -163,6 +163,130 @@ def gen_CF4_TFR_mock(nsamples, Vext_mag, Vext_ell, Vext_b, sigma_v, alpha,
         "los_r": r_los,
         "los_density": los_density_precomp,
         "los_velocity": los_velocity_precomp,
+        }
+
+    if zcmb_max is not None:
+        mask = zcmb < zcmb_max
+        fprint(f"Rejecting {np.sum(~mask)} samples with zcmb > {zcmb_max:.2f}")
+        for key in data:
+            if key in ["los_r"]:
+                continue
+            data[key] = data[key][mask]
+
+    return data
+
+
+def gen_Clusters_LTY_mock(nsamples, Vext_mag, Vext_ell, Vext_b, sigma_v, alpha, 
+                          beta, A, B, C, sigma_mu, h, 
+                          logT, logY, logF, e_logT, e_logY, e_logF,
+                          b_min, zcmb_max, r_h_max, distmod2dist, distmod2redshift,
+                          log_grad_distmod2dist, field_loader, use_data_prior,
+                          mu_from_LTY_calibration,
+                          rmin_reconstruction, rmax_reconstruction,
+                          num_steps_reconstruction, seed=42):
+    """
+    Generate a mock sample of clusters with LTY scaling relation.
+    """
+    gen = np.random.default_rng(seed)
+
+    # Sample the sky-coordinates of the clusters.
+    ell = gen.uniform(0, 360, size=nsamples)
+    if b_min is None:
+        b = np.arcsin(gen.uniform(-1, 1, size=nsamples))
+    else:
+        b = np.arcsin(gen.uniform(np.sin(np.deg2rad(b_min)), 1, size=nsamples))
+        b[gen.random(nsamples) < 0.5] *= -1
+    b = np.rad2deg(b)
+    RA, dec = galactic_to_radec(ell, b)
+    rhat = radec_to_cartesian(RA, dec)
+
+    if use_data_prior:
+        ks = np.random.choice(len(logF), size=nsamples, replace=True)
+        logT_true = logT[ks]
+        logY_true = logY[ks]
+        logF_true = logF[ks]
+    else:
+        pass # TODO sample according to Boubel model
+    
+    logT_obs = gen.normal(logT, e_logT, size=nsamples)
+    logY_obs = gen.normal(logY, e_logY, size=nsamples)
+    logF_obs = gen.normal(logF, e_logF, size=nsamples)
+
+    r_los = np.linspace(
+        rmin_reconstruction, rmax_reconstruction, num_steps_reconstruction)
+
+    r_h_grid = np.arange(0, r_h_max + 0.1, 0.1)
+    if field_loader is None:
+        log_los_density_grid = np.zeros((nsamples, len(r_h_grid)))
+        los_velocity_grid = np.zeros((nsamples, len(r_h_grid)))
+        los_density_precomp = np.ones((nsamples, len(r_h_grid)))
+        los_velocity_precomp = np.zeros((nsamples, len(r_h_grid)))
+    else:
+        log_los_density_grid, los_velocity_grid = interpolate_los_density_velocity(
+            field_loader, r_h_grid, RA, dec)
+        log_los_density_grid = alpha * np.log(log_los_density_grid)
+        los_velocity_grid *= beta
+
+        los_density_precomp, los_velocity_precomp = interpolate_los_density_velocity(
+            field_loader, r_los, RA, dec)
+
+    #Ez = get_Ez(data["zcmb"], Om=0.3)
+    logL_pred = A + B * logT
+    mu_cluster = 2.5 * (logL_pred - logF) + 25
+
+    #theta = 0.5 * (A + B * logT_true + C * logY_true - logF_true)
+    #mu_cluster = mu_from_LTY_calibration(theta, C)
+
+    # Reject sample the true distance from the LTY estimates.
+    mu = np.zeros_like(mu_cluster)
+    for i in range(len(mu_cluster)):
+        mu[i] = reject_sample_distance(
+            mu_cluster[i], sigma_mu, h, distmod2dist,
+            log_grad_distmod2dist, r_h_grid, log_los_density_grid[i],
+            seed=seed + i)
+    
+    import matplotlib.pyplot as plt
+    plt.hist(mu - mu_cluster,density=True)
+    plt.xlabel('Mu_true - Mu_pred ')
+    # plot a standardised normal with 0.5 width and mean 0 
+    x = np.linspace(-3, 3, 100)
+    plt.plot(x, norm(0, 0.5).pdf(x), label='Standardised Normal')
+    plt.legend()
+    plt.show()
+
+    r_h = distmod2dist(mu)
+    los_velocity = np.full(nsamples, np.nan)
+    for i in range(nsamples):
+        # Interpolate the velocity field at the position of the cluster.
+        los_velocity[i] = np.interp(r_h[i], r_h_grid, los_velocity_grid[i])
+
+    # Convert distance modulus to redshift.
+    zcosmo = distmod2redshift(mu, h=h)
+
+    # Compute peculiar velocity contributions.
+    Vext = Vext_mag * galactic_to_radec_cartesian(Vext_ell, Vext_b)
+    Vext_rad = np.sum(Vext[None, :] * rhat, axis=1)
+
+    zpec = (los_velocity + Vext_rad) / SPEED_OF_LIGHT
+    sigma_cz = sigma_v / SPEED_OF_LIGHT
+    zcmb_true = (1 + zcosmo) * (1 + zpec) - 1
+    zcmb = gen.normal(zcmb_true, sigma_cz, size=nsamples)
+
+    data = {
+        "RA": RA,
+        "dec": dec,
+        "zcmb": zcmb,
+        "logT": logT_obs,
+        "e_logT": np.ones_like(logT_obs) * e_logT,
+        "logY": logY_obs,
+        "e_logY": np.ones_like(logY_obs) * e_logY,
+        "logF": logF_obs,
+        "e_logF": np.ones_like(logF_obs) * e_logF,
+        "los_r": r_los,
+        "los_density": los_density_precomp,
+        "los_velocity": los_velocity_precomp,
+        "mu_cluster": mu_cluster,  # True mu for debugging
+        "mu": mu,  # Sampled mu for debugging
         }
 
     if zcmb_max is not None:

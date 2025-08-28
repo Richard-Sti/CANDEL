@@ -77,8 +77,9 @@ def interpolate_los_density_velocity(field_loader, r, RA, dec):
     velocity = field_loader.load_velocity()  # shape (3, ngrid, ngrid, ngrid)
     v_interp = np.empty((pos_flat.shape[0], 3), dtype=np.float32)
 
+
     for i in range(3):
-        f_vel = build_regular_interpolator(velocity[i], field_loader.boxsize)
+        f_vel = build_regular_interpolator(velocity[i], field_loader.boxsize, fill_value=fill_value)
         v_interp[:, i] = f_vel(pos_flat)
 
     v_interp = v_interp.reshape(*pos_shape)  # (n_r, n_gal, 3)

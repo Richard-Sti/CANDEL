@@ -68,6 +68,8 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
     else:
         log_density = None
 
+    log_likelihood = samples['ll_skipZ']
+
     if return_original_samples:
         original_samples = deepcopy(samples)
 
@@ -113,7 +115,7 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
     if save_samples:
         fname_out = model.config["io"]["fname_output"]
         fprint(f"output directory is {dirname(fname_out)}.")
-        save_mcmc_samples(samples, log_density, gof, fname_out)
+        save_mcmc_samples(samples, log_density, log_likelihood, gof, fname_out)
 
         fname_plot = splitext(fname_out)[0] + ".png"
         plot_corner(samples, show_fig=False, filename=fname_plot,)
@@ -127,9 +129,9 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
                                  filename=fname_plot)
 
     if return_original_samples:
-        return samples, log_density, original_samples
+        return samples, log_density, log_likelihood, original_samples
 
-    return samples, log_density
+    return samples, log_density, log_likelihood
 
 
 def run_magsel_inference(model, model_args, num_warmup=1000, num_samples=5000,
@@ -197,19 +199,19 @@ def drop_deterministic(samples):
 def postprocess_samples(samples):
     """Postprocess the MCMC samples."""
     # Convert Vext or Vext_rad samples to galactic coordinates
-    for prefix in ["Vext_rad", "Vext"]:  # ← more specific first
-        if f"{prefix}_phi" in samples and f"{prefix}_cos_theta" in samples:
-            phi = np.rad2deg(samples.pop(f"{prefix}_phi"))
-            theta = np.arccos(samples.pop(f"{prefix}_cos_theta"))
-            dec = np.rad2deg(0.5 * np.pi - theta)
+    for prefix in ["Vext_rad", "Vext", "dipA", "quadA"]:  # ← more specific first
+        for suffix in ["", "1", "2"]:
+            if f"{prefix}_phi{suffix}" in samples and f"{prefix}_cos_theta{suffix}" in samples:
+                phi = np.rad2deg(samples.pop(f"{prefix}_phi{suffix}"))
+                theta = np.arccos(samples.pop(f"{prefix}_cos_theta{suffix}"))
+                dec = np.rad2deg(0.5 * np.pi - theta)
 
-            ell, b = radec_to_galactic(phi, dec)
-            samples[f"{prefix}_ell"] = ell
-            samples[f"{prefix}_b"] = b
+                ell, b = radec_to_galactic(phi, dec)
+                samples[f"{prefix}_ell{suffix}"] = ell
+                samples[f"{prefix}_b{suffix}"] = b
 
-            if f"{prefix}_mag" in samples:
-                samples[f"{prefix}_mag"] = samples.pop(f"{prefix}_mag")
-            break
+        if f"{prefix}_mag" in samples:
+            samples[f"{prefix}_mag"] = samples.pop(f"{prefix}_mag")
 
     for prefix in ["a_TFR_dipole", "M_dipole"]:
         if f"{prefix}_phi" in samples and f"{prefix}_cos_theta" in samples:
@@ -232,15 +234,15 @@ def print_clean_summary(samples):
     """Wrapper around numpyro's `print_summary`."""
     samples_print = {}
     for key, x in samples.items():
-        if "_latent" in key:
-            continue
+        # if "_latent" in key:
+        #     continue
 
         samples_print[key] = x[None, ...]
 
     print_summary_numpyro(samples_print,)
 
 
-def save_mcmc_samples(samples, log_density, gof, filename):
+def save_mcmc_samples(samples, log_density, log_likelihood, gof, filename):
     """Save the MCMC samples to an HDF5 file."""
     with File(filename, 'w') as f:
         grp = f.create_group("samples")
@@ -270,6 +272,9 @@ def save_mcmc_samples(samples, log_density, gof, filename):
 
         if log_density is not None:
             f.create_dataset("log_density", data=log_density)
+
+        if log_likelihood is not None:
+            f.create_dataset("log_likelihood", data=log_likelihood)
 
         if gof is not None:
             grp = f.create_group("gof")

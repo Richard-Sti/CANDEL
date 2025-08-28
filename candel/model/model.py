@@ -160,6 +160,42 @@ def sample_vector_fixed(name, mag_min, mag_max):
          cos_theta]
         )
 
+def sample_quadrupole_fixed(name, mag_min, mag_max):
+    """
+    Sample a quadrupole but without accounting for continuity and poles.
+    
+    This enforces that all sampled points have the same contribution to
+    `log_density` which is not the case for the `sample_quadrupole` function
+    because the unit vectors are drawn.
+    """
+    phi1 = sample(f"{name}_phi1", Uniform(0, 2 * jnp.pi))
+    cos_theta1 = sample(f"{name}_cos_theta1", Uniform(-1, 1))
+    sin_theta1 = jnp.sqrt(1 - cos_theta1**2)
+    phi2 = sample(f"{name}_phi2", Uniform(0, 2 * jnp.pi))
+    cos_theta2 = sample(f"{name}_cos_theta2", Uniform(-1, 1))
+    sin_theta2 = jnp.sqrt(1 - cos_theta2**2)
+
+    mag = sample(f"{name}_mag", Uniform(mag_min, mag_max))
+
+    vector1 = jnp.array(
+        [sin_theta1 * jnp.cos(phi1),
+         sin_theta1 * jnp.sin(phi1),
+         cos_theta1]
+        )
+    vector2 = jnp.array(
+        [sin_theta2 * jnp.cos(phi2),
+         sin_theta2 * jnp.sin(phi2),
+         cos_theta2]
+        )
+    return jnp.sqrt(mag) * jnp.array([vector1, vector2]).T
+
+
+
+
+
+
+
+
 
 def sample_spline_radial_vector(name, nval, low, high):
     """
@@ -203,6 +239,7 @@ def load_priors(config_priors):
         "vector_uniform": lambda p: {"type": "vector_uniform", "low": p["low"], "high": p["high"]},  # noqa
         "vector_uniform_fixed": lambda p: {"type": "vector_uniform_fixed", "low": p["low"], "high": p["high"],},  # noqa
         "vector_radial_spline_uniform": lambda p: {"type": "vector_radial_spline_uniform", "nval": len(p["rknot"]), "low": p["low"], "high": p["high"]},  # noqa
+        "quadrupole_uniform_fixed": lambda p: {"type": "quadrupole_uniform_fixed", "low": p["low"], "high": p["high"]},  # noqa
     }
     priors = {}
     prior_dist_name = {}
@@ -249,6 +286,9 @@ def _rsample(name, dist):
     if isinstance(dist, dict) and dist.get("type") == "vector_radial_spline_uniform":  # noqa
         return sample_spline_radial_vector(
             name, dist["nval"], dist["low"], dist["high"], )
+
+    if isinstance(dist, dict) and dist.get("type") == "quadrupole_uniform_fixed":  # noqa
+        return sample_quadrupole_fixed(name, dist["low"], dist["high"])
 
     return sample(name, dist)
 
@@ -453,6 +493,23 @@ def compute_Vext_radial(data, Vext, with_radial_Vext=False, **kwargs_radial):
         Vext_rad = jnp.sum(data["rhat"] * Vext[None, :], axis=1)[:, None]
 
     return Vext_rad
+
+
+def compute_quadrupole_radial(data, quadrupole):
+    """Compute the line-of-sight projection of the quadrupole.
+    Q_rad = Q (q1.ni q2.ni - 1/3 q1.q2)
+    where q1 and q2 are the quadrupole vectors and ni is the unit radial vector to the galaxy i.
+    """
+    Qq1 = quadrupole[:, 0]  # shape (3,)
+    Qq2 = quadrupole[:, 1]  # shape (3,)
+    
+    dot1 = jnp.sum(data["rhat"] * Qq1, axis=1)  # (N, 1)
+    dot2 = jnp.sum(data["rhat"] * Qq2, axis=1)  # (N, 1)
+
+    Q_rad = dot1 * dot2  # (N, 1)
+    Q_rad -= (1 / 3) * jnp.dot(Qq1, Qq2)  # scalar, broadcasted
+
+    return Q_rad  # (N, 1)
 
 
 ###############################################################################
@@ -866,9 +923,6 @@ class Clusters_DistMarg(BaseModel):
 
         self.sample_mu = self.config["inference"]["sample_mu"]
 
-        if self.sample_mu:
-            print('Sampling mu!')
-
         which_relation = self.config["io"]["Clusters"]["which_relation"]
         if which_relation not in ["LT", "LY", "LTY", "YT"]:
             raise ValueError(f"Invalid scaling relation '{which_relation}'. "
@@ -943,9 +997,6 @@ class Clusters_DistMarg(BaseModel):
         C = rsample("C_CL", self.priors["CL_C"],shared_params)
         sigma_mu = rsample("sigma_mu", self.priors["sigma_mu"],shared_params)
 
-        #debug.print('{} {} {}', A,B,C)
-        #debug.print('{} {} {}',A_LT, B_LT, sigma_mu_LT)
-
         # Sample velocity field parameters.
         if self.with_radial_Vext:
             Vext = rsample("Vext_rad", self.priors["Vext_radial"],shared_params)
@@ -953,16 +1004,21 @@ class Clusters_DistMarg(BaseModel):
             Vext = rsample("Vext", self.priors["Vext"],shared_params)
         sigma_v = rsample("sigma_v", self.priors["sigma_v"],shared_params)
         # Remaining parameters
-        bias_params = sample_galaxy_bias(self.priors, self.galaxy_bias)
-        beta = rsample("beta", self.priors["beta"],shared_params)
+        if data.has_precomputed_los:
+            bias_params = sample_galaxy_bias(self.priors, self.galaxy_bias)
+            beta = rsample("beta", self.priors["beta"],shared_params)
 
         # For the distance marginalization, h is not sampled. Careful because
         # the mapping to `mu` above assumes h = 1.
         h = 1.
 
-        # if self.sample_mu:
-        #     mu_MNR_mean = sample("mu_MNR_mean", Uniform(30,40))
-        #     mu_MNR_sigma = sample("mu_MNR_sigma", Uniform(0,10))
+        # # normalisation dipole
+        dipA = rsample("dipA", self.priors["dipA"],shared_params)
+        quadA = rsample("quadA", self.priors["quadA"],shared_params)
+
+        A += jnp.sum(dipA * data['rhat'],axis=1)
+        A += compute_quadrupole_radial(data, quadA)
+
         with plate("data", nsamples):
             if self.use_MNR:
                 raise NotImplementedError(
@@ -1011,6 +1067,7 @@ class Clusters_DistMarg(BaseModel):
             # corrections are small and subdominant to the noise in the cluster
             # scaling relations.
             Ez = get_Ez(data["zcmb"], Om=self.Om)
+            #Ez = 1
 
             if self.which_relation == "LT":
                 logL_pred = jnp.log10(Ez) + A + B * logT
@@ -1029,41 +1086,55 @@ class Clusters_DistMarg(BaseModel):
             if self.sample_mu:
 
                 mu = sample("mu_latent", Normal(mu_cluster, sigma_mu))
-                #mu= sample("mu_latent", Normal(mu_MNR_mean,mu_MNR_sigma))
-                # mu= sample("mu_latent", Uniform(20,42))
+                ll = Normal(mu_cluster, sigma_mu).log_prob(mu)
 
+                #debug.print('mu: {mu}', mu=mu)
                 r = self.distmod2distance(mu, h=h)
-                log_pmu = 2 * jnp.log(r) + self.log_grad_distmod2distance(mu, h=h)
-                Vrad = 0.
-                # Homogeneous Malmquist bias
-                log_pmu_norm = log_norm_pmu(
-                    mu_cluster, sigma_mu, self.distmod2distance,
-                    **self.num_norm_kwargs, h=h)
-                
-                # rlower, rupper = self.distmod2distance(jnp.array([20.,41.]), h=h) 
-                # pmu_norm = 1/3 * (rupper**3 - rlower**3)
-                log_pmu_norm = 0 #jnp.log(pmu_norm) # normalisation not needed for basic case
-                #=log_pmu = 0.
-                Vrad = 0. # ADD Vrad
 
-                # # Homogeneous Malmquist bias
-                # log_pmu_norm = log_norm_pmu(
-                #     mu_cluster, sigma_mu, self.distmod2distance,
-                #     **self.num_norm_kwargs, h=h)
+                # Homogeneous & inhomogeneous Malmquist bias
+                log_pmu = 2 * jnp.log(r) + self.log_grad_distmod2distance(mu, h=h)
+                if data.has_precomputed_los:
+                # The field is in Mpc / h, so convert the distance modulus
+                # back to Mpc / h in case that h != 1.
+                    Vrad = beta * data.f_los_velocity(r * h)
+
+                    if self.galaxy_bias == "powerlaw":
+                        alpha = bias_params[0]
+                        log_pmu += alpha * data.f_los_log_density(r * h)
+                        log_pmu_norm = log_norm_pmu_im(
+                            mu_cluster, sigma_mu, bias_params, self.distmod2distance,
+                            data.f_los_log_density, self.galaxy_bias,
+                            **self.num_norm_kwargs, h=h)
+                    elif self.galaxy_bias == "linear":
+                        b1 = bias_params[0]
+                        #log_pmu += jnp.ones_like(r)
+                        log_pmu += jnp.log(
+                            jnp.clip(1 + b1 * data.f_los_delta(r * h), 1e-5))
+                        log_pmu_norm = log_norm_pmu_im(
+                            mu_cluster, sigma_mu, bias_params, self.distmod2distance,
+                            data.f_los_delta, self.galaxy_bias,
+                            **self.num_norm_kwargs, h=h)
+                    else:
+                        raise ValueError(
+                            f"Invalid galaxy bias model '{self.galaxy_bias}'.")
+
+                else:
+                    Vrad = 0.
+                    # Homogeneous Malmquist bias
+                    log_pmu_norm = log_norm_pmu(
+                        mu_cluster, sigma_mu, self.distmod2distance,
+                        **self.num_norm_kwargs, h=h)
 
                 factor("mu_norm", log_pmu - log_pmu_norm)
+                ll += log_pmu - log_pmu_norm
 
                 Vext_rad = jnp.sum(data["rhat"] * Vext, axis=1)
                 zpec = (Vrad + Vext_rad) / SPEED_OF_LIGHT
                 zcmb = self.distmod2redshift(mu, h=h)
                 czpred = SPEED_OF_LIGHT * ((1 + zcmb) * (1 + zpec) - 1)
 
-                zpec = (Vrad + Vext_rad) / SPEED_OF_LIGHT
-                zcmb = self.distmod2redshift(mu, h=h)
-
-                deterministic("zpred", zcmb)
-
-                czpred = SPEED_OF_LIGHT * ((1 + zcmb) * (1 + zpec) - 1)
+                ll += Normal(czpred, sigma_v).log_prob(data["czcmb"])
+                deterministic("ll_skipZ", ll)       
 
                 sample("obs", Normal(czpred, sigma_v), obs=data["czcmb"])
 
@@ -1075,16 +1146,21 @@ class Clusters_DistMarg(BaseModel):
                 ll = 2 * jnp.log(r_grid)
                 ll += Normal(
                     mu_cluster[:, None], sigma_mu[:, None]).log_prob(mu_grid)
+                
+                deterministic("ll_cluster_mu_skipZ", ll)
 
                 if data.has_precomputed_los:
                     # The shape is `(n_galaxies, num_steps.)`
                     Vrad = beta * data["los_velocity"]
+                    #Vrad = jnp.zeros(data["los_velocity"].shape)
                     ll += lp_galaxy_bias(
                         data["los_delta"], data["los_log_density"], bias_params,
                         self.galaxy_bias)
                 else:
                     Vrad = 0.
 
+                deterministic("ll_cluster_IHM_skipZ", ll)
+                
                 ll_norm = ln_simpson(ll, x=r_grid, axis=-1)
 
                 Vext_rad = compute_Vext_radial(
@@ -1095,19 +1171,10 @@ class Clusters_DistMarg(BaseModel):
                 czpred = SPEED_OF_LIGHT * ((1 + zcmb) * (1 + zpec) - 1)
 
                 ll += Normal(czpred, sigma_v).log_prob(data["czcmb"][:, None])
+                deterministic('ll_cluster_skipZ',ll)
                 ll = ln_simpson(ll, x=r_grid, axis=-1) - ll_norm
-                #ll = jnp.where(jnp.isnan(logY), 0, ll)
-
-                #debug.print('{}', np.sum(ll))
-                # debug.print('A_CL {}', A)
-                # debug.print('B_CL {}', B)
-                # debug.print('C_CL {}', C)
-                # debug.print('sigma_mu {}', sigma_mu[0])
-                # debug.print('sigma_v {}', sigma_v)
-                # debug.print('A_LT_CL {}', A_LT)
-                # debug.print('B_LT_CL {}', B_LT)
-                # debug.print('sigma_mu_LT {}', sigma_mu_LT[0])
-
+                deterministic("ll_skipZ", ll)
+                
                 factor("obs", ll)
 
 
@@ -1146,8 +1213,6 @@ class Clusters_DistMarg_LT_from_LTY(Clusters_DistMarg):
 
     def __call__(self, data, shared_params=None):
         super().__call__(data, shared_params)
-
-print(Clusters_DistMarg_LT_from_LTY.__mro__)
 
 ###############################################################################
 #                                FP models                                    #
