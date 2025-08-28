@@ -298,12 +298,12 @@ def name2labelgetdist(name):
         "b_TFR": r"b_\mathrm{TFR}",
         "c_TFR": r"c_\mathrm{TFR}",
         "sigma_int": r"\sigma_{\rm int}~\left[\mathrm{mag}\right]",
-        "sigma_v": r"\sigma_v~\left[\mathrm{km}/\mathrm{s}\right]",
+        "sigma_v": r"\sigma_v~\left[\mathrm{km}\,\mathrm{s}^{-1}\right]",
         "alpha": r"\alpha",
         "b1": r"b_1",
         "b2": r"b_2",
         "beta": r"\beta",
-        "Vext_mag": r"V_\mathrm{ext}~\left[\mathrm{km}/\mathrm{s}\right]",
+        "Vext_mag": r"V_\mathrm{ext}~\left[\mathrm{km}\,\mathrm{s}^{-1}\right]",  # noqa
         "Vext_ell": r"\ell_\mathrm{ext}~\left[\mathrm{deg}\right]",
         "Vext_ell_offset": r"\ell_\mathrm{ext} - 180~\left[\mathrm{deg}\right]",  # noqa
         "Vext_b":   r"b_\mathrm{ext}~\left[\mathrm{deg}\right]",
