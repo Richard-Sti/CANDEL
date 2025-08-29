@@ -74,5 +74,6 @@ from .util import (                                                             
     dms_to_degrees,                                                             # noqa
     fprint,                                                                     # noqa
     read_gof,                                                                   # noqa
-    get_nested,
+    read_samples,                                                               # noqa
+    get_nested,                                                                 # noqa
 )

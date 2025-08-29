@@ -24,6 +24,7 @@ except ModuleNotFoundError:
 from datetime import datetime
 from os.path import abspath, basename, isabs, join
 from pathlib import Path
+from warnings import warn
 
 import astropy.units as u
 import jax.numpy as jnp
@@ -298,7 +299,7 @@ def name2labelgetdist(name):
         "a_TFR": r"a_\mathrm{TFR}",
         "b_TFR": r"b_\mathrm{TFR}",
         "c_TFR": r"c_\mathrm{TFR}",
-        "sigma_int": r"\sigma_{\rm int}~\left[\mathrm{mag}\right]",
+        "sigma_int": r"\sigma_{\rm int}",
         "sigma_v": r"\sigma_v~\left[\mathrm{km}\,\mathrm{s}^{-1}\right]",
         "alpha": r"\alpha",
         "b1": r"b_1",
@@ -438,7 +439,7 @@ def plot_Vext_rad_corner(samples, show_fig=True, filename=None, smooth=1):
         plt.close(fig)
 
 
-def plot_corner_getdist(samples_list, labels=None, show_fig=True,
+def plot_corner_getdist(samples_list, labels=None, cols=None, show_fig=True,
                         filename=None, keys=None, fontsize=None,
                         legend_fontsize=None, filled=True,
                         apply_ell_offset=False, mag_range=[0, None],
@@ -449,6 +450,7 @@ def plot_corner_getdist(samples_list, labels=None, show_fig=True,
         import scienceplots  # noqa
         use_scienceplots = True
     except ImportError:
+        warn("scienceplots not found, using default plotting style.")
         use_scienceplots = False
 
     if isinstance(samples_list, dict):
@@ -531,12 +533,20 @@ def plot_corner_getdist(samples_list, labels=None, show_fig=True,
         settings.axes_fontsize = fontsize - 1
         settings.title_limit_fontsize = fontsize - 1
 
+    if cols is not None:
+        line_args = [{"color": c} for c in cols]
+    else:
+        line_args = None
+
     with plt.style.context("science" if use_scienceplots else "default"):
         g = plots.get_subplot_plotter(settings=settings)
         g.triangle_plot(
             gdsamples_list,
             params=param_names,
             filled=filled,
+            colors=cols,
+            contour_colors=cols,
+            line_args=line_args,
             legend_labels=labels,
             legend_loc="upper right",
         )
@@ -601,9 +611,9 @@ def plot_corner_getdist(samples_list, labels=None, show_fig=True,
             plt.close()
 
 
-def plot_corner_from_hdf5(fnames, keys=None, labels=None, fontsize=None,
-                          legend_fontsize=None, filled=True, show_fig=True,
-                          filename=None, apply_ell_offset=False,
+def plot_corner_from_hdf5(fnames, keys=None, labels=None, cols=None,
+                          fontsize=None, legend_fontsize=None, filled=True,
+                          show_fig=True, filename=None, apply_ell_offset=False,
                           mag_range=[0, None], ell_range=[0, 360],
                           b_range=[-90, 90], points=None, truths=None):
     """
@@ -627,6 +637,7 @@ def plot_corner_from_hdf5(fnames, keys=None, labels=None, fontsize=None,
         samples_list,
         labels=labels,
         keys=keys,
+        cols=cols,
         fontsize=fontsize,
         legend_fontsize=legend_fontsize,
         filled=filled,
@@ -765,3 +776,19 @@ def read_gof(fname, which):
                 f"{list(f['gof'].keys())}") from e
 
     return stat / np.log(10) if convert else stat
+
+
+def read_samples(root, fname, keys=None):
+    fname = join(root, fname)
+
+    with File(fname, "r") as f:
+        if keys is None:
+            keys = list(f["samples"].keys())
+        elif isinstance(keys, str):
+            keys = [keys]
+
+        samples = {key: f[f"samples/{key}"][...] for key in keys}
+
+    if isinstance(keys, list) and len(keys) == 1:
+        return samples[keys[0]]
+    return samples
