@@ -267,26 +267,27 @@ if __name__ == "__main__":
     # --- TFR/SN/FP/Cluster flow model over-rides ---
     manual_overrides = {
         # "pv_model/kind": ["Vext", "precomputed_los_Carrick2015"],
-        "pv_model/kind": "precomputed_los_manticore_2MPP_MULTIBIN_N256_DES_V2",
-        "pv_model/galaxy_bias": "powerlaw",
+        "pv_model/kind": "precomputed_los_Carrick2015",
+        # "pv_model/kind": "Vext",
+        "pv_model/galaxy_bias": "linear",
         # "io/catalogue_name": [f"CF4_mock_{n}" for n in range(70)],
         "io/catalogue_name": "Clusters",
         "inference/model": "ClustersModel",
         "io/root_output": "results/Clusters",
-        "io/Clusters/which_relation": ["LT", "LTY"],
+        "io/Clusters/which_relation": "LT",
         "model/use_MNR": False,
         "pv_model/r_limits_malmquist": [[0.1, 1001]],
-        "pv_model/num_points_malmquist": 501,
+        "pv_model/num_points_malmquist": 1001,
         # "model/marginalize_eta": True,
         # "io/CF4_i/exclude_W1": True,
         # "io/CF4_W1/best_mag_quality": False,
         # "io/CF4_W1/zcmb_min": 0.01,
         # "io/CF4_W1/dust_model": ["none", "default", "SFD", "CSFD", "Planck2016"],  # noqa
         # "io/Clusters/which_relation": ["LT", "LTY"],
-        "model/priors/beta": [
-            # {"dist": "normal", "loc": 0.43, "scale": 0.1},
-            {"dist": "delta", "value": 1.0},
-        ],
+        # "model/priors/beta": [
+        #     # {"dist": "normal", "loc": 0.43, "scale": 0.1},
+        #     {"dist": "delta", "value": 1.0},
+        # ],
         # "model/priors/zeropoint_dipole": [
         #     {"dist": "delta", "value": [0.0, 0.0, 0.0]},
         #     # {"dist": "vector_uniform_fixed", "low": 0.0, "high": 0.3},
@@ -337,9 +338,6 @@ if __name__ == "__main__":
                         config = replace_prior_with_delta(config, "b1", 0.)
                         config = replace_prior_with_delta(
                             config, "delta_b1", 0.)
-                    else:
-                        value = f"precomputed_los_{value}"
-                        fprint(f"transformed kind override to: {value}")
 
                 if isinstance(value, dict):
                     local_config = overwrite_subtree(local_config, key, value)
