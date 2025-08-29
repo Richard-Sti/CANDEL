@@ -267,9 +267,10 @@ if __name__ == "__main__":
     # --- TFR/SN/FP/Cluster flow model over-rides ---
     manual_overrides = {
         # "pv_model/kind": ["Vext", "precomputed_los_Carrick2015"],
-        "pv_model/kind": "precomputed_los_Carrick2015",
+        # "pv_model/kind": "precomputed_los_Carrick2015",
+        "pv_model/kind": "precomputed_los_manticore_2MPP_MULTIBIN_N256_DES_V2",
         # "pv_model/kind": "Vext",
-        "pv_model/galaxy_bias": "linear",
+        "pv_model/galaxy_bias": "powerlaw",
         # "io/catalogue_name": [f"CF4_mock_{n}" for n in range(70)],
         "io/catalogue_name": "Clusters",
         "inference/model": "ClustersModel",
@@ -288,11 +289,11 @@ if __name__ == "__main__":
         #     # {"dist": "normal", "loc": 0.43, "scale": 0.1},
         #     {"dist": "delta", "value": 1.0},
         # ],
-        # "model/priors/zeropoint_dipole": [
-        #     {"dist": "delta", "value": [0.0, 0.0, 0.0]},
-        #     # {"dist": "vector_uniform_fixed", "low": 0.0, "high": 0.3},
-        #     # {"dist": "vector_components_uniform", "low": -0.3, "high": 0.3},  # noqa
-        # ],
+        "model/priors/zeropoint_dipole": [
+            {"dist": "delta", "value": [0.0, 0.0, 0.0]},
+            # {"dist": "vector_uniform_fixed", "low": 0.0, "high": 0.3},
+            # {"dist": "vector_components_uniform", "low": -0.3, "high": 0.3},  # noqa
+        ],
     }
 
     # --- CH0 overrides ---
