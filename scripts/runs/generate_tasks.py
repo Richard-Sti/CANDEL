@@ -270,14 +270,14 @@ if __name__ == "__main__":
         # "pv_model/kind": "precomputed_los_manticore_2MPP_MULTIBIN_N256_DES_V2",  # noqa
         # "pv_model/kind": "Vext",
         # "pv_model/galaxy_bias": "linear_from_beta",
-        "io/catalogue_name": [f"CF4_mock_{n}" for n in range(70)],
-        "io/CF4_mock/root": "data/CF4_mock/isotropic",
-        # "io/catalogue_name": "Foundation",
-        "inference/model": "TFRModel",
-        "io/root_output": "results/dH0/CF4_mock_isotropic",
+        # "io/catalogue_name": [f"CF4_mock_{n}" for n in range(70)],
+        # "io/CF4_mock/root": "data/CF4_mock/isotropic",
+        "io/catalogue_name": "Foundation",
+        "inference/model": "SNModel",
+        "io/root_output": "results_test/",
         # "io/Clusters/which_relation": "LT",
         "model/use_MNR": True,
-        "model/marginalize_eta": True,
+        # "model/marginalize_eta": True,
         # "pv_model/r_limits_malmquist": [[0.1, 1001]],
         # "pv_model/num_points_malmquist": 1001,
         # "model/marginalize_eta": True,
@@ -290,11 +290,11 @@ if __name__ == "__main__":
         #     # {"dist": "normal", "loc": 0.43, "scale": 0.1},
         #     {"dist": "delta", "value": 1.0},
         # ],
-        "model/priors/zeropoint_dipole": [
-            {"dist": "delta", "value": [0.0, 0.0, 0.0]},
-            {"dist": "vector_uniform_fixed", "low": 0.0, "high": 0.3},
-            # {"dist": "vector_components_uniform", "low": -0.3, "high": 0.3},  # noqa
-        ],
+        # "model/priors/zeropoint_dipole": [
+        #     {"dist": "delta", "value": [0.0, 0.0, 0.0]},
+        #     {"dist": "vector_uniform_fixed", "low": 0.0, "high": 0.3},
+        #     # {"dist": "vector_components_uniform", "low": -0.3, "high": 0.3},  # noqa
+        # ],
     }
 
     # --- CH0 overrides ---
