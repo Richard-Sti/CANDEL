@@ -266,19 +266,20 @@ if __name__ == "__main__":
     # Multiple override options → this creates a job per combination
     # --- TFR/SN/FP/Cluster flow model over-rides ---
     manual_overrides = {
-        # "pv_model/kind": ["Vext", "precomputed_los_Carrick2015"],
-        # "pv_model/kind": "precomputed_los_Carrick2015",
-        "pv_model/kind": "precomputed_los_manticore_2MPP_MULTIBIN_N256_DES_V2",
+        "pv_model/kind": "precomputed_los_Carrick2015",
+        # "pv_model/kind": "precomputed_los_manticore_2MPP_MULTIBIN_N256_DES_V2",  # noqa
         # "pv_model/kind": "Vext",
-        "pv_model/galaxy_bias": "powerlaw",
-        # "io/catalogue_name": [f"CF4_mock_{n}" for n in range(70)],
-        "io/catalogue_name": "Clusters",
-        "inference/model": "ClustersModel",
-        "io/root_output": "results/Clusters",
-        "io/Clusters/which_relation": "LT",
+        # "pv_model/galaxy_bias": "linear_from_beta",
+        "io/catalogue_name": [f"CF4_mock_{n}" for n in range(70)],
+        "io/CF4_mock/root": "data/CF4_mock/isotropic",
+        # "io/catalogue_name": "Foundation",
+        "inference/model": "TFRModel",
+        "io/root_output": "results_test/",
+        # "io/Clusters/which_relation": "LT",
         "model/use_MNR": False,
-        "pv_model/r_limits_malmquist": [[0.1, 1001]],
-        "pv_model/num_points_malmquist": 1001,
+        "model/marginalize_eta": False,
+        # "pv_model/r_limits_malmquist": [[0.1, 1001]],
+        "pv_model/num_points_malmquist": 101,
         # "model/marginalize_eta": True,
         # "io/CF4_i/exclude_W1": True,
         # "io/CF4_W1/best_mag_quality": False,
@@ -291,7 +292,7 @@ if __name__ == "__main__":
         # ],
         "model/priors/zeropoint_dipole": [
             {"dist": "delta", "value": [0.0, 0.0, 0.0]},
-            # {"dist": "vector_uniform_fixed", "low": 0.0, "high": 0.3},
+            {"dist": "vector_uniform_fixed", "low": 0.0, "high": 0.3},
             # {"dist": "vector_components_uniform", "low": -0.3, "high": 0.3},  # noqa
         ],
     }
