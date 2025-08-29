@@ -20,6 +20,7 @@ from argparse import ArgumentParser
 
 import numpy as np
 from h5py import File
+from mpi4py import MPI
 
 import candel
 from candel import fprint
@@ -92,58 +93,88 @@ def load_los(catalogue, config):
     return RA, dec, los_file
 
 
-if __name__ == "__main__":
+def main():
+    comm = MPI.COMM_WORLD
+    rank = comm.Get_rank()
+    size = comm.Get_size()
+    verbose = rank == 0
+
     parser = ArgumentParser()
-    parser.add_argument("--catalogue", type=str,
-                        help="Which catalogue to use.", required=True)
-    parser.add_argument("--reconstruction", type=str,
-                        help="Which reconstruction to use.", required=True)
-    parser.add_argument("--config", type=str,
-                        help="Path to the config file with paths.",
-                        required=True)
+    parser.add_argument("--catalogue", type=str, required=True)
+    parser.add_argument("--reconstruction", type=str, required=True)
+    parser.add_argument("--config", type=str, required=True)
     args = parser.parse_args()
 
     config = candel.load_config(args.config)
 
     if args.reconstruction == "Carrick2015":
-        nsims = [0,]
+        nsims = [0]
     elif args.reconstruction.lower().startswith("manticore"):
         nsims = list(range(30))
     else:
-        raise ValueError(
-            f"Reconstruction `{args.reconstruction}` not supported. ")
+        if rank == 0:
+            raise ValueError(
+                f"Reconstruction `{args.reconstruction}` not supported.")
+        else:
+            return
+
+    fprint(f"iterating over {len(nsims)} simulations "
+           f"for `{args.reconstruction}`.", verbose=verbose)
 
     d = config["io"]["reconstruction_main"]
     fprint(f"settin the radial grid from {d['rmin']} to {d['rmax']} with "
-           f"{d['num_steps']} steps.")
+           f"{d['num_steps']} steps.", verbose=verbose)
     r = np.linspace(d["rmin"], d["rmax"], d["num_steps"])
 
     fprint(f"loading the catalogue `{args.catalogue}` with "
-           f"reconstruction `{args.reconstruction}`.")
+           f"reconstruction `{args.reconstruction}`.", verbose=verbose)
     RA, dec, los_file = load_los(args.catalogue, config)
-    fprint(f"loaded {len(RA)} galaxies from the catalogue.")
+    fprint(f"loaded {len(RA)} galaxies from the catalogue.", verbose=verbose)
 
-    los_density = np.full(
-        (len(nsims), len(RA), len(r)), np.nan, dtype=np.float32)
-    los_velocity = np.full_like(los_density, np.nan, dtype=np.float32)
+    n_sims = len(nsims)
+    n_gal = len(RA)
+    n_r = len(r)
 
-    for i, nsim in enumerate(nsims):
-        fprint(f"loading the reconstruction `{args.reconstruction}` for "
-               f"simulation {nsim}.")
-        loader = candel.field.name2field_loader(
-            args.reconstruction)(
-                nsim=nsim,
-                **config["io"]["reconstruction_main"][args.reconstruction])
-        los_density[i], los_velocity[i] = candel.field.interpolate_los_density_velocity(  # noqa
+    # Assign work: indices in nsims handled by this rank
+    my_idxs = [i for i in range(n_sims) if (i % size) == rank]
+
+    local_results = []
+    for i in my_idxs:
+        nsim = nsims[i]
+        print(f"[rank {rank}] loading `{args.reconstruction}` for sim {nsim}.")
+        loader = candel.field.name2field_loader(args.reconstruction)(
+            nsim=nsim,
+            **config["io"]["reconstruction_main"][args.reconstruction])
+        dens_i, vel_i = candel.field.interpolate_los_density_velocity(
             loader, r, RA, dec)
+        # store with the global slot index so root can place it
+        local_results.append(
+            (i, dens_i.astype(np.float32), vel_i.astype(np.float32)))
 
-    los_file = los_file.replace("<X>", args.reconstruction)
-    fprint(f"saving the line of sight data to `{los_file}`.")
-    with File(los_file, "w") as f:
-        f.create_dataset("RA", data=RA, dtype=np.float32)
-        f.create_dataset("dec", data=dec, dtype=np.float32)
-        f.create_dataset("r", data=r, dtype=np.float32)
-        f.create_dataset("los_density", data=los_density, dtype=np.float32)
-        f.create_dataset("los_velocity", data=los_velocity, dtype=np.float32)
+    # Gather lists of (i, dens, vel) to root
+    all_results = comm.gather(local_results, root=0)
 
-    fprint("all finished.")
+    if rank == 0:
+        los_density = np.full((n_sims, n_gal, n_r), np.nan, dtype=np.float32)
+        los_velocity = np.full_like(los_density, np.nan, dtype=np.float32)
+
+        for rank_results in all_results:
+            for i, dens_i, vel_i in rank_results:
+                los_density[i] = dens_i
+                los_velocity[i] = vel_i
+
+        los_file = los_file.replace("<X>", args.reconstruction)
+        fprint(f"saving the line of sight data to `{los_file}`.")
+        dt = np.dtype(np.float32)
+        with File(los_file, "w") as f:
+            f.create_dataset("RA", data=RA, dtype=dt)
+            f.create_dataset("dec", data=dec, dtype=dt)
+            f.create_dataset("r", data=r, dtype=dt)
+            f.create_dataset("los_density", data=los_density, dtype=dt)
+            f.create_dataset("los_velocity", data=los_velocity, dtype=dt)
+
+        fprint("all finished.")
+
+
+if __name__ == "__main__":
+    main()
