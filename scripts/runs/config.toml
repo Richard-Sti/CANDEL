@@ -78,8 +78,21 @@ value = 0.3
 # high = 0.99
 
 [model.priors.alpha]
-dist = "normal"
-loc = 1.0
+dist = "truncated_normal"
+low = 0.0
+mean = 1.0
+scale = 1.0
+
+[model.priors.eps]
+dist = "truncated_normal"
+low = 0.0
+mean = 1.0
+scale = 1.0
+
+[model.priors.rho_exp]
+dist = "truncated_normal"
+low = 0.0
+mean = 1.0
 scale = 1.0
 
 [model.priors.b1]
