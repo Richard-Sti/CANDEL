@@ -275,7 +275,8 @@ def name2label(name):
         "R_dist_emp": r"$R_{\rm dist}$",
         "n_dist_emp": r"$n_{\rm dist}$",
         "p_dist_emp": r"$p_{\rm dist}$",
-        "Rmax_dist_emp": r"$R_{\rm max, dist}$"
+        "Rmax_dist_emp": r"$R_{\rm max, dist}$",
+        "rho_corr": r"$\rho_{\rm corr}$",
     }
 
     if "/" in name:
@@ -336,6 +337,7 @@ def name2labelgetdist(name):
         "R_dist_emp": r"R~\left[h^{-1}\,\mathrm{Mpc}\right]",
         "n_dist_emp": r"n",
         "p_dist_emp": r"p",
+        "rho_corr": r"\rho_{\rm corr}",
     }
 
     if "/" in name:
