@@ -312,10 +312,10 @@ def name2labelgetdist(name):
         "a": r"a",
         "m1": r"m_1",
         "m2": r"m_2",
-        "zeropoint_dipole_mag": r"\Delta_\mathrm{ZP}~\left[\mathrm{mag}\right]",         # noqa
+        "zeropoint_dipole_mag": r"\Delta_\mathrm{ZP}",         # noqa
         "zeropoint_dipole_ell": r"\ell_{\Delta_\mathrm{ZP}}~\left[\mathrm{deg}\right]",  # noqa
         "zeropoint_dipole_b": r"b_{\Delta_\mathrm{ZP}}~\left[\mathrm{deg}\right]",       # noqa
-        "M_dipole_mag": r"\Delta M_\mathrm{SN}~[\mathrm{mag}]",
+        "M_dipole_mag": r"\Delta M_\mathrm{SN}",
         "M_dipole_ell": r"\ell_{\Delta M_{\rm SN}}~\left[\mathrm{deg}\right]",
         "M_dipole_b": r"b_{\Delta M_{\rm SN}}~\left[\mathrm{deg}\right]",
         "eta_prior_mean": r"\hat{\eta}",
@@ -327,11 +327,11 @@ def name2labelgetdist(name):
         "b_FP": r"b_{\rm FP}",
         "c_FP": r"c_{\rm FP}",
         "R_dust": r"R_{\rm W1}",
-        "mu_LMC": r"\mu_{\rm LMC} ~ [\mathrm{mag}]",
-        "mu_M31": r"\mu_{\rm M31} ~ [\mathrm{mag}]",
-        "mu_N4258": r"\mu_{\rm NGC4258} ~ [\mathrm{mag}]",
+        "mu_LMC": r"\mu_{\rm LMC}",
+        "mu_M31": r"\mu_{\rm M31}",
+        "mu_N4258": r"\mu_{\rm NGC4258}",
         "H0": r"H_0~\left[\mathrm{km}\,\mathrm{s}^{-1}\,\mathrm{Mpc}^{-1}\right]",  # noqa
-        "dZP": r"\Delta_{\rm ZP}~\left[\mathrm{mag}\right]",
+        "dZP": r"\Delta_{\rm ZP}",
         "R_dist_emp": r"R~\left[h^{-1}\,\mathrm{Mpc}\right]",
         "n_dist_emp": r"n",
         "p_dist_emp": r"p",
