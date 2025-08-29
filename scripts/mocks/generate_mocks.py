@@ -85,7 +85,7 @@ for nsamples in nsample_list:
         fname = join(mock_dir, f"mock_{index}.hdf5")
         print(f"[INFO] Preparing `{fname}`", flush=True)
 
-        mock = candel.mock.gen_CF4_TFR_mock(nsamples, seed=seed, **kwargs)
+        mock = candel.mock.gen_TFR_mock(nsamples, seed=seed, **kwargs)
 
         with File(fname, 'w') as f:
             grp = f.create_group("mock")
