@@ -277,7 +277,7 @@ if __name__ == "__main__":
         "io/root_output": "results/dH0/CF4_mock_anisotropic",
         # "io/Clusters/which_relation": "LT",
         "model/use_MNR": True,
-        "model/marginalize_eta": True,
+        # "model/marginalize_eta": True,
         # "pv_model/r_limits_malmquist": [[0.1, 1001]],
         # "pv_model/num_points_malmquist": 1001,
         # "model/marginalize_eta": True,
@@ -290,11 +290,11 @@ if __name__ == "__main__":
         #     # {"dist": "normal", "loc": 0.43, "scale": 0.1},
         #     {"dist": "delta", "value": 1.0},
         # ],
-        "model/priors/zeropoint_dipole": [
-            {"dist": "delta", "value": [0.0, 0.0, 0.0]},
-            {"dist": "vector_uniform_fixed", "low": 0.0, "high": 0.3},
-            # {"dist": "vector_components_uniform", "low": -0.3, "high": 0.3},  # noqa
-        ],
+        # "model/priors/zeropoint_dipole": [
+        #     {"dist": "delta", "value": [0.0, 0.0, 0.0]},
+        #     {"dist": "vector_uniform_fixed", "low": 0.0, "high": 0.3},
+        #     # {"dist": "vector_components_uniform", "low": -0.3, "high": 0.3},  # noqa
+        # ],
     }
 
     # --- CH0 overrides ---

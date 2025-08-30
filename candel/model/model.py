@@ -736,12 +736,18 @@ class SNModel(BaseModel):
                 "c_prior_mean", Uniform(data["min_c"], data["max_c"]))
             c_prior_std = sample(
                 "c_prior_std", Uniform(0.0, data["max_c"] - data["min_c"]))
+            rho = sample("rho_corr", Uniform(-1, 1))
+
+            mu = jnp.array([x1_prior_mean, c_prior_mean])
+            cov = jnp.array([
+                [x1_prior_std**2, rho * x1_prior_std * c_prior_std],
+                [rho * x1_prior_std * c_prior_std, c_prior_std**2]])
 
         with plate("data", nsamples):
             if self.use_MNR:
-                # Sample latent x1, c and condition on their measurements.
-                x1 = sample("x1_latent", Normal(x1_prior_mean, x1_prior_std))
-                c = sample("c_latent", Normal(c_prior_mean, c_prior_std))
+                x_latent = sample("x_latent", MultivariateNormal(mu, cov))
+                x1 = x_latent[:, 0]
+                c = x_latent[:, 1]
 
                 sample("x1_obs", Normal(x1, data["e_x1"]), obs=data["x1"])
                 sample("c_obs", Normal(c, data["e_c"]), obs=data["c"])
