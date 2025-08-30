@@ -486,6 +486,15 @@ def compute_Vext_radial(data, r_grid, Vext, with_radial_Vext=False,
     return Vext_rad
 
 
+def sample_distance_prior(priors):
+    """Sample hyperparameters describing the empirical distance prior."""
+    return {
+        "R": rsample("R_dist_emp", priors["R_dist_emp"]),
+        "p": rsample("p_dist_emp", priors["p_dist_emp"]),
+        "n": rsample("n_dist_emp", priors["n_dist_emp"])
+        }
+
+
 ###############################################################################
 #                              TFR models                                     #
 ###############################################################################
@@ -534,14 +543,10 @@ class TFRModel(BaseModel):
         a_TFR_dipole = rsample(
             "zeropoint_dipole", self.priors["zeropoint_dipole"], shared_params)
         a_TFR = a_TFR + jnp.sum(a_TFR_dipole * data["rhat"], axis=1)
+        kwargs_dist = sample_distance_prior(self.priors)
 
         # For the distance marginalization, h is not sampled.
         h = 1.
-
-        R_dist_emp = rsample("R_dist_emp", self.priors["R_dist_emp"])
-        p_dist_emp = rsample("p_dist_emp", self.priors["p_dist_emp"])
-        n_dist_emp = rsample("n_dist_emp", self.priors["n_dist_emp"])
-        kwargs_dist = {"R": R_dist_emp, "p": p_dist_emp, "n": n_dist_emp}
 
         if data.sample_dust:
             Rdust = rsample("R_dust", self.priors["Rdust"], shared_params)
@@ -712,10 +717,7 @@ class SNModel(BaseModel):
         h = 1.0
 
         # Empirical p(r) hyperparameters
-        R_dist_emp = rsample("R_dist_emp", self.priors["R_dist_emp"])
-        p_dist_emp = rsample("p_dist_emp", self.priors["p_dist_emp"])
-        n_dist_emp = rsample("n_dist_emp", self.priors["n_dist_emp"])
-        kwargs_dist = {"R": R_dist_emp, "p": p_dist_emp, "n": n_dist_emp}
+        kwargs_dist = sample_distance_prior(self.priors)
 
         # --- Velocity field / selection nuisance ---
         if self.with_radial_Vext:
@@ -868,10 +870,7 @@ class PantheonPlusModel(BaseModel):
             x1 = data["x1"]
             c = data["c"]
 
-        R_dist_emp = rsample("R_dist_emp", self.priors["R_dist_emp"])
-        p_dist_emp = rsample("p_dist_emp", self.priors["p_dist_emp"])
-        n_dist_emp = rsample("n_dist_emp", self.priors["n_dist_emp"])
-        kwargs_dist = {"R": R_dist_emp, "p": p_dist_emp, "n": n_dist_emp}
+        kwargs_dist = sample_distance_prior(self.priors)
 
         # Sample velocity field parameters.
         Vext = rsample("Vext", self.priors["Vext"], shared_params)
@@ -1018,10 +1017,7 @@ class ClustersModel(BaseModel):
         # For the distance marginalization, h is not sampled.
         h = 1.
 
-        R_dist_emp = rsample("R_dist_emp", self.priors["R_dist_emp"])
-        p_dist_emp = rsample("p_dist_emp", self.priors["p_dist_emp"])
-        n_dist_emp = rsample("n_dist_emp", self.priors["n_dist_emp"])
-        kwargs_dist = {"R": R_dist_emp, "p": p_dist_emp, "n": n_dist_emp}
+        kwargs_dist = sample_distance_prior(self.priors)
 
         # Sample velocity field parameters.
         if self.with_radial_Vext:
@@ -1137,10 +1133,7 @@ class FPModel(BaseModel):
         # For the distance marginalization, h is not sampled.
         h = 1.
 
-        R_dist_emp = rsample("R_dist_emp", self.priors["R_dist_emp"])
-        p_dist_emp = rsample("p_dist_emp", self.priors["p_dist_emp"])
-        n_dist_emp = rsample("n_dist_emp", self.priors["n_dist_emp"])
-        kwargs_dist = {"R": R_dist_emp, "p": p_dist_emp, "n": n_dist_emp}
+        kwargs_dist = sample_distance_prior(self.priors)
 
         # Sample velocity field parameters.
         if self.with_radial_Vext:
@@ -1261,10 +1254,7 @@ class CalibratedDistanceModel_DistMarg(BaseModel):
         sigma_int = rsample(
             "sigma_int", self.priors["sigma_int"], shared_params)
 
-        R_dist_emp = rsample("R_dist_emp", self.priors["R_dist_emp"])
-        p_dist_emp = rsample("p_dist_emp", self.priors["p_dist_emp"])
-        n_dist_emp = rsample("n_dist_emp", self.priors["n_dist_emp"])
-        kwargs_dist = {"R": R_dist_emp, "p": p_dist_emp, "n": n_dist_emp}
+        kwargs_dist = sample_distance_prior(self.priors)
 
         # Sample velocity field parameters.
         if self.with_radial_Vext:

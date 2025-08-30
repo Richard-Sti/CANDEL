@@ -31,7 +31,8 @@ from ..util import (fprint, get_nested, load_config, radec_to_cartesian,
                     replace_prior_with_delta)
 from .interp import LOSInterpolator
 from .model import (JeffreysPrior, load_priors, log_prior_r_empirical,
-                    mvn_logpdf_cholesky, predict_cz, rsample)
+                    lp_galaxy_bias, mvn_logpdf_cholesky, predict_cz, rsample,
+                    sample_galaxy_bias, sample_distance_prior)
 from .simpson import ln_simpson
 
 
@@ -454,41 +455,30 @@ class SH0ESModel(BaseSH0ESModel):
             raise ValueError(
                 f"Unknown distance prior: `{self.which_distance_prior}`")
 
-    def log_galaxy_bias(self, delta, beta):
-        if self.which_bias == "linear":
-            b1 = self.Om ** 0.55 / beta
-            return jnp.log(jnp.clip(1 + b1 * delta, self.br_min_clip))
-        elif self.which_bias == "powerlaw":
-            # double_powerlaw+2014 model.
-            alpha = 0.65
-            rho_exp = 0.4
-            eps = 1.5
-
-            x = 1 + delta
-            return alpha * jnp.log(x) - (x / rho_exp)**(-eps)
-        else:
-            raise ValueError(
-                f"Unknown galaxy bias model: `{self.which_bias}`.")
-
     def __call__(self, ):
         # Hubble constant
         H0 = rsample("H0", self.priors["H0"])
+
         # CPLR calibration
         M_W = rsample("M_W", self.priors["M_W"])
         b_W = rsample("b_W", self.priors["b_W"])
         Z_W = rsample("Z_W", self.priors["Z_W"])
+
         # SN calibration
         M_B = rsample("M_B", self.priors["M_B"])
+
         # Velocity field calibration
         Vext = rsample("Vext", self.priors["Vext"])
         sigma_v = rsample("sigma_v", self.priors["sigma_v"])
         A_covmat = rsample("A_covmat", self.priors["A_covmat"])
         beta = rsample("beta", self.priors["beta"])
+
+        # Galaxy bias parameters
+        bias_params = sample_galaxy_bias(
+            self.priors, self.which_bias, beta=beta, Om=self.Om)
+
         # Empirical distance prior calibration
-        R_dist_emp = rsample("R_dist_emp", self.priors["R_dist_emp"])
-        p_dist_emp = rsample("p_dist_emp", self.priors["p_dist_emp"])
-        n_dist_emp = rsample("n_dist_emp", self.priors["n_dist_emp"])
-        kwargs_dist = {"R": R_dist_emp, "p": p_dist_emp, "n": n_dist_emp}
+        kwargs_dist = sample_distance_prior(self.priors)
 
         h = H0 / 100
         # Project Vext along the LOS to each host.
@@ -554,7 +544,9 @@ class SH0ESModel(BaseSH0ESModel):
             los_delta_host = self.f_host_los_delta(rh_host)
 
             # Add the inhomogeneous Malmquist bias (n_fields, n_galaxies)
-            lp_host_dist += self.log_galaxy_bias(los_delta_host, beta=beta)
+            lp_host_dist += lp_galaxy_bias(
+                los_delta_host, jnp.log(1 + los_delta_host), bias_params,
+                self.which_bias)
 
             # Evaluate LOS overdensity over a radial grid in Mpc / h:
             # `(n_fields, n_galaxies, n_steps)``
@@ -563,8 +555,9 @@ class SH0ESModel(BaseSH0ESModel):
 
             # Compute integrand for normalization
             # Shape: (n_fields, n_galaxies, n_steps)
-            lp_host_dist_grid += self.log_galaxy_bias(
-                los_delta_grid, beta=beta)
+            lp_host_dist_grid += lp_galaxy_bias(
+                los_delta_grid, jnp.log(1 + los_delta_grid), bias_params,
+                self.which_bias)
 
             # Simpson integral over radial steps, per field and galaxy
             lp_host_dist_norm = ln_simpson(
@@ -582,8 +575,10 @@ class SH0ESModel(BaseSH0ESModel):
                     self.r_host_range * h)
                 # Compute the inhomogeneous Malmquist bias
                 # (previously computed homogeneous)
-                lp_rand_dist_grid += self.log_galaxy_bias(
-                    rand_los_delta_grid, beta=beta)
+                lp_rand_dist_grid += lp_galaxy_bias(
+                    rand_los_delta_grid, jnp.log(1 + rand_los_delta_grid),
+                    bias_params, self.which_bias)
+
                 # Compute the normalization constant
                 lp_rand_dist_grid -= ln_simpson(
                     lp_rand_dist_grid, x=self.r_host_range[None, None, ...],
