@@ -196,18 +196,13 @@ def supergalactic_to_radec(sgl, sgb):
     return c.icrs.ra.deg, c.icrs.dec.deg
 
 
-def galactic_to_radec_cartesian(ell, b):
+def radec_to_supergalactic(ra, dec):
     """
-    Convert galactic coordinates (ell, b) in degrees to ICRS Cartesian unit
-    vectors.
+    Convert right ascension and declination (in degrees) to supergalactic
+    coordinates in degrees.
     """
-    c = SkyCoord(l=np.atleast_1d(ell) * u.deg,
-                 b=np.atleast_1d(b) * u.deg,
-                 frame='galactic')
-    icrs = c.icrs
-    xyz = icrs.cartesian.xyz.value.T
-
-    return xyz[0] if np.isscalar(ell) and np.isscalar(b) else xyz
+    c = SkyCoord(ra=ra * u.deg, dec=dec * u.deg, frame="icrs")
+    return c.supergalactic.sgl.deg, c.supergalactic.sgb.deg
 
 
 def radec_cartesian_to_galactic(x, y, z):

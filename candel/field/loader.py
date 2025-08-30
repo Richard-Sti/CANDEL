@@ -193,6 +193,10 @@ class CLONES_FieldLoader(BaseFieldLoader):
     def load_density(self):
         with File(self.file_path, "r") as f:
             field = f["density"][...]
+
+        grid = field.shape[0]
+        field /= (500 * 1e3 / grid)**3
+
         return field.astype(np.float32)
 
     def load_velocity(self):
