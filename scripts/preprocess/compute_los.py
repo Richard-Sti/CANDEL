@@ -107,17 +107,24 @@ def main():
     args = parser.parse_args()
 
     config = candel.load_config(args.config)
+    nreal_map = {
+        "Carrick2015": 1,
+        "Lilow2024": 1,
+        "CLONES": 1,
+        "CB1": 100,
+        "CB2": 20,
+        "CF4": 100,
+        }
 
-    if args.reconstruction == "Carrick2015":
-        nsims = [0]
-    elif args.reconstruction.lower().startswith("manticore"):
+    recon = args.reconstruction
+    if recon in nreal_map:
+        nsims = list(range(nreal_map[recon]))
+    elif recon.lower().startswith("manticore"):
         nsims = list(range(30))
     else:
         if rank == 0:
-            raise ValueError(
-                f"Reconstruction `{args.reconstruction}` not supported.")
-        else:
-            return
+            raise ValueError(f"Reconstruction `{recon}` not supported.")
+        return
 
     fprint(f"iterating over {len(nsims)} simulations "
            f"for `{args.reconstruction}`.", verbose=verbose)
