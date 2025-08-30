@@ -19,7 +19,8 @@ sight of galaxies and saved to HDF5 files, typically this is done with the
 import numpy as np
 from scipy.interpolate import RegularGridInterpolator
 
-from ..util import radec_to_cartesian, radec_to_galactic, fprint
+from ..util import (fprint, radec_to_cartesian, radec_to_galactic,
+                    supergalactic_to_radec)
 
 
 def apply_gaussian_smoothing(field, smooth_scale, boxsize, make_copy=False):
@@ -77,6 +78,9 @@ def interpolate_los_density_velocity(field_loader, r, RA, dec,
         rhat = radec_to_cartesian(RA, dec)
     elif field_loader.coordinate_frame == "galactic":
         ell, b = radec_to_galactic(RA, dec)
+        rhat = radec_to_cartesian(ell, b)
+    elif field_loader.coordinate_frame == "supergalactic":
+        ell, b = supergalactic_to_radec(RA, dec)
         rhat = radec_to_cartesian(ell, b)
     else:
         raise ValueError(

@@ -182,6 +182,15 @@ def galactic_to_radec(ell, b):
     return c.icrs.ra.degree, c.icrs.dec.degree
 
 
+def supergalactic_to_radec(ell, b):
+    """
+    Convert supergalactic coordinates to right ascension and declination (all
+    in degrees).
+    """
+    c = SkyCoord(l=ell*u.degree, b=b*u.degree, frame='supergalactic')
+    return c.icrs.ra.degree, c.icrs.dec.degree
+
+
 def galactic_to_radec_cartesian(ell, b):
     """
     Convert galactic coordinates (ell, b) in degrees to ICRS Cartesian unit

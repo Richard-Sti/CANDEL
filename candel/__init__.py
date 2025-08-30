@@ -68,6 +68,7 @@ from .util import (                                                             
     radec_cartesian_to_galactic,                                                # noqa
     galactic_to_radec,                                                          # noqa
     galactic_to_radec_cartesian,                                                # noqa
+    supergalactic_to_radec,                                                     # noqa
     load_config,                                                                # noqa
     replace_prior_with_delta,                                                   # noqa
     hms_to_degrees,                                                             # noqa
