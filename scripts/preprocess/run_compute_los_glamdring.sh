@@ -10,11 +10,12 @@ catalogue="$1"
 
 # ---- user variables ----
 # reconstruction="Carrick2015"
-reconstruction="manticore_2MPP_MULTIBIN_N256_DES_V2"
+# reconstruction="manticore_2MPP_MULTIBIN_N256_DES_V2"
+reconstruction="Lilow2024"
 config="../runs/config.toml"
 queue="berg"
 ncpu=3
-memory=64
+memory=7
 env="/mnt/users/rstiskalek/CANDEL/venv_candel/bin/python"
 # ------------------------
 
