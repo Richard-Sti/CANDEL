@@ -122,11 +122,13 @@ class Lilow2024_FieldLoader(BaseFieldLoader):
         self.observer_pos = np.array([200., 200., 200.], dtype=np.float32)
 
     def load_density(self):
-        return np.load(self.path_density).astype(np.float32)
+        rho = np.load(self.path_density).astype(np.float32)
+        return np.nan_to_num(rho, nan=1.0)
 
     def load_velocity(self):
-        return np.stack(
+        vel = np.stack(
             [np.load(f).astype(np.float32) for f in self.path_velocity])
+        return np.nan_to_num(vel, nan=0.0)
 
 
 class CF4_FieldLoader(BaseFieldLoader):
