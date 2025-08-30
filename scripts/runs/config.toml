@@ -505,10 +505,12 @@ folder = "/mnt/extraspace/rstiskalek/catalogs/CF4/CF4gp_23avr24_256-z008_test_10
 [io.reconstruction_main.CLONES]
 file_path = "/mnt/extraspace/rstiskalek/CLONES/s8/cf2gvpecc1pt5elmo73_sig6distribsbvoldi_RZA3Derrv2_512_500_ss8_zinit60_000.hdf5"
 
+[io.reconstruction_main.Hamlet]
+fpath_root = "/mnt/extraspace/rstiskalek/catalogs/HAMLET"
+
 [io.reconstruction_main.CB1]
 fpath_root = "/mnt/extraspace/rstiskalek/csiborg1/field"
 version = "csiborg1"
-
 
 [io.reconstruction_main.CB2]
 fpath_root = "/mnt/extraspace/rstiskalek/csiborg2_main/field"

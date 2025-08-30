@@ -208,6 +208,45 @@ class CLONES_FieldLoader(BaseFieldLoader):
         return field.astype(np.float32)
 
 
+class Hamlet_FieldLoader(BaseFieldLoader):
+    """
+    Class to load the HAMLET z = 0 density and velocity fields in
+    supergalactic coordinates.
+
+    Parameters
+    ----------
+    nsim : int
+        Simulation index (ranging from 0, not the MCMC step).
+    fpath_root : str
+        Root directory for the simulation files.
+    """
+
+    def __init__(self, nsim, fpath_root, **kwargs):
+        self.fpath_root = join(fpath_root, str(nsim - nsim % 2))
+        self.tag = 0 if nsim % 2 == 0 else 99
+
+        self.coordinate_frame = "supergalactic"
+        self.boxsize = 1000  # Mpc / h
+        self.ngrid = 256
+        self.Omega_m = 0.3
+        self.H0 = 75
+        self.observer_pos = np.array([self.boxsize / 2] * 3, dtype=np.float32)
+
+    def load_density(self):
+        fname = join(self.fpath_root, f"divv_{self.tag}_256.bin")
+        rho = np.fromfile(fname, dtype=np.float32).reshape((self.ngrid,) * 3)
+        rho /= - self.H0 * self.Omega_m**0.55
+        return rho
+
+    def load_velocity(self):
+        vel = []
+        for comp in ("x", "y", "z"):
+            f = join(self.fpath_root, f"v{comp}_{self.tag}_{self.ngrid}.bin")
+            arr = np.fromfile(f, dtype=np.float32).reshape((self.ngrid,) * 3)
+            vel.append(arr)
+        return np.stack(vel, axis=0)
+
+
 class CSiBORG_FieldLoader(BaseFieldLoader):
     """
     Class to load CSiBORG1/2 z=0 SPH fields, in the ICRS frame.
@@ -361,5 +400,7 @@ def name2field_loader(name):
         return CSiBORG_FieldLoader
     elif name.lower().startswith("manticore"):
         return Manticore_FieldLoader
+    elif name == "HAMLET":
+        return Hamlet_FieldLoader
     else:
         raise ValueError(f"Unknown field loader: {name}")
