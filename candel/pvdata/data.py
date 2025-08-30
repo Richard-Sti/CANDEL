@@ -378,6 +378,9 @@ def load_los(los_data_path, data, mask=None):
         fprint("normalizing the Manticore LOS density.")
         data["los_density"] /= 0.3111 * 275.4  # Manticore normalization
 
+    data["los_density"] = data["los_density"][0][None, ...]
+    data["los_velocity"] = data["los_velocity"][0][None, ...]
+
     return data
 
 
@@ -657,7 +660,7 @@ def _load_LOSS_Foundation(which, root, zcmb_min=None, zcmb_max=None,
         e_c = grp["e_c"][...]
         e_x1 = grp["e_x1"][...]
 
-    fprint(f"initially loaded {len(zcmb)} galaxies from CF4 TFR data.")
+    fprint(f"initially loaded {len(zcmb)} galaxies from LOSS/Foundation data.")
 
     data = dict(
         zcmb=zcmb,
