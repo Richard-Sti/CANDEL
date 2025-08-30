@@ -3,11 +3,11 @@
 # ---- user variables ----
 # reconstruction="Carrick2015"
 # reconstruction="manticore_2MPP_MULTIBIN_N256_DES_V2"
-reconstruction="CLONES"
+reconstruction="HAMLET"
 config="../runs/config.toml"
 queue="cmb"
-ncpu=1
-memory=64
+ncpu=5
+memory=7
 env="/mnt/users/rstiskalek/CANDEL/venv_candel/bin/python"
 # ------------------------
 

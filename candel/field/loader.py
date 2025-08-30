@@ -222,7 +222,7 @@ class Hamlet_FieldLoader(BaseFieldLoader):
     """
 
     def __init__(self, nsim, fpath_root, **kwargs):
-        self.fpath_root = join(fpath_root, str(nsim - nsim % 2))
+        self.fpath_root = join(fpath_root, str(1 + (nsim - nsim % 2)))
         self.tag = 0 if nsim % 2 == 0 else 99
 
         self.coordinate_frame = "supergalactic"
@@ -236,7 +236,7 @@ class Hamlet_FieldLoader(BaseFieldLoader):
         fname = join(self.fpath_root, f"divv_{self.tag}_256.bin")
         rho = np.fromfile(fname, dtype=np.float32).reshape((self.ngrid,) * 3)
         rho /= - self.H0 * self.Omega_m**0.55
-        return rho
+        return 1 + rho
 
     def load_velocity(self):
         vel = []
