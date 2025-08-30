@@ -23,6 +23,10 @@ from astropy.io import fits
 from h5py import File
 
 
+def smooth_clip(x, eps=1e-3):
+    return 0.5 * (x + np.sqrt(x**2 + eps**2))
+
+
 class BaseFieldLoader(ABC):
     """
     Base class for loading the 3D density and velocity fields.
@@ -71,7 +75,8 @@ class Carrick2015_FieldLoader(BaseFieldLoader):
 
     def load_density(self):
         # Carrick+2015 density field is in the form of overdensity
-        return 1 + np.load(self.path_density).astype(np.float32)
+        rho = 1 + np.load(self.path_density)
+        return smooth_clip(rho, eps=1e-3).astype(np.float32)
 
     def load_velocity(self):
         field = np.load(self.path_velocity)
@@ -161,8 +166,8 @@ class CF4_FieldLoader(BaseFieldLoader):
         self._velocity_path = join(self.folder, f"{fname_base}_velocity.fits")
 
     def load_density(self):
-        rho = 1 + fits.open(self._density_path)[0].data.astype(np.float32)
-        return np.clip(rho, 1e-5, None)
+        rho = 1 + fits.open(self._density_path)[0].data
+        return smooth_clip(rho, eps=1e-2).astype(np.float32)
 
     def load_velocity(self):
         vx, vy, vz = fits.open(self._velocity_path)[0].data
@@ -234,9 +239,8 @@ class Hamlet_FieldLoader(BaseFieldLoader):
 
     def load_density(self):
         fname = join(self.fpath_root, f"divv_{self.tag}_256.bin")
-        rho = np.fromfile(fname, dtype=np.float32).reshape((self.ngrid,) * 3)
-        rho /= - self.H0 * self.Omega_m**0.55
-        return 1 + rho
+        delta = np.fromfile(fname, dtype=np.float32).reshape((self.ngrid,) * 3)
+        return smooth_clip(1 + delta, eps=1e-2).astype(np.float32)
 
     def load_velocity(self):
         vel = []
