@@ -187,6 +187,20 @@ def galactic_to_radec(ell, b):
     return c.icrs.ra.degree, c.icrs.dec.degree
 
 
+def galactic_to_radec_cartesian(ell, b):
+    """
+    Convert galactic coordinates (ell, b) in degrees to ICRS Cartesian unit
+    vectors.
+    """
+    c = SkyCoord(l=np.atleast_1d(ell) * u.deg,
+                 b=np.atleast_1d(b) * u.deg,
+                 frame='galactic')
+    icrs = c.icrs
+    xyz = icrs.cartesian.xyz.value.T
+
+    return xyz[0] if np.isscalar(ell) and np.isscalar(b) else xyz
+
+
 def supergalactic_to_radec(sgl, sgb):
     """
     Convert supergalactic coordinates (sgl, sgb) to equatorial
