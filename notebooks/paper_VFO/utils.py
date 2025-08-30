@@ -31,6 +31,21 @@ def simname2label(simname):
     return ltx[simname] if simname in ltx else simname
 
 
+def catalogue2label(catalogue):
+    ltx = {"SFI_gals": r"SFI\texttt{++}",
+           "CF4_TFR_not2MTForSFI_i": r"CF4 $i$-band",
+           "CF4_TFR_i": r"CF4 TFR $i$",
+           "CF4_TFR_w1": r"CF4 TFR W1",
+           "CF4_TFR_w2": r"CF4 TFR W2",
+           }
+
+    if isinstance(catalogue, list):
+        names = [ltx[s] if s in ltx else s for s in catalogue]
+        return "".join([f"{n}, " for n in names]).rstrip(", ")
+
+    return ltx[catalogue] if catalogue in ltx else catalogue
+
+
 def simname2color(simname):
     cols = ["#1be7ffff", "#6eeb83ff", "#e4ff1aff", "#ffb800ff",
             "#ff5714ff", "#9b5de5ff"]
