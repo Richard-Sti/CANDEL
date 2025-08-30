@@ -406,7 +406,8 @@ class BaseModel(ABC):
 
         self.galaxy_bias = config["pv_model"]["galaxy_bias"]
         if self.galaxy_bias not in ["powerlaw", "linear", "linear_from_beta",
-                                    "linear_from_beta_stochastic", "neyrinck"]:
+                                    "linear_from_beta_stochastic",
+                                    "double_powerlaw"]:
             raise ValueError(
                 f"Invalid galaxy bias model '{self.galaxy_bias}'.")
 
@@ -435,11 +436,12 @@ def sample_galaxy_bias(priors, galaxy_bias, shared_params=None, **kwargs):
         delta_b1 = rsample("delta_b1_skipZ", priors["delta_b1"], shared_params)
         b1 = deterministic("b1", b1_mean + delta_b1)
         bias_params = [b1,]
-    elif galaxy_bias == "neyrinck":
-        alpha = rsample("alpha", priors["alpha"], shared_params)
-        eps = rsample("eps", priors["eps"], shared_params)
-        rho_exp = rsample("rho_exp", priors["rho_exp"], shared_params)
-        bias_params = [alpha, eps, rho_exp]
+    elif galaxy_bias == "double_powerlaw":
+        alpha_low = rsample("alpha_low", priors["alpha_low"], shared_params)
+        alpha_high = rsample("alpha_high", priors["alpha_high"], shared_params)
+        log_rho_t = rsample("log_rho_t", priors["log_rho_t"], shared_params)
+        bias_params = [alpha_low, alpha_high, log_rho_t]
+
     else:
         raise ValueError(f"Invalid galaxy bias model '{galaxy_bias}'.")
 
@@ -452,9 +454,11 @@ def lp_galaxy_bias(delta, log_rho, bias_params, galaxy_bias):
     """
     if galaxy_bias == "powerlaw":
         lp = bias_params[0] * log_rho
-    elif galaxy_bias == "neyrinck":
-        alpha, eps, rho_exp = bias_params
-        lp = alpha * log_rho - ((1 + delta) / rho_exp)**(-eps)
+    elif galaxy_bias == "double_powerlaw":
+        alpha_low, alpha_high, log_rho_t = bias_params
+        log_x = log_rho - log_rho_t
+        lp = (alpha_low * log_x
+              + (alpha_high - alpha_low) * jnp.logaddexp(0.0, log_x))
     elif "linear" in galaxy_bias:
         lp = jnp.log(jnp.clip(1 + bias_params[0] * delta, 1e-5))
     else:
@@ -480,6 +484,15 @@ def compute_Vext_radial(data, r_grid, Vext, with_radial_Vext=False,
         Vext_rad = jnp.sum(data["rhat"] * Vext[None, :], axis=1)[None, :, None]
 
     return Vext_rad
+
+
+def sample_distance_prior(priors):
+    """Sample hyperparameters describing the empirical distance prior."""
+    return {
+        "R": rsample("R_dist_emp", priors["R_dist_emp"]),
+        "p": rsample("p_dist_emp", priors["p_dist_emp"]),
+        "n": rsample("n_dist_emp", priors["n_dist_emp"])
+        }
 
 
 ###############################################################################
@@ -530,14 +543,10 @@ class TFRModel(BaseModel):
         a_TFR_dipole = rsample(
             "zeropoint_dipole", self.priors["zeropoint_dipole"], shared_params)
         a_TFR = a_TFR + jnp.sum(a_TFR_dipole * data["rhat"], axis=1)
+        kwargs_dist = sample_distance_prior(self.priors)
 
         # For the distance marginalization, h is not sampled.
         h = 1.
-
-        R_dist_emp = rsample("R_dist_emp", self.priors["R_dist_emp"])
-        p_dist_emp = rsample("p_dist_emp", self.priors["p_dist_emp"])
-        n_dist_emp = rsample("n_dist_emp", self.priors["n_dist_emp"])
-        kwargs_dist = {"R": R_dist_emp, "p": p_dist_emp, "n": n_dist_emp}
 
         if data.sample_dust:
             Rdust = rsample("R_dust", self.priors["Rdust"], shared_params)
@@ -708,10 +717,7 @@ class SNModel(BaseModel):
         h = 1.0
 
         # Empirical p(r) hyperparameters
-        R_dist_emp = rsample("R_dist_emp", self.priors["R_dist_emp"])
-        p_dist_emp = rsample("p_dist_emp", self.priors["p_dist_emp"])
-        n_dist_emp = rsample("n_dist_emp", self.priors["n_dist_emp"])
-        kwargs_dist = {"R": R_dist_emp, "p": p_dist_emp, "n": n_dist_emp}
+        kwargs_dist = sample_distance_prior(self.priors)
 
         # --- Velocity field / selection nuisance ---
         if self.with_radial_Vext:
@@ -864,10 +870,7 @@ class PantheonPlusModel(BaseModel):
             x1 = data["x1"]
             c = data["c"]
 
-        R_dist_emp = rsample("R_dist_emp", self.priors["R_dist_emp"])
-        p_dist_emp = rsample("p_dist_emp", self.priors["p_dist_emp"])
-        n_dist_emp = rsample("n_dist_emp", self.priors["n_dist_emp"])
-        kwargs_dist = {"R": R_dist_emp, "p": p_dist_emp, "n": n_dist_emp}
+        kwargs_dist = sample_distance_prior(self.priors)
 
         # Sample velocity field parameters.
         Vext = rsample("Vext", self.priors["Vext"], shared_params)
@@ -1014,10 +1017,7 @@ class ClustersModel(BaseModel):
         # For the distance marginalization, h is not sampled.
         h = 1.
 
-        R_dist_emp = rsample("R_dist_emp", self.priors["R_dist_emp"])
-        p_dist_emp = rsample("p_dist_emp", self.priors["p_dist_emp"])
-        n_dist_emp = rsample("n_dist_emp", self.priors["n_dist_emp"])
-        kwargs_dist = {"R": R_dist_emp, "p": p_dist_emp, "n": n_dist_emp}
+        kwargs_dist = sample_distance_prior(self.priors)
 
         # Sample velocity field parameters.
         if self.with_radial_Vext:
@@ -1133,10 +1133,7 @@ class FPModel(BaseModel):
         # For the distance marginalization, h is not sampled.
         h = 1.
 
-        R_dist_emp = rsample("R_dist_emp", self.priors["R_dist_emp"])
-        p_dist_emp = rsample("p_dist_emp", self.priors["p_dist_emp"])
-        n_dist_emp = rsample("n_dist_emp", self.priors["n_dist_emp"])
-        kwargs_dist = {"R": R_dist_emp, "p": p_dist_emp, "n": n_dist_emp}
+        kwargs_dist = sample_distance_prior(self.priors)
 
         # Sample velocity field parameters.
         if self.with_radial_Vext:
@@ -1257,10 +1254,7 @@ class CalibratedDistanceModel_DistMarg(BaseModel):
         sigma_int = rsample(
             "sigma_int", self.priors["sigma_int"], shared_params)
 
-        R_dist_emp = rsample("R_dist_emp", self.priors["R_dist_emp"])
-        p_dist_emp = rsample("p_dist_emp", self.priors["p_dist_emp"])
-        n_dist_emp = rsample("n_dist_emp", self.priors["n_dist_emp"])
-        kwargs_dist = {"R": R_dist_emp, "p": p_dist_emp, "n": n_dist_emp}
+        kwargs_dist = sample_distance_prior(self.priors)
 
         # Sample velocity field parameters.
         if self.with_radial_Vext:

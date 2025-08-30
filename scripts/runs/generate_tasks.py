@@ -126,6 +126,9 @@ def generate_dynamic_tag(config, base_tag="default"):
         use_mnr = get_nested(config, "model/use_MNR", False)
         parts.append("MNR" if use_mnr else "noMNR")
 
+    if get_nested(config, "pv_model/kind", "").startswith("precomputed_los"):
+        parts.append(get_nested(config, "pv_model/galaxy_bias", ""))
+
     # Clusters scaling relation choice
     if get_nested(config, "inference/model", None) == "ClustersModel":
         parts.append(get_nested(config, "io/Clusters/which_relation", None))
@@ -256,7 +259,7 @@ if __name__ == "__main__":
         help="Index of the task to run (default: 0)")
     args = parser.parse_args()
 
-    config_path = "./config.toml"
+    config_path = "./config_shoes.toml"
     config = load_config(
         config_path, replace_none=False, replace_los_prior=False)
 
@@ -264,60 +267,66 @@ if __name__ == "__main__":
     tasks_index = args.tasks_index
 
     # Multiple override options → this creates a job per combination
-    # --- TFR/SN/FP/Cluster flow model over-rides ---
-    manual_overrides = {
-        "pv_model/kind": "precomputed_los_Lilow2024",
-        # "pv_model/kind": "precomputed_los_manticore_2MPP_MULTIBIN_N256_DES_V2",  # noqa
-        "pv_model/galaxy_bias": "linear",
-        "io/catalogue_name": "2MTF",
-        "inference/model": "TFRModel",
-        "io/root_output": "results_test/",
-        # "io/Clusters/which_relation": "LT",
-        "model/use_MNR": False,
-        "model/marginalize_eta": False,
-        # "pv_model/r_limits_malmquist": [[0.1, 1001]],
-        # "pv_model/num_points_malmquist": 1001,
-        # "model/marginalize_eta": True,
-        # "io/CF4_i/exclude_W1": True,
-        # "io/CF4_W1/best_mag_quality": False,
-        # "io/CF4_W1/zcmb_min": 0.01,
-        # "io/CF4_W1/dust_model": ["none", "default", "SFD", "CSFD", "Planck2016"],  # noqa
-        # "io/Clusters/which_relation": ["LT", "LTY"],
-        "model/priors/beta": [
-            # {"dist": "normal", "loc": 0.43, "scale": 0.02},
-            {"dist": "delta", "value": 1.0},
-        ],
-        # "model/priors/zeropoint_dipole": [
-        #     {"dist": "delta", "value": [0.0, 0.0, 0.0]},
-        #     {"dist": "vector_uniform_fixed", "low": 0.0, "high": 0.3},
-        #     # {"dist": "vector_components_uniform", "low": -0.3, "high": 0.3},  # noqa
-        # ],
-        # "io/catalogue_name": [f"CF4_mock_{n}" for n in range(70)],
-        # "io/CF4_mock/root": "data/CF4_mock/anisotropic",
-    }
+    # # --- TFR/SN/FP/Cluster flow model over-rides ---
+    # manual_overrides = {
+    #     "inference/num_samples": 500,
+    #     "inference/compute_log_density": True,
+    #     "inference/compute_evidence": True,
+    #     "pv_model/kind": "precomputed_los_CLONES",
+    #     # "pv_model/kind": "precomputed_los_manticore_2MPP_MULTIBIN_N256_DES_V2",  # noqa
+    #     "pv_model/galaxy_bias": "double_powerlaw",
+    #     "io/catalogue_name": "Foundation",
+    #     "inference/model": "SNModel",
+    #     "io/root_output": "results_test/",
+    #     # "io/Clusters/which_relation": "LT",
+    #     "model/use_MNR": False,
+    #     "model/marginalize_eta": False,
+    #     # "pv_model/r_limits_malmquist": [[0.1, 1001]],
+    #     # "pv_model/num_points_malmquist": 1001,
+    #     # "model/marginalize_eta": True,
+    #     # "io/CF4_i/exclude_W1": True,
+    #     # "io/CF4_W1/best_mag_quality": False,
+    #     # "io/CF4_W1/zcmb_min": 0.01,
+    #     # "io/CF4_W1/dust_model": ["none", "default", "SFD", "CSFD", "Planck2016"],  # noqa
+    #     # "io/Clusters/which_relation": ["LT", "LTY"],
+    #     "model/priors/beta": [
+    #         # {"dist": "normal", "loc": 0.43, "scale": 0.25},
+    #         {"dist": "normal", "loc": 1.0, "scale": 0.25},
+    #         # {"dist": "delta", "value": 1.0},
+    #     ],
+    #     # "model/priors/zeropoint_dipole": [
+    #     #     {"dist": "delta", "value": [0.0, 0.0, 0.0]},
+    #     #     {"dist": "vector_uniform_fixed", "low": 0.0, "high": 0.3},
+    #     #     # {"dist": "vector_components_uniform", "low": -0.3, "high": 0.3},  # noqa
+    #     # ],
+    #     # "io/catalogue_name": [f"CF4_mock_{n}" for n in range(70)],
+    #     # "io/CF4_mock/root": "data/CF4_mock/anisotropic",
+    # }
 
     # --- CH0 overrides ---
-    # manual_overrides = {
-    #     "io/root_output": "results/CH0",
-    #     # "model/which_selection": ["none", "redshift", "SN_magnitude", "SN_magnitude_redshift", "empirical"],  # noqa
-    #     # "model/which_selection": ["none", "redshift", "SN_magnitude"],  # noqa
-    #     "model/which_selection": ["SN_magnitude_redshift", "empirical"],  # noqa
-    #     "model/use_reconstruction": True,
-    #     # "model/use_fiducial_Cepheid_host_PV_covariance": True,
-    #     # "model/use_PV_covmat_scaling": [False, True],
-    #     # "model/weight_selection_by_covmat_Neff": True,  # Only for redshift sel!  # noqa
-    #     # "io/SH0ES/which_host_los": "Carrick2015",
-    #     "io/SH0ES/which_host_los": "manticore_2MPP_MULTIBIN_N256_DES_V2",
-    #     "model/priors/Vext": [
-    #         {"dist": "vector_uniform_fixed", "low": 0.0, "high": 2500},
-    #         # {"dist": "delta", "value": [0., 0., 0.]},
-    #     ],
-    #     "model/priors/beta": [
-    #         # {"dist": "normal", "loc": 0.43, "scale": 0.02},
-    #         {"dist": "delta", "value": 1.0},
-    #         #{"dist": "normal", "loc": 1.0, "scale": 0.5},
-    #     ],
-    # }
+    manual_overrides = {
+        "io/root_output": "results/CH0",
+        "model/which_selection": "empirical",
+        # "model/which_selection": ["none", "redshift", "SN_magnitude", "SN_magnitude_redshift", "empirical"],  # noqa
+        # "model/which_selection": ["none", "redshift", "SN_magnitude"],  # noqa
+        # "model/which_selection": ["SN_magnitude_redshift", "empirical"],  # noqa
+        "model/use_reconstruction": True,
+        # "model/use_fiducial_Cepheid_host_PV_covariance": True,
+        # "model/use_PV_covmat_scaling": [False, True],
+        # "model/weight_selection_by_covmat_Neff": True,  # Only for redshift sel!  # noqa
+        "io/SH0ES/which_host_los": "Carrick2015",
+        # "io/SH0ES/which_host_los": "manticore_2MPP_MULTIBIN_N256_DES_V2",
+        "model/which_bias": "double_powerlaw",
+        # "model/priors/Vext": [
+        #     {"dist": "vector_uniform_fixed", "low": 0.0, "high": 2500},
+        #     # {"dist": "delta", "value": [0., 0., 0.]},
+        # ],
+        "model/priors/beta": [
+            {"dist": "normal", "loc": 0.43, "scale": 0.02},
+            # {"dist": "delta", "value": 1.0},
+            # {"dist": "normal", "loc": 1.0, "scale": 0.5},
+        ],
+    }
 
     # manticore_2MPP_MULTIBIN_N256_DES_V2
 
