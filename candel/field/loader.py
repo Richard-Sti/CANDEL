@@ -156,7 +156,7 @@ class CF4_FieldLoader(BaseFieldLoader):
         self.Omega_m = 0.3
         self.observer_pos = np.array([self.boxsize / 2] * 3, dtype=np.float32)
 
-        fname_base = f"CF4gp_23avr24_256-z008_test_realization{self.nsim}"
+        fname_base = f"CF4gp_23avr24_256-z008_test_realization{1 + self.nsim}"
         self._density_path = join(self.folder, f"{fname_base}_delta.fits")
         self._velocity_path = join(self.folder, f"{fname_base}_velocity.fits")
 
