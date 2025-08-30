@@ -9,16 +9,17 @@ catalogue="$1"
 # --------------------------------
 
 # ---- user variables ----
-reconstruction="Carrick2015"
+# reconstruction="Carrick2015"
+reconstruction="manticore_2MPP_MULTIBIN_N256_DES_V2"
 config="../runs/config.toml"
 queue="berg"
-ncpu=10
-memory=24
+ncpu=3
+memory=64
 env="/mnt/users/rstiskalek/CANDEL/venv_candel/bin/python"
 # ------------------------
 
 pythoncm="$env compute_los.py --catalogue $catalogue --reconstruction $reconstruction --config $config"
-cm="addqueue -q $queue -n 10 -m $memory $pythoncm"
+cm="addqueue -q $queue -n $ncpu -m $memory $pythoncm"
 
 echo "Submitting:"
 echo $cm
