@@ -222,7 +222,7 @@ class Hamlet_FieldLoader(BaseFieldLoader):
     """
 
     def __init__(self, nsim, fpath_root, **kwargs):
-        self.fpath_root = join(fpath_root, str(1 + (nsim - nsim % 2)))
+        self.fpath_root = join(fpath_root, str(1 + (nsim // 2)))
         self.tag = 0 if nsim % 2 == 0 else 99
 
         self.coordinate_frame = "supergalactic"
