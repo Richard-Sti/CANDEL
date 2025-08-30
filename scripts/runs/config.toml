@@ -1,10 +1,10 @@
-# root_main = "/Users/rstiskalek/Projects/CANDEL/"
-# python_exec = "/Users/rstiskalek/Projects/CANDEL/venv_candel/bin/python"
-# machine = "local"
-
-root_main = "/mnt/users/rstiskalek/CANDEL/"
-python_exec = "/mnt/users/rstiskalek/CANDEL/venv_candel/bin/python"
+root_main = "/Users/rstiskalek/Projects/CANDEL/"
+python_exec = "/Users/rstiskalek/Projects/CANDEL/venv_candel/bin/python"
 machine = "local"
+
+# root_main = "/mnt/users/rstiskalek/CANDEL/"
+# python_exec = "/mnt/users/rstiskalek/CANDEL/venv_candel/bin/python"
+# machine = "local"
 
 
 # root_main = "/mnt/home/rstiskalek/ceph/CANDEL"
@@ -84,16 +84,21 @@ low = 0.0
 mean = 1.0
 scale = 1.0
 
-[model.priors.eps]
+[model.priors.alpha_low]
 dist = "truncated_normal"
 low = 0.0
 mean = 1.0
 scale = 1.0
 
-[model.priors.rho_exp]
+[model.priors.alpha_high]
 dist = "truncated_normal"
 low = 0.0
-mean = 1.0
+mean = 0.5
+scale = 1.0
+
+[model.priors.log_rho_t]
+dist = "normal"
+loc = 0.0
 scale = 1.0
 
 [model.priors.b1]
