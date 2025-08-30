@@ -257,7 +257,8 @@ class CSiBORG_FieldLoader(BaseFieldLoader):
         if self.version == "csiborg2":
             rho = rho * 1e10  # Msun/h
 
-        cell = (self.boxsize * 1e3) / self.grid  # kpc/h per cell
+        grid = rho.shape[0]
+        cell = (self.boxsize * 1e3) / grid       # kpc/h per cell
         rho = rho / (cell**3)                    # -> h^2 Msun / kpc^3
         rho = rho.astype(np.float32)
 
