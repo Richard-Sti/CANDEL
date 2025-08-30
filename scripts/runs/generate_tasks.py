@@ -126,6 +126,9 @@ def generate_dynamic_tag(config, base_tag="default"):
         use_mnr = get_nested(config, "model/use_MNR", False)
         parts.append("MNR" if use_mnr else "noMNR")
 
+    if get_nested(config, "pv_model/kind", "").startswith("precomputed_los"):
+        parts.append(get_nested(config, "pv_model/galaxy_bias", ""))
+
     # Clusters scaling relation choice
     if get_nested(config, "inference/model", None) == "ClustersModel":
         parts.append(get_nested(config, "io/Clusters/which_relation", None))
@@ -266,9 +269,12 @@ if __name__ == "__main__":
     # Multiple override options → this creates a job per combination
     # --- TFR/SN/FP/Cluster flow model over-rides ---
     manual_overrides = {
-        "pv_model/kind": "precomputed_los_Lilow2024",
+        "inference/num_samples": 500,
+        "inference/compute_log_density": True,
+        "inference/compute_evidence": True,
+        "pv_model/kind": "precomputed_los_CB2",
         # "pv_model/kind": "precomputed_los_manticore_2MPP_MULTIBIN_N256_DES_V2",  # noqa
-        "pv_model/galaxy_bias": "linear",
+        "pv_model/galaxy_bias": ["powerlaw", "double_powerlaw"],
         "io/catalogue_name": "2MTF",
         "inference/model": "TFRModel",
         "io/root_output": "results_test/",
@@ -285,7 +291,8 @@ if __name__ == "__main__":
         # "io/Clusters/which_relation": ["LT", "LTY"],
         "model/priors/beta": [
             # {"dist": "normal", "loc": 0.43, "scale": 0.02},
-            {"dist": "delta", "value": 1.0},
+            {"dist": "normal", "loc": 1.0, "scale": 0.25},
+            # {"dist": "delta", "value": 1.0},
         ],
         # "model/priors/zeropoint_dipole": [
         #     {"dist": "delta", "value": [0.0, 0.0, 0.0]},
