@@ -173,6 +173,9 @@ class PVDataFrame:
                f"{num_points} points.")
         data["r_grid"] = np.linspace(rmin, rmax, num_points)
 
+        los_decay_scale = config_pv_model.get("los_decay_scale", 5.0)
+        fprint(f"setting los_decay_scale to {los_decay_scale}")
+
         if "los_density" in data:
             data["los_log_density"] = np.log(data["los_density"])
             data["los_delta"] = data["los_density"] - 1
@@ -183,10 +186,11 @@ class PVDataFrame:
                     "Subsampling for Pantheon+ Lane is not supported because "
                     "of the complicated covariance matrix.")
 
-            frame = cls(data)
-            frame = frame.subsample(nsamples_subsample, seed=seed_subsample)
+            frame = cls(data, los_decay_scale)
+            frame = frame.subsample(
+                nsamples_subsample, los_decay_scale, seed=seed_subsample)
         else:
-            frame = cls(data)
+            frame = cls(data, los_decay_scale)
 
         frame.sample_dust = sample_dust
 
@@ -233,7 +237,7 @@ class PVDataFrame:
         frame.name = name
         return frame
 
-    def subsample(self, nsamples, seed=42):
+    def subsample(self, nsamples, los_radial_decay_scale, seed=42):
         """
         Returns a new frame with randomly selected `nsamples`. Keeps all
         calibrators in the sample (if present), and updates associated
@@ -278,7 +282,7 @@ class PVDataFrame:
                 else:
                     subsampled[key] = self.data[key]
 
-        return PVDataFrame(subsampled)
+        return PVDataFrame(subsampled, los_radial_decay_scale)
 
     def __getitem__(self, key):
         if key in self._cache:
