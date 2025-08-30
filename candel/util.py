@@ -182,13 +182,13 @@ def galactic_to_radec(ell, b):
     return c.icrs.ra.degree, c.icrs.dec.degree
 
 
-def supergalactic_to_radec(ell, b):
+def supergalactic_to_radec(sgl, sgb):
     """
-    Convert supergalactic coordinates to right ascension and declination (all
-    in degrees).
+    Convert supergalactic coordinates (sgl, sgb) to equatorial
+    right ascension and declination (RA, Dec), all in degrees.
     """
-    c = SkyCoord(l=ell*u.degree, b=b*u.degree, frame='supergalactic')
-    return c.icrs.ra.degree, c.icrs.dec.degree
+    c = SkyCoord(sgl=sgl * u.deg, sgb=sgb * u.deg, frame="supergalactic")
+    return c.icrs.ra.deg, c.icrs.dec.deg
 
 
 def galactic_to_radec_cartesian(ell, b):
