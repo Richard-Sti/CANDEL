@@ -161,7 +161,8 @@ class CF4_FieldLoader(BaseFieldLoader):
         self._velocity_path = join(self.folder, f"{fname_base}_velocity.fits")
 
     def load_density(self):
-        return fits.open(self._density_path)[0].data.astype(np.float32)
+        rho = 1 + fits.open(self._density_path)[0].data.astype(np.float32)
+        return np.clip(rho, 1e-5, None)
 
     def load_velocity(self):
         vx, vy, vz = fits.open(self._velocity_path)[0].data
