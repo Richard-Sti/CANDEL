@@ -80,12 +80,15 @@ def replace_prior_with_delta(config, param, value, verbose=True):
 def convert_to_absolute_paths(config):
     """Recursively convert relative paths in config to absolute paths."""
     root = config["root_main"]
+    root_data = config.get("root_data", root)
 
-    path_keys = {
+    path_keys_root = {
         "fname_output",
+    }
+    path_keys_data = {
+        "root",
         "los_file",
         "los_file_random",
-        "root",
         "path_density",
         "path_velocity",
     }
@@ -94,9 +97,11 @@ def convert_to_absolute_paths(config):
         for k, v in d.items():
             if isinstance(v, dict):
                 _recurse(v)
-            elif k in path_keys and isinstance(v, str):
-                if not v.startswith("/") and not isabs(v):
+            elif isinstance(v, str):
+                if k in path_keys_root and not isabs(v):
                     d[k] = abspath(join(root, v))
+                elif k in path_keys_data and not isabs(v):
+                    d[k] = abspath(join(root_data, v))
 
     _recurse(config)
     return config
@@ -191,18 +196,13 @@ def supergalactic_to_radec(sgl, sgb):
     return c.icrs.ra.deg, c.icrs.dec.deg
 
 
-def galactic_to_radec_cartesian(ell, b):
+def radec_to_supergalactic(ra, dec):
     """
-    Convert galactic coordinates (ell, b) in degrees to ICRS Cartesian unit
-    vectors.
+    Convert right ascension and declination (in degrees) to supergalactic
+    coordinates in degrees.
     """
-    c = SkyCoord(l=np.atleast_1d(ell) * u.deg,
-                 b=np.atleast_1d(b) * u.deg,
-                 frame='galactic')
-    icrs = c.icrs
-    xyz = icrs.cartesian.xyz.value.T
-
-    return xyz[0] if np.isscalar(ell) and np.isscalar(b) else xyz
+    c = SkyCoord(ra=ra * u.deg, dec=dec * u.deg, frame="icrs")
+    return c.supergalactic.sgl.deg, c.supergalactic.sgb.deg
 
 
 def radec_cartesian_to_galactic(x, y, z):
