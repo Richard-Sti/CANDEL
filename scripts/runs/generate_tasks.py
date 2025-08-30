@@ -266,18 +266,15 @@ if __name__ == "__main__":
     # Multiple override options → this creates a job per combination
     # --- TFR/SN/FP/Cluster flow model over-rides ---
     manual_overrides = {
-        "pv_model/kind": "precomputed_los_Carrick2015",
+        "pv_model/kind": "precomputed_los_Lilow2024",
         # "pv_model/kind": "precomputed_los_manticore_2MPP_MULTIBIN_N256_DES_V2",  # noqa
-        # "pv_model/kind": "Vext",
-        # "pv_model/galaxy_bias": "linear_from_beta",
-        "io/catalogue_name": [f"CF4_mock_{n}" for n in range(70)],
-        "io/CF4_mock/root": "data/CF4_mock/anisotropic",
-        # "io/catalogue_name": "Foundation",
+        "pv_model/galaxy_bias": "linear",
+        "io/catalogue_name": "2MTF",
         "inference/model": "TFRModel",
-        "io/root_output": "results/dH0/CF4_mock_anisotropic",
+        "io/root_output": "results_test/",
         # "io/Clusters/which_relation": "LT",
-        "model/use_MNR": True,
-        # "model/marginalize_eta": True,
+        "model/use_MNR": False,
+        "model/marginalize_eta": False,
         # "pv_model/r_limits_malmquist": [[0.1, 1001]],
         # "pv_model/num_points_malmquist": 1001,
         # "model/marginalize_eta": True,
@@ -286,15 +283,17 @@ if __name__ == "__main__":
         # "io/CF4_W1/zcmb_min": 0.01,
         # "io/CF4_W1/dust_model": ["none", "default", "SFD", "CSFD", "Planck2016"],  # noqa
         # "io/Clusters/which_relation": ["LT", "LTY"],
-        # "model/priors/beta": [
-        #     # {"dist": "normal", "loc": 0.43, "scale": 0.1},
-        #     {"dist": "delta", "value": 1.0},
-        # ],
+        "model/priors/beta": [
+            # {"dist": "normal", "loc": 0.43, "scale": 0.02},
+            {"dist": "delta", "value": 1.0},
+        ],
         # "model/priors/zeropoint_dipole": [
         #     {"dist": "delta", "value": [0.0, 0.0, 0.0]},
         #     {"dist": "vector_uniform_fixed", "low": 0.0, "high": 0.3},
         #     # {"dist": "vector_components_uniform", "low": -0.3, "high": 0.3},  # noqa
         # ],
+        # "io/catalogue_name": [f"CF4_mock_{n}" for n in range(70)],
+        # "io/CF4_mock/root": "data/CF4_mock/anisotropic",
     }
 
     # --- CH0 overrides ---
