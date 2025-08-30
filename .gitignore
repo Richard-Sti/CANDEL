@@ -12,7 +12,7 @@ tasks_list*/
 
 notebooks/test.ipynb
 .DS_Store
-scripts/sync_*
+scripts/sync_from_rusty*
 
 logs_*/
 slurm-*
