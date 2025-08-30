@@ -224,6 +224,7 @@ class CSiBORG_FieldLoader(BaseFieldLoader):
 
         self.nsim = nsim
         self.flip_xz = True
+        self.version = version
 
         index_path = join(fpath_root, f"{version}_index.txt")
         mapping = {}
