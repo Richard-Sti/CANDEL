@@ -272,11 +272,11 @@ if __name__ == "__main__":
         "inference/num_samples": 500,
         "inference/compute_log_density": True,
         "inference/compute_evidence": True,
-        "pv_model/kind": "precomputed_los_CB2",
+        "pv_model/kind": "precomputed_los_CLONES",
         # "pv_model/kind": "precomputed_los_manticore_2MPP_MULTIBIN_N256_DES_V2",  # noqa
-        "pv_model/galaxy_bias": ["powerlaw", "double_powerlaw"],
-        "io/catalogue_name": "2MTF",
-        "inference/model": "TFRModel",
+        "pv_model/galaxy_bias": "double_powerlaw",
+        "io/catalogue_name": "Foundation",
+        "inference/model": "SNModel",
         "io/root_output": "results_test/",
         # "io/Clusters/which_relation": "LT",
         "model/use_MNR": False,
@@ -290,7 +290,7 @@ if __name__ == "__main__":
         # "io/CF4_W1/dust_model": ["none", "default", "SFD", "CSFD", "Planck2016"],  # noqa
         # "io/Clusters/which_relation": ["LT", "LTY"],
         "model/priors/beta": [
-            # {"dist": "normal", "loc": 0.43, "scale": 0.02},
+            # {"dist": "normal", "loc": 0.43, "scale": 0.25},
             {"dist": "normal", "loc": 1.0, "scale": 0.25},
             # {"dist": "delta", "value": 1.0},
         ],
