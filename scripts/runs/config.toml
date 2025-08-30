@@ -479,9 +479,30 @@ rmin = 0.001
 rmax = 201
 num_steps = 251
 
+[io.reconstruction_main.manticore_2MPP_MULTIBIN_N256_DES_V2]
+fpath_root = "/mnt/extraspace/rstiskalek/MANTICORE/2MPP_MULTIBIN_N256_DES_V2/sph_fields_new_feb/sph_fields"
+
 [io.reconstruction_main.Carrick2015]
 path_density = "data/fields/carrick2015_twompp_density.npy"
 path_velocity = "data/fields/carrick2015_twompp_velocity.npy"
 
-[io.reconstruction_main.manticore_2MPP_MULTIBIN_N256_DES_V2]
-fpath_root = "/mnt/extraspace/rstiskalek/MANTICORE/2MPP_MULTIBIN_N256_DES_V2/sph_fields_new_feb/sph_fields"
+[io.reconstruction_main.Lilow2024]
+path_density = "/mnt/extraspace/rstiskalek/catalogs/Lilow2024_density.npy"
+path_velocity_x = "/mnt/extraspace/rstiskalek/catalogs/Lilow2024_xVelocity.npy"
+path_velocity_y = "/mnt/extraspace/rstiskalek/catalogs/Lilow2024_yVelocity.npy"
+path_velocity_z = "/mnt/extraspace/rstiskalek/catalogs/Lilow2024_zVelocity.npy"
+
+[io.reconstruction_main.CF4]
+folder = "/mnt/extraspace/rstiskalek/catalogs/CF4/CF4gp_23avr24_256-z008_test_100_realizations"
+
+[io.reconstruction_main.CLONES]
+file_path = "/mnt/extraspace/rstiskalek/CLONES/s8/cf2gvpecc1pt5elmo73_sig6distribsbvoldi_RZA3Derrv2_512_500_ss8_zinit60_000.hdf5"
+
+[io.reconstruction_main.CB1]
+fpath_root = "/mnt/extraspace/rstiskalek/csiborg1/field"
+version = "csiborg1"
+
+
+[io.reconstruction_main.CB2]
+fpath_root = "/mnt/extraspace/rstiskalek/csiborg2_main/field"
+version = "csiborg2"

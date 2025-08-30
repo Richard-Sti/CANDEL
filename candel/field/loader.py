@@ -19,6 +19,7 @@ from abc import ABC, abstractmethod
 from os.path import join
 
 import numpy as np
+from astropy.io import fits
 from h5py import File
 
 
@@ -44,9 +45,11 @@ class BaseFieldLoader(ABC):
 
 class Carrick2015_FieldLoader(BaseFieldLoader):
     """
-    Class to load the Carrick+2015 3D density and velocity fields, which can be
-    obtained from `http://cosmicflows.iap.fr. The fields are expected to be
-    in Galactic coordintes.
+    Class to load the Carrick+2015 3D density and velocity fields [1], which
+    can be obtained from `http://cosmicflows.iap.fr. The fields are in Galactic
+    coordinates.
+
+    [1] https://arxiv.org/abs/1504.04627
 
     Parameters
     ----------
@@ -87,9 +90,199 @@ class Carrick2015_FieldLoader(BaseFieldLoader):
         return field.astype(np.float32)
 
 
+class Lilow2024_FieldLoader(BaseFieldLoader):
+    """
+    Class to load the Lilow+2024 3D density and velocity fields [1]. The fields
+    are expected to be in Galactic coordinates.
+
+    [1] https://arxiv.org/abs/2404.02278
+
+    Parameters
+    ----------
+    path_density : str
+        Path to the Lilow+2024 density field.
+    path_velocity_x : str
+        Path to the Lilow+2024 velocity field (x-component).
+    path_velocity_y : str
+        Path to the Lilow+2024 velocity field (y-component).
+    path_velocity_z : str
+        Path to the Lilow+2024 velocity field (z-component).
+    """
+
+    def __init__(self, path_density, path_velocity_x, path_velocity_y,
+                 path_velocity_z, **kwargs):
+        self.path_density = path_density
+        self.path_velocity = [
+            path_velocity_x, path_velocity_y, path_velocity_z]
+
+        self.coordinate_frame = "galactic"
+        self.boxsize = 400.0  # Mpc / h
+        self.Omega_m = 0.3175
+        self.effective_resolution = 4
+        self.observer_pos = np.array([200., 200., 200.], dtype=np.float32)
+
+    def load_density(self):
+        return np.load(self.path_density).astype(np.float32)
+
+    def load_velocity(self):
+        return np.stack(
+            [np.load(f).astype(np.float32) for f in self.path_velocity])
+
+
+class CF4_FieldLoader(BaseFieldLoader):
+    """
+    Class to load the CF4 3D density and velocity fields [1]. The fields
+    are expected to be in Galactic coordinates.
+
+    [1] https://arxiv.org/abs/2211.16390
+
+    Parameters
+    ----------
+    folder : str
+        Directory containing the CF4 FITS files
+        (e.g. ".../CF4gp_23avr24_256-z008_test_100_realizations").
+    nsim : int
+        Realization index to load.
+    """
+
+    def __init__(self, folder, nsim, **kwargs):
+        self.folder = folder
+        self.nsim = int(nsim)
+
+        self.coordinate_frame = "supergalactic"
+        self.boxsize = 1000.0  # Mpc / h
+        self.Omega_m = 0.3
+        self.observer_pos = np.array([self.boxsize / 2] * 3, dtype=np.float32)
+
+        fname_base = f"CF4gp_23avr24_256-z008_test_realization{self.nsim}"
+        self._density_path = join(self.folder, f"{fname_base}_delta.fits")
+        self._velocity_path = join(self.folder, f"{fname_base}_velocity.fits")
+
+    def load_density(self):
+        return fits.open(self._density_path)[0].data.astype(np.float32)
+
+    def load_velocity(self):
+        vx, vy, vz = fits.open(self._velocity_path)[0].data
+        return 52.0 * np.stack([vx, vy, vz], axis=0).astype(np.float32)
+
+
+class CLONES_FieldLoader(BaseFieldLoader):
+    """
+    Class to load the CLONES z=0 density and velocity fields in supergalactic
+    Cartesian coordinates.
+
+    Parameters
+    ----------
+    basedir : str
+        Directory containing the CLONES HDF5 files.
+    fname : str
+        Name of the HDF5 file to load.
+    """
+
+    def __init__(self, file_path, **kwargs):
+        self.file_path = file_path
+
+        self.coordinate_frame = "supergalactic"
+        self.boxsize = 500  # Mpc / h
+        self.Omega_m = 0.307115
+        self.observer_pos = np.array([self.boxsize / 2] * 3, dtype=np.float32)
+
+    def load_density(self):
+        with File(self.file_path, "r") as f:
+            field = f["density"][...]
+        return field.astype(np.float32)
+
+    def load_velocity(self):
+        with File(self.file_path, "r") as f:
+            vx = f["p0"][...] / f["density"][...]
+            vy = f["p1"][...] / f["density"][...]
+            vz = f["p2"][...] / f["density"][...]
+            field = np.stack([vx, vy, vz], axis=0)
+        return field.astype(np.float32)
+
+
+class CSiBORG_FieldLoader(BaseFieldLoader):
+    """
+    Class to load CSiBORG1/2 z=0 SPH fields, in the ICRS frame.
+
+    Parameters
+    ----------
+    nsim : int
+        Simulation index (ranging from 0, not the MCMC step).
+    fpath_root : str
+        Root directory for the simulation files.
+    version : {"csiborg1", "csiborg2"}
+        Which CSiBORG version to load (sets boxsize and unit conversion).
+    """
+
+    def __init__(self, nsim, fpath_root, version, **kwargs):
+        if version not in {"csiborg1", "csiborg2"}:
+            raise ValueError("version must be 'csiborg1' or 'csiborg2'.")
+
+        self.nsim = nsim
+        self.flip_xz = True
+
+        index_path = join(fpath_root, f"{version}_index.txt")
+        mapping = {}
+        with open(index_path, "r") as f:
+            for line in f:
+                idx, tag = line.strip().split()
+                mapping[int(idx)] = tag
+
+        if self.nsim not in mapping:
+            raise ValueError(f"nsim {self.nsim} not found in {index_path}.")
+
+        tag = mapping[self.nsim]
+        if version == "csiborg1":
+            self.file_path = join(fpath_root, f"sph_ramses_{tag}_1024.hdf5")
+            self.boxsize = 677.7  # Mpc / h
+        elif version == "csiborg2":
+            self.file_path = join(fpath_root, f"chain_{tag}_1024.hdf5")
+            self.boxsize = 676.6  # Mpc / h
+        else:
+            raise ValueError(f"Unknown CSiBORG version: {version}")
+
+        self.coordinate_frame = "icrs"
+        self.observer_pos = np.array([self.boxsize / 2] * 3, dtype=np.float32)
+
+    def load_density(self):
+        with File(self.file_path, "r") as f:
+            rho = f["density"][:]
+
+        # Unit conversion (CSiBORG2 masses are in 1e10 Msun / h)
+        if self.version == "csiborg2":
+            rho = rho * 1e10  # Msun/h
+
+        cell = (self.boxsize * 1e3) / self.grid  # kpc/h per cell
+        rho = rho / (cell**3)                    # -> h^2 Msun / kpc^3
+        rho = rho.astype(np.float32)
+
+        if self.flip_xz:
+            rho = rho.T
+
+        return rho
+
+    def load_velocity(self):
+        with File(self.file_path, "r") as f:
+            rho = f["density"][:]
+            v0 = f["p0"][:] / rho
+            v1 = f["p1"][:] / rho
+            v2 = f["p2"][:] / rho
+
+        v = np.array([v0, v1, v2], dtype=np.float32)
+
+        if self.flip_xz:
+            v[0, ...] = v[0, ...].T
+            v[1, ...] = v[1, ...].T
+            v[2, ...] = v[2, ...].T
+            v[[0, 2], ...] = v[[2, 0], ...]
+
+        return v
+
+
 class Manticore_FieldLoader(BaseFieldLoader):
     """
-    Manticore field loader class.
+    Manticore field loader class, in the ICRS frame.
 
     Parameters
     ----------
@@ -149,6 +342,14 @@ def name2field_loader(name):
     """
     if name == "Carrick2015":
         return Carrick2015_FieldLoader
+    elif name == "Lilow2024":
+        return Lilow2024_FieldLoader
+    elif name == "CF4":
+        return CF4_FieldLoader
+    elif name == "CLONES":
+        return CLONES_FieldLoader
+    elif name in ["CB1", "CB2"]:
+        return CSiBORG_FieldLoader
     elif name.lower().startswith("manticore"):
         return Manticore_FieldLoader
     else:
