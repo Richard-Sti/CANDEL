@@ -103,6 +103,7 @@ def main():
     parser.add_argument("--catalogue", type=str, required=True)
     parser.add_argument("--reconstruction", type=str, required=True)
     parser.add_argument("--config", type=str, required=True)
+    parser.add_argument("--smooth_target", type=float, default=None)
     args = parser.parse_args()
 
     config = candel.load_config(args.config)
@@ -146,7 +147,8 @@ def main():
             nsim=nsim,
             **config["io"]["reconstruction_main"][args.reconstruction])
         dens_i, vel_i = candel.field.interpolate_los_density_velocity(
-            loader, r, RA, dec)
+            loader, r, RA, dec, args.smooth_target)
+
         # store with the global slot index so root can place it
         local_results.append(
             (i, dens_i.astype(np.float32), vel_i.astype(np.float32)))
@@ -164,6 +166,11 @@ def main():
                 los_velocity[i] = vel_i
 
         los_file = los_file.replace("<X>", args.reconstruction)
+        if args.smooth_target is not None:
+            los_file = los_file.replace(
+                args.reconstruction,
+                f"{args.reconstruction}_smooth_to_{args.smooth_target}")
+
         fprint(f"saving the line of sight data to `{los_file}`.")
         dt = np.dtype(np.float32)
         with File(los_file, "w") as f:

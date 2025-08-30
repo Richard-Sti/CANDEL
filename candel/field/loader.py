@@ -63,6 +63,7 @@ class Carrick2015_FieldLoader(BaseFieldLoader):
         self.coordinate_frame = "galactic"
         self.boxsize = 400.0  # Mpc / h
         self.Omega_m = 0.3
+        self.effective_resolution = 4
         self.observer_pos = np.array([200., 200., 200.], dtype=np.float32)
 
     def load_density(self):
