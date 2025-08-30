@@ -459,7 +459,7 @@ class SH0ESModel(BaseSH0ESModel):
             b1 = self.Om ** 0.55 / beta
             return jnp.log(jnp.clip(1 + b1 * delta, self.br_min_clip))
         elif self.which_bias == "powerlaw":
-            # Neyrinck+2014 model.
+            # double_powerlaw+2014 model.
             alpha = 0.65
             rho_exp = 0.4
             eps = 1.5

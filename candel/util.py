@@ -187,15 +187,6 @@ def galactic_to_radec(ell, b):
     return c.icrs.ra.degree, c.icrs.dec.degree
 
 
-def supergalactic_to_radec(sgl, sgb):
-    """
-    Convert supergalactic coordinates (sgl, sgb) to equatorial
-    right ascension and declination (RA, Dec), all in degrees.
-    """
-    c = SkyCoord(sgl=sgl * u.deg, sgb=sgb * u.deg, frame="supergalactic")
-    return c.icrs.ra.deg, c.icrs.dec.deg
-
-
 def galactic_to_radec_cartesian(ell, b):
     """
     Convert galactic coordinates (ell, b) in degrees to ICRS Cartesian unit
@@ -208,6 +199,24 @@ def galactic_to_radec_cartesian(ell, b):
     xyz = icrs.cartesian.xyz.value.T
 
     return xyz[0] if np.isscalar(ell) and np.isscalar(b) else xyz
+
+
+def supergalactic_to_radec(sgl, sgb):
+    """
+    Convert supergalactic coordinates (sgl, sgb) to equatorial
+    right ascension and declination (RA, Dec), all in degrees.
+    """
+    c = SkyCoord(sgl=sgl * u.deg, sgb=sgb * u.deg, frame="supergalactic")
+    return c.icrs.ra.deg, c.icrs.dec.deg
+
+
+def radec_to_supergalactic(ra, dec):
+    """
+    Convert right ascension and declination (in degrees) to supergalactic
+    coordinates in degrees.
+    """
+    c = SkyCoord(ra=ra * u.deg, dec=dec * u.deg, frame="icrs")
+    return c.supergalactic.sgl.deg, c.supergalactic.sgb.deg
 
 
 def radec_cartesian_to_galactic(x, y, z):
@@ -260,6 +269,9 @@ def name2label(name):
         "sigma_int": r"$\sigma_{\rm int}$",
         "sigma_v": r"$\sigma_v$",
         "alpha": r"$\alpha$",
+        "alpha_low": r"$\alpha_\mathrm{low}$",
+        "alpha_high": r"$\alpha_\mathrm{high}$",
+        "log_rho_t": r"$\ln \rho_t$",
         "b1": r"$b_1$",
         "b2": r"$b_2$",
         "beta": r"$\beta$",
@@ -317,6 +329,9 @@ def name2labelgetdist(name):
         "sigma_int": r"\sigma_{\rm int}",
         "sigma_v": r"\sigma_v~\left[\mathrm{km}\,\mathrm{s}^{-1}\right]",
         "alpha": r"\alpha",
+        "alpha_low": r"\alpha_\mathrm{low}",
+        "alpha_high": r"\alpha_\mathrm{high}",
+        "log_rho_t": r"\ln \rho_t",
         "b1": r"b_1",
         "b2": r"b_2",
         "beta": r"\beta",
