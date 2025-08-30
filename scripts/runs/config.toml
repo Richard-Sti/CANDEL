@@ -2,18 +2,18 @@
 # python_exec = "/Users/rstiskalek/Projects/CANDEL/venv_candel/bin/python"
 # machine = "local"
 
-# root_main = "/mnt/users/rstiskalek/CANDEL/"
-# python_exec = "/mnt/users/rstiskalek/CANDEL/venv_candel/bin/python"
-# machine = "local"
+root_main = "/mnt/users/rstiskalek/CANDEL/"
+python_exec = "/mnt/users/rstiskalek/CANDEL/venv_candel/bin/python"
+machine = "local"
 
 
 # root_main = "/mnt/home/rstiskalek/ceph/CANDEL"
 # python_exec="/mnt/home/rstiskalek/CANDEL/venv_gpu_candel/bin/python"
 # machine="rusty"
 
-root_main = "/home/phys1997/CANDEL/"
-python_exec = "/home/phys1997/CANDEL/venv_candel/bin/python"
-machine = "arc"
+# root_main = "/home/phys1997/CANDEL/"
+# python_exec = "/home/phys1997/CANDEL/venv_candel/bin/python"
+# machine = "arc"
 
 
 ###############################################################################
