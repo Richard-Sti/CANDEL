@@ -406,7 +406,8 @@ class BaseModel(ABC):
 
         self.galaxy_bias = config["pv_model"]["galaxy_bias"]
         if self.galaxy_bias not in ["powerlaw", "linear", "linear_from_beta",
-                                    "linear_from_beta_stochastic", "neyrinck"]:
+                                    "linear_from_beta_stochastic",
+                                    "double_powerlaw"]:
             raise ValueError(
                 f"Invalid galaxy bias model '{self.galaxy_bias}'.")
 
@@ -435,11 +436,12 @@ def sample_galaxy_bias(priors, galaxy_bias, shared_params=None, **kwargs):
         delta_b1 = rsample("delta_b1_skipZ", priors["delta_b1"], shared_params)
         b1 = deterministic("b1", b1_mean + delta_b1)
         bias_params = [b1,]
-    elif galaxy_bias == "neyrinck":
-        alpha = rsample("alpha", priors["alpha"], shared_params)
-        eps = rsample("eps", priors["eps"], shared_params)
-        rho_exp = rsample("rho_exp", priors["rho_exp"], shared_params)
-        bias_params = [alpha, eps, rho_exp]
+    elif galaxy_bias == "double_powerlaw":
+        alpha_low = rsample("alpha_low", priors["alpha_low"], shared_params)
+        alpha_high = rsample("alpha_high", priors["alpha_high"], shared_params)
+        log_rho_t = rsample("log_rho_t", priors["log_rho_t"], shared_params)
+        bias_params = [alpha_low, alpha_high, log_rho_t]
+
     else:
         raise ValueError(f"Invalid galaxy bias model '{galaxy_bias}'.")
 
@@ -452,9 +454,11 @@ def lp_galaxy_bias(delta, log_rho, bias_params, galaxy_bias):
     """
     if galaxy_bias == "powerlaw":
         lp = bias_params[0] * log_rho
-    elif galaxy_bias == "neyrinck":
-        alpha, eps, rho_exp = bias_params
-        lp = alpha * log_rho - ((1 + delta) / rho_exp)**(-eps)
+    elif galaxy_bias == "double_powerlaw":
+        alpha_low, alpha_high, log_rho_t = bias_params
+        log_x = log_rho - log_rho_t
+        lp = (alpha_low * log_x
+              + (alpha_high - alpha_low) * jnp.logaddexp(0.0, log_x))
     elif "linear" in galaxy_bias:
         lp = jnp.log(jnp.clip(1 + bias_params[0] * delta, 1e-5))
     else:
