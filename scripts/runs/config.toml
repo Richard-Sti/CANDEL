@@ -50,6 +50,8 @@ galaxy_bias = "linear_from_beta"  # Ignored unless having an underlying density 
 r_limits_malmquist = [0.1, 251]
 num_points_malmquist = 251
 
+los_decay_scale = 5.0
+
 ###############################################################################
 #                                 Model                                       #
 ###############################################################################
@@ -99,7 +101,7 @@ scale = 1.0
 [model.priors.log_rho_t]
 dist = "normal"
 loc = 0.0
-scale = 1.0
+scale = 2.0
 
 [model.priors.b1]
 dist = "normal"
