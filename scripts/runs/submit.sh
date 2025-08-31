@@ -22,7 +22,7 @@
 #SBATCH --mail-type=BEGIN,FAIL,END
 #SBATCH --ntasks=1
 #SBATCH --gres=gpu:1 --constraint="cpu_gen:Cascade_Lake|cpu_gen:Skylake"
-#SBATCH --time=04:00:00
+#SBATCH --time=08:00:00
 #SBATCH --mem=32G
 #SBATCH --job-name=candel
 #SBATCH --output=logs/logs-%j.out
