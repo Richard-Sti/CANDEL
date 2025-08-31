@@ -235,17 +235,15 @@ class Hamlet_FieldLoader(BaseFieldLoader):
         self.version = int(version)
 
         self.coordinate_frame = "supergalactic"
-        self.boxsize = 1000.0
         self.Omega_m = 0.3
         self.H0 = 74.6
         self.dtype = np.float32
-        self.observer_pos = np.array(
-            [self.boxsize / 2] * 3, dtype=self.dtype)
 
         if self.version == 0:
             folder = str(1 + (self.nsim // 2))
             self.tag = 0 if (self.nsim % 2 == 0) else 99
             self.root = join(self.base, folder)
+            self.boxsize = 1000.0
             self.ngrid = 256
         elif self.version == 1:
             cluster = 1 + (self.nsim // 2)
@@ -257,9 +255,13 @@ class Hamlet_FieldLoader(BaseFieldLoader):
                              self.rtag,
                              self.stag,
                              "cic")
+            self.boxsize = 500.0
             self.ngrid = 128
         else:
             raise ValueError(f"Unknown HAMLET version: {self.version}")
+
+        self.observer_pos = np.array(
+            [self.boxsize / 2] * 3, dtype=self.dtype)
 
     def _read_grid(self, fname):
         return np.fromfile(fname, dtype=self.dtype).reshape(

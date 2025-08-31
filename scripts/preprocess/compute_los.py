@@ -114,7 +114,8 @@ def main():
         "CB1": 100,
         "CB2": 20,
         "CF4": 100,
-        "HAMLET": 20,
+        "HAMLET_V0": 20,
+        "HAMLET_V1": 20,
         }
 
     recon = args.reconstruction
