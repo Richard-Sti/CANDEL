@@ -14,70 +14,30 @@
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 """Simple mock generator for the CF4 TFR sample."""
 import numpy as np
-from scipy.stats import norm
+from scipy.integrate import cumulative_simpson
 
-from ..util import (SPEED_OF_LIGHT, galactic_to_radec,
-                    galactic_to_radec_cartesian, radec_to_cartesian, fprint)
 from ..field import interpolate_los_density_velocity
+from ..util import (SPEED_OF_LIGHT, fprint, galactic_to_radec,
+                    galactic_to_radec_cartesian, radec_to_cartesian)
 
 
-def reject_sample_distance(mu_TFR, sigma_TFR, h, distmod2dist,
-                           log_grad_distmod2distance, r_h_density_grid,
-                           log_los_density_grid, num_sigma=5, n_points=501,
-                           seed=42):
+def sample_distance(r_grid, los_density, b1, R, p, n, gen):
+    los_delta = los_density - 1
+    pi_r = (1 + b1 * los_delta) * r_grid**p * np.exp(-(r_grid / R)**n)
+    cdf_r = cumulative_simpson(pi_r, x=r_grid, initial=0)
+    cdf_r /= cdf_r[-1]
+    return np.interp(gen.uniform(), cdf_r, r_grid)
+
+
+def gen_TFR_mock(nsamples, r_grid, Vext_mag, Vext_ell, Vext_b, sigma_v, beta,
+                 a_TFR, b_TFR, c_TFR, sigma_int, zeropoint_dipole_mag,
+                 zeropoint_dipole_ell, zeropoint_dipole_b, h, e_mag,
+                 eta_prior_mean, eta_prior_std, e_eta, b_min, zcmb_max,
+                 R, p, n, field_loader, r2distmod, r2z, Om=0.3, seed=42,
+                 verbose=True):
     """
-    Sample a distance modulus from the TFR calibration via rejection sampling.
-    """
-    gen = np.random.default_rng(seed)
-
-    delta = num_sigma * sigma_TFR
-    mu_grid = np.linspace(mu_TFR - delta, mu_TFR + delta, n_points)
-
-    mu_min, mu_max = mu_grid[0], mu_grid[-1]
-
-    r_grid = distmod2dist(mu_grid, h=h)
-    log_jac = log_grad_distmod2distance(mu_grid, h=h)
-    log_rho = np.interp(r_grid * h, r_h_density_grid, log_los_density_grid)
-
-    prob = (+ 2 * np.log(r_grid)
-            + log_jac
-            + log_rho
-            + norm(mu_TFR, sigma_TFR).logpdf(mu_grid)
-            )
-    prob -= np.max(prob)
-    prob = np.exp(prob)
-
-    while True:
-        x = gen.uniform(mu_min, mu_max)
-        p_i = np.interp(x, mu_grid, prob)
-
-        if gen.uniform() < p_i:
-            return x
-
-
-def sample_magnitude(nsamples, mag_min, mag_max, gen):
-    """
-    Sample magnitude from a distribution that is proportional to 10^{0.6 mag}.
-    """
-    z = gen.uniform(0, 1, size=nsamples)
-
-    ymin = 10**(3 * mag_min / 5)
-    ymax = 10**(3 * mag_max / 5)
-
-    return 5 / 3 * np.log10(z * (ymax - ymin) + ymin)
-
-
-def gen_CF4_TFR_mock(nsamples, Vext_mag, Vext_ell, Vext_b, sigma_v, alpha,
-                     beta, a_TFR, b_TFR, c_TFR, sigma_TFR, a_TFR_dipole_mag,
-                     a_TFR_dipole_ell, a_TFR_dipole_b, h, mag, eta, mag_min,
-                     mag_max, e_mag, eta_mean, eta_std, e_eta,
-                     b_min, zcmb_max, r_h_max, distmod2dist, distmod2redshift,
-                     log_grad_distmod2dist, field_loader, use_data_prior,
-                     rmin_reconstruction, rmax_reconstruction,
-                     num_steps_reconstruction, seed=42):
-    """
-    Generate a mock sample of galaxies with TFR distances that resembles
-    the CF4 TFR sample.
+    Generate a mock TFR survey with distances sampled from an empirical
+    distribution, without any further selection effects.
     """
     gen = np.random.default_rng(seed)
 
@@ -88,89 +48,72 @@ def gen_CF4_TFR_mock(nsamples, Vext_mag, Vext_ell, Vext_b, sigma_v, alpha,
     else:
         b = np.arcsin(gen.uniform(np.sin(np.deg2rad(b_min)), 1, size=nsamples))
         b[gen.random(nsamples) < 0.5] *= -1
+
     b = np.rad2deg(b)
     RA, dec = galactic_to_radec(ell, b)
     rhat = radec_to_cartesian(RA, dec)
 
-    if use_data_prior:
-        ks = np.random.choice(len(mag), size=nsamples, replace=True)
-        mag_true = mag[ks]
-        eta_true = eta[ks]
-    else:
-        mag_true = sample_magnitude(nsamples, mag_min, mag_max, gen)
-        eta_true = gen.normal(eta_mean, eta_std, size=nsamples)
-
-    mag_obs = gen.normal(mag_true, e_mag, size=nsamples)
-    eta_obs = gen.normal(eta_true, e_eta, size=nsamples)
-
-    r_los = np.linspace(
-        rmin_reconstruction, rmax_reconstruction, num_steps_reconstruction)
-
-    if field_loader is None:
-        log_los_density_grid = np.ones(nsamples)
-        los_velocity_grid = np.zeros(nsamples)
-        los_density_precomp = np.ones((nsamples, len(r_los)))
-        los_velocity_precomp = np.zeros((nsamples, len(r_los)))
-    else:
-        r_h_grid = np.arange(0, r_h_max + 0.1, 0.1)
-        log_los_density_grid, los_velocity_grid = interpolate_los_density_velocity(  # noqa
-            field_loader, r_h_grid, RA, dec)
-        log_los_density_grid = alpha * np.log(log_los_density_grid)
-        los_velocity_grid *= beta
-
-        los_density_precomp, los_velocity_precomp = interpolate_los_density_velocity(  # noqa
-            field_loader, r_los, RA, dec)
-
-    if a_TFR_dipole_mag is not None:
-        a_TFR_dipole = a_TFR_dipole_mag * galactic_to_radec_cartesian(
-            a_TFR_dipole_ell, a_TFR_dipole_b)
-        a_TFR += np.sum(a_TFR_dipole[None, :] * rhat, axis=1)
-
-    mu_TFR = mag_true - (a_TFR + b_TFR * eta_true + np.where(
-        eta_true > 0, c_TFR * eta_true**2, 0))
-    # Reject sample the true distance from the TFR estimates.
-    mu = np.zeros_like(mu_TFR)
-    for i in range(len(mu_TFR)):
-        mu[i] = reject_sample_distance(
-            mu_TFR[i], sigma_TFR, h, distmod2dist,
-            log_grad_distmod2dist, r_h_grid, log_los_density_grid[i],
-            seed=seed + i)
-
-    r_h = distmod2dist(mu,)
-    los_velocity = np.full(nsamples, np.nan)
-    for i in range(nsamples):
-        # Interpolate the velocity field at the position of the galaxy
-        los_velocity[i] = np.interp(r_h[i], r_h_grid, los_velocity_grid[i])
-
-    zcosmo = distmod2redshift(mu, h=h)
-
     Vext = Vext_mag * galactic_to_radec_cartesian(Vext_ell, Vext_b)
     Vext_rad = np.sum(Vext[None, :] * rhat, axis=1)
 
-    zpec = (los_velocity + Vext_rad) / SPEED_OF_LIGHT
-    sigma_cz = sigma_v / SPEED_OF_LIGHT
-    zcmb_true = (1 + zcosmo) * (1 + zpec) - 1
-    zcmb = gen.normal(zcmb_true, sigma_cz, size=nsamples)
+    if field_loader is not None:
+        los_density, los_velocity = interpolate_los_density_velocity(
+            field_loader, r_grid, RA, dec, verbose=False)
+    else:
+        los_density = np.ones((nsamples, len(r_grid)))
+        los_velocity = np.zeros_like(los_density)
+
+    r = np.full(nsamples, np.nan)
+    Vpec = np.full(nsamples, np.nan)
+    b1 = Om**0.55 / beta
+    for i in range(nsamples):
+        Vpec[i] = Vext_rad[i]
+        r[i] = sample_distance(r_grid, los_density[i], b1, R, p, n, gen)
+        Vpec[i] += beta * np.interp(r[i], r_grid, los_velocity[i])
+
+    eta = gen.normal(eta_prior_mean, eta_prior_std, size=nsamples)
+    eta_obs = gen.normal(eta, e_eta, size=nsamples)
+
+    M = a_TFR + b_TFR * eta + np.where(eta > 0, c_TFR * eta**2, 0)
+    if zeropoint_dipole_mag is not None:
+        dM = zeropoint_dipole_mag * galactic_to_radec_cartesian(
+            zeropoint_dipole_ell, zeropoint_dipole_b)
+        M += np.sum(dM[None, :] * rhat, axis=1)
+
+    mag_obs = gen.normal(
+        M + r2distmod(r, h=h), np.sqrt(sigma_int**2 + e_mag**2))
+    zobs = gen.normal(
+        (1 + r2z(r, h=h)) * (1 + Vpec / SPEED_OF_LIGHT) - 1,
+        sigma_v / SPEED_OF_LIGHT)
+
+    if los_density.ndim == 2:
+        los_density = los_density[None, ...]
+        los_velocity = los_velocity[None, ...]
 
     data = {
         "RA": RA,
         "dec": dec,
-        "zcmb": zcmb,
+        "zcmb": zobs,
         "mag": mag_obs,
         "e_mag": np.ones_like(mag_obs) * e_mag,
         "eta": eta_obs,
         "e_eta": np.ones_like(eta_obs) * e_eta,
-        "los_r": r_los,
-        "los_density": los_density_precomp,
-        "los_velocity": los_velocity_precomp,
+        "los_r": r_grid,
+        "los_density": los_density,
+        "los_velocity": los_velocity,
         }
 
     if zcmb_max is not None:
-        mask = zcmb < zcmb_max
-        fprint(f"Rejecting {np.sum(~mask)} samples with zcmb > {zcmb_max:.2f}")
+        mask = data["zcmb"] < zcmb_max
+        fprint(f"Rejecting {np.sum(~mask)} samples with zcmb > {zcmb_max:.2f}",
+               verbose=verbose)
         for key in data:
             if key in ["los_r"]:
                 continue
-            data[key] = data[key][mask]
+
+            if key.startswith("los_"):
+                data[key] = data[key][:, mask, ...]
+            else:
+                data[key] = data[key][mask]
 
     return data

@@ -2,9 +2,10 @@
 # python_exec = "/Users/rstiskalek/Projects/CANDEL/venv_candel/bin/python"
 # machine = "local"
 
-# root_main = "/Users/yasin/code/CANDEL/"
-# python_exec = "/Users/yasin/code/CANDEL/venv_candel/bin/python"
+# root_main = "/mnt/users/rstiskalek/CANDEL/"
+# python_exec = "/mnt/users/rstiskalek/CANDEL/venv_candel/bin/python"
 # machine = "local"
+
 
 # root_main = "/mnt/home/rstiskalek/ceph/CANDEL"
 # python_exec="/mnt/home/rstiskalek/CANDEL/venv_gpu_candel/bin/python"
@@ -23,11 +24,11 @@ machine = "arc"
 model = "PantheonPlusModel"
 shared_params = "none"
 
-num_warmup = 500
+num_warmup = 1000
 num_samples = 5000
 num_chains = 4
 chain_method = "parallel"
-seed = 42
+seed = 44
 compute_log_density = true
 compute_evidence = true
 num_chains_harmonic = 10
@@ -48,6 +49,8 @@ galaxy_bias = "linear_from_beta"  # Ignored unless having an underlying density 
 # (Inhomogeneus Malmquist bias settings and extrapolation), in units of Mpc / h
 r_limits_malmquist = [0.1, 251]
 num_points_malmquist = 251
+
+los_decay_scale = 5.0
 
 ###############################################################################
 #                                 Model                                       #
@@ -78,9 +81,27 @@ value = 0.3
 # high = 0.99
 
 [model.priors.alpha]
-dist = "normal"
-loc = 1.0
+dist = "truncated_normal"
+low = 0.0
+mean = 1.0
 scale = 1.0
+
+[model.priors.alpha_low]
+dist = "truncated_normal"
+low = 0.0
+mean = 1.0
+scale = 1.0
+
+[model.priors.alpha_high]
+dist = "truncated_normal"
+low = 0.0
+mean = 0.5
+scale = 1.0
+
+[model.priors.log_rho_t]
+dist = "normal"
+loc = 0.0
+scale = 2.0
 
 [model.priors.b1]
 dist = "normal"
@@ -377,10 +398,6 @@ zcmb_max = 0.2
 which_relation = "LT"
 finite_logY = true
 
-zcmb_mapping_min = 1e-5
-zcmb_mapping_max = 0.3
-zcmb_mapping_num_points = 1001
-
 los_file = "data/Clusters/los_Clusters_<X>.hdf5"
 
 nsamples_subsample = "none"
@@ -469,9 +486,37 @@ rmin = 0.001
 rmax = 201
 num_steps = 251
 
+[io.reconstruction_main.manticore_2MPP_MULTIBIN_N256_DES_V2]
+fpath_root = "/mnt/extraspace/rstiskalek/MANTICORE/2MPP_MULTIBIN_N256_DES_V2/sph_fields_new_feb/sph_fields"
+
 [io.reconstruction_main.Carrick2015]
 path_density = "data/fields/carrick2015_twompp_density.npy"
 path_velocity = "data/fields/carrick2015_twompp_velocity.npy"
 
-[io.reconstruction_main.manticore_2MPP_MULTIBIN_N256_DES_V2]
-fpath_root = "/mnt/extraspace/rstiskalek/MANTICORE/2MPP_MULTIBIN_N256_DES_V2/sph_fields_new_feb/sph_fields"
+[io.reconstruction_main.Lilow2024]
+path_density = "/mnt/extraspace/rstiskalek/catalogs/Lilow2024_density.npy"
+path_velocity_x = "/mnt/extraspace/rstiskalek/catalogs/Lilow2024_xVelocity.npy"
+path_velocity_y = "/mnt/extraspace/rstiskalek/catalogs/Lilow2024_yVelocity.npy"
+path_velocity_z = "/mnt/extraspace/rstiskalek/catalogs/Lilow2024_zVelocity.npy"
+
+[io.reconstruction_main.CF4]
+folder = "/mnt/extraspace/rstiskalek/catalogs/CF4/CF4gp_23avr24_256-z008_test_100_realizations"
+
+[io.reconstruction_main.CLONES]
+file_path = "/mnt/extraspace/rstiskalek/CLONES/s8/cf2gvpecc1pt5elmo73_sig6distribsbvoldi_RZA3Derrv2_512_500_ss8_zinit60_000.hdf5"
+
+[io.reconstruction_main.HAMLET_V0]
+fpath_root = "/mnt/extraspace/rstiskalek/catalogs/HAMLET/HAMLET_V0"
+version = 0
+
+[io.reconstruction_main.HAMLET_V1]
+fpath_root = "/mnt/extraspace/rstiskalek/catalogs/HAMLET/HAMLET_V1"
+version = 1
+
+[io.reconstruction_main.CB1]
+fpath_root = "/mnt/extraspace/rstiskalek/csiborg1/field"
+version = "csiborg1"
+
+[io.reconstruction_main.CB2]
+fpath_root = "/mnt/extraspace/rstiskalek/csiborg2_main/field"
+version = "csiborg2"

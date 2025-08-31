@@ -24,6 +24,7 @@ except ModuleNotFoundError:
 from datetime import datetime
 from os.path import abspath, basename, isabs, join
 from pathlib import Path
+from warnings import warn
 
 import astropy.units as u
 import jax.numpy as jnp
@@ -79,12 +80,15 @@ def replace_prior_with_delta(config, param, value, verbose=True):
 def convert_to_absolute_paths(config):
     """Recursively convert relative paths in config to absolute paths."""
     root = config["root_main"]
+    root_data = config.get("root_data", root)
 
-    path_keys = {
+    path_keys_root = {
         "fname_output",
+    }
+    path_keys_data = {
+        "root",
         "los_file",
         "los_file_random",
-        "root",
         "path_density",
         "path_velocity",
     }
@@ -93,9 +97,11 @@ def convert_to_absolute_paths(config):
         for k, v in d.items():
             if isinstance(v, dict):
                 _recurse(v)
-            elif k in path_keys and isinstance(v, str):
-                if not v.startswith("/") and not isabs(v):
+            elif isinstance(v, str):
+                if k in path_keys_root and not isabs(v):
                     d[k] = abspath(join(root, v))
+                elif k in path_keys_data and not isabs(v):
+                    d[k] = abspath(join(root_data, v))
 
     _recurse(config)
     return config
@@ -119,6 +125,7 @@ def load_config(config_path, replace_none=True, fill_paths=True,
         config = replace_prior_with_delta(config, "alpha", 1.)
         config = replace_prior_with_delta(config, "beta", 0.)
         config = replace_prior_with_delta(config, "b1", 0.)
+        config = replace_prior_with_delta(config, "delta_b1", 0.)
 
     # Convert relative paths to absolute paths
     if fill_paths:
@@ -194,6 +201,24 @@ def galactic_to_radec_cartesian(ell, b):
     return xyz[0] if np.isscalar(ell) and np.isscalar(b) else xyz
 
 
+def supergalactic_to_radec(sgl, sgb):
+    """
+    Convert supergalactic coordinates (sgl, sgb) to equatorial
+    right ascension and declination (RA, Dec), all in degrees.
+    """
+    c = SkyCoord(sgl=sgl * u.deg, sgb=sgb * u.deg, frame="supergalactic")
+    return c.icrs.ra.deg, c.icrs.dec.deg
+
+
+def radec_to_supergalactic(ra, dec):
+    """
+    Convert right ascension and declination (in degrees) to supergalactic
+    coordinates in degrees.
+    """
+    c = SkyCoord(ra=ra * u.deg, dec=dec * u.deg, frame="icrs")
+    return c.supergalactic.sgl.deg, c.supergalactic.sgb.deg
+
+
 def radec_cartesian_to_galactic(x, y, z):
     """
     Convert ICRS Cartesian vectors (x, y, z) to Galactic coordinates (ell, b)
@@ -244,6 +269,9 @@ def name2label(name):
         "sigma_int": r"$\sigma_{\rm int}$",
         "sigma_v": r"$\sigma_v$",
         "alpha": r"$\alpha$",
+        "alpha_low": r"$\alpha_\mathrm{low}$",
+        "alpha_high": r"$\alpha_\mathrm{high}$",
+        "log_rho_t": r"$\ln \rho_t$",
         "b1": r"$b_1$",
         "b2": r"$b_2$",
         "beta": r"$\beta$",
@@ -273,7 +301,8 @@ def name2label(name):
         "R_dist_emp": r"$R_{\rm dist}$",
         "n_dist_emp": r"$n_{\rm dist}$",
         "p_dist_emp": r"$p_{\rm dist}$",
-        "Rmax_dist_emp": r"$R_{\rm max, dist}$"
+        "Rmax_dist_emp": r"$R_{\rm max, dist}$",
+        "rho_corr": r"$\rho_{\rm corr}$",
     }
 
     if "/" in name:
@@ -297,9 +326,12 @@ def name2labelgetdist(name):
         "a_TFR": r"a_\mathrm{TFR}",
         "b_TFR": r"b_\mathrm{TFR}",
         "c_TFR": r"c_\mathrm{TFR}",
-        "sigma_int": r"\sigma_{\rm int}~\left[\mathrm{mag}\right]",
+        "sigma_int": r"\sigma_{\rm int}",
         "sigma_v": r"\sigma_v~\left[\mathrm{km}\,\mathrm{s}^{-1}\right]",
         "alpha": r"\alpha",
+        "alpha_low": r"\alpha_\mathrm{low}",
+        "alpha_high": r"\alpha_\mathrm{high}",
+        "log_rho_t": r"\ln \rho_t",
         "b1": r"b_1",
         "b2": r"b_2",
         "beta": r"\beta",
@@ -311,10 +343,10 @@ def name2labelgetdist(name):
         "a": r"a",
         "m1": r"m_1",
         "m2": r"m_2",
-        "zeropoint_dipole_mag": r"\Delta_\mathrm{ZP}~\left[\mathrm{mag}\right]",         # noqa
+        "zeropoint_dipole_mag": r"\Delta_\mathrm{ZP}",         # noqa
         "zeropoint_dipole_ell": r"\ell_{\Delta_\mathrm{ZP}}~\left[\mathrm{deg}\right]",  # noqa
         "zeropoint_dipole_b": r"b_{\Delta_\mathrm{ZP}}~\left[\mathrm{deg}\right]",       # noqa
-        "M_dipole_mag": r"\Delta M_\mathrm{SN}~[\mathrm{mag}]",
+        "M_dipole_mag": r"\Delta M_\mathrm{SN}",
         "M_dipole_ell": r"\ell_{\Delta M_{\rm SN}}~\left[\mathrm{deg}\right]",
         "M_dipole_b": r"b_{\Delta M_{\rm SN}}~\left[\mathrm{deg}\right]",
         "eta_prior_mean": r"\hat{\eta}",
@@ -326,14 +358,15 @@ def name2labelgetdist(name):
         "b_FP": r"b_{\rm FP}",
         "c_FP": r"c_{\rm FP}",
         "R_dust": r"R_{\rm W1}",
-        "mu_LMC": r"\mu_{\rm LMC} ~ [\mathrm{mag}]",
-        "mu_M31": r"\mu_{\rm M31} ~ [\mathrm{mag}]",
-        "mu_N4258": r"\mu_{\rm NGC4258} ~ [\mathrm{mag}]",
+        "mu_LMC": r"\mu_{\rm LMC}",
+        "mu_M31": r"\mu_{\rm M31}",
+        "mu_N4258": r"\mu_{\rm NGC4258}",
         "H0": r"H_0~\left[\mathrm{km}\,\mathrm{s}^{-1}\,\mathrm{Mpc}^{-1}\right]",  # noqa
-        "dZP": r"\Delta_{\rm ZP}~\left[\mathrm{mag}\right]",
+        "dZP": r"\Delta_{\rm ZP}",
         "R_dist_emp": r"R~\left[h^{-1}\,\mathrm{Mpc}\right]",
         "n_dist_emp": r"n",
         "p_dist_emp": r"p",
+        "rho_corr": r"\rho_{\rm corr}",
     }
 
     if "/" in name:
@@ -437,7 +470,7 @@ def plot_Vext_rad_corner(samples, show_fig=True, filename=None, smooth=1):
         plt.close(fig)
 
 
-def plot_corner_getdist(samples_list, labels=None, show_fig=True,
+def plot_corner_getdist(samples_list, labels=None, cols=None, show_fig=True,
                         filename=None, keys=None, fontsize=None,
                         legend_fontsize=None, filled=True,
                         apply_ell_offset=False, mag_range=[0, None],
@@ -448,6 +481,7 @@ def plot_corner_getdist(samples_list, labels=None, show_fig=True,
         import scienceplots  # noqa
         use_scienceplots = True
     except ImportError:
+        warn("scienceplots not found, using default plotting style.")
         use_scienceplots = False
 
     if isinstance(samples_list, dict):
@@ -530,12 +564,20 @@ def plot_corner_getdist(samples_list, labels=None, show_fig=True,
         settings.axes_fontsize = fontsize - 1
         settings.title_limit_fontsize = fontsize - 1
 
+    if cols is not None:
+        line_args = [{"color": c} for c in cols]
+    else:
+        line_args = None
+
     with plt.style.context("science" if use_scienceplots else "default"):
         g = plots.get_subplot_plotter(settings=settings)
         g.triangle_plot(
             gdsamples_list,
             params=param_names,
             filled=filled,
+            colors=cols,
+            contour_colors=cols,
+            line_args=line_args,
             legend_labels=labels,
             legend_loc="upper right",
         )
@@ -600,9 +642,9 @@ def plot_corner_getdist(samples_list, labels=None, show_fig=True,
             plt.close()
 
 
-def plot_corner_from_hdf5(fnames, keys=None, labels=None, fontsize=None,
-                          legend_fontsize=None, filled=True, show_fig=True,
-                          filename=None, apply_ell_offset=False,
+def plot_corner_from_hdf5(fnames, keys=None, labels=None, cols=None,
+                          fontsize=None, legend_fontsize=None, filled=True,
+                          show_fig=True, filename=None, apply_ell_offset=False,
                           mag_range=[0, None], ell_range=[0, 360],
                           b_range=[-90, 90], points=None, truths=None):
     """
@@ -626,6 +668,7 @@ def plot_corner_from_hdf5(fnames, keys=None, labels=None, fontsize=None,
         samples_list,
         labels=labels,
         keys=keys,
+        cols=cols,
         fontsize=fontsize,
         legend_fontsize=legend_fontsize,
         filled=filled,
@@ -764,3 +807,19 @@ def read_gof(fname, which):
                 f"{list(f['gof'].keys())}") from e
 
     return stat / np.log(10) if convert else stat
+
+
+def read_samples(root, fname, keys=None):
+    fname = join(root, fname)
+
+    with File(fname, "r") as f:
+        if keys is None:
+            keys = list(f["samples"].keys())
+        elif isinstance(keys, str):
+            keys = [keys]
+
+        samples = {key: f[f"samples/{key}"][...] for key in keys}
+
+    if isinstance(keys, list) and len(keys) == 1:
+        return samples[keys[0]]
+    return samples
