@@ -14,6 +14,9 @@
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 
+import random
+
+
 def simname2label(simname):
     ltx = {"Carrick2015": "Carrick+15",
            "Lilow2024": "Lilow+24",
@@ -50,6 +53,10 @@ def simname2color(simname):
     cols = ["#1be7ffff", "#6eeb83ff", "#e4ff1aff", "#ffb800ff",
             "#ff5714ff", "#9b5de5ff"]
 
+    defaults = ["tab:blue", "tab:orange", "tab:green",
+                "tab:red", "tab:purple", "tab:brown",
+                "tab:pink", "tab:gray", "tab:olive", "tab:cyan"]
+
     colors = {
         "Carrick2015": cols[0],
         "Lilow2024": cols[1],
@@ -58,4 +65,5 @@ def simname2color(simname):
         "CF4": cols[4],
         "CLONES": cols[5],
     }
-    return colors[simname] if simname in colors else None
+
+    return colors.get(simname, random.choice(defaults))
