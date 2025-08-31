@@ -1150,7 +1150,8 @@ class FPModel(BaseModel):
             logs_prior_mean = sample(
                 "logs_prior_mean", Uniform(data["min_logs"], data["max_logs"]))
             logs_prior_std = sample(
-                "logs_prior_std", Uniform(data["min_logs"], data["max_logs"]))
+                "logs_prior_std",
+                Uniform(0, data["max_logs"] - data["min_logs"]))
 
             logI_prior_mean = sample(
                 "logI_prior_mean", Uniform(data["min_logI"], data["max_logI"]))
