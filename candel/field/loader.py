@@ -215,40 +215,86 @@ class CLONES_FieldLoader(BaseFieldLoader):
 
 class Hamlet_FieldLoader(BaseFieldLoader):
     """
-    Class to load the HAMLET z = 0 density and velocity fields in
-    supergalactic coordinates.
+    Loader for HAMLET z = 0 density and velocity fields in supergalactic
+    coordinates.
 
     Parameters
     ----------
     nsim : int
-        Simulation index (ranging from 0, not the MCMC step).
+        Simulation index starting from 0.
     fpath_root : str
-        Root directory for the simulation files.
+        Root directory pointing to the HAMLET_V0 or HAMLET_V1 dataset.
+    version : int
+        Dataset version, either 0 or 1.
     """
 
-    def __init__(self, nsim, fpath_root, **kwargs):
-        self.fpath_root = join(fpath_root, str(1 + (nsim // 2)))
-        self.tag = 0 if nsim % 2 == 0 else 99
+    def __init__(self, nsim, fpath_root, version, **kwargs):
+        self.nsim = int(nsim)
+        self.base = fpath_root
+        assert version in (0, 1)
+        self.version = int(version)
 
         self.coordinate_frame = "supergalactic"
-        self.boxsize = 1000  # Mpc / h
-        self.ngrid = 256
+        self.boxsize = 1000.0
         self.Omega_m = 0.3
-        self.H0 = 75
-        self.observer_pos = np.array([self.boxsize / 2] * 3, dtype=np.float32)
+        self.H0 = 74.6
+        self.dtype = np.float32
+        self.observer_pos = np.array(
+            [self.boxsize / 2] * 3, dtype=self.dtype)
+
+        if self.version == 0:
+            folder = str(1 + (self.nsim // 2))
+            self.tag = 0 if (self.nsim % 2 == 0) else 99
+            self.root = join(self.base, folder)
+            self.ngrid = 256
+        elif self.version == 1:
+            cluster = 1 + (self.nsim // 2)
+            self.rtag, self.stag = (("R000", "S000")
+                                    if (self.nsim % 2 == 0)
+                                    else ("R450", "S450"))
+            self.root = join(self.base,
+                             f"C{cluster:03d}",
+                             self.rtag,
+                             self.stag,
+                             "cic")
+            self.ngrid = 128
+        else:
+            raise ValueError(f"Unknown HAMLET version: {self.version}")
+
+    def _read_grid(self, fname):
+        return np.fromfile(fname, dtype=self.dtype).reshape(
+            (self.ngrid,) * 3)
 
     def load_density(self):
-        fname = join(self.fpath_root, f"divv_{self.tag}_256.bin")
-        delta = np.fromfile(fname, dtype=np.float32).reshape((self.ngrid,) * 3)
-        return smooth_clip(1 + delta, eps=1e-2).astype(np.float32)
+        if self.version == 0:
+            fname = join(self.root, f"divv_{self.tag}_{self.ngrid}.bin")
+            # TODO: Check this! Does not seem quite right..
+            delta = self._read_grid(fname)
+            rho = 1 + delta
+            # Might need to clip
+            # rho = smooth_clip(rho, eps=1e-2)
+        elif self.version == 1:
+            fname = join(self.root,
+                         f"cic_pos_N{self.ngrid}_{self.stag}_snap003.dat")
+            rho = self._read_grid(fname)
+        else:
+            raise ValueError(f"Unknown HAMLET version: {self.version}")
+
+        return rho.astype(self.dtype)
 
     def load_velocity(self):
-        vel = []
-        for comp in ("x", "y", "z"):
-            f = join(self.fpath_root, f"v{comp}_{self.tag}_{self.ngrid}.bin")
-            arr = np.fromfile(f, dtype=np.float32).reshape((self.ngrid,) * 3)
-            vel.append(arr)
-        return np.stack(vel, axis=0)
+        comps = []
+        for c in ("x", "y", "z"):
+            if self.version == 0:
+                fname = join(self.root,
+                             f"v{c}_{self.tag}_{self.ngrid}.bin")
+            else:
+                fname = join(self.root,
+                             f"cic_vel{c}_N{self.ngrid}_{self.stag}"
+                             f"_snap003_normed.dat")
+            comps.append(self._read_grid(fname))
+
+        return np.stack(comps, axis=0).astype(self.dtype)
 
 
 class CSiBORG_FieldLoader(BaseFieldLoader):
@@ -404,7 +450,7 @@ def name2field_loader(name):
         return CSiBORG_FieldLoader
     elif name.lower().startswith("manticore"):
         return Manticore_FieldLoader
-    elif name == "HAMLET":
+    elif name.lower().startswith("hamlet"):
         return Hamlet_FieldLoader
     else:
         raise ValueError(f"Unknown field loader: {name}")
