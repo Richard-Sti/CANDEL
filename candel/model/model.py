@@ -1108,9 +1108,6 @@ class FPModel(BaseModel):
         super().__init__(config_path)
 
         if self.use_MNR:
-            raise RuntimeError(
-                "MNR for FP is not implemented yet. Please set "
-                "`use_MNR` to False in the config file.")
             fprint("setting `compute_evidence` to False.")
             self.config["inference"]["compute_evidence"] = False
 
@@ -1150,17 +1147,41 @@ class FPModel(BaseModel):
             beta=beta)
 
         if self.use_MNR:
-            raise NotImplementedError("MNR for FP is not implemented yet.")
+            logs_prior_mean = sample(
+                "logs_prior_mean", Uniform(data["min_logs"], data["max_logs"]))
+            logs_prior_std = sample(
+                "logs_prior_std", Uniform(data["min_logs"], data["max_logs"]))
+
+            logI_prior_mean = sample(
+                "logI_prior_mean", Uniform(data["min_logI"], data["max_logI"]))
+            logI_prior_std = sample(
+                "logI_prior_std",
+                Uniform(0.0, data["max_logI"] - data["min_logI"]))
+            rho = sample("rho_corr", Uniform(-1.0, 1.0))
+
+            mu = jnp.array([logs_prior_mean, logI_prior_mean])
+            cov = jnp.array([
+                [logs_prior_std**2, rho * logs_prior_std * logI_prior_std],
+                [rho * logs_prior_std * logI_prior_std, logI_prior_std**2]])
 
         with plate("data", nsamples):
             if self.use_MNR:
-                raise NotImplementedError("MNR for FP is not implemented yet.")
+                x_latent = sample("x_latent", MultivariateNormal(mu, cov))
+                logs = x_latent[:, 0]
+                logI = x_latent[:, 1]
+
+                sample("logs_obs", Normal(logs, data["e_logs"]), obs=logs)
+                sample("logI_obs", Normal(logI, data["e_logI"]), obs=logI)
+
+                sigma_log_theta = jnp.sqrt(
+                    sigma_log_theta**2 + data["e2_log_theta_eff"])
             else:
                 logs = data["logs"]
                 logI = data["logI"]
 
                 sigma_log_theta = jnp.sqrt(
                     + sigma_log_theta**2
+                    + data["e2_log_theta_eff"]
                     + a_FP**2 * data["e2_logs"] + b_FP**2 * data["e2_logI"]
                     )
 

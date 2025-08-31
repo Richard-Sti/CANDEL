@@ -224,15 +224,6 @@ class PVDataFrame:
         else:
             frame.eta_max = None
 
-        # Hyperparameters for the SNe modelling
-        if "x1" in frame.keys():
-            frame.x1_min = jnp.min(frame["x1"])
-            frame.x1_max = jnp.max(frame["x1"])
-
-        if "c" in frame.keys():
-            frame.c_min = jnp.min(frame["c"])
-            frame.c_max = jnp.max(frame["c"])
-
         frame.with_lane_covmat = name == "PantheonPlusLane"
         frame.name = name
         return frame
@@ -1359,6 +1350,7 @@ def load_SDSS_FP(root, zcmb_min=None, zcmb_max=None, b_min=7.5,
         "theta_eff": theta_eff,
         "e_theta_eff": e_theta_eff,
         "log_theta_eff": np.log10(theta_eff),
+        "e_log_theta_eff": e_theta_eff / (theta_eff * np.log(10)),
         "logI": d_input["i"],
         "e_logI": d_input["ei"],
         "logs": d_input["s"],
