@@ -173,6 +173,9 @@ class PVDataFrame:
                f"{num_points} points.")
         data["r_grid"] = np.linspace(rmin, rmax, num_points)
 
+        los_decay_scale = config_pv_model.get("los_decay_scale", 5.0)
+        fprint(f"setting los_decay_scale to {los_decay_scale}")
+
         if "los_density" in data:
             data["los_log_density"] = np.log(data["los_density"])
             data["los_delta"] = data["los_density"] - 1
@@ -183,10 +186,11 @@ class PVDataFrame:
                     "Subsampling for Pantheon+ Lane is not supported because "
                     "of the complicated covariance matrix.")
 
-            frame = cls(data)
-            frame = frame.subsample(nsamples_subsample, seed=seed_subsample)
+            frame = cls(data, los_decay_scale)
+            frame = frame.subsample(
+                nsamples_subsample, los_decay_scale, seed=seed_subsample)
         else:
-            frame = cls(data)
+            frame = cls(data, los_decay_scale)
 
         frame.sample_dust = sample_dust
 
@@ -220,20 +224,11 @@ class PVDataFrame:
         else:
             frame.eta_max = None
 
-        # Hyperparameters for the SNe modelling
-        if "x1" in frame.keys():
-            frame.x1_min = jnp.min(frame["x1"])
-            frame.x1_max = jnp.max(frame["x1"])
-
-        if "c" in frame.keys():
-            frame.c_min = jnp.min(frame["c"])
-            frame.c_max = jnp.max(frame["c"])
-
         frame.with_lane_covmat = name == "PantheonPlusLane"
         frame.name = name
         return frame
 
-    def subsample(self, nsamples, seed=42):
+    def subsample(self, nsamples, los_radial_decay_scale, seed=42):
         """
         Returns a new frame with randomly selected `nsamples`. Keeps all
         calibrators in the sample (if present), and updates associated
@@ -278,7 +273,7 @@ class PVDataFrame:
                 else:
                     subsampled[key] = self.data[key]
 
-        return PVDataFrame(subsampled)
+        return PVDataFrame(subsampled, los_radial_decay_scale)
 
     def __getitem__(self, key):
         if key in self._cache:
@@ -374,9 +369,15 @@ def load_los(los_data_path, data, mask=None):
         assert np.all(data["los_density"] > 0)
         assert np.all(np.isfinite(data["los_velocity"]))
 
-    if "manticore" in los_data_path.lower():
-        fprint("normalizing the Manticore LOS density.")
-        data["los_density"] /= 0.3111 * 275.4  # Manticore normalization
+        if "manticore" in los_data_path.lower():
+            fprint("normalizing the Manticore LOS density (Om = 0.3111)")
+            data["los_density"] /= 0.3111 * 275.4  # Manticore normalization
+        elif "_CB1" in los_data_path:
+            data["los_density"] /= 0.307 * 275.4
+            fprint(f"normalizing the CB1 LOS density (Om = 0.307)")
+        elif "_CB2" in los_data_path:
+            fprint(f"normalizing the CB2 LOS density (Om = 0.3111)")
+            data["los_density"] /= 0.3111 * 275.4
 
     return data
 
@@ -657,7 +658,7 @@ def _load_LOSS_Foundation(which, root, zcmb_min=None, zcmb_max=None,
         e_c = grp["e_c"][...]
         e_x1 = grp["e_x1"][...]
 
-    fprint(f"initially loaded {len(zcmb)} galaxies from CF4 TFR data.")
+    fprint(f"initially loaded {len(zcmb)} galaxies from LOSS/Foundation data.")
 
     data = dict(
         zcmb=zcmb,
@@ -1349,6 +1350,7 @@ def load_SDSS_FP(root, zcmb_min=None, zcmb_max=None, b_min=7.5,
         "theta_eff": theta_eff,
         "e_theta_eff": e_theta_eff,
         "log_theta_eff": np.log10(theta_eff),
+        "e_log_theta_eff": e_theta_eff / (theta_eff * np.log(10)),
         "logI": d_input["i"],
         "e_logI": d_input["ei"],
         "logs": d_input["s"],

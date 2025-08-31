@@ -15,6 +15,7 @@
 
 from .field_interp import (                                                     # noqa
     interpolate_los_density_velocity,                                           # noqa
+    apply_gaussian_smoothing,                                                   # noqa
     )
 
 from .loader import (                                                           # noqa

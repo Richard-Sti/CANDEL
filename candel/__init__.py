@@ -68,11 +68,14 @@ from .util import (                                                             
     radec_cartesian_to_galactic,                                                # noqa
     galactic_to_radec,                                                          # noqa
     galactic_to_radec_cartesian,                                                # noqa
+    supergalactic_to_radec,                                                     # noqa
+    radec_to_supergalactic,                                                     # noqa
     load_config,                                                                # noqa
     replace_prior_with_delta,                                                   # noqa
     hms_to_degrees,                                                             # noqa
     dms_to_degrees,                                                             # noqa
     fprint,                                                                     # noqa
     read_gof,                                                                   # noqa
-    get_nested,
+    read_samples,                                                               # noqa
+    get_nested,                                                                 # noqa
 )
