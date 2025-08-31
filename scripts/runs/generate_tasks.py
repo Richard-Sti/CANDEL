@@ -269,29 +269,25 @@ if __name__ == "__main__":
     # Multiple override options → this creates a job per combination
     # # --- TFR/SN/FP/Cluster flow model over-rides ---
     manual_overrides = {
-        "inference/num_samples": 500,
-        "inference/compute_log_density": True,
-        "inference/compute_evidence": True,
-        "pv_model/kind": "precomputed_los_HAMLET",
-        # "pv_model/kind": "precomputed_los_manticore_2MPP_MULTIBIN_N256_DES_V2",  # noqa
-        "pv_model/galaxy_bias": "linear",
-        "io/catalogue_name": "2MTF",
-        "inference/model": "TFRModel",
-        "io/root_output": "results_test/",
-        # "io/Clusters/which_relation": "LT",
-        "model/use_MNR": False,
+        ###### - INFERENCE - ######
+        "inference/num_samples": 10_000,
+        "inference/num_chains": 5,
+        "inference/compute_log_density": False,
+        "inference/compute_evidence": False,
+        "inference/model": "FPModel",
+        ### -- MODEL -- ###
+        "model/use_MNR": True,
         "model/marginalize_eta": False,
+        ##### -- PV MODEL -- ######
+        "pv_model/kind": "precomputed_los_Carrick2015",
+        "pv_model/galaxy_bias": "linear_from_beta_stochastic",
+        # "pv_model/kind": "precomputed_los_manticore_2MPP_MULTIBIN_N256_DES_V2",  # noqa
         # "pv_model/r_limits_malmquist": [[0.1, 1001]],
         # "pv_model/num_points_malmquist": 1001,
-        # "model/marginalize_eta": True,
-        # "io/CF4_i/exclude_W1": True,
-        # "io/CF4_W1/best_mag_quality": False,
-        # "io/CF4_W1/zcmb_min": 0.01,
-        # "io/CF4_W1/dust_model": ["none", "default", "SFD", "CSFD", "Planck2016"],  # noqa
-        # "io/Clusters/which_relation": ["LT", "LTY"],
+        ###### - PRIORS -- ######
         "model/priors/beta": [
-            # {"dist": "normal", "loc": 0.43, "scale": 0.25},
-            {"dist": "normal", "loc": 1.0, "scale": 0.25},
+            {"dist": "normal", "loc": 0.43, "scale": 0.25},
+            # {"dist": "normal", "loc": 1.0, "scale": 0.25},
             # {"dist": "delta", "value": 1.0},
         ],
         # "model/priors/zeropoint_dipole": [
@@ -299,6 +295,14 @@ if __name__ == "__main__":
         #     {"dist": "vector_uniform_fixed", "low": 0.0, "high": 0.3},
         #     # {"dist": "vector_components_uniform", "low": -0.3, "high": 0.3},  # noqa
         # ],
+        ###### - IO - ######
+        "io/catalogue_name": "SDSS_FP",
+        "io/root_output": "results_test/",
+        # "io/Clusters/which_relation": "LT",
+        # "io/CF4_i/exclude_W1": True,
+        # "io/CF4_W1/best_mag_quality": False,
+        # "io/CF4_W1/dust_model": ["none", "default", "SFD", "CSFD", "Planck2016"],  # noqa
+        # "io/Clusters/which_relation": ["LT", "LTY"],
         # "io/catalogue_name": [f"CF4_mock_{n}" for n in range(70)],
         # "io/CF4_mock/root": "data/CF4_mock/anisotropic",
     }
