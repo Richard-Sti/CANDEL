@@ -270,14 +270,14 @@ if __name__ == "__main__":
     # # --- TFR/SN/FP/Cluster flow model over-rides ---
     manual_overrides = {
         # ###### - INFERENCE - ######
-        "inference/num_samples": 10_000,
+        "inference/num_samples": 5000,
         "inference/num_chains": 5,
         "inference/compute_log_density": False,
         "inference/compute_evidence": False,
-        "inference/model": "FPModel",
+        "inference/model": "TFRModel",
         # ###### -- MODEL -- ######
         "model/use_MNR": True,
-        "model/marginalize_eta": False,
+        "model/marginalize_eta": True,
         # ###### -- PV MODEL -- ######
         "pv_model/kind": "precomputed_los_Carrick2015",
         "pv_model/galaxy_bias": "linear_from_beta_stochastic",
@@ -296,8 +296,8 @@ if __name__ == "__main__":
         #     # {"dist": "vector_components_uniform", "low": -0.3, "high": 0.3},  # noqa
         # ],
         # ###### - IO - ######
-        "io/catalogue_name": "SDSS_FP",
-        "io/root_output": "results_test/",
+        "io/catalogue_name": "CF4_i",
+        "io/root_output": "results/S8",
         # "io/Clusters/which_relation": "LT",
         # "io/CF4_i/exclude_W1": True,
         # "io/CF4_W1/best_mag_quality": False,
