@@ -269,22 +269,22 @@ if __name__ == "__main__":
     # Multiple override options → this creates a job per combination
     # # --- TFR/SN/FP/Cluster flow model over-rides ---
     manual_overrides = {
-        ###### - INFERENCE - ######
+        # ###### - INFERENCE - ######
         "inference/num_samples": 10_000,
         "inference/num_chains": 5,
         "inference/compute_log_density": False,
         "inference/compute_evidence": False,
         "inference/model": "FPModel",
-        ### -- MODEL -- ###
+        # ###### -- MODEL -- ######
         "model/use_MNR": True,
         "model/marginalize_eta": False,
-        ##### -- PV MODEL -- ######
+        # ###### -- PV MODEL -- ######
         "pv_model/kind": "precomputed_los_Carrick2015",
         "pv_model/galaxy_bias": "linear_from_beta_stochastic",
         # "pv_model/kind": "precomputed_los_manticore_2MPP_MULTIBIN_N256_DES_V2",  # noqa
         # "pv_model/r_limits_malmquist": [[0.1, 1001]],
         # "pv_model/num_points_malmquist": 1001,
-        ###### - PRIORS -- ######
+        # ##### - PRIORS -- ######
         "model/priors/beta": [
             {"dist": "normal", "loc": 0.43, "scale": 0.25},
             # {"dist": "normal", "loc": 1.0, "scale": 0.25},
@@ -295,7 +295,7 @@ if __name__ == "__main__":
         #     {"dist": "vector_uniform_fixed", "low": 0.0, "high": 0.3},
         #     # {"dist": "vector_components_uniform", "low": -0.3, "high": 0.3},  # noqa
         # ],
-        ###### - IO - ######
+        # ###### - IO - ######
         "io/catalogue_name": "SDSS_FP",
         "io/root_output": "results_test/",
         # "io/Clusters/which_relation": "LT",
