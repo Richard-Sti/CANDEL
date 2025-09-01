@@ -270,11 +270,8 @@ class Hamlet_FieldLoader(BaseFieldLoader):
     def load_density(self):
         if self.version == 0:
             fname = join(self.root, f"divv_{self.tag}_{self.ngrid}.bin")
-            # TODO: Check this! Does not seem quite right..
             delta = self._read_grid(fname)
-            rho = 1 + delta
-            # Might need to clip
-            # rho = smooth_clip(rho, eps=1e-2)
+            rho = np.log1p(np.exp(delta))
         elif self.version == 1:
             fname = join(self.root,
                          f"cic_pos_N{self.ngrid}_{self.stag}_snap003.dat")
