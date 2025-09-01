@@ -22,7 +22,7 @@ except ModuleNotFoundError:
     import tomli as tomllib
 
 from datetime import datetime
-from os.path import abspath, basename, isabs, join
+from os.path import abspath, basename, isabs, join, exists
 from pathlib import Path
 from warnings import warn
 
@@ -793,8 +793,11 @@ def plot_radial_profiles(samples, model, r_eval_size=1000, show_fig=True,
         plt.close(fig)
 
 
-def read_gof(fname, which):
+def read_gof(fname, which, raise_error=True):
     """Read goodness-of-fit statistics from a file with samples."""
+    if not exists(fname) and not raise_error:
+        return np.nan
+
     convert = which.startswith("logZ_")
     key = which.replace("logZ_", "lnZ_") if convert else which
 
