@@ -14,7 +14,7 @@
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 
-import random
+from numpy.random import default_rng
 
 
 def simname2label(simname):
@@ -49,7 +49,7 @@ def catalogue2label(catalogue):
     return ltx[catalogue] if catalogue in ltx else catalogue
 
 
-def simname2color(simname):
+def simname2color(simname, gen=None):
     cols = ["#1be7ffff", "#6eeb83ff", "#e4ff1aff", "#ffb800ff",
             "#ff5714ff", "#9b5de5ff"]
 
@@ -66,4 +66,10 @@ def simname2color(simname):
         "CLONES": cols[5],
     }
 
-    return colors.get(simname, random.choice(defaults))
+    if simname in colors:
+        return colors[simname]
+
+    if gen is None:
+        gen = default_rng()
+
+    return gen.choice(defaults)
