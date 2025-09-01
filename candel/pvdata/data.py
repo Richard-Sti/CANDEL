@@ -378,6 +378,9 @@ def load_los(los_data_path, data, mask=None):
         elif "_CB2" in los_data_path:
             fprint("normalizing the CB2 LOS density (Om = 0.3111)")
             data["los_density"] /= 0.3111 * 275.4
+        elif "HAMLET_V1" in los_data_path:
+            fprint("normalizing the HAMLET_V1 LOS density (Om = 0.3)")
+            data["los_density"] /= 0.3 * 275.4
 
     return data
 
