@@ -12,6 +12,7 @@
 # machine="rusty"
 
 root_main = "/home/phys1997/CANDEL/"
+root_data = "/data/phys-galsim/phys1997/CANDEL/"
 python_exec = "/home/phys1997/CANDEL/venv_candel/bin/python"
 machine = "arc"
 
