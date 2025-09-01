@@ -270,25 +270,25 @@ if __name__ == "__main__":
     # # --- TFR/SN/FP/Cluster flow model over-rides ---
     manual_overrides = {
         # ###### - INFERENCE - ######
-        "inference/num_warmup": 500,
-        "inference/num_samples": 500,
+        "inference/num_warmup": 1000,
+        "inference/num_samples": 5000,
         "inference/num_chains": 5,
         "inference/compute_log_density": True,
         "inference/compute_evidence": True,
         "inference/model": "TFRModel",
         # ###### -- MODEL -- ######
-        "model/use_MNR": False,
-        "model/marginalize_eta": False,
+        "model/use_MNR": True,
+        "model/marginalize_eta": True,
         # ###### -- PV MODEL -- ######
-        "pv_model/kind": "precomputed_los_HAMLET_V1",
-        "pv_model/galaxy_bias": "double_powerlaw",
+        "pv_model/kind": "precomputed_los_Carrick2015",
+        "pv_model/galaxy_bias": "linear_from_beta_stochastic",
         # "pv_model/kind": "precomputed_los_manticore_2MPP_MULTIBIN_N256_DES_V2",  # noqa
         # "pv_model/r_limits_malmquist": [[0.1, 1001]],
         # "pv_model/num_points_malmquist": 1001,
         # ##### - PRIORS -- ######
         "model/priors/beta": [
-            # {"dist": "normal", "loc": 0.43, "scale": 0.25},
-            {"dist": "normal", "loc": 1.0, "scale": 0.25},
+            {"dist": "uniform", "low": -1, "high": 2.0},
+            # {"dist": "normal", "loc": 1.0, "scale": 0.25},
             # {"dist": "delta", "value": 1.0},
         ],
         # "model/priors/zeropoint_dipole": [
@@ -297,8 +297,8 @@ if __name__ == "__main__":
         #     # {"dist": "vector_components_uniform", "low": -0.3, "high": 0.3},  # noqa
         # ],
         # ###### - IO - ######
-        "io/catalogue_name": "2MTF",
-        "io/root_output": "results_test/",
+        "io/catalogue_name": ["2MTF", "SFI", "CF4_W1", "CF4_i"],
+        "io/root_output": "results/VFO",
         # "io/Clusters/which_relation": "LT",
         # "io/CF4_i/exclude_W1": True,
         # "io/CF4_W1/best_mag_quality": False,
