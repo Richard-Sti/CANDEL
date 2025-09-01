@@ -255,8 +255,8 @@ def expand_override_grid(overrides):
 if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_argument(
-        "tasks_index", type=int, nargs="?", default=0,
-        help="Index of the task to run (default: 0)")
+        "tasks_index", type=str, nargs="?", default="0",
+        help="Arbitrary tag/index for this task list.")
     args = parser.parse_args()
 
     config_path = "./config.toml"
