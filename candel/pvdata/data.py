@@ -375,12 +375,21 @@ def load_los(los_data_path, data, mask=None):
         elif "_CB1" in los_data_path:
             data["los_density"] /= 0.307 * 275.4
             fprint("normalizing the CB1 LOS density (Om = 0.307)")
+
+            if len(data["los_density"]) == 100:
+                fprint("downsampling the CB1 LOS density from 100 to 20")
+                data["los_density"] = data["los_density"][::5]
+                data["los_velocity"] = data["los_velocity"][::5]
         elif "_CB2" in los_data_path:
             fprint("normalizing the CB2 LOS density (Om = 0.3111)")
             data["los_density"] /= 0.3111 * 275.4
         elif "HAMLET_V1" in los_data_path:
             fprint("normalizing the HAMLET_V1 LOS density (Om = 0.3)")
             data["los_density"] /= 0.3 * 275.4
+        elif "_CF4.hdf5" in los_data_path and len(data["los_density"]) == 100:
+            fprint("downsampling the CF4 LOS density from 100 to 20")
+            data["los_density"] = data["los_density"][::5]
+            data["los_velocity"] = data["los_velocity"][::5]
 
     return data
 
