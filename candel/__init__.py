@@ -64,6 +64,7 @@ from .util import (                                                             
     plot_corner_from_hdf5,                                                      # noqa
     plot_radial_profiles,                                                       # noqa
     radec_to_cartesian,                                                         # noqa
+    cartesian_to_radec,                                                         # noqa
     radec_to_galactic,                                                          # noqa
     radec_cartesian_to_galactic,                                                # noqa
     galactic_to_radec,                                                          # noqa

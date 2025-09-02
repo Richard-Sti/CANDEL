@@ -169,6 +169,22 @@ def radec_to_cartesian(ra, dec):
     return np.column_stack([x, y, z])
 
 
+def cartesian_to_radec(x, y, z):
+    """
+    Convert Cartesian coordinates (x, y, z) to right ascension and
+    declination (RA, Dec), both in degrees.
+    """
+    d = (x**2 + y**2 + z**2)**0.5
+    dec = np.arcsin(z / d)
+    ra = np.arctan2(y, x)
+    ra[ra < 0] += 2 * np.pi
+
+    ra *= 180 / np.pi
+    dec *= 180 / np.pi
+
+    return d, ra, dec
+
+
 def radec_to_galactic(ra, dec):
     """
     Convert right ascension and declination to galactic coordinates (all in
