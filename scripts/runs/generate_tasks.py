@@ -270,20 +270,19 @@ if __name__ == "__main__":
     # # --- TFR/SN/FP/Cluster flow model over-rides ---
     manual_overrides = {
         # ###### - INFERENCE - ######
-        "inference/num_warmup": 50,
-        "inference/num_samples": 50,
-        "inference/num_chains": 1,
+        "inference/num_warmup": 1000,
+        "inference/num_samples": 5000,
+        "inference/num_chains": 5,
         "inference/compute_log_density": True,
         "inference/compute_evidence": True,
-        # "inference/model": ["TFRModel", "TFRModel", "SNModel", "SNModel"],
         "inference/model": ["TFRModel", "TFRModel", "SNModel", "SNModel"],
         "inference/shared_params": "beta,sigma_v,Vext",
         # ###### -- MODEL -- ######
-        "model/use_MNR": False,
-        "model/marginalize_eta": False,
+        "model/use_MNR": True,
+        "model/marginalize_eta": True,
         # ###### -- PV MODEL -- ######
         "pv_model/kind": "precomputed_los_Carrick2015",
-        # "pv_model/galaxy_bias": "double_powerlaw",
+        "pv_model/galaxy_bias": "linear_from_beta_stochastic",
         # "pv_model/kind": "precomputed_los_manticore_2MPP_MULTIBIN_N256_DES_V2",
         # "pv_model/r_limits_malmquist": [[0.1, 1001]],
         # "pv_model/num_points_malmquist": 1001,
@@ -300,9 +299,7 @@ if __name__ == "__main__":
         # ],
         # ###### - IO - ######
         # "io/catalogue_name": ["2MTF", "SFI", "CF4_W1", "CF4_i"],
-        # "io/catalogue_name": ["LOSS", "Foundation"],
-        # "inference/model": ["TFRModel", "TFRModel", "SNModel", "SNModel"],
-        "inference/model": ["SNModel", "SNModel"],
+        "io/catalogue_name": ["LOSS", "Foundation", "CF4_W1", "CF4_i"],
         "io/root_output": "results/VFO",
         # "io/Clusters/which_relation": "LT",
         "io/CF4_i/exclude_W1": True,
