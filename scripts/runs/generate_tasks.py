@@ -271,10 +271,10 @@ if __name__ == "__main__":
     manual_overrides = {
         # ###### - INFERENCE - ######
         "inference/num_warmup": 1000,
-        "inference/num_samples": 5000,
-        "inference/num_chains": 5,
-        "inference/compute_log_density": True,
-        "inference/compute_evidence": True,
+        "inference/num_samples": 10000,
+        "inference/num_chains": 1,
+        "inference/compute_log_density": False,
+        "inference/compute_evidence": False,
         "inference/model": ["TFRModel", "TFRModel", "SNModel", "SNModel"],
         "inference/shared_params": "beta,sigma_v,Vext",
         # ###### -- MODEL -- ######
@@ -299,8 +299,8 @@ if __name__ == "__main__":
         # ],
         # ###### - IO - ######
         # "io/catalogue_name": ["2MTF", "SFI", "CF4_W1", "CF4_i"],
-        "io/catalogue_name": ["LOSS", "Foundation", "CF4_W1", "CF4_i"],
-        "io/root_output": "results/VFO",
+        "io/catalogue_name": ["CF4_W1", "CF4_i", "LOSS", "Foundation"],
+        "io/root_output": "results_test/",
         # "io/Clusters/which_relation": "LT",
         "io/CF4_i/exclude_W1": True,
         # "io/CF4_W1/best_mag_quality": False,
