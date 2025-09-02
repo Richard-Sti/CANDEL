@@ -270,25 +270,27 @@ if __name__ == "__main__":
     # # --- TFR/SN/FP/Cluster flow model over-rides ---
     manual_overrides = {
         # ###### - INFERENCE - ######
-        "inference/num_warmup": 1000,
-        "inference/num_samples": 5000,
+        "inference/num_warmup": 50,
+        "inference/num_samples": 50,
         "inference/num_chains": 1,
         "inference/compute_log_density": True,
         "inference/compute_evidence": True,
-        "inference/model": "FPModel",
+        # "inference/model": ["TFRModel", "TFRModel", "SNModel", "SNModel"],
+        "inference/model": ["TFRModel", "TFRModel", "SNModel", "SNModel"],
+        "inference/shared_params": "beta,sigma_v,Vext",
         # ###### -- MODEL -- ######
-        "model/use_MNR": True,
+        "model/use_MNR": False,
         "model/marginalize_eta": False,
         # ###### -- PV MODEL -- ######
         "pv_model/kind": "precomputed_los_Carrick2015",
-        "pv_model/galaxy_bias": "linear",
-        # "pv_model/kind": "precomputed_los_manticore_2MPP_MULTIBIN_N256_DES_V2",  # noqa
+        # "pv_model/galaxy_bias": "double_powerlaw",
+        # "pv_model/kind": "precomputed_los_manticore_2MPP_MULTIBIN_N256_DES_V2",
         # "pv_model/r_limits_malmquist": [[0.1, 1001]],
         # "pv_model/num_points_malmquist": 1001,
         # ##### - PRIORS -- ######
         "model/priors/beta": [
-            # {"dist": "uniform", "low": -1, "high": 2.0},
-            {"dist": "normal", "loc": 0.43, "scale": 0.25},
+            {"dist": "uniform", "low": -1, "high": 2.0},
+            # {"dist": "normal", "loc": 0.43, "scale": 0.25},
             # {"dist": "delta", "value": 1.0},
         ],
         # "model/priors/zeropoint_dipole": [
@@ -299,8 +301,9 @@ if __name__ == "__main__":
         # ###### - IO - ######
         # "io/catalogue_name": ["2MTF", "SFI", "CF4_W1", "CF4_i"],
         # "io/catalogue_name": ["LOSS", "Foundation"],
-        "io/catalogue_name": "SDSS_FP",
-        "io/root_output": "results/S8",
+        # "inference/model": ["TFRModel", "TFRModel", "SNModel", "SNModel"],
+        "inference/model": ["SNModel", "SNModel"],
+        "io/root_output": "results/VFO",
         # "io/Clusters/which_relation": "LT",
         "io/CF4_i/exclude_W1": True,
         # "io/CF4_W1/best_mag_quality": False,
