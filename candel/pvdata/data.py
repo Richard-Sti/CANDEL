@@ -130,6 +130,11 @@ class PVDataFrame:
         seed_subsample = config.pop("seed_subsample", 42)
         sample_dust = False
 
+        smooth_target = config_pv_model.get("smooth_target", None)
+        if smooth_target is not None:
+            config["los_data_path"] = config["los_data_path"].replace(
+                ".hdf5", f"_smooth_to_{smooth_target}.hdf5")
+
         if "CF4_mock" in name:
             index = name.split("_")[-1]
             data = load_CF4_mock(root, index)
