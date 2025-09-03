@@ -16,6 +16,8 @@ Scripts to load fields that have been previously interpolated at the line of
 sight of galaxies and saved to HDF5 files, typically this is done with the
 `csiborgtools` package.
 """
+from warnings import warn
+
 import numpy as np
 from scipy.interpolate import RegularGridInterpolator
 
@@ -31,6 +33,14 @@ def apply_gaussian_smoothing(field, smooth_scale, boxsize, make_copy=False):
     N = field.shape[0]
     if field.ndim != 3 or not (field.shape[1] == N and field.shape[2] == N):
         raise ValueError("`field` must be cubic with shape (N, N, N).")
+
+    try:
+        import smoothing_library as SL
+        W_k = SL.FT_filter(boxsize, smooth_scale, N, "Gaussian")
+        return SL.field_smoothing(field, W_k)
+    except ImportError:
+        warn("Pylians3 not found. Switching to NumPy FFT calculation.",
+             UserWarning)
 
     x = field.copy() if make_copy else field
     dx = boxsize / N
@@ -71,8 +81,6 @@ def interpolate_los_density_velocity(field_loader, r, RA, dec,
     Interpolate the density and velocity fields along the line of sight
     specified by `RA` and `dec` at radial steps `r` from the observer. The
     former is expected in degrees, while the latter in `Mpc / h`.
-
-    XX
     """
     if field_loader.coordinate_frame == "icrs":
         rhat = radec_to_cartesian(RA, dec)
