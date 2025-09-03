@@ -129,6 +129,9 @@ def generate_dynamic_tag(config, base_tag="default"):
     if get_nested(config, "pv_model/kind", "").startswith("precomputed_los"):
         parts.append(get_nested(config, "pv_model/galaxy_bias", ""))
 
+    if get_nested(config, "pv_model/smooth_target", None) not in (None, "none"):  # noqa
+        parts.append(f"smooth{get_nested(config, 'pv_model/smooth_target')}")
+
     # Clusters scaling relation choice
     if get_nested(config, "inference/model", None) == "ClustersModel":
         parts.append(get_nested(config, "io/Clusters/which_relation", None))
@@ -270,18 +273,20 @@ if __name__ == "__main__":
     # # --- TFR/SN/FP/Cluster flow model over-rides ---
     manual_overrides = {
         # ###### - INFERENCE - ######
-        "inference/num_warmup": 1000,
-        "inference/num_samples": 10000,
+        "inference/num_warmup": 500,
+        "inference/num_samples": 500,
         "inference/num_chains": 1,
         "inference/compute_log_density": False,
         "inference/compute_evidence": False,
-        "inference/model": ["TFRModel", "TFRModel", "SNModel", "SNModel"],
-        "inference/shared_params": "beta,sigma_v,Vext",
+        # "inference/model": ["TFRModel", "TFRModel", "SNModel", "SNModel"],
+        "inference/model": "SNModel",
+        # "inference/shared_params": "beta,sigma_v,Vext",
         # ###### -- MODEL -- ######
         "model/use_MNR": True,
         "model/marginalize_eta": True,
         # ###### -- PV MODEL -- ######
         "pv_model/kind": "precomputed_los_Carrick2015",
+        "pv_model/smooth_target": 7.8,
         "pv_model/galaxy_bias": "linear_from_beta_stochastic",
         # "pv_model/kind": "precomputed_los_manticore_2MPP_MULTIBIN_N256_DES_V2",
         # "pv_model/r_limits_malmquist": [[0.1, 1001]],
@@ -299,7 +304,8 @@ if __name__ == "__main__":
         # ],
         # ###### - IO - ######
         # "io/catalogue_name": ["2MTF", "SFI", "CF4_W1", "CF4_i"],
-        "io/catalogue_name": ["CF4_W1", "CF4_i", "LOSS", "Foundation"],
+        # "io/catalogue_name": ["CF4_W1", "CF4_i", "LOSS", "Foundation"],
+        "io/catalogue_name": "LOSS",
         "io/root_output": "results_test/",
         # "io/Clusters/which_relation": "LT",
         "io/CF4_i/exclude_W1": True,
