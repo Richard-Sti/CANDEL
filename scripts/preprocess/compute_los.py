@@ -106,6 +106,9 @@ def main():
     parser.add_argument("--smooth_target", type=float, default=None)
     args = parser.parse_args()
 
+    if args.smooth_target == 0:
+        args.smooth_target = None
+
     config = candel.load_config(args.config)
     nreal_map = {
         "Carrick2015": 1,
