@@ -47,6 +47,7 @@ def catalogue2label(catalogue):
            "CF4_i": r"CF4 $i$",
            "CF4_W1": r"CF4 W1",
            "CF4_W2": r"CF4 W2",
+           "CF4_W1,CF4_i,LOSS,Foundation": "Joint",
            }
 
     if isinstance(catalogue, list):
@@ -87,7 +88,9 @@ def switch_paths_SN_to_no_MNR(files):
     for name, paths in files:
         new_paths = []
         for p in paths:
-            if "LOSS" in p or "Foundation" in p:
+            if "LOSS" in p and "Foundation" in p:
+                new_paths.append(p)
+            elif "LOSS" in p or "Foundation" in p:
                 new_paths.append(p.replace("MNR", "noMNR"))
             else:
                 new_paths.append(p)
