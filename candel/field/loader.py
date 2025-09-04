@@ -276,7 +276,7 @@ class Hamlet_FieldLoader(BaseFieldLoader):
             fname = join(self.root,
                          f"cic_pos_N{self.ngrid}_{self.stag}_snap003.dat")
             rho = self._read_grid(fname)
-            print("FLIPPING V0 HAMLET")
+            print("FLIPPING V1 HAMLET")
             rho = rho.T
         else:
             raise ValueError(f"Unknown HAMLET version: {self.version}")
@@ -298,7 +298,7 @@ class Hamlet_FieldLoader(BaseFieldLoader):
         v = np.stack(comps, axis=0).astype(self.dtype)
 
         if self.version == 1:
-            print("FLIPPING V0 HAMLET")
+            print("FLIPPING V1 HAMLET")
             v[0, ...] = v[0, ...].T
             v[1, ...] = v[1, ...].T
             v[2, ...] = v[2, ...].T
