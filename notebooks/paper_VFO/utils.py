@@ -148,10 +148,13 @@ def load_and_clean_logZ(files, samples, stat="logZ_harmonic"):
     return gof
 
 
-def strip_token_from_paths(files, token):
+def replace_token_in_paths(files, token, replacement=""):
+    """Replace or remove a token in the file paths."""
     new_files = []
     for name, paths in files:
-        new_paths = [p.replace(f"_{token}", "") for p in paths]
+        new_paths = [
+            p.replace(f"{token}", f"{replacement}" if replacement else "")
+            for p in paths]
         new_files.append((name, new_paths))
     return new_files
 
