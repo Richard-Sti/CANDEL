@@ -36,8 +36,8 @@ def apply_gaussian_smoothing(field, smooth_scale, boxsize, make_copy=False):
 
     try:
         import smoothing_library as SL
-        W_k = SL.FT_filter(boxsize, smooth_scale, N, "Gaussian")
-        return SL.field_smoothing(field, W_k)
+        W_k = SL.FT_filter(boxsize, smooth_scale, N, "Gaussian", 1)
+        return SL.field_smoothing(field, W_k, 1)
     except ImportError:
         warn("Pylians3 not found. Switching to NumPy FFT calculation.",
              UserWarning)

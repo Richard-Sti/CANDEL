@@ -180,8 +180,8 @@ def main():
         los_file = los_file.replace("<X>", args.reconstruction)
         if args.smooth_target is not None:
             los_file = los_file.replace(
-                args.reconstruction,
-                f"{args.reconstruction}_smooth_to_{args.smooth_target}")
+                ".hdf5",
+                f"_smooth_to_{args.smooth_target}.hdf5")
 
         fprint(f"saving the line of sight data to `{los_file}`.")
         dt = np.dtype(np.float32)
