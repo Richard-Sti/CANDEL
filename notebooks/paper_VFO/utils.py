@@ -29,8 +29,8 @@ def simname2label(simname):
            "manticore_2MPP_MULTIBIN_N256_DES_V2": r"\texttt{Manticore-Local}",
            "CF4": "Courtois+23",
            "CLONES": "Sorce+2018",
-           "HAMLET_V0": r"\texttt{HAMLET}-L",
-           "HAMLET_V1": r"\texttt{HAMLET}-NL",
+           "HAMLET_V0": r"\texttt{HAMLET-L}",
+           "HAMLET_V1": r"\texttt{HAMLET-PM}",
            }
 
     if isinstance(simname, list):
@@ -72,7 +72,8 @@ def simname2color(simname, gen=None):
         "CB2": '#FF2C00',
         "CF4": '#845B97',
         "CLONES": '#9e9e9e',
-        "HAMLET_V0": '#E4FF1A',
+        "HAMLET_V0": "#9310D4",
+        "HAMLET_V1": "#10C7D4",
     }
 
     if simname in colors_per_sim:
