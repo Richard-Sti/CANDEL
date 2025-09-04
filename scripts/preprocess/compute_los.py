@@ -81,6 +81,11 @@ def load_los(catalogue, config):
         los_file = d.pop("los_file")
         data = candel.pvdata.load_SDSS_FP(**d)
         RA, dec = data["RA"], data["dec"]
+    elif catalogue == "6dF_FP":
+        d = config["io"]["PV_main"][catalogue].copy()
+        los_file = d.pop("los_file")
+        data = candel.pvdata.load_6dF_FP(**d)
+        RA, dec = data["RA"], data["dec"]
     elif catalogue == "SH0ES":
         d = config["io"]["PV_main"][catalogue].copy()
         los_file = d.pop("los_file")
