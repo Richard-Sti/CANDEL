@@ -275,26 +275,26 @@ if __name__ == "__main__":
         # ###### - INFERENCE - ######
         "inference/num_warmup": 1000,
         "inference/num_samples": 5000,
-        "inference/num_chains": 10,
+        "inference/num_chains": 1,
         "inference/compute_log_density": False,
         "inference/compute_evidence": False,
         # "inference/model": ["TFRModel", "TFRModel", "SNModel", "SNModel"],
-        "inference/model": "SNModel",
+        "inference/model": "FPModel",
         # "inference/shared_params": "beta,sigma_v,Vext",
         # ###### -- MODEL -- ######
-        "model/use_MNR": True,
-        "model/marginalize_eta": True,
+        "model/use_MNR": False,
+        "model/marginalize_eta": False,
         # ###### -- PV MODEL -- ######
         "pv_model/kind": "precomputed_los_Carrick2015",
-        "pv_model/smooth_target": "none",
+        # "pv_model/smooth_target": "none",
         "pv_model/galaxy_bias": "linear_from_beta_stochastic",
         # "pv_model/kind": "precomputed_los_manticore_2MPP_MULTIBIN_N256_DES_V2",  # noqa
         # "pv_model/r_limits_malmquist": [[0.1, 1001]],
         # "pv_model/num_points_malmquist": 1001,
         # ##### - PRIORS -- ######
         "model/priors/beta": [
-            {"dist": "uniform", "low": -1, "high": 2.0},
-            # {"dist": "normal", "loc": 0.43, "scale": 0.25},
+            # {"dist": "uniform", "low": -1, "high": 2.0},
+            {"dist": "normal", "loc": 0.43, "scale": 0.25},
             # {"dist": "delta", "value": 1.0},
         ],
         # "model/priors/zeropoint_dipole": [
@@ -305,10 +305,11 @@ if __name__ == "__main__":
         # ###### - IO - ######
         # "io/catalogue_name": ["2MTF", "SFI", "CF4_W1", "CF4_i"],
         # "io/catalogue_name": ["CF4_W1", "CF4_i", "LOSS", "Foundation"],
-        "io/catalogue_name": "Foundation",
-        "io/root_output": "results/VFO",
+        "io/catalogue_name": "6dF_FP",
+        "io/root_output": "results/S8",
         # "io/Clusters/which_relation": "LT",
         "io/CF4_i/exclude_W1": True,
+        # "io/6dF_FP/nsamples_subsample": 1000,
         # "io/CF4_W1/best_mag_quality": False,
         # "io/CF4_W1/dust_model": ["none", "default", "SFD", "CSFD", "Planck2016"],  # noqa
         # "io/Clusters/which_relation": ["LT", "LTY"],
