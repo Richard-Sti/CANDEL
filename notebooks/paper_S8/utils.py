@@ -16,6 +16,15 @@
 from h5py import File
 
 
+def get_key_all(fnames, key):
+    values = []
+    for fname in fnames:
+        with File(fname, 'r') as f:
+            values.append(f["samples"][key][...])
+
+    return values
+
+
 def compute_S8_all(fnames, beta2cosmo):
     S8_list = []
     for fname in fnames:
