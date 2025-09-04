@@ -405,7 +405,8 @@ class BaseModel(ABC):
                 f"n_grid = {self.eta_grid_kwargs['n_grid']} (if TFR).")
 
         self.galaxy_bias = config["pv_model"]["galaxy_bias"]
-        if self.galaxy_bias not in ["powerlaw", "linear", "linear_from_beta",
+        if self.galaxy_bias not in ["unity", "powerlaw", "linear",
+                                    "linear_from_beta",
                                     "linear_from_beta_stochastic",
                                     "double_powerlaw"]:
             raise ValueError(
@@ -422,6 +423,8 @@ def sample_galaxy_bias(priors, galaxy_bias, shared_params=None, **kwargs):
     """
     Sample a vector of galaxy bias parameters based on the specified model.
     """
+    if galaxy_bias == "unity":
+        return [1.,]
     if galaxy_bias == "powerlaw":
         alpha = rsample("alpha", priors["alpha"], shared_params)
         bias_params = [alpha,]
@@ -459,7 +462,7 @@ def lp_galaxy_bias(delta, log_rho, bias_params, galaxy_bias):
         log_x = log_rho - log_rho_t
         lp = (alpha_low * log_x
               + (alpha_high - alpha_low) * jnp.logaddexp(0.0, log_x))
-    elif "linear" in galaxy_bias:
+    elif "linear" in galaxy_bias or galaxy_bias == "unity":
         lp = jnp.log(jnp.clip(1 + bias_params[0] * delta, 1e-5))
     else:
         raise ValueError(f"Invalid galaxy bias model '{galaxy_bias}'.")
