@@ -408,12 +408,23 @@ seed_subsample = 42
 root = "data/SDSS"
 zcmb_min = "none"
 zcmb_max = 0.05
-sample_Rmax = true
 
 los_file = "data/SDSS/los_SDSS_FP_<X>.hdf5"
 
 nsamples_subsample = "none"
 seed_subsample = 42
+
+[io.6dF_FP]
+root = "data/6dF_FP"
+which_band = "J"
+zcmb_min = "none"
+zcmb_max = 0.05
+
+los_file = "data/6dF_FP/los_6dF_FP_<X>.hdf5"
+
+nsamples_subsample = "none"
+seed_subsample = 42
+
 
 [io.CF4_calibrated]
 root = "data/CF4_calibrated"
@@ -479,6 +490,11 @@ los_file = "data/Clusters/los_Clusters_<X>.hdf5"
 root = "data/SDSS"
 return_all = true
 los_file = "data/SDSS/los_SDSS_FP_<X>.hdf5"
+
+[io.PV_main.6dF_FP]
+root = "data/6dF_FP"
+return_all = true
+los_file = "data/6dF_FP/los_6dF_FP_<X>.hdf5"
 
 
 [io.reconstruction_main]
