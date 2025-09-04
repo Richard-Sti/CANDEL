@@ -72,6 +72,7 @@ def simname2color(simname, gen=None):
         "CB2": '#FF2C00',
         "CF4": '#845B97',
         "CLONES": '#9e9e9e',
+        "HAMLET_V0": '#E4FF1A',
     }
 
     if simname in colors_per_sim:
