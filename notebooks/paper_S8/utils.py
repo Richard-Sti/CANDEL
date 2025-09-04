@@ -34,3 +34,12 @@ def compute_S8_all(fnames, beta2cosmo):
         S8_list.append(S8)
 
     return S8_list
+
+
+def replace_token_in_paths(files, token, replacement=""):
+    """Replace or remove a token in simple (path, label) tuples."""
+    new_files = []
+    for path, label in files:
+        new_path = path.replace(token, replacement if replacement else "")
+        new_files.append((new_path, label))
+    return new_files
