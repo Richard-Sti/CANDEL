@@ -3,11 +3,12 @@
 # ---- user variables ----
 # reconstruction="Carrick2015"
 # reconstruction="manticore_2MPP_MULTIBIN_N256_DES_V2"
-reconstruction="HAMLET"
+reconstruction="CF4"
 config="../runs/config.toml"
 queue="cmb"
-ncpu=5
-memory=7
+ncpu=20
+memory=16
+smooth_target=7.8
 env="/mnt/users/rstiskalek/CANDEL/venv_candel/bin/python"
 # ------------------------
 
@@ -39,7 +40,7 @@ fi
 # ------------------------------------------
 
 for catalogue in "${catalogues[@]}"; do
-    pythoncm="$env compute_los.py --catalogue $catalogue --reconstruction $reconstruction --config $config"
+    pythoncm="$env compute_los.py --catalogue $catalogue --reconstruction $reconstruction --config $config --smooth_target $smooth_target"
     cm="addqueue -q $queue -n $ncpu -m $memory $pythoncm"
 
     echo "Submitting catalogue: $catalogue"

@@ -12,6 +12,7 @@
 # machine="rusty"
 
 root_main = "/home/phys1997/CANDEL/"
+root_data = "/data/phys-galsim/phys1997/CANDEL/"
 python_exec = "/home/phys1997/CANDEL/venv_candel/bin/python"
 machine = "arc"
 
@@ -31,6 +32,7 @@ chain_method = "parallel"
 seed = 44
 compute_log_density = true
 compute_evidence = true
+track_log_density_per_sample = false
 num_chains_harmonic = 10
 
 skip_if_exists = false
@@ -45,6 +47,7 @@ kind = "precomputed_los_Carrick2015"
 # kind = "Vext"
 galaxy_bias = "linear_from_beta"  # Ignored unless having an underlying density field
 # galaxy_bias = "linear"  # Ignored unless having an underlying density field
+which_Vext = "constant"
 
 # (Inhomogeneus Malmquist bias settings and extrapolation), in units of Mpc / h
 r_limits_malmquist = [0.1, 251]
@@ -407,12 +410,23 @@ seed_subsample = 42
 root = "data/SDSS"
 zcmb_min = "none"
 zcmb_max = 0.05
-sample_Rmax = true
 
 los_file = "data/SDSS/los_SDSS_FP_<X>.hdf5"
 
 nsamples_subsample = "none"
 seed_subsample = 42
+
+[io.6dF_FP]
+root = "data/6dF_FP"
+which_band = "J"
+zcmb_min = "none"
+zcmb_max = 0.05
+
+los_file = "data/6dF_FP/los_6dF_FP_<X>.hdf5"
+
+nsamples_subsample = "none"
+seed_subsample = 42
+
 
 [io.CF4_calibrated]
 root = "data/CF4_calibrated"
@@ -478,6 +492,11 @@ los_file = "data/Clusters/los_Clusters_<X>.hdf5"
 root = "data/SDSS"
 return_all = true
 los_file = "data/SDSS/los_SDSS_FP_<X>.hdf5"
+
+[io.PV_main.6dF_FP]
+root = "data/6dF_FP"
+return_all = true
+los_file = "data/6dF_FP/los_6dF_FP_<X>.hdf5"
 
 
 [io.reconstruction_main]

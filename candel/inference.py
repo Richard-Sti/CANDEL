@@ -13,6 +13,7 @@
 # with this program; if not, write to the Free Software Foundation, Inc.,
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 """Running the MCMC inference for the model and some postprocessing."""
+import contextlib
 from copy import deepcopy
 from os.path import dirname, splitext
 
@@ -37,53 +38,12 @@ from .util import (fprint, galactic_to_radec, plot_corner,
                    radec_to_galactic)
 
 
-def run_pv_optimization(model, model_kwargs, num_steps=20, print_summary=True,
-                        save_samples=True):
-    """
-    Run MAP optimization on the given PV model, post-process the best-fit
-    parameters, and optionally save the results to an HDF5 file.
-    """
-    raise NotImplementedError("I cannot get the optimizer to consisntently "
-                              "converge, so I am disabling it for now.")
-
-    try:
-        from numpyro_ext import optim as optimx
-    except ImportError as e:
-        raise ImportError(
-            "Please install `numpyro-ext` to use the optimization.") from e
-
-    devices = jax.devices()
-    device_str = ", ".join(f"{d.device_kind}({d.platform})" for d in devices)
-    fprint(f"running optimization on devices: {device_str}")
-
-    if any(d.platform == "gpu" for d in devices):
-        set_platform("gpu")
-        fprint("using NumPyro platform: GPU")
-    else:
-        set_platform("cpu")
-        fprint("using NumPyro platform: CPU")
-
-    # Run optimization
-    key = jax.random.key(model.config["inference"]["seed"])
-    soln = optimx.optimize(model, num_steps=num_steps, return_info=True)(
-        key, **model_kwargs)
-    print(soln)
-
-    # Convert solution into samples-like dict
-    samples = {k: jnp.atleast_1d(v) for k, v in soln.items()}
-
-    samples = drop_deterministic(samples, check_all_equals=False)
-    samples = postprocess_samples(samples)
-
-    if print_summary:
-        print_optim_summary(samples)
-
-    if save_samples:
-        fname_out = model.config["io"]["fname_output"]
-        fprint(f"output directory is {dirname(fname_out)}.")
-        save_mcmc_samples(samples, None, None, fname_out)
-
-    return samples
+def print_evidence(bic, aic, lnZ_laplace, err_lnZ_laplace,
+                   lnZ_harmonic, err_lnZ_harmonic):
+    fprint(f"BIC:          {bic:.2f}")
+    fprint(f"AIC:          {aic:.2f}")
+    fprint(f"Laplace lnZ:  {lnZ_laplace:.2f} +- {err_lnZ_laplace:.2f}")
+    fprint(f"Harmonic lnZ: {lnZ_harmonic:.2f} +- {err_lnZ_harmonic:.2f}")
 
 
 def run_pv_inference(model, model_kwargs, print_summary=True,
@@ -114,6 +74,8 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
     mcmc.run(jax.random.key(kwargs["seed"]), **model_kwargs)
 
     samples = mcmc.get_samples()
+    log_density_per_sample = samples.pop("log_density_per_sample", None)
+
     if kwargs["compute_log_density"]:
         log_density = get_log_density(samples, model, model_kwargs)
     else:
@@ -124,7 +86,8 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
 
     samples = drop_deterministic(samples)
 
-    if model.config["inference"]["compute_evidence"]:
+    compute_evidence = model.config["inference"]["compute_evidence"]
+    if compute_evidence:
         ndata = len(model_kwargs["data"])
         bic, aic = BIC_AIC(samples, log_density, ndata)
 
@@ -143,10 +106,8 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
             return_flow_samples=False)
         err_lnZ_harmonic = np.mean(np.abs(err_lnZ_harmonic))
 
-        fprint(f"BIC:          {bic:.2f}")
-        fprint(f"AIC:          {aic:.2f}")
-        fprint(f"Laplace lnZ:  {lnZ_laplace:.2f} +- {err_lnZ_laplace:.2f}")
-        fprint(f"Harmonic lnZ: {lnZ_harmonic:.2f} +- {err_lnZ_harmonic:.2f}")
+        print_evidence(bic, aic, lnZ_laplace, err_lnZ_laplace,
+                       lnZ_harmonic, err_lnZ_harmonic)
 
         gof = {"BIC": bic, "AIC": aic,
                "lnZ_laplace": lnZ_laplace,
@@ -164,10 +125,21 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
     if save_samples:
         fname_out = model.config["io"]["fname_output"]
         fprint(f"output directory is {dirname(fname_out)}.")
-        save_mcmc_samples(samples, log_density, gof, fname_out)
+        save_mcmc_samples(
+            samples, log_density, log_density_per_sample, gof, fname_out)
 
         fname_plot = splitext(fname_out)[0] + ".png"
         plot_corner(samples, show_fig=False, filename=fname_plot,)
+
+        fname_summary = splitext(fname_out)[0] + "_summary.txt"
+        with open(fname_summary, "w") as f:
+            with contextlib.redirect_stdout(f):
+                print_clean_summary(samples)
+                if compute_evidence:
+                    print_evidence(
+                        bic, aic, lnZ_laplace, err_lnZ_laplace,
+                        lnZ_harmonic, err_lnZ_harmonic)
+        fprint(f"saved summary to {fname_summary}")
 
         if model.with_radial_Vext:
             fname_plot = splitext(fname_out)[0] + "_corner_Vext_rad.png"
@@ -224,21 +196,13 @@ def run_SH0ES_inference(model, model_kwargs={}, print_summary=True,
         fname_plot = splitext(fname_out)[0] + ".png"
         plot_corner(samples, show_fig=False, filename=fname_plot,)
 
+        fname_summary = splitext(fname_out)[0] + "_summary.txt"
+        with open(fname_summary, "w") as f:
+            with contextlib.redirect_stdout(f):
+                print_clean_summary(samples)
+        fprint(f"saved summary to {fname_summary}")
+
     return samples
-
-
-def run_magsel_inference(model, model_args, num_warmup=1000, num_samples=5000,
-                         num_chains=1, seed=42, print_summary=True,):
-    """Run MCMC inference on the given magnitude selection model."""
-    kernel = NUTS(model, init_strategy=init_to_median(num_samples=5000))
-    mcmc = MCMC(kernel, num_warmup=num_warmup, num_samples=num_samples,
-                num_chains=num_chains,)
-    mcmc.run(jax.random.key(seed), *model_args)
-
-    if print_summary:
-        mcmc.print_summary()
-
-    return mcmc.get_samples()
 
 
 def get_log_density(samples, model, model_kwargs, batch_size=5):
@@ -337,23 +301,8 @@ def print_clean_summary(samples):
     print_summary_numpyro(samples_print,)
 
 
-def print_optim_summary(soln):
-    """
-    Print a clean summary of optimized parameters from `optimx.optimize`.
-    """
-    print("MAP parameter estimates:\n")
-    for k, v in soln.items():
-        if "_latent" in k or k == "obs":
-            continue
-
-        v_scalar = jnp.atleast_1d(v).squeeze()
-        if v_scalar.size == 1:
-            print(f"  {k:<20s} = {float(v_scalar): .4f}")
-        else:
-            print(f"  {k:<20s} = {v_scalar}")
-
-
-def save_mcmc_samples(samples, log_density, gof, filename):
+def save_mcmc_samples(samples, log_density, log_density_per_sample, gof,
+                      filename):
     """Save the MCMC samples to an HDF5 file."""
     with File(filename, 'w') as f:
         grp = f.create_group("samples")
@@ -383,6 +332,10 @@ def save_mcmc_samples(samples, log_density, gof, filename):
 
         if log_density is not None:
             f.create_dataset("log_density", data=log_density)
+
+        if log_density_per_sample is not None:
+            f.create_dataset(
+                "log_density_per_sample", data=log_density_per_sample)
 
         if gof is not None:
             grp = f.create_group("gof")

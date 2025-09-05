@@ -25,6 +25,7 @@ from .data import (                                                             
     load_SH0ES_from_config,                                                     # noqa
     load_clusters,                                                              # noqa
     load_SDSS_FP,                                                               # noqa
+    load_6dF_FP,                                                                # noqa
     load_PantheonPlus,                                                          # noqa
     load_PantheonPlus_Lane,                                                     # noqa
     PVDataFrame,                                                                # noqa

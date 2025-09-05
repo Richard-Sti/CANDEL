@@ -270,15 +270,14 @@ class Hamlet_FieldLoader(BaseFieldLoader):
     def load_density(self):
         if self.version == 0:
             fname = join(self.root, f"divv_{self.tag}_{self.ngrid}.bin")
-            # TODO: Check this! Does not seem quite right..
             delta = self._read_grid(fname)
-            rho = 1 + delta
-            # Might need to clip
-            # rho = smooth_clip(rho, eps=1e-2)
+            rho = np.log1p(np.exp(delta))
         elif self.version == 1:
             fname = join(self.root,
                          f"cic_pos_N{self.ngrid}_{self.stag}_snap003.dat")
             rho = self._read_grid(fname)
+            print("FLIPPING V1 HAMLET")
+            rho = rho.T
         else:
             raise ValueError(f"Unknown HAMLET version: {self.version}")
 
@@ -296,7 +295,16 @@ class Hamlet_FieldLoader(BaseFieldLoader):
                              f"_snap003_normed.dat")
             comps.append(self._read_grid(fname))
 
-        return np.stack(comps, axis=0).astype(self.dtype)
+        v = np.stack(comps, axis=0).astype(self.dtype)
+
+        if self.version == 1:
+            print("FLIPPING V1 HAMLET")
+            v[0, ...] = v[0, ...].T
+            v[1, ...] = v[1, ...].T
+            v[2, ...] = v[2, ...].T
+            v[[0, 2], ...] = v[[2, 0], ...]
+
+        return v
 
 
 class CSiBORG_FieldLoader(BaseFieldLoader):
