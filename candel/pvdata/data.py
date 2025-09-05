@@ -130,6 +130,11 @@ class PVDataFrame:
         seed_subsample = config.pop("seed_subsample", 42)
         sample_dust = False
 
+        smooth_target = config_pv_model.get("smooth_target", None)
+        if smooth_target is not None:
+            config["los_data_path"] = config["los_data_path"].replace(
+                ".hdf5", f"_smooth_to_{smooth_target}.hdf5")
+
         if "CF4_mock" in name:
             index = name.split("_")[-1]
             data = load_CF4_mock(root, index)
@@ -148,6 +153,8 @@ class PVDataFrame:
             data = load_SFI(root, **config)
         elif name == "SDSS_FP":
             data = load_SDSS_FP(root, **config)
+        elif name == "6dF_FP":
+            data = load_6dF_FP(root, **config)
         elif name == "LOSS":
             data = load_LOSS(root, **config)
         elif name == "Foundation":
@@ -211,9 +218,6 @@ class PVDataFrame:
                     f"eta value of {np.min(frame['eta'])}.")
         else:
             frame.eta_min = None
-
-        if "sample_Rmax" in config:
-            frame.sample_Rmax = config["sample_Rmax"]
 
         if "eta_max" in config:
             frame.eta_max = config["eta_max"]
@@ -374,10 +378,22 @@ def load_los(los_data_path, data, mask=None):
             data["los_density"] /= 0.3111 * 275.4  # Manticore normalization
         elif "_CB1" in los_data_path:
             data["los_density"] /= 0.307 * 275.4
-            fprint(f"normalizing the CB1 LOS density (Om = 0.307)")
+            fprint("normalizing the CB1 LOS density (Om = 0.307)")
+
+            if len(data["los_density"]) == 100:
+                fprint("downsampling the CB1 LOS density from 100 to 20")
+                data["los_density"] = data["los_density"][::5]
+                data["los_velocity"] = data["los_velocity"][::5]
         elif "_CB2" in los_data_path:
-            fprint(f"normalizing the CB2 LOS density (Om = 0.3111)")
+            fprint("normalizing the CB2 LOS density (Om = 0.3111)")
             data["los_density"] /= 0.3111 * 275.4
+        elif "HAMLET_V1" in los_data_path:
+            fprint("normalizing the HAMLET_V1 LOS density (Om = 0.3)")
+            data["los_density"] /= 0.3 * 275.4
+        elif "_CF4.hdf5" in los_data_path and len(data["los_density"]) == 100:
+            fprint("downsampling the CF4 LOS density from 100 to 20")
+            data["los_density"] = data["los_density"][::5]
+            data["los_velocity"] = data["los_velocity"][::5]
 
     return data
 
@@ -1339,6 +1355,8 @@ def load_SDSS_FP(root, zcmb_min=None, zcmb_max=None, b_min=7.5,
     boa = d_input["deVAB_r"]
     e_boa = d_input["deVABErr_r"]
 
+    fprint(f"initially loaded {len(d_input)} galaxies from SDSS FP data.")
+
     theta_eff = arcsec_to_radian(rdev * np.sqrt(boa))
     e_theta_eff = theta_eff * np.sqrt(
         (e_rdev / rdev)**2 + (0.5 * e_boa / boa)**2)
@@ -1368,6 +1386,88 @@ def load_SDSS_FP(root, zcmb_min=None, zcmb_max=None, b_min=7.5,
     if zcmb_max is not None:
         mask &= data["zcmb"] < zcmb_max
 
+    if b_min is not None:
+        b = radec_to_galactic(data["RA"], data["dec"])[1]
+        mask &= np.abs(b) > b_min
+
+    fprint(f"removed {len(mask) - np.sum(mask)} galaxies, thus "
+           f"{len(data['RA'][mask])} remain.")
+
+    for key in data:
+        data[key] = data[key][mask]
+
+    if los_data_path is not None:
+        data = load_los(los_data_path, data, mask=mask)
+
+    return data
+
+
+def load_6dF_FP(root, which_band=None, zcmb_min=None, zcmb_max=None, b_min=7.5,
+                los_data_path=None, return_all=False, **kwargs):
+    """Load the 6dF FP data from the given root directory."""
+    d = np.genfromtxt(join(root, "6dF_FP.dat"))
+
+    RA = d[:, 2] * 360 / 24
+    dec = d[:, 3]
+    czcmb = d[:, 4]
+
+    data = {
+        "RA": RA,
+        "dec": dec,
+        "zcmb": czcmb / SPEED_OF_LIGHT,
+    }
+
+    fprint(f"initially loaded {len(d)} galaxies from 6dF FP data.")
+
+    if return_all:
+        return data
+    elif which_band is None:
+        raise ValueError("which_band must be one of 'J', 'H', 'K'.")
+
+    cosmo = FlatLambdaCDM(H0=100, Om0=0.3)
+    dA_zcmb = cosmo.angular_diameter_distance(czcmb / SPEED_OF_LIGHT).value  # noqa
+
+    if which_band == "J":
+        logRe = d[:, 5]
+        e_logRe = d[:, 6]
+
+        logIe = d[:, 11]
+        e_logIe = d[:, 12]
+    elif which_band == "H":
+        logRe = d[:, 7]
+        e_logRe = d[:, 8]
+
+        logIe = d[:, 13]
+        e_logIe = d[:, 14]
+    elif which_band == "K":
+        logRe = d[:, 9]
+        e_logRe = d[:, 10]
+
+        logIe = d[:, 15]
+        e_logIe = d[:, 16]
+    else:
+        raise ValueError(f"which_band must be one of 'J', 'H', 'K', got "
+                         f"{which_band}.")
+    logVd = d[:, 17]
+    e_logVd = d[:, 18]
+
+    log_theta_eff = logRe - np.log10(dA_zcmb * 1e3)
+    e_log_theta_eff = e_logRe
+
+    data.update({
+        "logI": logIe,
+        "e_logI": e_logIe,
+        "logs": logVd,
+        "e_logs": e_logVd,
+        "log_theta_eff": log_theta_eff,
+        "e_log_theta_eff": e_log_theta_eff,
+    })
+
+    mask = np.ones(len(data["zcmb"]), dtype=bool)
+    if zcmb_min is not None:
+        mask &= data["zcmb"] > zcmb_min
+    if zcmb_max is not None:
+        mask &= data["zcmb"] < zcmb_max
     if b_min is not None:
         b = radec_to_galactic(data["RA"], data["dec"])[1]
         mask &= np.abs(b) > b_min

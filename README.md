@@ -30,16 +30,3 @@ sys.path.insert(0, "/Users/rstiskalek/Projects/candel")
 
 
 ## TODO
-
-### General
-- [ ] Test the effect of galaxy biases. Try linear and quadratic.
-
-### Hubble Dipole
-- Focus the main inference solely on CF4 TFR W1 because of its uniform sky coverage, and then add a set of mock calibration to test if there is any signal.
-
-- [ ] Run the scripts to get results on the data (don't forget to save it in a new folder!)
-- [ ] Implement the Boubel likelihood (in part this can explain why they find such lower S8).
-
-### Hubble Calibration
-- [ ] Run an inference on the SH0ES calibrated data.
-- [ ] Better understand how to implement the calibration.

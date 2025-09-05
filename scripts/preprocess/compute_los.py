@@ -81,6 +81,11 @@ def load_los(catalogue, config):
         los_file = d.pop("los_file")
         data = candel.pvdata.load_SDSS_FP(**d)
         RA, dec = data["RA"], data["dec"]
+    elif catalogue == "6dF_FP":
+        d = config["io"]["PV_main"][catalogue].copy()
+        los_file = d.pop("los_file")
+        data = candel.pvdata.load_6dF_FP(**d)
+        RA, dec = data["RA"], data["dec"]
     elif catalogue == "SH0ES":
         d = config["io"]["PV_main"][catalogue].copy()
         los_file = d.pop("los_file")
@@ -105,6 +110,9 @@ def main():
     parser.add_argument("--config", type=str, required=True)
     parser.add_argument("--smooth_target", type=float, default=None)
     args = parser.parse_args()
+
+    if args.smooth_target == 0:
+        args.smooth_target = None
 
     config = candel.load_config(args.config)
     nreal_map = {
@@ -177,8 +185,8 @@ def main():
         los_file = los_file.replace("<X>", args.reconstruction)
         if args.smooth_target is not None:
             los_file = los_file.replace(
-                args.reconstruction,
-                f"{args.reconstruction}_smooth_to_{args.smooth_target}")
+                ".hdf5",
+                f"_smooth_to_{args.smooth_target}.hdf5")
 
         fprint(f"saving the line of sight data to `{los_file}`.")
         dt = np.dtype(np.float32)

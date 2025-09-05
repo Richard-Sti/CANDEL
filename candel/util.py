@@ -22,7 +22,7 @@ except ModuleNotFoundError:
     import tomli as tomllib
 
 from datetime import datetime
-from os.path import abspath, basename, isabs, join
+from os.path import abspath, basename, isabs, join, exists
 from pathlib import Path
 from warnings import warn
 
@@ -167,6 +167,22 @@ def radec_to_cartesian(ra, dec):
     z = np.sin(dec_rad)
 
     return np.column_stack([x, y, z])
+
+
+def cartesian_to_radec(x, y, z):
+    """
+    Convert Cartesian coordinates (x, y, z) to right ascension and
+    declination (RA, Dec), both in degrees.
+    """
+    d = (x**2 + y**2 + z**2)**0.5
+    dec = np.arcsin(z / d)
+    ra = np.arctan2(y, x)
+    ra[ra < 0] += 2 * np.pi
+
+    ra *= 180 / np.pi
+    dec *= 180 / np.pi
+
+    return d, ra, dec
 
 
 def radec_to_galactic(ra, dec):
@@ -326,6 +342,9 @@ def name2labelgetdist(name):
         "a_TFR": r"a_\mathrm{TFR}",
         "b_TFR": r"b_\mathrm{TFR}",
         "c_TFR": r"c_\mathrm{TFR}",
+        "SN_absmag": r"M_{\rm SN}",
+        "SN_alpha": r"\mathcal{A}",
+        "SN_beta": r"\mathcal{B}",
         "sigma_int": r"\sigma_{\rm int}",
         "sigma_v": r"\sigma_v~\left[\mathrm{km}\,\mathrm{s}^{-1}\right]",
         "alpha": r"\alpha",
@@ -793,8 +812,16 @@ def plot_radial_profiles(samples, model, r_eval_size=1000, show_fig=True,
         plt.close(fig)
 
 
-def read_gof(fname, which):
+###############################################################################
+#              Reading from files and other minor utilities                   #
+###############################################################################
+
+
+def read_gof(fname, which, raise_error=True):
     """Read goodness-of-fit statistics from a file with samples."""
+    if not exists(fname) and not raise_error:
+        return np.nan
+
     convert = which.startswith("logZ_")
     key = which.replace("logZ_", "lnZ_") if convert else which
 
@@ -823,3 +850,22 @@ def read_samples(root, fname, keys=None):
     if isinstance(keys, list) and len(keys) == 1:
         return samples[keys[0]]
     return samples
+
+
+def get_dlog_density_stats(lpA, lpB):
+    """
+    Compute the mean and standard deviation of the difference in log density
+    between two sets of log densities of shape `(num_samples, num_objects)`.
+    """
+    assert lpA.ndim == lpB.ndim == 2 and lpA.shape[-1] == lpB.shape[-1]
+
+    mu_A = np.mean(lpA, axis=0)
+    mu_B = np.mean(lpB, axis=0)
+
+    var_A = np.var(lpA, axis=0, ddof=1)
+    var_B = np.var(lpB, axis=0, ddof=1)
+
+    mean_diff = mu_A - mu_B
+    std_diff = np.sqrt(var_A + var_B)
+
+    return mean_diff, std_diff

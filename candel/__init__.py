@@ -45,10 +45,8 @@ from .evidence import (                                                         
     )
 
 from .inference import (                                                        # noqa
-    run_pv_optimization,                                                        # noqa
     run_pv_inference,                                                           # noqa
     run_SH0ES_inference,                                                        # noqa
-    run_magsel_inference,                                                       # noqa
     save_mcmc_samples,                                                          # noqa
     get_log_density,                                                            # noqa
     )
@@ -64,6 +62,7 @@ from .util import (                                                             
     plot_corner_from_hdf5,                                                      # noqa
     plot_radial_profiles,                                                       # noqa
     radec_to_cartesian,                                                         # noqa
+    cartesian_to_radec,                                                         # noqa
     radec_to_galactic,                                                          # noqa
     radec_cartesian_to_galactic,                                                # noqa
     galactic_to_radec,                                                          # noqa
@@ -77,5 +76,6 @@ from .util import (                                                             
     fprint,                                                                     # noqa
     read_gof,                                                                   # noqa
     read_samples,                                                               # noqa
+    get_dlog_density_stats,                                                     # noqa
     get_nested,                                                                 # noqa
 )

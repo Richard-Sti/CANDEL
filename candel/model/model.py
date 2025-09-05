@@ -228,21 +228,25 @@ def sample_vector_fixed(name, mag_min, mag_max):
 
 def sample_spline_radial_vector(name, nval, low, high):
     """
-    Sample a radial vector approximated as a spline with `n` knots spherical
-    coordinates. The magnitude is sampled uniformly and the direction is
-    sampled uniformly on the unit sphere.
+    Sample a radial vector at `nval` knots: direction ~ isotropic,
+    magnitude ~ Uniform(low, high). Returns an array of shape (nval, 3).
     """
     with plate(f"{name}_plate", nval):
-        phi = sample(f"{name}_phi", Uniform(0, 2 * jnp.pi))
-        cos_theta = sample(f"{name}_cos_theta", Uniform(-1, 1))
-        sin_theta = jnp.sqrt(1 - cos_theta**2)
+        phi = sample(f"{name}_phi", Uniform(0.0, 2.0 * jnp.pi))
+        cos_theta = sample(f"{name}_cos_theta", Uniform(-1.0, 1.0))
+        sin_theta = jnp.sqrt(jnp.clip(1.0 - cos_theta**2, 0.0, 1.0))
 
         mag = sample(f"{name}_mag", Uniform(low, high))
 
-    return mag[:, None] * jnp.asarray([
-        sin_theta * jnp.cos(phi),
-        sin_theta * jnp.sin(phi),
-        cos_theta]).T
+        # Unit direction vector
+        u = jnp.stack(
+            (sin_theta * jnp.cos(phi),
+             sin_theta * jnp.sin(phi),
+             cos_theta),
+            axis=-1
+        )
+
+    return mag[..., None] * u
 
 
 def interp_spline_radial_vector(rq, bin_values, **kwargs):
@@ -368,12 +372,15 @@ class BaseModel(ABC):
     def __init__(self, config_path):
         config = load_config(config_path)
 
-        kind = config["pv_model"]["kind"]
+        kind = get_nested(config, "pv_model/kind", "")
         kind_allowed = ["Vext", "Vext_radial"]
         if kind not in kind_allowed and not kind.startswith("precomputed_los_"):  # noqa
             raise ValueError(
                 f"Invalid kind '{kind}'. Must be one of {kind_allowed} or "
                 "start with 'precomputed_los_'.")
+
+        self.track_log_density_per_sample = get_nested(
+            config, "inference/track_log_density_per_sample", False)
 
         # Initialize interpolators for distance and redshift
         self.Om = get_nested(config, "model/Om", 0.3)
@@ -382,7 +389,9 @@ class BaseModel(ABC):
 
         priors = config["model"]["priors"]
 
-        self.with_radial_Vext = kind == "Vext_radial"
+        which_Vext = get_nested(config, "pv_model/which_Vext", "constant")
+
+        self.with_radial_Vext = kind == "Vext_radial" or which_Vext == "radial"
         if self.with_radial_Vext:
             d = priors["Vext_radial"]
             fprint(f"using radial `Vext` with spline knots at {d['rknot']}")
@@ -405,7 +414,8 @@ class BaseModel(ABC):
                 f"n_grid = {self.eta_grid_kwargs['n_grid']} (if TFR).")
 
         self.galaxy_bias = config["pv_model"]["galaxy_bias"]
-        if self.galaxy_bias not in ["powerlaw", "linear", "linear_from_beta",
+        if self.galaxy_bias not in ["unity", "powerlaw", "linear",
+                                    "linear_from_beta",
                                     "linear_from_beta_stochastic",
                                     "double_powerlaw"]:
             raise ValueError(
@@ -422,6 +432,8 @@ def sample_galaxy_bias(priors, galaxy_bias, shared_params=None, **kwargs):
     """
     Sample a vector of galaxy bias parameters based on the specified model.
     """
+    if galaxy_bias == "unity":
+        return [1.,]
     if galaxy_bias == "powerlaw":
         alpha = rsample("alpha", priors["alpha"], shared_params)
         bias_params = [alpha,]
@@ -459,7 +471,7 @@ def lp_galaxy_bias(delta, log_rho, bias_params, galaxy_bias):
         log_x = log_rho - log_rho_t
         lp = (alpha_low * log_x
               + (alpha_high - alpha_low) * jnp.logaddexp(0.0, log_x))
-    elif "linear" in galaxy_bias:
+    elif "linear" in galaxy_bias or galaxy_bias == "unity":
         lp = jnp.log(jnp.clip(1 + bias_params[0] * delta, 1e-5))
     else:
         raise ValueError(f"Invalid galaxy bias model '{galaxy_bias}'.")
@@ -533,6 +545,10 @@ class TFRModel(BaseModel):
 
     def __call__(self, data, shared_params=None):
         nsamples = len(data)
+        # Initialize log density tracker; not to be tracked by NumPyro with
+        # `factor`.
+        if self.track_log_density_per_sample:
+            log_density_per_sample = jnp.zeros(nsamples)
 
         # Sample the TFR parameters.
         a_TFR = rsample("a_TFR", self.priors["TFR_zeropoint"], shared_params)
@@ -595,13 +611,21 @@ class TFRModel(BaseModel):
                         "eta_latent", Normal(eta_prior_mean, eta_prior_std))
                     sample("eta", Normal(eta, data["e_eta"]), obs=data["eta"])
 
+                    if self.track_log_density_per_sample:
+                        log_density_per_sample += Normal(
+                            eta_prior_mean, eta_prior_std).log_prob(eta)
+                        log_density_per_sample += Normal(
+                            eta, data["e_eta"]).log_prob(data["eta"])
+
                 # Track the likelihood of the observed linewidths.
                 if data.add_eta_truncation:
-                    factor(
-                        "neg_log_S_eta",
-                        -log_p_S_TFR_eta(
-                            eta_prior_mean, eta_prior_std, data["e_eta"],
-                            data.eta_min, data.eta_max))
+                    neglog_pS = -log_p_S_TFR_eta(
+                        eta_prior_mean, eta_prior_std, data["e_eta"],
+                        data.eta_min, data.eta_max)
+
+                    factor("neg_log_S_eta", neglog_pS)
+                    if self.track_log_density_per_sample:
+                        log_density_per_sample += neglog_pS
 
                 e_mag = jnp.sqrt(sigma_int**2 + data["e2_mag"])
             else:
@@ -674,8 +698,12 @@ class TFRModel(BaseModel):
                 ll = ln_simpson(ll, x=r_grid[None, None, :], axis=-1)
 
             # Average over realizations and track the log-density.
-            factor("ll_obs",
-                   logsumexp(ll, axis=0) - jnp.log(data.num_fields))
+            ll = logsumexp(ll, axis=0) - jnp.log(data.num_fields)
+            factor("ll_obs", ll)
+
+            if self.track_log_density_per_sample:
+                log_density_per_sample += ll
+                deterministic("log_density_per_sample", log_density_per_sample)
 
 
 ###############################################################################
@@ -695,6 +723,11 @@ class SNModel(BaseModel):
         if self.use_MNR:
             fprint("setting `compute_evidence` to False.")
             self.config["inference"]["compute_evidence"] = False
+
+        if self.track_log_density_per_sample:
+            raise NotImplementedError(
+                "`track_log_density_per_sample` is not implemented "
+                "for `SNModel`.")
 
     def __call__(self, data, shared_params=None):
         nsamples = len(data)
@@ -841,8 +874,13 @@ class PantheonPlusModel(BaseModel):
                 "Please set `use_MNR` to True in the config file.")
 
         if self.with_radial_Vext:
-            raise ValueError("Radial velocity extension is not supported "
-                             "for `PantheonPlusModel`")
+            raise NotImplementedError(
+                "Radial Vext is not implemented for `PantheonPlusModel`.")
+
+        if self.track_log_density_per_sample:
+            raise NotImplementedError(
+                "`track_log_density_per_sample` is not implemented "
+                "for `PantheonPlusModel`.")
 
         fprint("setting `compute_evidence` to False.")
         self.config["inference"]["compute_evidence"] = False
@@ -1001,6 +1039,8 @@ class ClustersModel(BaseModel):
 
     def __call__(self, data, shared_params=None):
         nsamples = len(data)
+        if self.track_log_density_per_sample:
+            log_density_per_sample = jnp.zeros(nsamples)
 
         if data.sample_dust:
             raise NotImplementedError(
@@ -1091,7 +1131,12 @@ class ClustersModel(BaseModel):
             # Marginalise over the radial distance, average over realisations
             # and track the log-density.
             ll = ln_simpson(ll, x=r_grid[None, None, :], axis=-1)
-            factor("ll_obs", logsumexp(ll, axis=0) - jnp.log(data.num_fields))
+            ll = logsumexp(ll, axis=0) - jnp.log(data.num_fields)
+            factor("ll_obs", ll)
+
+            if self.track_log_density_per_sample:
+                log_density_per_sample += ll
+                deterministic("log_density_per_sample", log_density_per_sample)
 
 
 ###############################################################################
@@ -1110,6 +1155,11 @@ class FPModel(BaseModel):
         if self.use_MNR:
             fprint("setting `compute_evidence` to False.")
             self.config["inference"]["compute_evidence"] = False
+
+        if self.track_log_density_per_sample:
+            raise NotImplementedError(
+                "`track_log_density_per_sample` is not implemented "
+                "for `FPModel`.")
 
         self.distance2logangdist = Distance2LogAngDist(Om0=self.Om)
 
@@ -1150,7 +1200,8 @@ class FPModel(BaseModel):
             logs_prior_mean = sample(
                 "logs_prior_mean", Uniform(data["min_logs"], data["max_logs"]))
             logs_prior_std = sample(
-                "logs_prior_std", Uniform(data["min_logs"], data["max_logs"]))
+                "logs_prior_std",
+                Uniform(0, data["max_logs"] - data["min_logs"]))
 
             logI_prior_mean = sample(
                 "logI_prior_mean", Uniform(data["min_logI"], data["max_logI"]))
