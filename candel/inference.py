@@ -37,55 +37,6 @@ from .util import (fprint, galactic_to_radec, plot_corner,
                    radec_to_galactic)
 
 
-def run_pv_optimization(model, model_kwargs, num_steps=20, print_summary=True,
-                        save_samples=True):
-    """
-    Run MAP optimization on the given PV model, post-process the best-fit
-    parameters, and optionally save the results to an HDF5 file.
-    """
-    raise NotImplementedError("I cannot get the optimizer to consisntently "
-                              "converge, so I am disabling it for now.")
-
-    try:
-        from numpyro_ext import optim as optimx
-    except ImportError as e:
-        raise ImportError(
-            "Please install `numpyro-ext` to use the optimization.") from e
-
-    devices = jax.devices()
-    device_str = ", ".join(f"{d.device_kind}({d.platform})" for d in devices)
-    fprint(f"running optimization on devices: {device_str}")
-
-    if any(d.platform == "gpu" for d in devices):
-        set_platform("gpu")
-        fprint("using NumPyro platform: GPU")
-    else:
-        set_platform("cpu")
-        fprint("using NumPyro platform: CPU")
-
-    # Run optimization
-    key = jax.random.key(model.config["inference"]["seed"])
-    soln = optimx.optimize(model, num_steps=num_steps, return_info=True)(
-        key, **model_kwargs)
-    print(soln)
-
-    # Convert solution into samples-like dict
-    samples = {k: jnp.atleast_1d(v) for k, v in soln.items()}
-
-    samples = drop_deterministic(samples, check_all_equals=False)
-    samples = postprocess_samples(samples)
-
-    if print_summary:
-        print_optim_summary(samples)
-
-    if save_samples:
-        fname_out = model.config["io"]["fname_output"]
-        fprint(f"output directory is {dirname(fname_out)}.")
-        save_mcmc_samples(samples, None, None, fname_out)
-
-    return samples
-
-
 def run_pv_inference(model, model_kwargs, print_summary=True,
                      save_samples=True, return_original_samples=False):
     """
@@ -227,20 +178,6 @@ def run_SH0ES_inference(model, model_kwargs={}, print_summary=True,
     return samples
 
 
-def run_magsel_inference(model, model_args, num_warmup=1000, num_samples=5000,
-                         num_chains=1, seed=42, print_summary=True,):
-    """Run MCMC inference on the given magnitude selection model."""
-    kernel = NUTS(model, init_strategy=init_to_median(num_samples=5000))
-    mcmc = MCMC(kernel, num_warmup=num_warmup, num_samples=num_samples,
-                num_chains=num_chains,)
-    mcmc.run(jax.random.key(seed), *model_args)
-
-    if print_summary:
-        mcmc.print_summary()
-
-    return mcmc.get_samples()
-
-
 def get_log_density(samples, model, model_kwargs, batch_size=5):
     """
     Compute the log density of NumPyro model. The batch size cannot be much
@@ -335,22 +272,6 @@ def print_clean_summary(samples):
         samples_print[key] = x[None, ...]
 
     print_summary_numpyro(samples_print,)
-
-
-def print_optim_summary(soln):
-    """
-    Print a clean summary of optimized parameters from `optimx.optimize`.
-    """
-    print("MAP parameter estimates:\n")
-    for k, v in soln.items():
-        if "_latent" in k or k == "obs":
-            continue
-
-        v_scalar = jnp.atleast_1d(v).squeeze()
-        if v_scalar.size == 1:
-            print(f"  {k:<20s} = {float(v_scalar): .4f}")
-        else:
-            print(f"  {k:<20s} = {v_scalar}")
 
 
 def save_mcmc_samples(samples, log_density, gof, filename):

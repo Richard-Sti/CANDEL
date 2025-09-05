@@ -45,10 +45,8 @@ from .evidence import (                                                         
     )
 
 from .inference import (                                                        # noqa
-    run_pv_optimization,                                                        # noqa
     run_pv_inference,                                                           # noqa
     run_SH0ES_inference,                                                        # noqa
-    run_magsel_inference,                                                       # noqa
     save_mcmc_samples,                                                          # noqa
     get_log_density,                                                            # noqa
     )
