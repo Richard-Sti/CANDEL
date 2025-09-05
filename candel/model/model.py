@@ -228,21 +228,25 @@ def sample_vector_fixed(name, mag_min, mag_max):
 
 def sample_spline_radial_vector(name, nval, low, high):
     """
-    Sample a radial vector approximated as a spline with `n` knots spherical
-    coordinates. The magnitude is sampled uniformly and the direction is
-    sampled uniformly on the unit sphere.
+    Sample a radial vector at `nval` knots: direction ~ isotropic,
+    magnitude ~ Uniform(low, high). Returns an array of shape (nval, 3).
     """
     with plate(f"{name}_plate", nval):
-        phi = sample(f"{name}_phi", Uniform(0, 2 * jnp.pi))
-        cos_theta = sample(f"{name}_cos_theta", Uniform(-1, 1))
-        sin_theta = jnp.sqrt(1 - cos_theta**2)
+        phi = sample(f"{name}_phi", Uniform(0.0, 2.0 * jnp.pi))
+        cos_theta = sample(f"{name}_cos_theta", Uniform(-1.0, 1.0))
+        sin_theta = jnp.sqrt(jnp.clip(1.0 - cos_theta**2, 0.0, 1.0))
 
         mag = sample(f"{name}_mag", Uniform(low, high))
 
-    return mag[:, None] * jnp.asarray([
-        sin_theta * jnp.cos(phi),
-        sin_theta * jnp.sin(phi),
-        cos_theta]).T
+        # Unit direction vector
+        u = jnp.stack(
+            (sin_theta * jnp.cos(phi),
+             sin_theta * jnp.sin(phi),
+             cos_theta),
+            axis=-1
+        )
+
+    return mag[..., None] * u
 
 
 def interp_spline_radial_vector(rq, bin_values, **kwargs):
@@ -368,7 +372,7 @@ class BaseModel(ABC):
     def __init__(self, config_path):
         config = load_config(config_path)
 
-        kind = config["pv_model"]["kind"]
+        kind = get_nested(config, "pv_model/kind", "")
         kind_allowed = ["Vext", "Vext_radial"]
         if kind not in kind_allowed and not kind.startswith("precomputed_los_"):  # noqa
             raise ValueError(
@@ -382,7 +386,9 @@ class BaseModel(ABC):
 
         priors = config["model"]["priors"]
 
-        self.with_radial_Vext = kind == "Vext_radial"
+        which_Vext = get_nested(config, "pv_model/which_Vext", "constant")
+
+        self.with_radial_Vext = kind == "Vext_radial" or which_Vext == "radial"
         if self.with_radial_Vext:
             d = priors["Vext_radial"]
             fprint(f"using radial `Vext` with spline knots at {d['rknot']}")
