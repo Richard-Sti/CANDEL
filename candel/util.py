@@ -812,6 +812,11 @@ def plot_radial_profiles(samples, model, r_eval_size=1000, show_fig=True,
         plt.close(fig)
 
 
+###############################################################################
+#              Reading from files and other minor utilities                   #
+###############################################################################
+
+
 def read_gof(fname, which, raise_error=True):
     """Read goodness-of-fit statistics from a file with samples."""
     if not exists(fname) and not raise_error:
@@ -845,3 +850,22 @@ def read_samples(root, fname, keys=None):
     if isinstance(keys, list) and len(keys) == 1:
         return samples[keys[0]]
     return samples
+
+
+def get_dlog_density_stats(lpA, lpB):
+    """
+    Compute the mean and standard deviation of the difference in log density
+    between two sets of log densities of shape `(num_samples, num_objects)`.
+    """
+    assert lpA.ndim == lpB.ndim == 2 and lpA.shape[-1] == lpB.shape[-1]
+
+    mu_A = np.mean(lpA, axis=0)
+    mu_B = np.mean(lpB, axis=0)
+
+    var_A = np.var(lpA, axis=0, ddof=1)
+    var_B = np.var(lpB, axis=0, ddof=1)
+
+    mean_diff = mu_A - mu_B
+    std_diff = np.sqrt(var_A + var_B)
+
+    return mean_diff, std_diff

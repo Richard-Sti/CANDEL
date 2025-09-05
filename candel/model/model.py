@@ -379,6 +379,9 @@ class BaseModel(ABC):
                 f"Invalid kind '{kind}'. Must be one of {kind_allowed} or "
                 "start with 'precomputed_los_'.")
 
+        self.track_log_density_per_sample = get_nested(
+            config, "inference/track_log_density_per_sample", False)
+
         # Initialize interpolators for distance and redshift
         self.Om = get_nested(config, "model/Om", 0.3)
         self.distance2distmod = Distance2Distmod(Om0=self.Om)
@@ -542,6 +545,10 @@ class TFRModel(BaseModel):
 
     def __call__(self, data, shared_params=None):
         nsamples = len(data)
+        # Initialize log density tracker; not to be tracked by NumPyro with
+        # `factor`.
+        if self.track_log_density_per_sample:
+            log_density_per_sample = jnp.zeros(nsamples)
 
         # Sample the TFR parameters.
         a_TFR = rsample("a_TFR", self.priors["TFR_zeropoint"], shared_params)
@@ -604,13 +611,21 @@ class TFRModel(BaseModel):
                         "eta_latent", Normal(eta_prior_mean, eta_prior_std))
                     sample("eta", Normal(eta, data["e_eta"]), obs=data["eta"])
 
+                    if self.track_log_density_per_sample:
+                        log_density_per_sample += Normal(
+                            eta_prior_mean, eta_prior_std).log_prob(eta)
+                        log_density_per_sample += Normal(
+                            eta, data["e_eta"]).log_prob(data["eta"])
+
                 # Track the likelihood of the observed linewidths.
                 if data.add_eta_truncation:
-                    factor(
-                        "neg_log_S_eta",
-                        -log_p_S_TFR_eta(
-                            eta_prior_mean, eta_prior_std, data["e_eta"],
-                            data.eta_min, data.eta_max))
+                    neglog_pS = -log_p_S_TFR_eta(
+                        eta_prior_mean, eta_prior_std, data["e_eta"],
+                        data.eta_min, data.eta_max)
+
+                    factor("neg_log_S_eta", neglog_pS)
+                    if self.track_log_density_per_sample:
+                        log_density_per_sample += neglog_pS
 
                 e_mag = jnp.sqrt(sigma_int**2 + data["e2_mag"])
             else:
@@ -683,8 +698,12 @@ class TFRModel(BaseModel):
                 ll = ln_simpson(ll, x=r_grid[None, None, :], axis=-1)
 
             # Average over realizations and track the log-density.
-            factor("ll_obs",
-                   logsumexp(ll, axis=0) - jnp.log(data.num_fields))
+            ll = logsumexp(ll, axis=0) - jnp.log(data.num_fields)
+            factor("ll_obs", ll)
+
+            if self.track_log_density_per_sample:
+                log_density_per_sample += ll
+                deterministic("log_density_per_sample", log_density_per_sample)
 
 
 ###############################################################################
@@ -704,6 +723,11 @@ class SNModel(BaseModel):
         if self.use_MNR:
             fprint("setting `compute_evidence` to False.")
             self.config["inference"]["compute_evidence"] = False
+
+        if self.track_log_density_per_sample:
+            raise NotImplementedError(
+                "`track_log_density_per_sample` is not implemented "
+                "for `SNModel`.")
 
     def __call__(self, data, shared_params=None):
         nsamples = len(data)
@@ -850,8 +874,13 @@ class PantheonPlusModel(BaseModel):
                 "Please set `use_MNR` to True in the config file.")
 
         if self.with_radial_Vext:
-            raise ValueError("Radial velocity extension is not supported "
-                             "for `PantheonPlusModel`")
+            raise NotImplementedError(
+                "Radial Vext is not implemented for `PantheonPlusModel`.")
+
+        if self.track_log_density_per_sample:
+            raise NotImplementedError(
+                "`track_log_density_per_sample` is not implemented "
+                "for `PantheonPlusModel`.")
 
         fprint("setting `compute_evidence` to False.")
         self.config["inference"]["compute_evidence"] = False
@@ -1010,6 +1039,8 @@ class ClustersModel(BaseModel):
 
     def __call__(self, data, shared_params=None):
         nsamples = len(data)
+        if self.track_log_density_per_sample:
+            log_density_per_sample = jnp.zeros(nsamples)
 
         if data.sample_dust:
             raise NotImplementedError(
@@ -1100,7 +1131,12 @@ class ClustersModel(BaseModel):
             # Marginalise over the radial distance, average over realisations
             # and track the log-density.
             ll = ln_simpson(ll, x=r_grid[None, None, :], axis=-1)
-            factor("ll_obs", logsumexp(ll, axis=0) - jnp.log(data.num_fields))
+            ll = logsumexp(ll, axis=0) - jnp.log(data.num_fields)
+            factor("ll_obs", ll)
+
+            if self.track_log_density_per_sample:
+                log_density_per_sample += ll
+                deterministic("log_density_per_sample", log_density_per_sample)
 
 
 ###############################################################################
@@ -1119,6 +1155,11 @@ class FPModel(BaseModel):
         if self.use_MNR:
             fprint("setting `compute_evidence` to False.")
             self.config["inference"]["compute_evidence"] = False
+
+        if self.track_log_density_per_sample:
+            raise NotImplementedError(
+                "`track_log_density_per_sample` is not implemented "
+                "for `FPModel`.")
 
         self.distance2logangdist = Distance2LogAngDist(Om0=self.Om)
 

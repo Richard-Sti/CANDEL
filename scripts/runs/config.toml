@@ -32,6 +32,7 @@ chain_method = "parallel"
 seed = 44
 compute_log_density = true
 compute_evidence = true
+track_log_density_per_sample = false
 num_chains_harmonic = 10
 
 skip_if_exists = false
@@ -46,6 +47,7 @@ kind = "precomputed_los_Carrick2015"
 # kind = "Vext"
 galaxy_bias = "linear_from_beta"  # Ignored unless having an underlying density field
 # galaxy_bias = "linear"  # Ignored unless having an underlying density field
+which_Vext = "constant"
 
 # (Inhomogeneus Malmquist bias settings and extrapolation), in units of Mpc / h
 r_limits_malmquist = [0.1, 251]

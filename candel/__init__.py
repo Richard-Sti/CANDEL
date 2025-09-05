@@ -76,5 +76,6 @@ from .util import (                                                             
     fprint,                                                                     # noqa
     read_gof,                                                                   # noqa
     read_samples,                                                               # noqa
+    get_dlog_density_stats,                                                     # noqa
     get_nested,                                                                 # noqa
 )
