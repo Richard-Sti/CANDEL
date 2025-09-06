@@ -14,5 +14,5 @@
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 from .model import (                                                            # noqa
-    SimpleRedshift2Real,                                                        # noqa
+    Redshift2Real,                                                              # noqa
     )
