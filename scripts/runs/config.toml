@@ -400,6 +400,7 @@ root = "data/Clusters"
 zcmb_max = 0.2
 which_relation = "LT"
 finite_logY = true
+convert_to_CMB_frame = true
 
 los_file = "data/Clusters/los_Clusters_<X>.hdf5"
 
