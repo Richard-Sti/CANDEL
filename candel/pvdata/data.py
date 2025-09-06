@@ -26,7 +26,7 @@ from scipy.linalg import cholesky
 
 from ..model.interp import LOSInterpolator
 from ..util import (SPEED_OF_LIGHT, fprint, galactic_to_radec, load_config,
-                    radec_to_cartesian, radec_to_galactic)
+                    radec_to_cartesian, radec_to_galactic, heliocentric_to_cmb)
 from .dust import read_dustmap
 
 
@@ -1245,7 +1245,8 @@ def load_SH0ES_from_config(config_path):
 
 
 def load_clusters(root, zcmb_min=None, zcmb_max=None, los_data_path=None,
-                  finite_logY=True, return_all=False, **kwargs):
+                  finite_logY=True, convert_to_CMB_frame=True,
+                  return_all=False, **kwargs):
     """
     Load the cluster scaling relation data from the given root directory.
 
@@ -1268,7 +1269,13 @@ def load_clusters(root, zcmb_min=None, zcmb_max=None, los_data_path=None,
     # data = data[(data['Y_nr_no_ksz'] != -1.0)]
     fprint(f"initially loaded {len(data)} clusters.")
 
+    RA, dec = galactic_to_radec(data['Glon'], data['Glat'])
+
     z = data['z']
+    if convert_to_CMB_frame:
+        fprint("converting clusters' redshifts to the CMB frame.")
+        z = heliocentric_to_cmb(data['z'], RA, dec)
+
     T = data['T']
     Lx = data['Lx']
     eL = data['eL']
@@ -1288,8 +1295,6 @@ def load_clusters(root, zcmb_min=None, zcmb_max=None, los_data_path=None,
     e_logT = np.log10(np.e) * (Tmax - Tmin) / (2 * T)
     e_logF = np.log10(np.e) * (Lx * eL / 100) / Lx
     e_logY = np.log10(np.e) * e_Y / Y_arcmin2
-
-    RA, dec = galactic_to_radec(data['Glon'], data['Glat'])
 
     data = {
         "zcmb": z,
