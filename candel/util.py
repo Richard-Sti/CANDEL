@@ -268,6 +268,47 @@ def dms_to_degrees(degrees, arcminutes=None, arcseconds=None):
     return degrees + (arcminutes or 0) / 60 + (arcseconds or 0) / 3600
 
 
+def heliocentric_to_cmb(z_helio, RA, dec, e_z_helio=None):
+    """
+    Convert heliocentric redshift to CMB redshift using the Planck 2018 CMB
+    dipole.
+    """
+    # CMB dipole Planck 2018 values
+    vsun_mag = 369  # km/s
+    RA_sun = 167.942
+    dec_sun = -6.944
+    SPEED_OF_LIGHT = 299792.458  # km / s
+
+    theta_sun = np.pi / 2 - np.deg2rad(dec_sun)
+    phi_sun = np.deg2rad(RA_sun)
+
+    # Convert to theat/phi in radians
+    theta = np.pi / 2 - np.deg2rad(dec)
+    phi = np.deg2rad(RA)
+
+    # Unit vector in the direction of each galaxy
+    n = np.asarray([np.sin(theta) * np.cos(phi),
+                    np.sin(theta) * np.sin(phi),
+                    np.cos(theta)]).T
+    # CMB dipole unit vector
+    vsun_normvect = np.asarray([np.sin(theta_sun) * np.cos(phi_sun),
+                                np.sin(theta_sun) * np.sin(phi_sun),
+                                np.cos(theta_sun)])
+
+    # Project the CMB dipole onto the line of sight and normalize
+    vsun_projected = vsun_mag * np.dot(n, vsun_normvect) / SPEED_OF_LIGHT
+
+    zsun_tilde = np.sqrt((1 - vsun_projected) / (1 + vsun_projected))
+    zcmb = (1 + z_helio) / zsun_tilde - 1
+
+    # Optional linear error propagation
+    if e_z_helio is not None:
+        e_zcmb = np.abs(e_z_helio / zsun_tilde)
+        return zcmb, e_zcmb
+
+    return zcmb
+
+
 ###############################################################################
 #                               Plotting                                      #
 ###############################################################################
