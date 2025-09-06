@@ -1529,3 +1529,21 @@ def load_CF4_calibrated(root, zcmb_min=None, zcmb_max=None, bmin=None,
         # data = load_los(los_data_path, data, mask=mask)
 
     return data
+
+
+def load_CF4_HQ(root, los_data_path=None, **kwargs):
+    """Load the CF4 HQ data (only sky positions and redshifts)."""
+    d = np.genfromtxt(join(root, "CF4HQ.txt"), skip_header=1)
+
+    data = {
+        "RA": d[:, 2],
+        "dec": d[:, 3],
+        "zcmb": d[:, 14] / SPEED_OF_LIGHT,
+    }
+
+    fprint(f"loaded {len(data['RA'])} galaxies from CF4 HQ data.")
+
+    if los_data_path is not None:
+        data = load_los(los_data_path, data,)
+
+    return data
