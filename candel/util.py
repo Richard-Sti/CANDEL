@@ -535,7 +535,7 @@ def plot_corner_getdist(samples_list, labels=None, cols=None, show_fig=True,
                         legend_fontsize=None, filled=True,
                         apply_ell_offset=False, mag_range=[0, None],
                         ell_range=[0, 360], b_range=[-90, 90], points=None,
-                        truths=None):
+                        ranges={}, truths=None):
     """Plot a GetDist triangle plot for one or more posterior samples."""
     try:
         import scienceplots  # noqa
@@ -571,7 +571,6 @@ def plot_corner_getdist(samples_list, labels=None, cols=None, show_fig=True,
     if keys is None:
         param_names = sort_params(param_names)
 
-    ranges = {}
     for k in param_names:
         if "_mag" in k:
             ranges[k] = mag_range
@@ -706,7 +705,8 @@ def plot_corner_from_hdf5(fnames, keys=None, labels=None, cols=None,
                           fontsize=None, legend_fontsize=None, filled=True,
                           show_fig=True, filename=None, apply_ell_offset=False,
                           mag_range=[0, None], ell_range=[0, 360],
-                          b_range=[-90, 90], points=None, truths=None):
+                          b_range=[-90, 90], points=None, ranges={},
+                          truths=None):
     """
     Plot a triangle plot from one or more HDF5 files containing posterior
     samples.
@@ -735,6 +735,7 @@ def plot_corner_from_hdf5(fnames, keys=None, labels=None, cols=None,
         show_fig=show_fig,
         filename=filename,
         apply_ell_offset=apply_ell_offset,
+        ranges=ranges,
         mag_range=mag_range,
         ell_range=ell_range,
         b_range=b_range,
