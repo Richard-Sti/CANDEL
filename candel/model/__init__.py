@@ -23,7 +23,6 @@ from .model import (                                                            
     FPModel,                                                                    # noqa
     CalibratedDistanceModel_DistMarg,                                           # noqa
     JointPVModel,                                                               # noqa
-    Maxwell,                                                                    # noqa
     )
 from .model_SH0ES import SH0ESModel                                             # noqa
 from .interp import LOSInterpolator                                             # noqa
