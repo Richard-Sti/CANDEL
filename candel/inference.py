@@ -34,8 +34,8 @@ from .evidence import (BIC_AIC, dict_samples_to_array, harmonic_evidence,
                        laplace_evidence)
 from .util import (fprint, galactic_to_radec, plot_corner,
                    plot_radial_profiles, plot_Vext_rad_corner,
-                   radec_cartesian_to_galactic, radec_to_cartesian,
-                   radec_to_galactic)
+                   plot_Vext_moll, radec_cartesian_to_galactic,
+                   radec_to_cartesian, radec_to_galactic)
 
 
 def print_evidence(bic, aic, lnZ_laplace, err_lnZ_laplace,
@@ -141,13 +141,27 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
                         lnZ_harmonic, err_lnZ_harmonic)
         fprint(f"saved summary to {fname_summary}")
 
-        if model.with_radial_Vext:
+        if model.which_Vext == "radial":
             fname_plot = splitext(fname_out)[0] + "_corner_Vext_rad.png"
             plot_Vext_rad_corner(samples, show_fig=False, filename=fname_plot)
 
             fname_plot = splitext(fname_out)[0] + "_profile_Vext_rad.png"
             plot_radial_profiles(samples, model, show_fig=False,
                                  filename=fname_plot)
+
+        if model.which_Vext == "per_pix":
+            npix = samples["Vext_pix"].shape[1]
+            if npix > 50:
+                fprint(f"Skipping corner plot of Vext_pix with {npix} pixels.")
+            else:
+                fname_plot = splitext(fname_out)[0] + "_corner_Vext_pix.png"
+                samples_Vext = {
+                    f"Vext_pix_{i}": samples["Vext_pix"][:, i]
+                    for i in range(npix)}
+                plot_corner(samples_Vext, show_fig=False, filename=fname_plot,)
+
+            fname_plot = splitext(fname_out)[0] + "_moll_Vext_pix.png"
+            plot_Vext_moll(samples["Vext_pix"], fname_plot,)
 
     if return_original_samples:
         return samples, log_density, original_samples
