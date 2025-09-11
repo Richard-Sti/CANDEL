@@ -47,7 +47,7 @@ def catalogue2label(catalogue):
            "CF4_i": r"CF4 $i$",
            "CF4_W1": r"CF4 W1",
            "CF4_W2": r"CF4 W2",
-           "CF4_W1,CF4_i,LOSS,Foundation": "Joint",
+           "LOSS,Foundation,CF4_W1,CF4_i": "Joint",
            }
 
     if isinstance(catalogue, list):

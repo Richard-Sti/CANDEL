@@ -24,6 +24,7 @@ except ModuleNotFoundError:
 from datetime import datetime
 from os.path import abspath, basename, isabs, join, exists
 from pathlib import Path
+import healpy as hp
 from warnings import warn
 
 import astropy.units as u
@@ -535,7 +536,7 @@ def plot_corner_getdist(samples_list, labels=None, cols=None, show_fig=True,
                         legend_fontsize=None, filled=True,
                         apply_ell_offset=False, mag_range=[0, None],
                         ell_range=[0, 360], b_range=[-90, 90], points=None,
-                        truths=None):
+                        ranges={}, truths=None):
     """Plot a GetDist triangle plot for one or more posterior samples."""
     try:
         import scienceplots  # noqa
@@ -571,7 +572,6 @@ def plot_corner_getdist(samples_list, labels=None, cols=None, show_fig=True,
     if keys is None:
         param_names = sort_params(param_names)
 
-    ranges = {}
     for k in param_names:
         if "_mag" in k:
             ranges[k] = mag_range
@@ -706,7 +706,8 @@ def plot_corner_from_hdf5(fnames, keys=None, labels=None, cols=None,
                           fontsize=None, legend_fontsize=None, filled=True,
                           show_fig=True, filename=None, apply_ell_offset=False,
                           mag_range=[0, None], ell_range=[0, 360],
-                          b_range=[-90, 90], points=None, truths=None):
+                          b_range=[-90, 90], points=None, ranges={},
+                          truths=None):
     """
     Plot a triangle plot from one or more HDF5 files containing posterior
     samples.
@@ -735,6 +736,7 @@ def plot_corner_from_hdf5(fnames, keys=None, labels=None, cols=None,
         show_fig=show_fig,
         filename=filename,
         apply_ell_offset=apply_ell_offset,
+        ranges=ranges,
         mag_range=mag_range,
         ell_range=ell_range,
         b_range=b_range,
@@ -851,6 +853,101 @@ def plot_radial_profiles(samples, model, r_eval_size=1000, show_fig=True,
         fig.show()
     else:
         plt.close(fig)
+
+
+def _add_equator_labels(lon_step=60, lat_step=30):
+    for lon in np.arange(0, 360, lon_step):
+        hp.projtext(lon, -2.0, f"{lon:d}°", lonlat=True,
+                    fontsize=9, ha="center", va="top")
+    for lat in np.arange(-60, 61, lat_step):
+        if lat == 0:
+            continue
+        hp.projtext(-178.0, lat, f"{lat:+d}°", lonlat=True,
+                    fontsize=9, ha="right", va="center")
+
+
+def _upsample_map(map_lo, nside_plot, *, nest=False):
+    nside_lo = hp.npix2nside(map_lo.size)
+    if nside_plot is None or nside_plot <= nside_lo:
+        return map_lo
+    pix_hi = np.arange(hp.nside2npix(nside_plot))
+    th, ph = hp.pix2ang(nside_plot, pix_hi, nest=nest)
+    # Bilinear interpolation from the coarse map:
+    map_hi = hp.get_interp_val(map_lo, th, ph, nest=nest, lonlat=False)
+    return map_hi
+
+
+def plot_Vext_moll(samples_pix, fname_out, coord_in="C", coord_out="G",
+                   lon_step=60, lat_step=30, eps=1e-12, nside_plot=None,
+                   remove_coord_label=True):
+    """
+    Plot three stacked Mollweide maps from MCMC samples (Nsamples, Npix):
+      row 1: mean
+      row 2: std
+      row 3: mean/std
+    If nside_plot > nside(map), upsample via healpy bilinear interpolation.
+    """
+    mean_map = np.nanmean(samples_pix, axis=0)
+    std_map = np.nanstd(samples_pix, axis=0, ddof=0)
+    snr_map = mean_map / (std_map + eps)
+
+    if nside_plot is None:
+        nside_plot = 4 * hp.npix2nside(mean_map.size)
+
+    # Upsample (optional)
+    mean_map = _upsample_map(mean_map, nside_plot)
+    std_map = _upsample_map(std_map, nside_plot)
+    snr_map = _upsample_map(snr_map, nside_plot)
+
+    coord_arg = coord_out if coord_in == coord_out else [coord_in, coord_out]
+
+    plt.figure(figsize=(7, 10))
+
+    # Mean
+    hp.mollview(mean_map, nest=False, coord=coord_arg, notext=False,
+                xsize=2000, cbar=True,
+                unit=r"Mean $V_{\mathrm{ext}}$ [$\mathrm{km\ s^{-1}}$]",
+                title="", sub=311)
+    hp.graticule(dpar=lat_step, dmer=lon_step)
+    if remove_coord_label:
+        ax = plt.gca()
+        for t in ax.texts:
+            if "Galactic" in t.get_text() or "Equatorial" in t.get_text():
+                t.set_visible(False)
+    _add_equator_labels(lon_step, lat_step)
+
+    # Std
+    hp.mollview(std_map, nest=False, coord=coord_arg, notext=False,
+                xsize=2000, cbar=True,
+                unit=r"Std($V_{\mathrm{ext}}$) [$\mathrm{km\ s^{-1}}$]",
+                title="", sub=312)
+    hp.graticule(dpar=lat_step, dmer=lon_step)
+    if remove_coord_label:
+        ax = plt.gca()
+        for t in ax.texts:
+            if "Galactic" in t.get_text() or "Equatorial" in t.get_text():
+                t.set_visible(False)
+    _add_equator_labels(lon_step, lat_step)
+
+    # Mean / Std
+    hp.mollview(snr_map, nest=False, coord=coord_arg, notext=False,
+                xsize=2000, cbar=True,
+                unit=r"$V_{\mathrm{ext}}$/Std($V_{\mathrm{ext}}$)",
+                title="", sub=313)
+    hp.graticule(dpar=lat_step, dmer=lon_step)
+    if remove_coord_label:
+        ax = plt.gca()
+        for t in ax.texts:
+            if "Galactic" in t.get_text() or "Equatorial" in t.get_text():
+                t.set_visible(False)
+    _add_equator_labels(lon_step, lat_step)
+
+    # Add padding between rows
+    plt.subplots_adjust(hspace=0.35)
+
+    plt.savefig(fname_out, dpi=450, bbox_inches="tight")
+    fprint(f"saving a Mollweide map to {fname_out}")
+    plt.close()
 
 
 ###############################################################################

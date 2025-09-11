@@ -52,7 +52,7 @@ from .inference import (                                                        
     )
 
 from .redshift2real import (                                                    # noqa
-    SimpleRedshift2Real,                                                        # noqa
+    Redshift2Real,                                                              # noqa
     )
 
 from .util import (                                                             # noqa
