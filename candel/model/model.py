@@ -21,13 +21,13 @@ from abc import ABC, abstractmethod
 
 import jax.numpy as jnp
 import numpy as np
+from interpax import interp1d
 from jax import random, vmap
 from jax.debug import print as jprint  # noqa
 from jax.lax import cond
 from jax.scipy.linalg import solve_triangular
 from jax.scipy.special import gammainc, gammaln, logsumexp
 from jax.scipy.stats.norm import cdf as jax_norm_cdf
-from jax_cosmo.scipy.interpolate import InterpolatedUnivariateSpline
 from numpyro import deterministic, factor, handlers, plate, sample
 from numpyro.distributions import (Delta, Distribution, MultivariateNormal,
                                    Normal, ProjectedNormal, TruncatedNormal,
@@ -226,7 +226,7 @@ def sample_vector_fixed(name, mag_min, mag_max):
         )
 
 
-def sample_spline_radial_vector(name, nval, low, high):
+def sample_radial_vector(name, nval, low, high):
     """
     Sample a radial vector at `nval` knots: direction ~ isotropic,
     magnitude ~ Uniform(low, high). Returns an array of shape (nval, 3).
@@ -249,25 +249,51 @@ def sample_spline_radial_vector(name, nval, low, high):
     return mag[..., None] * u
 
 
-def interp_spline_radial_vector(rq, bin_values, **kwargs):
-    """Spline interp with constant extrapolation at boundaries."""
-    x = jnp.asarray(kwargs["rknot"])
-    k = kwargs.get("k", 3)
-    endpoints = kwargs.get("endpoints", "not-a-knot")
+def _slerp(u0, u1, t, eps=1e-8):
+    dot = jnp.clip(jnp.dot(u0, u1), -1.0, 1.0)
+    theta = jnp.arccos(dot)
+    sin_th = jnp.sin(theta)
 
+    def slerp_core(_):
+        a = jnp.sin((1.0 - t) * theta) / sin_th
+        b = jnp.sin(t * theta) / sin_th
+        return a * u0 + b * u1
+
+    def lerp_norm(_):
+        v = (1.0 - t) * u0 + t * u1
+        n = jnp.linalg.norm(v)
+        return jnp.where(n > 0.0, v / n, u0)
+
+    return cond(sin_th < eps, lerp_norm, slerp_core, operand=None)
+
+
+def interp_cartesian_vector(rq, rknot, v_knot, method="cubic"):
+    """Magnitude via interpax; direction via SLERP; constant extrapolation."""
     rq = jnp.asarray(rq)
+    x = jnp.asarray(rknot)
+    y = jnp.asarray(v_knot)            # (K, 3)
+    K = y.shape[0]
+
+    mk = jnp.linalg.norm(y, axis=-1)   # (K,)
+    mk_safe = jnp.where(mk > 0.0, mk, 1.0)
+    uk = y / mk_safe[:, None]
+
+    m_r = interp1d(rq, x, mk, method=method)
     x0, x1 = x[0], x[-1]
+    m_r = jnp.where(rq < x0, mk[0], m_r)
+    m_r = jnp.where(rq > x1, mk[-1], m_r)
 
-    def spline_eval(y):
-        s = InterpolatedUnivariateSpline(x, jnp.asarray(y),
-                                         k=k, endpoints=endpoints)
-        vals = s(rq)
-        y0, y1 = y[0], y[-1]
-        vals = jnp.where(rq < x0, y0, vals)
-        vals = jnp.where(rq > x1, y1, vals)
-        return vals
+    def dir_at_r(r):
+        i = jnp.clip(jnp.searchsorted(x, r, side="right") - 1, 0, K - 2)
+        xl, xr = x[i], x[i + 1]
+        t = jnp.where(xr > xl, (r - xl) / (xr - xl), 0.0)
+        return _slerp(uk[i], uk[i + 1], t)
 
-    return vmap(spline_eval)(bin_values.T)
+    u_r = vmap(dir_at_r)(rq)           # (R, 3)
+    u_r = jnp.where((rq < x0)[:, None], uk[0], u_r)
+    u_r = jnp.where((rq > x1)[:, None], uk[-1], u_r)
+
+    return m_r[:, None] * u_r          # (R, 3)
 
 
 def load_priors(config_priors):
@@ -281,7 +307,7 @@ def load_priors(config_priors):
         "maxwell": lambda p: Maxwell(p["scale"]),
         "vector_uniform": lambda p: {"type": "vector_uniform", "low": p["low"], "high": p["high"]},  # noqa
         "vector_uniform_fixed": lambda p: {"type": "vector_uniform_fixed", "low": p["low"], "high": p["high"],},  # noqa
-        "vector_radial_spline_uniform": lambda p: {"type": "vector_radial_spline_uniform", "nval": len(p["rknot"]), "low": p["low"], "high": p["high"]},  # noqa
+        "vector_radial_uniform": lambda p: {"type": "vector_radial_uniform", "nval": len(p["rknot"]), "low": p["low"], "high": p["high"]},  # noqa
         "vector_components_uniform": lambda p: {"type": "vector_components_uniform", "low": p["low"], "high": p["high"],},  # noqa
     }
     priors = {}
@@ -326,8 +352,8 @@ def _rsample(name, dist):
         return sample_vector_components_uniform(
             name, dist["low"], dist["high"])
 
-    if isinstance(dist, dict) and dist.get("type") == "vector_radial_spline_uniform":  # noqa
-        return sample_spline_radial_vector(
+    if isinstance(dist, dict) and dist.get("type") == "vector_radial_uniform":
+        return sample_radial_vector(
             name, dist["nval"], dist["low"], dist["high"], )
 
     return sample(name, dist)
@@ -403,7 +429,7 @@ class BaseModel(ABC):
             d = priors["Vext_radial"]
             fprint(f"using radial `Vext` with spline knots at {d['rknot']}")
             self.kwargs_Vext = {
-                key: d[key] for key in ["rknot", "k", "endpoints"]}
+                key: d[key] for key in ["rknot", "method"]}
         elif self.which_Vext == "per_pix":
             nside = get_nested(config, "pv_model/Vext_per_pix_nside", None)
             if nside is None:
@@ -511,9 +537,10 @@ def compute_Vext_radial(data, r_grid, Vext, which_Vext, **kwargs_Vext):
     """
     if which_Vext == "radial":
         # Shape (3, n_rbins)
-        Vext = interp_spline_radial_vector(r_grid, Vext, **kwargs_Vext)
+        Vext = interp_cartesian_vector(r_grid, v_knot=Vext, **kwargs_Vext)
+
         Vext_rad = jnp.sum(
-            data["rhat"][..., None] * Vext[None, ...], axis=1)[None, ...]
+            data["rhat"][:, None, :] * Vext[None, :, :], axis=-1)[None, ...]
     elif which_Vext == "per_pix":
         Vext_rad = (data["C_pix"] @ Vext)[None, :, None]
     elif which_Vext == "constant":
