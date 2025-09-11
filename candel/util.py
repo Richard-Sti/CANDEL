@@ -22,12 +22,12 @@ except ModuleNotFoundError:
     import tomli as tomllib
 
 from datetime import datetime
-from os.path import abspath, basename, isabs, join, exists
+from os.path import abspath, basename, exists, isabs, join
 from pathlib import Path
-import healpy as hp
 from warnings import warn
 
 import astropy.units as u
+import healpy as hp
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
@@ -35,8 +35,9 @@ from astropy.coordinates import CartesianRepresentation, SkyCoord
 from corner import corner
 from getdist import MCSamples, plots
 from h5py import File
+from interpax import interp1d
 from jax import vmap
-from jax_cosmo.scipy.interpolate import InterpolatedUnivariateSpline
+from matplotlib.ticker import FuncFormatter
 
 SPEED_OF_LIGHT = 299_792.458  # km / s
 
@@ -750,57 +751,127 @@ def plot_corner_from_hdf5(fnames, keys=None, labels=None, cols=None,
 ###############################################################################
 
 
-def interpolate_scalar_field(V, r, rbins, k=3, endpoints="not-a-knot"):
-    V = jnp.asarray(V).reshape(-1, rbins.size)
+def _interp1d_const(r, rbins, y, method="cubic"):
+    """1D interpolation with constant extrapolation at boundaries."""
+    r = jnp.asarray(r)
+    rbins = jnp.asarray(rbins)
+    x0, x1 = rbins[0], rbins[-1]
+    r_clipped = jnp.clip(r, x0, x1)
+    vals = interp1d(r_clipped, rbins, y, method=method)
+    vals = jnp.where(r < x0, y[0], vals)
+    vals = jnp.where(r > x1, y[-1], vals)
+    return vals
 
-    def spline_eval(y):
-        spline = InterpolatedUnivariateSpline(
-            rbins, y, k=k, endpoints=endpoints)
-        return spline(r)
 
-    return vmap(spline_eval)(V)
+def interpolate_scalar_field(V, r, rbins, method="cubic"):
+    """Interpolate scalar field along last axis with constant extrapolation."""
+    V = jnp.asarray(V)
+    r = jnp.asarray(r)
+    rbins = jnp.asarray(rbins)
+
+    y2d = V.reshape(-1, rbins.size)
+
+    def interp_row(y):
+        return _interp1d_const(r, rbins, y, method)
+
+    out = vmap(interp_row)(y2d)
+    return out.reshape(*V.shape[:-1], r.shape[0])
 
 
-def interpolate_latitude_field(b_deg, r, rbins, k=3, endpoints="not-a-knot"):
-    b_rad = jnp.deg2rad(b_deg).reshape(-1, rbins.size)
+def interpolate_latitude_field(b_deg, r, rbins, method="cubic"):
+    """Interpolate latitude via sin(b); return degrees."""
+    b_rad = jnp.deg2rad(jnp.asarray(b_deg)).reshape(-1, rbins.size)
     sin_b = jnp.sin(b_rad)
 
-    def spline_eval(y):
-        spline = InterpolatedUnivariateSpline(
-            rbins, y, k=k, endpoints=endpoints)
-        return spline(r)
+    def interp_row(y):
+        return _interp1d_const(r, rbins, y, method)
 
-    sin_b_interp = vmap(spline_eval)(sin_b)
-    return jnp.rad2deg(jnp.arcsin(jnp.clip(sin_b_interp, -1.0, 1.0)))
+    sin_b_interp = vmap(interp_row)(sin_b)
+    sin_b_interp = jnp.clip(sin_b_interp, -1.0, 1.0)
+    return jnp.rad2deg(jnp.arcsin(sin_b_interp))
 
 
-def interpolate_longitude_field(l_deg, r, rbins, k=3, endpoints="not-a-knot"):
-    l_rad = jnp.deg2rad(l_deg).reshape(-1, rbins.size)
+def interpolate_longitude_field(l_deg, r, rbins, method="cubic"):
+    """Interpolate longitude via sin/cos; return degrees in [0, 360)."""
+    l_rad = jnp.deg2rad(jnp.asarray(l_deg)).reshape(-1, rbins.size)
     sin_l = jnp.sin(l_rad)
     cos_l = jnp.cos(l_rad)
 
-    def spline_eval(y):
-        spline = InterpolatedUnivariateSpline(
-            rbins, y, k=k, endpoints=endpoints)
-        return spline(r)
-    sin_l_interp = vmap(spline_eval)(sin_l)
-    cos_l_interp = vmap(spline_eval)(cos_l)
-    return jnp.rad2deg(jnp.arctan2(sin_l_interp, cos_l_interp)) % 360
+    def interp_row(y):
+        return _interp1d_const(r, rbins, y, method)
+
+    sin_l_i = vmap(interp_row)(sin_l)
+    cos_l_i = vmap(interp_row)(cos_l)
+
+    # renormalise to unit circle to avoid drift
+    s = jnp.sqrt(jnp.clip(sin_l_i**2 + cos_l_i**2, 1e-20, None))
+    sin_l_i = sin_l_i / s
+    cos_l_i = cos_l_i / s
+
+    return jnp.rad2deg(jnp.arctan2(sin_l_i, cos_l_i)) % 360.0
 
 
-def interpolate_all_radial_fields(model, Vmag, ell, b, r_eval_size=1000):
-    rknot = jnp.asarray(model.kwargs_radial_Vext["rknot"])
-    rmin, rmax = 0, jnp.max(rknot)
-    k = model.kwargs_radial_Vext.get("k", 3)
-    endpoints = model.kwargs_radial_Vext.get("endpoints", "not-a-knot")
+def interpolate_all_radial_fields(model, Vmag, ell, b, r_eval_size=1000,
+                                  method="cubic"):
+    rknot = jnp.asarray(model.kwargs_Vext["rknot"])
+    rmin, rmax = 0.0, jnp.max(rknot)
 
     r = jnp.linspace(rmin, rmax, r_eval_size)
 
-    Vmag_interp = interpolate_scalar_field(Vmag, r, rknot, k, endpoints)
-    ell_interp = interpolate_longitude_field(ell, r, rknot, k, endpoints)
-    b_interp = interpolate_latitude_field(b, r, rknot, k, endpoints)
+    Vmag_interp = interpolate_scalar_field(Vmag, r, rknot, method=method)
+    ell_interp = interpolate_longitude_field(ell, r, rknot, method=method)
+    b_interp = interpolate_latitude_field(b, r, rknot, method=method)
 
     return r, Vmag_interp, ell_interp, b_interp
+
+
+def get_percentiles_circ_along_r(lon_deg_samples, qs=(2.5, 16, 50, 84, 97.5),
+                                 rmin_conc=0.2, return_unwrapped=True):
+    """
+    Robust circular percentiles along radius with phase-tracked reference.
+    """
+    th = np.deg2rad(np.asarray(lon_deg_samples))  # (Ns, R)
+
+    # Raw circular mean and concentration R \in [0,1]
+    sinm = np.sin(th).mean(axis=0)
+    cosm = np.cos(th).mean(axis=0)
+    mu_raw = np.arctan2(sinm, cosm)              # (-pi, pi]
+    Rconc = np.hypot(sinm, cosm)                 # mean resultant length
+
+    # Phase-tracked reference: make mu continuous by following the
+    # nearest branch
+    ref = np.empty_like(mu_raw)
+    ref[0] = mu_raw[0]
+    two_pi = 2.0 * np.pi
+    for j in range(1, mu_raw.size):
+        mu = mu_raw[j]
+        # choose branch closest to previous ref
+        mu += two_pi * np.round((ref[j-1] - mu) / two_pi)
+        # damp sudden jumps when concentration is low
+        if Rconc[j] < rmin_conc:
+            # blend toward previous ref (keeps continuity when mean is noisy)
+            mu = 0.7 * ref[j-1] + 0.3 * mu
+        ref[j] = mu
+
+    # Align each sample at each radius to nearest branch of the reference
+    shifts = two_pi * np.round((ref[None, :] - th) / two_pi)   # (Ns, R)
+    th_aligned = th + shifts
+
+    # Percentiles across samples at each r
+    q_tracks = np.percentile(th_aligned, qs, axis=0)           # (Q, R)
+
+    if return_unwrapped:
+        return tuple(np.rad2deg(q_tracks[i]) for i in range(len(qs)))
+
+    # Wrap back to [0, 360) using a single global shift (avoids seam wandering)
+    median = np.rad2deg(q_tracks[qs.index(50) if 50 in qs else len(qs)//2])
+    shift = 360.0 * np.round(median.mean() / 360.0)
+    return tuple(
+        (np.rad2deg(q_tracks[i]) - shift) % 360.0 for i in range(len(qs)))
+
+
+def deg_wrap_360(y, pos):
+    return f"{(y % 360 + 360) % 360:.0f}"
 
 
 def plot_radial_profiles(samples, model, r_eval_size=1000, show_fig=True,
@@ -813,6 +884,8 @@ def plot_radial_profiles(samples, model, r_eval_size=1000, show_fig=True,
     ell = samples["Vext_rad_ell"]
     b = samples["Vext_rad_b"]
 
+    rknot = model.kwargs_Vext["rknot"]
+
     r, V_interp, ell_interp, b_interp = interpolate_all_radial_fields(
         model, Vmag, ell, b, r_eval_size=r_eval_size
     )
@@ -823,8 +896,17 @@ def plot_radial_profiles(samples, model, r_eval_size=1000, show_fig=True,
         p025, p975 = np.percentile(arr, [2.5, 97.5], axis=0)
         return p025, p16, p50, p84, p975
 
+    def get_percentiles_circ(arr_deg):
+        arr_rad = np.deg2rad(arr_deg)
+        # unwrap along axis 0 (samples)
+        arr_unwrapped = np.unwrap(arr_rad, axis=0)
+        p16, p50, p84 = np.percentile(arr_unwrapped, [16, 50, 84], axis=0)
+        p025, p975 = np.percentile(arr_unwrapped, [2.5, 97.5], axis=0)
+        # back to [0, 360)
+        return np.rad2deg([p025, p16, p50, p84, p975]) % 360
+
     V025, V16, V50, V84, V975 = get_percentiles(V_interp)
-    l025, l16, l50, l84, l975 = get_percentiles(ell_interp)
+    l025, l16, l50, l84, l975 = get_percentiles_circ_along_r(ell_interp)
     b025, b16, b50, b84, b975 = get_percentiles(b_interp)
 
     fig, axes = plt.subplots(1, 3, figsize=(12, 4), sharex=True)
@@ -836,13 +918,30 @@ def plot_radial_profiles(samples, model, r_eval_size=1000, show_fig=True,
         (b025, b16, b50, b84, b975, r"$b_{\rm dipole}~[\mathrm{deg}]$"),
     ]
 
+    knot_line_kwargs = dict(
+        color="black", linestyle="--", zorder=-1, alpha=0.5)
     for i, (lo2, lo1, med, hi1, hi2, ylabel) in enumerate(components):
         ax = axes[i]
+        xmin, xmax = r[0], r[-1]
         ax.fill_between(r, lo2, hi2, alpha=0.2, color=c)
         ax.fill_between(r, lo1, hi1, alpha=0.4, color=c)
         ax.plot(r, med, c=c)
+        ax.set_xlim(xmin, xmax)
         ax.set_xlabel(r"$r~[\mathrm{Mpc}/h]$")
         ax.set_ylabel(ylabel)
+
+        dx = 0.01 * (xmax - xmin)  # shift by 1% of the span
+        for rk in rknot:
+
+            if jnp.isclose(rk, xmin):
+                ax.axvline(xmin + dx, **knot_line_kwargs)
+            elif jnp.isclose(rk, xmax):
+                ax.axvline(xmax - dx, **knot_line_kwargs)
+            else:
+                ax.axvline(rk, **knot_line_kwargs)
+
+    axes[0].set_ylim(0, None)
+    axes[1].yaxis.set_major_formatter(FuncFormatter(deg_wrap_360))
 
     fig.tight_layout()
     if filename is not None:
