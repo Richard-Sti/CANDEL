@@ -28,6 +28,7 @@ from .data import (                                                             
     load_6dF_FP,                                                                # noqa
     load_PantheonPlus,                                                          # noqa
     load_PantheonPlus_Lane,                                                     # noqa
+    load_CF4_HQ,                                                                # noqa
     PVDataFrame,                                                                # noqa
     load_PV_dataframes,                                                         # noqa
     )

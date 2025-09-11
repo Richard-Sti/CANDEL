@@ -15,6 +15,7 @@
 
 from os.path import join
 
+import healpy as hp
 import numpy as np
 from astropy import units as u
 from astropy.cosmology import FlatLambdaCDM
@@ -22,11 +23,13 @@ from astropy.io import fits
 from h5py import File
 from jax import core as jcore
 from jax import numpy as jnp
+from jax.nn import one_hot
 from scipy.linalg import cholesky
 
 from ..model.interp import LOSInterpolator
-from ..util import (SPEED_OF_LIGHT, fprint, galactic_to_radec, load_config,
-                    radec_to_cartesian, radec_to_galactic, heliocentric_to_cmb)
+from ..util import (SPEED_OF_LIGHT, fprint, galactic_to_radec,
+                    heliocentric_to_cmb, load_config, radec_to_cartesian,
+                    radec_to_galactic)
 from .dust import read_dustmap
 
 
@@ -42,6 +45,28 @@ def effective_rank_entropy(C):
     p = w / np.sum(w)
     p_nonzero = p[p > 0]
     return np.exp(-np.sum(p_nonzero * np.log(p_nonzero)))
+
+
+def precompute_pixel_projection(rhat_data, nside, sigma_deg=None):
+    """
+    Precompute the pixel projection matrix for a given set of LOS vectors.
+    """
+    npix = hp.nside2npix(nside)
+    theta, phi = hp.pix2ang(nside, np.arange(npix))
+    rhat_pix = np.stack([np.sin(theta) * np.cos(phi),
+                         np.sin(theta) * np.sin(phi),
+                         np.cos(theta)], axis=1)
+
+    d = rhat_data @ rhat_pix.T  # radial projection factors
+
+    if sigma_deg is None:
+        # One-hot on nearest pixel (max dot == min angle)
+        p_max = np.argmax(d, axis=1)
+        w = one_hot(p_max, rhat_pix.shape[0], dtype=rhat_data.dtype)
+    else:
+        raise NotImplementedError("Gaussian smoothing is not implemented")
+
+    return w * d
 
 
 ###############################################################################
@@ -201,6 +226,12 @@ class PVDataFrame:
 
         frame.sample_dust = sample_dust
 
+        # Precompute Vext_per_pix data
+        nside = config_pv_model.get("Vext_per_pix_nside", None)
+        if nside is not None:
+            fprint(f"precomputing Vext_per_pix data for nside = {nside}.")
+            frame.C_pix = precompute_pixel_projection(frame["rhat"], nside)
+
         # Hyperparameters for the TFR linewidth modelling
         if "eta_min" in config or "eta_max" in config:
             if config["add_eta_selection"]:
@@ -293,9 +324,11 @@ class PVDataFrame:
         if key.startswith("e2_") and key.replace("e2_", "e_") in self.data:
             val = self.data[key.replace("e2_", "e_")]**2
         elif key == "theta":
-            val = np.deg2rad(self.data["RA"])
-        elif key == "phi":
             val = 0.5 * np.pi - np.deg2rad(self.data["dec"])
+        elif key == "phi":
+            val = np.deg2rad(self.data["RA"])
+        elif key == "C_pix":
+            val = self.C_pix
         elif key == "czcmb":
             val = self.data["zcmb"] * SPEED_OF_LIGHT
         elif key == "rhat":
@@ -1527,5 +1560,23 @@ def load_CF4_calibrated(root, zcmb_min=None, zcmb_max=None, bmin=None,
     if los_data_path is not None:
         raise ValueError("LOS for CF4 calibrated data is not supported.")
         # data = load_los(los_data_path, data, mask=mask)
+
+    return data
+
+
+def load_CF4_HQ(root, los_data_path=None, **kwargs):
+    """Load the CF4 HQ data (only sky positions and redshifts)."""
+    d = np.genfromtxt(join(root, "CF4HQ.txt"), skip_header=1)
+
+    data = {
+        "RA": d[:, 2],
+        "dec": d[:, 3],
+        "zcmb": d[:, 14] / SPEED_OF_LIGHT,
+    }
+
+    fprint(f"loaded {len(data['RA'])} galaxies from CF4 HQ data.")
+
+    if los_data_path is not None:
+        data = load_los(los_data_path, data,)
 
     return data

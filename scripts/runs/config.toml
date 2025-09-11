@@ -1,6 +1,6 @@
-# root_main = "/Users/rstiskalek/Projects/CANDEL/"
-# python_exec = "/Users/rstiskalek/Projects/CANDEL/venv_candel/bin/python"
-# machine = "local"
+root_main = "/Users/rstiskalek/Projects/CANDEL/"
+python_exec = "/Users/rstiskalek/Projects/CANDEL/venv_candel/bin/python"
+machine = "local"
 
 # root_main = "/mnt/users/rstiskalek/CANDEL/"
 # python_exec = "/mnt/users/rstiskalek/CANDEL/venv_candel/bin/python"
@@ -11,10 +11,10 @@
 # python_exec="/mnt/home/rstiskalek/CANDEL/venv_gpu_candel/bin/python"
 # machine="rusty"
 
-root_main = "/home/phys1997/CANDEL/"
-root_data = "/data/phys-galsim/phys1997/CANDEL/"
-python_exec = "/home/phys1997/CANDEL/venv_candel/bin/python"
-machine = "arc"
+# root_main = "/home/phys1997/CANDEL/"
+# root_data = "/data/phys-galsim/phys1997/CANDEL/"
+# python_exec = "/home/phys1997/CANDEL/venv_candel/bin/python"
+# machine = "arc"
 
 
 ###############################################################################
@@ -49,11 +49,14 @@ galaxy_bias = "linear_from_beta"  # Ignored unless having an underlying density 
 # galaxy_bias = "linear"  # Ignored unless having an underlying density field
 which_Vext = "constant"
 
+
 # (Inhomogeneus Malmquist bias settings and extrapolation), in units of Mpc / h
 r_limits_malmquist = [0.1, 251]
 num_points_malmquist = 251
 
 los_decay_scale = 5.0
+
+Vext_per_pix_nside = 1
 
 ###############################################################################
 #                                 Model                                       #
@@ -234,6 +237,11 @@ high = 5000
 rknot = [0, 250, 600]
 k = 1
 endpoints="not-a-knot"
+
+[model.priors.Vext_sigma]
+dist = "uniform"
+low = 1
+high = 10_000
 
 [model.priors.Rdust]
 # 0.19 +- 0.01 for W1. For W2 should be 0.15 +- 0.01. I take it a little bit
@@ -438,7 +446,17 @@ b_min = "none"
 nsamples_subsample = "none"
 seed_subsample = 42
 
-los_file = "none"
+
+################################################################################
+#                         Redshift2real mapping                                #
+################################################################################
+
+[redshift2real]
+
+which_calibration = "none"
+which_reconstruction = "Carrick2015"
+
+# "/Users/rstiskalek/Projects/CANDEL/results/VFO/precomputed_los_Carrick2015_CF4_W1_MNR_linear.hdf5"
 
 
 ########
@@ -499,6 +517,9 @@ root = "data/6dF_FP"
 return_all = true
 los_file = "data/6dF_FP/los_6dF_FP_<X>.hdf5"
 
+[io.PV_main.CF4_HQ]
+root = "data/CF4_HQ"
+los_file = "data/CF4_HQ/los_CF4_HQ_<X>.hdf5"
 
 [io.reconstruction_main]
 # Distance over which to interpolate the 3D grids along the source LOS.

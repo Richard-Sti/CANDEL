@@ -250,14 +250,22 @@ def sample_spline_radial_vector(name, nval, low, high):
 
 
 def interp_spline_radial_vector(rq, bin_values, **kwargs):
-    """Interpolate delta radial vectors using JAX-compatible splines."""
+    """Spline interp with constant extrapolation at boundaries."""
     x = jnp.asarray(kwargs["rknot"])
     k = kwargs.get("k", 3)
     endpoints = kwargs.get("endpoints", "not-a-knot")
 
+    rq = jnp.asarray(rq)
+    x0, x1 = x[0], x[-1]
+
     def spline_eval(y):
-        spline = InterpolatedUnivariateSpline(x, y, k=k, endpoints=endpoints)
-        return spline(rq)
+        s = InterpolatedUnivariateSpline(x, jnp.asarray(y),
+                                         k=k, endpoints=endpoints)
+        vals = s(rq)
+        y0, y1 = y[0], y[-1]
+        vals = jnp.where(rq < x0, y0, vals)
+        vals = jnp.where(rq > x1, y1, vals)
+        return vals
 
     return vmap(spline_eval)(bin_values.T)
 
@@ -389,18 +397,34 @@ class BaseModel(ABC):
 
         priors = config["model"]["priors"]
 
-        which_Vext = get_nested(config, "pv_model/which_Vext", "constant")
+        self.which_Vext = get_nested(config, "pv_model/which_Vext", "constant")
 
-        self.with_radial_Vext = kind == "Vext_radial" or which_Vext == "radial"
-        if self.with_radial_Vext:
+        if self.which_Vext == "radial":
             d = priors["Vext_radial"]
             fprint(f"using radial `Vext` with spline knots at {d['rknot']}")
-            self.with_radial_Vext = True
-            self.kwargs_radial_Vext = {
+            self.kwargs_Vext = {
                 key: d[key] for key in ["rknot", "k", "endpoints"]}
+        elif self.which_Vext == "per_pix":
+            nside = get_nested(config, "pv_model/Vext_per_pix_nside", None)
+            if nside is None:
+                raise ValueError(
+                    "Must specify `Vext_per_pix_nside` in config when "
+                    "`which_Vext = 'per_pix'`.")
+            if not (nside > 0 and ((nside & (nside - 1)) == 0)):
+                raise ValueError(
+                    f"Invalid nside={nside} in "
+                    f"which_Vext = '{self.which_Vext}'. "
+                    "Must be a positive power of 2.")
+            fprint(f"using per-pixel `Vext` at nside={nside}.")
+            npix = 12 * nside**2
+            self.kwargs_Vext = {
+                "nside": nside, "npix": npix,
+                "Q": jnp.asarray(sumzero_basis(npix))}
+        elif self.which_Vext == "constant":
+            self.which_Vext = "constant"
+            self.kwargs_Vext = {}
         else:
-            self.with_radial_Vext = False
-            self.kwargs_radial_Vext = {}
+            raise ValueError(f"Invalid which_Vext '{self.which_Vext}'.")
 
         self.priors, self.prior_dist_name = load_priors(priors)
         self.use_MNR = get_nested(config, "model/use_MNR", False)
@@ -479,22 +503,23 @@ def lp_galaxy_bias(delta, log_rho, bias_params, galaxy_bias):
     return lp
 
 
-def compute_Vext_radial(data, r_grid, Vext, with_radial_Vext=False,
-                        **kwargs_radial):
+def compute_Vext_radial(data, r_grid, Vext, which_Vext, **kwargs_Vext):
     """
     Compute the line-of-sight projection of the external velocity.
 
     Promote the final output to shape `(n_field, n_gal, n_rbins)`.
     """
-    if with_radial_Vext:
+    if which_Vext == "radial":
         # Shape (3, n_rbins)
-        Vext = interp_spline_radial_vector(r_grid, Vext, **kwargs_radial)
-
+        Vext = interp_spline_radial_vector(r_grid, Vext, **kwargs_Vext)
         Vext_rad = jnp.sum(
             data["rhat"][..., None] * Vext[None, ...], axis=1)[None, ...]
-    else:
+    elif which_Vext == "per_pix":
+        Vext_rad = (data["C_pix"] @ Vext)[None, :, None]
+    elif which_Vext == "constant":
         Vext_rad = jnp.sum(data["rhat"] * Vext[None, :], axis=1)[None, :, None]
-
+    else:
+        raise ValueError(f"Invalid which_Vext '{which_Vext}'.")
     return Vext_rad
 
 
@@ -505,6 +530,40 @@ def sample_distance_prior(priors):
         "p": rsample("p_dist_emp", priors["p_dist_emp"]),
         "n": rsample("n_dist_emp", priors["n_dist_emp"])
         }
+
+
+def sumzero_basis(npix):
+    """
+    Return an orthonormal basis `(npix x (npix - 1))` for the subspace of
+    vectors with zero sum.
+    """
+    one = jnp.ones((npix,)) / jnp.sqrt(npix)
+    e1 = jnp.zeros((npix,)).at[0].set(1.0)
+    v = one - e1
+    beta = 2.0 / jnp.dot(v, v)
+    H = jnp.eye(npix) - beta * jnp.outer(v, v)
+    Q = H[:, 1:]
+    return Q
+
+
+def sample_Vext(priors, which_Vext, shared_params=None, kwargs_Vext={}):
+    if which_Vext == "radial":
+        Vext = rsample("Vext_rad", priors["Vext_radial"], shared_params)
+    elif which_Vext == "per_pix":
+        Vext_sigma = rsample("Vext_sigma", priors["Vext_sigma"], shared_params)
+
+        with plate("Vext_pix_plate", kwargs_Vext["npix"] - 1):
+            u = rsample("Vext_pix_skipZ", Normal(0., 1.), shared_params)
+
+        Vext = rsample(
+            "Vext_pix",
+            Delta(Vext_sigma * (kwargs_Vext["Q"] @ u)), shared_params)
+    elif which_Vext == "constant":
+        Vext = rsample("Vext", priors["Vext"], shared_params)
+    else:
+        raise ValueError(f"Invalid which_Vext '{which_Vext}'.")
+
+    return Vext
 
 
 ###############################################################################
@@ -571,11 +630,8 @@ class TFRModel(BaseModel):
             Ab = 0.
 
         # Sample velocity field parameters.
-        if self.with_radial_Vext:
-            Vext = rsample(
-                "Vext_rad", self.priors["Vext_radial"], shared_params)
-        else:
-            Vext = rsample("Vext", self.priors["Vext"], shared_params)
+        Vext = sample_Vext(
+            self.priors, self.which_Vext, shared_params, self.kwargs_Vext)
         sigma_v = rsample("sigma_v", self.priors["sigma_v"], shared_params)
 
         # Remaining parameters
@@ -654,8 +710,9 @@ class TFRModel(BaseModel):
 
             # Likelihood of the observed redshifts, `(n_field, n_gal, n_rbins)`
             Vext_rad = compute_Vext_radial(
-                data, r_grid, Vext, with_radial_Vext=self.with_radial_Vext,
-                **self.kwargs_radial_Vext)
+                data, r_grid, Vext, which_Vext=self.which_Vext,
+                **self.kwargs_Vext)
+            # deterministic("Vext_rad", Vext_rad[0, :, 0])
             czpred = predict_cz(
                 self.distance2redshift(r_grid, h=h)[None, None, :],
                 Vrad + Vext_rad)
@@ -753,11 +810,8 @@ class SNModel(BaseModel):
         kwargs_dist = sample_distance_prior(self.priors)
 
         # --- Velocity field / selection nuisance ---
-        if self.with_radial_Vext:
-            Vext = rsample("Vext_rad", self.priors["Vext_radial"],
-                           shared_params)
-        else:
-            Vext = rsample("Vext", self.priors["Vext"], shared_params)
+        Vext = sample_Vext(
+            self.priors, self.which_Vext, shared_params, self.kwargs_Vext)
         sigma_v = rsample("sigma_v", self.priors["sigma_v"], shared_params)
         beta = rsample("beta", self.priors["beta"], shared_params)
 
@@ -822,8 +876,8 @@ class SNModel(BaseModel):
 
             # Predicted cz (n_field, n_gal, n_r)
             Vext_rad = compute_Vext_radial(
-                data, r_grid, Vext, with_radial_Vext=self.with_radial_Vext,
-                **self.kwargs_radial_Vext)
+                data, r_grid, Vext, which_Vext=self.which_Vext,
+                **self.kwargs_Vext)
             czpred = predict_cz(
                 self.distance2redshift(r_grid, h=h)[None, None, :],
                 Vrad + Vext_rad)
@@ -873,9 +927,9 @@ class PantheonPlusModel(BaseModel):
                 "The PantheonPlus model requires the MNR model to be used. "
                 "Please set `use_MNR` to True in the config file.")
 
-        if self.with_radial_Vext:
-            raise NotImplementedError(
-                "Radial Vext is not implemented for `PantheonPlusModel`.")
+        if self.which_Vext != "constant":
+            raise NotImplementedError("Only constant Vext is implemented for "
+                                      "the `PantheonPlusModel`.")
 
         if self.track_log_density_per_sample:
             raise NotImplementedError(
@@ -1060,11 +1114,8 @@ class ClustersModel(BaseModel):
         kwargs_dist = sample_distance_prior(self.priors)
 
         # Sample velocity field parameters.
-        if self.with_radial_Vext:
-            Vext = rsample(
-                "Vext_rad", self.priors["Vext_radial"], shared_params)
-        else:
-            Vext = rsample("Vext", self.priors["Vext"], shared_params)
+        Vext = sample_Vext(
+            self.priors, self.which_Vext, shared_params, self.kwargs_Vext)
         sigma_v = rsample("sigma_v", self.priors["sigma_v"], shared_params)
 
         # Remaining parameters
@@ -1120,8 +1171,8 @@ class ClustersModel(BaseModel):
             ll += lp_dist
             # Likelihood of the observed redshifts, `(n_field, n_gal, n_rbins)`
             Vext_rad = compute_Vext_radial(
-                data, r_grid, Vext, with_radial_Vext=self.with_radial_Vext,
-                **self.kwargs_radial_Vext)
+                data, r_grid, Vext, which_Vext=self.which_Vext,
+                **self.kwargs_Vext)
             czpred = predict_cz(
                 self.distance2redshift(r_grid, h=h)[None, None, :],
                 Vrad + Vext_rad)
@@ -1183,11 +1234,8 @@ class FPModel(BaseModel):
         kwargs_dist = sample_distance_prior(self.priors)
 
         # Sample velocity field parameters.
-        if self.with_radial_Vext:
-            Vext = rsample(
-                "Vext_rad", self.priors["Vext_radial"], shared_params)
-        else:
-            Vext = rsample("Vext", self.priors["Vext"], shared_params)
+        Vext = sample_Vext(
+            self.priors, self.which_Vext, shared_params, self.kwargs_Vext)
         sigma_v = rsample("sigma_v", self.priors["sigma_v"], shared_params)
 
         # Remaining parameters
@@ -1271,8 +1319,8 @@ class FPModel(BaseModel):
             ll += lp_dist
             # Likelihood of the observed redshifts, `(n_field, n_gal, n_rbins)`
             Vext_rad = compute_Vext_radial(
-                data, r_grid, Vext, with_radial_Vext=self.with_radial_Vext,
-                **self.kwargs_radial_Vext)
+                data, r_grid, Vext, which_Vext=self.which_Vext,
+                **self.kwargs_Vext)
             czpred = predict_cz(
                 self.distance2redshift(r_grid, h=h)[None, None, :],
                 Vrad + Vext_rad)
@@ -1329,11 +1377,8 @@ class CalibratedDistanceModel_DistMarg(BaseModel):
         kwargs_dist = sample_distance_prior(self.priors)
 
         # Sample velocity field parameters.
-        if self.with_radial_Vext:
-            Vext = rsample(
-                "Vext_rad", self.priors["Vext_radial"], shared_params)
-        else:
-            Vext = rsample("Vext", self.priors["Vext"], shared_params)
+        Vext = sample_Vext(
+            self.priors, self.which_Vext, shared_params, self.kwargs_Vext)
         sigma_v = rsample("sigma_v", self.priors["sigma_v"], shared_params)
 
         # Remaining parameters
@@ -1381,8 +1426,8 @@ class CalibratedDistanceModel_DistMarg(BaseModel):
             ll += lp_dist
             # Likelihood of the observed redshifts, `(n_field, n_gal, n_rbins)`
             Vext_rad = compute_Vext_radial(
-                data, r_grid, Vext, with_radial_Vext=self.with_radial_Vext,
-                **self.kwargs_radial_Vext)
+                data, r_grid, Vext, which_Vext=self.which_Vext,
+                **self.kwargs_Vext)
             czpred = predict_cz(
                 self.distance2redshift_with_Om(
                     r_grid, Om=Om, h=h)[None, None, :], Vrad + Vext_rad)
@@ -1417,7 +1462,7 @@ class JointPVModel:
                 raise ValueError(f"Submodel {i} has a different config hash.")
 
         self.config = submodels[0].config
-        self.with_radial_Vext = submodels[0].with_radial_Vext
+        self.which_Vext = submodels[0].which_Vext
 
     def _sample_shared_params(self, priors):
         shared = {}
