@@ -1,6 +1,6 @@
-root_main = "/Users/rstiskalek/Projects/CANDEL/"
-python_exec = "/Users/rstiskalek/Projects/CANDEL/venv_candel/bin/python"
-machine = "local"
+# root_main = "/Users/rstiskalek/Projects/CANDEL/"
+# python_exec = "/Users/rstiskalek/Projects/CANDEL/venv_candel/bin/python"
+# machine = "local"
 
 # root_main = "/mnt/users/rstiskalek/CANDEL/"
 # python_exec = "/mnt/users/rstiskalek/CANDEL/venv_candel/bin/python"
@@ -11,10 +11,10 @@ machine = "local"
 # python_exec="/mnt/home/rstiskalek/CANDEL/venv_gpu_candel/bin/python"
 # machine="rusty"
 
-# root_main = "/home/phys1997/CANDEL/"
-# root_data = "/data/phys-galsim/phys1997/CANDEL/"
-# python_exec = "/home/phys1997/CANDEL/venv_candel/bin/python"
-# machine = "arc"
+root_main = "/home/phys1997/CANDEL/"
+root_data = "/data/phys-galsim/phys1997/CANDEL/"
+python_exec = "/home/phys1997/CANDEL/venv_candel/bin/python"
+machine = "arc"
 
 
 ###############################################################################
@@ -55,7 +55,7 @@ num_points_malmquist = 251
 
 los_decay_scale = 5.0
 
-Vext_per_pix_nside = 1
+Vext_per_pix_nside = "none"
 
 ###############################################################################
 #                                 Model                                       #
@@ -229,13 +229,12 @@ high = 2500
 # value = [0.0, 0.0, 0.0]
 
 [model.priors.Vext_radial]
-dist = "vector_radial_spline_uniform"
+dist = "vector_radial_uniform"
 low = 0.0
 high = 5000
 
 rknot = [0, 250, 600]
-k = 1
-endpoints="not-a-knot"
+method = "cubic"
 
 [model.priors.Vext_sigma]
 dist = "uniform"
