@@ -153,6 +153,10 @@ def generate_dynamic_tag(config, base_tag="default"):
     if isinstance(Vext_prior, dict) and Vext_prior.get("dist") == "delta":
         parts.append("noVext")
 
+    which_Vext = get_nested(config, "pv_model/which_Vext", None)
+    if which_Vext is not None and which_Vext != "constant":
+        parts.append(f"Vext_{which_Vext}")
+
     beta_prior = get_nested(config, "model/priors/beta", None)
     if isinstance(beta_prior, dict) and beta_prior.get("dist") == "delta":
         val = beta_prior.get("value")
