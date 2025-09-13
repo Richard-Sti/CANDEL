@@ -56,6 +56,23 @@ num_points_malmquist = 251
 los_decay_scale = 5.0
 
 Vext_per_pix_nside = "none"
+which_distance_prior = "empirical"
+
+###############################################################################
+#                      Optional interpolator settings                         #
+###############################################################################
+
+
+[interp_kwargs.Distance2Distmod_withOm]
+nr = 1000
+Om_max = 3.0
+nOm = 1000
+
+[interp_kwargs.Distance2Redshift_withOm]
+nr = 1000
+Om_max = 3.0
+nOm = 1000
+
 
 ###############################################################################
 #                                 Model                                       #
@@ -71,19 +88,20 @@ k_sigma = 5
 n_grid = 31
 
 [model.priors.h]
-dist = "delta"
-value = 1.0
-# dist = "uniform"
-# low = 0.25
-# high = 1.0
+# Currently sampled only for the CF4 calibrated data.
+# dist = "delta"
+# value = 1.0
+dist = "uniform"
+low = 0.01
+high = 1.0
 
 [model.priors.Om]
 # Currently sampled only for the CF4 calibrated data.
-dist = "delta"
-value = 0.3
-# dist = "uniform"
-# low = 0.01
-# high = 0.99
+# dist = "delta"
+# value = 0.3
+dist = "uniform"
+low = 0.01
+high = 2.99
 
 [model.priors.alpha]
 dist = "truncated_normal"
