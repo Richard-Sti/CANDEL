@@ -72,8 +72,8 @@ from os import makedirs
 from os.path import exists, join, splitext
 
 import tomli_w
-
-from candel import fprint, load_config, replace_prior_with_delta, get_nested
+from candel import (SPEED_OF_LIGHT, fprint, get_nested, load_config,
+                    replace_prior_with_delta)
 
 
 def overwrite_config(config, key, value):
@@ -156,6 +156,11 @@ def generate_dynamic_tag(config, base_tag="default"):
     which_Vext = get_nested(config, "pv_model/which_Vext", None)
     if which_Vext is not None and which_Vext != "constant":
         parts.append(f"Vext_{which_Vext}")
+
+    which_dist_prior = get_nested(
+        config, "pv_model/which_distance_prior", "empirical")
+    if which_dist_prior != "empirical":
+        parts.append(f"rprior-{which_dist_prior}")
 
     beta_prior = get_nested(config, "model/priors/beta", None)
     if isinstance(beta_prior, dict) and beta_prior.get("dist") == "delta":
@@ -283,48 +288,50 @@ if __name__ == "__main__":
         "inference/compute_log_density": False,
         "inference/compute_evidence": False,
         "inference/track_log_density_per_sample": False,
-        "inference/model": "TFRModel",
+        "inference/model": "CalibratedDistanceModel",
         # "inference/model": "ClustersModel",
         # "inference/shared_params": "beta,sigma_v,Vext",
         # ###### -- MODEL -- ######
         "model/use_MNR": False,
         "model/marginalize_eta": False,
         # ###### -- PV MODEL -- ######
-        "pv_model/kind": "precomputed_los_Carrick2015",  # noqa
-        # "pv_model/kind": "Vext",
+        # "pv_model/kind": "precomputed_los_Carrick2015",  # noqa
+        "pv_model/kind": "Vext",
         # "pv_model/smooth_target": "none",
         "pv_model/galaxy_bias": "linear",
         # "pv_model/kind": "precomputed_los_manticore_2MPP_MULTIBIN_N256_DES_V2",  # noqa
-        "pv_model/which_Vext": "radial",
-        "pv_model/r_limits_malmquist": [[0.1, 201]],
-        "pv_model/num_points_malmquist": 201,
+        # "pv_model/which_Vext": "radial",
+        "pv_model/r_limits_malmquist": [[0.1, 500]],
+        "pv_model/num_points_malmquist": 251,
         "pv_model/los_decay_scale": 20.0,
+        "pv_model/which_distance_prior": ["empirical", "volume_redshift_selected"],
+        # "pv_model/which_distance_prior": "volume_redshift_selected",
         # ##### - PRIORS -- ######
-        "model/priors/Vext_radial": {
-            "dist": "vector_radial_uniform",
-            "low": 0.0,
-            "high": 1000,
-            "rknot": [0, 40, 80, 150],
-            "method": "cubic"
-        },
-        "model/priors/beta": [
-            # {"dist": "uniform", "low": -1, "high": 2.0},
-            # {"dist": "normal", "loc": 0.43, "scale": 0.25},
-            {"dist": "normal", "loc": 0.43, "scale": 0.25},
-            # {"dist": "delta", "value": 1.0},
-        ],
+        # "model/priors/Vext_radial": {
+        #     "dist": "vector_radial_uniform",
+        #     "low": 0.0,
+        #     "high": 1000,
+        #     "rknot": [0, 40, 80, 150],
+        #     "method": "cubic"
+        # },
+        # "model/priors/beta": [
+        #     # {"dist": "uniform", "low": -1, "high": 2.0},
+        #     # {"dist": "normal", "loc": 0.43, "scale": 0.25},
+        #     {"dist": "normal", "loc": 0.43, "scale": 0.25},
+        #     # {"dist": "delta", "value": 1.0},
+        # ],
         # "model/priors/zeropoint_dipole": [
         #     {"dist": "delta", "value": [0.0, 0.0, 0.0]},
         #     {"dist": "vector_uniform_fixed", "low": 0.0, "high": 0.3},
         #     # {"dist": "vector_components_uniform", "low": -0.3, "high": 0.3},  # noqa
         # ],
-        # "model/priors/Vext": [
-        #     {"dist": "delta", "value": [0.0, 0.0, 0.0]},
-        #     # {"dist": "vector_components_uniform", "low": -0.3, "high": 0.3},  # noqa
-        # ],
+        "model/priors/Vext": [
+            {"dist": "delta", "value": [0.0, 0.0, 0.0]},
+            # {"dist": "vector_components_uniform", "low": -0.3, "high": 0.3},  # noqa
+        ],
         # ###### - IO - ######
         # "io/catalogue_name": ["2MTF", "SFI", "CF4_W1", "CF4_i"],
-        "io/catalogue_name": "CF4_W1",
+        "io/catalogue_name": "CF4_calibrated",
         # "io/catalogue_name": ["LOSS", "Foundation",],
         # "io/catalogue_name": "Clusters",
         # "io/root_output": "results_test/",
@@ -333,6 +340,8 @@ if __name__ == "__main__":
         # "io/CF4_i/exclude_W1": True,
         # "io/Clusters/nsamples_subsample": 101,
         # "io/CF4_W1/nsamples_subsample": 1000,
+        # "io/CF4_calibrated/nsamples_subsample": 1000,
+        # "io/CF4_calibrated/zcmb_min": 4000 / SPEED_OF_LIGHT,
         # "io/CF4_W1/best_mag_quality": False,
         # "io/CF4_W1/dust_model": ["none", "default", "SFD", "CSFD", "Planck2016"],  # noqa
         # "io/Clusters/which_relation": ["LT", "LTY"],
