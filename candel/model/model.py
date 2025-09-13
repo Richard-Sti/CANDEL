@@ -471,6 +471,9 @@ class BaseModel(ABC):
             raise ValueError(
                 f"Invalid galaxy bias model '{self.galaxy_bias}'.")
 
+        self.which_distance_prior = get_nested(
+            config, "pv_model/which_distance_prior", "empirical")
+
         self.config = config
 
     @abstractmethod
@@ -628,6 +631,11 @@ class TFRModel(BaseModel):
         if self.use_MNR and not self.marginalize_eta:
             fprint("setting `compute_evidence` to False.")
             self.config["inference"]["compute_evidence"] = False
+
+        if self.which_distance_prior != "empirical":
+            raise ValueError(
+                f"TFRModel only supports empirical distance prior, got "
+                f"'{self.which_distance_prior}'.")
 
     def __call__(self, data, shared_params=None):
         nsamples = len(data)
@@ -813,6 +821,11 @@ class SNModel(BaseModel):
                 "`track_log_density_per_sample` is not implemented "
                 "for `SNModel`.")
 
+        if self.which_distance_prior != "empirical":
+            raise ValueError(
+                f"SNModel only supports empirical distance prior, got "
+                f"'{self.which_distance_prior}'.")
+
     def __call__(self, data, shared_params=None):
         nsamples = len(data)
 
@@ -962,6 +975,11 @@ class PantheonPlusModel(BaseModel):
             raise NotImplementedError(
                 "`track_log_density_per_sample` is not implemented "
                 "for `PantheonPlusModel`.")
+
+        if self.which_distance_prior != "empirical":
+            raise ValueError(
+                f"PantheonPlusModel only supports empirical distance prior, "
+                f"got {self.which_distance_prior}'.")
 
         fprint("setting `compute_evidence` to False.")
         self.config["inference"]["compute_evidence"] = False
@@ -1118,6 +1136,11 @@ class ClustersModel(BaseModel):
             fprint("setting `compute_evidence` to False.")
             self.config["inference"]["compute_evidence"] = False
 
+        if self.which_distance_prior != "empirical":
+            raise ValueError(
+                f"ClustersModel only supports empirical distance prior, got "
+                f"'{self.which_distance_prior}'.")
+
     def __call__(self, data, shared_params=None):
         nsamples = len(data)
         if self.track_log_density_per_sample:
@@ -1240,6 +1263,11 @@ class FPModel(BaseModel):
                 "for `FPModel`.")
 
         self.distance2logangdist = Distance2LogAngDist(Om0=self.Om)
+
+        if self.which_distance_prior != "empirical":
+            raise ValueError(
+                f"FPModel only supports empirical distance prior, got "
+                f"'{self.which_distance_prior}'.")
 
     def __call__(self, data, shared_params=None):
         nsamples = len(data)
@@ -1364,7 +1392,7 @@ class FPModel(BaseModel):
 #                       Calibrated-distance model                             #
 ###############################################################################
 
-class CalibratedDistanceModel_DistMarg(BaseModel):
+class CalibratedDistanceModel(BaseModel):
     """
     A calibrated distance model, where the task is to forward-model a set of
     precomputed galaxy distance moduli, typically done e.g. in CF4, while
@@ -1382,11 +1410,21 @@ class CalibratedDistanceModel_DistMarg(BaseModel):
 
         if self.prior_dist_name["h"] == "delta":
             raise ValueError(
-                "Must sample `h` for `CalibratedDistanceModel_DistMarg`. "
+                "Must sample `h` for `CalibratedDistanceModel`. "
                 "Currently set to a delta-function prior.")
 
-        self.distance2distmod_with_Om = Distance2Distmod_withOm()
-        self.distance2redshift_with_Om = Distance2Redshift_withOm()
+        try:
+            kwargs_r2mu = self.config["interp_kwargs"]["Distance2Distmod_withOm"]  # noqa
+        except KeyError:
+            kwargs_r2mu = {}
+
+        try:
+            kwargs_r2z = self.config["interp_kwargs"]["Distance2Redshift_withOm"]  # noqa
+        except KeyError:
+            kwargs_r2z = {}
+
+        self.distance2distmod_with_Om = Distance2Distmod_withOm(**kwargs_r2mu)
+        self.distance2redshift_with_Om = Distance2Redshift_withOm(**kwargs_r2z)
 
     def __call__(self, data, shared_params=None):
         nsamples = len(data)
@@ -1401,12 +1439,20 @@ class CalibratedDistanceModel_DistMarg(BaseModel):
         sigma_int = rsample(
             "sigma_int", self.priors["sigma_int"], shared_params)
 
-        kwargs_dist = sample_distance_prior(self.priors)
+        if self.which_distance_prior == "empirical":
+            kwargs_dist = sample_distance_prior(self.priors)
+        elif self.which_distance_prior == "volume_redshit_selected":
+            factor("log_p_S", nsamples * 3 * jnp.log(h * 100))
+            kwargs_dist = {}
+        else:
+            kwargs_dist = {}
 
         # Sample velocity field parameters.
         Vext = sample_Vext(
             self.priors, self.which_Vext, shared_params, self.kwargs_Vext)
         sigma_v = rsample("sigma_v", self.priors["sigma_v"], shared_params)
+
+        factor("selection_test", nsamples * 3 * jnp.log(h * 100))
 
         # Remaining parameters
         beta = rsample("beta", self.priors["beta"], shared_params)
@@ -1426,8 +1472,14 @@ class CalibratedDistanceModel_DistMarg(BaseModel):
             mu_grid = self.distance2distmod_with_Om(r_grid, Om=Om, h=h)
 
             # Homogeneous Malmqusit distance prior, `(n_field, n_gal, n_rbin)`
-            lp_dist = log_prior_r_empirical(
-                r_grid, **kwargs_dist, Rmax_grid=r_grid[-1])[None, None, :]
+            if self.which_distance_prior == "empirical":
+                lp_dist = log_prior_r_empirical(
+                    r_grid, **kwargs_dist, Rmax_grid=r_grid[-1])[None, None, :]
+            elif self.which_distance_prior.startswith("volume"):
+                lp_dist = 2 * jnp.log(r_grid)[None, None, :]
+            else:
+                raise ValueError(
+                    f"Invalid distance prior '{self.which_distance_prior}'.")
 
             # Likelihood of the 'obs' dist moduli, `(n_field, n_gal, n_rbin)`
             sigma_mu = jnp.sqrt(sigma_int**2 + data["e2_mu"])
