@@ -1423,6 +1423,19 @@ class CalibratedDistanceModel(BaseModel):
         except KeyError:
             kwargs_r2z = {}
 
+        allowed_priors = ["empirical", "volume", "volume_redshift_selected",
+                          "flat_distance", "inv_distance"]
+        if self.which_distance_prior not in allowed_priors:
+            raise ValueError(
+                f"`which_distance_prior` must be one of "
+                f"{allowed_priors}, got '{self.which_distance_prior}'.")
+
+        if self.prior_dist_name["Om"] != "delta":
+            raise ValueError(
+                "`Om` must be fixed to a delta-function prior for the "
+                "`CalibratedDistanceModel`. Something is wrong with the Om "
+                "sampling.")
+
         self.distance2distmod_with_Om = Distance2Distmod_withOm(**kwargs_r2mu)
         self.distance2redshift_with_Om = Distance2Redshift_withOm(**kwargs_r2z)
 
@@ -1436,8 +1449,6 @@ class CalibratedDistanceModel(BaseModel):
         # Sample the FP parameters.
         h = rsample("h", self.priors["h"], shared_params)
         Om = rsample("Om", self.priors["Om"], shared_params)
-        sigma_int = rsample(
-            "sigma_int", self.priors["sigma_int"], shared_params)
 
         if self.which_distance_prior == "empirical":
             kwargs_dist = sample_distance_prior(self.priors)
@@ -1452,13 +1463,8 @@ class CalibratedDistanceModel(BaseModel):
             self.priors, self.which_Vext, shared_params, self.kwargs_Vext)
         sigma_v = rsample("sigma_v", self.priors["sigma_v"], shared_params)
 
-        factor("selection_test", nsamples * 3 * jnp.log(h * 100))
-
-        # Remaining parameters
-        beta = rsample("beta", self.priors["beta"], shared_params)
-        bias_params = sample_galaxy_bias(
-            self.priors, self.galaxy_bias, shared_params, Om=Om,
-            beta=beta)
+        if self.which_distance_prior == "volume_redshift_selected":
+            factor("selection_test", nsamples * 3 * jnp.log(h * 100))
 
         if self.use_MNR:
             raise NotImplementedError("MNR for FP is not implemented yet.")
@@ -1467,8 +1473,8 @@ class CalibratedDistanceModel(BaseModel):
             if self.use_MNR:
                 raise NotImplementedError("MNR for FP is not implemented yet.")
 
-            # Convert the distance grid from `Mpc / h` to `Mpc``
-            r_grid = data["r_grid"] / h
+            # This distance grid is assumed to be in `Mpc``
+            r_grid = data["r_grid"]
             mu_grid = self.distance2distmod_with_Om(r_grid, Om=Om, h=h)
 
             # Homogeneous Malmqusit distance prior, `(n_field, n_gal, n_rbin)`
@@ -1476,28 +1482,27 @@ class CalibratedDistanceModel(BaseModel):
                 lp_dist = log_prior_r_empirical(
                     r_grid, **kwargs_dist, Rmax_grid=r_grid[-1])[None, None, :]
             elif self.which_distance_prior.startswith("volume"):
-                lp_dist = 2 * jnp.log(r_grid)[None, None, :]
+                Rmax = r_grid[-1]
+                lp_dist = (
+                    2 * jnp.log(r_grid)[None, None, :] - 3 * jnp.log(Rmax))
+            elif self.which_distance_prior == "flat_distance":
+                lp_dist = jnp.zeros((1, 1, r_grid.size))
+            elif self.which_distance_prior == "inv_distance":
+                lp_dist = -jnp.log(r_grid)[None, None, :]
             else:
                 raise ValueError(
                     f"Invalid distance prior '{self.which_distance_prior}'.")
 
             # Likelihood of the 'obs' dist moduli, `(n_field, n_gal, n_rbin)`
-            sigma_mu = jnp.sqrt(sigma_int**2 + data["e2_mu"])
+            sigma_mu = data["e_mu"]
             ll = Normal(
                 mu_grid[None, :], sigma_mu[:, None]).log_prob(
                 data["mu"][:, None])[None, ...]
 
             if data.has_precomputed_los:
-                # Reconstruction LOS velocity `(n_field, n_gal, n_step)`
-                Vrad = beta * data["los_velocity_r_grid"]
-                # Add inhomogeneous Malmquist bias and normalize the r prior
-                lp_dist += lp_galaxy_bias(
-                    data["los_delta_r_grid"],
-                    data["los_log_density_r_grid"],
-                    bias_params, self.galaxy_bias
-                    )
-                lp_dist -= ln_simpson(
-                    lp_dist, x=r_grid[None, None, :], axis=-1)[..., None]
+                raise NotImplementedError(
+                    "Precomputed LOS for `CalibratedDistanceModel` is not "
+                    "implemented yet.")
             else:
                 Vrad = 0.
 
