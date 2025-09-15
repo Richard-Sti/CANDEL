@@ -87,6 +87,12 @@ def mvn_logpdf_cholesky(y, mu, L):
 #                                Priors                                       #
 ###############################################################################
 
+
+def smoothclip_nr(nr, tau):
+    """Smooth zero-clipping for the number density."""
+    return 0.5 * (nr + jnp.sqrt(nr**2 + tau**2))
+
+
 def log_prior_r_empirical(r, R, p, n, Rmax_grid, Rmax_truncate=None):
     """
     Log of the (empirical) truncated prior:
@@ -525,7 +531,7 @@ def lp_galaxy_bias(delta, log_rho, bias_params, galaxy_bias):
         lp = (alpha_low * log_x
               + (alpha_high - alpha_low) * jnp.logaddexp(0.0, log_x))
     elif "linear" in galaxy_bias or galaxy_bias == "unity":
-        lp = jnp.log(jnp.clip(1 + bias_params[0] * delta, 1e-5))
+        lp = jnp.log(smoothclip_nr(1 + bias_params[0] * delta, tau=0.1))
     else:
         raise ValueError(f"Invalid galaxy bias model '{galaxy_bias}'.")
 
