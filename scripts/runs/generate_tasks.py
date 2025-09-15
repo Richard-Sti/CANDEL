@@ -72,7 +72,7 @@ from os import makedirs
 from os.path import exists, join, splitext
 
 import tomli_w
-from candel import (SPEED_OF_LIGHT, fprint, get_nested, load_config,
+from candel import (SPEED_OF_LIGHT, fprint, get_nested, load_config,  # noqa
                     replace_prior_with_delta)
 
 
@@ -301,10 +301,10 @@ if __name__ == "__main__":
         "pv_model/galaxy_bias": "linear",
         # "pv_model/kind": "precomputed_los_manticore_2MPP_MULTIBIN_N256_DES_V2",  # noqa
         # "pv_model/which_Vext": "radial",
-        "pv_model/r_limits_malmquist": [[0.1, 500]],
+        "pv_model/r_limits_malmquist": [[0.1, 251]],
         "pv_model/num_points_malmquist": 251,
         "pv_model/los_decay_scale": 20.0,
-        "pv_model/which_distance_prior": ["empirical", "volume_redshift_selected"],
+        # "pv_model/which_distance_prior": "empirical",
         # "pv_model/which_distance_prior": "volume_redshift_selected",
         # ##### - PRIORS -- ######
         # "model/priors/Vext_radial": {
@@ -329,24 +329,26 @@ if __name__ == "__main__":
             {"dist": "delta", "value": [0.0, 0.0, 0.0]},
             # {"dist": "vector_components_uniform", "low": -0.3, "high": 0.3},  # noqa
         ],
+        # "model/priors/Om": {"dist": "delta", "value": 0.3},
         # ###### - IO - ######
         # "io/catalogue_name": ["2MTF", "SFI", "CF4_W1", "CF4_i"],
         "io/catalogue_name": "CF4_calibrated",
         # "io/catalogue_name": ["LOSS", "Foundation",],
         # "io/catalogue_name": "Clusters",
-        # "io/root_output": "results_test/",
+        "io/root_output": "results_test/",
         # "io/Clusters/which_relation": "LY",
         # "io/Clusters/zcmb_max": 0.055,
         # "io/CF4_i/exclude_W1": True,
         # "io/Clusters/nsamples_subsample": 101,
         # "io/CF4_W1/nsamples_subsample": 1000,
-        # "io/CF4_calibrated/nsamples_subsample": 1000,
+        "io/CF4_calibrated/nsamples_subsample": 500,
         # "io/CF4_calibrated/zcmb_min": 4000 / SPEED_OF_LIGHT,
+        "io/CF4_calibrated/zcmb_max": 0.055,
         # "io/CF4_W1/best_mag_quality": False,
         # "io/CF4_W1/dust_model": ["none", "default", "SFD", "CSFD", "Planck2016"],  # noqa
         # "io/Clusters/which_relation": ["LT", "LTY"],
         # "io/catalogue_name": [f"CF4_mock_{n}" for n in range(70)],
-        # "io/CF4_mock/root": "data/CF4_mock/anisotropic",
+        # "io/CF4_mock/root": "data/CF4_mock/",
     }
 
     # --- CH0 overrides ---
