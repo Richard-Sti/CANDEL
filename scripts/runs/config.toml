@@ -49,7 +49,9 @@ galaxy_bias = "linear_from_beta"  # Ignored unless having an underlying density 
 # galaxy_bias = "linear"  # Ignored unless having an underlying density field
 which_Vext = "constant"
 
-# (Inhomogeneus Malmquist bias settings and extrapolation), in units of Mpc / h
+# (Inhomogeneus Malmquist bias settings and extrapolation), in units of Mpc / h.
+# However, for `CalibratedDistanceModel` this is interpreted in Mpc because of
+# the inferred H0.
 r_limits_malmquist = [0.1, 251]
 num_points_malmquist = 251
 
