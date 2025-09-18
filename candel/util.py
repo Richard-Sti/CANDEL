@@ -311,6 +311,15 @@ def heliocentric_to_cmb(z_helio, RA, dec, e_z_helio=None):
     return zcmb
 
 
+def H0_with_transition_r(r, H0_present, dH0, R, alpha):
+    """
+    H0(r) = (H0_present + dH0) - dH0 / (1 + (r/R)^alpha)
+    """
+    fr = 1.0 / (1.0 + (r / R)**alpha)
+    H0_asymptotic = H0_present + dH0
+    return H0_asymptotic - dH0 * fr
+
+
 ###############################################################################
 #                               Plotting                                      #
 ###############################################################################
@@ -530,6 +539,39 @@ def plot_Vext_rad_corner(samples, show_fig=True, filename=None, smooth=1):
         plt.show()
     else:
         plt.close(fig)
+
+
+def plot_H0_transition(samples, H0_present, show_fig=True, filename=None):
+    dH0 = samples["dH0"]
+    R = samples["R_H0"]
+    alpha = samples["R_H0_alpha"]
+
+    fr_target = 0.01
+
+    Rmax = np.mean(R) * ((1.0 / fr_target - 1.0) ** (1.0 / np.mean(alpha)))
+    r = np.linspace(0, Rmax, 999)
+
+    Hz = H0_with_transition_r(
+        r[:, None], H0_present, dH0[None, :], R[None, :], alpha[None, :])
+    H0_mean = Hz.mean(axis=1)
+    H0_std = Hz.std(axis=1)
+
+    plt.figure()
+    plt.fill_between(r, H0_mean - H0_std, H0_mean + H0_std, alpha=0.5)
+    plt.plot(r, H0_mean)
+
+    plt.xlabel(r"$r~[h^{-1}\,\mathrm{Mpc}]$")
+    plt.ylabel(r"$H_0(r)~\left[\mathrm{km}\,\mathrm{s}^{-1}\,\mathrm{Mpc}^{-1}\right]$")  # noqa
+    plt.xlim(0, Rmax)
+    plt.tight_layout()
+    if filename is not None:
+        fprint(f"saving H0 transition plot to {filename}")
+        plt.savefig(filename, bbox_inches="tight")
+
+    if show_fig:
+        plt.show()
+    else:
+        plt.close()
 
 
 def plot_corner_getdist(samples_list, labels=None, cols=None, show_fig=True,
