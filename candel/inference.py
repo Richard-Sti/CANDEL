@@ -34,8 +34,9 @@ from .evidence import (BIC_AIC, dict_samples_to_array, harmonic_evidence,
                        laplace_evidence)
 from .util import (fprint, galactic_to_radec, plot_corner,
                    plot_radial_profiles, plot_Vext_rad_corner,
-                   plot_Vext_moll, radec_cartesian_to_galactic,
-                   radec_to_cartesian, radec_to_galactic)
+                   plot_Vext_moll, plot_H0_transition,
+                   radec_cartesian_to_galactic, radec_to_cartesian,
+                   radec_to_galactic)
 
 
 def print_evidence(bic, aic, lnZ_laplace, err_lnZ_laplace,
@@ -162,6 +163,13 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
 
             fname_plot = splitext(fname_out)[0] + "_moll_Vext_pix.png"
             plot_Vext_moll(samples["Vext_pix"], fname_plot,)
+
+        if model.with_H0_transition:
+            H0_present = model.H0_for_transition
+            fname_plot = splitext(fname_out)[0] + "_H0_transition.png"
+            samples = {k: samples[k] for k in ["dH0", "R_H0", "R_H0_alpha"]}
+            plot_H0_transition(
+                samples, H0_present, show_fig=False, filename=fname_plot,)
 
     if return_original_samples:
         return samples, log_density, original_samples
