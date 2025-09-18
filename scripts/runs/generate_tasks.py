@@ -287,36 +287,37 @@ if __name__ == "__main__":
     # # --- TFR/SN/FP/Cluster flow model over-rides ---
     manual_overrides = {
         # ###### - INFERENCE - ######
-        "inference/num_warmup": 1500,
-        "inference/num_samples": 5000,
-        "inference/num_chains": 2,
+        "inference/num_warmup": 500,
+        "inference/num_samples": 500,
+        "inference/num_chains": 1,
         "inference/compute_log_density": False,
         "inference/compute_evidence": False,
         "inference/track_log_density_per_sample": False,
-        "inference/model": "TFRModel",
+        "inference/model": "PantheonPlusModel",
         # "inference/model": "ClustersModel",
         # "inference/shared_params": "beta,sigma_v,Vext",
         # ###### -- MODEL -- ######
-        "model/use_MNR": False,
+        "model/use_MNR": True,
         "model/marginalize_eta": False,
         # ###### -- PV MODEL -- ######
-        "pv_model/kind": "precomputed_los_Carrick2015",
+        "pv_model/kind": "Vext",
         # "pv_model/kind": "Vext",
         # "pv_model/smooth_target": "none",
         "pv_model/galaxy_bias": "linear",
         # "pv_model/kind": "precomputed_los_manticore_2MPP_MULTIBIN_N256_DES_V2",  # noqa
-        # "pv_model/which_Vext": "radial",
+        # "pv_model/which_Vext": "constant",
         "pv_model/r_limits_malmquist": [[0.1, 201]],
         "pv_model/num_points_malmquist": 251,
         "pv_model/los_decay_scale": 20.0,
+        "pv_model/with_H0_transition": True,
         # "pv_model/which_distance_prior": "empirical",
         # "pv_model/which_distance_prior": "volume_redshift_selected",
         # ##### - PRIORS -- ######
         # "model/priors/Vext_radial": {
         #     "dist": "vector_radial_uniform",
         #     "low": 0.0,
-        #     "high": 1000,
-        #     "rknot": [0, 40, 80, 150],
+        #     "high": 500,
+        #     "rknot": [0, 20, 60, 100, ],
         #     "method": "cubic"
         # },
         # "model/priors/beta": [
@@ -325,8 +326,8 @@ if __name__ == "__main__":
         #     {"dist": "normal", "loc": 0.43, "scale": 0.25},
         #     # {"dist": "delta", "value": 1.0},
         # ],
-        "model/priors/b1": [{"dist": "delta", "value": x}
-                            for x in [round(0.1 * n, 1) for n in range(16)]],  # noqa
+        # "model/priors/b1": [{"dist": "delta", "value": x}
+        #                     for x in [round(0.1 * n, 1) for n in range(16)]],  # noqa
         # "model/priors/zeropoint_dipole": [
         #     {"dist": "delta", "value": [0.0, 0.0, 0.0]},
         #     {"dist": "vector_uniform_fixed", "low": 0.0, "high": 0.3},
@@ -339,16 +340,18 @@ if __name__ == "__main__":
         # "model/priors/Om": {"dist": "delta", "value": 0.3},
         # ###### - IO - ######
         # "io/catalogue_name": ["2MTF", "SFI", "CF4_W1", "CF4_i"],
-        "io/catalogue_name": "CF4_W1",
+        "io/catalogue_name": "PantheonPlus",
         # "io/catalogue_name": ["LOSS", "Foundation",],
         # "io/catalogue_name": "Clusters",
-        "io/root_output": "results/S8",
+        "io/root_output": "results_test/",
         # "io/Clusters/which_relation": "LY",
         # "io/Clusters/zcmb_max": 0.055,
         # "io/CF4_i/exclude_W1": True,
         # "io/Clusters/nsamples_subsample": 101,
         # "io/CF4_W1/nsamples_subsample": 1000,
         # "io/CF4_calibrated/nsamples_subsample": 500,
+        "io/PantheonPlus/nsamples_subsample": 100,
+        "io/PantheonPlus/zcmb_max": 0.06,
         # "io/CF4_calibrated/zcmb_min": 4000 / SPEED_OF_LIGHT,
         # "io/CF4_calibrated/zcmb_max": 0.055,
         # "io/CF4_W1/best_mag_quality": False,
