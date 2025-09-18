@@ -60,6 +60,10 @@ los_decay_scale = 5.0
 Vext_per_pix_nside = "none"
 which_distance_prior = "empirical"
 
+with_H0_transition = false
+H0_for_transition = 73.04
+H0_transition_rmax = 300  # Mpc
+
 ###############################################################################
 #                      Optional interpolator settings                         #
 ###############################################################################
@@ -284,6 +288,19 @@ dist = "truncated_normal"
 low = 0.0
 mean = 1.0
 scale = 30
+
+# H0 transition priors
+[model.priors.dH0]
+dist = "normal"
+loc = 0.0
+scale = 1.0
+
+[model.priors.R_H0_alpha]
+dist = "truncated_normal"
+low = 0.0
+mean = 1.0
+scale = 5.0
+
 
 ################################################################################
 #                                  Data                                        #
