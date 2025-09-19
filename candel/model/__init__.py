@@ -20,8 +20,10 @@ from .model import (                                                            
     SNModel,                                                                    # noqa
     PantheonPlusModel,                                                          # noqa
     ClustersModel,                                                              # noqa
-    FPModel,                                                                    # noqa
-    CalibratedDistanceModel_DistMarg,                                           # noqa
+    FPModel,                                                                   # noqa
+    HybridClustersModel,                                                       # noqa
+    MigkasModel,                                                                # noqa
+    CalibratedDistanceModel_DistMarg,                                         # noqa
     JointPVModel,                                                               # noqa
     Maxwell,                                                                    # noqa
     )
@@ -40,6 +42,8 @@ def name2model(name, shared_param=None, config=None):
         "ClustersModel": ClustersModel,
         "FPModel": FPModel,
         "CalibratedDistanceModel_DistMarg": CalibratedDistanceModel_DistMarg,
+        "MigkasModel": MigkasModel,
+        "HybridClustersModel": HybridClustersModel,
         }
 
     if isinstance(name, str):

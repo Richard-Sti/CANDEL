@@ -220,7 +220,7 @@ class Distmod2Redshift:
 
 class Redshift2Distance:
     """
-    Class to build an interpolator to convert redshift to distance modulus.
+    Class to build an interpolator to convert redshift to comoving distance.
     Choice of `h` is determined when calling the `__call__` method.
 
     Parameters

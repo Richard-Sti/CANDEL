@@ -37,7 +37,8 @@ from numpyro.infer.reparam import ProjectedNormalReparam
 
 from ..cosmography import (Distance2Distmod, Distance2Distmod_withOm,
                            Distance2LogAngDist, Distance2LogLumDist,
-                           Distance2Redshift, Distance2Redshift_withOm)
+                           Distance2Redshift, Distance2Redshift_withOm,
+                           Redshift2Distance)
 from ..util import SPEED_OF_LIGHT, fprint, get_nested, load_config
 from .simpson import ln_simpson
 
@@ -1142,6 +1143,7 @@ class ClustersModel(BaseModel):
             # Homogeneous Malmqusit distance prior, `(n_field, n_gal, n_rbin)`
             lp_dist = log_prior_r_empirical(
                 r_grid, **kwargs_dist, Rmax_grid=r_grid[-1])[None, None, :]
+            #lp_dist = 0.
 
             # Predict logF from the scaling relation, `(ngal, nrbin)``
             # TODO: Where to add the E(z) term?
@@ -1188,6 +1190,133 @@ class ClustersModel(BaseModel):
             if self.track_log_density_per_sample:
                 log_density_per_sample += ll
                 deterministic("log_density_per_sample", log_density_per_sample)
+
+
+
+class HybridClustersModel(BaseModel):
+    """
+    Cluster LTY scaling relation with explicit distance marginalization.
+    """
+    def __init__(self, config_path):
+        super().__init__(config_path)
+
+        self.which_relation = self.config["io"]["Clusters"]["which_relation"]
+        if self.which_relation not in ["LT", "LY", "LTY"]:
+            raise ValueError(
+                f"Invalid scaling relation '{self.which_relation}'. "
+                "Choose either 'LT' or 'LY' or 'LTY'.")
+
+        self.redshift2distance = Redshift2Distance(Om0=self.Om)
+
+        if self.which_relation == "LT":
+            self.priors["CL_C"] = Delta(jnp.asarray(0.0))
+        if self.which_relation == "LY":
+            self.priors["CL_B"] = Delta(jnp.asarray(0.0))
+
+        if self.use_MNR:
+            raise NotImplementedError(
+                "MNR for clusters is not implemented yet. Please set "
+                "`use_MNR` to False in the config file.")
+            fprint("setting `compute_evidence` to False.")
+            self.config["inference"]["compute_evidence"] = False
+
+    def __call__(self, data, shared_params=None):
+        nsamples = len(data)
+        if self.track_log_density_per_sample:
+            log_density_per_sample = jnp.zeros(nsamples)
+
+        if data.sample_dust:
+            raise NotImplementedError(
+                "Dust sampling is not implemented for "
+                "`ClustersModel`.")
+
+        # Sample the cluster scaling parameters.
+        A = rsample("A_CL", self.priors["CL_A"], shared_params)
+        B = rsample("B_CL", self.priors["CL_B"], shared_params)
+        sigma_int = rsample(
+            "sigma_int", self.priors["sigma_int"], shared_params)
+
+        # For the distance marginalization, h is not sampled.
+        h = 1.
+
+        # Sample velocity field parameters.
+        if self.with_radial_Vext:
+            Vext = rsample(
+                "Vext_rad", self.priors["Vext_radial"], shared_params)
+        else:
+            Vext = rsample("Vext", self.priors["Vext"], shared_params)
+
+        with plate("data", nsamples):
+            if self.use_MNR:
+                raise NotImplementedError(
+                    "MNR for clusters is not implemented yet.")
+            else:
+                logT = data["logT"]
+                sigma_logF = jnp.sqrt(
+                    data["e2_logF"] + sigma_int**2
+                    + B**2 * data["e2_logT"])
+
+            Vext_rad = compute_Vext_radial(
+            data, None, Vext, with_radial_Vext=self.with_radial_Vext,
+            **self.kwargs_radial_Vext)[0,:,0]
+            
+            zcosmo = (1 + data["zcmb"]) / (1 + Vext_rad / SPEED_OF_LIGHT) - 1
+            logdl = jnp.log10(self.redshift2distance(zcosmo, h=h) * (1 + zcosmo))
+
+            # jprint("zcosmo{}", zcosmo.shape)
+            # jprint("Vext_rad{}", Vext_rad.shape)
+
+
+            logF_pred = (A + B * logT[:, None]
+                         - jnp.log10(4 * jnp.pi) - 2 * logdl)
+
+            # Likelihood of logF , `(n_field, n_gal, n_rbin)`
+            ll = Normal(logF_pred, sigma_logF[:, None]).log_prob(
+                data["logF"][:, None])[None, ...]
+
+            factor("ll_obs", ll)
+
+            if self.track_log_density_per_sample:
+                log_density_per_sample += ll
+                deterministic("log_density_per_sample", log_density_per_sample)
+
+
+class MigkasModel(BaseModel):
+    """
+    The simple model of Migkas et al. from the FLAMINGO paper.
+    """
+    def __init__(self, config_path):
+        super().__init__(config_path)
+
+        self.redshift2distance = Redshift2Distance(Om0=self.Om)
+
+    def __call__(self, data):
+        
+        nsamples = len(data['logT'])
+
+        A = sample("A_CL", Uniform(-5, 5))
+        B = sample("B_CL", Uniform(-5, 5))
+        sigma = sample("sigma_int", Uniform(0, 1))
+
+        Vext = rsample("Vext", self.priors["Vext"], shared_params=None)
+        Vext_rad = compute_Vext_radial(data, None, Vext, with_radial_Vext=False)
+        Vext_rad = Vext_rad[0,:,0]
+
+        dH = rsample("dH0", self.priors["dH0"], shared_params=None)
+        dH_rad = jnp.sum(data['rhat'] * dH[None, :], axis=1)
+        h = 0.7 * (1 + dH_rad)
+        
+        #vpec  = jnp.sum(dipole_vector * data['rhat'],axis=1)   #
+        zcosmo = (1 + data["zcmb"]) / (1 + Vext_rad / SPEED_OF_LIGHT) - 1
+
+        dL = self.redshift2distance(zcosmo, h=h) * (1 + zcosmo)
+        logL = data['logF'] + jnp.log10(4.0*jnp.pi) + 2.0*jnp.log10(dL)
+
+        with plate("data", nsamples):
+            chi2 = (logL - (A + B * data['logT']))**2 / (sigma**2 + data['e_logLx']**2 + (B * data['e_logT']**2))
+            lnL = -0.5 * chi2  - 0.5 * jnp.log(sigma**2 + data['e_logLx']**2 + B**2 * data['e_logT']**2)
+
+            factor("likelihood", lnL)
 
 
 ###############################################################################
@@ -1331,6 +1460,7 @@ class FPModel(BaseModel):
             # and track the log-density.
             ll = ln_simpson(ll, x=r_grid[None, None, :], axis=-1)
             factor("ll_obs", logsumexp(ll, axis=0) - jnp.log(data.num_fields))
+
 
 
 ###############################################################################

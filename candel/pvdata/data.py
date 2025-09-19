@@ -1324,10 +1324,12 @@ def load_clusters(root, zcmb_min=None, zcmb_max=None, los_data_path=None,
     logT = np.log10(T)
     logF = np.log10(Lx / (4 * np.pi * DL**2))
     logY = np.log10(Y_arcmin2)
+    logLx = np.log10(Lx)
 
     e_logT = np.log10(np.e) * (Tmax - Tmin) / (2 * T)
     e_logF = np.log10(np.e) * (Lx * eL / 100) / Lx
     e_logY = np.log10(np.e) * e_Y / Y_arcmin2
+    e_logLx = e_logF
 
     data = {
         "zcmb": z,
@@ -1340,6 +1342,8 @@ def load_clusters(root, zcmb_min=None, zcmb_max=None, los_data_path=None,
         "logY": logY,
         "e_logY": e_logY,
         "Y": Y_arcmin2,
+        "logLx": logLx,
+        "e_logLx": e_logLx,
     }
 
     if return_all:
@@ -1367,6 +1371,10 @@ def load_clusters(root, zcmb_min=None, zcmb_max=None, los_data_path=None,
 
     fprint("subtracting the mean logY from the data.")
     data["logY"] -= np.mean(data["logY"])
+
+    if not finite_logY:
+        data['logY'] = np.zeros_like(data['logY'])
+        data['e_logY'] = np.zeros_like(data['e_logY'])
 
     if los_data_path is not None:
         data = load_los(los_data_path, data, mask=mask)
