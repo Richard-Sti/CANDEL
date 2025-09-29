@@ -1075,7 +1075,7 @@ class ClustersModel(BaseModel):
         super().__init__(config_path)
 
         self.which_relation = self.config["io"]["Clusters"]["which_relation"]
-        if self.which_relation not in ["LT", "LY", "LTY"]:
+        if self.which_relation not in ["LT", "LY", "LTY", "YT", "YTL"]:
             raise ValueError(
                 f"Invalid scaling relation '{self.which_relation}'. "
                 "Choose either 'LT' or 'LY' or 'LTY'.")
@@ -1087,6 +1087,8 @@ class ClustersModel(BaseModel):
             self.priors["CL_C"] = Delta(jnp.asarray(0.0))
         if self.which_relation == "LY":
             self.priors["CL_B"] = Delta(jnp.asarray(0.0))
+        if self.which_relation == "YT":
+            self.priors["CL_C"] = Delta(jnp.asarray(0.0))
 
         if self.use_MNR:
             raise NotImplementedError(
@@ -1135,9 +1137,15 @@ class ClustersModel(BaseModel):
             else:
                 logT = data["logT"]
                 logY = data["logY"]
-                sigma_logF = jnp.sqrt(
-                    data["e2_logF"] + sigma_int**2
-                    + B**2 * data["e2_logT"] + C**2 * data["e2_logY"])
+                logF = data["logF"]
+                if self.which_relation in ["LT", "LTY"]:
+                    sigma_logF = jnp.sqrt(
+                        data["e2_logF"] + sigma_int**2
+                        + B**2 * data["e2_logT"] + C**2 * data["e2_logY"])
+                if self.which_relation in ["YT", "YTL"]:
+                    sigma_logY = jnp.sqrt(
+                        data["e2_logY"] + sigma_int**2
+                        + B**2 * data["e2_logT"] + C**2 * data["e2_logF"])
 
             r_grid = data["r_grid"] / h
             logdl_grid = self.distance2logdl(r_grid)
@@ -1150,13 +1158,22 @@ class ClustersModel(BaseModel):
 
             # Predict logF from the scaling relation, `(ngal, nrbin)``
             # TODO: Where to add the E(z) term?
-            logF_pred = (A + B * logT[:, None]
-                         + C * (logY[:, None] + 2 * logda_grid[None, :])
-                         - jnp.log10(4 * jnp.pi) - 2 * logdl_grid[None, :])
-
-            # Likelihood of logF , `(n_field, n_gal, n_rbin)`
-            ll = Normal(logF_pred, sigma_logF[:, None]).log_prob(
-                data["logF"][:, None])[None, ...]
+            if self.which_relation in ["LT", "LTY"]:
+                logF_pred = (A + B * logT[:, None]
+                            + C * (logY[:, None] + 2 * logda_grid[None, :])
+                            - jnp.log10(4 * jnp.pi) - 2 * logdl_grid[None, :])
+                # Likelihood of logF , `(n_field, n_gal, n_rbin)`
+                ll = Normal(logF_pred, sigma_logF[:, None]).log_prob(
+                    data["logF"][:, None])[None, ...]
+            elif self.which_relation in ["YT", "YTL"]:
+                logY_pred = (A + B * logT[:, None]
+                            + C * (logF[:, None] + 2 * logdl_grid[None, :]
+                            + jnp.log10(4 * jnp.pi) ) - 2 * logda_grid[None, :])
+                # Likelihood of logY , `(n_field, n_gal, n_rbin)`
+                ll = Normal(logY_pred, sigma_logY[:, None]).log_prob(
+                    data["logY"][:, None])[None, ...]
+            else:
+                raise ValueError(f"Invalid which_relation '{self.which_relation}'.")
 
             if data.has_precomputed_los:
                 # Reconstruction LOS velocity `(n_field, n_gal, n_step)`
