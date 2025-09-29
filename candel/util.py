@@ -789,10 +789,10 @@ def interpolate_longitude_field(l_deg, r, rbins, k=3, endpoints="not-a-knot"):
 
 
 def interpolate_all_radial_fields(model, Vmag, ell, b, r_eval_size=1000):
-    rknot = jnp.asarray(model.kwargs_radial_Vext["rknot"])
+    rknot = jnp.asarray(model.kwargs_Vext["rknot"])
     rmin, rmax = 0, jnp.max(rknot)
-    k = model.kwargs_radial_Vext.get("k", 3)
-    endpoints = model.kwargs_radial_Vext.get("endpoints", "not-a-knot")
+    k = model.kwargs_Vext.get("k", 3)
+    endpoints = model.kwargs_Vext.get("endpoints", "not-a-knot")
 
     r = jnp.linspace(rmin, rmax, r_eval_size)
 
@@ -895,9 +895,9 @@ def plot_Vext_moll(samples_pix, fname_out, coord_in="C", coord_out="G",
         nside_plot = 4 * hp.npix2nside(mean_map.size)
 
     # Upsample (optional)
-    mean_map = _upsample_map(mean_map, nside_plot)
-    std_map = _upsample_map(std_map, nside_plot)
-    snr_map = _upsample_map(snr_map, nside_plot)
+    # mean_map = _upsample_map(mean_map, nside_plot)
+    # std_map = _upsample_map(std_map, nside_plot)
+    # snr_map = _upsample_map(snr_map, nside_plot)
 
     coord_arg = coord_out if coord_in == coord_out else [coord_in, coord_out]
 

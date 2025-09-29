@@ -550,15 +550,18 @@ def sumzero_basis(npix):
 def sample_Vext(priors, which_Vext, shared_params=None, kwargs_Vext={}):
     if which_Vext == "radial":
         Vext = rsample("Vext_rad", priors["Vext_radial"], shared_params)
+    # elif which_Vext == "per_pix":
+    #     Vext_sigma = rsample("Vext_sigma", priors["Vext_sigma"], shared_params)
+
+    #     with plate("Vext_pix_plate", kwargs_Vext["npix"] - 1):
+    #         u = rsample("Vext_pix_skipZ", Normal(0., 1.), shared_params)
+
+    #     Vext = rsample(
+    #         "Vext_pix",
+    #         Delta(Vext_sigma * (kwargs_Vext["Q"] @ u)), shared_params)
     elif which_Vext == "per_pix":
-        Vext_sigma = rsample("Vext_sigma", priors["Vext_sigma"], shared_params)
-
-        with plate("Vext_pix_plate", kwargs_Vext["npix"] - 1):
-            u = rsample("Vext_pix_skipZ", Normal(0., 1.), shared_params)
-
-        Vext = rsample(
-            "Vext_pix",
-            Delta(Vext_sigma * (kwargs_Vext["Q"] @ u)), shared_params)
+        with plate("Vext_pix_plate", kwargs_Vext["npix"]):
+            Vext = rsample("Vext_pix", Uniform(-10000., 10000.), shared_params)  # noqa
     elif which_Vext == "constant":
         Vext = rsample("Vext", priors["Vext"], shared_params)
     else:
