@@ -84,6 +84,22 @@ def mvn_logpdf_cholesky(y, mu, L):
     return -0.5 * (len(y) * jnp.log(2 * jnp.pi) + 2 * log_det + jnp.dot(z, z))
 
 
+def logpdf_mvn2_broadcast(x1, x2, m1, m2, v11, v22, v12):
+    """
+    Elementwise log N2 with broadcasting:
+    cov = [[v11, v12],[v12, v22]].
+    All inputs can broadcast to a common shape.
+    """
+    two_pi = 2.0 * jnp.pi
+    det = v11 * v22 - v12 * v12
+    inv11 =  v22 / det
+    inv22 =  v11 / det
+    inv12 = -v12 / det
+    dx1 = x1 - m1
+    dx2 = x2 - m2
+    quad = inv11*dx1*dx1 + 2.0*inv12*dx1*dx2 + inv22*dx2*dx2
+    return -0.5*(2.0*jnp.log(two_pi) + jnp.log(det) + quad)
+
 ###############################################################################
 #                                Priors                                       #
 ###############################################################################
@@ -1122,6 +1138,7 @@ class ClustersModel(BaseModel):
             A2 = rsample("A2_CL", self.priors["CL_A2"], shared_params)
             B2 = rsample("B2_CL", self.priors["CL_B2"], shared_params)
             sigma_int2 = rsample("sigma_int2", self.priors["sigma_int2"], shared_params)
+            rho12 = sample("rho12", Uniform(-0.9, 0.9))
 
         # For the distance marginalization, h is not sampled.
         h = 1.
@@ -1230,13 +1247,13 @@ class ClustersModel(BaseModel):
                     sigma_logY = jnp.sqrt(
                         data["e2_logY"] + sigma_int**2
                         + B**2 * data["e2_logT"] + C**2 * data["e2_logF"])
-                if self.which_relation == "LTYT":
-                    sigma_logF = jnp.sqrt(
-                        data["e2_logF"] + sigma_int**2
-                        + B**2 * data["e2_logT"] )
-                    sigma_logY = jnp.sqrt(
-                        data["e2_logY"] + sigma_int2**2
-                        + B2**2 * data["e2_logT"])
+                # if self.which_relation == "LTYT":
+                #     sigma_logF = jnp.sqrt(
+                #         data["e2_logF"] + sigma_int**2
+                #         + B**2 * data["e2_logT"] )
+                #     sigma_logY = jnp.sqrt(
+                #         data["e2_logY"] + sigma_int2**2
+                #         + B2**2 * data["e2_logT"])
 
             r_grid = data["r_grid"] / h
             logdl_grid = self.distance2logdl(r_grid)
@@ -1264,15 +1281,75 @@ class ClustersModel(BaseModel):
                 ll = Normal(logY_pred, sigma_logY[:, None]).log_prob(
                     data["logY"][:, None])[None, ...]
             elif self.which_relation == "LTYT":
-                logF_pred = (A + B * logT[:, None]
-                            - jnp.log10(4 * jnp.pi) - 2 * logdl_grid[None, :])
-                logY_pred = (A2 + B2 * logT[:, None]
-                            - 2 * logda_grid[None, :])
-                ll_F = Normal(logF_pred, sigma_logF[:, None]).log_prob(
-                    data["logF"][:, None])[None, ...]
-                ll_Y = Normal(logY_pred, sigma_logY[:, None]).log_prob(
-                    data["logY"][:, None])[None, ...]
-                ll = ll_F + ll_Y
+
+                # OLD
+                
+                # # Sample Y and L jointly given T, A, B, A2, B2,
+                # # with intrinsic scatter sigma_int and sigma_int2
+                # cov_LY = jnp.array([[sigma_int**2, rho12 * sigma_int * sigma_int2],
+                #                     [rho12 * sigma_int * sigma_int2, sigma_int2**2]])
+                # mu_LY = jnp.array([A + B * logT,
+                #                    A2 + B2 * logT]).T  # (2, n_gal)
+                # x_latent = sample("x_latent", MultivariateNormal(mu_LY, cov_LY))
+                # logL = x_latent[:, 0]
+                # logY = x_latent[:, 1]
+                # sigma_logF = data['e_logF']
+                # sigma_logY = data['e_logY']
+
+                # # logL = A + B * logT
+                # # logY = A2 + B2 * logT
+
+                # logF_pred = (logL[:, None] 
+                #             - jnp.log10(4 * jnp.pi) - 2 * logdl_grid[None, :])
+                # logY_pred = (logY[:, None]
+                #             - 2 * logda_grid[None, :])
+                # # Likelihood of logF and logY, `(n_field, n_gal,
+                # ll_F = Normal(logF_pred, sigma_logF[:, None]).log_prob(
+                #     data["logF"][:, None])[None, ...]
+                # ll_Y = Normal(logY_pred, sigma_logY[:, None]).log_prob(
+                #     data["logY"][:, None])[None, ...]
+
+                # # logF_pred = (A + B * logT[:, None]
+                # #             - jnp.log10(4 * jnp.pi) - 2 * logdl_grid[None, :])
+                # # logY_pred = (A2 + B2 * logT[:, None]
+                # #             - 2 * logda_grid[None, :])
+                # # ll_F = Normal(logF_pred, sigma_logF[:, None]).log_prob(
+                # #     data["logF"][:, None])[None, ...]
+                # # ll_Y = Normal(logY_pred, sigma_logY[:, None]).log_prob(
+                # #     data["logY"][:, None])[None, ...]
+                # ll = ll_F + ll_Y
+
+                # --- Intrinsic means in log-space at fixed T ---
+                mL = A + B * logT            # (n_gal,)
+                mY = A2 + B2 * logT          # (n_gal,)
+
+                # --- Map to observable means over the distance grid ---
+                # logF = logL - log10(4π) - 2 log DL
+                # logy = logY - 2 log DA
+                mF = mL[:, None] - jnp.log10(4 * jnp.pi) - 2.0 * logdl_grid[None, :]   # (n_gal, n_rbin)
+                my = mY[:, None] - 2.0 * logda_grid[None, :]                           # (n_gal, n_rbin)
+
+                # --- Intrinsic covariance (logL, logY) at fixed T ---
+                # sigma_int: scatter in logL; sigma_int2: scatter in logY; rho12: intrinsic corr.
+
+                # Total covariance in observable space = intrinsic + measurement
+                # (no measurement cross-covariance)
+                v11 = sigma_int**2  + data["e2_logF"]          # (n_gal,)
+                v22 = sigma_int2**2 + data["e2_logY"]          # (n_gal,)
+                v12 = rho12 * sigma_int * sigma_int2           # scalar → broadcasts
+
+                # Broadcast across the distance grid
+                V11 = v11[:, None]   # (n_gal, 1)
+                V22 = v22[:, None]   # (n_gal, 1)
+                V12 = v12            # scalar
+
+                # Observations broadcast to (n_gal, n_rbin)
+                xF = data["logF"][:, None]
+                xy = data["logY"][:, None]
+
+                # Joint log-likelihood per galaxy × per grid bin
+                ll_joint = logpdf_mvn2_broadcast(xF, xy, mF, my, V11, V22, V12)  # (n_gal, n_rbin)
+                ll = ll_joint[None, ...]  # (n_field=1, n_gal, n_rbin)
             else:
                 raise ValueError(f"Invalid which_relation '{self.which_relation}'.")
 
