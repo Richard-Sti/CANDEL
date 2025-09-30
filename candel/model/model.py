@@ -1091,14 +1091,12 @@ class ClustersModel(BaseModel):
             self.priors["CL_C"] = Delta(jnp.asarray(0.0))
         if self.which_relation == "LTYT":
             self.priors["CL_C"] = Delta(jnp.asarray(0.0))
-            A2 = sample("CL_A2", Uniform(-10.0, 10.0))
-            B2 = sample("CL_B2", Uniform(-10.0, 10.0))
-            sigma_int2 = sample("sigma_int2", Uniform(0.0, 5.0))
-            
+            # Add priors for second relation parameters
+            self.priors["CL_A2"] = Uniform(-10.0, 10.0)
+            self.priors["CL_B2"] = Uniform(-10.0, 10.0)
+            self.priors["sigma_int2"] = Uniform(0.0, 5.0)
+
         if self.use_MNR:
-            raise NotImplementedError(
-                "MNR for clusters is not implemented yet. Please set "
-                "`use_MNR` to False in the config file.")
             fprint("setting `compute_evidence` to False.")
             self.config["inference"]["compute_evidence"] = False
 
@@ -1119,6 +1117,12 @@ class ClustersModel(BaseModel):
         sigma_int = rsample(
             "sigma_int", self.priors["sigma_int"], shared_params)
 
+        # Additional parameters for LTYT relation
+        if self.which_relation == "LTYT":
+            A2 = rsample("A2_CL", self.priors["CL_A2"], shared_params)
+            B2 = rsample("B2_CL", self.priors["CL_B2"], shared_params)
+            sigma_int2 = rsample("sigma_int2", self.priors["sigma_int2"], shared_params)
+
         # For the distance marginalization, h is not sampled.
         h = 1.
 
@@ -1135,14 +1139,89 @@ class ClustersModel(BaseModel):
             self.priors, self.galaxy_bias, shared_params, Om=self.Om,
             beta=beta)
 
+        # MNR hyperpriors for cluster observables
+        if self.use_MNR:
+            # All scaling relations need T hyperprior
+            logT_prior_mean = sample(
+                "logT_prior_mean", Uniform(data["min_logT"], data["max_logT"]))
+            logT_prior_std = sample(
+                "logT_prior_std", 
+                Uniform(0.0, data["max_logT"] - data["min_logT"]))
+            
+            if self.which_relation in ["LTY", "YTL"]:
+                # These relations need bivariate MNR priors
+                if self.which_relation == "LTY":
+                    # T and Y bivariate prior
+                    logY_prior_mean = sample(
+                        "logY_prior_mean", Uniform(data["min_logY"], data["max_logY"]))
+                    logY_prior_std = sample(
+                        "logY_prior_std",
+                        Uniform(0.0, data["max_logY"] - data["min_logY"]))
+                    rho_TY = sample("rho_TY", Uniform(-1, 1))
+                    
+                    mu_TY = jnp.array([logT_prior_mean, logY_prior_mean])
+                    cov_TY = jnp.array([
+                        [logT_prior_std**2, rho_TY * logT_prior_std * logY_prior_std],
+                        [rho_TY * logT_prior_std * logY_prior_std, logY_prior_std**2]])
+                
+                elif self.which_relation == "YTL":
+                    # T and L bivariate prior  
+                    logF_prior_mean = sample(
+                        "logF_prior_mean", Uniform(data["min_logF"], data["max_logF"]))
+                    logF_prior_std = sample(
+                        "logF_prior_std",
+                        Uniform(0.0, data["max_logF"] - data["min_logF"]))
+                    rho_TF = sample("rho_TF", Uniform(-1, 1))
+                    
+                    mu_TF = jnp.array([logT_prior_mean, logF_prior_mean])
+                    cov_TF = jnp.array([
+                        [logT_prior_std**2, rho_TF * logT_prior_std * logF_prior_std],
+                        [rho_TF * logT_prior_std * logF_prior_std, logF_prior_std**2]])
+
         with plate("data", nsamples):
             if self.use_MNR:
-                raise NotImplementedError(
-                    "MNR for clusters is not implemented yet.")
+                if self.which_relation in ["LT", "YT", "LTYT"]:
+                    # T-only MNR for these relations
+                    logT = sample("logT_latent", Normal(logT_prior_mean, logT_prior_std))
+                    sample("logT_obs", Normal(logT, data["e_logT"]), obs=data["logT"])
+                    logY = data["logY"]
+                    logF = data["logF"]
+                
+                elif self.which_relation == "LTY":
+                    # T and Y bivariate MNR
+                    x_latent = sample("x_latent_TY", MultivariateNormal(mu_TY, cov_TY))
+                    logT = x_latent[:, 0]
+                    logY = x_latent[:, 1]
+                    
+                    sample("logT_obs", Normal(logT, data["e_logT"]), obs=data["logT"])
+                    sample("logY_obs", Normal(logY, data["e_logY"]), obs=data["logY"])
+                    logF = data["logF"]
+                
+                elif self.which_relation == "YTL":
+                    # T and L bivariate MNR
+                    x_latent = sample("x_latent_TF", MultivariateNormal(mu_TF, cov_TF))
+                    logT = x_latent[:, 0]
+                    logF = x_latent[:, 1]
+                    
+                    sample("logT_obs", Normal(logT, data["e_logT"]), obs=data["logT"])
+                    sample("logF_obs", Normal(logF, data["e_logF"]), obs=data["logF"])
+                    logY = data["logY"]
             else:
                 logT = data["logT"]
                 logY = data["logY"]
                 logF = data["logF"]
+
+            # Calculate intrinsic scatter - MNR doesn't propagate observational errors
+            if self.use_MNR:
+                if self.which_relation in ["LT", "LTY"]:
+                    sigma_logF = jnp.sqrt(data["e2_logF"] + sigma_int**2)
+                if self.which_relation in ["YT", "YTL"]:
+                    sigma_logY = jnp.sqrt(data["e2_logY"] + sigma_int**2)
+                if self.which_relation == "LTYT":
+                    sigma_logF = jnp.sqrt(data["e2_logF"] + sigma_int**2)
+                    sigma_logY = jnp.sqrt(data["e2_logY"] + sigma_int2**2)
+            else:
+                # Non-MNR case: propagate observational errors
                 if self.which_relation in ["LT", "LTY"]:
                     sigma_logF = jnp.sqrt(
                         data["e2_logF"] + sigma_int**2
