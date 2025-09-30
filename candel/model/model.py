@@ -1075,7 +1075,7 @@ class ClustersModel(BaseModel):
         super().__init__(config_path)
 
         self.which_relation = self.config["io"]["Clusters"]["which_relation"]
-        if self.which_relation not in ["LT", "LY", "LTY", "YT", "YTL"]:
+        if self.which_relation not in ["LT", "LY", "LTY", "YT", "YTL", "LTYT"]:
             raise ValueError(
                 f"Invalid scaling relation '{self.which_relation}'. "
                 "Choose either 'LT' or 'LY' or 'LTY'.")
@@ -1089,7 +1089,12 @@ class ClustersModel(BaseModel):
             self.priors["CL_B"] = Delta(jnp.asarray(0.0))
         if self.which_relation == "YT":
             self.priors["CL_C"] = Delta(jnp.asarray(0.0))
-
+        if self.which_relation == "LTYT":
+            self.priors["CL_C"] = Delta(jnp.asarray(0.0))
+            A2 = sample("CL_A2", Uniform(-10.0, 10.0))
+            B2 = sample("CL_B2", Uniform(-10.0, 10.0))
+            sigma_int2 = sample("sigma_int2", Uniform(0.0, 5.0))
+            
         if self.use_MNR:
             raise NotImplementedError(
                 "MNR for clusters is not implemented yet. Please set "
@@ -1146,6 +1151,13 @@ class ClustersModel(BaseModel):
                     sigma_logY = jnp.sqrt(
                         data["e2_logY"] + sigma_int**2
                         + B**2 * data["e2_logT"] + C**2 * data["e2_logF"])
+                if self.which_relation == "LTYT":
+                    sigma_logF = jnp.sqrt(
+                        data["e2_logF"] + sigma_int**2
+                        + B**2 * data["e2_logT"] )
+                    sigma_logY = jnp.sqrt(
+                        data["e2_logY"] + sigma_int2**2
+                        + B2**2 * data["e2_logT"])
 
             r_grid = data["r_grid"] / h
             logdl_grid = self.distance2logdl(r_grid)
@@ -1172,6 +1184,16 @@ class ClustersModel(BaseModel):
                 # Likelihood of logY , `(n_field, n_gal, n_rbin)`
                 ll = Normal(logY_pred, sigma_logY[:, None]).log_prob(
                     data["logY"][:, None])[None, ...]
+            elif self.which_relation == "LTYT":
+                logF_pred = (A + B * logT[:, None]
+                            - jnp.log10(4 * jnp.pi) - 2 * logdl_grid[None, :])
+                logY_pred = (A2 + B2 * logT[:, None]
+                            - 2 * logda_grid[None, :])
+                ll_F = Normal(logF_pred, sigma_logF[:, None]).log_prob(
+                    data["logF"][:, None])[None, ...]
+                ll_Y = Normal(logY_pred, sigma_logY[:, None]).log_prob(
+                    data["logY"][:, None])[None, ...]
+                ll = ll_F + ll_Y
             else:
                 raise ValueError(f"Invalid which_relation '{self.which_relation}'.")
 
