@@ -1138,7 +1138,7 @@ class ClustersModel(BaseModel):
             A2 = rsample("A2_CL", self.priors["CL_A2"], shared_params)
             B2 = rsample("B2_CL", self.priors["CL_B2"], shared_params)
             sigma_int2 = rsample("sigma_int2", self.priors["sigma_int2"], shared_params)
-            rho12 = sample("rho12", Uniform(-0.9, 0.9))
+            rho12 = sample("rho12", Uniform(-0.99, 0.99))  # avoid singular cov
 
         # For the distance marginalization, h is not sampled.
         h = 1.
