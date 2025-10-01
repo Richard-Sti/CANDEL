@@ -1334,14 +1334,24 @@ class ClustersModel(BaseModel):
 
                 # Total covariance in observable space = intrinsic + measurement
                 # (no measurement cross-covariance)
+
                 v11 = sigma_int**2  + data["e2_logF"]          # (n_gal,)
                 v22 = sigma_int2**2 + data["e2_logY"]          # (n_gal,)
                 v12 = rho12 * sigma_int * sigma_int2           # scalar → broadcasts
+                if self.use_MNR == False:
+                    # Add measurement error propagation from T
+                    v11 += B**2 * data["e2_logT"]
+                    v22 += B2**2 * data["e2_logT"]
+                    v12 += B * B2 * data["e2_logT"]
 
                 # Broadcast across the distance grid
                 V11 = v11[:, None]   # (n_gal, 1)
                 V22 = v22[:, None]   # (n_gal, 1)
-                V12 = v12            # scalar
+                # Handle v12 broadcasting: scalar in MNR case, (n_gal,) in non-MNR case
+                if jnp.ndim(v12) == 0:  # scalar
+                    V12 = v12
+                else:  # array
+                    V12 = v12[:, None]
 
                 # Observations broadcast to (n_gal, n_rbin)
                 xF = data["logF"][:, None]
