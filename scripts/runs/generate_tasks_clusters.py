@@ -86,24 +86,17 @@ def generate_dynamic_tag(config, base_tag="default"):
     if scaling_relation:
         parts.append(scaling_relation)
 
-    # Extract reconstruction name from pv_model/kind
-    kind = get_nested(config, "pv_model/kind", "")
-    if kind.startswith("precomputed_los"):
-        beta_prior = get_nested(config, "model/priors/beta", {})
-        if isinstance(beta_prior, dict) and beta_prior.get("dist") == "delta":
-            val = beta_prior.get("value")
-            if val is not None:
-                parts.append(f"beta{val}")
-
     # Vext configuration - only add non-default cases
     which_vext = get_nested(config, "pv_model/which_Vext", "constant")
     if which_vext == "per_pix":
         parts.append("pixVext")
+    elif which_vext == "radial":
+        parts.append("radVext")
     else:
-        # Check for quadrupole Vext first (implies dipole too)
+        # Check for separate Vext_quad component first
         Vext_quad_prior = get_nested(config, "model/priors/Vext_quad", {})
         if isinstance(Vext_quad_prior, dict) and Vext_quad_prior.get("dist") != "delta":
-            parts.append("quadVext")
+            parts.append("quadVext")  # Quadrupole implicitly includes dipole
         else:
             # Check regular Vext prior
             Vext_prior = get_nested(config, "model/priors/Vext", {})
@@ -112,22 +105,26 @@ def generate_dynamic_tag(config, base_tag="default"):
                 if vext_dist == "vector_uniform_fixed":
                     parts.append("dipVext")
                 elif vext_dist == "quadrupole_uniform_fixed":
-                    parts.append("quadVext")
+                    parts.append("quadVext")  # Main Vext is quadrupole
                 # delta case is default, don't add anything
 
-    # Zeropoint configuration - only add non-default cases
-    # Check for quadrupole zeropoint first (implies dipole too)
-    quad_prior = get_nested(config, "model/priors/zeropoint_quad", {})
-    if isinstance(quad_prior, dict) and quad_prior.get("dist") != "delta":
-        parts.append("quadA")
+    # Zeropoint A configuration - check per_pix first
+    which_A = get_nested(config, "pv_model/which_A", "constant")
+    if which_A == "per_pix":
+        parts.append("pixA")
     else:
-        # Check dipole zeropoint
-        dip_prior = get_nested(config, "model/priors/zeropoint_dipole", {})
-        if isinstance(dip_prior, dict):
-            dip_dist = dip_prior.get("dist", "")
-            if dip_dist == "vector_uniform_fixed":
-                parts.append("dipA")
-            # delta case is default, don't add anything
+        # Check for quadrupole zeropoint first (implies dipole too)
+        quad_prior = get_nested(config, "model/priors/zeropoint_quad", {})
+        if isinstance(quad_prior, dict) and quad_prior.get("dist") != "delta":
+            parts.append("quadA")
+        else:
+            # Check dipole zeropoint
+            dip_prior = get_nested(config, "model/priors/zeropoint_dipole", {})
+            if isinstance(dip_prior, dict):
+                dip_dist = dip_prior.get("dist", "")
+                if dip_dist == "vector_uniform_fixed":
+                    parts.append("dipA")
+                # delta case is default, don't add anything
 
     # Flag if sampling the dust prior
     dust_model = get_nested(config, f"io/{catalogue}/dust_model", None)
@@ -168,17 +165,17 @@ if __name__ == "__main__":
     tag = "default"
     tasks_index = args.tasks_index
 
-    task_file = f"tasks_LT_vs_LTY_{tasks_index}.txt"
-    log_dir = f"logs_LT_vs_LTY_{tasks_index}"
+    task_file = f"tasks_{tasks_index}.txt"
+    log_dir = f"logs_{tasks_index}"
 
     # Dipoles for LT and LTY with Manticore
     base = {
-        "pv_model/kind": ["precomputed_los_manticore_2MPP_MULTIBIN_N256_DES_V2"],
+        "pv_model/kind": ["Vext", "precomputed_los_Carrick2015", "precomputed_los_manticore"],
         #"pv_model/kind": ["precomputed_los_Carrick2015"],
         "pv_model/galaxy_bias": ["powerlaw"],
         "pv_model/which_Vext": ["constant"],
         "io/catalogue_name": "Clusters",
-        "io/root_output": "results/Clusters",
+        "io/root_output": "results/friday",
         "pv_model/use_MNR": False,
         "io/Clusters/which_relation": ["LTYT"],
         "io/Clusters/remove_noY": [True],
@@ -203,18 +200,24 @@ if __name__ == "__main__":
     dipole_combinations = expand_override_grid(dipole_settings)
     
     # Per-pixel Vext
-    pixel_settings = deepcopy(base)
-    pixel_settings["pv_model/which_Vext"] = ["per_pix"]
+    pixelVext_settings = deepcopy(base)
+    pixelVext_settings["pv_model/which_Vext"] = ["per_pix"]
 
-    pixel_combinations = expand_override_grid(pixel_settings)
+    pixelVext_combinations = expand_override_grid(pixelVext_settings)
+
+    # Per-pixel A
+    pixelA_settings = deepcopy(base)
+    pixelA_settings["pv_model/which_A"] = ["per_pix"]
+
+    pixelA_combinations = expand_override_grid(pixelA_settings)
 
     # Dipole and quadrupole Vext
     quadVext_settings = deepcopy(base)
 
-    quadVext_settings["pv_model/priors/Vext"] = [
+    quadVext_settings["model/priors/Vext"] = [
         {"dist": "vector_uniform_fixed", "low": 0.0, "high": 2000.0},
     ]
-    quadVext_settings["pv_model/priors/Vext_quad"] = [
+    quadVext_settings["model/priors/Vext_quad"] = [
         {"dist": "quadrupole_uniform_fixed", "low": 0.0, "high": 2000.0},
     ]
 
@@ -231,9 +234,17 @@ if __name__ == "__main__":
 
     quad_zeropoint_combinations = expand_override_grid(quad_zeropoint_settings)
     
+    # Radial Vext
+    radialVext_settings = deepcopy(base)
+    radialVext_settings["pv_model/which_Vext"] = ["radial"]
+
+    radialVext_combinations = expand_override_grid(radialVext_settings)
+    
     # Combine both lists
-    override_combinations = dipole_combinations + pixel_combinations + \
-                            quadVext_combinations  + quad_zeropoint_combinations
+    override_combinations = dipole_combinations +\
+                            quadVext_combinations  + quad_zeropoint_combinations \
+                            + pixelA_combinations + pixelVext_combinations \
+                            + radialVext_combinations
 
     print(f"Total combinations: {len(override_combinations)}")
 
@@ -263,13 +274,20 @@ if __name__ == "__main__":
                 fprint(f"creating output directory `{fdir_out}`")
                 makedirs(fdir_out, exist_ok=True)
 
+            # If using manticore, set beta to delta(1.0)
+            kind = get_nested(local_config, "pv_model/kind", "unknown")
+            if "manticore" in kind.lower():
+                local_config = replace_prior_with_delta(local_config, "beta", 1.0)
+                fprint(f"set beta prior to delta(1.0) for manticore reconstruction")
+
             dynamic_tag = generate_dynamic_tag(local_config, base_tag=tag)
 
-            kind = get_nested(local_config, "pv_model/kind", "unknown")
+            # Remove "precomputed_los_" prefix from kind for the filename
+            kind_for_filename = kind.replace("precomputed_los_", "")
 
             fname_out = join(
                 local_config["io"]["root_output"],
-                f"{kind}_{dynamic_tag}.hdf5"
+                f"{kind_for_filename}_{dynamic_tag}.hdf5"
             )
             local_config = overwrite_config(
                 local_config, "io/fname_output", fname_out)

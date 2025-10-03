@@ -639,6 +639,36 @@ def sample_Vext(priors, which_Vext, shared_params=None, kwargs_Vext={}):
     return Vext
 
 
+def sample_A_clusters(priors, which_A, shared_params=None, kwargs_A={}):
+    """
+    Sample zeropoint A parameters for clusters, supporting per-pixel variation.
+    """
+    if which_A == "per_pix":
+        with plate("A_pix_plate", kwargs_A["npix"]):
+            A_pix = rsample("A_pix", Uniform(-10.0, 10.0), shared_params)
+        return A_pix
+    elif which_A == "constant":
+        # Use regular A from priors (will be handled by rsample in main model)
+        return None
+    else:
+        raise ValueError(f"Invalid which_A '{which_A}'.")
+
+
+def compute_A_clusters_radial(data, A_pix, which_A, **kwargs_A):
+    """
+    Compute the per-pixel A variation, similar to compute_Vext_radial.
+    Returns per-galaxy A values: shape (n_gal,).
+    """
+    if which_A == "per_pix":
+        # A_pix has shape (npix,), data["C_pix"] has shape (n_gal, npix)
+        A_radial = data["C_pix"] @ A_pix  # shape (n_gal,)
+        return A_radial
+    elif which_A == "constant":
+        return 0.0  # No per-pixel variation
+    else:
+        raise ValueError(f"Invalid which_A '{which_A}'.")
+
+
 ###############################################################################
 #                              TFR models                                     #
 ###############################################################################
@@ -1165,6 +1195,30 @@ class ClustersModel(BaseModel):
             self.priors["CL_B2"] = Uniform(-10.0, 10.0)
             self.priors["sigma_int2"] = Uniform(0.0, 5.0)
 
+        # Configuration for per-pixel A variation (similar to Vext)
+        self.which_A = get_nested(self.config, "pv_model/which_A", "constant")
+        
+        if self.which_A == "per_pix":
+            nside = get_nested(self.config, "pv_model/A_per_pix_nside", None)
+            if nside is None:
+                raise ValueError(
+                    "Must specify `A_per_pix_nside` in config when "
+                    "`which_A = 'per_pix'`.")
+            if not (nside > 0 and ((nside & (nside - 1)) == 0)):
+                raise ValueError(
+                    f"Invalid nside={nside} in "
+                    f"which_A = '{self.which_A}'. "
+                    "Must be a positive power of 2.")
+            fprint(f"using per-pixel `A` at nside={nside}.")
+            npix = 12 * nside**2
+            self.kwargs_A = {
+                "nside": nside, "npix": npix,
+                "Q": jnp.asarray(sumzero_basis(npix))}
+        elif self.which_A == "constant":
+            self.kwargs_A = {}
+        else:
+            raise ValueError(f"Invalid which_A '{self.which_A}'.")
+
         if self.use_MNR:
             fprint("setting `compute_evidence` to False.")
             self.config["inference"]["compute_evidence"] = False
@@ -1186,16 +1240,24 @@ class ClustersModel(BaseModel):
         sigma_int = rsample(
             "sigma_int", self.priors["sigma_int"], shared_params)
 
-        A_dipole = rsample(
-            "zeropoint_dipole", self.priors["zeropoint_dipole"], shared_params)
-        A_quad = rsample(
-            "zeropoint_quad", self.priors["zeropoint_quad"],shared_params)
+        # Sample different A variations
+        if self.which_A == "per_pix":
+            A_pix = sample_A_clusters(
+                self.priors, self.which_A, shared_params, self.kwargs_A)
+            A_pix_radial = compute_A_clusters_radial(
+                data, A_pix, self.which_A, **self.kwargs_A)
+            A = A + A_pix_radial  # A_pix_radial has shape (n_gal,)
+        else:
+            # Traditional dipole/quadrupole approach
+            A_dipole = rsample(
+                "zeropoint_dipole", self.priors["zeropoint_dipole"], shared_params)
+            A_quad = rsample(
+                "zeropoint_quad", self.priors["zeropoint_quad"],shared_params)
 
-        A_dipole_radial = jnp.sum(A_dipole * data["rhat"], axis=1)
-        A_quad_radial = compute_quadrupole_radial(data, A_quad)
+            A_dipole_radial = jnp.sum(A_dipole * data["rhat"], axis=1)
+            A_quad_radial = compute_quadrupole_radial(data, A_quad)
 
-        A += A_dipole_radial
-        A += A_quad_radial
+            A = A + A_dipole_radial + A_quad_radial
 
         # Additional parameters for LTYT relation
         if self.which_relation == "LTYT":
@@ -1204,8 +1266,12 @@ class ClustersModel(BaseModel):
             sigma_int2 = rsample("sigma_int2", self.priors["sigma_int2"], shared_params)
             rho12 = sample("rho12", Uniform(-0.99, 0.99))  # avoid singular cov
     
-            A2 += A_dipole_radial
-            A2 += A_quad_radial
+            if self.which_A == "per_pix":
+                # For per_pix, A2 gets the same per-pixel variation as A
+                A2 = A2 + A_pix_radial  # A_pix_radial has shape (n_gal,)
+            else:
+                # Traditional dipole/quadrupole approach
+                A2 = A2 + A_dipole_radial + A_quad_radial
 
         # For the distance marginalization, h is not sampled.
         h = 1.
