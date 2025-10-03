@@ -243,6 +243,37 @@ def sample_vector_fixed(name, mag_min, mag_max):
         )
 
 
+def sample_quadrupole_fixed(name, mag_min, mag_max):
+    """
+    Sample a quadrupole but without accounting for continuity and poles.
+    
+    This enforces that all sampled points have the same contribution to
+    `log_density` which is not the case for the `sample_quadrupole` function
+    because the unit vectors are drawn.
+    """
+    phi1 = sample(f"{name}_phi1", Uniform(0, 2 * jnp.pi))
+    cos_theta1 = sample(f"{name}_cos_theta1", Uniform(-1, 1))
+    sin_theta1 = jnp.sqrt(1 - cos_theta1**2)
+    phi2 = sample(f"{name}_phi2", Uniform(0, 2 * jnp.pi))
+    cos_theta2 = sample(f"{name}_cos_theta2", Uniform(-1, 1))
+    sin_theta2 = jnp.sqrt(1 - cos_theta2**2)
+
+    mag = sample(f"{name}_mag", Uniform(mag_min, mag_max))
+
+    vector1 = jnp.array(
+        [sin_theta1 * jnp.cos(phi1),
+         sin_theta1 * jnp.sin(phi1),
+         cos_theta1]
+        )
+    vector2 = jnp.array(
+        [sin_theta2 * jnp.cos(phi2),
+         sin_theta2 * jnp.sin(phi2),
+         cos_theta2]
+        )
+    return jnp.sqrt(mag) * jnp.array([vector1, vector2]).T
+
+
+
 def sample_spline_radial_vector(name, nval, low, high):
     """
     Sample a radial vector at `nval` knots: direction ~ isotropic,
@@ -300,6 +331,7 @@ def load_priors(config_priors):
         "vector_uniform_fixed": lambda p: {"type": "vector_uniform_fixed", "low": p["low"], "high": p["high"],},  # noqa
         "vector_radial_spline_uniform": lambda p: {"type": "vector_radial_spline_uniform", "nval": len(p["rknot"]), "low": p["low"], "high": p["high"]},  # noqa
         "vector_components_uniform": lambda p: {"type": "vector_components_uniform", "low": p["low"], "high": p["high"],},  # noqa
+        "quadrupole_uniform_fixed": lambda p: {"type": "quadrupole_uniform_fixed", "low": p["low"], "high": p["high"],},  # noqa
     }
     priors = {}
     prior_dist_name = {}
@@ -342,6 +374,10 @@ def _rsample(name, dist):
     if isinstance(dist, dict) and dist.get("type") == "vector_components_uniform":  # noqa
         return sample_vector_components_uniform(
             name, dist["low"], dist["high"])
+    
+    # New quadrupole sampling
+    if isinstance(dist, dict) and dist.get("type") == "quadrupole_uniform_fixed":  # noqa
+        return sample_quadrupole_fixed(name, dist["low"], dist["high"])
 
     if isinstance(dist, dict) and dist.get("type") == "vector_radial_spline_uniform":  # noqa
         return sample_spline_radial_vector(
@@ -538,6 +574,23 @@ def compute_Vext_radial(data, r_grid, Vext, which_Vext, **kwargs_Vext):
     else:
         raise ValueError(f"Invalid which_Vext '{which_Vext}'.")
     return Vext_rad
+
+
+def compute_quadrupole_radial(data, quadrupole):
+    """Compute the line-of-sight projection of the quadrupole.
+    Q_rad = Q (q1.ni q2.ni - 1/3 q1.q2)
+    where q1 and q2 are the quadrupole vectors and ni is the unit radial vector to the galaxy i.
+    """
+    Qq1 = quadrupole[:, 0]  # shape (3,)
+    Qq2 = quadrupole[:, 1]  # shape (3,)
+    
+    dot1 = jnp.sum(data["rhat"] * Qq1, axis=1)  # (N, 1)
+    dot2 = jnp.sum(data["rhat"] * Qq2, axis=1)  # (N, 1)
+
+    Q_rad = dot1 * dot2  # (N, 1)
+    Q_rad -= (1 / 3) * jnp.dot(Qq1, Qq2)  # scalar, broadcasted
+
+    return Q_rad  # (N, 1)
 
 
 def sample_distance_prior(priors):
@@ -1133,12 +1186,26 @@ class ClustersModel(BaseModel):
         sigma_int = rsample(
             "sigma_int", self.priors["sigma_int"], shared_params)
 
+        A_dipole = rsample(
+            "zeropoint_dipole", self.priors["zeropoint_dipole"], shared_params)
+        A_quad = rsample(
+            "zeropoint_quad", self.priors["zeropoint_quad"],shared_params)
+
+        A_dipole_radial = jnp.sum(A_dipole * data["rhat"], axis=1)
+        A_quad_radial = compute_quadrupole_radial(data, A_quad)
+
+        A += A_dipole_radial
+        A += A_quad_radial
+
         # Additional parameters for LTYT relation
         if self.which_relation == "LTYT":
             A2 = rsample("A2_CL", self.priors["CL_A2"], shared_params)
             B2 = rsample("B2_CL", self.priors["CL_B2"], shared_params)
             sigma_int2 = rsample("sigma_int2", self.priors["sigma_int2"], shared_params)
             rho12 = sample("rho12", Uniform(-0.99, 0.99))  # avoid singular cov
+    
+            A2 += A_dipole_radial
+            A2 += A_quad_radial
 
         # For the distance marginalization, h is not sampled.
         h = 1.
@@ -1148,6 +1215,10 @@ class ClustersModel(BaseModel):
         # Sample velocity field parameters.
         Vext = sample_Vext(
             self.priors, self.which_Vext, shared_params, self.kwargs_Vext)
+    
+        if self.which_Vext == "constant":
+            Vext_quad = rsample("Vext_quad", self.priors["Vext_quad"], shared_params)
+
         sigma_v = rsample("sigma_v", self.priors["sigma_v"], shared_params)
 
         # Remaining parameters
@@ -1282,43 +1353,6 @@ class ClustersModel(BaseModel):
                     data["logY"][:, None])[None, ...]
             elif self.which_relation == "LTYT":
 
-                # OLD
-                
-                # # Sample Y and L jointly given T, A, B, A2, B2,
-                # # with intrinsic scatter sigma_int and sigma_int2
-                # cov_LY = jnp.array([[sigma_int**2, rho12 * sigma_int * sigma_int2],
-                #                     [rho12 * sigma_int * sigma_int2, sigma_int2**2]])
-                # mu_LY = jnp.array([A + B * logT,
-                #                    A2 + B2 * logT]).T  # (2, n_gal)
-                # x_latent = sample("x_latent", MultivariateNormal(mu_LY, cov_LY))
-                # logL = x_latent[:, 0]
-                # logY = x_latent[:, 1]
-                # sigma_logF = data['e_logF']
-                # sigma_logY = data['e_logY']
-
-                # # logL = A + B * logT
-                # # logY = A2 + B2 * logT
-
-                # logF_pred = (logL[:, None] 
-                #             - jnp.log10(4 * jnp.pi) - 2 * logdl_grid[None, :])
-                # logY_pred = (logY[:, None]
-                #             - 2 * logda_grid[None, :])
-                # # Likelihood of logF and logY, `(n_field, n_gal,
-                # ll_F = Normal(logF_pred, sigma_logF[:, None]).log_prob(
-                #     data["logF"][:, None])[None, ...]
-                # ll_Y = Normal(logY_pred, sigma_logY[:, None]).log_prob(
-                #     data["logY"][:, None])[None, ...]
-
-                # # logF_pred = (A + B * logT[:, None]
-                # #             - jnp.log10(4 * jnp.pi) - 2 * logdl_grid[None, :])
-                # # logY_pred = (A2 + B2 * logT[:, None]
-                # #             - 2 * logda_grid[None, :])
-                # # ll_F = Normal(logF_pred, sigma_logF[:, None]).log_prob(
-                # #     data["logF"][:, None])[None, ...]
-                # # ll_Y = Normal(logY_pred, sigma_logY[:, None]).log_prob(
-                # #     data["logY"][:, None])[None, ...]
-                # ll = ll_F + ll_Y
-
                 # --- Intrinsic means in log-space at fixed T ---
                 mL = A + B * logT            # (n_gal,)
                 mY = A2 + B2 * logT          # (n_gal,)
@@ -1337,7 +1371,7 @@ class ClustersModel(BaseModel):
 
                 v11 = sigma_int**2  + data["e2_logF"]          # (n_gal,)
                 v22 = sigma_int2**2 + data["e2_logY"]          # (n_gal,)
-                v12 = rho12 * sigma_int * sigma_int2           # scalar → broadcasts
+                v12 = jnp.ones_like(v11) * rho12 * sigma_int * sigma_int2           # scalar → broadcasts
                 if self.use_MNR == False:
                     # Add measurement error propagation from T
                     v11 += B**2 * data["e2_logT"]
@@ -1347,11 +1381,7 @@ class ClustersModel(BaseModel):
                 # Broadcast across the distance grid
                 V11 = v11[:, None]   # (n_gal, 1)
                 V22 = v22[:, None]   # (n_gal, 1)
-                # Handle v12 broadcasting: scalar in MNR case, (n_gal,) in non-MNR case
-                if jnp.ndim(v12) == 0:  # scalar
-                    V12 = v12
-                else:  # array
-                    V12 = v12[:, None]
+                V12 = v12[:, None]   # (n_gal, 1)
 
                 # Observations broadcast to (n_gal, n_rbin)
                 xF = data["logF"][:, None]
@@ -1383,6 +1413,10 @@ class ClustersModel(BaseModel):
             Vext_rad = compute_Vext_radial(
                 data, r_grid, Vext, which_Vext=self.which_Vext,
                 **self.kwargs_Vext)
+                    
+            if self.which_Vext == "constant":
+                Vext_quad_rad = compute_quadrupole_radial(data, Vext_quad)
+                Vext_rad += Vext_quad_rad[None, :, None]
             czpred = predict_cz(
                 self.distance2redshift(r_grid, h=h)[None, None, :],
                 Vrad + Vext_rad)
