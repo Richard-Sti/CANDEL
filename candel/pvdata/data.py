@@ -1369,8 +1369,8 @@ def load_clusters(root, zcmb_min=None, zcmb_max=None, los_data_path=None,
     fprint("subtracting the mean logT from the data.")
     data["logT"] -= np.mean(data["logT"])
 
-    fprint("subtracting the mean logY from the data.")
-    data["logY"] -= np.mean(data["logY"])
+    # fprint("subtracting the mean logY from the data.")
+    # data["logY"] -= np.mean(data["logY"])
 
     if not finite_logY:
         data['logY'] = np.zeros_like(data['logY'])
