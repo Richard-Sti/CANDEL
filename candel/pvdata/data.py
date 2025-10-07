@@ -69,6 +69,34 @@ def precompute_pixel_projection(rhat_data, nside, sigma_deg=None):
     return w * d
 
 
+def precompute_radial_bin_assignment(zcmb_data, bin_edges):
+    """
+    Precompute the radial bin assignment matrix for redshift binning.
+    
+    Parameters
+    ----------
+    zcmb_data : array_like
+        CMB-frame redshift values for each galaxy.
+    bin_edges : array_like
+        Bin edges for the redshift bins.
+    
+    Returns
+    -------
+    C_bin : ndarray
+        Matrix of shape (n_gal, n_bins) with one-hot encoding of bin membership.
+    """
+    n_bins = len(bin_edges) - 1
+    bin_indices = np.digitize(zcmb_data, bin_edges) - 1
+    
+    # Clip to valid range [0, n_bins-1]
+    bin_indices = np.clip(bin_indices, 0, n_bins - 1)
+    
+    # Create one-hot encoding
+    C_bin = one_hot(bin_indices, n_bins, dtype=zcmb_data.dtype)
+    
+    return C_bin
+
+
 ###############################################################################
 #                             Data frames                                     #
 ###############################################################################
@@ -232,6 +260,13 @@ class PVDataFrame:
             fprint(f"precomputing Vext_per_pix data for nside = {nside}.")
             frame.C_pix = precompute_pixel_projection(frame["rhat"], nside)
 
+        # Precompute radial_binned Vext data
+        bin_edges = config_pv_model.get("Vext_radial_bin_edges", None)
+        if bin_edges is not None:
+            fprint(f"precomputing Vext_radial_binned data with bin edges: {bin_edges}.")
+            frame.C_radial_bin = precompute_radial_bin_assignment(frame["zcmb"], bin_edges)
+            frame.n_radial_bins = len(bin_edges) - 1
+
         # Hyperparameters for the TFR linewidth modelling
         if "eta_min" in config or "eta_max" in config:
             if config["add_eta_selection"]:
@@ -329,6 +364,8 @@ class PVDataFrame:
             val = np.deg2rad(self.data["RA"])
         elif key == "C_pix":
             val = self.C_pix
+        elif key == "C_radial_bin":
+            val = self.C_radial_bin
         elif key == "czcmb":
             val = self.data["zcmb"] * SPEED_OF_LIGHT
         elif key == "rhat":

@@ -457,6 +457,17 @@ class BaseModel(ABC):
             fprint(f"using radial `Vext` with spline knots at {d['rknot']}")
             self.kwargs_Vext = {
                 key: d[key] for key in ["rknot", "k", "endpoints"]}
+        elif self.which_Vext == "radial_binned":
+            bin_edges = get_nested(config, "pv_model/Vext_radial_bin_edges", None)
+            if bin_edges is None:
+                raise ValueError(
+                    "Must specify `Vext_radial_bin_edges` in config when "
+                    "`which_Vext = 'radial_binned'`.")
+            n_bins = len(bin_edges) - 1
+            fprint(f"using radial_binned `Vext` with {n_bins} bins: {bin_edges}.")
+            self.kwargs_Vext = {
+                "n_bins": n_bins,
+                "bin_edges": bin_edges}
         elif self.which_Vext == "per_pix":
             nside = get_nested(config, "pv_model/Vext_per_pix_nside", None)
             if nside is None:
@@ -567,6 +578,16 @@ def compute_Vext_radial(data, r_grid, Vext, which_Vext, **kwargs_Vext):
         Vext = interp_spline_radial_vector(r_grid, Vext, **kwargs_Vext)
         Vext_rad = jnp.sum(
             data["rhat"][..., None] * Vext[None, ...], axis=1)[None, ...]
+    elif which_Vext == "radial_binned":
+        # Vext shape: (n_bins * 3,) representing (n_bins, 3) flattened
+        n_bins = kwargs_Vext["n_bins"]
+        Vext_3d = Vext.reshape(n_bins, 3)  # Shape: (n_bins, 3)
+        # Project each bin's velocity onto LOS
+        # data["rhat"]: (n_gal, 3), C_radial_bin: (n_gal, n_bins)
+        # Vext_3d: (n_bins, 3)
+        # Result: (n_gal,) = sum over component axis of (n_gal, n_bins) * (n_bins, 3) * (n_gal, 3)
+        Vext_rad = jnp.sum(
+            (data["C_radial_bin"] @ Vext_3d) * data["rhat"], axis=1)[None, :, None]
     elif which_Vext == "per_pix":
         Vext_rad = (data["C_pix"] @ Vext)[None, :, None]
     elif which_Vext == "constant":
@@ -619,6 +640,12 @@ def sumzero_basis(npix):
 def sample_Vext(priors, which_Vext, shared_params=None, kwargs_Vext={}):
     if which_Vext == "radial":
         Vext = rsample("Vext_rad", priors["Vext_radial"], shared_params)
+    elif which_Vext == "radial_binned":
+        # Sample one 3D velocity vector per bin
+        with plate("Vext_radial_bin_plate", kwargs_Vext["n_bins"]):
+            Vext = rsample("Vext_radial_bin", priors["Vext"], shared_params)
+        # Flatten to shape (n_bins * 3,) for consistency with compute_Vext_radial
+        Vext = Vext.reshape(-1)
     # elif which_Vext == "per_pix":
     #     Vext_sigma = rsample("Vext_sigma", priors["Vext_sigma"], shared_params)
 

@@ -274,6 +274,36 @@ def drop_deterministic(samples, check_all_equals=True):
 
 def postprocess_samples(samples):
     """Postprocess MCMC samples."""
+    # Handle radial_binned Vext parameters (sampled as arrays with n_bins)
+    # These come from priors["Vext"] which samples spherical coords: phi, cos_theta, mag
+    if "Vext_radial_bin_phi" in samples and "Vext_radial_bin_cos_theta" in samples:
+        phi_arr = samples.pop("Vext_radial_bin_phi")  # shape: (n_samples, n_bins)
+        cos_theta_arr = samples.pop("Vext_radial_bin_cos_theta")  # shape: (n_samples, n_bins)
+        mag_arr = samples.pop("Vext_radial_bin_mag", None)  # shape: (n_samples, n_bins) or None
+        
+        n_bins = phi_arr.shape[1] if phi_arr.ndim > 1 else 1
+        
+        # Process each bin separately
+        for bin_idx in range(n_bins):
+            if phi_arr.ndim > 1:
+                phi = np.rad2deg(phi_arr[:, bin_idx])
+                cos_theta = cos_theta_arr[:, bin_idx]
+                mag = mag_arr[:, bin_idx] if mag_arr is not None else None
+            else:
+                phi = np.rad2deg(phi_arr)
+                cos_theta = cos_theta_arr
+                mag = mag_arr if mag_arr is not None else None
+            
+            theta = np.arccos(cos_theta)
+            dec = np.rad2deg(0.5 * np.pi - theta)
+            
+            ell, b = radec_to_galactic(phi, dec)
+            samples[f"Vext_radial_bin_ell__{bin_idx}"] = ell
+            samples[f"Vext_radial_bin_b__{bin_idx}"] = b
+            
+            if mag is not None:
+                samples[f"Vext_radial_bin_mag__{bin_idx}"] = mag
+    
     for prefix in ["dH0", "Vext_rad", "Vext", "zeropoint_dipole"]:
         # Spherical form: phi + cos_theta (+ mag optional)
         if f"{prefix}_phi" in samples and f"{prefix}_cos_theta" in samples:

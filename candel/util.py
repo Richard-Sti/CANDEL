@@ -367,6 +367,18 @@ def name2label(name):
         "rho_corr": r"$\rho_{\rm corr}$",
     }
 
+    # Handle radial_binned Vext parameters (e.g., Vext_radial_bin_mag__0)
+    if "Vext_radial_bin" in name:
+        parts = name.split("__")
+        if len(parts) >= 2:
+            bin_idx = parts[-1]
+            if "mag" in name:
+                return rf"$V_{{\mathrm{{ext}},{bin_idx}}}$"
+            elif "ell" in name:
+                return rf"$\ell_{{\mathrm{{ext}},{bin_idx}}}$"
+            elif "b" in name:
+                return rf"$b_{{\mathrm{{ext}},{bin_idx}}}$"
+    
     if "/" in name:
         prefix, base = name.split("/", 1)
         base_label = latex_labels.get(base, base)
@@ -437,6 +449,18 @@ def name2labelgetdist(name):
         "p_dist_emp": r"p",
         "rho_corr": r"\rho_{\rm corr}",
     }
+
+    # Handle radial_binned Vext parameters (e.g., Vext_radial_bin_mag__0)
+    if "Vext_radial_bin" in name:
+        parts = name.split("__")
+        if len(parts) >= 2:
+            bin_idx = parts[-1]
+            if "mag" in name:
+                return rf"V_{{\mathrm{{ext}},{bin_idx}}}~\left[\mathrm{{km}}\,\mathrm{{s}}^{{-1}}\right]"
+            elif "ell" in name:
+                return rf"\ell_{{\mathrm{{ext}},{bin_idx}}}~\left[\mathrm{{deg}}\right]"
+            elif "b" in name:
+                return rf"b_{{\mathrm{{ext}},{bin_idx}}}~\left[\mathrm{{deg}}\right]"
 
     if "/" in name:
         prefix, base = name.split("/", 1)

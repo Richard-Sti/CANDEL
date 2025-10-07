@@ -31,5 +31,6 @@ from .data import (                                                             
     load_CF4_HQ,                                                                # noqa
     PVDataFrame,                                                                # noqa
     load_PV_dataframes,                                                         # noqa
-    precompute_pixel_projection
+    precompute_pixel_projection,                                                # noqa
+    precompute_radial_bin_assignment
     )
