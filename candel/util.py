@@ -379,6 +379,25 @@ def name2label(name):
             elif "b" in name:
                 return rf"$b_{{\mathrm{{ext}},{bin_idx}}}$"
     
+    # Handle radial_binned dipole A parameters (e.g., A_dipole_radial_bin_mag__0)
+    if "A_dipole_radial_bin" in name:
+        parts = name.split("__")
+        if len(parts) >= 2:
+            bin_idx = parts[-1]
+            if "mag" in name:
+                return rf"$A_{{\mathrm{{dip}},{bin_idx}}}$"
+            elif "ell" in name:
+                return rf"$\ell_{{A,{bin_idx}}}$"
+            elif "b" in name:
+                return rf"$b_{{A,{bin_idx}}}$"
+    
+    # Handle radial_binned A parameters (e.g., A_radial_bin__0)
+    if "A_radial_bin" in name and "dipole" not in name:
+        parts = name.split("__")
+        if len(parts) >= 2:
+            bin_idx = parts[-1]
+            return rf"$A_{{\mathrm{{CL}},{bin_idx}}}$"
+    
     if "/" in name:
         prefix, base = name.split("/", 1)
         base_label = latex_labels.get(base, base)
@@ -461,6 +480,25 @@ def name2labelgetdist(name):
                 return rf"\ell_{{\mathrm{{ext}},{bin_idx}}}~\left[\mathrm{{deg}}\right]"
             elif "b" in name:
                 return rf"b_{{\mathrm{{ext}},{bin_idx}}}~\left[\mathrm{{deg}}\right]"
+    
+    # Handle radial_binned dipole A parameters (e.g., A_dipole_radial_bin_mag__0)
+    if "A_dipole_radial_bin" in name:
+        parts = name.split("__")
+        if len(parts) >= 2:
+            bin_idx = parts[-1]
+            if "mag" in name:
+                return rf"A_{{\mathrm{{dip}},{bin_idx}}}~\left[\mathrm{{mag}}\right]"
+            elif "ell" in name:
+                return rf"\ell_{{A,{bin_idx}}}~\left[\mathrm{{deg}}\right]"
+            elif "b" in name:
+                return rf"b_{{A,{bin_idx}}}~\left[\mathrm{{deg}}\right]"
+    
+    # Handle radial_binned A parameters (e.g., A_radial_bin__0)
+    if "A_radial_bin" in name and "dipole" not in name:
+        parts = name.split("__")
+        if len(parts) >= 2:
+            bin_idx = parts[-1]
+            return rf"A_{{\mathrm{{CL}},{bin_idx}}}~\left[\mathrm{{mag}}\right]"
 
     if "/" in name:
         prefix, base = name.split("/", 1)

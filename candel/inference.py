@@ -304,6 +304,50 @@ def postprocess_samples(samples):
             if mag is not None:
                 samples[f"Vext_radial_bin_mag__{bin_idx}"] = mag
     
+    # Handle A_dipole_radial_bin (vector per bin, needs coordinate conversion)
+    if "A_dipole_radial_bin_phi" in samples and "A_dipole_radial_bin_cos_theta" in samples:
+        phi_arr = samples.pop("A_dipole_radial_bin_phi")  # shape: (n_samples, n_bins)
+        cos_theta_arr = samples.pop("A_dipole_radial_bin_cos_theta")  # shape: (n_samples, n_bins)
+        mag_arr = samples.pop("A_dipole_radial_bin_mag", None)  # shape: (n_samples, n_bins) or None
+        
+        n_bins = phi_arr.shape[1] if phi_arr.ndim > 1 else 1
+        
+        # Process each bin separately
+        for bin_idx in range(n_bins):
+            if phi_arr.ndim > 1:
+                phi = np.rad2deg(phi_arr[:, bin_idx])
+                cos_theta = cos_theta_arr[:, bin_idx]
+                mag = mag_arr[:, bin_idx] if mag_arr is not None else None
+            else:
+                phi = np.rad2deg(phi_arr)
+                cos_theta = cos_theta_arr
+                mag = mag_arr if mag_arr is not None else None
+            
+            theta = np.arccos(cos_theta)
+            dec = np.rad2deg(0.5 * np.pi - theta)
+            
+            ell, b = radec_to_galactic(phi, dec)
+            samples[f"A_dipole_radial_bin_ell__{bin_idx}"] = ell
+            samples[f"A_dipole_radial_bin_b__{bin_idx}"] = b
+            
+            if mag is not None:
+                samples[f"A_dipole_radial_bin_mag__{bin_idx}"] = mag
+    
+    # Handle A_radial_bin (scalar per bin, no coordinate conversion needed)
+    if "A_radial_bin" in samples:
+        A_arr = samples.pop("A_radial_bin")  # shape: (n_samples, n_bins)
+        
+        n_bins = A_arr.shape[1] if A_arr.ndim > 1 else 1
+        
+        # Split into individual bin parameters
+        for bin_idx in range(n_bins):
+            if A_arr.ndim > 1:
+                A_bin = A_arr[:, bin_idx]
+            else:
+                A_bin = A_arr
+            
+            samples[f"A_radial_bin__{bin_idx}"] = A_bin
+    
     for prefix in ["dH0", "Vext_rad", "Vext", "zeropoint_dipole"]:
         # Spherical form: phi + cos_theta (+ mag optional)
         if f"{prefix}_phi" in samples and f"{prefix}_cos_theta" in samples:

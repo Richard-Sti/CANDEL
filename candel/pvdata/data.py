@@ -267,6 +267,13 @@ class PVDataFrame:
             frame.C_radial_bin = precompute_radial_bin_assignment(frame["zcmb"], bin_edges)
             frame.n_radial_bins = len(bin_edges) - 1
 
+        # Precompute radial_binned A data (may be different bins than Vext)
+        A_bin_edges = config_pv_model.get("A_radial_bin_edges", None)
+        if A_bin_edges is not None:
+            fprint(f"precomputing A_radial_binned data with bin edges: {A_bin_edges}.")
+            frame.C_A_radial_bin = precompute_radial_bin_assignment(frame["zcmb"], A_bin_edges)
+            frame.n_A_radial_bins = len(A_bin_edges) - 1
+
         # Hyperparameters for the TFR linewidth modelling
         if "eta_min" in config or "eta_max" in config:
             if config["add_eta_selection"]:
@@ -366,6 +373,8 @@ class PVDataFrame:
             val = self.C_pix
         elif key == "C_radial_bin":
             val = self.C_radial_bin
+        elif key == "C_A_radial_bin":
+            val = self.C_A_radial_bin
         elif key == "czcmb":
             val = self.data["zcmb"] * SPEED_OF_LIGHT
         elif key == "rhat":

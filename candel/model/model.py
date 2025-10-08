@@ -668,12 +668,24 @@ def sample_Vext(priors, which_Vext, shared_params=None, kwargs_Vext={}):
 
 def sample_A_clusters(priors, which_A, shared_params=None, kwargs_A={}):
     """
-    Sample zeropoint A parameters for clusters, supporting per-pixel variation.
+    Sample zeropoint A parameters for clusters, supporting per-pixel and radial binned variation.
     """
     if which_A == "per_pix":
         with plate("A_pix_plate", kwargs_A["npix"]):
             A_pix = rsample("A_pix", Uniform(-10.0, 10.0), shared_params)
         return A_pix
+    elif which_A == "radial_binned":
+        # Sample one A value per radial bin
+        with plate("A_radial_bin_plate", kwargs_A["n_bins"]):
+            A_radial_bin = rsample("A_radial_bin", priors["CL_A"], shared_params)
+        return A_radial_bin
+    elif which_A == "radial_binned_dipole":
+        # Sample a 3D dipole vector per radial bin
+        with plate("A_dipole_radial_bin_plate", kwargs_A["n_bins"]):
+            A_dipole_radial_bin = rsample("A_dipole_radial_bin", priors["zeropoint_dipole"], shared_params)
+        # Flatten to shape (n_bins * 3,) for consistency with compute_A_clusters_radial
+        A_dipole_radial_bin = A_dipole_radial_bin.reshape(-1)
+        return A_dipole_radial_bin
     elif which_A == "constant":
         # Use regular A from priors (will be handled by rsample in main model)
         return None
@@ -683,15 +695,29 @@ def sample_A_clusters(priors, which_A, shared_params=None, kwargs_A={}):
 
 def compute_A_clusters_radial(data, A_pix, which_A, **kwargs_A):
     """
-    Compute the per-pixel A variation, similar to compute_Vext_radial.
+    Compute the per-pixel or radial binned A variation.
     Returns per-galaxy A values: shape (n_gal,).
     """
     if which_A == "per_pix":
         # A_pix has shape (npix,), data["C_pix"] has shape (n_gal, npix)
         A_radial = data["C_pix"] @ A_pix  # shape (n_gal,)
         return A_radial
+    elif which_A == "radial_binned":
+        # A_pix has shape (n_bins,), data["C_A_radial_bin"] has shape (n_gal, n_bins)
+        A_radial = data["C_A_radial_bin"] @ A_pix  # shape (n_gal,)
+        return A_radial
+    elif which_A == "radial_binned_dipole":
+        # A_pix has shape (n_bins * 3,), need to reshape to (n_bins, 3)
+        n_bins = kwargs_A["n_bins"]
+        A_dipole_3d = A_pix.reshape(n_bins, 3)  # shape (n_bins, 3)
+        # Project each bin's dipole onto line of sight for each galaxy
+        # data["C_A_radial_bin"] @ A_dipole_3d gives (n_gal, 3)
+        A_dipole_per_gal = data["C_A_radial_bin"] @ A_dipole_3d  # shape (n_gal, 3)
+        # Dot with rhat to get radial component
+        A_radial = jnp.sum(A_dipole_per_gal * data["rhat"], axis=1)  # shape (n_gal,)
+        return A_radial
     elif which_A == "constant":
-        return 0.0  # No per-pixel variation
+        return 0.0  # No per-pixel or radial variation
     else:
         raise ValueError(f"Invalid which_A '{which_A}'.")
 
@@ -1241,6 +1267,26 @@ class ClustersModel(BaseModel):
             self.kwargs_A = {
                 "nside": nside, "npix": npix,
                 "Q": jnp.asarray(sumzero_basis(npix))}
+        elif self.which_A == "radial_binned":
+            bin_edges = get_nested(self.config, "pv_model/A_radial_bin_edges", None)
+            if bin_edges is None:
+                raise ValueError(
+                    "Must specify `A_radial_bin_edges` in config when "
+                    "`which_A = 'radial_binned'`.")
+            bin_edges = jnp.asarray(bin_edges)
+            n_bins = len(bin_edges) - 1
+            fprint(f"using radial binned `A` with {n_bins} bins.")
+            self.kwargs_A = {"n_bins": n_bins, "bin_edges": bin_edges}
+        elif self.which_A == "radial_binned_dipole":
+            bin_edges = get_nested(self.config, "pv_model/A_radial_bin_edges", None)
+            if bin_edges is None:
+                raise ValueError(
+                    "Must specify `A_radial_bin_edges` in config when "
+                    "`which_A = 'radial_binned_dipole'`.")
+            bin_edges = jnp.asarray(bin_edges)
+            n_bins = len(bin_edges) - 1
+            fprint(f"using radial binned dipole `A` with {n_bins} bins.")
+            self.kwargs_A = {"n_bins": n_bins, "bin_edges": bin_edges}
         elif self.which_A == "constant":
             self.kwargs_A = {}
         else:
@@ -1268,7 +1314,7 @@ class ClustersModel(BaseModel):
             "sigma_int", self.priors["sigma_int"], shared_params)
 
         # Sample different A variations
-        if self.which_A == "per_pix":
+        if self.which_A in ["per_pix", "radial_binned", "radial_binned_dipole"]:
             A_pix = sample_A_clusters(
                 self.priors, self.which_A, shared_params, self.kwargs_A)
             A_pix_radial = compute_A_clusters_radial(
@@ -1293,8 +1339,8 @@ class ClustersModel(BaseModel):
             sigma_int2 = rsample("sigma_int2", self.priors["sigma_int2"], shared_params)
             rho12 = sample("rho12", Uniform(-0.99, 0.99))  # avoid singular cov
     
-            if self.which_A == "per_pix":
-                # For per_pix, A2 gets the same per-pixel variation as A
+            if self.which_A in ["per_pix", "radial_binned", "radial_binned_dipole"]:
+                # For per_pix, radial_binned, or radial_binned_dipole, A2 gets the same variation as A
                 A2 = A2 + A_pix_radial  # A_pix_radial has shape (n_gal,)
             else:
                 # Traditional dipole/quadrupole approach
@@ -1431,14 +1477,17 @@ class ClustersModel(BaseModel):
             # Predict logF from the scaling relation, `(ngal, nrbin)``
             # TODO: Where to add the E(z) term?
             if self.which_relation in ["LT", "LTY"]:
-                logF_pred = (A + B * logT[:, None]
+                # If A varies per galaxy (per_pix or radial_binned), need to add extra dim
+                A_term = A[:, None] if self.which_A in ["per_pix", "radial_binned"] else A
+                logF_pred = (A_term + B * logT[:, None]
                             + C * (logY[:, None] + 2 * logda_grid[None, :])
                             - jnp.log10(4 * jnp.pi) - 2 * logdl_grid[None, :])
                 # Likelihood of logF , `(n_field, n_gal, n_rbin)`
                 ll = Normal(logF_pred, sigma_logF[:, None]).log_prob(
                     data["logF"][:, None])[None, ...]
             elif self.which_relation in ["YT", "YTL"]:
-                logY_pred = (A + B * logT[:, None]
+                A_term = A[:, None] if self.which_A in ["per_pix", "radial_binned"] else A
+                logY_pred = (A_term + B * logT[:, None]
                             + C * (logF[:, None] + 2 * logdl_grid[None, :]
                             + jnp.log10(4 * jnp.pi) ) - 2 * logda_grid[None, :])
                 # Likelihood of logY , `(n_field, n_gal, n_rbin)`
