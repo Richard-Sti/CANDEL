@@ -1477,8 +1477,11 @@ class ClustersModel(BaseModel):
             # Predict logF from the scaling relation, `(ngal, nrbin)``
             # TODO: Where to add the E(z) term?
             if self.which_relation in ["LT", "LTY"]:
-                # If A varies per galaxy (per_pix or radial_binned), need to add extra dim
-                A_term = A[:, None] if self.which_A in ["per_pix", "radial_binned"] else A
+                # If A varies per galaxy (per_pix, radial_binned, or has dipole/quad),
+                # need to add extra dim for broadcasting with r_grid
+                # Check if A is per-galaxy (ndim > 0) or scalar (ndim == 0)
+                A_term = A[:, None] if (self.which_A in ["per_pix", "radial_binned", "radial_binned_dipole"] 
+                                       or jnp.ndim(A) > 0) else A
                 logF_pred = (A_term + B * logT[:, None]
                             + C * (logY[:, None] + 2 * logda_grid[None, :])
                             - jnp.log10(4 * jnp.pi) - 2 * logdl_grid[None, :])
@@ -1486,7 +1489,9 @@ class ClustersModel(BaseModel):
                 ll = Normal(logF_pred, sigma_logF[:, None]).log_prob(
                     data["logF"][:, None])[None, ...]
             elif self.which_relation in ["YT", "YTL"]:
-                A_term = A[:, None] if self.which_A in ["per_pix", "radial_binned"] else A
+                # Same fix for YT/YTL: check if A is per-galaxy or scalar
+                A_term = A[:, None] if (self.which_A in ["per_pix", "radial_binned", "radial_binned_dipole"] 
+                                       or jnp.ndim(A) > 0) else A
                 logY_pred = (A_term + B * logT[:, None]
                             + C * (logF[:, None] + 2 * logdl_grid[None, :]
                             + jnp.log10(4 * jnp.pi) ) - 2 * logda_grid[None, :])
