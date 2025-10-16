@@ -24,12 +24,19 @@ CANDEL can be run locally for small samples or scaled to computing clusters with
 
 **CANDEL** uses configuration files to set up the paths, data, and model parameters. A working example will be provided soon! In the meantime, please get in touch if you have any questions.
 
-Here are some examples of what CANDEL can do:
-
-If you use CANDEL, please cite:
+Here are some recent works that have used CANDEL:
 
 > *The Velocity Field Olympics: Assessing velocity field reconstructions with direct distance tracers*; **Stiskalek et al. (2025)**
+> [[arXiv:2502.00121]](https://arxiv.org/abs/2502.00121)
+
+> *1.8 per cent measurement of $H_0$ from Cepheids alone*; **Stiskalek et al. (2025)**
 > [[arXiv:2509.09665]](https://arxiv.org/abs/2509.09665)
+
+> No evidence for $H_0$ anisotropy from Tully-Fisher or supernova distances; **Stiskalek et al. (2025)**
+> [[arXiv:2509.14997]](https://arxiv.org/abs/2509.14997)
+
+> *$S_8$ from Tully-Fisher, fundamental plane, and supernova distances agree with Planck*; **Stiskalek (2025)**
+> [[arXiv:2509.20235]](https://arxiv.org/abs/2509.20235)
 
 
 ## Installation
@@ -49,11 +56,7 @@ python -m pip install -e .
 ```
 
 To enable model evidence computation, install the [harmonic](https://github.com/astro-informatics/harmonic) package. But there may be some compatibility issues with the latest JAX versions.
-```
 
 ## Citation
-If you use CANDEL, please cite:
 
-> **Stiskalek et al. (2025)**,
-> *CANDEL: Calibration and Normalization of the Distance Ladder*, in prep.
-> [arXiv:2509.09665](https://arxiv.org/abs/2509.09665)
+If you use CANDEL, or find it useful, please cite the papers listed in the example section.
