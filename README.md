@@ -4,13 +4,15 @@
 
 ## Overview
 
-CANDEL is designed to **jointly calibrate** each distance indicator (e.g. the slope and intercept of the Tully–Fisher relation) while **simultaneously calibrating** the underlying density and velocity field.
+CANDEL is designed to jointly calibrate each distance indicator (e.g. the slope and intercept of the Tully–Fisher relation) while simultaneously calibrating the underlying density and velocity field.
 
-Its core philosophy is to **forward-model the observables** (e.g. magnitudes, redshifts) while **marginalising over latent variables** such as distances or absolute magnitudes.
-Marginalisation can be performed either via **numerical integration** or **Hamiltonian Monte Carlo (HMC)** sampling. Moreover, if the velocity field is provided, it also allows one to account for the peculiar velocities when forward-modelling the observed redshift.
+Its core philosophy is to forward-model the observables (e.g. magnitudes, redshifts) while marginalising over latent variables such as distances or absolute magnitudes. Marginalisation can be performed either via numerical integration or Hamiltonian Monte Carlo (HMC) sampling. If the velocity field is provided, it also allows one to account for the peculiar velocities when forward-modelling the observed redshift. CANDEL also supports model comparison via Bayesian evidence computation using the [harmonic](https://github.com/astro-informatics/harmonic) package.
 
 The selection function is typically modelled following the phenomenological approach of
 [Lavaux (2016)](https://arxiv.org/abs/1512.04534). For precision measurements sensitive to selection effects (e.g. $H_0$), a more detailed treatment is recommended (see [Stiskalek et al. 2025](https://arxiv.org/abs/2509.09665)).
+
+CANDEL can be run locally for small samples or scaled to computing clusters with full GPU support. It includes examples for SLURM submission and tools for batch job generation, enabling runs to be launched individually or in groups using a frozen version of the code. This setup efficiently leverages available computational resources and accelerates development.
+
 
 ## Supported distance indicators and catalogues
 - **Tully–Fisher relation:** 2MTF, SFI++, CF4-TFR
@@ -20,7 +22,14 @@ The selection function is typically modelled following the phenomenological appr
 
 ## Example
 
-**CANDEL** uses configuration files to set up the paths, data, and model parameters. A working example will be provided soon!
+**CANDEL** uses configuration files to set up the paths, data, and model parameters. A working example will be provided soon! In the meantime, please get in touch if you have any questions.
+
+Here are some examples of what CANDEL can do:
+
+If you use CANDEL, please cite:
+
+> *The Velocity Field Olympics: Assessing velocity field reconstructions with direct distance tracers*; **Stiskalek et al. (2025)**
+> [[arXiv:2509.09665]](https://arxiv.org/abs/2509.09665)
 
 
 ## Installation
