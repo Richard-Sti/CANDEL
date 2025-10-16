@@ -25,16 +25,16 @@ CANDEL can be run locally for small samples or scaled to computing clusters with
 **CANDEL** uses configuration files to set up the paths, data, and model parameters. A working example will be provided soon! In the meantime, please get in touch if you have any questions.
 
 Here are some recent works that have used CANDEL:
-1. *The Velocity Field Olympics: Assessing velocity field reconstructions with direct distance tracers* — Stiskalek et al. (2025)
+1. *The Velocity Field Olympics: Assessing velocity field reconstructions with direct distance tracers*; Stiskalek et al. (2025)
   [arXiv:2502.00121](https://arxiv.org/abs/2502.00121)
 
-2. *1.8 per cent measurement of H₀ from Cepheids alone* — Stiskalek et al. (2025)
+2. *1.8 per cent measurement of H₀ from Cepheids alone*; Stiskalek et al. (2025)
   [arXiv:2509.09665](https://arxiv.org/abs/2509.09665)
 
-3. *No evidence for H₀ anisotropy from Tully–Fisher or supernova distances* — Stiskalek et al. (2025)
+3. *No evidence for H₀ anisotropy from Tully–Fisher or supernova distances*; Stiskalek et al. (2025)
   [arXiv:2509.14997](https://arxiv.org/abs/2509.14997)
 
-4. *S₈ from Tully–Fisher, fundamental plane, and supernova distances agree with Planck* — Stiskalek (2025)
+4. *S₈ from Tully–Fisher, fundamental plane, and supernova distances agree with Planck*; Stiskalek (2025)
   [arXiv:2509.20235](https://arxiv.org/abs/2509.20235)
 
 ## Installation
