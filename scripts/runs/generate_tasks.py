@@ -72,8 +72,8 @@ from os import makedirs
 from os.path import exists, join, splitext
 
 import tomli_w
-
-from candel import fprint, load_config, replace_prior_with_delta, get_nested
+from candel import (SPEED_OF_LIGHT, fprint, get_nested, load_config,  # noqa
+                    replace_prior_with_delta)
 
 
 def overwrite_config(config, key, value):
@@ -153,11 +153,25 @@ def generate_dynamic_tag(config, base_tag="default"):
     if isinstance(Vext_prior, dict) and Vext_prior.get("dist") == "delta":
         parts.append("noVext")
 
+    which_Vext = get_nested(config, "pv_model/which_Vext", None)
+    if which_Vext is not None and which_Vext != "constant":
+        parts.append(f"Vext_{which_Vext}")
+
+    which_dist_prior = get_nested(
+        config, "pv_model/which_distance_prior", "empirical")
+    if which_dist_prior != "empirical":
+        parts.append(f"rprior-{which_dist_prior}")
+
     beta_prior = get_nested(config, "model/priors/beta", None)
     if isinstance(beta_prior, dict) and beta_prior.get("dist") == "delta":
         val = beta_prior.get("value")
         if val != 0.:
             parts.append(f"beta_{val}")
+
+    b1_prior = get_nested(config, "model/priors/b1", None)
+    if isinstance(b1_prior, dict) and b1_prior.get("dist") == "delta":
+        val = b1_prior.get("value")
+        parts.append(f"b1_{val}")
 
     # Flag if sampling the dust prior
     dust_model = get_nested(config, f"io/{catalogue}/dust_model", None)
@@ -274,42 +288,46 @@ if __name__ == "__main__":
     manual_overrides = {
         # ###### - INFERENCE - ######
         "inference/num_warmup": 500,
-        "inference/num_samples": 1000,
-        "inference/num_chains": 5,
+        "inference/num_samples": 500,
+        "inference/num_chains": 1,
         "inference/compute_log_density": False,
         "inference/compute_evidence": False,
         "inference/track_log_density_per_sample": False,
-        "inference/model": "ClustersModel",
+        "inference/model": "PantheonPlusModel",
         # "inference/model": "ClustersModel",
         # "inference/shared_params": "beta,sigma_v,Vext",
         # ###### -- MODEL -- ######
-        "model/use_MNR": False,
+        "model/use_MNR": True,
         "model/marginalize_eta": False,
         # ###### -- PV MODEL -- ######
-        # "pv_model/kind": "precomputed_los_Carrick2015",  # noqa
         "pv_model/kind": "Vext",
+        # "pv_model/kind": "Vext",
         # "pv_model/smooth_target": "none",
         "pv_model/galaxy_bias": "linear",
         # "pv_model/kind": "precomputed_los_manticore_2MPP_MULTIBIN_N256_DES_V2",  # noqa
-        "pv_model/which_Vext": "per_pix",
-        "pv_model/r_limits_malmquist": [[0.1, 1001]],
-        "pv_model/num_points_malmquist": 201,
+        # "pv_model/which_Vext": "constant",
+        "pv_model/r_limits_malmquist": [[0.1, 201]],
+        "pv_model/num_points_malmquist": 251,
         "pv_model/los_decay_scale": 20.0,
+        "pv_model/with_H0_transition": True,
+        # "pv_model/which_distance_prior": "empirical",
+        # "pv_model/which_distance_prior": "volume_redshift_selected",
         # ##### - PRIORS -- ######
         # "model/priors/Vext_radial": {
-        #     "dist": "vector_radial_spline_uniform",
+        #     "dist": "vector_radial_uniform",
         #     "low": 0.0,
-        #     "high": 1000,
-        #     "rknot": [20, 60, 100, 130],
-        #     "k": 3,
-        #     "endpoints": "not-a-knot"
+        #     "high": 500,
+        #     "rknot": [0, 20, 60, 100, ],
+        #     "method": "cubic"
         # },
-        "model/priors/beta": [
-            # {"dist": "uniform", "low": -1, "high": 2.0},
-            # {"dist": "normal", "loc": 0.43, "scale": 0.25},
-            {"dist": "normal", "loc": 0.43, "scale": 0.25},
-            # {"dist": "delta", "value": 1.0},
-        ],
+        # "model/priors/beta": [
+        #     # {"dist": "uniform", "low": -1, "high": 2.0},
+        #     # {"dist": "normal", "loc": 0.43, "scale": 0.25},
+        #     {"dist": "normal", "loc": 0.43, "scale": 0.25},
+        #     # {"dist": "delta", "value": 1.0},
+        # ],
+        # "model/priors/b1": [{"dist": "delta", "value": x}
+        #                     for x in [round(0.1 * n, 1) for n in range(16)]],  # noqa
         # "model/priors/zeropoint_dipole": [
         #     {"dist": "delta", "value": [0.0, 0.0, 0.0]},
         #     {"dist": "vector_uniform_fixed", "low": 0.0, "high": 0.3},
@@ -319,22 +337,28 @@ if __name__ == "__main__":
         #     {"dist": "delta", "value": [0.0, 0.0, 0.0]},
         #     # {"dist": "vector_components_uniform", "low": -0.3, "high": 0.3},  # noqa
         # ],
+        # "model/priors/Om": {"dist": "delta", "value": 0.3},
         # ###### - IO - ######
         # "io/catalogue_name": ["2MTF", "SFI", "CF4_W1", "CF4_i"],
-        "io/catalogue_name": "Clusters",
+        "io/catalogue_name": "PantheonPlus",
         # "io/catalogue_name": ["LOSS", "Foundation",],
         # "io/catalogue_name": "Clusters",
-        # "io/root_output": "results_test/",
+        "io/root_output": "results_test/",
         # "io/Clusters/which_relation": "LY",
         # "io/Clusters/zcmb_max": 0.055,
         # "io/CF4_i/exclude_W1": True,
         # "io/Clusters/nsamples_subsample": 101,
-        # "io/CF4_W1/nsamples_subsample": 500,
+        # "io/CF4_W1/nsamples_subsample": 1000,
+        # "io/CF4_calibrated/nsamples_subsample": 500,
+        "io/PantheonPlus/nsamples_subsample": 100,
+        "io/PantheonPlus/zcmb_max": 0.06,
+        # "io/CF4_calibrated/zcmb_min": 4000 / SPEED_OF_LIGHT,
+        # "io/CF4_calibrated/zcmb_max": 0.055,
         # "io/CF4_W1/best_mag_quality": False,
         # "io/CF4_W1/dust_model": ["none", "default", "SFD", "CSFD", "Planck2016"],  # noqa
         # "io/Clusters/which_relation": ["LT", "LTY"],
         # "io/catalogue_name": [f"CF4_mock_{n}" for n in range(70)],
-        # "io/CF4_mock/root": "data/CF4_mock/anisotropic",
+        # "io/CF4_mock/root": "data/CF4_mock/",
     }
 
     # --- CH0 overrides ---

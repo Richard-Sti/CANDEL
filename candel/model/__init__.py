@@ -21,9 +21,10 @@ from .model import (                                                            
     PantheonPlusModel,                                                          # noqa
     ClustersModel,                                                              # noqa
     FPModel,                                                                    # noqa
-    CalibratedDistanceModel_DistMarg,                                           # noqa
+    CalibratedDistanceModel,                                                    # noqa
     JointPVModel,                                                               # noqa
-    Maxwell,                                                                    # noqa
+    interp_cartesian_vector,                                                    # noqa
+    H0_with_transition_r,                                                       # noqa
     )
 from .model_SH0ES import SH0ESModel                                             # noqa
 from .interp import LOSInterpolator                                             # noqa
@@ -39,7 +40,7 @@ def name2model(name, shared_param=None, config=None):
         "PantheonPlusModel": PantheonPlusModel,
         "ClustersModel": ClustersModel,
         "FPModel": FPModel,
-        "CalibratedDistanceModel_DistMarg": CalibratedDistanceModel_DistMarg,
+        "CalibratedDistanceModel": CalibratedDistanceModel,
         }
 
     if isinstance(name, str):

@@ -21,13 +21,13 @@ from abc import ABC, abstractmethod
 
 import jax.numpy as jnp
 import numpy as np
+from interpax import interp1d
 from jax import random, vmap
 from jax.debug import print as jprint  # noqa
 from jax.lax import cond
 from jax.scipy.linalg import solve_triangular
 from jax.scipy.special import gammainc, gammaln, logsumexp
 from jax.scipy.stats.norm import cdf as jax_norm_cdf
-from jax_cosmo.scipy.interpolate import InterpolatedUnivariateSpline
 from numpyro import deterministic, factor, handlers, plate, sample
 from numpyro.distributions import (Delta, Distribution, MultivariateNormal,
                                    Normal, ProjectedNormal, TruncatedNormal,
@@ -38,7 +38,8 @@ from numpyro.infer.reparam import ProjectedNormalReparam
 from ..cosmography import (Distance2Distmod, Distance2Distmod_withOm,
                            Distance2LogAngDist, Distance2LogLumDist,
                            Distance2Redshift, Distance2Redshift_withOm)
-from ..util import SPEED_OF_LIGHT, fprint, get_nested, load_config
+from ..util import (SPEED_OF_LIGHT, fprint, get_nested, load_config,
+                    H0_with_transition_r)
 from .simpson import ln_simpson
 
 ###############################################################################
@@ -86,6 +87,12 @@ def mvn_logpdf_cholesky(y, mu, L):
 ###############################################################################
 #                                Priors                                       #
 ###############################################################################
+
+
+def smoothclip_nr(nr, tau):
+    """Smooth zero-clipping for the number density."""
+    return 0.5 * (nr + jnp.sqrt(nr**2 + tau**2))
+
 
 def log_prior_r_empirical(r, R, p, n, Rmax_grid, Rmax_truncate=None):
     """
@@ -226,7 +233,7 @@ def sample_vector_fixed(name, mag_min, mag_max):
         )
 
 
-def sample_spline_radial_vector(name, nval, low, high):
+def sample_radial_vector(name, nval, low, high):
     """
     Sample a radial vector at `nval` knots: direction ~ isotropic,
     magnitude ~ Uniform(low, high). Returns an array of shape (nval, 3).
@@ -249,25 +256,51 @@ def sample_spline_radial_vector(name, nval, low, high):
     return mag[..., None] * u
 
 
-def interp_spline_radial_vector(rq, bin_values, **kwargs):
-    """Spline interp with constant extrapolation at boundaries."""
-    x = jnp.asarray(kwargs["rknot"])
-    k = kwargs.get("k", 3)
-    endpoints = kwargs.get("endpoints", "not-a-knot")
+def _slerp(u0, u1, t, eps=1e-8):
+    dot = jnp.clip(jnp.dot(u0, u1), -1.0, 1.0)
+    theta = jnp.arccos(dot)
+    sin_th = jnp.sin(theta)
 
+    def slerp_core(_):
+        a = jnp.sin((1.0 - t) * theta) / sin_th
+        b = jnp.sin(t * theta) / sin_th
+        return a * u0 + b * u1
+
+    def lerp_norm(_):
+        v = (1.0 - t) * u0 + t * u1
+        n = jnp.linalg.norm(v)
+        return jnp.where(n > 0.0, v / n, u0)
+
+    return cond(sin_th < eps, lerp_norm, slerp_core, operand=None)
+
+
+def interp_cartesian_vector(rq, rknot, v_knot, method="cubic"):
+    """Magnitude via interpax; direction via SLERP; constant extrapolation."""
     rq = jnp.asarray(rq)
+    x = jnp.asarray(rknot)
+    y = jnp.asarray(v_knot)            # (K, 3)
+    K = y.shape[0]
+
+    mk = jnp.linalg.norm(y, axis=-1)   # (K,)
+    mk_safe = jnp.where(mk > 0.0, mk, 1.0)
+    uk = y / mk_safe[:, None]
+
+    m_r = interp1d(rq, x, mk, method=method)
     x0, x1 = x[0], x[-1]
+    m_r = jnp.where(rq < x0, mk[0], m_r)
+    m_r = jnp.where(rq > x1, mk[-1], m_r)
 
-    def spline_eval(y):
-        s = InterpolatedUnivariateSpline(x, jnp.asarray(y),
-                                         k=k, endpoints=endpoints)
-        vals = s(rq)
-        y0, y1 = y[0], y[-1]
-        vals = jnp.where(rq < x0, y0, vals)
-        vals = jnp.where(rq > x1, y1, vals)
-        return vals
+    def dir_at_r(r):
+        i = jnp.clip(jnp.searchsorted(x, r, side="right") - 1, 0, K - 2)
+        xl, xr = x[i], x[i + 1]
+        t = jnp.where(xr > xl, (r - xl) / (xr - xl), 0.0)
+        return _slerp(uk[i], uk[i + 1], t)
 
-    return vmap(spline_eval)(bin_values.T)
+    u_r = vmap(dir_at_r)(rq)           # (R, 3)
+    u_r = jnp.where((rq < x0)[:, None], uk[0], u_r)
+    u_r = jnp.where((rq > x1)[:, None], uk[-1], u_r)
+
+    return m_r[:, None] * u_r          # (R, 3)
 
 
 def load_priors(config_priors):
@@ -281,7 +314,7 @@ def load_priors(config_priors):
         "maxwell": lambda p: Maxwell(p["scale"]),
         "vector_uniform": lambda p: {"type": "vector_uniform", "low": p["low"], "high": p["high"]},  # noqa
         "vector_uniform_fixed": lambda p: {"type": "vector_uniform_fixed", "low": p["low"], "high": p["high"],},  # noqa
-        "vector_radial_spline_uniform": lambda p: {"type": "vector_radial_spline_uniform", "nval": len(p["rknot"]), "low": p["low"], "high": p["high"]},  # noqa
+        "vector_radial_uniform": lambda p: {"type": "vector_radial_uniform", "nval": len(p["rknot"]), "low": p["low"], "high": p["high"]},  # noqa
         "vector_components_uniform": lambda p: {"type": "vector_components_uniform", "low": p["low"], "high": p["high"],},  # noqa
     }
     priors = {}
@@ -326,8 +359,8 @@ def _rsample(name, dist):
         return sample_vector_components_uniform(
             name, dist["low"], dist["high"])
 
-    if isinstance(dist, dict) and dist.get("type") == "vector_radial_spline_uniform":  # noqa
-        return sample_spline_radial_vector(
+    if isinstance(dist, dict) and dist.get("type") == "vector_radial_uniform":
+        return sample_radial_vector(
             name, dist["nval"], dist["low"], dist["high"], )
 
     return sample(name, dist)
@@ -403,7 +436,7 @@ class BaseModel(ABC):
             d = priors["Vext_radial"]
             fprint(f"using radial `Vext` with spline knots at {d['rknot']}")
             self.kwargs_Vext = {
-                key: d[key] for key in ["rknot", "k", "endpoints"]}
+                key: d[key] for key in ["rknot", "method"]}
         elif self.which_Vext == "per_pix":
             nside = get_nested(config, "pv_model/Vext_per_pix_nside", None)
             if nside is None:
@@ -444,6 +477,9 @@ class BaseModel(ABC):
                                     "double_powerlaw"]:
             raise ValueError(
                 f"Invalid galaxy bias model '{self.galaxy_bias}'.")
+
+        self.which_distance_prior = get_nested(
+            config, "pv_model/which_distance_prior", "empirical")
 
         self.config = config
 
@@ -496,7 +532,7 @@ def lp_galaxy_bias(delta, log_rho, bias_params, galaxy_bias):
         lp = (alpha_low * log_x
               + (alpha_high - alpha_low) * jnp.logaddexp(0.0, log_x))
     elif "linear" in galaxy_bias or galaxy_bias == "unity":
-        lp = jnp.log(jnp.clip(1 + bias_params[0] * delta, 1e-5))
+        lp = jnp.log(smoothclip_nr(1 + bias_params[0] * delta, tau=0.1))
     else:
         raise ValueError(f"Invalid galaxy bias model '{galaxy_bias}'.")
 
@@ -511,9 +547,10 @@ def compute_Vext_radial(data, r_grid, Vext, which_Vext, **kwargs_Vext):
     """
     if which_Vext == "radial":
         # Shape (3, n_rbins)
-        Vext = interp_spline_radial_vector(r_grid, Vext, **kwargs_Vext)
+        Vext = interp_cartesian_vector(r_grid, v_knot=Vext, **kwargs_Vext)
+
         Vext_rad = jnp.sum(
-            data["rhat"][..., None] * Vext[None, ...], axis=1)[None, ...]
+            data["rhat"][:, None, :] * Vext[None, :, :], axis=-1)[None, ...]
     elif which_Vext == "per_pix":
         Vext_rad = (data["C_pix"] @ Vext)[None, :, None]
     elif which_Vext == "constant":
@@ -601,6 +638,11 @@ class TFRModel(BaseModel):
         if self.use_MNR and not self.marginalize_eta:
             fprint("setting `compute_evidence` to False.")
             self.config["inference"]["compute_evidence"] = False
+
+        if self.which_distance_prior != "empirical":
+            raise ValueError(
+                f"TFRModel only supports empirical distance prior, got "
+                f"'{self.which_distance_prior}'.")
 
     def __call__(self, data, shared_params=None):
         nsamples = len(data)
@@ -786,6 +828,11 @@ class SNModel(BaseModel):
                 "`track_log_density_per_sample` is not implemented "
                 "for `SNModel`.")
 
+        if self.which_distance_prior != "empirical":
+            raise ValueError(
+                f"SNModel only supports empirical distance prior, got "
+                f"'{self.which_distance_prior}'.")
+
     def __call__(self, data, shared_params=None):
         nsamples = len(data)
 
@@ -936,8 +983,23 @@ class PantheonPlusModel(BaseModel):
                 "`track_log_density_per_sample` is not implemented "
                 "for `PantheonPlusModel`.")
 
+        if self.which_distance_prior != "empirical":
+            raise ValueError(
+                f"PantheonPlusModel only supports empirical distance prior, "
+                f"got {self.which_distance_prior}'.")
+
         fprint("setting `compute_evidence` to False.")
         self.config["inference"]["compute_evidence"] = False
+
+        self.with_H0_transition = get_nested(
+            self.config, "pv_model/with_H0_transition", False)
+        self.H0_for_transition = get_nested(
+            self.config, "pv_model/H0_for_transition", 73.04)
+        self.Rmax = get_nested(
+            self.config, "pv_model/H0_transition_rmax", 200.)
+        fprint(f"with_H0_transition = {self.with_H0_transition}, "
+               f"H0_for_transition = {self.H0_for_transition} and "
+               f"Rmax = {self.Rmax} Mpc.")
 
     def __call__(self, data, shared_params=None):
         nsamples = len(data)
@@ -945,6 +1007,11 @@ class PantheonPlusModel(BaseModel):
         if data.sample_dust:
             raise NotImplementedError(
                 "Dust sampling is not implemented for `PantheonPlusModel`.")
+
+        if self.with_H0_transition and data.has_precomputed_los:
+            raise NotImplementedError(
+                "H0 transition is not implemented if modelling the "
+                "density and velocity field.")
 
         # Sample the SN parameters.
         M = rsample("M", self.priors["SN_absmag"], shared_params)
@@ -980,13 +1047,26 @@ class PantheonPlusModel(BaseModel):
         # the width of the uniform distribution of h is sampled. A grid
         # is still required to normalize the inhomogeneous Malmquist bias
         # distribution.
-        h = 1.
-        r_grid = data["r_grid"] / h
-        Rmax = r_grid[-1]
+        if self.with_H0_transition:
+            Rmax = self.Rmax
+            H0_present = self.H0_for_transition
+
+            dH0 = rsample("dH0", self.priors["dH0"], shared_params)
+            Rt = sample("R_H0", Uniform(0., Rmax), shared_params)
+            Rt_alpha = rsample(
+                "R_H0_alpha", self.priors["R_H0_alpha"], shared_params)
+        else:
+            h = 1.
+            r_grid = data["r_grid"] / h
+            Rmax = r_grid[-1]
 
         # Sample the radial distance to each galaxy, `(n_galaxies)`.
         with plate("plate_distance", nsamples):
             r = sample("r_latent", Uniform(0, Rmax))
+
+        if self.with_H0_transition:
+            # Compute h(r) with transition
+            h = H0_with_transition_r(r, H0_present, dH0, Rt, Rt_alpha) / 100.
 
         mu = self.distance2distmod(r, h=h)  # (n_gal,)
 
@@ -1090,6 +1170,11 @@ class ClustersModel(BaseModel):
                 "`use_MNR` to False in the config file.")
             fprint("setting `compute_evidence` to False.")
             self.config["inference"]["compute_evidence"] = False
+
+        if self.which_distance_prior != "empirical":
+            raise ValueError(
+                f"ClustersModel only supports empirical distance prior, got "
+                f"'{self.which_distance_prior}'.")
 
     def __call__(self, data, shared_params=None):
         nsamples = len(data)
@@ -1214,6 +1299,11 @@ class FPModel(BaseModel):
 
         self.distance2logangdist = Distance2LogAngDist(Om0=self.Om)
 
+        if self.which_distance_prior != "empirical":
+            raise ValueError(
+                f"FPModel only supports empirical distance prior, got "
+                f"'{self.which_distance_prior}'.")
+
     def __call__(self, data, shared_params=None):
         nsamples = len(data)
 
@@ -1337,7 +1427,7 @@ class FPModel(BaseModel):
 #                       Calibrated-distance model                             #
 ###############################################################################
 
-class CalibratedDistanceModel_DistMarg(BaseModel):
+class CalibratedDistanceModel(BaseModel):
     """
     A calibrated distance model, where the task is to forward-model a set of
     precomputed galaxy distance moduli, typically done e.g. in CF4, while
@@ -1355,11 +1445,34 @@ class CalibratedDistanceModel_DistMarg(BaseModel):
 
         if self.prior_dist_name["h"] == "delta":
             raise ValueError(
-                "Must sample `h` for `CalibratedDistanceModel_DistMarg`. "
+                "Must sample `h` for `CalibratedDistanceModel`. "
                 "Currently set to a delta-function prior.")
 
-        self.distance2distmod_with_Om = Distance2Distmod_withOm()
-        self.distance2redshift_with_Om = Distance2Redshift_withOm()
+        try:
+            kwargs_r2mu = self.config["interp_kwargs"]["Distance2Distmod_withOm"]  # noqa
+        except KeyError:
+            kwargs_r2mu = {}
+
+        try:
+            kwargs_r2z = self.config["interp_kwargs"]["Distance2Redshift_withOm"]  # noqa
+        except KeyError:
+            kwargs_r2z = {}
+
+        allowed_priors = ["empirical", "volume", "volume_redshift_selected",
+                          "flat_distance", "inv_distance"]
+        if self.which_distance_prior not in allowed_priors:
+            raise ValueError(
+                f"`which_distance_prior` must be one of "
+                f"{allowed_priors}, got '{self.which_distance_prior}'.")
+
+        if self.prior_dist_name["Om"] != "delta":
+            raise ValueError(
+                "`Om` must be fixed to a delta-function prior for the "
+                "`CalibratedDistanceModel`. Something is wrong with the Om "
+                "sampling.")
+
+        self.distance2distmod_with_Om = Distance2Distmod_withOm(**kwargs_r2mu)
+        self.distance2redshift_with_Om = Distance2Redshift_withOm(**kwargs_r2z)
 
     def __call__(self, data, shared_params=None):
         nsamples = len(data)
@@ -1371,21 +1484,22 @@ class CalibratedDistanceModel_DistMarg(BaseModel):
         # Sample the FP parameters.
         h = rsample("h", self.priors["h"], shared_params)
         Om = rsample("Om", self.priors["Om"], shared_params)
-        sigma_int = rsample(
-            "sigma_int", self.priors["sigma_int"], shared_params)
 
-        kwargs_dist = sample_distance_prior(self.priors)
+        if self.which_distance_prior == "empirical":
+            kwargs_dist = sample_distance_prior(self.priors)
+        elif self.which_distance_prior == "volume_redshit_selected":
+            factor("log_p_S", nsamples * 3 * jnp.log(h * 100))
+            kwargs_dist = {}
+        else:
+            kwargs_dist = {}
 
         # Sample velocity field parameters.
         Vext = sample_Vext(
             self.priors, self.which_Vext, shared_params, self.kwargs_Vext)
         sigma_v = rsample("sigma_v", self.priors["sigma_v"], shared_params)
 
-        # Remaining parameters
-        beta = rsample("beta", self.priors["beta"], shared_params)
-        bias_params = sample_galaxy_bias(
-            self.priors, self.galaxy_bias, shared_params, Om=Om,
-            beta=beta)
+        if self.which_distance_prior == "volume_redshift_selected":
+            factor("selection_test", nsamples * 3 * jnp.log(h * 100))
 
         if self.use_MNR:
             raise NotImplementedError("MNR for FP is not implemented yet.")
@@ -1394,31 +1508,36 @@ class CalibratedDistanceModel_DistMarg(BaseModel):
             if self.use_MNR:
                 raise NotImplementedError("MNR for FP is not implemented yet.")
 
-            # Convert the distance grid from `Mpc / h` to `Mpc``
-            r_grid = data["r_grid"] / h
+            # This distance grid is assumed to be in `Mpc``
+            r_grid = data["r_grid"]
             mu_grid = self.distance2distmod_with_Om(r_grid, Om=Om, h=h)
 
             # Homogeneous Malmqusit distance prior, `(n_field, n_gal, n_rbin)`
-            lp_dist = log_prior_r_empirical(
-                r_grid, **kwargs_dist, Rmax_grid=r_grid[-1])[None, None, :]
+            if self.which_distance_prior == "empirical":
+                lp_dist = log_prior_r_empirical(
+                    r_grid, **kwargs_dist, Rmax_grid=r_grid[-1])[None, None, :]
+            elif self.which_distance_prior.startswith("volume"):
+                Rmax = r_grid[-1]
+                lp_dist = (
+                    2 * jnp.log(r_grid)[None, None, :] - 3 * jnp.log(Rmax))
+            elif self.which_distance_prior == "flat_distance":
+                lp_dist = jnp.zeros((1, 1, r_grid.size))
+            elif self.which_distance_prior == "inv_distance":
+                lp_dist = -jnp.log(r_grid)[None, None, :]
+            else:
+                raise ValueError(
+                    f"Invalid distance prior '{self.which_distance_prior}'.")
 
             # Likelihood of the 'obs' dist moduli, `(n_field, n_gal, n_rbin)`
-            sigma_mu = jnp.sqrt(sigma_int**2 + data["e2_mu"])
+            sigma_mu = data["e_mu"]
             ll = Normal(
                 mu_grid[None, :], sigma_mu[:, None]).log_prob(
                 data["mu"][:, None])[None, ...]
 
             if data.has_precomputed_los:
-                # Reconstruction LOS velocity `(n_field, n_gal, n_step)`
-                Vrad = beta * data["los_velocity_r_grid"]
-                # Add inhomogeneous Malmquist bias and normalize the r prior
-                lp_dist += lp_galaxy_bias(
-                    data["los_delta_r_grid"],
-                    data["los_log_density_r_grid"],
-                    bias_params, self.galaxy_bias
-                    )
-                lp_dist -= ln_simpson(
-                    lp_dist, x=r_grid[None, None, :], axis=-1)[..., None]
+                raise NotImplementedError(
+                    "Precomputed LOS for `CalibratedDistanceModel` is not "
+                    "implemented yet.")
             else:
                 Vrad = 0.
 

@@ -65,7 +65,10 @@ def gen_TFR_mock(nsamples, r_grid, Vext_mag, Vext_ell, Vext_b, sigma_v, beta,
 
     r = np.full(nsamples, np.nan)
     Vpec = np.full(nsamples, np.nan)
-    b1 = Om**0.55 / beta
+    if beta == 0:
+        b1 = 0.
+    else:
+        b1 = Om**0.5 / beta
     for i in range(nsamples):
         Vpec[i] = Vext_rad[i]
         r[i] = sample_distance(r_grid, los_density[i], b1, R, p, n, gen)

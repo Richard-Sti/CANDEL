@@ -36,6 +36,17 @@ def compute_S8_all(fnames, beta2cosmo):
     return S8_list
 
 
+def compute_fsigma8_lin_all(fnames, beta2cosmo):
+    fsigma8_lin_list = []
+    for fname in fnames:
+        with File(fname, 'r') as f:
+            beta = f["samples"]["beta"][...]
+        fsigma8_lin = beta2cosmo.compute_fsigma8_linear(beta)
+        fsigma8_lin_list.append(fsigma8_lin)
+
+    return fsigma8_lin_list
+
+
 def replace_token_in_paths(files, token, replacement=""):
     """Replace or remove a token in simple (path, label) tuples."""
     new_files = []
