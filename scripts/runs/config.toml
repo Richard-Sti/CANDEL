@@ -1,6 +1,6 @@
-root_main = "/Users/rstiskalek/Projects/CANDEL/"
-python_exec = "/Users/rstiskalek/Projects/CANDEL/venv_candel/bin/python"
-machine = "local"
+# root_main = "/Users/rstiskalek/Projects/CANDEL/"
+# python_exec = "/Users/rstiskalek/Projects/CANDEL/venv_candel/bin/python"
+# machine = "local"
 
 # root_main = "/mnt/users/rstiskalek/CANDEL/"
 # python_exec = "/mnt/users/rstiskalek/CANDEL/venv_candel/bin/python"
@@ -11,10 +11,10 @@ machine = "local"
 # python_exec="/mnt/home/rstiskalek/CANDEL/venv_gpu_candel/bin/python"
 # machine="rusty"
 
-# root_main = "/home/phys1997/CANDEL/"
-# root_data = "/data/phys-galsim/phys1997/CANDEL/"
-# python_exec = "/home/phys1997/CANDEL/venv_candel/bin/python"
-# machine = "arc"
+root_main = "/home/phys1997/CANDEL/"
+root_data = "/data/phys-galsim/phys1997/CANDEL/"
+python_exec = "/home/phys1997/CANDEL/venv_candel/bin/python"
+machine = "arc"
 
 
 ###############################################################################
@@ -49,13 +49,36 @@ galaxy_bias = "linear_from_beta"  # Ignored unless having an underlying density 
 # galaxy_bias = "linear"  # Ignored unless having an underlying density field
 which_Vext = "constant"
 
-# (Inhomogeneus Malmquist bias settings and extrapolation), in units of Mpc / h
+# (Inhomogeneus Malmquist bias settings and extrapolation), in units of Mpc / h.
+# However, for `CalibratedDistanceModel` this is interpreted in Mpc because of
+# the inferred H0.
 r_limits_malmquist = [0.1, 251]
 num_points_malmquist = 251
 
 los_decay_scale = 5.0
 
-Vext_per_pix_nside = 1
+Vext_per_pix_nside = "none"
+which_distance_prior = "empirical"
+
+with_H0_transition = false
+H0_for_transition = 73.04
+H0_transition_rmax = 300  # Mpc
+
+###############################################################################
+#                      Optional interpolator settings                         #
+###############################################################################
+
+
+[interp_kwargs.Distance2Distmod_withOm]
+nr = 1000
+Om_max = 3.0
+nOm = 1000
+
+[interp_kwargs.Distance2Redshift_withOm]
+nr = 1000
+Om_max = 3.0
+nOm = 1000
+
 
 ###############################################################################
 #                                 Model                                       #
@@ -71,19 +94,20 @@ k_sigma = 5
 n_grid = 31
 
 [model.priors.h]
-dist = "delta"
-value = 1.0
-# dist = "uniform"
-# low = 0.25
-# high = 1.0
+# Currently sampled only for the CF4 calibrated data.
+# dist = "delta"
+# value = 1.0
+dist = "uniform"
+low = 0.01
+high = 1.0
 
 [model.priors.Om]
 # Currently sampled only for the CF4 calibrated data.
-dist = "delta"
-value = 0.3
-# dist = "uniform"
-# low = 0.01
-# high = 0.99
+# dist = "delta"
+# value = 0.3
+dist = "uniform"
+low = 0.01
+high = 2.99
 
 [model.priors.alpha]
 dist = "truncated_normal"
@@ -229,13 +253,12 @@ high = 2500
 # value = [0.0, 0.0, 0.0]
 
 [model.priors.Vext_radial]
-dist = "vector_radial_spline_uniform"
+dist = "vector_radial_uniform"
 low = 0.0
 high = 5000
 
 rknot = [0, 250, 600]
-k = 1
-endpoints="not-a-knot"
+method = "cubic"
 
 [model.priors.Vext_sigma]
 dist = "uniform"
@@ -265,6 +288,19 @@ dist = "truncated_normal"
 low = 0.0
 mean = 1.0
 scale = 30
+
+# H0 transition priors
+[model.priors.dH0]
+dist = "normal"
+loc = 0.0
+scale = 1.0
+
+[model.priors.R_H0_alpha]
+dist = "truncated_normal"
+low = 0.0
+mean = 1.0
+scale = 5.0
+
 
 ################################################################################
 #                                  Data                                        #
