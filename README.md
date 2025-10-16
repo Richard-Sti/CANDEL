@@ -22,7 +22,7 @@ CANDEL can be run locally for small samples or scaled to computing clusters with
 
 ## Example
 
-**CANDEL** uses configuration files to set up the paths, data, and model parameters. A working example will be provided soon! In the meantime, please get in touch if you have any questions.
+CANDEL uses configuration files to set up the paths, data, and model parameters. A working example will be provided soon! In the meantime, please get in touch if you have any questions.
 
 Here are some recent works that have used CANDEL:
 1. *The Velocity Field Olympics: Assessing velocity field reconstructions with direct distance tracers*; Stiskalek et al. (2025)
