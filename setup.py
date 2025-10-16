@@ -49,7 +49,6 @@ setup(
         "corner",
         "tomli_w",
         "scienceplots",
-        "jax-cosmo",
         "joblib",
         "getdist",
     ],
