@@ -55,7 +55,7 @@ which_Vext = "constant"
 r_limits_malmquist = [0.1, 251]
 num_points_malmquist = 251
 
-los_decay_scale = 5.0
+los_decay_scale = 10.0
 
 Vext_per_pix_nside = "none"
 which_distance_prior = "empirical"
@@ -258,6 +258,14 @@ low = 0.0
 high = 5000
 
 rknot = [0, 250, 600]
+method = "cubic"
+
+[model.priors.Vext_radial_magnitude]
+dist = "vector_radialmag_uniform"
+low = 0.0
+high = 5000
+
+rknot = [0, 50, 150]
 method = "cubic"
 
 [model.priors.Vext_sigma]
