@@ -289,41 +289,41 @@ if __name__ == "__main__":
         # ###### - INFERENCE - ######
         "inference/num_warmup": 500,
         "inference/num_samples": 1500,
-        "inference/num_chains": 10,
+        # "inference/num_chains": 1,
         "inference/compute_log_density": False,
         "inference/compute_evidence": False,
         "inference/track_log_density_per_sample": False,
         # "inference/model": "TFRModel",
-        "inference/model": "ClustersModel",
+        "inference/model": "PantheonPlusModel",
         # "inference/shared_params": "beta,sigma_v,Vext",
         # ###### -- MODEL -- ######
-        "model/use_MNR": False,
+        "model/use_MNR": True,
         "model/marginalize_eta": False,
         # ###### -- PV MODEL -- ######
-        "pv_model/kind": "precomputed_los_Carrick2015",
+        # "pv_model/kind": "precomputed_los_Carrick2015",
         # "pv_model/kind": "Vext",
         # "pv_model/smooth_target": "none",
-        "pv_model/galaxy_bias": "linear",
-        # "pv_model/kind": "precomputed_los_manticore_2MPP_MULTIBIN_N256_DES_V2",  # noqa
-        "pv_model/which_Vext": "radial_magnitude",
-        "pv_model/r_limits_malmquist": [[0.1, 751]],
+        "pv_model/galaxy_bias": "double_powerlaw",
+        "pv_model/kind": "precomputed_los_manticore_2MPP_MULTIBIN_N256_DES_V2",  # noqa
+        # "pv_model/which_Vext": "radial_magnitude",
+        # "pv_model/r_limits_malmquist": [[0.1, 751]],
         # "pv_model/num_points_malmquist": 251,
         # "pv_model/which_distance_prior": "empirical",
         # "pv_model/which_distance_prior": "volume_redshift_selected",
         # ##### - PRIORS -- ######
-        "model/priors/Vext_radial_magnitude": {
-            "dist": "vector_radialmag_uniform",
-            "low": 0.0,
-            "high": 5000,
-            "rknot": [0, 150, 300, 450],
-            "method": "cubic"
-        },
-        # "model/priors/beta": [
-        #     # {"dist": "uniform", "low": -1, "high": 2.0},
-        #     # {"dist": "normal", "loc": 0.43, "scale": 0.25},
-        #     {"dist": "normal", "loc": 0.43, "scale": 0.25},
-        #     # {"dist": "delta", "value": 1.0},
-        # ],
+        # "model/priors/Vext_radial_magnitude": {
+        #     "dist": "vector_radialmag_uniform",
+        #     "low": 0.0,
+        #     "high": 10_000,
+        #     "rknot": [0, 50, 100, 150, 200, 250, 300, 350, 400, 450],
+        #     "method": "linear"
+        # },
+        "model/priors/beta": [
+            # {"dist": "uniform", "low": -1, "high": 2.0},
+            # {"dist": "normal", "loc": 0.43, "scale": 0.25},
+            # {"dist": "normal", "loc": 0.43, "scale": 0.25},
+            {"dist": "delta", "value": 1.0},
+        ],
         # "model/priors/b1": [{"dist": "delta", "value": x}
         #                     for x in [round(0.1 * n, 1) for n in range(16)]],  # noqa
         # "model/priors/zeropoint_dipole": [
@@ -340,9 +340,9 @@ if __name__ == "__main__":
         # "io/catalogue_name": ["2MTF", "SFI", "CF4_W1", "CF4_i"],
         # "io/catalogue_name": "CF4_W1",
         # "io/catalogue_name": ["LOSS", "Foundation",],
-        "io/catalogue_name": "Clusters",
+        "io/catalogue_name": "PantheonPlus",
         "io/root_output": "results_test/",
-        "io/Clusters/which_relation": "LT",
+        # "io/Clusters/which_relation": "LT",
         # "io/Clusters/zcmb_max": 0.055,
         # "io/CF4_i/exclude_W1": True,
         # "io/Clusters/nsamples_subsample": 101,
