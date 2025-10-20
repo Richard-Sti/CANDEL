@@ -24,7 +24,7 @@ from numpyro import factor, plate, sample
 from numpyro.distributions import Normal, Uniform
 
 from ..cosmography import Distance2Redshift
-from ..model import LOSInterpolator, ln_simpson
+from ..model import LOSInterpolator, ln_simpson, lp_galaxy_bias
 from ..util import SPEED_OF_LIGHT, fprint, radec_to_cartesian
 
 
@@ -36,7 +36,7 @@ class BaseRedshift2Real(ABC):
     """Base class for all models. """
 
     def __init__(self, RA, dec, zcmb, los_r, los_density, los_velocity,
-                 calibration_samples=None, Rmin=1e-7, Rmax=300,
+                 which_bias, calibration_samples, Rmin=1e-7, Rmax=300,
                  num_rgrid=101, r0_decay_scale=5, Om0=0.3):
         self.dist2redshift = Distance2Redshift(Om0=Om0)
 
@@ -47,14 +47,11 @@ class BaseRedshift2Real(ABC):
 
         self.len_input_data = len(zcmb)
         self.cz_cmb = jnp.asarray(zcmb * SPEED_OF_LIGHT)  # in km/s
-        print("SETTING 1 FIELD")
 
         los_r = jnp.asarray(los_r)
         los_density = jnp.asarray(los_density)
         los_velocity = jnp.asarray(los_velocity)
 
-        self.f_los_delta = LOSInterpolator(
-            los_r, los_density - 1, r0_decay_scale=r0_decay_scale)
         self.f_los_velocity = LOSInterpolator(
             los_r, los_velocity, r0_decay_scale=r0_decay_scale)
 
@@ -77,14 +74,26 @@ class BaseRedshift2Real(ABC):
                 (self.len_input_data, self.num_cal))
 
         self.use_im = True
-        if "b1" in calibration_samples:
+        self.which_bias = which_bias
+        if which_bias is None:
+            self.use_im = False
+        elif which_bias == "linear":
             self.b1 = jnp.asarray(calibration_samples["b1"])
+            self.f_los_delta = LOSInterpolator(
+                los_r, los_density - 1, r0_decay_scale=r0_decay_scale)
             self.lp_norm = self.compute_linear_bias_lp_normalization(
                 self.los_grid_r)
+        elif which_bias == "double_powerlaw":
+            self.alpha_low = jnp.asarray(calibration_samples["alpha_low"])
+            self.alpha_high = jnp.asarray(calibration_samples["alpha_high"])
+            self.log_rho_t = jnp.asarray(calibration_samples["log_rho_t"])
+            self.f_los_log_density = LOSInterpolator(
+                los_r, jnp.log(los_density), r0_decay_scale=r0_decay_scale)
+
+            self.lp_norm = self.compute_double_powerlaw_bias_lp_normalization(
+                self.los_grid_r)
         else:
-            fprint("b1 not in calibration samples. Not using inhomogeneous "
-                   "Malmquist bias.")
-            self.use_im = False
+            raise ValueError(f"Unknown bias model: {which_bias}")
 
         self.sigma_v = jnp.asarray(calibration_samples["sigma_v"])
         if "beta" in calibration_samples:
@@ -96,22 +105,51 @@ class BaseRedshift2Real(ABC):
         fprint(f"Loaded {self.len_input_data} objects and "
                f"{self.num_cal} calibration samples.")
 
+        self.print_sample_stats()
+
+    def print_sample_stats(self):
+        print("Calibration sample statistics:")
+        print(f"sigma_v : {jnp.mean(self.sigma_v):.3f} +- {jnp.std(self.sigma_v):.3f}")  # noqa
+        print(f"beta    : {jnp.mean(self.beta):.3f} +- {jnp.std(self.beta):.3f}")        # noqa
+        if self.which_bias == "linear":
+            print(f"b1      : {jnp.mean(self.b1):.3f} +- {jnp.std(self.b1):.3f}")          # noqa
+        elif self.which_bias == "double_powerlaw":
+            print(f"alpha_low  : {jnp.mean(self.alpha_low):.3f} +- {jnp.std(self.alpha_low):.3f}")      # noqa
+            print(f"alpha_high : {jnp.mean(self.alpha_high):.3f} +- {jnp.std(self.alpha_high):.3f}")    # noqa
+            print(f"log_rho_t  : {jnp.mean(self.log_rho_t):.3f} +- {jnp.std(self.log_rho_t):.3f}")      # noqa
+
     def compute_linear_bias_lp_normalization(self, los_grid_r):
         """
         Compute the normalization of the linear bias term in the distance
         prior.
         """
-        if not self.use_im:
-            return jnp.zeros((self.len_input_data, self.num_cal))
+        print("Computing `linear` bias lp normalization...")
+        # Density constrast along the LOS, (nfield, ngal, nrad_steps)
+        los_grid_delta = self.f_los_delta.interp_many_steps_per_galaxy(
+            los_grid_r)
+        bias_params = [self.b1[None, None, :, None],]
 
-        # Density constrast along the LOS, (ngal, nrad_steps)
-        los_grid_delta = self.f_los_delta.interp_many_steps_per_galaxy(los_grid_r)[0]  # noqa
+        intg = lp_galaxy_bias(
+            los_grid_delta[:, :, None, :], None, bias_params,
+            galaxy_bias="linear")
+        return ln_simpson(intg, los_grid_r[None, None, None, :], axis=-1)
 
-        # Integrand, (ngal, ncalibration_samples, nrad_steps)
-        intg = (1 + self.b1[None, :, None] * los_grid_delta[:, None, :])
-        intg = jnp.log(jnp.clip(intg, 1e-5))
-        intg = 2 * jnp.log(los_grid_r)[None, None, :] + intg
-        return ln_simpson(intg, los_grid_r[None, None, :], axis=-1)
+    def compute_double_powerlaw_bias_lp_normalization(self, los_grid_r):
+        """
+        Compute the normalization of the double powerlaw bias term in the
+        distance prior.
+        """
+        print("Computing `double_powerlaw` bias lp normalization...")
+        los_log_density = self.f_los_log_density.interp_many_steps_per_galaxy(
+            los_grid_r)
+        bias_params = [self.alpha_low[None, None, :, None],
+                       self.alpha_high[None, None, :, None],
+                       self.log_rho_t[None, None, :, None],
+                       ]
+        intg = lp_galaxy_bias(
+            None, los_log_density[:, :, None, :], bias_params,
+            galaxy_bias="double_powerlaw")
+        return ln_simpson(intg, los_grid_r[None, None, None, :], axis=-1)
 
     @abstractmethod
     def __call__(self, *args, **kwargs):
@@ -121,8 +159,6 @@ class BaseRedshift2Real(ABC):
 class Redshift2Real(BaseRedshift2Real):
     """
     A model for mapping observed redshift to cosmological redshift.
-
-    TODO: Switch to some smoother clipping for the IM.
     """
 
     def __call__(self, ):
@@ -135,33 +171,48 @@ class Redshift2Real(BaseRedshift2Real):
         # Homogeneous Malmquist bias term, shape (ngal,)
         lp_r = 2 * jnp.log(r)
 
-        if self.use_im:
-            # Density constrast along the LOS, (ngal, )
-            los_delta = self.f_los_delta(r)[0]
-            # Distance prior, shape (ngal, ncalibration_samples)
-            lp_r = (lp_r[:, None]
-                    + jnp.log(jnp.clip(1 + self.b1[None, :] * los_delta[:, None], 1e-5)))  # noqa
-            lp_r -= self.lp_norm
+        if self.which_bias == "linear":
+            bias_params = [self.b1[None, None, :],]
+            lp_r_bias = lp_galaxy_bias(
+                self.f_los_delta(r)[..., None], None, bias_params,
+                galaxy_bias="linear")
+            lp_r = lp_r[None, :, None] + lp_r_bias - self.lp_norm
+        elif self.which_bias == "double_powerlaw":
+            bias_params = [
+                self.alpha_low[None, None, :],
+                self.alpha_high[None, None, :],
+                self.log_rho_t[None, None, :],
+                ]
+            lp_r_bias = lp_galaxy_bias(
+                None, self.f_los_log_density(r)[..., None],
+                bias_params,
+                galaxy_bias="double_powerlaw")
+            lp_r = lp_r[None, :, None] + lp_r_bias - self.lp_norm
         else:
-            lp_r = lp_r[:, None]
+            lp_r = lp_r[None, :, None]
 
         # Cosmological redshift, shape (ngal,)
         zcosmo = self.dist2redshift(r)
 
-        # Peculiar velocity from the reconstruction, (ngal,)
-        Vpec = self.f_los_velocity(r)[0]
+        # Peculiar velocity from the reconstruction, (nfield, ngal,)
+        Vpec = self.f_los_velocity(r)
 
-        # Peculiar velocity redshift (ngal, ncalibration_samples)
+        # Peculiar velocity redshift (nfield, ngal, ncalibration_samples)
         zpec = (
-            self.beta[None, :] * Vpec[:, None]
-            + self.Vext_radial) / SPEED_OF_LIGHT
-        # Predicted redshift (ngal, ncalibration_samples)
+            self.beta[None, None, :] * Vpec[..., None]
+            + self.Vext_radial[None, ...]) / SPEED_OF_LIGHT
+        # Predicted redshift (nfield, ngal, ncalibration_samples)
         cz_pred = SPEED_OF_LIGHT * (
-            (1 + zcosmo)[:, None] * (1 + zpec) - 1)
+            (1 + zcosmo)[None, :, None] * (1 + zpec) - 1)
 
-        ll = Normal(cz_pred, self.sigma_v[None, :],).log_prob(
-            self.cz_cmb[:, None])
+        ll = Normal(cz_pred, self.sigma_v[None, None, :],).log_prob(
+            self.cz_cmb[None, :, None])
+        ll += lp_r
+
+        # Average over the calibration samples, shape (nfield, ngal)
+        ll = log_mean_exp(ll, axis=-1) - jnp.log(ll.shape[-1])
+        # Average over the density and velocity field samples
         factor(
             "log_density",
-            log_mean_exp(lp_r + ll, axis=-1) - jnp.log(ll.shape[-1])
+            log_mean_exp(ll, axis=0) - jnp.log(ll.shape[0])
             )
