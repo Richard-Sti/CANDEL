@@ -172,12 +172,11 @@ if __name__ == "__main__":
     base = {
         "pv_model/kind": ["Vext", "precomputed_los_Carrick2015", "precomputed_los_manticore"],
         #"pv_model/kind": ["precomputed_los_Carrick2015"],
-        "pv_model/galaxy_bias": ["powerlaw"],
         "pv_model/which_Vext": ["constant"],
         "io/catalogue_name": "Clusters",
         "io/root_output": "results/friday",
         "pv_model/use_MNR": False,
-        "io/Clusters/which_relation": ["LTYT"],
+        "io/Clusters/which_relation": ["LTYT", "LT", "YT"],
         "io/Clusters/remove_noY": [True],
         "model/priors/Vext": [
             {"dist": "delta", "value": [0.0, 0.0, 0.0]}],
@@ -194,7 +193,7 @@ if __name__ == "__main__":
         ]
     dipole_settings["model/priors/zeropoint_dipole"] = [
             {"dist": "delta", "value": [0.0, 0.0, 0.0]},
-            {"dist": "vector_uniform_fixed", "low": 0.0, "high": 0.3},
+            {"dist": "vector_uniform_fixed", "low": 0.0, "high": 0.1},
         ]
 
     dipole_combinations = expand_override_grid(dipole_settings)
@@ -274,11 +273,26 @@ if __name__ == "__main__":
                 fprint(f"creating output directory `{fdir_out}`")
                 makedirs(fdir_out, exist_ok=True)
 
-            # If using manticore, set beta to delta(1.0)
+            # Auto-set beta prior and galaxy_bias based on reconstruction type
             kind = get_nested(local_config, "pv_model/kind", "unknown")
-            if "manticore" in kind.lower():
-                local_config = replace_prior_with_delta(local_config, "beta", 1.0)
-                fprint(f"set beta prior to delta(1.0) for manticore reconstruction")
+            if kind.startswith("precomputed_los_"):
+                if "manticore" in kind.lower():
+                    # Manticore: beta ~ Normal(1.0, 0.02), galaxy_bias = powerlaw
+                    beta_prior = {"dist": "normal", "loc": 1.0, "scale": 0.02}
+                    local_config = overwrite_subtree(local_config, "model/priors/beta", beta_prior)
+                    fprint(f"set beta prior to Normal(1.0, 0.02) for manticore reconstruction")
+                    
+                    local_config = overwrite_config(local_config, "pv_model/galaxy_bias", "powerlaw")
+                    fprint(f"set galaxy_bias to 'powerlaw' for manticore reconstruction")
+                    
+                elif "carrick" in kind.lower():
+                    # Carrick2015: beta ~ Normal(0.43, 0.02), galaxy_bias = linear
+                    beta_prior = {"dist": "normal", "loc": 0.43, "scale": 0.02}
+                    local_config = overwrite_subtree(local_config, "model/priors/beta", beta_prior)
+                    fprint(f"set beta prior to Normal(0.43, 0.02) for Carrick2015 reconstruction")
+                    
+                    local_config = overwrite_config(local_config, "pv_model/galaxy_bias", "linear")
+                    fprint(f"set galaxy_bias to 'linear' for Carrick2015 reconstruction")
 
             dynamic_tag = generate_dynamic_tag(local_config, base_tag=tag)
 

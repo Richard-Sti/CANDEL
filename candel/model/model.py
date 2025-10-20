@@ -1312,6 +1312,7 @@ class ClustersModel(BaseModel):
         C = rsample("C_CL", self.priors["CL_C"], shared_params)
         sigma_int = rsample(
             "sigma_int", self.priors["sigma_int"], shared_params)
+        
 
         # Sample different A variations
         if self.which_A in ["per_pix", "radial_binned", "radial_binned_dipole"]:
@@ -1320,6 +1321,8 @@ class ClustersModel(BaseModel):
             A_pix_radial = compute_A_clusters_radial(
                 data, A_pix, self.which_A, **self.kwargs_A)
             A = A + A_pix_radial  # A_pix_radial has shape (n_gal,)
+
+
         else:
             # Traditional dipole/quadrupole approach
             A_dipole = rsample(
@@ -1480,9 +1483,7 @@ class ClustersModel(BaseModel):
                 # If A varies per galaxy (per_pix, radial_binned, or has dipole/quad),
                 # need to add extra dim for broadcasting with r_grid
                 # Check if A is per-galaxy (ndim > 0) or scalar (ndim == 0)
-                A_term = A[:, None] if (self.which_A in ["per_pix", "radial_binned", "radial_binned_dipole"] 
-                                       or jnp.ndim(A) > 0) else A
-                logF_pred = (A_term + B * logT[:, None]
+                logF_pred = (A[:, None] + B * logT[:, None]
                             + C * (logY[:, None] + 2 * logda_grid[None, :])
                             - jnp.log10(4 * jnp.pi) - 2 * logdl_grid[None, :])
                 # Likelihood of logF , `(n_field, n_gal, n_rbin)`
@@ -1490,9 +1491,8 @@ class ClustersModel(BaseModel):
                     data["logF"][:, None])[None, ...]
             elif self.which_relation in ["YT", "YTL"]:
                 # Same fix for YT/YTL: check if A is per-galaxy or scalar
-                A_term = A[:, None] if (self.which_A in ["per_pix", "radial_binned", "radial_binned_dipole"] 
-                                       or jnp.ndim(A) > 0) else A
-                logY_pred = (A_term + B * logT[:, None]
+
+                logY_pred = (A[:, None] + B * logT[:, None]
                             + C * (logF[:, None] + 2 * logdl_grid[None, :]
                             + jnp.log10(4 * jnp.pi) ) - 2 * logda_grid[None, :])
                 # Likelihood of logY , `(n_field, n_gal, n_rbin)`
@@ -1501,14 +1501,14 @@ class ClustersModel(BaseModel):
             elif self.which_relation == "LTYT":
 
                 # --- Intrinsic means in log-space at fixed T ---
-                mL = A + B * logT            # (n_gal,)
-                mY = A2 + B2 * logT          # (n_gal,)
+                mL = A[:, None] + B * logT[:, None]           # (n_gal,)
+                mY = A2[:, None] + B2 * logT[:, None]          # (n_gal,)
 
                 # --- Map to observable means over the distance grid ---
                 # logF = logL - log10(4π) - 2 log DL
                 # logy = logY - 2 log DA
-                mF = mL[:, None] - jnp.log10(4 * jnp.pi) - 2.0 * logdl_grid[None, :]   # (n_gal, n_rbin)
-                my = mY[:, None] - 2.0 * logda_grid[None, :]                           # (n_gal, n_rbin)
+                mF = mL - jnp.log10(4 * jnp.pi) - 2.0 * logdl_grid[None, :]   # (n_gal, n_rbin)
+                my = mY - 2.0 * logda_grid[None, :]                           # (n_gal, n_rbin)
 
                 # --- Intrinsic covariance (logL, logY) at fixed T ---
                 # sigma_int: scatter in logL; sigma_int2: scatter in logY; rho12: intrinsic corr.
@@ -1572,6 +1572,7 @@ class ClustersModel(BaseModel):
 
             # Marginalise over the radial distance, average over realisations
             # and track the log-density.
+            deterministic("ll_skipZ", ll)
             ll = ln_simpson(ll, x=r_grid[None, None, :], axis=-1)
             ll = logsumexp(ll, axis=0) - jnp.log(data.num_fields)
             factor("ll_obs", ll)
