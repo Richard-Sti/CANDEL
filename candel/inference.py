@@ -274,35 +274,86 @@ def drop_deterministic(samples, check_all_equals=True):
 
 def postprocess_samples(samples):
     """Postprocess MCMC samples."""
-    # Handle radial_binned Vext parameters (sampled as arrays with n_bins)
-    # These come from priors["Vext"] which samples spherical coords: phi, cos_theta, mag
-    if "Vext_radial_bin_phi" in samples and "Vext_radial_bin_cos_theta" in samples:
-        phi_arr = samples.pop("Vext_radial_bin_phi")  # shape: (n_samples, n_bins)
-        cos_theta_arr = samples.pop("Vext_radial_bin_cos_theta")  # shape: (n_samples, n_bins)
-        mag_arr = samples.pop("Vext_radial_bin_mag", None)  # shape: (n_samples, n_bins) or None
+    # Handle Vext_rad or Vext_rad_bin with FIXED direction (vector_radial_spline_uniform_fixed_direction)
+    # Works for both which_Vext="radial" and which_Vext="radial_binned"
+    if "Vext_rad_direction_phi" in samples and "Vext_rad_direction_cos_theta" in samples:
+        phi = np.rad2deg(samples.pop("Vext_rad_direction_phi"))
+        cos_theta = samples.pop("Vext_rad_direction_cos_theta")
+        mag_arr = samples.pop("Vext_rad_mag", None)
         
-        n_bins = phi_arr.shape[1] if phi_arr.ndim > 1 else 1
+        theta = np.arccos(cos_theta)
+        dec = np.rad2deg(0.5 * np.pi - theta)
         
-        # Process each bin separately
-        for bin_idx in range(n_bins):
-            if phi_arr.ndim > 1:
-                phi = np.rad2deg(phi_arr[:, bin_idx])
-                cos_theta = cos_theta_arr[:, bin_idx]
-                mag = mag_arr[:, bin_idx] if mag_arr is not None else None
-            else:
-                phi = np.rad2deg(phi_arr)
-                cos_theta = cos_theta_arr
-                mag = mag_arr if mag_arr is not None else None
-            
-            theta = np.arccos(cos_theta)
-            dec = np.rad2deg(0.5 * np.pi - theta)
-            
-            ell, b = radec_to_galactic(phi, dec)
-            samples[f"Vext_radial_bin_ell__{bin_idx}"] = ell
-            samples[f"Vext_radial_bin_b__{bin_idx}"] = b
-            
-            if mag is not None:
-                samples[f"Vext_radial_bin_mag__{bin_idx}"] = mag
+        ell, b = radec_to_galactic(phi, dec)
+        samples["Vext_rad_direction_ell"] = ell
+        samples["Vext_rad_direction_b"] = b
+        
+        # Add per-knot/bin magnitudes
+        if mag_arr is not None:
+            n_vals = mag_arr.shape[1] if mag_arr.ndim > 1 else 1
+            for i in range(n_vals):
+                if mag_arr.ndim > 1:
+                    samples[f"Vext_rad_mag__{i}"] = mag_arr[:, i]
+                else:
+                    samples[f"Vext_rad_mag__{i}"] = mag_arr
+    
+    # Handle Vext_rad_bin with FIXED direction (backward compatibility)
+    elif "Vext_rad_bin_direction_phi" in samples and "Vext_rad_bin_direction_cos_theta" in samples:
+        phi = np.rad2deg(samples.pop("Vext_rad_bin_direction_phi"))
+        cos_theta = samples.pop("Vext_rad_bin_direction_cos_theta")
+        mag_arr = samples.pop("Vext_rad_bin_mag", None)
+        
+        theta = np.arccos(cos_theta)
+        dec = np.rad2deg(0.5 * np.pi - theta)
+        
+        ell, b = radec_to_galactic(phi, dec)
+        samples["Vext_rad_direction_ell"] = ell
+        samples["Vext_rad_direction_b"] = b
+        
+        # Add per-knot/bin magnitudes
+        if mag_arr is not None:
+            n_vals = mag_arr.shape[1] if mag_arr.ndim > 1 else 1
+            for i in range(n_vals):
+                if mag_arr.ndim > 1:
+                    samples[f"Vext_rad_mag__{i}"] = mag_arr[:, i]
+                else:
+                    samples[f"Vext_rad_mag__{i}"] = mag_arr
+    
+    # Handle Vext_rad with independent vectors (vector_radial_spline_uniform)
+    elif "Vext_rad_phi" in samples and "Vext_rad_cos_theta" in samples:
+        phi_arr = samples.pop("Vext_rad_phi")
+        cos_theta_arr = samples.pop("Vext_rad_cos_theta")
+        mag_arr = samples.pop("Vext_rad_mag", None)
+        
+        # Convert to galactic coordinates
+        phi = np.rad2deg(phi_arr)
+        theta = np.arccos(cos_theta_arr)
+        dec = np.rad2deg(0.5 * np.pi - theta)
+        
+        ell, b = radec_to_galactic(phi, dec)
+        samples["Vext_rad_ell"] = ell
+        samples["Vext_rad_b"] = b
+        
+        if mag_arr is not None:
+            samples["Vext_rad_mag"] = mag_arr
+    
+    # Handle Vext_rad_bin with independent vectors (backward compatibility)
+    elif "Vext_rad_bin_phi" in samples and "Vext_rad_bin_cos_theta" in samples:
+        phi_arr = samples.pop("Vext_rad_bin_phi")
+        cos_theta_arr = samples.pop("Vext_rad_bin_cos_theta")
+        mag_arr = samples.pop("Vext_rad_bin_mag", None)
+        
+        # Convert to galactic coordinates
+        phi = np.rad2deg(phi_arr)
+        theta = np.arccos(cos_theta_arr)
+        dec = np.rad2deg(0.5 * np.pi - theta)
+        
+        ell, b = radec_to_galactic(phi, dec)
+        samples["Vext_rad_ell"] = ell
+        samples["Vext_rad_b"] = b
+        
+        if mag_arr is not None:
+            samples["Vext_rad_mag"] = mag_arr
     
     # Handle A_dipole_radial_bin (vector per bin, needs coordinate conversion)
     if "A_dipole_radial_bin_phi" in samples and "A_dipole_radial_bin_cos_theta" in samples:

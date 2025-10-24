@@ -69,16 +69,22 @@ def precompute_pixel_projection(rhat_data, nside, sigma_deg=None):
     return w * d
 
 
-def precompute_radial_bin_assignment(zcmb_data, bin_edges):
+def precompute_radial_bin_assignment(zcmb_data, bin_edges, use_comoving=True, Om=0.3):
     """
-    Precompute the radial bin assignment matrix for redshift binning.
+    Precompute the radial bin assignment matrix for redshift or comoving distance binning.
     
     Parameters
     ----------
     zcmb_data : array_like
         CMB-frame redshift values for each galaxy.
     bin_edges : array_like
-        Bin edges for the redshift bins.
+        Bin edges for the redshift bins (if use_comoving=False) or 
+        comoving distance bins in Mpc (if use_comoving=True).
+    use_comoving : bool, optional
+        If True, bin_edges are in comoving Mpc and zcmb_data is converted.
+        If False, bin_edges are in redshift. Default: True.
+    Om : float, optional
+        Matter density for comoving distance calculation. Default: 0.3.
     
     Returns
     -------
@@ -86,7 +92,16 @@ def precompute_radial_bin_assignment(zcmb_data, bin_edges):
         Matrix of shape (n_gal, n_bins) with one-hot encoding of bin membership.
     """
     n_bins = len(bin_edges) - 1
-    bin_indices = np.digitize(zcmb_data, bin_edges) - 1
+    
+    if use_comoving:
+        # Convert redshift to comoving distance in Mpc
+        from astropy.cosmology import FlatLambdaCDM
+        cosmo = FlatLambdaCDM(H0=100, Om0=Om)  # h=1 units
+        r_comov = cosmo.comoving_distance(zcmb_data).value  # in Mpc
+        bin_indices = np.digitize(r_comov, bin_edges) - 1
+    else:
+        # Use redshift directly
+        bin_indices = np.digitize(zcmb_data, bin_edges) - 1
     
     # Clip to valid range [0, n_bins-1]
     bin_indices = np.clip(bin_indices, 0, n_bins - 1)
@@ -263,15 +278,17 @@ class PVDataFrame:
         # Precompute radial_binned Vext data
         bin_edges = config_pv_model.get("Vext_radial_bin_edges", None)
         if bin_edges is not None:
-            fprint(f"precomputing Vext_radial_binned data with bin edges: {bin_edges}.")
-            frame.C_radial_bin = precompute_radial_bin_assignment(frame["zcmb"], bin_edges)
+            fprint(f"precomputing Vext_radial_binned data with bin edges (comoving Mpc): {bin_edges}.")
+            frame.C_radial_bin = precompute_radial_bin_assignment(
+                frame["zcmb"], bin_edges, use_comoving=True, Om=0.3)
             frame.n_radial_bins = len(bin_edges) - 1
 
         # Precompute radial_binned A data (may be different bins than Vext)
         A_bin_edges = config_pv_model.get("A_radial_bin_edges", None)
         if A_bin_edges is not None:
-            fprint(f"precomputing A_radial_binned data with bin edges: {A_bin_edges}.")
-            frame.C_A_radial_bin = precompute_radial_bin_assignment(frame["zcmb"], A_bin_edges)
+            fprint(f"precomputing A_radial_binned data with bin edges (comoving Mpc): {A_bin_edges}.")
+            frame.C_A_radial_bin = precompute_radial_bin_assignment(
+                frame["zcmb"], A_bin_edges, use_comoving=True, Om=0.3)
             frame.n_A_radial_bins = len(A_bin_edges) - 1
 
         # Hyperparameters for the TFR linewidth modelling

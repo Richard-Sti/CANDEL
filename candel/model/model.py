@@ -297,6 +297,56 @@ def sample_spline_radial_vector(name, nval, low, high):
     return mag[..., None] * u
 
 
+def sample_radial_spline_uniform_fixed_direction(name, nval, low, high):
+    """
+    Sample velocity vectors with a FIXED direction across all radial knots,
+    but VARIABLE magnitude per knot.
+    
+    This is a fixed-direction variant of `sample_radial_spline_uniform()`.
+    While that function samples independent 3D vectors at each knot, this function
+    constrains all knots to share the same direction but allows different magnitudes.
+    
+    Useful for modeling bulk flows or jets where the direction is constant
+    but the velocity magnitude varies with radius. Can be used with either:
+    - which_Vext="radial" for spline interpolation between knots
+    - which_Vext="radial_binned" for piecewise constant bins
+    
+    Parameters
+    ----------
+    name : str
+        Parameter name prefix
+    nval : int
+        Number of radial knots (for spline) or bins (for piecewise constant)
+    low : float
+        Lower bound for magnitude
+    high : float
+        Upper bound for magnitude
+    
+    Returns
+    -------
+    vectors : array_like
+        Array of shape (nval, 3) with same direction but different magnitudes
+    """
+    # Sample ONE direction (shared across all knots/bins)
+    phi = sample(f"{name}_direction_phi", Uniform(0.0, 2.0 * jnp.pi))
+    cos_theta = sample(f"{name}_direction_cos_theta", Uniform(-1.0, 1.0))
+    sin_theta = jnp.sqrt(jnp.clip(1.0 - cos_theta**2, 0.0, 1.0))
+    
+    # Unit direction vector (same for all knots/bins)
+    u = jnp.array([
+        sin_theta * jnp.cos(phi),
+        sin_theta * jnp.sin(phi),
+        cos_theta
+    ])
+    
+    # Sample DIFFERENT magnitudes for each knot/bin
+    with plate(f"{name}_mag_plate", nval):
+        mag = sample(f"{name}_mag", Uniform(low, high))
+    
+    # Broadcast: (nval,) * (3,) -> (nval, 3)
+    return mag[:, None] * u[None, :]
+
+
 def interp_spline_radial_vector(rq, bin_values, **kwargs):
     """Spline interp with constant extrapolation at boundaries."""
     x = jnp.asarray(kwargs["rknot"])
@@ -330,6 +380,7 @@ def load_priors(config_priors):
         "vector_uniform": lambda p: {"type": "vector_uniform", "low": p["low"], "high": p["high"]},  # noqa
         "vector_uniform_fixed": lambda p: {"type": "vector_uniform_fixed", "low": p["low"], "high": p["high"],},  # noqa
         "vector_radial_spline_uniform": lambda p: {"type": "vector_radial_spline_uniform", "nval": len(p["rknot"]), "low": p["low"], "high": p["high"]},  # noqa
+        "vector_radial_spline_uniform_fixed_direction": lambda p: {"type": "vector_radial_spline_uniform_fixed_direction", "nval": len(p["rknot"]) if "rknot" in p else None, "low": p["low"], "high": p["high"]},  # noqa
         "vector_components_uniform": lambda p: {"type": "vector_components_uniform", "low": p["low"], "high": p["high"],},  # noqa
         "quadrupole_uniform_fixed": lambda p: {"type": "quadrupole_uniform_fixed", "low": p["low"], "high": p["high"],},  # noqa
     }
@@ -382,6 +433,10 @@ def _rsample(name, dist):
     if isinstance(dist, dict) and dist.get("type") == "vector_radial_spline_uniform":  # noqa
         return sample_spline_radial_vector(
             name, dist["nval"], dist["low"], dist["high"], )
+    
+    if isinstance(dist, dict) and dist.get("type") == "vector_radial_spline_uniform_fixed_direction":  # noqa
+        return sample_radial_spline_uniform_fixed_direction(
+            name, dist["nval"], dist["low"], dist["high"])
 
     return sample(name, dist)
 
@@ -641,11 +696,22 @@ def sample_Vext(priors, which_Vext, shared_params=None, kwargs_Vext={}):
     if which_Vext == "radial":
         Vext = rsample("Vext_rad", priors["Vext_radial"], shared_params)
     elif which_Vext == "radial_binned":
-        # Sample one 3D velocity vector per bin
-        with plate("Vext_radial_bin_plate", kwargs_Vext["n_bins"]):
-            Vext = rsample("Vext_radial_bin", priors["Vext"], shared_params)
-        # Flatten to shape (n_bins * 3,) for consistency with compute_Vext_radial
-        Vext = Vext.reshape(-1)
+        prior = priors["Vext_radial_binned"]
+        
+        # For vector_radial_spline_uniform_fixed_direction, inject n_bins if not provided
+        if isinstance(prior, dict) and prior.get("type") == "vector_radial_spline_uniform_fixed_direction":
+            if prior.get("nval") is None:
+                prior["nval"] = kwargs_Vext["n_bins"]
+            # Sample directly - the function handles the plate internally
+            Vext = rsample("Vext_rad_bin", prior, shared_params)
+            # Flatten to shape (n_bins * 3,) for consistency with compute_Vext_radial
+            Vext = Vext.reshape(-1)
+        else:
+            # For other prior types (e.g., vector_uniform), sample one vector per bin
+            with plate("Vext_rad_bin_plate", kwargs_Vext["n_bins"]):
+                Vext = rsample("Vext_rad_bin", prior, shared_params)
+            # Flatten to shape (n_bins * 3,) for consistency with compute_Vext_radial
+            Vext = Vext.reshape(-1)
     # elif which_Vext == "per_pix":
     #     Vext_sigma = rsample("Vext_sigma", priors["Vext_sigma"], shared_params)
 

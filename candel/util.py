@@ -563,31 +563,66 @@ def plot_corner(samples, show_fig=True, filename=None, smooth=1, keys=None):
 
 
 def plot_Vext_rad_corner(samples, show_fig=True, filename=None, smooth=1):
-    """Plot a corner plot of Vext_rad_{mag, ell, b} samples."""
-    keys = ["Vext_rad_mag", "Vext_rad_ell", "Vext_rad_b"]
-    base_labels = [r"V", r"\ell", r"b"]
+    """
+    Plot a corner plot of Vext_rad_{mag, ell, b} samples.
+    
+    Handles both:
+    - vector_radial_spline_uniform: Vext_rad_mag, Vext_rad_ell, Vext_rad_b (per knot)
+    - vector_radial_spline_uniform_fixed_direction: Vext_rad_direction_ell/b (single), Vext_rad_mag__{i} (per knot)
+    """
+    # Check if using fixed direction variant
+    is_fixed_direction = "Vext_rad_direction_ell" in samples
+    
+    if is_fixed_direction:
+        # For fixed direction: plot direction + magnitudes
+        ell = samples["Vext_rad_direction_ell"]
+        b = samples["Vext_rad_direction_b"]
+        
+        # Extract per-knot magnitudes
+        mag_keys = sorted([k for k in samples.keys() if k.startswith("Vext_rad_mag__")])
+        
+        arrays = []
+        labels = []
+        
+        # Add direction (single value)
+        arrays.append(ell[:, None])
+        labels.append(r"$\ell_{\rm dir}$")
+        
+        arrays.append(b[:, None])
+        labels.append(r"$b_{\rm dir}$")
+        
+        # Add magnitudes per knot
+        for i, key in enumerate(mag_keys):
+            arrays.append(samples[key][:, None])
+            labels.append(fr"$V_{{{i}}}$")
+        
+        data = np.hstack(arrays)
+    else:
+        # Independent vectors per knot
+        keys = ["Vext_rad_mag", "Vext_rad_ell", "Vext_rad_b"]
+        base_labels = [r"V", r"\ell", r"b"]
 
-    arrays = []
-    labels = []
+        arrays = []
+        labels = []
 
-    for key, base_label in zip(keys, base_labels):
-        if key not in samples:
-            raise ValueError(f"Missing key: {key}")
+        for key, base_label in zip(keys, base_labels):
+            if key not in samples:
+                raise ValueError(f"Missing key: {key}")
 
-        arr = samples[key]
+            arr = samples[key]
 
-        if arr.ndim == 3:
-            arr = arr.reshape(-1, arr.shape[-1])
-        elif arr.ndim != 2:
-            raise ValueError(f"{key} must be 2D or 3D")
+            if arr.ndim == 3:
+                arr = arr.reshape(-1, arr.shape[-1])
+            elif arr.ndim != 2:
+                raise ValueError(f"{key} must be 2D or 3D")
 
-        ndim = arr.shape[1]
-        arrays.append(arr)
+            ndim = arr.shape[1]
+            arrays.append(arr)
 
-        for i in range(ndim):
-            labels.append(fr"${base_label}_{{{i}}}$")
+            for i in range(ndim):
+                labels.append(fr"${base_label}_{{{i}}}$")
 
-    data = np.hstack(arrays)  # shape: (nsamples_total, total_dims)
+        data = np.hstack(arrays)  # shape: (nsamples_total, total_dims)
 
     fig = corner(data, labels=labels, show_titles=True, smooth=smooth)
 
@@ -878,14 +913,47 @@ def plot_radial_profiles(samples, model, r_eval_size=1000, show_fig=True,
     """
     Plot the radial profiles of Vext_rad_{mag, ell, b} from the samples,
     including 1sigma and 2sigma percentile bands.
+    
+    Handles both:
+    - vector_radial_spline_uniform: independent directions at each knot
+    - vector_radial_spline_uniform_fixed_direction: fixed direction, variable magnitude
     """
-    Vmag = samples["Vext_rad_mag"]
-    ell = samples["Vext_rad_ell"]
-    b = samples["Vext_rad_b"]
-
-    r, V_interp, ell_interp, b_interp = interpolate_all_radial_fields(
-        model, Vmag, ell, b, r_eval_size=r_eval_size
-    )
+    # Check if using fixed direction variant
+    is_fixed_direction = "Vext_rad_direction_ell" in samples
+    
+    if is_fixed_direction:
+        # Fixed direction: extract single direction and per-knot magnitudes
+        ell = samples["Vext_rad_direction_ell"]
+        b = samples["Vext_rad_direction_b"]
+        
+        # Extract per-knot magnitudes
+        mag_keys = sorted([k for k in samples.keys() if k.startswith("Vext_rad_mag__")])
+        Vmag = np.stack([samples[k] for k in mag_keys], axis=1)
+        
+        # Get radial positions
+        rknot = jnp.asarray(model.kwargs_Vext["rknot"])
+        k_spline = model.kwargs_Vext.get("k", 3)
+        endpoints = model.kwargs_Vext.get("endpoints", "not-a-knot")
+        r = jnp.linspace(0, jnp.max(rknot), r_eval_size)
+        
+        # Interpolate magnitudes
+        V_interp = interpolate_scalar_field(
+            jnp.array(Vmag), r, rknot, k_spline, endpoints)
+        V_interp = np.array(V_interp)
+        
+        # Direction is constant, just replicate for plotting
+        ell_interp = np.tile(ell[:, None], (1, r_eval_size))
+        b_interp = np.tile(b[:, None], (1, r_eval_size))
+        r = np.array(r)
+    else:
+        # Independent vectors: extract per-knot mag/ell/b
+        Vmag = samples["Vext_rad_mag"]
+        ell = samples["Vext_rad_ell"]
+        b = samples["Vext_rad_b"]
+        
+        r, V_interp, ell_interp, b_interp = interpolate_all_radial_fields(
+            model, Vmag, ell, b, r_eval_size=r_eval_size
+        )
 
     def get_percentiles(arr):
         arr = np.array(arr)
@@ -893,27 +961,90 @@ def plot_radial_profiles(samples, model, r_eval_size=1000, show_fig=True,
         p025, p975 = np.percentile(arr, [2.5, 97.5], axis=0)
         return p025, p16, p50, p84, p975
 
-    V025, V16, V50, V84, V975 = get_percentiles(V_interp)
-    l025, l16, l50, l84, l975 = get_percentiles(ell_interp)
-    b025, b16, b50, b84, b975 = get_percentiles(b_interp)
+    def add_knot_markers(ax):
+        """Add vertical lines at knot/bin positions."""
+        rknot = np.array(model.kwargs_Vext.get("rknot", []))
+        for rk in rknot:
+            ax.axvline(rk, color='gray', linestyle=':', alpha=0.5, linewidth=1)
+    
+    def add_h0_dipole_reference(ax, ell_val, b_val, std_ell, std_b):
+        """Add H0 dipole reference line and band with inferred dipole direction."""
+        H0 = 100.0            # km/s/Mpc
+        q0 = -0.53            # deceleration parameter
+        delta1 = 0.05 * 1.15  # 5% H0 dipole
+        c_light = 3e5         # km/s
+        bf = delta1 * (H0 * r + q0 * H0**2 * r**2 / c_light)
+        delta_u = 0.07 * 1.15
+        delta_l = 0.03 * 1.15
+        bu = delta_u * (H0 * r + q0 * H0**2 * r**2 / c_light)
+        bl = delta_l * (H0 * r + q0 * H0**2 * r**2 / c_light)
 
-    fig, axes = plt.subplots(1, 3, figsize=(12, 4), sharex=True)
-    c = plt.rcParams["axes.prop_cycle"].by_key()["color"][0]
-
-    components = [
-        (V025, V16, V50, V84, V975, r"$V_{\rm dipole}~[\mathrm{km}/\mathrm{s}]$"),  # noqa
-        (l025, l16, l50, l84, l975, r"$\ell_{\rm dipole}~[\mathrm{deg}]$"),
-        (b025, b16, b50, b84, b975, r"$b_{\rm dipole}~[\mathrm{deg}]$"),
-    ]
-
-    for i, (lo2, lo1, med, hi1, hi2, ylabel) in enumerate(components):
-        ax = axes[i]
+        H0_ell_val = 123.9
+        H0_b_val = 53.88
+        H0_std_ell =  99.8
+        H0_std_b = 17.71
+        
+        ax.plot(r, bf, linestyle="--", color="gray",
+                label=fr"Equivalent $H_0$ dipole: $(5 \pm 2)\%$ at $(\ell, b) = ({H0_ell_val:.1f} \pm {H0_std_ell:.1f}°, {H0_b_val:.1f} \pm {H0_std_b:.1f}°)$")
+        ax.fill_between(r, bl, bu, color="gray", alpha=0.3)
+        ax.legend(loc='best', fontsize=9)
+    
+    def plot_component(ax, lo2, lo1, med, hi1, hi2, ylabel, c, add_label=False, 
+                      label_ell=None, label_b=None, std_ell=None, std_b=None):
+        """Plot a single component with percentile bands."""
         ax.fill_between(r, lo2, hi2, alpha=0.2, color=c)
         ax.fill_between(r, lo1, hi1, alpha=0.4, color=c)
-        ax.plot(r, med, c=c)
+        if add_label and label_ell is not None and label_b is not None:
+            if std_ell is not None and std_b is not None:
+                ax.plot(r, med, c=c, 
+                       label=fr"Radially varying $V_{{\rm ext}}$: $(\ell, b) = ({label_ell:.1f} \pm {std_ell:.1f}°, {label_b:.1f} \pm {std_b:.1f}°)$")
+            else:
+                ax.plot(r, med, c=c, 
+                       label=fr"Radially varying $V_{{\rm ext}}$ at $(\ell, b) = ({label_ell:.1f}°, {label_b:.1f}°)$")
+        else:
+            ax.plot(r, med, c=c)
         ax.set_xlabel(r"$r~[\mathrm{Mpc}/h]$")
         ax.set_ylabel(ylabel)
+        add_knot_markers(ax)
 
+    V025, V16, V50, V84, V975 = get_percentiles(V_interp)
+    c = plt.rcParams["axes.prop_cycle"].by_key()["color"][0]
+    
+    if is_fixed_direction:
+        # Only plot magnitude for fixed direction
+        fig, ax = plt.subplots(1, 1, figsize=(7, 5))
+        
+        # Calculate statistics for direction
+        mean_ell = np.mean(ell)
+        std_ell = np.std(ell)
+        mean_b = np.mean(b)
+        std_b = np.std(b)
+        
+        # Plot the radially varying dipole with label including uncertainties
+        plot_component(ax, V025, V16, V50, V84, V975, 
+                      r"$V_{\rm dipole}~[\mathrm{km}/\mathrm{s}]$", c,
+                      add_label=True, label_ell=mean_ell, label_b=mean_b,
+                      std_ell=std_ell, std_b=std_b)
+        
+        # Add H0 dipole reference with same inferred direction
+        add_h0_dipole_reference(ax, mean_ell, mean_b, std_ell, std_b)
+        
+    else:
+        # Plot all three components for independent directions
+        l025, l16, l50, l84, l975 = get_percentiles(ell_interp)
+        b025, b16, b50, b84, b975 = get_percentiles(b_interp)
+        
+        fig, axes = plt.subplots(1, 3, figsize=(12, 4), sharex=True)
+
+        components = [
+            (V025, V16, V50, V84, V975, r"$V_{\rm dipole}~[\mathrm{km}/\mathrm{s}]$"),
+            (l025, l16, l50, l84, l975, r"$\ell_{\rm dipole}~[\mathrm{deg}]$"),
+            (b025, b16, b50, b84, b975, r"$b_{\rm dipole}~[\mathrm{deg}]$"),
+        ]
+
+        for i, (lo2, lo1, med, hi1, hi2, ylabel) in enumerate(components):
+            plot_component(axes[i], lo2, lo1, med, hi1, hi2, ylabel, c)
+    
     fig.tight_layout()
     if filename is not None:
         fprint(f"saving a radial profile plot to {filename}")
