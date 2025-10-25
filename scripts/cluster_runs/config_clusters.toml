@@ -1,0 +1,260 @@
+root_main = "/Users/yasin/code/CANDEL/"
+python_exec = "/Users/yasin/code/CANDEL/venv_candel/bin/python"
+machine = "local"
+
+
+
+###############################################################################
+#                               Inference                                     #
+###############################################################################
+
+[inference]
+model = "Clusters_DistMarg"
+shared_params = "none"
+
+num_warmup = 1000
+num_samples = 1000
+num_chains = 1
+chain_method = "parallel"
+seed = 44
+compute_log_density = true
+compute_evidence =  true
+track_log_density_per_sample = true
+num_chains_harmonic = 10
+
+skip_if_exists = false
+###############################################################################
+#                           Peculiar velocity model                           #
+###############################################################################
+
+[pv_model]
+# Default kind. This gets overwritten if using a submission script.
+kind = "precomputed_los_manticore_2MPP_MULTIBIN_N256_DES_V2" # or "Vext"
+#kind = "precomputed_los_Carrick2015" # or "Vext"
+
+#kind = "Vext"
+galaxy_bias = "powerlaw"  # Ignored unless having an underlying density field
+which_Vext = "constant"
+#which_Vext = "per_pix"
+Vext_per_pix_nside = 1
+
+# Per-pixel A (zeropoint) configuration
+which_A = "constant"
+A_per_pix_nside = 1
+
+# Radial binned Vext configuration
+Vext_radial_bin_edges = [0.0,0.075,0.35]
+
+# (Inhomogeneus Malmquist bias settings and extrapolation), in units of Mpc / h
+r_limits_malmquist = [0.1, 1001]
+num_points_malmquist = 251
+
+los_decay_scale = 5.0
+
+###############################################################################
+#                                 Model                                       #
+###############################################################################
+
+[model]
+Om = 0.3
+use_MNR = false
+marginalize_eta = true
+
+[model.eta_grid]
+k_sigma = 5
+n_grid = 31
+
+[model.priors.h]
+dist = "delta"
+value = 1.0
+
+[model.priors.b1]
+#dist = "normal"
+#loc = 1
+#scale = 1.0
+dist = "uniform"
+low = 0.0
+high = 10.0
+
+[model.priors.beta]
+dist = "normal"
+loc = 0.43
+scale = 0.02
+
+[model.priors.alpha]
+#dist = "truncated_normal"
+#low = 0.0
+#mean = 1.0
+#scale = 1.0
+dist = "uniform"
+low = 0.0
+high = 10.0
+
+[model.priors.alpha_low]
+#dist = "truncated_normal"
+#low = 0.0
+#mean = 1.0
+#scale = 1.0
+dist = "uniform"
+low = 0.0
+high = 10.0
+
+[model.priors.alpha_high]
+#dist = "truncated_normal"
+#low = 0.0
+#mean = 0.5
+#scale = 1.0
+dist = "uniform"
+low = 0.0
+high = 4.0
+
+[model.priors.log_rho_t]
+#dist = "normal"
+#loc = 0.0
+#scale = 2.0
+dist = "uniform"
+low = -10.0
+high = 10.0
+
+[model.priors.sigma_int]
+dist = "jeffreys"
+low = 0.005
+high = 1.0
+
+[model.priors.CL_A]
+dist = "uniform"
+low = -10
+high = 10
+
+[model.priors.CL_B]
+dist = "uniform"
+low = -5
+high = 5
+
+[model.priors.CL_C]
+dist = "uniform"
+low = -2.0
+high = 2.0
+
+[model.priors.sigma_v]
+dist = "jeffreys"
+low = 5.0
+high = 2500
+#dist = "delta"
+#value = 300.0
+
+[model.priors.Vext]
+dist = "vector_uniform_fixed"
+low = 0.0
+high = 5000.0
+
+[model.priors.Vext_quad]
+dist = "delta"
+value = [[0, 0], [0, 0], [0, 0]]
+#dist = "vector_uniform_fixed"
+#low = 0.0
+#high = 0.3
+
+[model.priors.Vext_radial]
+dist = "vector_radial_spline_uniform"
+low = 0.0
+high = 5000
+
+rknot = [0, 100, 200, 300, 500]
+k = 1
+endpoints="not-a-knot"
+
+[model.priors.zeropoint_dipole]
+dist = "delta"
+value = [0,0,0]
+#dist = "vector_uniform_fixed"
+#low = 0.0
+#high = 0.3
+
+[model.priors.zeropoint_quad]
+dist = "delta"
+value = [[0, 0], [0, 0], [0, 0]]
+#dist = "vector_uniform_fixed"
+#low = 0.0
+#high = 0.3
+
+[model.priors.dH0]
+dist = "delta"
+value = [0,0,0]
+
+
+[model.priors.R_dist_emp]
+dist = "uniform"
+low = 1.0
+high = 500
+
+[model.priors.p_dist_emp]
+dist = "truncated_normal"
+low = 0.0
+mean = 2.0
+scale = 0.1
+
+[model.priors.n_dist_emp]
+dist = "truncated_normal"
+low = 0.0
+mean = 1.0
+scale = 30
+
+
+[model.priors.Vext_sigma]
+dist = "uniform"
+low = 0.0
+high = 1000.0
+
+################################################################################
+#                                  Data                                        #
+################################################################################
+
+[io]
+root_output = "results/main"
+# Default catalogue name and output path. This gets overwritten
+# if using a submission script.
+catalogue_name = "Clusters"
+#catalogue_name = "CF4_mock_0"
+
+fname_output = "results/LTYT_manticore.hdf5"
+
+
+[io.Clusters]
+root = "data/Clusters"
+zcmb_max = 0.35
+which_relation = "LTYT"
+finite_logY = true
+convert_to_CMB_frame = true
+
+los_file = "data/Clusters/los_Clusters_<X>.hdf5"
+
+nsamples_subsample = "none"
+seed_subsample = 42
+
+
+########
+# Static paths to define a general acces to the catalogues and reconstruction
+# fields without applying any cuts etc.
+########
+
+[io.PV_main]
+
+
+[io.PV_main.Clusters]
+root = "data/Clusters"
+return_all = true
+los_file = "data/Clusters/los_Clusters_<X>.hdf5"
+
+
+[io.reconstruction_main]
+# Distance over which to interpolate the 3D grids along the source LOS.
+rmin = 0.1
+rmax = 2001
+num_steps = 1001
+[io.reconstruction_main.manticore_2MPP_MULTIBIN_N256_DES_V2]
+fpath_root = "/mnt/extraspace/rstiskalek/MANTICORE/2MPP_MULTIBIN_N256_DES_V2/sph_fields_new_feb/sph_fields"
+
+[io.reconstruction_main.Carrick2015]
+path_density = "data/fields/carrick2015_twompp_density.npy"
+path_velocity = "data/fields/carrick2015_twompp_velocity.npy"
