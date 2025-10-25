@@ -643,12 +643,6 @@ def plot_corner_getdist(samples_list, labels=None, cols=None, show_fig=True,
                         ell_range=[0, 360], b_range=[-90, 90], points=None,
                         ranges={}, truths=None):
     """Plot a GetDist triangle plot for one or more posterior samples."""
-    try:
-        import scienceplots  # noqa
-        use_scienceplots = True
-    except ImportError:
-        warn("scienceplots not found, using default plotting style.")
-        use_scienceplots = False
 
     if isinstance(samples_list, dict):
         samples_list = [samples_list]
@@ -734,7 +728,7 @@ def plot_corner_getdist(samples_list, labels=None, cols=None, show_fig=True,
     else:
         line_args = None
 
-    with plt.style.context("science" if use_scienceplots else "default"):
+    with plt.style.context("science"):
         g = plots.get_subplot_plotter(settings=settings)
         g.triangle_plot(
             gdsamples_list,

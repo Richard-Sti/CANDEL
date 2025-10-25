@@ -135,9 +135,12 @@ def load_PV_dataframes(config_path):
     dfs = []
     fprint(f"loading {len(names)} PV dataframes: {names}")
     for name in names:
-        is_mock = name.startswith("CF4_mock")
+        is_mock = name.startswith("CF4_mock") or name.startswith("Clusters_mock")
         if is_mock:
-            kwargs = config_io["CF4_mock"].copy()
+            if name.startswith("CF4_mock"):
+                kwargs = config_io["CF4_mock"].copy()
+            elif name.startswith("Clusters_mock"):
+                kwargs = config_io["Clusters_mock"].copy()  # Use generic section for all Clusters mocks
         else:
             kwargs = config_io[name].copy()
 
@@ -206,6 +209,9 @@ class PVDataFrame:
         if "CF4_mock" in name:
             index = name.split("_")[-1]
             data = load_CF4_mock(root, index)
+        elif "Clusters_mock" in name:
+            index = name.split("_")[-1]
+            data = load_Clusters_mock(root, index)
         elif name == "CF4_calibrated":
             data = load_CF4_calibrated(root, **config)
         elif "CF4_" in name:
@@ -637,6 +643,29 @@ def load_CF4_data(root, which_band, best_mag_quality=True, eta_min=-0.3,
 
 
 def load_CF4_mock(root, index):
+    fname = join(root, f"mock_{index}.hdf5")
+    with File(fname, 'r') as f:
+        grp = f["mock"]
+        data = {key: grp[key][...] for key in grp.keys()}
+    return data
+
+
+def load_Clusters_mock(root, index):
+    """
+    Load a Clusters mock from the given root directory.
+    
+    Parameters
+    ----------
+    root : str
+        Root directory containing the mock files.
+    index : int or str
+        Index of the mock to load.
+    
+    Returns
+    -------
+    data : dict
+        Dictionary containing the mock data.
+    """
     fname = join(root, f"mock_{index}.hdf5")
     with File(fname, 'r') as f:
         grp = f["mock"]

@@ -16,6 +16,7 @@
 from .data import (                                                             # noqa
     load_CF4_data,                                                              # noqa
     load_CF4_mock,                                                              # noqa
+    load_Clusters_mock,                                                         # noqa
     load_2MTF,                                                                  # noqa
     load_SFI,                                                                   # noqa
     load_LOSS,                                                                  # noqa

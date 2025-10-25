@@ -15,4 +15,5 @@
 
 from .pv_mock import (                                                          # noqa
     gen_TFR_mock,                                                           # noqa
+    gen_Clusters_mock,                                                      # noqa
     )
