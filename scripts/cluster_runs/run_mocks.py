@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 """
 MPI script for mock cluster analysis with iterative cluster removal.
 
@@ -33,7 +32,7 @@ except ImportError:
     print("Warning: mpi4py not available, running in serial mode")
 
 # Add CANDEL to path
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+#sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import candel
 
 
@@ -125,6 +124,7 @@ def generate_mock(nsamples, seed, field_loader, output_dir, mock_id=0):
 
 
 def run_inference_on_mock(config_path, mock_dir, mock_id, output_dir, 
+                          field_density, field_velocity,
                           temp_suffix="", verbose_name="", mock_name=None):
     """
     Run inference on mock data with a given config.
@@ -139,6 +139,10 @@ def run_inference_on_mock(config_path, mock_dir, mock_id, output_dir,
         Mock identifier
     output_dir : str
         Directory to save temp config
+    field_density : str
+        Path to field density file
+    field_velocity : str
+        Path to field velocity file
     temp_suffix : str
         Suffix for temp config file
     verbose_name : str
@@ -170,8 +174,18 @@ def run_inference_on_mock(config_path, mock_dir, mock_id, output_dir,
         f'catalogue_name = "{mock_name}"'
     )
     config_text = config_text.replace(
-        'root = "/Users/yasin/code/CANDEL/data/Clusters_mock"',
+        'root = "PLACEHOLDER_MOCK_DIR"',
         f'root = "{mock_dir}"'
+    )
+    
+    # Replace field paths
+    config_text = config_text.replace(
+        'path_density = "PLACEHOLDER_DENSITY"',
+        f'path_density = "{field_density}"'
+    )
+    config_text = config_text.replace(
+        'path_velocity = "PLACEHOLDER_VELOCITY"',
+        f'path_velocity = "{field_velocity}"'
     )
     
     # Set unique output file for this mock and iteration
@@ -326,14 +340,14 @@ def main():
     parser = argparse.ArgumentParser(
         description='MPI-based mock cluster analysis with iterative cluster removal'
     )
-    parser.add_argument('--config_nodipole', type=str, required=True,
-                        help='Path to config file for model WITHOUT dipole')
-    parser.add_argument('--config_dipole', type=str, required=True,
-                        help='Path to config file for model WITH dipole')
-    parser.add_argument('--field_density', type=str, required=True,
-                        help='Path to field density file (e.g., carrick2015_twompp_density.npy)')
-    parser.add_argument('--field_velocity', type=str, required=True,
-                        help='Path to field velocity file (e.g., carrick2015_twompp_velocity.npy)')
+    parser.add_argument('--config_nodipole', type=str, default='scripts/cluster_runs/mock_cluster_nodipole.toml',
+                        help='Path to config file for model WITHOUT dipole (default: scripts/cluster_runs/mock_cluster_nodipole.toml)')
+    parser.add_argument('--config_dipole', type=str, default='scripts/cluster_runs/mock_cluster_dipole.toml',
+                        help='Path to config file for model WITH dipole (default: scripts/cluster_runs/mock_cluster_dipole.toml)')
+    parser.add_argument('--field_density', type=str, default=os.path.expanduser('~/code/CANDEL/data/fields/carrick2015_twompp_density.npy'),
+                        help='Path to field density file (default: ~/code/CANDEL/data/fields/carrick2015_twompp_density.npy)')
+    parser.add_argument('--field_velocity', type=str, default=os.path.expanduser('~/code/CANDEL/data/fields/carrick2015_twompp_velocity.npy'),
+                        help='Path to field velocity file (default: ~/code/CANDEL/data/fields/carrick2015_twompp_velocity.npy)')
     parser.add_argument('--nsamples', type=int, default=275,
                         help='Number of clusters per mock (default: 275)')
     parser.add_argument('--n_mocks_total', type=int, default=None,
@@ -343,10 +357,10 @@ def main():
     parser.add_argument('--n_remove_per_iteration', type=int, default=1,
                         help='Number of clusters to remove per iteration (default: 1)')
     parser.add_argument('--output_dir', type=str, 
-                        default='/Users/yasin/code/CANDEL/results/mock_cluster_removal',
-                        help='Output directory for results')
+                        default='results/mock_cluster_removal',
+                        help='Output directory for results (default: results/mock_cluster_removal)')
     parser.add_argument('--seed_offset', type=int, default=1000,
-                        help='Seed offset (seed = offset + mock_id)')
+                        help='Seed offset (seed = offset + mock_id, default: 1000)')
     parser.add_argument('--dipole_only', action='store_true',
                         help='Only run dipole inference on full mock (skip no-dipole and removal)')
     
@@ -377,7 +391,11 @@ def main():
             n_mocks_this_rank = mocks_per_rank
         
         mock_ids = list(range(start_mock_id, start_mock_id + n_mocks_this_rank))
-        fprint(f"Generating {n_mocks_this_rank} mocks: IDs {mock_ids[0]}-{mock_ids[-1]}")
+        fprint(f"DEBUG: n_mocks_total={args.n_mocks_total}, size={size}, rank={rank}, mocks_per_rank={mocks_per_rank}, remainder={remainder}, start_mock_id={start_mock_id}, n_mocks_this_rank={n_mocks_this_rank}, mock_ids={mock_ids}")
+        if mock_ids:
+            fprint(f"Generating {n_mocks_this_rank} mocks: IDs {mock_ids[0]}-{mock_ids[-1]}")
+        else:
+            fprint("No mocks assigned to this rank.")
     else:
         # Default: 1 mock per rank, ID = rank
         mock_ids = [rank]
@@ -393,7 +411,7 @@ def main():
     )
     
     # Create mock directory (shared across all mocks, no rank-specific dir)
-    mock_dir = join(args.output_dir, "mocks")
+    mock_dir = os.path.abspath(join(args.output_dir, "mocks"))
     os.makedirs(mock_dir, exist_ok=True)
     
     # Loop over mocks assigned to this rank
@@ -419,6 +437,7 @@ def main():
             
             lp_dipole_full, output_dipole, data_dipole = run_inference_on_mock(
                 args.config_dipole, mock_dir, mock_id, args.output_dir,
+                args.field_density, args.field_velocity,
                 temp_suffix="_dipole_full", verbose_name="Dipole (full)"
             )
             
@@ -436,6 +455,7 @@ def main():
         
         lp_nodipole_full, output_nodipole, data_full = run_inference_on_mock(
             args.config_nodipole, mock_dir, mock_id, args.output_dir,
+            args.field_density, args.field_velocity,
             temp_suffix="_nodipole", verbose_name="No-dipole"
         )
         
@@ -463,6 +483,7 @@ def main():
         
         lp_dipole_full, output_dipole, data_dipole = run_inference_on_mock(
             args.config_dipole, mock_dir, mock_id, args.output_dir,
+            args.field_density, args.field_velocity,
             temp_suffix="_dipole_full", verbose_name="Dipole (full)"
         )
         
@@ -528,8 +549,8 @@ def main():
                         # No cluster dimension, keep as is
                         mock_filtered[key] = data
             
-            # Save filtered mock
-            filtered_mock_path = join(mock_dir, f"mock_{mock_id:04d}_iter{iteration:02d}.hdf5")
+            # Save filtered mock (use format without underscore before iter so loader parses correctly)
+            filtered_mock_path = join(mock_dir, f"mock_{mock_id:04d}iter{iteration:02d}.hdf5")
             fprint(f"  Saving filtered mock to {filtered_mock_path}")
             
             with File(filtered_mock_path, 'w') as f_new:
@@ -548,12 +569,15 @@ def main():
                 grp.attrs['removed_indices'] = remove_indices
             
             # Update config to point to this filtered mock
-            # The loader will look for "mock_{mock_id:04d}_iter{iteration:02d}.hdf5" based on catalogue name
-            filtered_mock_name = f"Clusters_mock_{mock_id:04d}_iter{iteration:02d}"
+            # The loader expects name.split("_")[-1] as index, so use format without underscore
+            # Clusters_mock_0000iter01 -> index = "0000iter01" -> mock_0000iter01.hdf5
+            filtered_mock_name = f"Clusters_mock_{mock_id:04d}iter{iteration:02d}"
+            filtered_mock_file = join(mock_dir, f"mock_{mock_id:04d}iter{iteration:02d}.hdf5")
             
             # Run dipole inference on filtered mock
             lp_dipole_filtered, output_dipole_filtered, data_filtered_loaded = run_inference_on_mock(
                 args.config_dipole, mock_dir, mock_id, args.output_dir,
+                args.field_density, args.field_velocity,
                 temp_suffix=f"_dipole_iter{iteration:02d}",
                 verbose_name=f"Dipole (iter {iteration})",
                 mock_name=filtered_mock_name

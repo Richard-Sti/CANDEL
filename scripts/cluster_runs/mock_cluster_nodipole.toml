@@ -1,15 +1,16 @@
 # Example configuration for mock cluster analysis WITHOUT dipole
 # This config sets dipole to zero (no anisotropy)
+# Paths will be updated by the script to use absolute paths
 
-root_main = "/Users/yasin/code/CANDEL/"
-python_exec = "/Users/yasin/code/CANDEL/venv_candel/bin/python"
+root_main = "./"
+python_exec = "python"
 machine = "local"
 
 [inference]
 model = "Clusters_DistMarg"
 shared_params = "none"
-num_warmup = 750
-num_samples = 750
+num_warmup = 500
+num_samples = 500
 num_chains = 1
 chain_method = "parallel"
 seed = 44
@@ -160,7 +161,7 @@ fname_output = "results/mocks/nodipole.hdf5"
 
 # This section will be updated by the script
 [io.Clusters_mock]
-root = "/Users/yasin/code/CANDEL/data/Clusters_mock"
+root = "PLACEHOLDER_MOCK_DIR"
 
 [io.Clusters]
 which_relation = "YT"
@@ -171,5 +172,5 @@ rmax = 2001
 num_steps = 1001
 
 [io.reconstruction_main.Carrick2015]
-path_density = "/Users/yasin/code/CANDEL/data/fields/carrick2015_twompp_density.npy"
-path_velocity = "/Users/yasin/code/CANDEL/data/fields/carrick2015_twompp_velocity.npy"
+path_density = "PLACEHOLDER_DENSITY"
+path_velocity = "PLACEHOLDER_VELOCITY"

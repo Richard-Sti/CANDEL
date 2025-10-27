@@ -1,5 +1,5 @@
-root_main = "/Users/yasin/code/CANDEL/"
-python_exec = "/Users/yasin/code/CANDEL/venv_candel/bin/python"
+root_main = "~/code/CANDEL/"
+python_exec = "~/code/CANDEL/venv_candel/bin/python"
 machine = "local"
 
 
