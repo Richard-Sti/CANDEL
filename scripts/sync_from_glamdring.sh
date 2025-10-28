@@ -2,13 +2,13 @@
 set -euo pipefail
 
 # ---- local destination ----
-DEST_BASE="$HOME/Projects/CANDEL"
+DEST_BASE="$HOME/code/CANDEL"
 
 # ---- glamdring source ----
-SRC_USER="rstiskalek"
+SRC_USER="yasin"
 SRC_HOST="glamdring.physics.ox.ac.uk"
-SRC_PATH="/mnt/users/rstiskalek/CANDEL"
-SSH_KEY="$HOME/.ssh/glamdring"
+SRC_PATH="/mnt/users/yasin/code/CANDEL"
+SSH_KEY="$HOME/.ssh/id_ed25519"
 
 usage() {
     echo "Usage: $0 [results|data]"
