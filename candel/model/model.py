@@ -24,6 +24,7 @@ import numpy as np
 from jax import random, vmap
 from jax.debug import print as jprint  # noqa
 from jax.lax import cond
+from interpax import interp1d
 from jax.scipy.linalg import solve_triangular
 from jax.scipy.special import gammainc, gammaln, logsumexp
 from jax.scipy.stats.norm import cdf as jax_norm_cdf
@@ -297,6 +298,32 @@ def sample_spline_radial_vector(name, nval, low, high):
     return mag[..., None] * u
 
 
+def sample_radialmag_vector(name, nval, low, high):
+    """
+    Sample a vector whose magnitude varies at `nval` knots but a direction
+    is shared by all knots and sampled isotropically on the sky. The magnitude
+    is sampled ~ Uniform(low, high).
+
+    Returns the tuple (mag, rhat), where `mag` has shape (nval,) and `rhat`
+    has shape (3,).
+    """
+    phi = sample(f"{name}_phi", Uniform(0, 2 * jnp.pi))
+    cos_theta = sample(f"{name}_cos_theta", Uniform(0, 1))
+    sin_theta = jnp.sqrt(1 - cos_theta**2)
+
+    with plate(f"{name}_plate", nval):
+        mag = sample(f"{name}_mag", Uniform(low, high))
+
+    rhat = jnp.array([
+        sin_theta * jnp.cos(phi),
+        sin_theta * jnp.sin(phi),
+        cos_theta
+        ])
+
+    return mag, rhat
+
+
+
 def sample_radial_spline_uniform_fixed_direction(name, nval, low, high):
     """
     Sample velocity vectors with a FIXED direction across all radial knots,
@@ -383,6 +410,7 @@ def load_priors(config_priors):
         "vector_radial_spline_uniform_fixed_direction": lambda p: {"type": "vector_radial_spline_uniform_fixed_direction", "nval": len(p["rknot"]) if "rknot" in p else None, "low": p["low"], "high": p["high"]},  # noqa
         "vector_components_uniform": lambda p: {"type": "vector_components_uniform", "low": p["low"], "high": p["high"],},  # noqa
         "quadrupole_uniform_fixed": lambda p: {"type": "quadrupole_uniform_fixed", "low": p["low"], "high": p["high"],},  # noqa
+        "vector_radialmag_uniform": lambda p: {"type": "vector_radialmag_uniform", "nval": len(p["rknot"]), "low": p["low"], "high": p["high"]},  # noqa
     }
     priors = {}
     prior_dist_name = {}
@@ -437,6 +465,11 @@ def _rsample(name, dist):
     if isinstance(dist, dict) and dist.get("type") == "vector_radial_spline_uniform_fixed_direction":  # noqa
         return sample_radial_spline_uniform_fixed_direction(
             name, dist["nval"], dist["low"], dist["high"])
+    
+    if isinstance(dist, dict) and dist.get("type") == "vector_radialmag_uniform":  # noqa
+        return sample_radialmag_vector(
+            name, dist["nval"], dist["low"], dist["high"], )
+
 
     return sample(name, dist)
 
@@ -507,11 +540,11 @@ class BaseModel(ABC):
 
         self.which_Vext = get_nested(config, "pv_model/which_Vext", "constant")
 
-        if self.which_Vext == "radial":
-            d = priors["Vext_radial"]
+        if self.which_Vext in ["radial", "radial_magnitude"]:
+            d = priors[f"Vext_{self.which_Vext}"]
             fprint(f"using radial `Vext` with spline knots at {d['rknot']}")
             self.kwargs_Vext = {
-                key: d[key] for key in ["rknot", "k", "endpoints"]}
+                key: d[key] for key in ["rknot", "method"]}
         elif self.which_Vext == "radial_binned":
             bin_edges = get_nested(config, "pv_model/Vext_radial_bin_edges", None)
             if bin_edges is None:
@@ -643,6 +676,22 @@ def compute_Vext_radial(data, r_grid, Vext, which_Vext, **kwargs_Vext):
         # Result: (n_gal,) = sum over component axis of (n_gal, n_bins) * (n_bins, 3) * (n_gal, 3)
         Vext_rad = jnp.sum(
             (data["C_radial_bin"] @ Vext_3d) * data["rhat"], axis=1)[None, :, None]
+    elif which_Vext == "radial_magnitude":
+        # Unpack the tuple of magnitude and direction.
+        Vext_mag, rhat = Vext
+        # Interpolate the magnitude as a function of radius, shape (n_rbins,).
+        Vext_mag_r = interp1d(
+            r_grid, kwargs_Vext["rknot"], Vext_mag,
+            method=kwargs_Vext["method"], extrap=(Vext_mag[0], Vext_mag[-1]))
+        # Clipping to only keep positive magnitudes.
+        #Vext_mag_r = smoothclip_nr(Vext_mag_r, tau=2.5)
+
+        # Project the LOS of each galaxy onto the dipole direction, shape
+        # is (n_gal,).
+        cos_theta = jnp.sum(data["rhat"] * rhat[None, :], axis=1)
+
+        # Finally, the shape is (n_field, n_gal, n_rbins).
+        Vext_rad = (cos_theta[:, None] * Vext_mag_r[None, :])[None, :, :]
     elif which_Vext == "per_pix":
         Vext_rad = (data["C_pix"] @ Vext)[None, :, None]
     elif which_Vext == "constant":
@@ -695,6 +744,10 @@ def sumzero_basis(npix):
 def sample_Vext(priors, which_Vext, shared_params=None, kwargs_Vext={}):
     if which_Vext == "radial":
         Vext = rsample("Vext_rad", priors["Vext_radial"], shared_params)
+    elif which_Vext == "radial_magnitude":
+        Vext = rsample(
+            "Vext_radmag", priors["Vext_radial_magnitude"],
+            shared_params)
     elif which_Vext == "radial_binned":
         prior = priors["Vext_radial_binned"]
         

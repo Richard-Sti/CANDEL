@@ -18,6 +18,7 @@ import argparse
 import numpy as np
 from h5py import File
 import copy
+import re
 
 try:
     from mpi4py import MPI
@@ -74,7 +75,8 @@ def generate_mock(nsamples, seed, field_loader, output_dir, mock_id=0):
         'Vext_ell': 270.0,
         'Vext_b': 30.0,
         'sigma_v': 150.0,
-        'beta': 4.0,
+        'beta': 0.43,
+        'b1': 1.2,
         'A_CL': 2.0,
         'B_CL': 2.5,
         'sigma_int': 0.11,
@@ -91,7 +93,7 @@ def generate_mock(nsamples, seed, field_loader, output_dir, mock_id=0):
         'e_logY': 0.09,
         'e_logF': 0.05,
         'b_min': 0.0,  #20.0,
-        'zcmb_max': 0.35,
+        'zcmb_max': 0.4,
         'R': 130.0,
         'p': 2.00,
         'n': 1.1,
@@ -124,7 +126,7 @@ def generate_mock(nsamples, seed, field_loader, output_dir, mock_id=0):
 
 
 def run_inference_on_mock(config_path, mock_dir, mock_id, output_dir, 
-                          field_density, field_velocity,
+                          field_density, field_velocity, num_samples=None,
                           temp_suffix="", verbose_name="", mock_name=None):
     """
     Run inference on mock data with a given config.
@@ -162,6 +164,8 @@ def run_inference_on_mock(config_path, mock_dir, mock_id, output_dir,
     """
     if mock_name is None:
         mock_name = f"Clusters_mock_{mock_id:04d}"
+
+    print('num_samples:', num_samples)
     
     # Create a temporary config by modifying the original via text replacement
     with open(config_path, 'r') as f:
@@ -199,7 +203,19 @@ def run_inference_on_mock(config_path, mock_dir, mock_id, output_dir,
         'fname_output = "results/mocks/dipole.hdf5"',
         f'fname_output = "{output_file}"'
     )
-    
+
+    config_text = config_text.replace(
+        'num_samples = 1000', f'num_samples = {num_samples}'
+    )
+    config_text = config_text.replace(
+        'num_warmup = 1000', f'num_warmup = {num_samples}'
+    )
+
+    # Replace whatever number appears after '='
+
+    # config_text = re.sub(r'n_warmup\s*=\s*\d+', f'n_warmup = {num_samples}', config_text)
+    # config_text = re.sub(r'n_samples\s*=\s*\d+', f'n_samples = {num_samples}', config_text)
+
     # Save temp config
     temp_config = join(output_dir, f"temp_config_mock{mock_id:04d}{temp_suffix}.toml")
     with open(temp_config, 'w') as f:
@@ -363,6 +379,8 @@ def main():
                         help='Seed offset (seed = offset + mock_id, default: 1000)')
     parser.add_argument('--dipole_only', action='store_true',
                         help='Only run dipole inference on full mock (skip no-dipole and removal)')
+    parser.add_argument('--num_samples', type=int, default=500,
+                        help='Number of samples for inference runs (default: 500)')
     
     args = parser.parse_args()
     
@@ -438,7 +456,8 @@ def main():
             lp_dipole_full, output_dipole, data_dipole = run_inference_on_mock(
                 args.config_dipole, mock_dir, mock_id, args.output_dir,
                 args.field_density, args.field_velocity,
-                temp_suffix="_dipole_full", verbose_name="Dipole (full)"
+                temp_suffix="_dipole_full", verbose_name="Dipole (full)",
+                num_samples=args.num_samples
             )
             
             fprint(f"\n{'='*60}")
@@ -456,7 +475,8 @@ def main():
         lp_nodipole_full, output_nodipole, data_full = run_inference_on_mock(
             args.config_nodipole, mock_dir, mock_id, args.output_dir,
             args.field_density, args.field_velocity,
-            temp_suffix="_nodipole", verbose_name="No-dipole"
+            temp_suffix="_nodipole", verbose_name="No-dipole",
+            num_samples=args.num_samples
         )
         
         # Save initial no-dipole results
@@ -484,7 +504,8 @@ def main():
         lp_dipole_full, output_dipole, data_dipole = run_inference_on_mock(
             args.config_dipole, mock_dir, mock_id, args.output_dir,
             args.field_density, args.field_velocity,
-            temp_suffix="_dipole_full", verbose_name="Dipole (full)"
+            temp_suffix="_dipole_full", verbose_name="Dipole (full)",
+            num_samples=args.num_samples
         )
         
         # ===================================================================
@@ -580,7 +601,8 @@ def main():
                 args.field_density, args.field_velocity,
                 temp_suffix=f"_dipole_iter{iteration:02d}",
                 verbose_name=f"Dipole (iter {iteration})",
-                mock_name=filtered_mock_name
+                mock_name=filtered_mock_name,
+                num_samples=args.num_samples
             )
             
             # Save summary results for this iteration

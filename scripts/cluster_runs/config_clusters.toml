@@ -1,5 +1,5 @@
-root_main = "~/code/CANDEL/"
-python_exec = "~/code/CANDEL/venv_candel/bin/python"
+root_main = "./"
+python_exec = "python"
 machine = "local"
 
 
@@ -12,8 +12,8 @@ machine = "local"
 model = "Clusters_DistMarg"
 shared_params = "none"
 
-num_warmup = 1000
-num_samples = 1000
+num_warmup = 4000
+num_samples = 4000
 num_chains = 1
 chain_method = "parallel"
 seed = 44
@@ -29,13 +29,10 @@ skip_if_exists = false
 
 [pv_model]
 # Default kind. This gets overwritten if using a submission script.
-kind = "precomputed_los_manticore_2MPP_MULTIBIN_N256_DES_V2" # or "Vext"
-#kind = "precomputed_los_Carrick2015" # or "Vext"
+kind = "precomputed_los_Carrick2015" # or "Vext"
 
-#kind = "Vext"
-galaxy_bias = "powerlaw"  # Ignored unless having an underlying density field
-which_Vext = "constant"
-#which_Vext = "per_pix"
+galaxy_bias = "linear"  # Ignored unless having an underlying density field
+which_Vext = "radial_magnitude"
 Vext_per_pix_nside = 1
 
 # Per-pixel A (zeropoint) configuration
@@ -131,17 +128,11 @@ dist = "uniform"
 low = -5
 high = 5
 
-[model.priors.CL_C]
-dist = "uniform"
-low = -2.0
-high = 2.0
 
 [model.priors.sigma_v]
 dist = "jeffreys"
 low = 5.0
 high = 2500
-#dist = "delta"
-#value = 300.0
 
 [model.priors.Vext]
 dist = "vector_uniform_fixed"
@@ -163,6 +154,13 @@ high = 5000
 rknot = [0, 100, 200, 300, 500]
 k = 1
 endpoints="not-a-knot"
+
+[model.priors.Vext_radial_magnitude]
+dist = "vector_radialmag_uniform"
+low = -10000
+high = 10000
+rknot = [0, 50, 100, 150, 200, 250, 500, 750, 1000]
+method = "cubic"
 
 [model.priors.zeropoint_dipole]
 dist = "delta"
@@ -201,11 +199,6 @@ mean = 1.0
 scale = 30
 
 
-[model.priors.Vext_sigma]
-dist = "uniform"
-low = 0.0
-high = 1000.0
-
 ################################################################################
 #                                  Data                                        #
 ################################################################################
@@ -217,13 +210,13 @@ root_output = "results/main"
 catalogue_name = "Clusters"
 #catalogue_name = "CF4_mock_0"
 
-fname_output = "results/LTYT_manticore.hdf5"
+fname_output = "results/config_clusters.hdf5"
 
 
 [io.Clusters]
 root = "data/Clusters"
 zcmb_max = 0.35
-which_relation = "LTYT"
+which_relation = "YT"
 finite_logY = true
 convert_to_CMB_frame = true
 

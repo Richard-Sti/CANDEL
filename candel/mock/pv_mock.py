@@ -121,7 +121,7 @@ def gen_TFR_mock(nsamples, r_grid, Vext_mag, Vext_ell, Vext_b, sigma_v, beta,
 
 
 def gen_Clusters_mock(nsamples, r_grid, Vext_mag, Vext_ell, Vext_b, sigma_v,
-                      beta, A_CL, B_CL, sigma_int, A_CL_LT, B_CL_LT, sigma_int_LT,
+                      beta, b1, A_CL, B_CL, sigma_int, A_CL_LT, B_CL_LT, sigma_int_LT,
                       zeropoint_dipole_mag, zeropoint_dipole_ell, zeropoint_dipole_b, h,
                       e_logT, e_logY, e_logF, logT_prior_mean, logT_prior_std,
                       b_min, zcmb_max, R, p, n, field_loader, r2distmod, r2z,
@@ -162,7 +162,6 @@ def gen_Clusters_mock(nsamples, r_grid, Vext_mag, Vext_ell, Vext_b, sigma_v,
     # Sample distances
     r = np.full(nsamples, np.nan)
     Vpec = np.full(nsamples, np.nan)
-    b1 = Om**0.55 / beta
     for i in range(nsamples):
         Vpec[i] = Vext_rad[i]
         r[i] = sample_distance(r_grid, los_density[i], b1, R, p, n, gen)
