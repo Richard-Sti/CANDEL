@@ -76,7 +76,7 @@ def generate_mock(nsamples, seed, field_loader, output_dir, mock_id=0):
         'Vext_b': 30.0,
         'sigma_v': 150.0,
         'beta': 0.43,
-        'b1': 1.2,
+        'b1': 3.0,
         'A_CL': 2.0,
         'B_CL': 2.5,
         'sigma_int': 0.11,
