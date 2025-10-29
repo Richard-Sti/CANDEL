@@ -92,7 +92,7 @@ def generate_mock(nsamples, seed, field_loader, output_dir, mock_id=0):
         'e_logT': 0.03,
         'e_logY': 0.09,
         'e_logF': 0.05,
-        'b_min': 0.0,  #20.0,
+        'b_min': 20.0,  #20.0,
         'zcmb_max': 0.4,
         'R': 130.0,
         'p': 2.00,
@@ -364,7 +364,7 @@ def main():
                         help='Path to field density file (default: ~/code/CANDEL/data/fields/carrick2015_twompp_density.npy)')
     parser.add_argument('--field_velocity', type=str, default=os.path.expanduser('~/code/CANDEL/data/fields/carrick2015_twompp_velocity.npy'),
                         help='Path to field velocity file (default: ~/code/CANDEL/data/fields/carrick2015_twompp_velocity.npy)')
-    parser.add_argument('--nsamples', type=int, default=275,
+    parser.add_argument('--nclusters', type=int, default=275,
                         help='Number of clusters per mock (default: 275)')
     parser.add_argument('--n_mocks_total', type=int, default=None,
                         help='Total number of mocks to generate (distributed across ranks). If None, generates 1 mock per rank.')
@@ -440,10 +440,10 @@ def main():
         
         # Generate mock with unique seed
         seed = args.seed_offset + mock_id
-        mock, mock_path = generate_mock(args.nsamples, seed, field_loader, mock_dir, mock_id=mock_id)
+        mock, mock_path = generate_mock(args.nclusters, seed, field_loader, mock_dir, mock_id=mock_id)
     
         fprint(f"Starting cluster removal analysis...")
-        fprint(f"  Initial clusters: {args.nsamples}")
+        fprint(f"  Initial clusters: {args.nclusters}")
         fprint(f"  Removal iterations: {args.n_remove_iterations}")
         fprint(f"  Clusters per iteration: {args.n_remove_per_iteration}")
         
