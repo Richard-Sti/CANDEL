@@ -71,8 +71,9 @@ def generate_mock(nsamples, seed, field_loader, output_dir, mock_id=0):
     mock_path : str
         Path to saved mock file
     """
-    fprint(f"Generating mock with {nsamples} clusters, seed={seed}")
-    
+    fprint(f"Generating mock with {nsamples} clusters, seed={seed}, b1={b1}")
+    b1 = sample_uniform(n=1, low=0.0, high=4.0, seed=seed)[0]
+
     # Mock generation parameters (same as make_Clusters_mocks.ipynb)
     kwargs = {
         'r_grid': np.linspace(0.1, 1001, 1001),
@@ -81,7 +82,7 @@ def generate_mock(nsamples, seed, field_loader, output_dir, mock_id=0):
         'Vext_b': 0.0,
         'sigma_v': 300.0,
         'beta': 0.43,
-        'b1': sample_uniform(n=1, low=0.0, high=10.0, seed=seed)[0],
+        'b1': b1,
         'A_CL': 2.0,
         'B_CL': 2.5,
         'sigma_int': 0.11,
