@@ -42,6 +42,11 @@ def fprint(msg):
     print(f"[Rank {rank}] {msg}", flush=True)
 
 
+def sample_uniform(n=1, low=0.0, high=10.0, seed=None):
+    rng = np.random.default_rng(seed)
+    return rng.uniform(low, high, size=n)
+
+
 def generate_mock(nsamples, seed, field_loader, output_dir, mock_id=0):
     """
     Generate a mock cluster dataset.
@@ -76,7 +81,7 @@ def generate_mock(nsamples, seed, field_loader, output_dir, mock_id=0):
         'Vext_b': 0.0,
         'sigma_v': 300.0,
         'beta': 0.43,
-        'b1': 3.0,
+        'b1': sample_uniform(n=1, low=0.0, high=10.0, seed=seed)[0],
         'A_CL': 2.0,
         'B_CL': 2.5,
         'sigma_int': 0.11,
