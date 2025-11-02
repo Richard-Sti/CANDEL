@@ -72,7 +72,7 @@ def generate_mock(nsamples, seed, field_loader, output_dir, mock_id=0):
         Path to saved mock file
     """
     
-    b1 = sample_uniform(n=1, low=0.0, high=4.0, seed=seed)[0]
+    b1 = sample_uniform(n=1, low=1.0, high=4.0, seed=seed)[0]
     
     # Jeffreys prior for sigma_int
     rng = np.random.default_rng(seed)

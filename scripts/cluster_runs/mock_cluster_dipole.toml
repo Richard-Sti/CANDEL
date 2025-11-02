@@ -48,7 +48,7 @@ value = 1.0
 
 [model.priors.b1]
 dist = "uniform"
-low = 0.0
+low = 1.0
 high = 4.0
 
 [model.priors.beta]
