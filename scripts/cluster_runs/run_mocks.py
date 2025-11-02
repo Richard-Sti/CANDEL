@@ -71,8 +71,35 @@ def generate_mock(nsamples, seed, field_loader, output_dir, mock_id=0):
     mock_path : str
         Path to saved mock file
     """
+    
     b1 = sample_uniform(n=1, low=0.0, high=4.0, seed=seed)[0]
-    fprint(f"Generating mock with {nsamples} clusters, seed={seed}, b1={b1}")
+    
+    # Jeffreys prior for sigma_int
+    rng = np.random.default_rng(seed)
+    log_sigma_int = rng.uniform(np.log(0.005), np.log(0.2))
+    sigma_int = np.exp(log_sigma_int)
+    
+    A_CL = sample_uniform(n=1, low=1.0, high=3.0, seed=seed)[0]
+    B_CL = sample_uniform(n=1, low=2.0, high=3.0, seed=seed)[0]
+    
+    # Jeffreys prior for sigma_v
+    log_sigma_v = rng.uniform(np.log(5.0), np.log(500.0))
+    sigma_v = np.exp(log_sigma_v)
+    
+    zeropoint_dipole_mag = sample_uniform(n=1, low=0.0, high=0.1, seed=seed)[0]
+    zeropoint_dipole_ell = sample_uniform(n=1, low=0.0, high=360.0, seed=seed)[0]
+    # Sample cos_theta uniformly over full sphere to match vector_uniform_fixed
+    cos_theta = sample_uniform(n=1, low=-1.0, high=1.0, seed=seed)[0]
+    zeropoint_dipole_b = np.rad2deg(np.arccos(cos_theta))
+    
+    # Fixed values for distance model parameters
+    R = 130.0
+    p = 2.0
+    n = 1.1
+    
+    fprint(f"Generating mock with {nsamples} clusters, seed={seed}, b1={b1:.3f}, sigma_int={sigma_int:.3f}, sigma_v={sigma_v:.1f}")
+
+
 
     # Mock generation parameters (same as make_Clusters_mocks.ipynb)
     kwargs = {
@@ -80,18 +107,18 @@ def generate_mock(nsamples, seed, field_loader, output_dir, mock_id=0):
         'Vext_mag': 0.00,
         'Vext_ell': 0.0,
         'Vext_b': 0.0,
-        'sigma_v': 300.0,
+        'sigma_v': sigma_v,
         'beta': 0.43,
         'b1': b1,
-        'A_CL': 2.0,
-        'B_CL': 2.5,
-        'sigma_int': 0.11,
+        'A_CL': A_CL,
+        'B_CL': B_CL,
+        'sigma_int': sigma_int,
         'A_CL_LT': 0.0,
         'B_CL_LT': 2.5,
         'sigma_int_LT': 0.15,
-        'zeropoint_dipole_mag': 0.05,
-        'zeropoint_dipole_ell': 180.0,
-        'zeropoint_dipole_b': 50.0,
+        'zeropoint_dipole_mag': zeropoint_dipole_mag,
+        'zeropoint_dipole_ell': zeropoint_dipole_ell,
+        'zeropoint_dipole_b': zeropoint_dipole_b,
         'h': 1.0,
         'logT_prior_mean': 0.0,
         'logT_prior_std': 0.2,
@@ -100,9 +127,9 @@ def generate_mock(nsamples, seed, field_loader, output_dir, mock_id=0):
         'e_logF': 0.05,
         'b_min': 20.0,  #20.0,
         'zcmb_max': 0.4,
-        'R': 130.0,
-        'p': 2.00,
-        'n': 1.1,
+        'R': R,
+        'p': p,
+        'n': n,
         'field_loader': field_loader,
         'r2distmod': candel.Distance2Distmod(),
         'r2z': candel.Distance2Redshift(),
