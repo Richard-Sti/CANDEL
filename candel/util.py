@@ -35,6 +35,7 @@ from astropy.coordinates import CartesianRepresentation, SkyCoord
 from corner import corner
 from getdist import MCSamples, plots
 from h5py import File
+from interpax import interp1d
 from jax import vmap
 from jax_cosmo.scipy.interpolate import InterpolatedUnivariateSpline
 
@@ -365,6 +366,8 @@ def name2label(name):
         "p_dist_emp": r"$p_{\rm dist}$",
         "Rmax_dist_emp": r"$R_{\rm max, dist}$",
         "rho_corr": r"$\rho_{\rm corr}$",
+        "Vext_radmag_ell": r"$\ell_{\mathrm{Vext}}$",
+        "Vext_radmag_b": r"$b_{\mathrm{Vext}}$",
     }
 
     # Handle radial_binned Vext parameters (e.g., Vext_radial_bin_mag__0)
@@ -535,6 +538,13 @@ def plot_corner(samples, show_fig=True, filename=None, smooth=1, keys=None):
     for k, v in samples.items():
         if keys is not None and k not in keys:
             continue
+
+        if k == "Vext_radmag_mag":
+            nbin = v.shape[1]
+            for i in range(nbin):
+                flat_samples.append(v[:, i])
+                labels.append(fr"$V_{{\mathrm{{ext}}, {{{i}}}}}$")
+
         if v.ndim > 1:
             continue
         flat_samples.append(v.reshape(-1))
@@ -1042,7 +1052,7 @@ def plot_radial_profiles(samples, model, r_eval_size=1000, show_fig=True,
     fig.tight_layout()
     if filename is not None:
         fprint(f"saving a radial profile plot to {filename}")
-        fig.savefig(filename, bbox_inches="tight")
+        fig.savefig(filename, bbox_inches="tight", dpi=450)
 
     if show_fig:
         fig.show()
@@ -1070,6 +1080,56 @@ def _upsample_map(map_lo, nside_plot, *, nest=False):
     # Bilinear interpolation from the coarse map:
     map_hi = hp.get_interp_val(map_lo, th, ph, nest=nest, lonlat=False)
     return map_hi
+
+
+def plot_Vext_radmag(samples, model, r_eval_size=1000, show_fig=True,
+                     filename=None):
+    Vmag = samples["Vext_radmag_mag"]
+    rknot = model.kwargs_Vext["rknot"]
+    method = model.kwargs_Vext["method"]
+
+    r = jnp.linspace(0.0, np.max(rknot), r_eval_size)
+    # print(Vmag.shape)
+    # interp1d is from interpax
+    # all arrays are 1D except Vmag is shape (Nsamples, Nknots)
+    # how to get V to be shape (Nsamples, r_eval_size)?
+    V = vmap(lambda y: interp1d(r, rknot, y, method=method))(Vmag)
+    V = jnp.clip(V, 0, None)
+    Vlow, Vmed, Vhigh = np.percentile(V, [16, 50, 84], axis=0)
+
+    fig, ax = plt.subplots()
+
+    ax.fill_between(r, Vlow, Vhigh, alpha=0.4)
+    ax.plot(r, Vmed, color="C0")
+    ax.set_xlabel(r"$r~[h^{-1}\,\mathrm{Mpc}]$")
+    ax.set_ylabel(r"$V_{\mathrm{ext}}~[\mathrm{km/s}]$")
+
+    ax.set_xlim(r[0], r[-1])
+    ax.set_ylim(0, None)
+
+    xmin, xmax = r[0], r[-1]
+
+    dx = 0.01 * (xmax - xmin)  # shift by 1% of the span
+    knot_line_kwargs = dict(
+        color="black", linestyle="--", zorder=-1, alpha=0.5)
+    for rk in rknot:
+        if jnp.isclose(rk, xmin):
+            ax.axvline(xmin + dx, **knot_line_kwargs)
+        elif jnp.isclose(rk, xmax):
+            ax.axvline(xmax - dx, **knot_line_kwargs)
+        else:
+            ax.axvline(rk, **knot_line_kwargs)
+
+    fig.tight_layout()
+
+    if filename is not None:
+        fprint(f"saving a radial Vext_mag plot to {filename}")
+        fig.savefig(filename, bbox_inches="tight", dpi=450)
+
+    if show_fig:
+        fig.show()
+    else:
+        plt.close(fig)
 
 
 def plot_Vext_moll(samples_pix, fname_out, coord_in="C", coord_out="G",

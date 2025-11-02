@@ -87,10 +87,18 @@ def generate_mock(nsamples, seed, field_loader, output_dir, mock_id=0):
     sigma_v = np.exp(log_sigma_v)
     
     zeropoint_dipole_mag = sample_uniform(n=1, low=0.0, high=0.1, seed=seed)[0]
-    zeropoint_dipole_ell = sample_uniform(n=1, low=0.0, high=360.0, seed=seed)[0]
-    # Sample cos_theta uniformly over full sphere to match vector_uniform_fixed
-    cos_theta = sample_uniform(n=1, low=-1.0, high=1.0, seed=seed)[0]
-    zeropoint_dipole_b = np.rad2deg(np.arccos(cos_theta))
+    # Sample spherical coordinates uniformly over sphere (matching vector_uniform_fixed)
+    phi = sample_uniform(n=1, low=0.0, high=2*np.pi, seed=seed)[0]  # azimuthal angle (RA)
+    cos_theta = sample_uniform(n=1, low=-1.0, high=1.0, seed=seed)[0]  # uniform on sphere
+    
+    # Convert to equatorial coordinates
+    theta = np.arccos(cos_theta)  # polar angle from +z axis [0, π]
+    ra = np.rad2deg(phi)  # RA in degrees [0°, 360°]
+    dec = np.rad2deg(0.5 * np.pi - theta)  # declination in [-90°, 90°]
+    
+    # Convert (RA, dec) to galactic (ell, b)
+    from candel.util import radec_to_galactic
+    zeropoint_dipole_ell, zeropoint_dipole_b = radec_to_galactic(ra, dec)
     
     # Fixed values for distance model parameters
     R = 130.0

@@ -33,8 +33,9 @@ from tqdm import trange
 from .evidence import (BIC_AIC, dict_samples_to_array, harmonic_evidence,
                        laplace_evidence)
 from .util import (fprint, galactic_to_radec, plot_corner,
-                   plot_radial_profiles, plot_Vext_rad_corner,
-                   plot_Vext_moll, radec_cartesian_to_galactic,
+                   plot_radial_profiles, plot_Vext_radmag,
+                   plot_Vext_rad_corner, plot_Vext_moll,
+                   radec_cartesian_to_galactic,
                    radec_to_cartesian, radec_to_galactic)
 
 
@@ -148,6 +149,10 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
             fname_plot = splitext(fname_out)[0] + "_profile_Vext_rad.png"
             plot_radial_profiles(samples, model, show_fig=False,
                                  filename=fname_plot)
+        elif model.which_Vext == "radial_magnitude":
+            fname_plot = splitext(fname_out)[0] + "_profile_Vext_radmag.png"
+            plot_Vext_radmag(
+                samples, model, show_fig=False, filename=fname_plot,)
 
         if model.which_Vext == "per_pix":
             npix = samples["Vext_pix"].shape[1]
@@ -399,7 +404,7 @@ def postprocess_samples(samples):
             
             samples[f"A_radial_bin__{bin_idx}"] = A_bin
     
-    for prefix in ["dH0", "Vext_rad", "Vext", "zeropoint_dipole"]:
+    for prefix in ["dH0", "Vext_rad", "Vext_radmag", "Vext", "zeropoint_dipole"]:
         # Spherical form: phi + cos_theta (+ mag optional)
         if f"{prefix}_phi" in samples and f"{prefix}_cos_theta" in samples:
             phi = np.rad2deg(samples.pop(f"{prefix}_phi"))
