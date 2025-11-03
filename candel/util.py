@@ -1094,7 +1094,6 @@ def plot_Vext_radmag(samples, model, r_eval_size=1000, show_fig=True,
     # all arrays are 1D except Vmag is shape (Nsamples, Nknots)
     # how to get V to be shape (Nsamples, r_eval_size)?
     V = vmap(lambda y: interp1d(r, rknot, y, method=method))(Vmag)
-    V = jnp.clip(V, 0, None)
     Vlow, Vmed, Vhigh = np.percentile(V, [16, 50, 84], axis=0)
 
     fig, ax = plt.subplots()
@@ -1105,7 +1104,7 @@ def plot_Vext_radmag(samples, model, r_eval_size=1000, show_fig=True,
     ax.set_ylabel(r"$V_{\mathrm{ext}}~[\mathrm{km/s}]$")
 
     ax.set_xlim(r[0], r[-1])
-    ax.set_ylim(0, None)
+    ax.set_ylim(None, None)
 
     xmin, xmax = r[0], r[-1]
 
