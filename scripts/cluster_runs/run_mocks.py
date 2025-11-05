@@ -76,13 +76,13 @@ def generate_mock(nsamples, seed, field_loader, output_dir, mock_id=0):
     rng = np.random.default_rng(seed)
 
     # fixed values
-    b1 = rng.uniform(1.0, 6.0)
-    beta = rng.normal(0.43, 0.02)
+    b1 = rng.uniform(1.0, 4.0)
+    beta = 0.43 #rng.normal(0.43, 0.02)
 
     # Sample sigma_int from Jeffreys prior between 0.005 and 0.2
     log_sigma_int = rng.uniform(np.log(0.01), np.log(0.2))
     sigma_int = np.exp(log_sigma_int)
-    log_sigma_v = rng.uniform(np.log(200.0), np.log(700.0))
+    log_sigma_v = rng.uniform(np.log(300.0), np.log(700.0))
     sigma_v = np.exp(log_sigma_v)
 
     # draw ALL random params from the SAME rng
@@ -103,11 +103,10 @@ def generate_mock(nsamples, seed, field_loader, output_dir, mock_id=0):
     # to galactic (ℓ, b)
     zeropoint_dipole_ell, zeropoint_dipole_b = radec_to_galactic(ra, dec)
 
-    # Sample distance model parameters to match toml priors
-    R = rng.uniform(50.0, 200.0)  # uniform [50, 200]
-    # p: truncated normal (mean=2.0, scale=0.1, low=0.0) - approximate with normal clipped
-    p = np.clip(rng.normal(2.0, 0.1), 0.0, None)
-    n = rng.uniform(0.5, 1.5)  # uniform [0.5, 1.5]
+    # Fixed distance model parameters
+    R = rng.uniform(100.0,150.0)
+    p = rng.normal(2.0, 0.1)
+    n = rng.normal(0.8, 1.2)
     
     fprint(f"Generating mock with {nsamples} clusters, seed={seed}, b1={b1:.3f}, sigma_int={sigma_int:.3f}, sigma_v={sigma_v:.1f}, R={R:.1f}, p={p:.2f}, n={n:.2f}")
 
@@ -136,7 +135,7 @@ def generate_mock(nsamples, seed, field_loader, output_dir, mock_id=0):
         'e_logY': 0.09,
         'e_logF': 0.05,
         'b_min': 20.0,  #20.0,
-        'zcmb_max': 0.45,
+        'zcmb_max': 0.35,
         'R_dist_emp': R,
         'p_dist_emp': p,
         'n_dist_emp': n,
@@ -147,6 +146,8 @@ def generate_mock(nsamples, seed, field_loader, output_dir, mock_id=0):
     }
     
     mock = candel.mock.gen_Clusters_mock(nsamples, seed=seed, **kwargs)
+
+    fprint("Maximum zcmb in mock: {:.4f}".format(np.max(mock['zcmb'])))
     
     # Save mock to HDF5
     mock_path = join(output_dir, f"mock_{mock_id:04d}.hdf5")

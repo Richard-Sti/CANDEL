@@ -29,8 +29,8 @@ Vext_per_pix_nside = 1
 which_A = "constant"
 A_per_pix_nside = 1
 
-r_limits_malmquist = [0.1, 1301]
-num_points_malmquist = 351
+r_limits_malmquist = [0.1, 1001]
+num_points_malmquist = 251
 los_decay_scale = 5.0
 
 [model]
@@ -49,12 +49,11 @@ value = 1.0
 [model.priors.b1]
 dist = "uniform"
 low = 1.0
-high = 6.0
+high = 4.0
 
 [model.priors.beta]
-dist = "normal"
-loc = 0.43
-scale = 0.02
+dist = "delta"
+value = 0.43
 
 [model.priors.alpha]
 dist = "uniform"
@@ -98,7 +97,7 @@ high = 2.0
 
 [model.priors.sigma_v]
 dist = "jeffreys"
-low = 200.0
+low = 300.0
 high = 700.0
 
 # Still no bulk flow Vext
@@ -134,13 +133,12 @@ value = [0, 0, 0]
 
 [model.priors.R_dist_emp]
 dist = "uniform"
-low = 50
-high = 200
+low = 50.0
+high = 200.0
 
 [model.priors.p_dist_emp]
-dist = "truncated_normal"
-low = 0.0
-mean = 2.0
+dist = "normal"
+loc = 2.0
 scale = 0.1
 
 [model.priors.n_dist_emp]
@@ -165,6 +163,7 @@ root = "PLACEHOLDER_MOCK_DIR"
 
 [io.Clusters]
 which_relation = "YT"
+zcmb_max = 0.35
 
 [io.reconstruction_main]
 rmin = 0.1
