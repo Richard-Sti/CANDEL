@@ -1491,12 +1491,14 @@ class ClustersModel(BaseModel):
         # MNR hyperpriors for cluster observables
         if self.use_MNR:
             # All scaling relations need T hyperprior
-            logT_prior_mean = sample(
-                "logT_prior_mean", Uniform(data["min_logT"], data["max_logT"]))
-            logT_prior_std = sample(
-                "logT_prior_std", 
-                Uniform(0.0, data["max_logT"] - data["min_logT"]))
-            
+            # logT_prior_mean = sample(
+            #     "logT_prior_mean", Uniform(data["min_logT"], data["max_logT"]))
+            # logT_prior_std = sample(
+            #     "logT_prior_std", 
+            #     Uniform(0.0, data["max_logT"] - data["min_logT"]))
+            logT_prior_mean = 0.0
+            logT_prior_std = 0.2
+
             if self.which_relation in ["LTY", "YTL"]:
                 # These relations need bivariate MNR priors
                 if self.which_relation == "LTY":

@@ -21,6 +21,7 @@ num_chains_harmonic = 10
 skip_if_exists = false
 
 [pv_model]
+#kind = "Vext"
 kind = "precomputed_los_Carrick2015"
 galaxy_bias = "linear"
 which_Vext = "constant"
@@ -28,14 +29,13 @@ Vext_per_pix_nside = 1
 which_A = "constant"
 A_per_pix_nside = 1
 
-r_limits_malmquist = [0.1, 1001]
-num_points_malmquist = 251
+r_limits_malmquist = [0.1, 1301]
+num_points_malmquist = 351
 los_decay_scale = 5.0
-use_MNR = false
 
 [model]
 Om = 0.3
-use_MNR = false
+use_MNR = true
 marginalize_eta = true
 
 [model.eta_grid]
@@ -49,11 +49,12 @@ value = 1.0
 [model.priors.b1]
 dist = "uniform"
 low = 1.0
-high = 4.0
+high = 6.0
 
 [model.priors.beta]
-dist = "delta"
-value = 0.43
+dist = "normal"
+loc = 0.43
+scale = 0.02
 
 [model.priors.alpha]
 dist = "uniform"
@@ -77,7 +78,7 @@ high = 10.0
 
 [model.priors.sigma_int]
 dist = "jeffreys"
-low = 0.005
+low = 0.01
 high = 0.2
 
 [model.priors.CL_A]
@@ -97,8 +98,8 @@ high = 2.0
 
 [model.priors.sigma_v]
 dist = "jeffreys"
-low = 5.0
-high = 500.0
+low = 200.0
+high = 700.0
 
 # Still no bulk flow Vext
 [model.priors.Vext]
@@ -132,16 +133,20 @@ dist = "delta"
 value = [0, 0, 0]
 
 [model.priors.R_dist_emp]
-dist = "delta"
-value = 130.0
+dist = "uniform"
+low = 50
+high = 200
 
 [model.priors.p_dist_emp]
-dist = "delta"
-value = 2.0
+dist = "truncated_normal"
+low = 0.0
+mean = 2.0
+scale = 0.1
 
 [model.priors.n_dist_emp]
-dist = "delta"
-value = 1.1
+dist = "uniform"
+low = 0.5
+high = 1.5
 
 [model.priors.Vext_sigma]
 dist = "uniform"

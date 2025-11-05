@@ -124,7 +124,7 @@ def gen_Clusters_mock(nsamples, r_grid, Vext_mag, Vext_ell, Vext_b, sigma_v,
                       beta, b1, A_CL, B_CL, sigma_int, A_CL_LT, B_CL_LT, sigma_int_LT,
                       zeropoint_dipole_mag, zeropoint_dipole_ell, zeropoint_dipole_b, h,
                       e_logT, e_logY, e_logF, logT_prior_mean, logT_prior_std,
-                      b_min, zcmb_max, R, p, n, field_loader, r2distmod, r2z,
+                      b_min, zcmb_max, R_dist_emp, p_dist_emp, n_dist_emp, field_loader, r2distmod, r2z,
                       Om=0.3, seed=42, verbose=True):
     """
     Generate a mock cluster survey with distances sampled from an empirical
@@ -164,7 +164,8 @@ def gen_Clusters_mock(nsamples, r_grid, Vext_mag, Vext_ell, Vext_b, sigma_v,
     Vpec = np.full(nsamples, np.nan)
     for i in range(nsamples):
         Vpec[i] = Vext_rad[i]
-        r[i] = sample_distance(r_grid, los_density[i], b1, R, p, n, gen)
+        r[i] = sample_distance(r_grid, los_density[i], b1, 
+                               R_dist_emp, p_dist_emp, n_dist_emp, gen)
         Vpec[i] += beta * np.interp(r[i], r_grid, los_velocity[i])
 
     # Sample logT with intrinsic scatter

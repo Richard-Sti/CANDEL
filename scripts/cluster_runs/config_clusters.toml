@@ -12,8 +12,8 @@ machine = "local"
 model = "Clusters_DistMarg"
 shared_params = "none"
 
-num_warmup = 4000
-num_samples = 4000
+num_warmup = 2000
+num_samples = 2000
 num_chains = 1
 chain_method = "parallel"
 seed = 44
@@ -66,12 +66,9 @@ dist = "delta"
 value = 1.0
 
 [model.priors.b1]
-#dist = "normal"
-#loc = 1
-#scale = 1.0
 dist = "uniform"
-low = 0.0
-high = 10.0
+low = 1.0
+high = 6.0
 
 [model.priors.beta]
 dist = "normal"
@@ -116,23 +113,23 @@ high = 10.0
 [model.priors.sigma_int]
 dist = "jeffreys"
 low = 0.005
-high = 1.0
+high = 0.3
 
 [model.priors.CL_A]
 dist = "uniform"
-low = -10
-high = 10
+low = -0.5
+high = 2.5
 
 [model.priors.CL_B]
 dist = "uniform"
-low = -5
-high = 5
+low = 1.5
+high = 3
 
 
 [model.priors.sigma_v]
 dist = "jeffreys"
-low = 5.0
-high = 2500
+low = 100.0
+high = 500.0
 
 [model.priors.Vext]
 dist = "vector_uniform_fixed"
@@ -159,7 +156,7 @@ endpoints="not-a-knot"
 dist = "vector_radialmag_uniform"
 low = -10000
 high = 10000
-rknot = [0, 50, 100, 150, 200, 250, 500, 750, 1000]
+rknot = [0, 125, 250, 500, 750, 1000]
 method = "cubic"
 
 [model.priors.zeropoint_dipole]
@@ -183,8 +180,8 @@ value = [0,0,0]
 
 [model.priors.R_dist_emp]
 dist = "uniform"
-low = 1.0
-high = 500
+low = 50
+high = 200
 
 [model.priors.p_dist_emp]
 dist = "truncated_normal"
@@ -193,10 +190,9 @@ mean = 2.0
 scale = 0.1
 
 [model.priors.n_dist_emp]
-dist = "truncated_normal"
-low = 0.0
-mean = 1.0
-scale = 30
+dist = "uniform"
+low = 0.5
+high = 1.5
 
 
 ################################################################################

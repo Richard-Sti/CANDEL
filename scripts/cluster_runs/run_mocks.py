@@ -19,6 +19,7 @@ import numpy as np
 from h5py import File
 import copy
 import re
+from candel.util import radec_to_galactic
 
 try:
     from mpi4py import MPI
@@ -72,42 +73,43 @@ def generate_mock(nsamples, seed, field_loader, output_dir, mock_id=0):
         Path to saved mock file
     """
     
-    b1 = sample_uniform(n=1, low=1.0, high=4.0, seed=seed)[0]
-    
-    # Jeffreys prior for sigma_int
     rng = np.random.default_rng(seed)
-    log_sigma_int = rng.uniform(np.log(0.005), np.log(0.2))
+
+    # fixed values
+    b1 = rng.uniform(1.0, 6.0)
+    beta = rng.normal(0.43, 0.02)
+
+    # Sample sigma_int from Jeffreys prior between 0.005 and 0.2
+    log_sigma_int = rng.uniform(np.log(0.01), np.log(0.2))
     sigma_int = np.exp(log_sigma_int)
-    
-    A_CL = sample_uniform(n=1, low=1.0, high=3.0, seed=seed)[0]
-    B_CL = sample_uniform(n=1, low=2.0, high=3.0, seed=seed)[0]
-    
-    # Jeffreys prior for sigma_v
-    log_sigma_v = rng.uniform(np.log(5.0), np.log(500.0))
+    log_sigma_v = rng.uniform(np.log(200.0), np.log(700.0))
     sigma_v = np.exp(log_sigma_v)
-    
-    zeropoint_dipole_mag = sample_uniform(n=1, low=0.0, high=0.1, seed=seed)[0]
-    # Sample spherical coordinates uniformly over sphere (matching vector_uniform_fixed)
-    phi = sample_uniform(n=1, low=0.0, high=2*np.pi, seed=seed)[0]  # azimuthal angle (RA)
-    cos_theta = sample_uniform(n=1, low=-1.0, high=1.0, seed=seed)[0]  # uniform on sphere
-    
-    # Convert to equatorial coordinates
-    theta = np.arccos(cos_theta)  # polar angle from +z axis [0, π]
-    ra = np.rad2deg(phi)  # RA in degrees [0°, 360°]
-    dec = np.rad2deg(0.5 * np.pi - theta)  # declination in [-90°, 90°]
-    
-    # Convert (RA, dec) to galactic (ell, b)
-    from candel.util import radec_to_galactic
+
+    # draw ALL random params from the SAME rng
+    A_CL = rng.uniform(1.0, 3.0)
+    B_CL = rng.uniform(2.0, 3.0)
+
+    zeropoint_dipole_mag = rng.uniform(0.0, 0.1)
+
+    # isotropic direction: phi ~ U[0,2π), cosθ ~ U[-1,1]
+    phi = rng.uniform(0.0, 2*np.pi)
+    cos_theta = rng.uniform(-1.0, 1.0)
+
+    # convert to (RA, dec)s
+    theta = np.arccos(cos_theta)                 # [0, π]
+    ra = np.rad2deg(phi)                         # [0°, 360°)
+    dec = np.rad2deg(0.5*np.pi - theta)          # [-90°, 90°]
+
+    # to galactic (ℓ, b)
     zeropoint_dipole_ell, zeropoint_dipole_b = radec_to_galactic(ra, dec)
-    
-    # Fixed values for distance model parameters
-    R = 130.0
-    p = 2.0
-    n = 1.1
-    
-    fprint(f"Generating mock with {nsamples} clusters, seed={seed}, b1={b1:.3f}, sigma_int={sigma_int:.3f}, sigma_v={sigma_v:.1f}")
 
-
+    # Sample distance model parameters to match toml priors
+    R = rng.uniform(50.0, 200.0)  # uniform [50, 200]
+    # p: truncated normal (mean=2.0, scale=0.1, low=0.0) - approximate with normal clipped
+    p = np.clip(rng.normal(2.0, 0.1), 0.0, None)
+    n = rng.uniform(0.5, 1.5)  # uniform [0.5, 1.5]
+    
+    fprint(f"Generating mock with {nsamples} clusters, seed={seed}, b1={b1:.3f}, sigma_int={sigma_int:.3f}, sigma_v={sigma_v:.1f}, R={R:.1f}, p={p:.2f}, n={n:.2f}")
 
     # Mock generation parameters (same as make_Clusters_mocks.ipynb)
     kwargs = {
@@ -116,7 +118,7 @@ def generate_mock(nsamples, seed, field_loader, output_dir, mock_id=0):
         'Vext_ell': 0.0,
         'Vext_b': 0.0,
         'sigma_v': sigma_v,
-        'beta': 0.43,
+        'beta': beta,
         'b1': b1,
         'A_CL': A_CL,
         'B_CL': B_CL,
@@ -134,10 +136,10 @@ def generate_mock(nsamples, seed, field_loader, output_dir, mock_id=0):
         'e_logY': 0.09,
         'e_logF': 0.05,
         'b_min': 20.0,  #20.0,
-        'zcmb_max': 0.4,
-        'R': R,
-        'p': p,
-        'n': n,
+        'zcmb_max': 0.45,
+        'R_dist_emp': R,
+        'p_dist_emp': p,
+        'n_dist_emp': n,
         'field_loader': field_loader,
         'r2distmod': candel.Distance2Distmod(),
         'r2z': candel.Distance2Redshift(),

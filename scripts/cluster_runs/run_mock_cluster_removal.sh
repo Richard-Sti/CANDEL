@@ -1,4 +1,4 @@
-#!/bin/bash
+    #!/bin/bash
 # Example script to run mock cluster analysis with MPI
 # Adjust paths and parameters as needed
 #
