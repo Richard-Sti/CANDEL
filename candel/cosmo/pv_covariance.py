@@ -45,26 +45,14 @@ def get_Pk_CAMB(H0=67.4, Om0=0.3153, Ombh2=0.0224, As=2.100549e-9, ns=0.965,
     return k, Pk[0]
 
 
-def compute_Fuv(u, v, cos_theta, ell_min=0, ell_max=100):
-    """
-    Compute:
-    F(u, v, cosθ) = Σ_{l=ell_min}^{ell_max} (2l + 1) j_l'(u) j_l'(v) P_l(cosθ)
-    """
-    ells = np.arange(ell_min, ell_max + 1)
-    P = eval_legendre(ells, cos_theta)
-    j_u = spherical_jn(ells, u, derivative=True)
-    j_v = spherical_jn(ells, v, derivative=True)
-    return np.sum((2 * ells + 1) * j_u * j_v * P)
-
-
 def compute_dD_dtau(a=1, Omega_m=0.315, Omega_L=0.685, H0=67.4):
     """
     Compute the derivative of the linear growth factor D with respect to
     conformal time τ.
 
     This function solves the linear growth ODE for a flat ΛCDM cosmology,
-    normalizes D(a) such that D(a=1) = 1, and returns an interpolating function
-    that evaluates dD/dτ(a).
+    normalizes D(a) such that D(a=1) = 1, and returns dD/dτ evaluated at the
+    supplied scale factor `a`.
     """
     def E(a):
         return np.sqrt(Omega_m / a**3 + Omega_L)
@@ -92,15 +80,26 @@ def compute_dD_dtau(a=1, Omega_m=0.315, Omega_L=0.685, H0=67.4):
     return dD_dtau(a)
 
 
+def compute_Fuv(u, v, ells, Pells):
+    """
+    Compute:
+    F(u, v, cosθ) = Σ_{l=ell_min}^{ell_max} (2l + 1) j_l'(u) j_l'(v) P_l(cosθ)
+    """
+    j_u = spherical_jn(ells, u, derivative=True)
+    j_v = spherical_jn(ells, v, derivative=True)
+    return np.sum((2 * ells + 1) * j_u * j_v * Pells)
+
+
 def _compute_covariance_element(i, j, rhat, r, k, Pk, dDdtau, ell_min,
                                 ell_max):
     cos_theta = np.dot(rhat[i], rhat[j])
+    ells = np.arange(ell_min, ell_max + 1)
+    Pells = eval_legendre(ells, cos_theta)
 
     integrand = np.zeros_like(k)
     for n in range(len(k)):
         kn = k[n]
-        integrand[n] = Pk[n] * compute_Fuv(
-            kn * r[i], kn * r[j], cos_theta, ell_min, ell_max)
+        integrand[n] = Pk[n] * compute_Fuv(kn * r[i], kn * r[j], ells, Pells)
 
     integrand /= 2 * np.pi**2
     integral = simpson(integrand, x=k)
