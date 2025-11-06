@@ -24,7 +24,8 @@ from ..cosmography import Distance2LogAngDist, Distance2LogLumDist
 
 def sample_distance(r_grid, los_density, b1, R, p, n, gen):
     los_delta = los_density - 1
-    pi_r = (1 + b1 * los_delta) * r_grid**p * np.exp(-(r_grid / R)**n)
+    bias = np.clip(1 + b1 * los_delta, 1e-5)
+    pi_r = bias * r_grid**p * np.exp(-(r_grid / R)**n)
     cdf_r = cumulative_simpson(pi_r, x=r_grid, initial=0)
     cdf_r /= cdf_r[-1]
     return np.interp(gen.uniform(), cdf_r, r_grid)
