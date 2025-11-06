@@ -39,12 +39,16 @@ class BaseRedshift2Real(ABC):
     """Base class for all models. """
 
     def __init__(self, RA, dec, zcmb, los_r, los_density, los_velocity,
-                 which_bias, calibration_samples, Rmin=1e-7, Rmax=300,
+                 which_bias, calibration_samples, Rmin=1e-7, Rmax=500,
                  num_rgrid=101, r0_decay_scale=5, Om0=0.3, verbose=True,
                  r_init=None):
         self.verbose = verbose
         self.dist2redshift = Distance2Redshift(Om0=Om0)
         self.r_init = jnp.asarray(r_init) if r_init is not None else None
+
+        if self.r_init is not None:
+            if jnp.any(self.r_init < Rmin) or jnp.any(self.r_init > Rmax):
+                raise ValueError("r_init values must be within [Rmin, Rmax]")
 
         self.Rmin = Rmin
         self.Rmax = Rmax
@@ -328,11 +332,14 @@ def run_batched_inference(model_kwargs, batch_size=50, num_warmup=500,
     fprint(f"Running inference for {ngal} galaxies in {n_batches} batches of "
            f"size {batch_size}.")
 
+    # If only one batch, always show MCMC progress bar
+    show_mcmc_progress = True if n_batches == 1 else progress_bar
+
     r_samples = jnp.zeros((ngal, num_samples * num_chains))
     rhat_values = jnp.zeros(ngal)
 
     for i in tqdm(range(n_batches), desc="Processing batches",
-                  disable=progress_bar):
+                  disable=show_mcmc_progress):
         start_idx = i * batch_size
         end_idx = min((i + 1) * batch_size, ngal)
 
@@ -366,7 +373,7 @@ def run_batched_inference(model_kwargs, batch_size=50, num_warmup=500,
         nuts_kernel = NUTS(model, init_strategy=init_strategy)
         mcmc = MCMC(
             nuts_kernel, num_warmup=num_warmup, num_samples=num_samples,
-            num_chains=num_chains, progress_bar=progress_bar)
+            num_chains=num_chains, progress_bar=show_mcmc_progress)
 
         rng_key = jrandom.PRNGKey(rng_seed + i)
         mcmc.run(rng_key)
