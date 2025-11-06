@@ -13,6 +13,11 @@ The selection function is typically modelled following the phenomenological appr
 
 CANDEL can be run locally for small samples or scaled to computing clusters with full GPU support. It includes examples for SLURM submission and tools for batch job generation, enabling runs to be launched individually or in groups using a frozen version of the code. This setup efficiently leverages available computational resources and accelerates development.
 
+### Highlights
+- Forward modelling of the full distance ladder with JAX and NumPyro.
+- Joint calibration of distance-indicator relations and the underlying density/velocity field.
+- Utilities for survey selection functions, peculiar-velocity covariances, and evidence estimation.
+- HPC-friendly tooling for batch submit scripts and reproducible runs.
 
 ## Supported distance indicators and catalogues
 - **Tully–Fisher relation:** 2MTF, SFI++, CF4-TFR
@@ -36,6 +41,11 @@ Here are some recent works that have used CANDEL:
 
 4. *S₈ from Tully–Fisher, fundamental plane, and supernova distances agree with Planck*; Stiskalek (2025)
   [arXiv:2509.20235](https://arxiv.org/abs/2509.20235)
+
+## Key components
+- `candel.cosmo.pv_covariance`: builds the line-of-sight peculiar-velocity covariance matrix for an arbitrary catalogue. It supports CAMB-based power spectra, configurable Legendre expansions, and embarrassingly parallel evaluation via joblib.
+- `candel.util`: common utilities, including coordinate conversions (`radec_to_cartesian`) used across the inference pipelines.
+- `scripts/`: lightweight CLI helpers for data preparation, submission-script generation, and diagnostics.
 
 ## Installation
 ```
