@@ -53,6 +53,7 @@ from .inference import (                                                        
 
 from .redshift2real import (                                                    # noqa
     Redshift2Real,                                                              # noqa
+    run_batched_inference,                                                      # noqa
     )
 
 from .util import (                                                             # noqa
