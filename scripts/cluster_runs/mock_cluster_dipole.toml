@@ -48,7 +48,7 @@ value = 1.0
 
 [model.priors.b1]
 dist = "delta"
-value = 1.0
+value = 4.0
 
 [model.priors.beta]
 dist = "delta"
