@@ -17,6 +17,7 @@ A script to compute the LOS density and radial velocity from an existing
 reconstruction and a catalogue of galaxies.
 """
 from argparse import ArgumentParser
+from os.path import dirname, basename, join, splitext
 
 import numpy as np
 from h5py import File
@@ -26,7 +27,7 @@ import candel
 from candel import fprint
 
 
-def load_los(catalogue, config):
+def load_los(catalogue, config, filepath=None):
     if "random_" in catalogue:
         d = config["io"].copy()
         los_file = d.pop("los_file_random")
@@ -91,11 +92,16 @@ def load_los(catalogue, config):
         los_file = d.pop("los_file")
         data = candel.pvdata.load_SH0ES_separated(**d)
         RA, dec = data["RA_host"], data["dec_host"]
-    elif catalogue == "CF4_HQ":
-        d = config["io"]["PV_main"][catalogue].copy()
-        los_file = d.pop("los_file")
-        data = candel.pvdata.load_CF4_HQ(**d)
+    elif catalogue == "generic":
+        if filepath is None:
+            raise ValueError("filepath must be provided for generic catalogue.")
+        data = candel.pvdata.load_generic(filepath)
         RA, dec = data["RA"], data["dec"]
+
+        # Construct LOS file path in the same directory as input
+        input_dir = dirname(filepath)
+        name, __ = splitext(basename(filepath))
+        los_file = join(input_dir, f"{name}_LOS_<X>.hdf5")
     else:
         raise ValueError(f"Catalogue {catalogue} not supported. Please add "
                          "support for it.")
@@ -114,6 +120,8 @@ def main():
     parser.add_argument("--reconstruction", type=str, required=True)
     parser.add_argument("--config", type=str, required=True)
     parser.add_argument("--smooth_target", type=float, default=None)
+    parser.add_argument("--filepath", type=str, default=None,
+                        help="Path to catalogue file (required for generic)")
     args = parser.parse_args()
 
     if args.smooth_target == 0:
@@ -151,7 +159,7 @@ def main():
 
     fprint(f"loading the catalogue `{args.catalogue}` with "
            f"reconstruction `{args.reconstruction}`.", verbose=verbose)
-    RA, dec, los_file = load_los(args.catalogue, config)
+    RA, dec, los_file = load_los(args.catalogue, config, args.filepath)
     fprint(f"loaded {len(RA)} galaxies from the catalogue.", verbose=verbose)
 
     n_sims = len(nsims)
