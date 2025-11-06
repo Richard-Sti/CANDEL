@@ -83,11 +83,8 @@ def generate_mock(nsamples, seed, field_loader, output_dir, mock_id=0):
     log_sigma_int = rng.uniform(np.log(0.01), np.log(0.2))
     sigma_int = np.exp(log_sigma_int)
     
-    log_sigma_v = rng.uniform(np.log(250.0), np.log(600.0))
+    log_sigma_v = rng.uniform(np.log(300.0), np.log(600.0))
     sigma_v = np.exp(log_sigma_v)
-
-    #sigma_v = 350.0
-    sigma_int = 0.10
 
     # draw ALL random params from the SAME rng
     A_CL = rng.uniform(1.0, 3.0)

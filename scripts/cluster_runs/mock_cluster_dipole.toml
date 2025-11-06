@@ -76,11 +76,11 @@ low = -10.0
 high = 10.0
 
 [model.priors.sigma_int]
-dist = "delta"
-value = 0.10
-#dist = "jeffreys"
-#low = 0.01
-#high = 0.2
+#dist = "delta"
+#value = 0.10
+dist = "jeffreys"
+low = 0.01
+high = 0.2
 
 [model.priors.CL_A]
 dist = "uniform"
@@ -101,7 +101,7 @@ high = 2.0
 #dist = "delta"
 #value = 350.0
 dist = "jeffreys"
-low = 250.0
+low = 300.0
 high = 600.0
 
 # Still no bulk flow Vext
