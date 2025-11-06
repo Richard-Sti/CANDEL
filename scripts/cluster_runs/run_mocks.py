@@ -104,10 +104,9 @@ def generate_mock(nsamples, seed, field_loader, output_dir, mock_id=0):
     zeropoint_dipole_ell, zeropoint_dipole_b = radec_to_galactic(ra, dec)
 
     # Fixed distance model parameters
-    # R = rng.uniform(25.0, 75.0)
+    R = rng.uniform(50.0, 120.0)
     # # p = rng.normal(2.0, 0.1)
     # # n = rng.normal(0.8, 1.2)
-    R= 120.0
     p= 2.0
     n= 1.1
     

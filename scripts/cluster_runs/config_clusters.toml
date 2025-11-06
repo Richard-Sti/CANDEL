@@ -181,7 +181,7 @@ value = [0,0,0]
 [model.priors.R_dist_emp]
 dist = "uniform"
 low = 50
-high = 200
+high = 100
 
 [model.priors.p_dist_emp]
 dist = "truncated_normal"

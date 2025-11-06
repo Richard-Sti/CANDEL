@@ -136,8 +136,11 @@ dist = "delta"
 value = [0, 0, 0]
 
 [model.priors.R_dist_emp]
-dist = "delta"
-value = 120.0
+dist = "uniform"
+low = 50.0
+high = 120.0
+#dist = "delta"
+#value = 120.0
 
 [model.priors.p_dist_emp]
 dist = "delta"
