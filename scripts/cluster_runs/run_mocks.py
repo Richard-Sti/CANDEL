@@ -76,7 +76,7 @@ def generate_mock(nsamples, seed, field_loader, output_dir, mock_id=0):
     rng = np.random.default_rng(seed)
 
     # fixed values
-    b1 = 4.0 #rng.uniform(1.0, 4.0)
+    b1 = 1.0 #rng.uniform(1.0, 4.0)
     beta = 0.43 #rng.normal(0.43, 0.02)
 
     # Sample sigma_int from Jeffreys prior between 0.005 and 0.2
