@@ -10,4 +10,4 @@ NMOCKS=${1:-1}
 source ~/code/CANDEL/venv_candel/bin/activate
 
 exec python ~/code/CANDEL/scripts/cluster_runs/run_mocks.py \
-    --n_mocks_total $NMOCKS --output_dir results/prior_sampled_mocks_sigmav --nclusters 275 --num_samples 1000 --dipole_only
+    --n_mocks_total $NMOCKS --output_dir results/prior_sampled_mocks_sigmaint --nclusters 275 --num_samples 1000 --dipole_only
