@@ -18,10 +18,13 @@ calibrated density and velocity field.
 """
 from abc import ABC, abstractmethod
 
-from jax import numpy as jnp
+from jax import numpy as jnp, random as jrandom
 from jax.scipy.special import logsumexp
 from numpyro import factor, plate, sample
+from numpyro.diagnostics import gelman_rubin
 from numpyro.distributions import Normal, Uniform
+from numpyro.infer import MCMC, NUTS, init_to_median
+from tqdm import tqdm
 
 from ..cosmography import Distance2Redshift
 from ..model import LOSInterpolator, ln_simpson, lp_galaxy_bias
@@ -37,7 +40,8 @@ class BaseRedshift2Real(ABC):
 
     def __init__(self, RA, dec, zcmb, los_r, los_density, los_velocity,
                  which_bias, calibration_samples, Rmin=1e-7, Rmax=300,
-                 num_rgrid=101, r0_decay_scale=5, Om0=0.3):
+                 num_rgrid=101, r0_decay_scale=5, Om0=0.3, verbose=True):
+        self.verbose = verbose
         self.dist2redshift = Distance2Redshift(Om0=Om0)
 
         self.Rmin = Rmin
@@ -69,7 +73,7 @@ class BaseRedshift2Real(ABC):
                 rhat[:, None, :] * calibration_samples["Vext"][None, :, :],
                 axis=-1)
         else:
-            fprint("No Vext in calibration samples.")
+            fprint("No Vext in calibration samples.", verbose=self.verbose)
             self.Vext_radial = jnp.zeros(
                 (self.len_input_data, self.num_cal))
 
@@ -99,15 +103,18 @@ class BaseRedshift2Real(ABC):
         if "beta" in calibration_samples:
             self.beta = jnp.asarray(calibration_samples["beta"])
         else:
-            fprint("Beta not in calibration samples. Setting beta=1.")
+            fprint("Beta not in calibration samples. Setting beta=1.",
+                   verbose=self.verbose)
             self.beta = jnp.ones_like(self.sigma_v)
 
         fprint(f"Loaded {self.len_input_data} objects and "
-               f"{self.num_cal} calibration samples.")
+               f"{self.num_cal} calibration samples.", verbose=self.verbose)
 
         self.print_sample_stats()
 
     def print_sample_stats(self):
+        if not self.verbose:
+            return
         print("Calibration sample statistics:")
         print(f"sigma_v : {jnp.mean(self.sigma_v):.3f} +- {jnp.std(self.sigma_v):.3f}")  # noqa
         print(f"beta    : {jnp.mean(self.beta):.3f} +- {jnp.std(self.beta):.3f}")        # noqa
@@ -123,7 +130,8 @@ class BaseRedshift2Real(ABC):
         Compute the normalization of the linear bias term in the distance
         prior.
         """
-        print("Computing `linear` bias lp normalization...")
+        if self.verbose:
+            print("Computing `linear` bias lp normalization...")
         # Density constrast along the LOS, (nfield, ngal, nrad_steps)
         los_grid_delta = self.f_los_delta.interp_many_steps_per_galaxy(
             los_grid_r)
@@ -139,7 +147,8 @@ class BaseRedshift2Real(ABC):
         Compute the normalization of the double powerlaw bias term in the
         distance prior.
         """
-        print("Computing `double_powerlaw` bias lp normalization...")
+        if self.verbose:
+            print("Computing `double_powerlaw` bias lp normalization...")
         los_log_density = self.f_los_log_density.interp_many_steps_per_galaxy(
             los_grid_r)
         bias_params = [self.alpha_low[None, None, :, None],
@@ -216,3 +225,160 @@ class Redshift2Real(BaseRedshift2Real):
             "log_density",
             log_mean_exp(ll, axis=0) - jnp.log(ll.shape[0])
             )
+
+
+def run_batched_inference(model_kwargs, batch_size=50, num_warmup=500,
+                          num_samples=2000, num_chains=1, rng_seed=0,
+                          progress_bar=False, galaxy_idx=None):
+    """
+    Run batched inference for redshift2real model.
+
+    Parameters
+    ----------
+    batch_size : int
+    num_warmup, num_samples, num_chains : int
+    rng_seed : int
+    progress_bar : bool
+        Show MCMC progress bar for each batch (default False)
+    galaxy_idx : int, optional
+        If provided, run inference only on this galaxy index
+    **model_kwargs : All arguments for Redshift2Real (RA, dec, zcmb, los_r,
+        los_density, los_velocity, calibration_samples, which_bias, Rmax, etc.)
+
+    Returns
+    -------
+    r_samples : array, shape (ngal, num_samples * num_chains) or
+        (num_samples * num_chains,) if galaxy_idx provided
+    rhat_values : array, shape (ngal,) or scalar if galaxy_idx provided
+    """
+    RA = model_kwargs["RA"]
+    dec = model_kwargs["dec"]
+    zcmb = model_kwargs["zcmb"]
+    los_r = model_kwargs["los_r"]
+    los_density = model_kwargs["los_density"]
+    los_velocity = model_kwargs["los_velocity"]
+
+    # Extract remaining kwargs for model (excluding data arrays and verbose)
+    data_keys = ["RA", "dec", "zcmb", "los_r", "los_density", "los_velocity",
+                 "verbose"]
+    remaining_kwargs = {
+        k: v for k, v in model_kwargs.items() if k not in data_keys}
+
+    # Handle single galaxy case
+    if galaxy_idx is not None:
+        fprint(f"Running inference for single galaxy at index {galaxy_idx}.")
+
+        # Slice data for the single galaxy
+        single_RA = RA[galaxy_idx:galaxy_idx+1]
+        single_dec = dec[galaxy_idx:galaxy_idx+1]
+        single_zcmb = zcmb[galaxy_idx:galaxy_idx+1]
+        single_los_density = los_density[:, galaxy_idx:galaxy_idx+1, :]
+        single_los_velocity = los_velocity[:, galaxy_idx:galaxy_idx+1, :]
+
+        # Instantiate model for single galaxy
+        model = Redshift2Real(
+            RA=single_RA,
+            dec=single_dec,
+            zcmb=single_zcmb,
+            los_r=los_r,
+            los_density=single_los_density,
+            los_velocity=single_los_velocity,
+            verbose=True,
+            **remaining_kwargs
+        )
+
+        # Run MCMC
+        nuts_kernel = NUTS(
+            model, init_strategy=init_to_median(num_samples=1000))
+        mcmc = MCMC(
+            nuts_kernel, num_warmup=num_warmup, num_samples=num_samples,
+            num_chains=num_chains, progress_bar=True)
+
+        rng_key = jrandom.PRNGKey(rng_seed)
+        mcmc.run(rng_key)
+
+        mcmc.print_summary()
+
+        # Extract samples and rhat
+        samples = mcmc.get_samples()["r"]
+        r_samples = samples.T.squeeze()
+
+        if num_chains > 1:
+            samples_by_chain = mcmc.get_samples(
+                group_by_chain=True)["r"][:, :, 0]
+            rhat = gelman_rubin(samples_by_chain)
+        else:
+            rhat = 1.0
+
+        fprint("Inference complete.")
+        return r_samples, rhat
+
+    # Batch processing for all galaxies
+    ngal = len(zcmb)
+    n_batches = (ngal + batch_size - 1) // batch_size
+
+    fprint(f"Running inference for {ngal} galaxies in {n_batches} batches of "
+           f"size {batch_size}.")
+
+    r_samples = jnp.zeros((ngal, num_samples * num_chains))
+    rhat_values = jnp.zeros(ngal)
+
+    for i in tqdm(range(n_batches), desc="Processing batches",
+                  disable=progress_bar):
+        start_idx = i * batch_size
+        end_idx = min((i + 1) * batch_size, ngal)
+
+        # Slice data for this batch
+        batch_RA = RA[start_idx:end_idx]
+        batch_dec = dec[start_idx:end_idx]
+        batch_zcmb = zcmb[start_idx:end_idx]
+        batch_los_density = los_density[:, start_idx:end_idx, :]
+        batch_los_velocity = los_velocity[:, start_idx:end_idx, :]
+
+        # Instantiate model for this batch
+        # Only print for first batch
+        model = Redshift2Real(
+            RA=batch_RA,
+            dec=batch_dec,
+            zcmb=batch_zcmb,
+            los_r=los_r,
+            los_density=batch_los_density,
+            los_velocity=batch_los_velocity,
+            verbose=(i == 0),
+            **remaining_kwargs
+        )
+
+        # Run MCMC
+        nuts_kernel = NUTS(
+            model, init_strategy=init_to_median(num_samples=1000))
+        mcmc = MCMC(
+            nuts_kernel, num_warmup=num_warmup, num_samples=num_samples,
+            num_chains=num_chains, progress_bar=progress_bar)
+
+        rng_key = jrandom.PRNGKey(rng_seed + i)
+        mcmc.run(rng_key)
+
+        # Extract samples for 'r', shape (num_samples * num_chains, batch_ngal)
+        batch_samples = mcmc.get_samples()["r"]
+        # Transpose to (batch_ngal, num_samples * num_chains)
+        batch_samples = batch_samples.T
+        r_samples = r_samples.at[start_idx:end_idx, :].set(batch_samples)
+
+        # Compute Rhat for this batch
+        if num_chains > 1:
+            # Get samples grouped by chain, shape
+            # (num_chains, num_samples, batch_ngal)
+            batch_samples_by_chain = mcmc.get_samples(group_by_chain=True)["r"]
+            batch_ngal = end_idx - start_idx
+            batch_rhat = jnp.zeros(batch_ngal)
+            # Compute R-hat for each galaxy in the batch
+            for j in range(batch_ngal):
+                # Extract samples for galaxy j, shape (num_chains, num_samples)
+                galaxy_samples = batch_samples_by_chain[:, :, j]
+                batch_rhat = batch_rhat.at[j].set(gelman_rubin(galaxy_samples))
+        else:
+            batch_rhat = jnp.ones(end_idx - start_idx)
+        rhat_values = rhat_values.at[start_idx:end_idx].set(batch_rhat)
+
+    fprint("Batched inference complete.")
+    return r_samples, rhat_values
