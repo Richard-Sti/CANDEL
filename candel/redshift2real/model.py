@@ -23,7 +23,7 @@ from jax.scipy.special import logsumexp
 from numpyro import factor, plate, sample
 from numpyro.diagnostics import gelman_rubin
 from numpyro.distributions import Normal, Uniform
-from numpyro.infer import MCMC, NUTS, init_to_median
+from numpyro.infer import MCMC, NUTS, init_to_median, init_to_value
 from tqdm import tqdm
 
 from ..cosmography import Distance2Redshift
@@ -40,9 +40,11 @@ class BaseRedshift2Real(ABC):
 
     def __init__(self, RA, dec, zcmb, los_r, los_density, los_velocity,
                  which_bias, calibration_samples, Rmin=1e-7, Rmax=300,
-                 num_rgrid=101, r0_decay_scale=5, Om0=0.3, verbose=True):
+                 num_rgrid=101, r0_decay_scale=5, Om0=0.3, verbose=True,
+                 r_init=None):
         self.verbose = verbose
         self.dist2redshift = Distance2Redshift(Om0=Om0)
+        self.r_init = jnp.asarray(r_init) if r_init is not None else None
 
         self.Rmin = Rmin
         self.Rmax = Rmax
@@ -257,10 +259,11 @@ def run_batched_inference(model_kwargs, batch_size=50, num_warmup=500,
     los_r = model_kwargs["los_r"]
     los_density = model_kwargs["los_density"]
     los_velocity = model_kwargs["los_velocity"]
+    r_init = model_kwargs.get("r_init", None)
 
     # Extract remaining kwargs for model (excluding data arrays and verbose)
     data_keys = ["RA", "dec", "zcmb", "los_r", "los_density", "los_velocity",
-                 "verbose"]
+                 "verbose", "r_init"]
     remaining_kwargs = {
         k: v for k, v in model_kwargs.items() if k not in data_keys}
 
@@ -274,6 +277,7 @@ def run_batched_inference(model_kwargs, batch_size=50, num_warmup=500,
         single_zcmb = zcmb[galaxy_idx:galaxy_idx+1]
         single_los_density = los_density[:, galaxy_idx:galaxy_idx+1, :]
         single_los_velocity = los_velocity[:, galaxy_idx:galaxy_idx+1, :]
+        single_r_init = r_init[galaxy_idx:galaxy_idx+1] if r_init is not None else None  # noqa
 
         # Instantiate model for single galaxy
         model = Redshift2Real(
@@ -283,13 +287,17 @@ def run_batched_inference(model_kwargs, batch_size=50, num_warmup=500,
             los_r=los_r,
             los_density=single_los_density,
             los_velocity=single_los_velocity,
+            r_init=single_r_init,
             verbose=True,
             **remaining_kwargs
         )
 
-        # Run MCMC
-        nuts_kernel = NUTS(
-            model, init_strategy=init_to_median(num_samples=1000))
+        # Run MCMC with appropriate initialization
+        if single_r_init is not None:
+            init_strategy = init_to_value(values={"r": single_r_init})
+        else:
+            init_strategy = init_to_median(num_samples=1000)
+        nuts_kernel = NUTS(model, init_strategy=init_strategy)
         mcmc = MCMC(
             nuts_kernel, num_warmup=num_warmup, num_samples=num_samples,
             num_chains=num_chains, progress_bar=True)
@@ -334,6 +342,7 @@ def run_batched_inference(model_kwargs, batch_size=50, num_warmup=500,
         batch_zcmb = zcmb[start_idx:end_idx]
         batch_los_density = los_density[:, start_idx:end_idx, :]
         batch_los_velocity = los_velocity[:, start_idx:end_idx, :]
+        batch_r_init = r_init[start_idx:end_idx] if r_init is not None else None  # noqa
 
         # Instantiate model for this batch
         # Only print for first batch
@@ -344,13 +353,17 @@ def run_batched_inference(model_kwargs, batch_size=50, num_warmup=500,
             los_r=los_r,
             los_density=batch_los_density,
             los_velocity=batch_los_velocity,
+            r_init=batch_r_init,
             verbose=(i == 0),
             **remaining_kwargs
         )
 
-        # Run MCMC
-        nuts_kernel = NUTS(
-            model, init_strategy=init_to_median(num_samples=1000))
+        # Run MCMC with appropriate initialization
+        if batch_r_init is not None:
+            init_strategy = init_to_value(values={"r": batch_r_init})
+        else:
+            init_strategy = init_to_median(num_samples=1000)
+        nuts_kernel = NUTS(model, init_strategy=init_strategy)
         mcmc = MCMC(
             nuts_kernel, num_warmup=num_warmup, num_samples=num_samples,
             num_chains=num_chains, progress_bar=progress_bar)
