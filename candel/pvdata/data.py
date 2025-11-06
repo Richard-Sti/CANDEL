@@ -167,7 +167,12 @@ class PVDataFrame:
     add_eta_truncation = False
 
     def __init__(self, data, los_radial_decay_scale=5):
+        # Separate mock truths (metadata) from actual data arrays
+        mock_truths = data.pop("_mock_truths", None)
         self.data = {k: jnp.asarray(v) for k, v in data.items()}
+        # Restore mock truths as metadata (not converted to JAX array)
+        if mock_truths is not None:
+            self.data["_mock_truths"] = mock_truths
         self.name = None
 
         if "los_velocity" in self.data:
@@ -670,6 +675,8 @@ def load_Clusters_mock(root, index):
     with File(fname, 'r') as f:
         grp = f["mock"]
         data = {key: grp[key][...] for key in grp.keys()}
+        # Store truth values as metadata for initialization
+        data["_mock_truths"] = dict(grp.attrs)
     return data
 
 

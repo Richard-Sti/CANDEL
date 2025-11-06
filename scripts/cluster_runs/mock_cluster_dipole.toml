@@ -29,8 +29,8 @@ Vext_per_pix_nside = 1
 which_A = "constant"
 A_per_pix_nside = 1
 
-r_limits_malmquist = [0.1, 1001]
-num_points_malmquist = 251
+r_limits_malmquist = [0.1, 1301]
+num_points_malmquist = 1301
 los_decay_scale = 5.0
 
 [model]
@@ -76,9 +76,11 @@ low = -10.0
 high = 10.0
 
 [model.priors.sigma_int]
-dist = "jeffreys"
-low = 0.01
-high = 0.2
+dist = "delta"
+value = 0.10
+#dist = "jeffreys"
+#low = 0.01
+#high = 0.2
 
 [model.priors.CL_A]
 dist = "uniform"
@@ -96,9 +98,11 @@ low = -2.0
 high = 2.0
 
 [model.priors.sigma_v]
+#dist = "delta"
+#value = 350.0
 dist = "jeffreys"
-low = 300.0
-high = 700.0
+low = 250.0
+high = 600.0
 
 # Still no bulk flow Vext
 [model.priors.Vext]
@@ -132,9 +136,8 @@ dist = "delta"
 value = [0, 0, 0]
 
 [model.priors.R_dist_emp]
-dist = "uniform"
-low = 25.0
-high = 75.0
+dist = "delta"
+value = 120.0
 
 [model.priors.p_dist_emp]
 dist = "delta"
@@ -147,9 +150,6 @@ value = 2.0
 [model.priors.n_dist_emp]
 dist = "delta"
 value = 1.1
-#dist = "uniform"
-#low = 0.5
-#high = 1.5
 
 [model.priors.Vext_sigma]
 dist = "uniform"
@@ -170,11 +170,3 @@ root = "PLACEHOLDER_MOCK_DIR"
 which_relation = "YT"
 zcmb_max = 0.35
 
-[io.reconstruction_main]
-rmin = 0.1
-rmax = 2001
-num_steps = 1001
-
-[io.reconstruction_main.Carrick2015]
-path_density = "PLACEHOLDER_DENSITY"
-path_velocity = "PLACEHOLDER_VELOCITY"

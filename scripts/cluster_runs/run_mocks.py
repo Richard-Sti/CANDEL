@@ -82,8 +82,12 @@ def generate_mock(nsamples, seed, field_loader, output_dir, mock_id=0):
     # Sample sigma_int from Jeffreys prior between 0.005 and 0.2
     log_sigma_int = rng.uniform(np.log(0.01), np.log(0.2))
     sigma_int = np.exp(log_sigma_int)
-    log_sigma_v = rng.uniform(np.log(300.0), np.log(700.0))
+    
+    log_sigma_v = rng.uniform(np.log(250.0), np.log(600.0))
     sigma_v = np.exp(log_sigma_v)
+
+    #sigma_v = 350.0
+    sigma_int = 0.10
 
     # draw ALL random params from the SAME rng
     A_CL = rng.uniform(1.0, 3.0)
@@ -92,30 +96,31 @@ def generate_mock(nsamples, seed, field_loader, output_dir, mock_id=0):
     zeropoint_dipole_mag = rng.uniform(0.0, 0.1)
 
     # isotropic direction: phi ~ U[0,2π), cosθ ~ U[-1,1]
-    phi = rng.uniform(0.0, 2*np.pi)
-    cos_theta = rng.uniform(-1.0, 1.0)
+    # Store in the same format that NumPyro samples (for initialization)
+    zeropoint_dipole_phi = rng.uniform(0.0, 2*np.pi)
+    zeropoint_dipole_cos_theta = rng.uniform(-1.0, 1.0)
 
-    # convert to (RA, dec)s
-    theta = np.arccos(cos_theta)                 # [0, π]
-    ra = np.rad2deg(phi)                         # [0°, 360°)
-    dec = np.rad2deg(0.5*np.pi - theta)          # [-90°, 90°]
-
-    # to galactic (ℓ, b)
+    # Also compute galactic coordinates for reference (not used in inference)
+    theta = np.arccos(zeropoint_dipole_cos_theta)
+    ra = np.rad2deg(zeropoint_dipole_phi)
+    dec = np.rad2deg(0.5*np.pi - theta)
     zeropoint_dipole_ell, zeropoint_dipole_b = radec_to_galactic(ra, dec)
 
     # Fixed distance model parameters
-    R = rng.uniform(25.0, 75.0)
-    # p = rng.normal(2.0, 0.1)
-    # n = rng.normal(0.8, 1.2)
-    #R= 130.0
+    # R = rng.uniform(25.0, 75.0)
+    # # p = rng.normal(2.0, 0.1)
+    # # n = rng.normal(0.8, 1.2)
+    R= 120.0
     p= 2.0
     n= 1.1
     
     fprint(f"Generating mock with {nsamples} clusters, seed={seed}, b1={b1:.3f}, sigma_int={sigma_int:.3f}, sigma_v={sigma_v:.1f}, R={R:.1f}, p={p:.2f}, n={n:.2f}")
 
     # Mock generation parameters (same as make_Clusters_mocks.ipynb)
+    # Extra kwargs (e.g., phi, cos_theta) are accepted and ignored by gen_Clusters_mock
+    # but will be saved as truth parameters for MCMC initialization
     kwargs = {
-        'r_grid': np.linspace(0.1, 1001, 1001),
+        'r_grid': np.linspace(0.1, 2001, 2001),
         'Vext_mag': 0.00,
         'Vext_ell': 0.0,
         'Vext_b': 0.0,
@@ -129,16 +134,18 @@ def generate_mock(nsamples, seed, field_loader, output_dir, mock_id=0):
         'B_CL_LT': 2.5,
         'sigma_int_LT': 0.15,
         'zeropoint_dipole_mag': zeropoint_dipole_mag,
-        'zeropoint_dipole_ell': zeropoint_dipole_ell,
-        'zeropoint_dipole_b': zeropoint_dipole_b,
+        'zeropoint_dipole_phi': zeropoint_dipole_phi,
+        'zeropoint_dipole_cos_theta': zeropoint_dipole_cos_theta,
+        'zeropoint_dipole_ell': zeropoint_dipole_ell,  # For mock generation & reference
+        'zeropoint_dipole_b': zeropoint_dipole_b,      # For mock generation & reference
         'h': 1.0,
         'logT_prior_mean': 0.0,
         'logT_prior_std': 0.2,
         'e_logT': 0.03,
         'e_logY': 0.09,
         'e_logF': 0.05,
-        'b_min': 20.0,  #20.0,
-        'zcmb_max': 0.35,
+        'b_min': 20.0,
+        'zcmb_max': 0.45,
         'R_dist_emp': R,
         'p_dist_emp': p,
         'n_dist_emp': n,
@@ -151,6 +158,7 @@ def generate_mock(nsamples, seed, field_loader, output_dir, mock_id=0):
     mock = candel.mock.gen_Clusters_mock(nsamples, seed=seed, **kwargs)
 
     fprint("Maximum zcmb in mock: {:.4f}".format(np.max(mock['zcmb'])))
+    fprint("Maximum comoving radius in mock: {:.1f} Mpc/h".format(np.max(mock['r_true'])))
     
     # Save mock to HDF5
     mock_path = join(output_dir, f"mock_{mock_id:04d}.hdf5")
@@ -161,7 +169,7 @@ def generate_mock(nsamples, seed, field_loader, output_dir, mock_id=0):
         for key, value in mock.items():
             grp.create_dataset(key, data=value, dtype=np.float32)
         
-        # Save parameters as attributes
+        # Save all scalar parameters as attributes (for MCMC initialization and reference)
         for key, value in kwargs.items():
             if isinstance(value, (float, int, bool)):
                 grp.attrs[key] = value

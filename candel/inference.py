@@ -25,8 +25,9 @@ from jax import numpy as jnp
 from jax import vmap
 from numpyro import set_platform
 from numpyro.diagnostics import print_summary as print_summary_numpyro
+from numpyro.distributions import Delta
 from numpyro.infer import MCMC, NUTS
-from numpyro.infer.initialization import init_to_median
+from numpyro.infer.initialization import init_to_median, init_to_value
 from numpyro.infer.util import log_density
 from tqdm import trange
 
@@ -45,6 +46,75 @@ def print_evidence(bic, aic, lnZ_laplace, err_lnZ_laplace,
     fprint(f"AIC:          {aic:.2f}")
     fprint(f"Laplace lnZ:  {lnZ_laplace:.2f} +- {err_lnZ_laplace:.2f}")
     fprint(f"Harmonic lnZ: {lnZ_harmonic:.2f} +- {err_lnZ_harmonic:.2f}")
+
+
+def get_mock_init_values(data, model):
+    """
+    Extract mock truth values for model parameters to use as initialization.
+    
+    Mock truth values are stored with the same parameter names that NumPyro
+    samples, so no mapping or conversion is needed.
+    
+    Parameters
+    ----------
+    data : dict or PVDataFrame
+        Data dictionary/object that may contain '_mock_truths' key
+    model : Model
+        The model object with priors
+        
+    Returns
+    -------
+    init_values : dict or None
+        Dictionary mapping parameter names to their truth values, or None if not a mock
+    """
+    # Handle both plain dicts and PVDataFrame objects
+    if hasattr(data, 'data'):
+        # PVDataFrame - access internal data dict
+        data_dict = data.data
+    else:
+        # Plain dict
+        data_dict = data
+    
+    if "_mock_truths" not in data_dict:
+        return None
+    
+    mock_truths = data_dict["_mock_truths"]
+    
+    # List of parameter names that NumPyro samples
+    # These match the names stored in mock HDF5 files
+    param_names = [
+        'sigma_v', 'sigma_int', 'b1',
+        'A_CL', 'B_CL', 'C_CL',
+        'R_dist_emp', 'p_dist_emp', 'n_dist_emp',
+        # Vector parameters are stored as components that NumPyro samples
+        'zeropoint_dipole_mag', 'zeropoint_dipole_phi', 'zeropoint_dipole_cos_theta',
+    ]
+    
+    # Extract available parameters
+    init_values = {}
+    for param_name in param_names:
+        if param_name in mock_truths:
+            init_values[param_name] = float(mock_truths[param_name])
+    
+    # Filter out parameters with Delta (fixed) priors
+    # These are deterministic and not sampled by MCMC
+    filtered_init_values = {}
+    for param_name, value in init_values.items():
+        if param_name in model.priors:
+            prior = model.priors[param_name]
+            if not isinstance(prior, Delta):
+                filtered_init_values[param_name] = value
+            else:
+                fprint(f"Skipping initialization for fixed parameter: {param_name}")
+        else:
+            # Parameter not in priors, keep it anyway
+            filtered_init_values[param_name] = value
+    
+    if filtered_init_values:
+        fprint(f"Initializing from mock truth values: {list(filtered_init_values.keys())}")
+        return filtered_init_values
+    
+    return None
 
 
 def run_pv_inference(model, model_kwargs, print_summary=True,
@@ -67,7 +137,18 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
 
     kwargs = model.config["inference"]
 
-    kernel = NUTS(model, init_strategy=init_to_median(num_samples=5000))
+    # Check if we have mock truth values for initialization
+    data = model_kwargs.get('data', None)
+    mock_init_values = get_mock_init_values(data, model) if data is not None else None
+    
+    if mock_init_values is not None:
+        # Initialize at mock truth values
+        init_strategy = init_to_value(values=mock_init_values)
+    else:
+        # Default: initialize at median of prior
+        init_strategy = init_to_median(num_samples=5000)
+
+    kernel = NUTS(model, init_strategy=init_strategy)
     mcmc = MCMC(
         kernel, num_warmup=kwargs["num_warmup"],
         num_samples=kwargs["num_samples"], num_chains=kwargs["num_chains"],
@@ -193,7 +274,18 @@ def run_SH0ES_inference(model, model_kwargs={}, print_summary=True,
 
     kwargs = model.config["inference"]
 
-    kernel = NUTS(model, init_strategy=init_to_median(num_samples=5000))
+    # Check if we have mock truth values for initialization
+    data = model_kwargs.get('data', None)
+    mock_init_values = get_mock_init_values(data, model) if data is not None else None
+    
+    if mock_init_values is not None:
+        # Initialize at mock truth values
+        init_strategy = init_to_value(values=mock_init_values)
+    else:
+        # Default: initialize at median of prior
+        init_strategy = init_to_median(num_samples=5000)
+
+    kernel = NUTS(model, init_strategy=init_strategy)
     mcmc = MCMC(
         kernel, num_warmup=kwargs["num_warmup"],
         num_samples=kwargs["num_samples"], num_chains=kwargs["num_chains"],

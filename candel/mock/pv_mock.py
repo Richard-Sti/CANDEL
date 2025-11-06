@@ -125,10 +125,13 @@ def gen_Clusters_mock(nsamples, r_grid, Vext_mag, Vext_ell, Vext_b, sigma_v,
                       zeropoint_dipole_mag, zeropoint_dipole_ell, zeropoint_dipole_b, h,
                       e_logT, e_logY, e_logF, logT_prior_mean, logT_prior_std,
                       b_min, zcmb_max, R_dist_emp, p_dist_emp, n_dist_emp, field_loader, r2distmod, r2z,
-                      Om=0.3, seed=42, verbose=True):
+                      Om=0.3, seed=42, verbose=True, **kwargs):
     """
     Generate a mock cluster survey with distances sampled from an empirical
     distribution, using Y-T and L-T scaling relations with uncorrelated scatter.
+    
+    Additional keyword arguments in **kwargs are ignored but can be passed through
+    for convenience (e.g., storing extra truth parameters).
     
     Parameters include:
     - A_CL, B_CL, sigma_int: Y-T relation parameters
@@ -226,6 +229,7 @@ def gen_Clusters_mock(nsamples, r_grid, Vext_mag, Vext_ell, Vext_b, sigma_v,
         "los_r": r_grid,
         "los_density": los_density,
         "los_velocity": los_velocity,
+        "r_true": r,
         }
 
     if zcmb_max is not None:
