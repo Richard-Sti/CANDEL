@@ -122,7 +122,7 @@ def gen_TFR_mock(nsamples, r_grid, Vext_mag, Vext_ell, Vext_b, sigma_v, beta,
 
 
 def gen_Clusters_mock(nsamples, r_grid, Vext_mag, Vext_ell, Vext_b, sigma_v,
-                      beta, b1, A_CL, B_CL, sigma_int, A_CL_LT, B_CL_LT, sigma_int_LT,
+                      beta, b1, A_YT, B_YT, sigma_int, A_LT, B_LT, sigma_int_LT,
                       zeropoint_dipole_mag, zeropoint_dipole_ell, zeropoint_dipole_b, h,
                       e_logT, e_logY, e_logF, logT_prior_mean, logT_prior_std,
                       b_min, zcmb_max, R_dist_emp, p_dist_emp, n_dist_emp, field_loader, r2distmod, r2z,
@@ -135,8 +135,8 @@ def gen_Clusters_mock(nsamples, r_grid, Vext_mag, Vext_ell, Vext_b, sigma_v,
     for convenience (e.g., storing extra truth parameters).
     
     Parameters include:
-    - A_CL, B_CL, sigma_int: Y-T relation parameters
-    - A_CL_LT, B_CL_LT, sigma_int_LT: L-T relation parameters
+    - A_YT, B_YT, sigma_int: Y-T relation parameters
+    - A_LT, B_LT, sigma_int_LT: L-T relation parameters
     - e_logF: observational error on logF (flux)
     """
     gen = np.random.default_rng(seed)
@@ -175,15 +175,15 @@ def gen_Clusters_mock(nsamples, r_grid, Vext_mag, Vext_ell, Vext_b, sigma_v,
     # Sample logT with intrinsic scatter
     logT_true = gen.normal(logT_prior_mean, logT_prior_std, size=nsamples)
     
-    # Y-T relation: logY = A_CL + B_CL * logT + epsilon_Y
+    # Y-T relation: logY = A_YT + B_YT * logT + epsilon_Y
     # Note: This is the intrinsic relation before distance corrections
     epsilon_Y = gen.normal(0, sigma_int, size=nsamples)
-    logY_intrinsic = A_CL + B_CL * logT_true + epsilon_Y
+    logY_intrinsic = A_YT + B_YT * logT_true + epsilon_Y
     
-    # L-T relation: logL = A_CL_LT + B_CL_LT * logT + epsilon_L
+    # L-T relation: logL = A_LT + B_LT * logT + epsilon_L
     # Generate with UNCORRELATED scatter to Y-T relation
     epsilon_L = gen.normal(0, sigma_int_LT, size=nsamples)
-    logL_intrinsic = A_CL_LT + B_CL_LT * logT_true + epsilon_L
+    logL_intrinsic = A_LT + B_LT * logT_true + epsilon_L
     
     # Apply zeropoint dipole if present (same for both Y and L)
     if zeropoint_dipole_mag is not None:

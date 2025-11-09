@@ -177,12 +177,22 @@ scale = 1.0
 
 
 ## Cluster scaling relation priors
-[model.priors.CL_A]
+[model.priors.A_LT]
 dist = "uniform"
 low = -10
 high = 10
 
-[model.priors.CL_B]
+[model.priors.B_LT]
+dist = "uniform"
+low = -5
+high = 5
+
+[model.priors.A_YT]
+dist = "uniform"
+low = -10
+high = 10
+
+[model.priors.B_YT]
 dist = "uniform"
 low = -5
 high = 5

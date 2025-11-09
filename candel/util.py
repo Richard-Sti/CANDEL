@@ -351,8 +351,12 @@ def name2label(name):
         "SN_beta": r"$\mathcal{B}$",
         "eta_prior_mean": r"$\hat{\eta}$",
         "eta_prior_std": r"$w_\eta$",
-        "A_CL": r"$a_L$",
-        "B_CL": r"$b_L$",
+        "A_LT": r"$a_{LT}$",
+        "B_LT": r"$b_{LT}$",
+        "A_YT": r"$a_{YT}$",
+        "B_YT": r"$b_{YT}$",
+        "A_CL": r"$a_L$",   # legacy
+        "B_CL": r"$b_L$",   # legacy
         "C_CL": r"$C_{\rm CL}$",
         "A2_CL": r"$a_Y$",
         "B2_CL": r"$b_Y$",
@@ -452,8 +456,12 @@ def name2labelgetdist(name):
         "M_dipole_b": r"b_{\Delta M_{\rm SN}}~\left[\mathrm{deg}\right]",
         "eta_prior_mean": r"\hat{\eta}",
         "eta_prior_std": r"w_\eta",
-        "A_CL": r"a_L",
-        "B_CL": r"b_L",
+        "A_LT": r"a_{LT}",
+        "B_LT": r"b_{LT}",
+        "A_YT": r"a_{YT}",
+        "B_YT": r"b_{YT}",
+        "A_CL": r"a_L",   # legacy
+        "B_CL": r"b_L",   # legacy
         "C_CL": r"C_{\rm CL}",
         "A2_CL": r"a_Y",
         "B2_CL": r"b_Y",

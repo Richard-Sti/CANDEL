@@ -9,7 +9,7 @@ machine = "local"
 ###############################################################################
 
 [inference]
-model = "Clusters_DistMarg"
+model = "ClustersModel"
 shared_params = "none"
 
 num_warmup = 2000
@@ -44,7 +44,7 @@ Vext_radial_bin_edges = [0.0,0.075,0.35]
 
 # (Inhomogeneus Malmquist bias settings and extrapolation), in units of Mpc / h
 r_limits_malmquist = [0.1, 1401]
-num_points_malmquist = 501
+num_points_malmquist = 1401
 
 los_decay_scale = 5.0
 
@@ -68,7 +68,7 @@ value = 1.0
 [model.priors.b1]
 dist = "uniform"
 low = 1.0
-high = 6.0
+high = 10.0
 
 [model.priors.beta]
 dist = "normal"
@@ -112,15 +112,25 @@ high = 10.0
 
 [model.priors.sigma_int]
 dist = "jeffreys"
-low = 0.005
-high = 0.3
+low = 0.05
+high = 0.5
 
-[model.priors.CL_A]
+[model.priors.A_LT]
+dist = "uniform"
+low = -2
+high = 2.5
+
+[model.priors.B_LT]
+dist = "uniform"
+low = 1.5
+high = 3
+
+[model.priors.A_YT]
 dist = "uniform"
 low = -0.5
 high = 2.5
 
-[model.priors.CL_B]
+[model.priors.B_YT]
 dist = "uniform"
 low = 1.5
 high = 3
@@ -180,7 +190,7 @@ value = [0,0,0]
 
 [model.priors.R_dist_emp]
 dist = "uniform"
-low = 50
+low = 20
 high = 350
 
 [model.priors.p_dist_emp]
@@ -192,7 +202,7 @@ scale = 0.1
 [model.priors.n_dist_emp]
 dist = "uniform"
 low = 0.5
-high = 1.5
+high = 1.7
 
 
 ################################################################################
@@ -214,6 +224,36 @@ root = "data/Clusters"
 zcmb_max = 0.35
 which_relation = "YT"
 finite_logY = true
+remove_noY = true
+only_missing_Y = false
+convert_to_CMB_frame = true
+
+los_file = "data/Clusters/los_Clusters_<X>.hdf5"
+
+nsamples_subsample = "none"
+seed_subsample = 42
+
+[io.Clusters_hasY]
+root = "data/Clusters"
+zcmb_max = 0.35
+which_relation = "LTYT"
+finite_logY = true
+remove_noY = true
+only_missing_Y = false
+convert_to_CMB_frame = true
+
+los_file = "data/Clusters/los_Clusters_<X>.hdf5"
+
+nsamples_subsample = "none"
+seed_subsample = 42
+
+[io.Clusters_LTtail]
+root = "data/Clusters"
+zcmb_max = 0.35
+which_relation = "LT"
+finite_logY = false
+remove_noY = false
+only_missing_Y = true
 convert_to_CMB_frame = true
 
 los_file = "data/Clusters/los_Clusters_<X>.hdf5"

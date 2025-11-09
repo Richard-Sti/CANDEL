@@ -72,19 +72,34 @@ def generate_dynamic_tag(config, base_tag="default"):
     """Generate a descriptive tag string based on selected config values."""
     parts = []
 
-    # Catalogue name
-    catalogue = get_nested(config, "io/catalogue_name", None)
-    if catalogue:
-        parts.append(catalogue)
+    if base_tag != "default":
+        parts.append(base_tag)
+
+    catalogue_value = get_nested(config, "io/catalogue_name", None)
+    if isinstance(catalogue_value, list):
+        catalogue_names = catalogue_value
+        if base_tag == "default":
+            parts.append("joint")
+    elif isinstance(catalogue_value, str) and catalogue_value:
+        catalogue_names = [catalogue_value]
+        if base_tag == "default":
+            parts.append(catalogue_value)
+    else:
+        catalogue_names = ["Clusters"]
+        if base_tag == "default":
+            parts.append("Clusters")
 
     # MNR flag
     use_mnr = get_nested(config, "pv_model/use_MNR", False)
     parts.append("MNR" if use_mnr else "noMNR")
 
     # Clusters scaling relation choice
-    scaling_relation = get_nested(config, "io/Clusters/which_relation", None)
-    if scaling_relation:
-        parts.append(scaling_relation)
+    relations = []
+    for name in catalogue_names:
+        rel = get_nested(config, f"io/{name}/which_relation", None)
+        if rel and rel not in relations:
+            relations.append(rel)
+    parts.extend(relations)
 
     # Vext configuration - only add non-default cases
     which_vext = get_nested(config, "pv_model/which_Vext", "constant")
@@ -127,16 +142,25 @@ def generate_dynamic_tag(config, base_tag="default"):
                 # delta case is default, don't add anything
 
     # Flag if sampling the dust prior
-    dust_model = get_nested(config, f"io/{catalogue}/dust_model", None)
-    if dust_model is not None and dust_model.lower() != "none":
-        parts.append(f"dust-{dust_model}")
+    dust_flags = []
+    for name in catalogue_names:
+        dust_model = get_nested(config, f"io/{name}/dust_model", None)
+        if isinstance(dust_model, str) and dust_model.lower() != "none":
+            label = f"dust-{dust_model}"
+            if label not in dust_flags:
+                dust_flags.append(label)
+    parts.extend(dust_flags)
 
     # if remove_noY is true then label tag with hasY:
-    remove_noY = get_nested(config, f"io/{catalogue}/remove_noY", False)
-    if remove_noY:
+    has_y = False
+    for name in catalogue_names:
+        if get_nested(config, f"io/{name}/remove_noY", False):
+            has_y = True
+            break
+    if has_y:
         parts.append("hasY")
 
-    return "_".join(parts) if base_tag == "default" else base_tag
+    return "_".join(parts)
 
 
 def expand_override_grid(overrides):
@@ -158,26 +182,19 @@ if __name__ == "__main__":
         help="Index of the task to run (default: 0)")
     args = parser.parse_args()
 
-    config_path = "config_clusters.toml"
+    config_path = "scripts/cluster_runs/config_clusters.toml"
     config = load_config(
         config_path, replace_none=False, replace_los_prior=False)
 
-    tag = "default"
     tasks_index = args.tasks_index
 
     task_file = f"tasks_{tasks_index}.txt"
     log_dir = f"logs_{tasks_index}"
 
-    # Dipoles for LT and LTY with Manticore
     base = {
         "pv_model/kind": ["Vext", "precomputed_los_Carrick2015", "precomputed_los_manticore"],
-        #"pv_model/kind": ["precomputed_los_Carrick2015"],
         "pv_model/which_Vext": ["constant"],
-        "io/catalogue_name": "Clusters",
-        "io/root_output": "results/friday",
-        "pv_model/use_MNR": False,
-        "io/Clusters/which_relation": ["LTYT", "LT", "YT"],
-        "io/Clusters/remove_noY": [True],
+        "io/root_output": "results/final",
         "model/priors/Vext": [
             {"dist": "delta", "value": [0.0, 0.0, 0.0]}],
         "model/priors/zeropoint_dipole": [
@@ -239,81 +256,187 @@ if __name__ == "__main__":
 
     radialVext_combinations = expand_override_grid(radialVext_settings)
     
-    # Combine both lists
-    override_combinations = dipole_combinations +\
-                            quadVext_combinations  + quad_zeropoint_combinations \
-                            + pixelA_combinations + pixelVext_combinations \
-                            + radialVext_combinations
+    override_combinations = (
+        dipole_combinations
+        + quadVext_combinations
+        + quad_zeropoint_combinations
+        + pixelA_combinations
+        + pixelVext_combinations
+        + radialVext_combinations
+    )
 
-    print(f"Total combinations: {len(override_combinations)}")
+    base_clusters_section = deepcopy(config["io"].get("Clusters", {}))
+    if not base_clusters_section:
+        raise ValueError("Base config must define [io.Clusters] for template settings.")
 
+    def build_cluster_section(**updates):
+        section = deepcopy(base_clusters_section)
+        section.setdefault("remove_noY", False)
+        section.setdefault("only_missing_Y", False)
+        section.update(updates)
+        return section
+
+    scenarios = [
+        {
+            "label": "LT",
+            "overrides": {
+                "inference/model": "ClustersModel",
+                "inference/shared_params": "none",
+                "io/catalogue_name": "Clusters",
+                "io/Clusters": build_cluster_section(
+                    which_relation="LT",
+                    finite_logY=False,
+                    remove_noY=False,
+                    only_missing_Y=False,
+                ),
+            },
+        },
+        {
+            "label": "YT",
+            "overrides": {
+                "inference/model": "ClustersModel",
+                "inference/shared_params": "none",
+                "io/catalogue_name": "Clusters",
+                "io/Clusters": build_cluster_section(
+                    which_relation="YT",
+                    finite_logY=True,
+                    remove_noY=True,
+                    only_missing_Y=False,
+                ),
+            },
+        },
+        {
+            "label": "LTYT",
+            "overrides": {
+                "inference/model": "ClustersModel",
+                "inference/shared_params": "none",
+                "io/catalogue_name": "Clusters",
+                "io/Clusters": build_cluster_section(
+                    which_relation="LTYT",
+                    finite_logY=True,
+                    remove_noY=True,
+                    only_missing_Y=False,
+                ),
+            },
+        },
+        {
+            "label": "Joint",
+            "overrides": {
+                "inference/model": ["ClustersModel", "ClustersModel"],
+                "io/catalogue_name": ["Clusters_hasY", "Clusters_LTtail"],
+                "io/Clusters_hasY": build_cluster_section(
+                    which_relation="LTYT",
+                    finite_logY=True,
+                    remove_noY=True,
+                    only_missing_Y=False,
+                ),
+                "io/Clusters_LTtail": build_cluster_section(
+                    which_relation="LT",
+                    finite_logY=False,
+                    remove_noY=False,
+                    only_missing_Y=True,
+                ),
+            },
+            "shared_params_base": [
+                "sigma_v",
+                "zeropoint_dipole",
+                "zeropoint_quad",
+                "beta",
+            ],
+            "share_flow": True,
+        },
+    ]
+
+    def flow_shared_params(which_vext):
+        mapping = {
+            "constant": ["Vext", "Vext_quad"],
+            "radial": ["Vext_rad"],
+            "radial_magnitude": ["Vext_radmag"],
+        }
+        return mapping.get(which_vext, [])
+
+    print(f"Total override combinations per scenario: {len(override_combinations)}")
+
+    task_counter = 0
     with open(task_file, "w") as task_fh:
-        for idx, override_set in enumerate(override_combinations):
-            local_config = deepcopy(config)
+        for scenario in scenarios:
+            scenario_overrides = scenario["overrides"]
+            scenario_label = scenario["label"]
 
-            for key, value in override_set.items():
-                # Special handling for kind: transform before writing
-                # if key == "pv_model/kind":
-                #     if "Vext" in value:
-                #         config = replace_prior_with_delta(config, "alpha", 1.)
-                #         config = replace_prior_with_delta(config, "beta", 0.)
-                #     else:
-                #         value = f"precomputed_los_{value}"
-                #         fprint(f"transformed kind override to: {value}")
+            for override_set in override_combinations:
+                local_config = deepcopy(config)
 
-                if isinstance(value, dict):
-                    local_config = overwrite_subtree(local_config, key, value)
-                else:
-                    local_config = overwrite_config(local_config, key, value)
+                for key, value in scenario_overrides.items():
+                    if isinstance(value, dict):
+                        local_config = overwrite_subtree(local_config, key, value)
+                    else:
+                        local_config = overwrite_config(local_config, key, value)
 
-            # Check that the output directory exists
-            fdir_out = join(
-                local_config["root_main"], local_config["io"]["root_output"])
-            if not exists(fdir_out):
-                fprint(f"creating output directory `{fdir_out}`")
-                makedirs(fdir_out, exist_ok=True)
+                for key, value in override_set.items():
+                    if isinstance(value, dict):
+                        local_config = overwrite_subtree(local_config, key, value)
+                    else:
+                        local_config = overwrite_config(local_config, key, value)
 
-            # Auto-set beta prior and galaxy_bias based on reconstruction type
-            kind = get_nested(local_config, "pv_model/kind", "unknown")
-            if kind.startswith("precomputed_los_"):
-                if "manticore" in kind.lower():
-                    # Manticore: beta ~ Normal(1.0, 0.02), galaxy_bias = powerlaw
-                    beta_prior = {"dist": "normal", "loc": 1.0, "scale": 0.02}
-                    local_config = overwrite_subtree(local_config, "model/priors/beta", beta_prior)
-                    fprint(f"set beta prior to Normal(1.0, 0.02) for manticore reconstruction")
-                    
-                    local_config = overwrite_config(local_config, "pv_model/galaxy_bias", "powerlaw")
-                    fprint(f"set galaxy_bias to 'powerlaw' for manticore reconstruction")
-                    
-                elif "carrick" in kind.lower():
-                    # Carrick2015: beta ~ Normal(0.43, 0.02), galaxy_bias = linear
-                    beta_prior = {"dist": "normal", "loc": 0.43, "scale": 0.02}
-                    local_config = overwrite_subtree(local_config, "model/priors/beta", beta_prior)
-                    fprint(f"set beta prior to Normal(0.43, 0.02) for Carrick2015 reconstruction")
-                    
-                    local_config = overwrite_config(local_config, "pv_model/galaxy_bias", "linear")
-                    fprint(f"set galaxy_bias to 'linear' for Carrick2015 reconstruction")
+                shared_base = scenario.get("shared_params_base", None)
+                if shared_base:
+                    shared_list = list(shared_base)
+                    if scenario.get("share_flow", False):
+                        which_vext = get_nested(
+                            local_config, "pv_model/which_Vext", "constant")
+                        shared_list.extend(flow_shared_params(which_vext))
+                    shared_list = list(dict.fromkeys(shared_list))
+                    shared_str = ",".join(shared_list)
+                    local_config = overwrite_config(
+                        local_config, "inference/shared_params", shared_str)
 
-            dynamic_tag = generate_dynamic_tag(local_config, base_tag=tag)
+                fdir_out = join(
+                    local_config["root_main"], local_config["io"]["root_output"])
+                if not exists(fdir_out):
+                    fprint(f"creating output directory `{fdir_out}`")
+                    makedirs(fdir_out, exist_ok=True)
 
-            # Remove "precomputed_los_" prefix from kind for the filename
-            kind_for_filename = kind.replace("precomputed_los_", "")
+                kind = get_nested(local_config, "pv_model/kind", "unknown")
+                if kind.startswith("precomputed_los_"):
+                    if "manticore" in kind.lower():
+                        beta_prior = {"dist": "normal", "loc": 1.0, "scale": 0.02}
+                        local_config = overwrite_subtree(
+                            local_config, "model/priors/beta", beta_prior)
+                        fprint("set beta prior to Normal(1.0, 0.02) for manticore reconstruction")
 
-            fname_out = join(
-                local_config["io"]["root_output"],
-                f"{kind_for_filename}_{dynamic_tag}.hdf5"
-            )
-            local_config = overwrite_config(
-                local_config, "io/fname_output", fname_out)
+                        local_config = overwrite_config(
+                            local_config, "pv_model/galaxy_bias", "powerlaw")
+                        fprint("set galaxy_bias to 'powerlaw' for manticore reconstruction")
 
-            toml_out = join(
-                local_config["root_main"],
-                splitext(fname_out)[0] + ".toml"
-            )
-            fprint(f"writing the configuration file to `{toml_out}`")
-            with open(toml_out, "wb") as f:
-                tomli_w.dump(local_config, f)
+                    elif "carrick" in kind.lower():
+                        beta_prior = {"dist": "normal", "loc": 0.43, "scale": 0.02}
+                        local_config = overwrite_subtree(
+                            local_config, "model/priors/beta", beta_prior)
+                        fprint("set beta prior to Normal(0.43, 0.02) for Carrick2015 reconstruction")
 
-            task_fh.write(f"{idx} {toml_out}\n")
+                        local_config = overwrite_config(
+                            local_config, "pv_model/galaxy_bias", "linear")
+                        fprint("set galaxy_bias to 'linear' for Carrick2015 reconstruction")
+
+                dynamic_tag = generate_dynamic_tag(local_config, base_tag=scenario_label)
+                kind_for_filename = kind.replace("precomputed_los_", "")
+
+                fname_out = join(
+                    local_config["io"]["root_output"],
+                    f"{kind_for_filename}_{dynamic_tag}.hdf5"
+                )
+                local_config = overwrite_config(
+                    local_config, "io/fname_output", fname_out)
+
+                toml_out = join(
+                    local_config["root_main"],
+                    splitext(fname_out)[0] + ".toml"
+                )
+                fprint(f"writing the configuration file to `{toml_out}`")
+                with open(toml_out, "wb") as f:
+                    tomli_w.dump(local_config, f)
+
+                task_fh.write(f"{task_counter} {toml_out}\n")
+                task_counter += 1
 
     fprint(f"wrote task list to `{task_file}`")

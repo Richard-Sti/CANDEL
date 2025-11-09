@@ -84,7 +84,8 @@ def get_mock_init_values(data, model):
     # These match the names stored in mock HDF5 files
     param_names = [
         'sigma_v', 'sigma_int', 'b1',
-        'A_CL', 'B_CL', 'C_CL',
+        'A_LT', 'B_LT', 'A_YT', 'B_YT', 'C_CL',
+        'A_CL', 'B_CL', 'A_CL_LT', 'B_CL_LT',  # legacy support
         'R_dist_emp', 'p_dist_emp', 'n_dist_emp',
         # Vector parameters are stored as components that NumPyro samples
         'zeropoint_dipole_mag', 'zeropoint_dipole_phi', 'zeropoint_dipole_cos_theta',
@@ -157,6 +158,12 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
 
     samples = mcmc.get_samples()
     log_density_per_sample = samples.pop("log_density_per_sample", None)
+    extra_ld_keys = [
+        key for key in list(samples.keys())
+        if key.endswith("/log_density_per_sample")
+    ]
+    for key in extra_ld_keys:
+        samples.pop(key, None)
 
     if kwargs["compute_log_density"]:
         log_density = get_log_density(samples, model, model_kwargs)

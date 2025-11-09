@@ -81,12 +81,22 @@ dist = "jeffreys"
 low = 0.01
 high = 0.2
 
-[model.priors.CL_A]
+[model.priors.A_YT]
 dist = "uniform"
 low = 1.0
 high = 3.0
 
-[model.priors.CL_B]
+[model.priors.B_YT]
+dist = "uniform"
+low = 2.0
+high = 3.0
+
+[model.priors.A_LT]
+dist = "uniform"
+low = 1.0
+high = 3.0
+
+[model.priors.B_LT]
 dist = "uniform"
 low = 2.0
 high = 3.0
@@ -171,4 +181,3 @@ root = "PLACEHOLDER_MOCK_DIR"
 [io.Clusters]
 which_relation = "YT"
 zcmb_max = 0.35
-

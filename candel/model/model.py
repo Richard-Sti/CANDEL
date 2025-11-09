@@ -18,6 +18,7 @@ TFR, FP, SNe ... forward models (typically no absolute distance calibration).
 import hashlib
 import json
 from abc import ABC, abstractmethod
+from copy import deepcopy
 
 import jax.numpy as jnp
 import numpy as np
@@ -718,13 +719,13 @@ def compute_quadrupole_radial(data, quadrupole):
     return Q_rad  # (N, 1)
 
 
-def sample_distance_prior(priors):
+def sample_distance_prior(priors, shared_params=None):
     """Sample hyperparameters describing the empirical distance prior."""
     return {
-        "R": rsample("R_dist_emp", priors["R_dist_emp"]),
-        "p": rsample("p_dist_emp", priors["p_dist_emp"]),
-        "n": rsample("n_dist_emp", priors["n_dist_emp"])
-        }
+        "R": rsample("R_dist_emp", priors["R_dist_emp"], shared_params),
+        "p": rsample("p_dist_emp", priors["p_dist_emp"], shared_params),
+        "n": rsample("n_dist_emp", priors["n_dist_emp"], shared_params),
+    }
 
 
 def sumzero_basis(npix):
@@ -796,7 +797,7 @@ def sample_A_clusters(priors, which_A, shared_params=None, kwargs_A={}):
     elif which_A == "radial_binned":
         # Sample one A value per radial bin
         with plate("A_radial_bin_plate", kwargs_A["n_bins"]):
-            A_radial_bin = rsample("A_radial_bin", priors["CL_A"], shared_params)
+            A_radial_bin = rsample("A_radial_bin", priors["A_LT"], shared_params)
         return A_radial_bin
     elif which_A == "radial_binned_dipole":
         # Sample a 3D dipole vector per radial bin
@@ -893,7 +894,7 @@ class TFRModel(BaseModel):
         a_TFR_dipole = rsample(
             "zeropoint_dipole", self.priors["zeropoint_dipole"], shared_params)
         a_TFR = a_TFR + jnp.sum(a_TFR_dipole * data["rhat"], axis=1)
-        kwargs_dist = sample_distance_prior(self.priors)
+        kwargs_dist = sample_distance_prior(self.priors, shared_params)
 
         # For the distance marginalization, h is not sampled.
         h = 1.
@@ -1082,7 +1083,7 @@ class SNModel(BaseModel):
         h = 1.0
 
         # Empirical p(r) hyperparameters
-        kwargs_dist = sample_distance_prior(self.priors)
+        kwargs_dist = sample_distance_prior(self.priors, shared_params)
 
         # --- Velocity field / selection nuisance ---
         Vext = sample_Vext(
@@ -1237,7 +1238,7 @@ class PantheonPlusModel(BaseModel):
             x1 = data["x1"]
             c = data["c"]
 
-        kwargs_dist = sample_distance_prior(self.priors)
+        kwargs_dist = sample_distance_prior(self.priors, shared_params)
 
         # Sample velocity field parameters.
         Vext = rsample("Vext", self.priors["Vext"], shared_params)
@@ -1338,33 +1339,56 @@ def get_Ez(z, Om):
     return jnp.sqrt(Om * (1 + z)**3 + (1 - Om))
 
 
+DEFAULT_A_PRIOR = {"dist": "uniform", "low": -0.5, "high": 2.5}
+DEFAULT_B_PRIOR = {"dist": "uniform", "low": 1.5, "high": 3.0}
+
+
+def _ensure_scaling_priors(priors):
+    """
+    Ensure that the cluster scaling relation priors include the per-relation
+    keys used by the modern models (A_LT, A_YT, ...). Falls back to the legacy
+    CL_* entries or defaults when necessary and keeps compatibility by
+    re-populating the CL_* entries if missing.
+    """
+    template_A = (priors.get("A_LT") or priors.get("A_YT")
+                  or priors.get("CL_A") or DEFAULT_A_PRIOR)
+    template_B = (priors.get("B_LT") or priors.get("B_YT")
+                  or priors.get("CL_B") or DEFAULT_B_PRIOR)
+
+    for name in ("A_LT", "A_YT"):
+        if name not in priors:
+            priors[name] = deepcopy(template_A)
+    for name in ("B_LT", "B_YT"):
+        if name not in priors:
+            priors[name] = deepcopy(template_B)
+
+    priors.setdefault("CL_A", deepcopy(priors["A_LT"]))
+    priors.setdefault("CL_B", deepcopy(priors["B_LT"]))
+
+
 class ClustersModel(BaseModel):
-    """
-    Cluster LTY scaling relation with explicit distance marginalization.
-    """
+    """Cluster scaling relations with explicit distance marginalization."""
+
+    _VALID_RELATIONS = {"LT", "LY", "LTY", "YT", "YTL", "LTYT"}
+
     def __init__(self, config_path):
         super().__init__(config_path)
 
-        self.which_relation = self.config["io"]["Clusters"]["which_relation"]
-        if self.which_relation not in ["LT", "LY", "LTY", "YT", "YTL", "LTYT"]:
-            raise ValueError(
-                f"Invalid scaling relation '{self.which_relation}'. "
-                "Choose either 'LT' or 'LY' or 'LTY'.")
+        _ensure_scaling_priors(self.priors)
+        (self.relation_by_catalogue,
+         self.default_relation) = self._build_relation_lookup()
+        self.used_relations = set(self.relation_by_catalogue.values())
+        # Backwards compatibility for code that inspects this attribute.
+        self.which_relation = self.default_relation
 
-        self.distance2logda = Distance2LogAngDist(Om0=self.Om)
-        self.distance2logdl = Distance2LogLumDist(Om0=self.Om)
+        self.distance2logda = Distance2LogAngDist(Om0=self.Om, zmax_interp=1.0)
+        self.distance2logdl = Distance2LogLumDist(Om0=self.Om, zmax_interp=1.0)
 
-        if self.which_relation == "LT":
+        if {"LT", "YT", "LTYT"} & self.used_relations:
             self.priors["CL_C"] = Delta(jnp.asarray(0.0))
-        if self.which_relation == "LY":
+        if "LY" in self.used_relations:
             self.priors["CL_B"] = Delta(jnp.asarray(0.0))
-        if self.which_relation == "YT":
-            self.priors["CL_C"] = Delta(jnp.asarray(0.0))
-        if self.which_relation == "LTYT":
-            self.priors["CL_C"] = Delta(jnp.asarray(0.0))
-            # Add priors for second relation parameters
-            self.priors["CL_A2"] = Uniform(-10.0, 10.0)
-            self.priors["CL_B2"] = Uniform(-10.0, 10.0)
+        if "LTYT" in self.used_relations:
             self.priors["sigma_int2"] = Uniform(0.0, 5.0)
 
         # Configuration for per-pixel A variation (similar to Vext)
@@ -1415,10 +1439,55 @@ class ClustersModel(BaseModel):
             fprint("setting `compute_evidence` to False.")
             self.config["inference"]["compute_evidence"] = False
 
+    def _validate_relation(self, relation):
+        if relation not in self._VALID_RELATIONS:
+            raise ValueError(
+                f"Invalid scaling relation '{relation}'. "
+                "Choose either 'LT', 'LY', 'LTY', 'YT', 'YTL', or 'LTYT'.")
+
+    def _build_relation_lookup(self):
+        io_cfg = self.config.get("io", {})
+        names = io_cfg.get("catalogue_name", "Clusters")
+        if isinstance(names, str) or names is None:
+            catalogue_names = [names or "Clusters"]
+        else:
+            catalogue_names = list(names)
+
+        default_relation = io_cfg.get("Clusters", {}).get("which_relation")
+        if default_relation is None:
+            default_relation = "LT"
+        self._validate_relation(default_relation)
+
+        relations = {}
+        for name in catalogue_names:
+            section = io_cfg.get(name, {})
+            relation = section.get("which_relation", default_relation)
+            if relation is None:
+                relation = default_relation
+            self._validate_relation(relation)
+            relations[name] = relation
+
+        if not relations:
+            relations["Clusters"] = default_relation
+            catalogue_names = ["Clusters"]
+
+        first = catalogue_names[0]
+        return relations, relations.get(first, default_relation)
+
+    def _relation_for_dataset(self, data):
+        name = getattr(data, "name", None)
+        if name in self.relation_by_catalogue:
+            return self.relation_by_catalogue[name]
+        return self.default_relation
+
     def __call__(self, data, shared_params=None):
         nsamples = len(data)
         if self.track_log_density_per_sample:
             log_density_per_sample = jnp.zeros(nsamples)
+
+        relation = self._relation_for_dataset(data)
+        # Keep attribute for backward compatibility (e.g., logging/introspection)
+        self.which_relation = relation
 
         if data.sample_dust:
             raise NotImplementedError(
@@ -1426,52 +1495,71 @@ class ClustersModel(BaseModel):
                 "`ClustersModel`.")
 
         # Sample the cluster scaling parameters.
-        A = rsample("A_CL", self.priors["CL_A"], shared_params)
-        B = rsample("B_CL", self.priors["CL_B"], shared_params)
+        use_LT_branch = relation in ["LT", "LTY", "LTYT"]
+        use_YT_branch = relation in ["YT", "YTL", "LTYT"]
+
+        A_LT = B_LT = None
+        A_YT = B_YT = None
+
+        if use_LT_branch:
+            A_LT = rsample("A_LT", self.priors["A_LT"], shared_params)
+            B_LT = rsample("B_LT", self.priors["B_LT"], shared_params)
+        if use_YT_branch:
+            A_YT = rsample("A_YT", self.priors["A_YT"], shared_params)
+            B_YT = rsample("B_YT", self.priors["B_YT"], shared_params)
+
         C = rsample("C_CL", self.priors["CL_C"], shared_params)
         sigma_int = rsample(
             "sigma_int", self.priors["sigma_int"], shared_params)
         
-
-        # Sample different A variations
+        delta_A = None
         if self.which_A in ["per_pix", "radial_binned", "radial_binned_dipole"]:
             A_pix = sample_A_clusters(
                 self.priors, self.which_A, shared_params, self.kwargs_A)
-            A_pix_radial = compute_A_clusters_radial(
+            delta_A = compute_A_clusters_radial(
                 data, A_pix, self.which_A, **self.kwargs_A)
-            A = A + A_pix_radial  # A_pix_radial has shape (n_gal,)
-
-
         else:
             # Traditional dipole/quadrupole approach
             A_dipole = rsample(
                 "zeropoint_dipole", self.priors["zeropoint_dipole"], shared_params)
             A_quad = rsample(
-                "zeropoint_quad", self.priors["zeropoint_quad"],shared_params)
+                "zeropoint_quad", self.priors["zeropoint_quad"], shared_params)
 
             A_dipole_radial = jnp.sum(A_dipole * data["rhat"], axis=1)
             A_quad_radial = compute_quadrupole_radial(data, A_quad)
 
-            A = A + A_dipole_radial + A_quad_radial
+            delta_A = A_dipole_radial + A_quad_radial
 
-        # Additional parameters for LTYT relation
-        if self.which_relation == "LTYT":
-            A2 = rsample("A2_CL", self.priors["CL_A2"], shared_params)
-            B2 = rsample("B2_CL", self.priors["CL_B2"], shared_params)
+        if delta_A is not None:
+            if A_LT is not None:
+                A_LT = A_LT + delta_A
+            if A_YT is not None:
+                A_YT = A_YT + delta_A
+
+        if relation in ["LT", "LTY"]:
+            A = A_LT
+            B = B_LT
+        elif relation in ["YT", "YTL"]:
+            A = A_YT
+            B = B_YT
+        elif relation == "LTYT":
+            A = A_LT
+            B = B_LT
+
+        if relation == "LTYT":
             sigma_int2 = rsample("sigma_int2", self.priors["sigma_int2"], shared_params)
             rho12 = sample("rho12", Uniform(-0.99, 0.99))  # avoid singular cov
-    
-            if self.which_A in ["per_pix", "radial_binned", "radial_binned_dipole"]:
-                # For per_pix, radial_binned, or radial_binned_dipole, A2 gets the same variation as A
-                A2 = A2 + A_pix_radial  # A_pix_radial has shape (n_gal,)
-            else:
-                # Traditional dipole/quadrupole approach
-                A2 = A2 + A_dipole_radial + A_quad_radial
 
         # For the distance marginalization, h is not sampled.
         h = 1.
 
-        kwargs_dist = sample_distance_prior(self.priors)
+        kwargs_dist = sample_distance_prior(self.priors, shared_params)
+
+        def _broadcast_param(param, template):
+            param = jnp.asarray(param)
+            if param.ndim == 0:
+                param = jnp.broadcast_to(param, template.shape)
+            return param
 
         # Sample velocity field parameters.
         Vext = sample_Vext(
@@ -1490,18 +1578,27 @@ class ClustersModel(BaseModel):
 
         # MNR hyperpriors for cluster observables
         if self.use_MNR:
-            # All scaling relations need T hyperprior
-            # logT_prior_mean = sample(
-            #     "logT_prior_mean", Uniform(data["min_logT"], data["max_logT"]))
-            # logT_prior_std = sample(
-            #     "logT_prior_std", 
-            #     Uniform(0.0, data["max_logT"] - data["min_logT"]))
-            logT_prior_mean = 0.0
-            logT_prior_std = 0.2
+            def _shared_or_sample(name, dist):
+                if shared_params is not None and name in shared_params:
+                    return shared_params[name]
+                value = sample(name, dist)
+                if shared_params is not None:
+                    shared_params[name] = value
+                return value
 
-            if self.which_relation in ["LTY", "YTL"]:
+            # All scaling relations need T hyperprior
+            logT_prior_mean = _shared_or_sample(
+                "logT_prior_mean",
+                Uniform(data["min_logT"], data["max_logT"]),
+            )
+            logT_prior_std = _shared_or_sample(
+                "logT_prior_std",
+                Uniform(0.0, data["max_logT"] - data["min_logT"]),
+            )
+
+            if relation in ["LTY", "YTL"]:
                 # These relations need bivariate MNR priors
-                if self.which_relation == "LTY":
+                if relation == "LTY":
                     # T and Y bivariate prior
                     logY_prior_mean = sample(
                         "logY_prior_mean", Uniform(data["min_logY"], data["max_logY"]))
@@ -1515,7 +1612,7 @@ class ClustersModel(BaseModel):
                         [logT_prior_std**2, rho_TY * logT_prior_std * logY_prior_std],
                         [rho_TY * logT_prior_std * logY_prior_std, logY_prior_std**2]])
                 
-                elif self.which_relation == "YTL":
+                elif relation == "YTL":
                     # T and L bivariate prior  
                     logF_prior_mean = sample(
                         "logF_prior_mean", Uniform(data["min_logF"], data["max_logF"]))
@@ -1531,14 +1628,14 @@ class ClustersModel(BaseModel):
 
         with plate("data", nsamples):
             if self.use_MNR:
-                if self.which_relation in ["LT", "YT", "LTYT"]:
+                if relation in ["LT", "YT", "LTYT"]:
                     # T-only MNR for these relations
                     logT = sample("logT_latent", Normal(logT_prior_mean, logT_prior_std))
                     sample("logT_obs", Normal(logT, data["e_logT"]), obs=data["logT"])
                     logY = data["logY"]
                     logF = data["logF"]
                 
-                elif self.which_relation == "LTY":
+                elif relation == "LTY":
                     # T and Y bivariate MNR
                     x_latent = sample("x_latent_TY", MultivariateNormal(mu_TY, cov_TY))
                     logT = x_latent[:, 0]
@@ -1548,7 +1645,7 @@ class ClustersModel(BaseModel):
                     sample("logY_obs", Normal(logY, data["e_logY"]), obs=data["logY"])
                     logF = data["logF"]
                 
-                elif self.which_relation == "YTL":
+                elif relation == "YTL":
                     # T and L bivariate MNR
                     x_latent = sample("x_latent_TF", MultivariateNormal(mu_TF, cov_TF))
                     logT = x_latent[:, 0]
@@ -1564,30 +1661,23 @@ class ClustersModel(BaseModel):
 
             # Calculate intrinsic scatter - MNR doesn't propagate observational errors
             if self.use_MNR:
-                if self.which_relation in ["LT", "LTY"]:
+                if relation in ["LT", "LTY"]:
                     sigma_logF = jnp.sqrt(data["e2_logF"] + sigma_int**2)
-                if self.which_relation in ["YT", "YTL"]:
+                if relation in ["YT", "YTL"]:
                     sigma_logY = jnp.sqrt(data["e2_logY"] + sigma_int**2)
-                if self.which_relation == "LTYT":
+                if relation == "LTYT":
                     sigma_logF = jnp.sqrt(data["e2_logF"] + sigma_int**2)
                     sigma_logY = jnp.sqrt(data["e2_logY"] + sigma_int2**2)
             else:
                 # Non-MNR case: propagate observational errors
-                if self.which_relation in ["LT", "LTY"]:
+                if relation in ["LT", "LTY"]:
                     sigma_logF = jnp.sqrt(
                         data["e2_logF"] + sigma_int**2
                         + B**2 * data["e2_logT"] + C**2 * data["e2_logY"])
-                if self.which_relation in ["YT", "YTL"]:
+                if relation in ["YT", "YTL"]:
                     sigma_logY = jnp.sqrt(
                         data["e2_logY"] + sigma_int**2
                         + B**2 * data["e2_logT"] + C**2 * data["e2_logF"])
-                # if self.which_relation == "LTYT":
-                #     sigma_logF = jnp.sqrt(
-                #         data["e2_logF"] + sigma_int**2
-                #         + B**2 * data["e2_logT"] )
-                #     sigma_logY = jnp.sqrt(
-                #         data["e2_logY"] + sigma_int2**2
-                #         + B2**2 * data["e2_logT"])
 
             r_grid = data["r_grid"] / h
             logdl_grid = self.distance2logdl(r_grid)
@@ -1600,30 +1690,34 @@ class ClustersModel(BaseModel):
 
             # Predict logF from the scaling relation, `(ngal, nrbin)``
             # TODO: Where to add the E(z) term?
-            if self.which_relation in ["LT", "LTY"]:
-                # If A varies per galaxy (per_pix, radial_binned, or has dipole/quad),
-                # need to add extra dim for broadcasting with r_grid
-                # Check if A is per-galaxy (ndim > 0) or scalar (ndim == 0)
-                logF_pred = (A[:, None] + B * logT[:, None]
-                            + C * (logY[:, None] + 2 * logda_grid[None, :])
-                            - jnp.log10(4 * jnp.pi) - 2 * logdl_grid[None, :])
+            if relation in ["LT", "LTY"]:
+                A_vec = _broadcast_param(A, logT)
+                logF_pred = (
+                    (A_vec + B * logT)[:, None]
+                    + C * (logY[:, None] + 2 * logda_grid[None, :])
+                    - jnp.log10(4 * jnp.pi) - 2 * logdl_grid[None, :]
+                )
                 # Likelihood of logF , `(n_field, n_gal, n_rbin)`
                 ll = Normal(logF_pred, sigma_logF[:, None]).log_prob(
                     data["logF"][:, None])[None, ...]
-            elif self.which_relation in ["YT", "YTL"]:
-                # Same fix for YT/YTL: check if A is per-galaxy or scalar
-
-                logY_pred = (A[:, None] + B * logT[:, None]
-                            + C * (logF[:, None] + 2 * logdl_grid[None, :]
-                            + jnp.log10(4 * jnp.pi) ) - 2 * logda_grid[None, :])
+            elif relation in ["YT", "YTL"]:
+                A_vec = _broadcast_param(A, logT)
+                logY_pred = (
+                    (A_vec + B * logT)[:, None]
+                    + C * (logF[:, None] + 2 * logdl_grid[None, :]
+                           + jnp.log10(4 * jnp.pi))
+                    - 2 * logda_grid[None, :]
+                )
                 # Likelihood of logY , `(n_field, n_gal, n_rbin)`
                 ll = Normal(logY_pred, sigma_logY[:, None]).log_prob(
                     data["logY"][:, None])[None, ...]
-            elif self.which_relation == "LTYT":
+            elif relation == "LTYT":
 
                 # --- Intrinsic means in log-space at fixed T ---
-                mL = A[:, None] + B * logT[:, None]           # (n_gal,)
-                mY = A2[:, None] + B2 * logT[:, None]          # (n_gal,)
+                A_LT_vec = _broadcast_param(A_LT, logT)
+                A_YT_vec = _broadcast_param(A_YT, logT)
+                mL = (A_LT_vec + B_LT * logT)[:, None]           # (n_gal,)
+                mY = (A_YT_vec + B_YT * logT)[:, None]           # (n_gal,)
 
                 # --- Map to observable means over the distance grid ---
                 # logF = logL - log10(4π) - 2 log DL
@@ -1642,9 +1736,9 @@ class ClustersModel(BaseModel):
                 v12 = jnp.ones_like(v11) * rho12 * sigma_int * sigma_int2           # scalar → broadcasts
                 if self.use_MNR == False:
                     # Add measurement error propagation from T
-                    v11 += B**2 * data["e2_logT"]
-                    v22 += B2**2 * data["e2_logT"]
-                    v12 += B * B2 * data["e2_logT"]
+                    v11 += B_LT**2 * data["e2_logT"]
+                    v22 += B_YT**2 * data["e2_logT"]
+                    v12 += B_LT * B_YT * data["e2_logT"]
 
                 # Broadcast across the distance grid
                 V11 = v11[:, None]   # (n_gal, 1)
@@ -1659,7 +1753,7 @@ class ClustersModel(BaseModel):
                 ll_joint = logpdf_mvn2_broadcast(xF, xy, mF, my, V11, V22, V12)  # (n_gal, n_rbin)
                 ll = ll_joint[None, ...]  # (n_field=1, n_gal, n_rbin)
             else:
-                raise ValueError(f"Invalid which_relation '{self.which_relation}'.")
+                raise ValueError(f"Invalid which_relation '{relation}'.")
 
             if data.has_precomputed_los:
                 # Reconstruction LOS velocity `(n_field, n_gal, n_step)`
@@ -1871,7 +1965,7 @@ class FPModel(BaseModel):
         # For the distance marginalization, h is not sampled.
         h = 1.
 
-        kwargs_dist = sample_distance_prior(self.priors)
+        kwargs_dist = sample_distance_prior(self.priors, shared_params)
 
         # Sample velocity field parameters.
         Vext = sample_Vext(
@@ -2015,7 +2109,7 @@ class CalibratedDistanceModel_DistMarg(BaseModel):
         sigma_int = rsample(
             "sigma_int", self.priors["sigma_int"], shared_params)
 
-        kwargs_dist = sample_distance_prior(self.priors)
+        kwargs_dist = sample_distance_prior(self.priors, shared_params)
 
         # Sample velocity field parameters.
         Vext = sample_Vext(

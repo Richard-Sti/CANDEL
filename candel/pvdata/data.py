@@ -242,7 +242,7 @@ class PVDataFrame:
             data = load_PantheonPlus(root, **config)
         elif name == "PantheonPlusLane":
             data = load_PantheonPlus_Lane(root, **config)
-        elif name == "Clusters":
+        elif name.startswith("Clusters"):
             data = load_clusters(root, **config)
         else:
             raise ValueError(f"Unknown catalogue name: {name}")
@@ -1378,6 +1378,7 @@ def load_SH0ES_from_config(config_path):
 
 def load_clusters(root, zcmb_min=None, zcmb_max=None, los_data_path=None,
                   finite_logY=True, convert_to_CMB_frame=True,
+                  remove_noY=False, only_missing_Y=False,
                   return_all=False, **kwargs):
     """
     Load the cluster scaling relation data from the given root directory.
@@ -1448,10 +1449,21 @@ def load_clusters(root, zcmb_min=None, zcmb_max=None, los_data_path=None,
     if return_all:
         return data
 
+    if remove_noY and only_missing_Y:
+        raise ValueError("Cannot set both `remove_noY` and `only_missing_Y`.")
+
+    has_logY = np.isfinite(logY)
+
     mask = np.ones(len(z), dtype=bool)
 
     if finite_logY:
-        mask &= np.isfinite(logY)
+        mask &= has_logY
+
+    if remove_noY:
+        mask &= has_logY
+
+    if only_missing_Y:
+        mask &= ~has_logY
 
     if zcmb_min is not None:
         mask &= z > zcmb_min

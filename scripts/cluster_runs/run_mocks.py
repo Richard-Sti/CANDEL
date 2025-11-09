@@ -87,8 +87,8 @@ def generate_mock(nsamples, seed, field_loader, output_dir, mock_id=0):
     sigma_v = np.exp(log_sigma_v)
 
     # draw ALL random params from the SAME rng
-    A_CL = rng.uniform(1.0, 3.0)
-    B_CL = rng.uniform(2.0, 3.0)
+    A_YT = rng.uniform(1.0, 3.0)
+    B_YT = rng.uniform(2.0, 3.0)
 
     zeropoint_dipole_mag = rng.uniform(0.0, 0.1)
 
@@ -123,11 +123,11 @@ def generate_mock(nsamples, seed, field_loader, output_dir, mock_id=0):
         'sigma_v': sigma_v,
         'beta': beta,
         'b1': b1,
-        'A_CL': A_CL,
-        'B_CL': B_CL,
+        'A_YT': A_YT,
+        'B_YT': B_YT,
         'sigma_int': sigma_int,
-        'A_CL_LT': 0.0,
-        'B_CL_LT': 2.5,
+        'A_LT': 0.0,
+        'B_LT': 2.5,
         'sigma_int_LT': 0.15,
         'zeropoint_dipole_mag': zeropoint_dipole_mag,
         'zeropoint_dipole_phi': zeropoint_dipole_phi,
