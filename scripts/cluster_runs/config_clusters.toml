@@ -43,8 +43,8 @@ A_per_pix_nside = 1
 Vext_radial_bin_edges = [0.0,0.075,0.35]
 
 # (Inhomogeneus Malmquist bias settings and extrapolation), in units of Mpc / h
-r_limits_malmquist = [0.1, 1001]
-num_points_malmquist = 251
+r_limits_malmquist = [0.1, 1401]
+num_points_malmquist = 501
 
 los_decay_scale = 5.0
 
@@ -54,7 +54,7 @@ los_decay_scale = 5.0
 
 [model]
 Om = 0.3
-use_MNR = false
+use_MNR = true
 marginalize_eta = true
 
 [model.eta_grid]
@@ -128,8 +128,8 @@ high = 3
 
 [model.priors.sigma_v]
 dist = "jeffreys"
-low = 100.0
-high = 500.0
+low = 200.0
+high = 600.0
 
 [model.priors.Vext]
 dist = "vector_uniform_fixed"
@@ -181,7 +181,7 @@ value = [0,0,0]
 [model.priors.R_dist_emp]
 dist = "uniform"
 low = 50
-high = 100
+high = 350
 
 [model.priors.p_dist_emp]
 dist = "truncated_normal"
