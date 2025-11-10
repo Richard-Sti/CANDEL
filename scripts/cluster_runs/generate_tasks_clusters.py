@@ -125,14 +125,6 @@ def generate_dynamic_tag(config, scenario_label):
         quad_prior = get_nested(config, "model/priors/zeropoint_quad", {})
         if isinstance(quad_prior, dict) and quad_prior.get("dist") != "delta":
             parts.append("quadA")
-        else:
-            # Check dipole zeropoint
-            dip_prior = get_nested(config, "model/priors/zeropoint_dipole", {})
-            if isinstance(dip_prior, dict):
-                dip_dist = dip_prior.get("dist", "")
-                if dip_dist == "vector_uniform_fixed":
-                    parts.append("dipA")
-                # delta case is default, don't add anything
 
     # Flag if sampling the dust prior
     dust_flags = []

@@ -54,7 +54,7 @@ los_decay_scale = 5.0
 
 [model]
 Om = 0.3
-use_MNR = true
+use_MNR = false
 marginalize_eta = true
 
 [model.eta_grid]
