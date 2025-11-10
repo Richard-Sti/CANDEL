@@ -44,9 +44,9 @@ Vext_radial_bin_edges = [0.0,0.075,0.35]
 
 # (Inhomogeneus Malmquist bias settings and extrapolation), in units of Mpc / h
 r_limits_malmquist = [0.1, 1401]
-num_points_malmquist = 1401
+num_points_malmquist = 251
 
-los_decay_scale = 5.0
+los_decay_scale = 20.0
 
 ###############################################################################
 #                                 Model                                       #
