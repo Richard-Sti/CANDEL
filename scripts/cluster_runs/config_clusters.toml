@@ -12,8 +12,8 @@ machine = "local"
 model = "ClustersModel"
 shared_params = "none"
 
-num_warmup = 2000
-num_samples = 2000
+num_warmup = 500
+num_samples = 500
 num_chains = 1
 chain_method = "parallel"
 seed = 44
@@ -166,7 +166,7 @@ endpoints="not-a-knot"
 dist = "vector_radialmag_uniform"
 low = -10000
 high = 10000
-rknot = [0, 125, 250, 500, 750, 1000]
+rknot = [0, 250, 500, 750, 1000]
 method = "cubic"
 
 [model.priors.zeropoint_dipole]
@@ -191,7 +191,7 @@ value = [0,0,0]
 [model.priors.R_dist_emp]
 dist = "uniform"
 low = 1
-high = 350
+high = 450
 
 [model.priors.p_dist_emp]
 dist = "truncated_normal"
@@ -202,7 +202,7 @@ scale = 0.1
 [model.priors.n_dist_emp]
 dist = "uniform"
 low = 0.5
-high = 1.7
+high = 4.0
 
 
 ################################################################################

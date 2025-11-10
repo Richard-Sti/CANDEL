@@ -400,9 +400,22 @@ if __name__ == "__main__":
                     makedirs(fdir_out, exist_ok=True)
 
                 kind = get_nested(local_config, "pv_model/kind", "unknown")
+                kind_lower = str(kind).lower()
+
+                if "manticore" in kind_lower:
+                    local_config = overwrite_config(
+                        local_config, "inference/num_warmup", 500)
+                    local_config = overwrite_config(
+                        local_config, "inference/num_samples", 500)
+                elif "carrick" in kind_lower or kind_lower.startswith("vext"):
+                    local_config = overwrite_config(
+                        local_config, "inference/num_warmup", 2000)
+                    local_config = overwrite_config(
+                        local_config, "inference/num_samples", 2000)
+
                 if kind.startswith("precomputed_los_"):
-                    if "manticore" in kind.lower():
-                        beta_prior = {"dist": "normal", "loc": 1.0, "scale": 0.02}
+                    if "manticore" in kind_lower:
+                        beta_prior = {"dist": "normal", "loc": 1.0, "scale": 0.05}
                         local_config = overwrite_subtree(
                             local_config, "model/priors/beta", beta_prior)
                         fprint("set beta prior to Normal(1.0, 0.02) for manticore reconstruction")
@@ -411,7 +424,7 @@ if __name__ == "__main__":
                             local_config, "pv_model/galaxy_bias", "powerlaw")
                         fprint("set galaxy_bias to 'powerlaw' for manticore reconstruction")
 
-                    elif "carrick" in kind.lower():
+                    elif "carrick" in kind_lower:
                         beta_prior = {"dist": "normal", "loc": 0.43, "scale": 0.02}
                         local_config = overwrite_subtree(
                             local_config, "model/priors/beta", beta_prior)
