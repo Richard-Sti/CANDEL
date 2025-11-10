@@ -543,9 +543,19 @@ class BaseModel(ABC):
 
         if self.which_Vext in ["radial", "radial_magnitude"]:
             d = priors[f"Vext_{self.which_Vext}"]
-            fprint(f"using radial `Vext` with spline knots at {d['rknot']}")
-            self.kwargs_Vext = {
-                key: d[key] for key in ["rknot", "method"]}
+            rknot = d.get("rknot")
+            if rknot is None:
+                raise KeyError(
+                    f"`model/priors/Vext_{self.which_Vext}` must define `rknot`.")
+            fprint(f"using radial `Vext` with spline knots at {rknot}")
+            # Always carry knots and optionally pass through interpolation kwargs.
+            self.kwargs_Vext = {"rknot": rknot}
+            for opt_key in ("method", "k", "endpoints"):
+                if opt_key in d:
+                    self.kwargs_Vext[opt_key] = d[opt_key]
+            if self.which_Vext == "radial_magnitude":
+                # Magnitude interpolation defaults to cubic if unspecified.
+                self.kwargs_Vext.setdefault("method", "cubic")
         elif self.which_Vext == "radial_binned":
             bin_edges = get_nested(config, "pv_model/Vext_radial_bin_edges", None)
             if bin_edges is None:

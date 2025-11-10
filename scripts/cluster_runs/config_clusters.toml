@@ -222,7 +222,7 @@ fname_output = "results/config_clusters.hdf5"
 
 [io.Clusters]
 root = "data/Clusters"
-zcmb_max = 0.35
+zcmb_max = 0.45
 which_relation = "YT"
 finite_logY = true
 remove_noY = true
@@ -236,7 +236,7 @@ seed_subsample = 42
 
 [io.Clusters_hasY]
 root = "data/Clusters"
-zcmb_max = 0.35
+zcmb_max = 0.45
 which_relation = "LTYT"
 finite_logY = true
 remove_noY = true
@@ -250,7 +250,7 @@ seed_subsample = 42
 
 [io.Clusters_LTtail]
 root = "data/Clusters"
-zcmb_max = 0.35
+zcmb_max = 0.45
 which_relation = "LT"
 finite_logY = false
 remove_noY = false
