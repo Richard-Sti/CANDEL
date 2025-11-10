@@ -165,6 +165,9 @@ if __name__ == "__main__":
     parser.add_argument(
         "tasks_index", type=int, nargs="?", default=0,
         help="Index of the task to run (default: 0)")
+    parser.add_argument(
+        "--include-joint", action="store_true",
+        help="Generate the Joint scenario tasks as well.")
     args = parser.parse_args()
 
     config_path = "scripts/cluster_runs/config_clusters.toml"
@@ -172,6 +175,7 @@ if __name__ == "__main__":
         config_path, replace_none=False, replace_los_prior=False)
 
     tasks_index = args.tasks_index
+    include_joint = args.include_joint
 
     task_file = f"tasks_{tasks_index}.txt"
     log_dir = f"logs_{tasks_index}"
@@ -332,6 +336,10 @@ if __name__ == "__main__":
             "share_flow": True,
         },
     ]
+
+    if not include_joint:
+        scenarios = [sc for sc in scenarios if sc.get("label") != "Joint"]
+        fprint("Joint scenario disabled (pass --include-joint to include it).")
 
     def flow_shared_params(which_vext):
         mapping = {
