@@ -68,38 +68,31 @@ def get_nested(config, key_path, default=None):
     return current
 
 
-def generate_dynamic_tag(config, base_tag="default"):
-    """Generate a descriptive tag string based on selected config values."""
+def generate_dynamic_tag(config, scenario_label):
+    """Generate a concise tag string for the output filename."""
     parts = []
 
-    if base_tag != "default":
-        parts.append(base_tag)
+    if scenario_label and scenario_label != "default":
+        parts.append(scenario_label)
+
+    # MNR flag (always include for requested naming pattern)
+    use_mnr = get_nested(config, "pv_model/use_MNR", False)
+    parts.append("MNR" if use_mnr else "noMNR")
+
+    # Dipole zeropoint configuration
+    dip_prior = get_nested(config, "model/priors/zeropoint_dipole", {})
+    if isinstance(dip_prior, dict) and dip_prior.get("dist") == "vector_uniform_fixed":
+        parts.append("dipA")
+    else:
+        parts.append("nodipA")
 
     catalogue_value = get_nested(config, "io/catalogue_name", None)
     if isinstance(catalogue_value, list):
         catalogue_names = catalogue_value
-        if base_tag == "default":
-            parts.append("joint")
     elif isinstance(catalogue_value, str) and catalogue_value:
         catalogue_names = [catalogue_value]
-        if base_tag == "default":
-            parts.append(catalogue_value)
     else:
         catalogue_names = ["Clusters"]
-        if base_tag == "default":
-            parts.append("Clusters")
-
-    # MNR flag
-    use_mnr = get_nested(config, "pv_model/use_MNR", False)
-    parts.append("MNR" if use_mnr else "noMNR")
-
-    # Clusters scaling relation choice
-    relations = []
-    for name in catalogue_names:
-        rel = get_nested(config, f"io/{name}/which_relation", None)
-        if rel and rel not in relations:
-            relations.append(rel)
-    parts.extend(relations)
 
     # Vext configuration - only add non-default cases
     which_vext = get_nested(config, "pv_model/which_Vext", "constant")
@@ -210,7 +203,7 @@ if __name__ == "__main__":
         ]
     dipole_settings["model/priors/zeropoint_dipole"] = [
             {"dist": "delta", "value": [0.0, 0.0, 0.0]},
-            {"dist": "vector_uniform_fixed", "low": 0.0, "high": 0.1},
+            {"dist": "vector_uniform_fixed", "low": 0.0, "high": 0.2},
         ]
 
     dipole_combinations = expand_override_grid(dipole_settings)
@@ -342,6 +335,7 @@ if __name__ == "__main__":
                 "zeropoint_dipole",
                 "zeropoint_quad",
                 "beta",
+                "b1",
             ],
             "share_flow": True,
         },
@@ -390,6 +384,15 @@ if __name__ == "__main__":
                     local_config = overwrite_config(
                         local_config, "inference/shared_params", shared_str)
 
+                if scenario_label == "Joint":
+                    dipole_prior = get_nested(
+                        local_config, "model/priors/zeropoint_dipole", {})
+                    if not (
+                        isinstance(dipole_prior, dict)
+                        and dipole_prior.get("dist") == "vector_uniform_fixed"
+                    ):
+                        continue
+
                 fdir_out = join(
                     local_config["root_main"], local_config["io"]["root_output"])
                 if not exists(fdir_out):
@@ -418,7 +421,7 @@ if __name__ == "__main__":
                             local_config, "pv_model/galaxy_bias", "linear")
                         fprint("set galaxy_bias to 'linear' for Carrick2015 reconstruction")
 
-                dynamic_tag = generate_dynamic_tag(local_config, base_tag=scenario_label)
+                dynamic_tag = generate_dynamic_tag(local_config, scenario_label)
                 kind_for_filename = kind.replace("precomputed_los_", "")
 
                 fname_out = join(

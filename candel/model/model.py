@@ -1380,6 +1380,8 @@ class ClustersModel(BaseModel):
         self.used_relations = set(self.relation_by_catalogue.values())
         # Backwards compatibility for code that inspects this attribute.
         self.which_relation = self.default_relation
+        self.apply_Ez_correction = bool(
+            get_nested(self.config, "io/apply_Ez_correction", True))
 
         self.distance2logda = Distance2LogAngDist(Om0=self.Om, zmax_interp=1.0)
         self.distance2logdl = Distance2LogLumDist(Om0=self.Om, zmax_interp=1.0)
@@ -1445,13 +1447,15 @@ class ClustersModel(BaseModel):
                 f"Invalid scaling relation '{relation}'. "
                 "Choose either 'LT', 'LY', 'LTY', 'YT', 'YTL', or 'LTYT'.")
 
-    def _build_relation_lookup(self):
-        io_cfg = self.config.get("io", {})
+    def _get_catalogue_names(self, io_cfg):
         names = io_cfg.get("catalogue_name", "Clusters")
         if isinstance(names, str) or names is None:
-            catalogue_names = [names or "Clusters"]
-        else:
-            catalogue_names = list(names)
+            return [names or "Clusters"]
+        return list(names)
+
+    def _build_relation_lookup(self):
+        io_cfg = self.config.get("io", {})
+        catalogue_names = self._get_catalogue_names(io_cfg)
 
         default_relation = io_cfg.get("Clusters", {}).get("which_relation")
         if default_relation is None:
@@ -1471,6 +1475,7 @@ class ClustersModel(BaseModel):
             relations["Clusters"] = default_relation
             catalogue_names = ["Clusters"]
 
+        self.catalogue_names = list(catalogue_names)
         first = catalogue_names[0]
         return relations, relations.get(first, default_relation)
 
@@ -1688,12 +1693,20 @@ class ClustersModel(BaseModel):
                 r_grid, **kwargs_dist, Rmax_grid=r_grid[-1])[None, None, :]
             #lp_dist = 0.
 
+            # Predict logF/logY incorporating (optional) cosmological E(z)
+            if self.apply_Ez_correction:
+                logEz_raw = jnp.log10(get_Ez(data["zcmb"], Om=self.Om))
+            else:
+                logEz_raw = jnp.zeros_like(data["zcmb"])
+            logEz = _broadcast_param(logEz_raw, logT)
+            logEz_LT = logEz
+            logEz_YT = -logEz
+
             # Predict logF from the scaling relation, `(ngal, nrbin)``
-            # TODO: Where to add the E(z) term?
             if relation in ["LT", "LTY"]:
                 A_vec = _broadcast_param(A, logT)
                 logF_pred = (
-                    (A_vec + B * logT)[:, None]
+                    (logEz_LT + A_vec + B * logT)[:, None]
                     + C * (logY[:, None] + 2 * logda_grid[None, :])
                     - jnp.log10(4 * jnp.pi) - 2 * logdl_grid[None, :]
                 )
@@ -1703,7 +1716,7 @@ class ClustersModel(BaseModel):
             elif relation in ["YT", "YTL"]:
                 A_vec = _broadcast_param(A, logT)
                 logY_pred = (
-                    (A_vec + B * logT)[:, None]
+                    (logEz_YT + A_vec + B * logT)[:, None]
                     + C * (logF[:, None] + 2 * logdl_grid[None, :]
                            + jnp.log10(4 * jnp.pi))
                     - 2 * logda_grid[None, :]
@@ -1716,8 +1729,8 @@ class ClustersModel(BaseModel):
                 # --- Intrinsic means in log-space at fixed T ---
                 A_LT_vec = _broadcast_param(A_LT, logT)
                 A_YT_vec = _broadcast_param(A_YT, logT)
-                mL = (A_LT_vec + B_LT * logT)[:, None]           # (n_gal,)
-                mY = (A_YT_vec + B_YT * logT)[:, None]           # (n_gal,)
+                mL = (logEz_LT + A_LT_vec + B_LT * logT)[:, None]   # (n_gal,)
+                mY = (logEz_YT + A_YT_vec + B_YT * logT)[:, None]   # (n_gal,)
 
                 # --- Map to observable means over the distance grid ---
                 # logF = logL - log10(4π) - 2 log DL

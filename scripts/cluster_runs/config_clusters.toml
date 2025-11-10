@@ -190,7 +190,7 @@ value = [0,0,0]
 
 [model.priors.R_dist_emp]
 dist = "uniform"
-low = 20
+low = 1
 high = 350
 
 [model.priors.p_dist_emp]
@@ -214,6 +214,7 @@ root_output = "results/main"
 # Default catalogue name and output path. This gets overwritten
 # if using a submission script.
 catalogue_name = "Clusters"
+apply_Ez_correction = true
 #catalogue_name = "CF4_mock_0"
 
 fname_output = "results/config_clusters.hdf5"
