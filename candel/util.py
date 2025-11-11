@@ -346,8 +346,8 @@ def name2label(name):
         "m1": r"$m_1$",
         "m2": r"$m_2$",
         "zeropoint_dipole_mag": r"$\Delta \mathrm{ZP}$",
-        "zeropoint_dipole_ell": r"$\ell_{\Delta H_0/H_0}$",
-        "zeropoint_dipole_b": r"$b_{\Delta H_0/H_0}$",
+        "zeropoint_dipole_ell": r"$\ell_{\Delta H_0}$",
+        "zeropoint_dipole_b": r"$b_{\Delta H_0}$",
         "dH_over_H_dipole": r"$\Delta H_0/H_0$",
         "dH_over_H_quad": r"$\Delta H_0/H_0$",
         "SN_absmag": r"$M_{\rm SN}$",
@@ -455,8 +455,8 @@ def name2labelgetdist(name):
         "m1": r"m_1",
         "m2": r"m_2",
         "zeropoint_dipole_mag": r"\Delta_\mathrm{ZP}",         # noqa
-        "zeropoint_dipole_ell": r"\ell_{\Delta_\mathrm{ZP}}~\left[\mathrm{deg}\right]",  # noqa
-        "zeropoint_dipole_b": r"b_{\Delta_\mathrm{ZP}}~\left[\mathrm{deg}\right]",       # noqa
+        "zeropoint_dipole_ell": r"\ell_{\Delta H_0}~\left[\mathrm{deg}\right]",  # noqa
+        "zeropoint_dipole_b": r"b_{\Delta H_0}~\left[\mathrm{deg}\right]",       # noqa
         "M_dipole_mag": r"\Delta M_\mathrm{SN}",
         "M_dipole_ell": r"\ell_{\Delta M_{\rm SN}}~\left[\mathrm{deg}\right]",
         "M_dipole_b": r"b_{\Delta M_{\rm SN}}~\left[\mathrm{deg}\right]",
@@ -665,8 +665,9 @@ def plot_Vext_rad_corner(samples, show_fig=True, filename=None, smooth=1):
 def plot_corner_getdist(samples_list, labels=None, cols=None, show_fig=True,
                         filename=None, keys=None, fontsize=None,
                         legend_fontsize=None, filled=True,
-                        apply_ell_offset=False, mag_range=[0, None],
-                        ell_range=[0, 360], b_range=[-90, 90], points=None,
+                        apply_ell_offset=False, ell_zero=180,
+                        mag_range=[0, None], ell_range=[0, 360],
+                        b_range=[-90, 90], points=None,
                         ranges={}, truths=None):
     """Plot a GetDist triangle plot for one or more posterior samples."""
 
@@ -707,6 +708,9 @@ def plot_corner_getdist(samples_list, labels=None, cols=None, show_fig=True,
         if "_b" in k:
             ranges[k] = b_range
 
+        if "dH_over_H" in k:
+            ranges[k] = [0, None]
+
     gdsamples_list = []
 
     for samples in samples_list:
@@ -723,10 +727,8 @@ def plot_corner_getdist(samples_list, labels=None, cols=None, show_fig=True,
 
             if not np.all(np.isnan(col)):
                 if "_ell" in k and apply_ell_offset:
-                    col = (col - 180) % 360
-                    label = name2labelgetdist(k + "_offset")
-                else:
-                    label = name2labelgetdist(k)
+                    col = (col - ell_zero) % 360
+                label = name2labelgetdist(k)
 
                 present_params.append(k)
                 present_labels.append(label)
@@ -766,6 +768,25 @@ def plot_corner_getdist(samples_list, labels=None, cols=None, show_fig=True,
             legend_labels=labels,
             legend_loc="upper right",
         )
+
+        if apply_ell_offset:
+            tick_positions = np.arange(0, 360, 90)
+            tick_labels = [str(int((ell_zero + t) % 360)) for t in tick_positions]
+
+            for i, param in enumerate(param_names):
+                if "_ell" in param:
+                    ax_diag = g.subplots[i, i]
+                    ax_diag.set_xticks(tick_positions)
+                    ax_diag.set_xticklabels(tick_labels)
+
+                for j in range(i):
+                    ax = g.subplots[i, j]
+                    if "_ell" in param:
+                        ax.set_yticks(tick_positions)
+                        ax.set_yticklabels(tick_labels)
+                    if "_ell" in param_names[j]:
+                        ax.set_xticks(tick_positions)
+                        ax.set_xticklabels(tick_labels)
 
         if points is not None:
             plotted_pairs = set()
@@ -830,9 +851,9 @@ def plot_corner_getdist(samples_list, labels=None, cols=None, show_fig=True,
 def plot_corner_from_hdf5(fnames, keys=None, labels=None, cols=None,
                           fontsize=None, legend_fontsize=None, filled=True,
                           show_fig=True, filename=None, apply_ell_offset=False,
-                          mag_range=[0, None], ell_range=[0, 360],
-                          b_range=[-90, 90], points=None, ranges={},
-                          truths=None):
+                          ell_zero=180, mag_range=[0, None],
+                          ell_range=[0, 360], b_range=[-90, 90],
+                          points=None, ranges={}, truths=None):
     """
     Plot a triangle plot from one or more HDF5 files containing posterior
     samples.
@@ -861,6 +882,7 @@ def plot_corner_from_hdf5(fnames, keys=None, labels=None, cols=None,
         show_fig=show_fig,
         filename=filename,
         apply_ell_offset=apply_ell_offset,
+        ell_zero=ell_zero,
         ranges=ranges,
         mag_range=mag_range,
         ell_range=ell_range,
