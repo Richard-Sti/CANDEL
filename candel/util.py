@@ -327,6 +327,8 @@ def name2label(name):
         "c_TFR": r"$c_\mathrm{TFR}$",
         "sigma_int": r"$\sigma_L$",
         "sigma_int2": r"$\sigma_Y$",
+        "sigma_LT": r"$\sigma_{LT}$",
+        "sigma_YT": r"$\sigma_{YT}$",
         "rho12": r"$\rho$",
         "sigma_v": r"$\sigma_v$",
         "alpha": r"$\alpha$",
@@ -433,7 +435,9 @@ def name2labelgetdist(name):
         "SN_beta": r"\mathcal{B}",
         "sigma_int": r"\sigma_L",
         "sigma_int2": r"\sigma_Y",
-        "rho12": r"\rho",
+        "sigma_LT": r"\sigma_{LT}",
+        "sigma_YT": r"\sigma_{YT}",
+        "rho12": r"\rho_{LY}",
         "sigma_v": r"\sigma_v~\left[\mathrm{km}\,\mathrm{s}^{-1}\right]",
         "alpha": r"\alpha",
         "alpha_low": r"\alpha_\mathrm{low}",
@@ -480,6 +484,8 @@ def name2labelgetdist(name):
         "n_dist_emp": r"n",
         "p_dist_emp": r"p",
         "rho_corr": r"\rho_{\rm corr}",
+        "dH_over_H_dipole": r"\Delta H_0/H_0",
+        "dH_over_H_quad": r"\Delta H_0/H_0",
     }
 
     # Handle radial_binned Vext parameters (e.g., Vext_radial_bin_mag__0)

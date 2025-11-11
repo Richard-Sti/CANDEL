@@ -139,7 +139,7 @@ high = 3
 [model.priors.sigma_v]
 dist = "jeffreys"
 low = 200.0
-high = 2000.0
+high = 3000.0
 
 [model.priors.Vext]
 dist = "vector_uniform_fixed"

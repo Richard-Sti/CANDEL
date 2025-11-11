@@ -183,7 +183,7 @@ if __name__ == "__main__":
     base = {
         "pv_model/kind": ["Vext", "precomputed_los_Carrick2015", "precomputed_los_manticore"],
         "pv_model/which_Vext": ["constant"],
-        "io/root_output": "results/final",
+        "io/root_output": "results/short",
         "model/priors/Vext": [
             {"dist": "delta", "value": [0.0, 0.0, 0.0]}],
         "model/priors/zeropoint_dipole": [

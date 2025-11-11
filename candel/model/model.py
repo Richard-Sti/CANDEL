@@ -1400,9 +1400,6 @@ class ClustersModel(BaseModel):
             self.priors["CL_C"] = Delta(jnp.asarray(0.0))
         if "LY" in self.used_relations:
             self.priors["CL_B"] = Delta(jnp.asarray(0.0))
-        if "LTYT" in self.used_relations:
-            self.priors["sigma_int2"] = Uniform(0.0, 5.0)
-
         # Configuration for per-pixel A variation (similar to Vext)
         self.which_A = get_nested(self.config, "pv_model/which_A", "constant")
         
@@ -1515,18 +1512,19 @@ class ClustersModel(BaseModel):
 
         A_LT = B_LT = None
         A_YT = B_YT = None
+        sigma_LT = sigma_YT = None
 
         if use_LT_branch:
             A_LT = rsample("A_LT", self.priors["A_LT"], shared_params)
             B_LT = rsample("B_LT", self.priors["B_LT"], shared_params)
+            sigma_LT = rsample("sigma_LT", self.priors["sigma_int"], shared_params)
         if use_YT_branch:
             A_YT = rsample("A_YT", self.priors["A_YT"], shared_params)
             B_YT = rsample("B_YT", self.priors["B_YT"], shared_params)
+            sigma_YT = rsample("sigma_YT", self.priors["sigma_int"], shared_params)
 
         C = rsample("C_CL", self.priors["CL_C"], shared_params)
-        sigma_int = rsample(
-            "sigma_int", self.priors["sigma_int"], shared_params)
-        
+
         delta_A = None
         if self.which_A in ["per_pix", "radial_binned", "radial_binned_dipole"]:
             A_pix = sample_A_clusters(
@@ -1562,7 +1560,6 @@ class ClustersModel(BaseModel):
             B = B_LT
 
         if relation == "LTYT":
-            sigma_int2 = rsample("sigma_int2", self.priors["sigma_int2"], shared_params)
             rho12 = sample("rho12", Uniform(-0.99, 0.99))  # avoid singular cov
 
         # For the distance marginalization, h is not sampled.
@@ -1677,21 +1674,21 @@ class ClustersModel(BaseModel):
             # Calculate intrinsic scatter - MNR doesn't propagate observational errors
             if self.use_MNR:
                 if relation in ["LT", "LTY"]:
-                    sigma_logF = jnp.sqrt(data["e2_logF"] + sigma_int**2)
+                    sigma_logF = jnp.sqrt(data["e2_logF"] + sigma_LT**2)
                 if relation in ["YT", "YTL"]:
-                    sigma_logY = jnp.sqrt(data["e2_logY"] + sigma_int**2)
+                    sigma_logY = jnp.sqrt(data["e2_logY"] + sigma_YT**2)
                 if relation == "LTYT":
-                    sigma_logF = jnp.sqrt(data["e2_logF"] + sigma_int**2)
-                    sigma_logY = jnp.sqrt(data["e2_logY"] + sigma_int2**2)
+                    sigma_logF = jnp.sqrt(data["e2_logF"] + sigma_LT**2)
+                    sigma_logY = jnp.sqrt(data["e2_logY"] + sigma_YT**2)
             else:
                 # Non-MNR case: propagate observational errors
                 if relation in ["LT", "LTY"]:
                     sigma_logF = jnp.sqrt(
-                        data["e2_logF"] + sigma_int**2
+                        data["e2_logF"] + sigma_LT**2
                         + B**2 * data["e2_logT"] + C**2 * data["e2_logY"])
                 if relation in ["YT", "YTL"]:
                     sigma_logY = jnp.sqrt(
-                        data["e2_logY"] + sigma_int**2
+                        data["e2_logY"] + sigma_YT**2
                         + B**2 * data["e2_logT"] + C**2 * data["e2_logF"])
 
             r_grid = data["r_grid"] / h
@@ -1749,14 +1746,14 @@ class ClustersModel(BaseModel):
                 my = mY - 2.0 * logda_grid[None, :]                           # (n_gal, n_rbin)
 
                 # --- Intrinsic covariance (logL, logY) at fixed T ---
-                # sigma_int: scatter in logL; sigma_int2: scatter in logY; rho12: intrinsic corr.
+                # sigma_LT: scatter in logL; sigma_YT: scatter in logY; rho12: intrinsic corr.
 
                 # Total covariance in observable space = intrinsic + measurement
                 # (no measurement cross-covariance)
 
-                v11 = sigma_int**2  + data["e2_logF"]          # (n_gal,)
-                v22 = sigma_int2**2 + data["e2_logY"]          # (n_gal,)
-                v12 = jnp.ones_like(v11) * rho12 * sigma_int * sigma_int2           # scalar → broadcasts
+                v11 = sigma_LT**2  + data["e2_logF"]          # (n_gal,)
+                v22 = sigma_YT**2 + data["e2_logY"]          # (n_gal,)
+                v12 = jnp.ones_like(v11) * rho12 * sigma_LT * sigma_YT           # scalar → broadcasts
                 if self.use_MNR == False:
                     # Add measurement error propagation from T
                     v11 += B_LT**2 * data["e2_logT"]
