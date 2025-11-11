@@ -529,6 +529,20 @@ def postprocess_samples(samples):
             samples[f"{prefix}_ell"] = ell
             samples[f"{prefix}_b"] = b
 
+    def _delta_a_to_frac(delta_a):
+        delta_a = np.asarray(delta_a)
+        return np.power(10.0, 0.5 * delta_a) - 1.0
+
+    if "zeropoint_dipole_mag" in samples:
+        samples["dH_over_H_dipole"] = _delta_a_to_frac(
+            samples["zeropoint_dipole_mag"])
+        samples.pop("zeropoint_dipole_mag", None)
+
+    if "zeropoint_quad_mag" in samples:
+        samples["dH_over_H_quad"] = _delta_a_to_frac(
+            samples["zeropoint_quad_mag"])
+        samples.pop("zeropoint_quad_mag", None)
+
     return samples
 
 
