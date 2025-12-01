@@ -25,6 +25,8 @@ from .model import (                                                            
     JointPVModel,                                                               # noqa
     interp_cartesian_vector,                                                    # noqa
     H0_with_transition_r,                                                       # noqa
+    lp_galaxy_bias,                                                             # noqa
+    smoothclip_nr,                                                              # noqa
     )
 from .model_SH0ES import SH0ESModel                                             # noqa
 from .interp import LOSInterpolator                                             # noqa

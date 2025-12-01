@@ -1564,17 +1564,21 @@ def load_CF4_calibrated(root, zcmb_min=None, zcmb_max=None, bmin=None,
     return data
 
 
-def load_CF4_HQ(root, los_data_path=None, **kwargs):
-    """Load the CF4 HQ data (only sky positions and redshifts)."""
-    d = np.genfromtxt(join(root, "CF4HQ.txt"), skip_header=1)
+def load_generic(filepath, los_data_path=None, **kwargs):
+    """
+    Load generic catalog data from a .txt file with column names.
+
+    Expected columns: RA, dec, Vcmb (in CMB frame).
+    """
+    d = np.genfromtxt(filepath, names=True)
 
     data = {
-        "RA": d[:, 2],
-        "dec": d[:, 3],
-        "zcmb": d[:, 14] / SPEED_OF_LIGHT,
+        "RA": d["RA"],
+        "dec": d["dec"],
+        "zcmb": d["Vcmb"] / SPEED_OF_LIGHT,
     }
 
-    fprint(f"loaded {len(data['RA'])} galaxies from CF4 HQ data.")
+    fprint(f"loaded {len(data['RA'])} galaxies from {filepath}.")
 
     if los_data_path is not None:
         data = load_los(los_data_path, data,)
