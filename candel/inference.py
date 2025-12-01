@@ -34,7 +34,7 @@ from .evidence import (BIC_AIC, dict_samples_to_array, harmonic_evidence,
                        laplace_evidence)
 from .util import (fprint, galactic_to_radec, plot_corner,
                    plot_radial_profiles, plot_Vext_radmag,
-                   plot_Vext_rad_corner, plot_Vext_moll, plot_H0_transition,
+                   plot_Vext_rad_corner, plot_Vext_moll,
                    radec_cartesian_to_galactic, radec_to_cartesian,
                    radec_to_galactic)
 
