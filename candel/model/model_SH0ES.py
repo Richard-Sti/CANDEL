@@ -59,6 +59,10 @@ class BaseSH0ESModel(ABC):
 
     def __init__(self, config_path, data):
         config = load_config(config_path, replace_los_prior=False)
+        # Defaults; overwritten if LOS information is provided in the data.
+        self.has_host_los = False
+        self.has_rand_los = False
+        self.num_rand_los = 1
 
         # Set unused parameter priors to delta functions.
         config = self.replace_priors(config)
@@ -126,6 +130,10 @@ class BaseSH0ESModel(ABC):
         self.which_selection = get_nested(
             config, "model/which_selection", None)
         fprint(f"which_selection set to {self.which_selection}")
+        self.num_hosts_selection_mag = get_nested(
+            config, "model/num_hosts_selection_mag", None)
+        fprint("num_hosts_selection_mag set to "
+               f"{self.num_hosts_selection_mag}")
         self.use_Cepheid_host_redshift = get_nested(
             config, "model/use_Cepheid_host_redshift", False)
         fprint(f"use_Cepheid_host_redshift set to {self.use_Cepheid_host_redshift}")  # noqa
@@ -162,12 +170,17 @@ class BaseSH0ESModel(ABC):
                              "`host_los_r` and `host_los_density` "
                              "in the data.")
 
-        if self.which_selection not in ["redshift", "SN_magnitude", "Cepheid_magnitude", "SN_magnitude_redshift", None]:  # noqa
+        allowed_selection = [
+            "redshift", "SN_magnitude", "Cepheid_magnitude",
+            "SN_magnitude_redshift", "SN_magnitude_or_redshift_Nmag", None]
+        if self.which_selection not in allowed_selection:
             raise ValueError(
                 f"Unknown `which_selection`: {self.which_selection}. "
-                "Expected one of ['redshift', 'SN_magnitude', 'Cepheid_magnitude', 'SN_magnitude_redshift', None].")  # noqa
+                "Expected one of ['redshift', 'SN_magnitude', "
+                "'Cepheid_magnitude', 'SN_magnitude_redshift', "
+                "'SN_magnitude_or_redshift_Nmag', None].")
 
-        if self.which_selection in ["redshift", "SN_magnitude_redshift"] and not self.use_Cepheid_host_redshift:  # noqa
+        if self.which_selection in ["redshift", "SN_magnitude_redshift", "SN_magnitude_or_redshift_Nmag"] and not self.use_Cepheid_host_redshift:  # noqa
             raise ValueError(
                 "If `which_selection` is set to 'redshift', "
                 "`use_Cepheid_host_redshift` must be set to True.")
@@ -186,6 +199,16 @@ class BaseSH0ESModel(ABC):
             raise ValueError(
                 "Cannot use `weight_selection_by_covmat_Neff` without "
                 "`use_fiducial_Cepheid_host_PV_covariance` set to True.")
+
+        if self.which_selection == "SN_magnitude_or_redshift_Nmag":
+            if self.num_hosts_selection_mag is None:
+                raise ValueError(
+                    "Set `model/num_hosts_selection_mag` when using "
+                    "`SN_magnitude_or_redshift_Nmag` selection.")
+            if not (0 <= self.num_hosts_selection_mag <= self.num_hosts):
+                raise ValueError(
+                    "`num_hosts_selection_mag` must be between 0 and "
+                    "`num_hosts`.")
 
         r_limits_malmquist = get_nested(
             config, "model/r_limits_malmquist", [0.01, 350])
@@ -601,6 +624,7 @@ class SH0ESModel(BaseSH0ESModel):
         # Selection function of shape `(n_fields, n_random_los)` calculated
         # for the *random* LOS. Average over the randoms will be taken below.
         if self.which_selection == "redshift":
+            # Redshift-limited Cepheid host selection via cz threshold.
             log_S = self.log_S_cz(
                 lp_rand_dist_grid,
                 Vext_rad_rand[None, :, None] + beta * rand_los_Vpec_grid,
@@ -608,15 +632,43 @@ class SH0ESModel(BaseSH0ESModel):
 
             if self.weight_selection_by_covmat_Neff:
                 log_S *= self.Neff_PV_covmat_cepheid_host / self.num_hosts
+        elif self.which_selection == "SN_magnitude_or_redshift_Nmag":
+            # Mixture: fraction by host count split between cz- and
+            # mag-limited.
+            log_S_cz = self.log_S_cz(
+                lp_rand_dist_grid,
+                Vext_rad_rand[None, :, None] + beta * rand_los_Vpec_grid,
+                H0, sigma_v)
+            log_S_mag = self.log_S_SN_mag(lp_rand_dist_grid, M_B, H0)
+
+            if self.weight_selection_by_covmat_Neff:
+                raise NotImplementedError(
+                    "Weighting by Neff not implemented for "
+                    "`SN_magnitude_or_redshift_Nmag` selection.")
+
+            mu_SN = self.L_SN_unique_Cepheid_host_dist @ mu_host_all
+            mag_SN = mu_SN + M_B
+
+            w_mag = self.num_hosts_selection_mag / self.num_hosts
+
+            # Downweight SN magnitude likelihood by the fraction
+            # of mag-selected hosts.
+            factor(
+                "ll_SN",
+                w_mag * mvn_logpdf_cholesky(
+                    self.mag_SN_unique_Cepheid_host, mag_SN,
+                    self.L_SN_unique_Cepheid_host)
+                )
         elif self.which_selection == "SN_magnitude":
+            # Supernova apparent-magnitude limited selection of SN hosts.
             # Assign distance moduli to the SN hosts.
             mu_SN = self.L_SN_unique_Cepheid_host_dist @ mu_host_all
             mag_SN = mu_SN + M_B
 
             log_S = self.log_S_SN_mag(lp_rand_dist_grid, M_B, H0)
 
-            # if self.weight_selection_by_covmat_Neff:
-            #     log_S *= self.Neff_C_SN_unique_Cepheid_host / self.num_hosts
+            if self.weight_selection_by_covmat_Neff:
+                log_S *= self.Neff_C_SN_unique_Cepheid_host / self.num_hosts
 
             # Since the selection is in supernova apparent magnitude, must
             # constrain their absolute magnitude and thus also forward model
@@ -627,16 +679,8 @@ class SH0ESModel(BaseSH0ESModel):
                     self.mag_SN_unique_Cepheid_host, mag_SN,
                     self.L_SN_unique_Cepheid_host)
                 )
-
-            # # If testing a diagonal covariance..
-            # with plate("plate_ll_SN", self.num_hosts):
-            #     sample(
-            #         "ll_SN",
-            #         Normal(mag_SN,
-            #                np.sqrt(np.diag(self.C_SN_unique_Cepheid_host))),
-            #         obs=self.mag_SN_unique_Cepheid_host)
-
         elif self.which_selection == "SN_magnitude_redshift":
+            # Joint mag + redshift truncation applied to SN hosts.
             log_S = self.log_S_SN_mag_cz(
                 lp_rand_dist_grid,
                 Vext_rad_rand[None, :, None] + beta * rand_los_Vpec_grid,
@@ -656,16 +700,23 @@ class SH0ESModel(BaseSH0ESModel):
                     self.L_SN_unique_Cepheid_host)
                 )
         elif self.which_selection == "Cepheid_magnitude":
-            log_S = self.log_S_Cepheid_mag(
-                lp_host_dist_grid, M_W, b_W, Z_W, H0)
-
-            # if self.weight_selection_by_covmat_Neff:
-            #     log_S *= self.Neff_C_Cepheid / self.num_hosts
+            raise NotImplementedError(
+                "Cepheid selection is not understood well enough..")
         else:
             log_S = jnp.zeros((1, self.num_hosts))
 
-        # Average the selection term over the random line-of-sight.
-        log_S = logsumexp(log_S, axis=-1) - jnp.log(self.num_rand_los)
+        # Average the selection term over the random line-of-sight, so that
+        # the shape becomes `(n_fields,)`.
+        if self.which_selection == "SN_magnitude_or_redshift_Nmag":
+            log_S_cz = logsumexp(
+                log_S_cz, axis=-1) - jnp.log(self.num_rand_los)
+            log_S_mag = logsumexp(
+                log_S_mag, axis=-1) - jnp.log(self.num_rand_los)
+            w_mag = self.num_hosts_selection_mag / self.num_hosts
+            w_cz = 1 - w_mag
+            log_S = w_mag * log_S_mag + w_cz * log_S_cz
+        else:
+            log_S = logsumexp(log_S, axis=-1) - jnp.log(self.num_rand_los)
 
         if self.use_reconstruction:
             # Subtract it per each host
