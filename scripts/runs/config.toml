@@ -60,10 +60,6 @@ los_decay_scale = 10.0
 Vext_per_pix_nside = "none"
 which_distance_prior = "empirical"
 
-with_H0_transition = false
-H0_for_transition = 73.04
-H0_transition_rmax = 300  # Mpc
-
 ###############################################################################
 #                      Optional interpolator settings                         #
 ###############################################################################
