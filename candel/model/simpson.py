@@ -5,21 +5,20 @@ Routines copied from:
 Only minor changes were made to the original code.
 """
 from functools import partial
-from typing import Any
 
 import jax
 import jax.numpy as jnp
 from jax.scipy.special import logsumexp
 
 
-def tupleset(t: tuple, i: int, value: Any) -> tuple:
+def tupleset(t, i, value):
     _l = list(t)
     _l[i] = value
     return tuple(_l)
 
 
 @partial(jax.jit, static_argnums=(1, 3))
-def _basic_ln_simpson(ln_y: jax.Array, stop: int, x: jax.Array, axis: int) -> jax.Array:  # noqa
+def _basic_ln_simpson(ln_y, stop, x, axis):
     """
     Note: Interface comes from scipy.integrate.simpson implementation
     """
