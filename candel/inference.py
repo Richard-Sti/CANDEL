@@ -168,13 +168,6 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
             fname_plot = splitext(fname_out)[0] + "_moll_Vext_pix.png"
             plot_Vext_moll(samples["Vext_pix"], fname_plot,)
 
-        if model.with_H0_transition:
-            H0_present = model.H0_for_transition
-            fname_plot = splitext(fname_out)[0] + "_H0_transition.png"
-            samples = {k: samples[k] for k in ["dH0", "R_H0", "R_H0_alpha"]}
-            plot_H0_transition(
-                samples, H0_present, show_fig=False, filename=fname_plot,)
-
     if return_original_samples:
         return samples, log_density, original_samples
 
@@ -217,7 +210,7 @@ def run_SH0ES_inference(model, model_kwargs={}, print_summary=True,
     if save_samples:
         fname_out = model.config["io"]["fname_output"]
         fprint(f"output directory is {dirname(fname_out)}.")
-        save_mcmc_samples(samples, None, None, fname_out)
+        save_mcmc_samples(samples, None, None, None, fname_out)
 
         fname_plot = splitext(fname_out)[0] + ".png"
         plot_corner(samples, show_fig=False, filename=fname_plot,)
