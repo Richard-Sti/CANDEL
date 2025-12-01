@@ -9,7 +9,6 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
-import jax.typing as JT
 from jax.scipy.special import logsumexp
 
 
