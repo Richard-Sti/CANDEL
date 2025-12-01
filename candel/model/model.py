@@ -524,7 +524,7 @@ def sample_galaxy_bias(priors, galaxy_bias, shared_params=None, **kwargs):
     """
     if galaxy_bias == "unity":
         return [1.,]
-    if galaxy_bias == "powerlaw":
+    elif galaxy_bias == "powerlaw":
         alpha = rsample("alpha", priors["alpha"], shared_params)
         bias_params = [alpha,]
     elif galaxy_bias == "linear":
@@ -543,7 +543,6 @@ def sample_galaxy_bias(priors, galaxy_bias, shared_params=None, **kwargs):
         alpha_high = rsample("alpha_high", priors["alpha_high"], shared_params)
         log_rho_t = rsample("log_rho_t", priors["log_rho_t"], shared_params)
         bias_params = [alpha_low, alpha_high, log_rho_t]
-
     else:
         raise ValueError(f"Invalid galaxy bias model '{galaxy_bias}'.")
 
