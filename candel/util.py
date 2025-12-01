@@ -367,7 +367,7 @@ def name2label(name):
         "sigma_log_theta": r"$\sigma_{\log \theta}$",
         "R_dust": r"$R_{\rm W1}$",
         "R_dist_emp": r"$R_{\rm dist}$",
-        "n_dist_emp": r"$n_{\rm dist}$",
+        "n_dist_emp": r"$q_{\rm dist}$",
         "p_dist_emp": r"$p_{\rm dist}$",
         "Rmax_dist_emp": r"$R_{\rm max, dist}$",
         "rho_corr": r"$\rho_{\rm corr}$",
@@ -437,7 +437,7 @@ def name2labelgetdist(name):
         "H0": r"H_0~\left[\mathrm{km}\,\mathrm{s}^{-1}\,\mathrm{Mpc}^{-1}\right]",  # noqa
         "dZP": r"\Delta_{\rm ZP}",
         "R_dist_emp": r"R~\left[h^{-1}\,\mathrm{Mpc}\right]",
-        "n_dist_emp": r"n",
+        "n_dist_emp": r"q",
         "p_dist_emp": r"p",
         "rho_corr": r"\rho_{\rm corr}",
     }

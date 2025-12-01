@@ -22,3 +22,6 @@ scripts/runs/logs
 scripts/mocks/logs/
 
 modules_arc.sh
+CLAUDE.md
+GEMINI.md
+AGENTS.md
