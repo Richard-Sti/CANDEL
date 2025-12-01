@@ -51,6 +51,12 @@ def log_prob_integrand_sel(x, e_x, lim, lim_width):
         return log_integral_gauss_pdf_times_cdf(x, e_x, lim, lim_width)
 
 
+def logmeanexp(x, axis=None, denom=None):
+    """Stable log(mean(exp(x))) with optional explicit denominator."""
+    denom = x.shape[axis] if denom is None else denom
+    return logsumexp(x, axis=axis) - jnp.log(denom)
+
+
 class BaseSH0ESModel(ABC):
     """
     Base class for the SH0ES model, providing common functionality and
@@ -708,15 +714,13 @@ class SH0ESModel(BaseSH0ESModel):
         # Average the selection term over the random line-of-sight, so that
         # the shape becomes `(n_fields,)`.
         if self.which_selection == "SN_magnitude_or_redshift_Nmag":
-            log_S_cz = logsumexp(
-                log_S_cz, axis=-1) - jnp.log(self.num_rand_los)
-            log_S_mag = logsumexp(
-                log_S_mag, axis=-1) - jnp.log(self.num_rand_los)
+            log_S_cz = logmeanexp(log_S_cz, axis=-1)
+            log_S_mag = logmeanexp(log_S_mag, axis=-1)
             w_mag = self.num_hosts_selection_mag / self.num_hosts
             w_cz = 1 - w_mag
             log_S = w_mag * log_S_mag + w_cz * log_S_cz
         else:
-            log_S = logsumexp(log_S, axis=-1) - jnp.log(self.num_rand_los)
+            log_S = logmeanexp(log_S, axis=-1)
 
         if self.use_reconstruction:
             # Subtract it per each host
@@ -809,8 +813,7 @@ class SH0ESModel(BaseSH0ESModel):
                 # Here compute the average log-density of the Cepheid hosts,
                 # averaged over the field realizations, so that the final
                 # shape is `(n_galaxies,)`.
-                ll_reconstruction = logsumexp(ll_reconstruction, axis=0)
-                ll_reconstruction -= jnp.log(self.num_fields)
+                ll_reconstruction = logmeanexp(ll_reconstruction, axis=0)
                 factor("ll_reconstruction", ll_reconstruction)
             else:
                 cz_pred = predict_cz(z_cosmo, Vext_rad_host)
