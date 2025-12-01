@@ -38,8 +38,7 @@ from numpyro.infer.reparam import ProjectedNormalReparam
 from ..cosmography import (Distance2Distmod, Distance2Distmod_withOm,
                            Distance2LogAngDist, Distance2LogLumDist,
                            Distance2Redshift, Distance2Redshift_withOm)
-from ..util import (SPEED_OF_LIGHT, fprint, get_nested, load_config,
-                    H0_with_transition_r)
+from ..util import SPEED_OF_LIGHT, fprint, get_nested, load_config
 from .simpson import ln_simpson
 
 ###############################################################################
@@ -452,7 +451,6 @@ class BaseModel(ABC):
 
         self.track_log_density_per_sample = get_nested(
             config, "inference/track_log_density_per_sample", False)
-        self.with_H0_transition = False  # Enforce default
 
         # Initialize interpolators for distance and redshift
         self.Om = get_nested(config, "model/Om", 0.3)
@@ -1043,27 +1041,12 @@ class PantheonPlusModel(BaseModel):
         fprint("setting `compute_evidence` to False.")
         self.config["inference"]["compute_evidence"] = False
 
-        self.with_H0_transition = get_nested(
-            self.config, "pv_model/with_H0_transition", False)
-        self.H0_for_transition = get_nested(
-            self.config, "pv_model/H0_for_transition", 73.04)
-        self.Rmax = get_nested(
-            self.config, "pv_model/H0_transition_rmax", 200.)
-        fprint(f"with_H0_transition = {self.with_H0_transition}, "
-               f"H0_for_transition = {self.H0_for_transition} and "
-               f"Rmax = {self.Rmax} Mpc.")
-
     def __call__(self, data, shared_params=None):
         nsamples = len(data)
 
         if data.sample_dust:
             raise NotImplementedError(
                 "Dust sampling is not implemented for `PantheonPlusModel`.")
-
-        if self.with_H0_transition and data.has_precomputed_los:
-            raise NotImplementedError(
-                "H0 transition is not implemented if modelling the "
-                "density and velocity field.")
 
         # Sample the SN parameters.
         M = rsample("M", self.priors["SN_absmag"], shared_params)
@@ -1095,30 +1078,15 @@ class PantheonPlusModel(BaseModel):
             self.priors, self.galaxy_bias, shared_params,
             Om=self.Om, beta=beta)
 
-        # For the distance marginalization, h is not sampled. Watch out for
-        # the width of the uniform distribution of h is sampled. A grid
-        # is still required to normalize the inhomogeneous Malmquist bias
-        # distribution.
-        if self.with_H0_transition:
-            Rmax = self.Rmax
-            H0_present = self.H0_for_transition
-
-            dH0 = rsample("dH0", self.priors["dH0"], shared_params)
-            Rt = sample("R_H0", Uniform(0., Rmax), shared_params)
-            Rt_alpha = rsample(
-                "R_H0_alpha", self.priors["R_H0_alpha"], shared_params)
-        else:
-            h = 1.
-            r_grid = data["r_grid"] / h
-            Rmax = r_grid[-1]
+        # For the distance marginalization, h is not sampled. A grid is still
+        # required to normalize the inhomogeneous Malmquist bias distribution.
+        h = 1.
+        r_grid = data["r_grid"] / h
+        Rmax = r_grid[-1]
 
         # Sample the radial distance to each galaxy, `(n_galaxies)`.
         with plate("plate_distance", nsamples):
             r = sample("r_latent", Uniform(0, Rmax))
-
-        if self.with_H0_transition:
-            # Compute h(r) with transition
-            h = H0_with_transition_r(r, H0_present, dH0, Rt, Rt_alpha) / 100.
 
         mu = self.distance2distmod(r, h=h)  # (n_gal,)
 
