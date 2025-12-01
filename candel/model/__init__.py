@@ -24,7 +24,6 @@ from .model import (                                                            
     CalibratedDistanceModel,                                                    # noqa
     JointPVModel,                                                               # noqa
     interp_cartesian_vector,                                                    # noqa
-    H0_with_transition_r,                                                       # noqa
     lp_galaxy_bias,                                                             # noqa
     smoothclip_nr,                                                              # noqa
     )
