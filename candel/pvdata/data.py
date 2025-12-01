@@ -12,7 +12,12 @@
 # You should have received a copy of the GNU General Public License along
 # with this program; if not, write to the Free Software Foundation, Inc.,
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+"""
+Data loading and preprocessing utilities for peculiar-velocity catalogues.
 
+Provides dataframe-like containers, LOS interpolation helpers, covariance
+assembly, and catalogue I/O wired to the project config files.
+"""
 from os.path import join
 
 import healpy as hp
