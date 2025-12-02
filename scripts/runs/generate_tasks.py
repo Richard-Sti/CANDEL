@@ -370,9 +370,9 @@ if __name__ == "__main__":
     # --- CH0 overrides ---
     manual_overrides = {
         "io/root_output": "results/test",
-        # "model/which_selection": "SN_magnitude_or_redshift_Nmag",
-        "model/which_selection": "redshift",
-        "model/num_hosts_selection_mag": 15,
+        "model/which_selection": "SN_magnitude_or_redshift_Nmag",
+        # "model/which_selection": "redshift",
+        "model/num_hosts_selection_mag": 35,
         # "model/which_selection": ["none", "redshift", "SN_magnitude", "SN_magnitude_redshift", "empirical"],  # noqa
         # "model/which_selection": ["none", "redshift", "SN_magnitude"],  # noqa
         # "model/which_selection": ["SN_magnitude_redshift", "empirical"],  # noqa
