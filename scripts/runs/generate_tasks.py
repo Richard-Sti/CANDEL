@@ -370,19 +370,20 @@ if __name__ == "__main__":
     # --- CH0 overrides ---
     manual_overrides = {
         "io/root_output": "results/test",
-        "model/which_selection": "SN_magnitude_or_redshift_Nmag",
-        # "model/which_selection": "redshift",
-        "model/num_hosts_selection_mag": 35,
+        # "model/which_selection": "SN_magnitude_or_redshift_Nmag",
+        "model/which_selection": "redshift",
+        # "model/num_hosts_selection_mag": 35,
         # "model/which_selection": ["none", "redshift", "SN_magnitude", "SN_magnitude_redshift", "empirical"],  # noqa
         # "model/which_selection": ["none", "redshift", "SN_magnitude"],  # noqa
         # "model/which_selection": ["SN_magnitude_redshift", "empirical"],  # noqa
-        "model/use_reconstruction": False,
+        "model/use_reconstruction": True,
         # "model/use_fiducial_Cepheid_host_PV_covariance": True,
         # "model/use_PV_covmat_scaling": [False, True],
         # "model/weight_selection_by_covmat_Neff": True,  # Only for redshift sel!  # noqa
         "io/SH0ES/which_host_los": "Carrick2015",
         # "io/SH0ES/which_host_los": "manticore_2MPP_MULTIBIN_N256_DES_V2",
-        "model/which_bias": "unity",
+        "model/which_bias": "linear_from_beta",
+        "model/track_host_velocity": True,
         # "model/priors/Vext": [
         #     {"dist": "vector_uniform_fixed", "low": 0.0, "high": 2500},
         #     # {"dist": "delta", "value": [0., 0., 0.]},
