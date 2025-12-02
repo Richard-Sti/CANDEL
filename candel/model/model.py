@@ -396,13 +396,25 @@ def _rsample(name, dist):
 
 
 def rsample(name, dist, shared_params=None):
-    """Sample a parameter from `dist`, unless provided in `shared_params`."""
+    """
+    Retrieve a parameter value: use `shared_params[name]` when provided (for
+    sharing/conditioning across submodels), otherwise draw from `dist`.
+    """
     if shared_params is not None and name in shared_params:
         return shared_params[name]
     return _rsample(name, dist)
 
 
 def get_absmag_TFR(eta, a_TFR, b_TFR, c_TFR=0.0):
+    """
+    Tully–Fisher absolute magnitude with optional curvature:
+
+        M(eta) = a + b * eta + c * eta^2 for eta > 0,
+                 a + b * eta           otherwise.
+
+    The quadratic term only applies on the high-width (eta > 0) side to
+    capture potential curvature while keeping the low-width branch linear.
+    """
     return a_TFR + b_TFR * eta + jnp.where(eta > 0, c_TFR * eta**2, 0.0)
 
 
