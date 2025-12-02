@@ -20,7 +20,7 @@ import numpy as np
 from jax.debug import print as jprint  # noqa
 from jax.scipy.special import logsumexp
 from jax.scipy.stats import norm as norm_jax
-from numpyro import factor, plate, sample
+from numpyro import deterministic, factor, plate, sample
 from numpyro.distributions import (HalfNormal, MultivariateNormal, Normal,
                                    Uniform)
 
@@ -155,6 +155,9 @@ class BaseSH0ESModel(ABC):
         self.use_reconstruction = get_nested(
             config, "model/use_reconstruction", False)
         fprint(f"use_reconstruction set to {self.use_reconstruction}")
+        self.track_host_velocity = get_nested(
+            config, "model/track_host_velocity", False)
+        fprint(f"track_host_velocity set to {self.track_host_velocity}")
         self.which_bias = get_nested(
             config, "model/which_bias", "linear")
         fprint(f"which_bias set to {self.which_bias}")
@@ -805,6 +808,9 @@ class SH0ESModel(BaseSH0ESModel):
                 Vpec += Vext_rad_host[None, :]
                 cz_pred = predict_cz(z_cosmo[None, :], Vpec)
                 e_cz = jnp.sqrt(e2_cz)
+
+                if self.track_host_velocity:
+                    deterministic("Vpec_host_skipZ", Vpec)
 
                 ll_reconstruction += Normal(
                     cz_pred, e_cz[None, :]).log_prob(

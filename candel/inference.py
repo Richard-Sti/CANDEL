@@ -75,6 +75,7 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
     mcmc.run(jax.random.key(kwargs["seed"]), **model_kwargs)
 
     samples = mcmc.get_samples()
+    auxiliary = extract_auxiliary(samples, ["Vpec_host_skipZ"])
     log_density_per_sample = samples.pop("log_density_per_sample", None)
 
     if kwargs["compute_log_density"]:
@@ -127,7 +128,8 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
         fname_out = model.config["io"]["fname_output"]
         fprint(f"output directory is {dirname(fname_out)}.")
         save_mcmc_samples(
-            samples, log_density, log_density_per_sample, gof, fname_out)
+            samples, log_density, log_density_per_sample, gof, fname_out,
+            auxiliary=auxiliary)
 
         fname_plot = splitext(fname_out)[0] + ".png"
         plot_corner(samples, show_fig=False, filename=fname_plot,)
@@ -201,6 +203,7 @@ def run_SH0ES_inference(model, model_kwargs={}, print_summary=True,
     mcmc.run(jax.random.key(kwargs["seed"]), **model_kwargs)
 
     samples = mcmc.get_samples()
+    auxiliary = extract_auxiliary(samples, ["Vpec_host_skipZ"])
     samples = drop_deterministic(samples)
     samples = postprocess_samples(samples)
 
@@ -210,7 +213,8 @@ def run_SH0ES_inference(model, model_kwargs={}, print_summary=True,
     if save_samples:
         fname_out = model.config["io"]["fname_output"]
         fprint(f"output directory is {dirname(fname_out)}.")
-        save_mcmc_samples(samples, None, None, None, fname_out)
+        save_mcmc_samples(samples, None, None, None, fname_out,
+                          auxiliary=auxiliary)
 
         fname_plot = splitext(fname_out)[0] + ".png"
         plot_corner(samples, show_fig=False, filename=fname_plot,)
@@ -247,6 +251,26 @@ def get_log_density(samples, model, model_kwargs, batch_size=5):
             batch_log_densities)
 
     return log_densities
+
+
+def extract_auxiliary(samples, keys):
+    """
+    Extract and remove auxiliary deterministic samples.
+
+    Parameters
+    ----------
+    samples : dict
+        Dictionary returned by `mcmc.get_samples()`.
+    keys : sequence of str
+        Names to extract. If a key ends with `_skipZ`, the suffix is dropped
+        in the returned dictionary.
+    """
+    aux = {}
+    for key in keys:
+        if key in samples:
+            new_key = key.replace("_skipZ", "")
+            aux[new_key] = samples.pop(key)
+    return aux
 
 
 def drop_deterministic(samples, check_all_equals=True):
@@ -321,12 +345,18 @@ def print_clean_summary(samples):
 
 
 def save_mcmc_samples(samples, log_density, log_density_per_sample, gof,
-                      filename):
+                      filename, auxiliary=None):
     """Save the MCMC samples to an HDF5 file."""
     with File(filename, 'w') as f:
         grp = f.create_group("samples")
         for key, x in samples.items():
             grp.create_dataset(key, data=x, dtype=np.float32)
+
+        if auxiliary and "Vpec_host" in auxiliary:
+            grp_aux = f.create_group("auxiliary")
+            grp_aux.create_dataset(
+                "Vpec_host", data=auxiliary["Vpec_host"],
+                dtype=np.float32)
 
         try:
             ndim = samples["Vext_ell"].ndim
