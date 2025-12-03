@@ -204,6 +204,8 @@ def generate_dynamic_tag(config, base_tag="default"):
         use_reconstruction = get_nested(config, "model/use_reconstruction", False)  # noqa
         if use_reconstruction:
             parts.append(get_nested(config, "io/SH0ES/which_host_los", None))
+            if get_nested(config, "model/use_density_dependent_sigma_v", False):
+                parts.append("sigv_rho")
 
         if get_nested(config, "model/use_fiducial_Cepheid_host_PV_covariance", False):  # noqa
             parts.append("PV_covmat")
@@ -377,13 +379,14 @@ if __name__ == "__main__":
         # "model/which_selection": ["none", "redshift", "SN_magnitude"],  # noqa
         # "model/which_selection": ["SN_magnitude_redshift", "empirical"],  # noqa
         "model/use_reconstruction": True,
+        "model/use_density_dependent_sigma_v": True,
         # "model/use_fiducial_Cepheid_host_PV_covariance": True,
         # "model/use_PV_covmat_scaling": [False, True],
         # "model/weight_selection_by_covmat_Neff": True,  # Only for redshift sel!  # noqa
         "io/SH0ES/which_host_los": "Carrick2015",
         # "io/SH0ES/which_host_los": "manticore_2MPP_MULTIBIN_N256_DES_V2",
         "model/which_bias": "linear_from_beta",
-        "model/track_host_velocity": True,
+        # "model/track_host_velocity": True,
         # "model/priors/Vext": [
         #     {"dist": "vector_uniform_fixed", "low": 0.0, "high": 2500},
         #     # {"dist": "delta", "value": [0., 0., 0.]},
