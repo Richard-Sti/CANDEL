@@ -515,11 +515,12 @@ class SH0ESModel(BaseSH0ESModel):
                 f"Unknown distance prior: `{self.which_distance_prior}`")
 
     def sigma_v_from_density(self, delta, sigma_v_low, sigma_v_high,
-                             rho_t, k):
-        """Map overdensity to sigma_v through a sigmoid."""
+                             log_rho_t, k):
+        """Map overdensity to sigma_v through a sigmoid in log density."""
         rho = jnp.clip(1.0 + delta, a_min=1e-6)
+        log_rho = jnp.log(rho)
         return sigma_v_low + (sigma_v_high - sigma_v_low) / (
-            1.0 + jnp.exp(-k * (rho - rho_t)))
+            1.0 + jnp.exp(-k * (log_rho - log_rho_t)))
 
     def __call__(self, ):
         # Hubble constant
@@ -540,7 +541,6 @@ class SH0ESModel(BaseSH0ESModel):
             sigma_v_high = rsample("sigma_v_high", self.priors["sigma_v_high"])
             log_sigma_v_rho_t = rsample(
                 "log_sigma_v_rho_t", self.priors["log_sigma_v_rho_t"])
-            sigma_v_rho_t = jnp.exp(log_sigma_v_rho_t)
             sigma_v_k = rsample("sigma_v_k", self.priors["sigma_v_k"])
             sigma_v_base = 0.5 * (sigma_v_low + sigma_v_high)
         else:
@@ -559,7 +559,7 @@ class SH0ESModel(BaseSH0ESModel):
         def map_sigma_v(delta):
             if self.use_density_dependent_sigma_v:
                 return self.sigma_v_from_density(
-                    delta, sigma_v_low, sigma_v_high, sigma_v_rho_t,
+                    delta, sigma_v_low, sigma_v_high, log_sigma_v_rho_t,
                     sigma_v_k)
             return jnp.broadcast_to(sigma_v_base, delta.shape)
 
