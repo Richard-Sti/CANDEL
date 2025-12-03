@@ -17,8 +17,8 @@ machine = "local"
 ###############################################################################
 
 [inference]
-num_warmup = 500
-num_samples = 500
+num_warmup = 1000
+num_samples = 5000
 num_chains = 4
 chain_method = "parallel"
 seed = 44
@@ -111,14 +111,12 @@ high = 2500
 # value = 250
 
 [model.priors.sigma_v_low]
-dist = "uniform"
-low = 25
-high = 2500
+dist = "maxwell"
+scale = 200
 
 [model.priors.sigma_v_high]
-dist = "uniform"
-low = 25
-high = 2500
+dist = "maxwell"
+scale = 200
 
 [model.priors.log_sigma_v_rho_t]
 dist = "normal"
