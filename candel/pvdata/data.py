@@ -1414,8 +1414,8 @@ def load_clusters(root, zcmb_min=None, zcmb_max=None, los_data_path=None,
     eL = data['eL']
     Tmax = data['Tmax']
     Tmin = data['Tmin']
-    Y_arcmin2 = data['Y_arcmin2']
-    e_Y = data['e_Y']
+    Y_arcmin2 = data['Y_nr_mf']
+    e_Y = data['e_Y5']
 
     # The file assumes a cosmology with H0 = 70 km/s/Mpc and Omega_m = 0.3
     cosmo = FlatLambdaCDM(H0=70, Om0=0.3)
