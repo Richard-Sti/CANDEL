@@ -17,9 +17,9 @@ machine = "local"
 ###############################################################################
 
 [inference]
-num_warmup = 1000
-num_samples = 5000
-num_chains = 5
+num_warmup = 500
+num_samples = 500
+num_chains = 4
 chain_method = "parallel"
 seed = 44
 num_chains_harmonic = 10
@@ -111,12 +111,12 @@ high = 2500
 # value = 250
 
 [model.priors.sigma_v_low]
-dist = "jeffreys"
+dist = "uniform"
 low = 25
 high = 2500
 
 [model.priors.sigma_v_high]
-dist = "jeffreys"
+dist = "uniform"
 low = 25
 high = 2500
 
