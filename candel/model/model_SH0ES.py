@@ -69,6 +69,7 @@ class BaseSH0ESModel(ABC):
         self.has_host_los = False
         self.has_rand_los = False
         self.num_rand_los = 1
+        self.num_fields = 1
 
         # Set unused parameter priors to delta functions.
         config = self.replace_priors(config)
@@ -155,6 +156,10 @@ class BaseSH0ESModel(ABC):
         self.use_reconstruction = get_nested(
             config, "model/use_reconstruction", False)
         fprint(f"use_reconstruction set to {self.use_reconstruction}")
+        self.use_density_dependent_sigma_v = get_nested(
+            config, "model/use_density_dependent_sigma_v", False)
+        fprint("use_density_dependent_sigma_v set to "
+               f"{self.use_density_dependent_sigma_v}")
         self.track_host_velocity = get_nested(
             config, "model/track_host_velocity", False)
         fprint(f"track_host_velocity set to {self.track_host_velocity}")
@@ -178,6 +183,20 @@ class BaseSH0ESModel(ABC):
                              "interpolators to be available. Please provide "
                              "`host_los_r` and `host_los_density` "
                              "in the data.")
+
+        if self.use_density_dependent_sigma_v and not self.use_reconstruction:
+            raise ValueError(
+                "`use_density_dependent_sigma_v` requires "
+                "`use_reconstruction` to be set to True.")
+
+        if self.use_density_dependent_sigma_v:
+            required = ["sigma_v_low", "sigma_v_high",
+                        "log_sigma_v_rho_t", "sigma_v_k"]
+            missing = [k for k in required if k not in self.priors]
+            if missing:
+                raise ValueError(
+                    "Missing priors for density-dependent sigma_v: "
+                    f"{', '.join(missing)}.")
 
         allowed_selection = [
             "redshift", "SN_magnitude", "Cepheid_magnitude",
@@ -329,7 +348,7 @@ class BaseSH0ESModel(ABC):
 
         attrs_set = []
         for k, v in data.items():
-            if k in ["q_names", "host_map"]:
+            if k in ["q_names", "host_map", "host_names"]:
                 continue
 
             if isinstance(v, np.ndarray):
@@ -429,6 +448,10 @@ class SH0ESModel(BaseSH0ESModel):
         # Cosmological redshift of shape `(n_steps,)`
         zcosmo = self.distance2redshift(self.r_host_range, h=H0 / 100)
         cz_r = predict_cz(zcosmo[None, None, :], Vpec)
+        sigma_v = jnp.asarray(sigma_v)
+        while sigma_v.ndim < cz_r.ndim:
+            sigma_v = sigma_v[..., None]
+        sigma_v = jnp.broadcast_to(sigma_v, cz_r.shape)
         log_prob = log_prob_integrand_sel(
             cz_r, sigma_v, self.cz_lim_selection, self.cz_lim_selection_width)
         # The expected output is of the shape `(n_fields, n_galaxies,)`,
@@ -456,6 +479,10 @@ class SH0ESModel(BaseSH0ESModel):
         cz_r = predict_cz(zcosmo[None, None, :], Vpec)
         mag = self.distance2distmod(self.r_host_range, h=H0 / 100) + M_SN
 
+        sigma_v = jnp.asarray(sigma_v)
+        while sigma_v.ndim < cz_r.ndim:
+            sigma_v = sigma_v[..., None]
+        sigma_v = jnp.broadcast_to(sigma_v, cz_r.shape)
         log_prob = log_prob_integrand_sel(
             mag[None, None, :], self.mean_std_mag_SN_unique_Cepheid_host,
             self.mag_lim_SN, self.mag_lim_SN_width)
@@ -487,6 +514,13 @@ class SH0ESModel(BaseSH0ESModel):
             raise ValueError(
                 f"Unknown distance prior: `{self.which_distance_prior}`")
 
+    def sigma_v_from_density(self, delta, sigma_v_low, sigma_v_high,
+                             rho_t, k):
+        """Map overdensity to sigma_v through a sigmoid."""
+        rho = jnp.clip(1.0 + delta, a_min=1e-6)
+        return sigma_v_low + (sigma_v_high - sigma_v_low) / (
+            1.0 + jnp.exp(-k * (rho - rho_t)))
+
     def __call__(self, ):
         # Hubble constant
         H0 = rsample("H0", self.priors["H0"])
@@ -501,7 +535,17 @@ class SH0ESModel(BaseSH0ESModel):
 
         # Velocity field calibration
         Vext = rsample("Vext", self.priors["Vext"])
-        sigma_v = rsample("sigma_v", self.priors["sigma_v"])
+        if self.use_density_dependent_sigma_v:
+            sigma_v_low = rsample("sigma_v_low", self.priors["sigma_v_low"])
+            sigma_v_high = rsample("sigma_v_high", self.priors["sigma_v_high"])
+            log_sigma_v_rho_t = rsample(
+                "log_sigma_v_rho_t", self.priors["log_sigma_v_rho_t"])
+            sigma_v_rho_t = jnp.exp(log_sigma_v_rho_t)
+            sigma_v_k = rsample("sigma_v_k", self.priors["sigma_v_k"])
+            sigma_v_base = 0.5 * (sigma_v_low + sigma_v_high)
+        else:
+            sigma_v = rsample("sigma_v", self.priors["sigma_v"])
+            sigma_v_base = sigma_v
         A_covmat = rsample("A_covmat", self.priors["A_covmat"])
         beta = rsample("beta", self.priors["beta"])
 
@@ -511,6 +555,13 @@ class SH0ESModel(BaseSH0ESModel):
 
         # Empirical distance prior calibration
         kwargs_dist = sample_distance_prior(self.priors)
+
+        def map_sigma_v(delta):
+            if self.use_density_dependent_sigma_v:
+                return self.sigma_v_from_density(
+                    delta, sigma_v_low, sigma_v_high, sigma_v_rho_t,
+                    sigma_v_k)
+            return jnp.broadcast_to(sigma_v_base, delta.shape)
 
         h = H0 / 100
         # Project Vext along the LOS to each host.
@@ -561,6 +612,9 @@ class SH0ESModel(BaseSH0ESModel):
         lp_host_dist_grid = self.log_prior_distance(
             self.r_host_range, **kwargs_dist)[None, None, :]
 
+        sigma_v_host = None
+        sigma_v_selection = None
+
         # Copy the homogeneous Malmquist bias for the random LOS
         if self.apply_sel:
             lp_rand_dist_grid = jnp.copy(lp_host_dist_grid)
@@ -574,6 +628,7 @@ class SH0ESModel(BaseSH0ESModel):
             # Compute LOS delta from reconstruction at host distances (Mpc/h),
             # shape is (n_fields, n_galaxies).
             los_delta_host = self.f_host_los_delta(rh_host)
+            sigma_v_host = map_sigma_v(los_delta_host)
 
             # Add the inhomogeneous Malmquist bias (n_fields, n_galaxies)
             lp_host_dist += lp_galaxy_bias(
@@ -605,6 +660,8 @@ class SH0ESModel(BaseSH0ESModel):
                 # Evaluate the LOS density
                 rand_los_delta_grid = self.f_rand_los_delta.interp_many_steps_per_galaxy(  # noqa
                     self.r_host_range * h)
+                sigma_v_selection = map_sigma_v(rand_los_delta_grid)
+
                 # Compute the inhomogeneous Malmquist bias
                 # (previously computed homogeneous)
                 lp_rand_dist_grid += lp_galaxy_bias(
@@ -620,6 +677,10 @@ class SH0ESModel(BaseSH0ESModel):
                     self.r_host_range * h)
             else:
                 rand_los_Vpec_grid = 0.
+                sigma_v_selection = map_sigma_v(
+                    jnp.zeros(
+                        (self.num_fields, self.num_rand_los,
+                         self.r_host_range.size)))
         else:
             rand_los_Vpec_grid = 0.
             # Repeat the grid over all host galaxies.
@@ -629,6 +690,9 @@ class SH0ESModel(BaseSH0ESModel):
             # reconstruction, otherwise it is done later as it is averaged
             # together with the redshift likelihood.
             factor("lp_host_dist", lp_host_dist)
+            sigma_v_host = map_sigma_v(jnp.zeros((1, self.num_hosts)))
+            sigma_v_selection = map_sigma_v(
+                jnp.zeros((1, self.num_rand_los, self.r_host_range.size)))
 
         # Selection function of shape `(n_fields, n_random_los)` calculated
         # for the *random* LOS. Average over the randoms will be taken below.
@@ -637,7 +701,7 @@ class SH0ESModel(BaseSH0ESModel):
             log_S = self.log_S_cz(
                 lp_rand_dist_grid,
                 Vext_rad_rand[None, :, None] + beta * rand_los_Vpec_grid,
-                H0, sigma_v)
+                H0, sigma_v_selection)
 
             if self.weight_selection_by_covmat_Neff:
                 log_S *= self.Neff_PV_covmat_cepheid_host / self.num_hosts
@@ -647,7 +711,7 @@ class SH0ESModel(BaseSH0ESModel):
             log_S_cz = self.log_S_cz(
                 lp_rand_dist_grid,
                 Vext_rad_rand[None, :, None] + beta * rand_los_Vpec_grid,
-                H0, sigma_v)
+                H0, sigma_v_selection)
             log_S_mag = self.log_S_SN_mag(lp_rand_dist_grid, M_B, H0)
 
             if self.weight_selection_by_covmat_Neff:
@@ -693,7 +757,7 @@ class SH0ESModel(BaseSH0ESModel):
             log_S = self.log_S_SN_mag_cz(
                 lp_rand_dist_grid,
                 Vext_rad_rand[None, :, None] + beta * rand_los_Vpec_grid,
-                M_B, H0, sigma_v)
+                M_B, H0, sigma_v_selection)
 
             # Assign distance moduli to the SN hosts.
             mu_SN = self.L_SN_unique_Cepheid_host_dist @ mu_host_all
@@ -791,7 +855,11 @@ class SH0ESModel(BaseSH0ESModel):
 
         if self.use_Cepheid_host_redshift:
             z_cosmo = self.distmod2redshift(mu_host, h=h)
-            e2_cz = self.e2_czcmb_cepheid_host + sigma_v**2
+            if self.use_reconstruction:
+                e2_cz = (
+                    self.e2_czcmb_cepheid_host[None, :] + sigma_v_host**2)
+            else:
+                e2_cz = self.e2_czcmb_cepheid_host + sigma_v_host[0]**2
 
             if self.use_fiducial_Cepheid_host_PV_covariance:
                 cz_pred = predict_cz(z_cosmo, Vext_rad_host)
@@ -812,9 +880,8 @@ class SH0ESModel(BaseSH0ESModel):
                 if self.track_host_velocity:
                     deterministic("Vpec_host_skipZ", Vpec)
 
-                ll_reconstruction += Normal(
-                    cz_pred, e_cz[None, :]).log_prob(
-                        self.czcmb_cepheid_host[None, :])
+                ll_reconstruction += Normal(cz_pred, e_cz).log_prob(
+                    self.czcmb_cepheid_host[None, :])
 
                 # Here compute the average log-density of the Cepheid hosts,
                 # averaged over the field realizations, so that the final
@@ -875,7 +942,7 @@ class SH0ESModel(BaseSH0ESModel):
             Vext_rad_SN = jnp.sum(Vext[None, :] * self.rhat_SN_HF, axis=1)
             cz_pred_SN = predict_cz(
                 self.distmod2redshift(mu_SN, h=h), Vext_rad_SN)
-            e_cz = jnp.sqrt(self.e2_czcmb_SN_HF + sigma_v**2)
+            e_cz = jnp.sqrt(self.e2_czcmb_SN_HF + sigma_v_base**2)
             with plate("SN_redshift", self.num_SN_HF):
                 sample("cz_pred2", Normal(cz_pred_SN, e_cz),
                        obs=self.czcmb_SN_HF)
