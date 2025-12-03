@@ -41,6 +41,7 @@ which_distance_prior = "volume"
 use_Cepheid_host_redshift = true
 
 use_reconstruction = true
+use_density_dependent_sigma_v = false
 which_bias = "linear"
 
 use_fiducial_Cepheid_host_PV_covariance = false
@@ -104,10 +105,31 @@ high = 2
 # Small-scale peculiar velocity dispersion
 [model.priors.sigma_v]
 dist = "jeffreys"
-low = 5
+low = 25
 high = 2500
 # dist = "delta"
 # value = 250
+
+[model.priors.sigma_v_low]
+dist = "jeffreys"
+low = 25
+high = 2500
+
+[model.priors.sigma_v_high]
+dist = "jeffreys"
+low = 25
+high = 2500
+
+[model.priors.log_sigma_v_rho_t]
+dist = "normal"
+loc = 0.0
+scale = 2.0
+
+[model.priors.sigma_v_k]
+dist = "truncated_normal"
+low = 0.0
+mean = 1.0
+scale = 1.0
 
 [model.priors.beta]
 dist = "normal"
