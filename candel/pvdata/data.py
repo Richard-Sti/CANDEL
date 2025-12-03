@@ -1041,6 +1041,9 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
 
     num_hosts = L_Cepheid_host_dist.shape[1] - 3
     num_cepheids = len(mag_cepheid)
+    host_names = q_names[np.char.startswith(
+        q_names.astype(str), "mu_")]
+    host_names = host_names[:num_hosts]
 
     # Cepheid host redshifts and the PV covariance matrix.
     data_cepheid_host_redshift = np.load(
@@ -1171,6 +1174,7 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
         "sigma_grnd": sigma_grnd,
         # Cepheid host galaxy information.
         "q_names": q_names,
+        "host_names": host_names,
         "czcmb_cepheid_host": data_cepheid_host_redshift["zCMB"] * SPEED_OF_LIGHT,  # noqa
         "e_czcmb_cepheid_host": data_cepheid_host_redshift["zCMBERR"],
         "RA_host": data_cepheid_host_redshift["RA"],
@@ -1182,7 +1186,6 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
         # # SH0ES-Antonio's approach for predicting H0 from Cepheid host zs
         # "Y_Cepheid_new": Y_Cepheid_new,
         # "Y_Cepheid_new_err": Y_Cepheid_new_err
-        "q_names": q_names,
         # Random LOS for modelling selection
         "has_rand_los": has_rand_los,
         "num_rand_los": rand_los_density.shape[1] if rand_los_density is not None else 1,  # noqa
@@ -1238,6 +1241,7 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
 
         data["num_hosts"] = np.sum(mask_host)
         data["num_cepheids"] = np.sum(mask_cepheid)
+        data["host_names"] = data["host_names"][mask_host]
 
         data["mask_host"] = mask_host
 
