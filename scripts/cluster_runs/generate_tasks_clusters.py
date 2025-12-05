@@ -100,6 +100,10 @@ def generate_dynamic_tag(config, scenario_label):
         parts.append("pixVext")
     elif which_vext == "radial":
         parts.append("radVext")
+    elif which_vext == "radial_magnitude":
+        variant = get_nested(config, "pv_model/radmag_variant", "default")
+        label = "radmagVext" if variant in ("", "default") else f"radmagVext-{variant}"
+        parts.append(label)
     else:
         # Check for separate Vext_quad component first
         Vext_quad_prior = get_nested(config, "model/priors/Vext_quad", {})
@@ -244,6 +248,31 @@ if __name__ == "__main__":
     radialVext_settings["pv_model/which_Vext"] = ["radial"]
 
     radialVext_combinations = expand_override_grid(radialVext_settings)
+
+    # Radial magnitude-only Vext (direction fixed, magnitude varies)
+    radmag_prior_template = get_nested(
+        config, "model/priors/Vext_radial_magnitude", {})
+
+    def radmag_prior_with_knots(knots):
+        prior = deepcopy(radmag_prior_template)
+        prior["rknot"] = knots
+        return prior
+
+    def build_radmag_combinations(knots, variant_label):
+        settings = deepcopy(base)
+        settings["pv_model/which_Vext"] = ["radial_magnitude"]
+        settings["model/priors/Vext_radial_magnitude"] = [
+            radmag_prior_with_knots(knots)]
+        if variant_label not in ("", "default"):
+            settings["pv_model/radmag_variant"] = [variant_label]
+        return expand_override_grid(settings)
+
+    radialMagVext_combinations = (
+        build_radmag_combinations([0, 250, 500, 750, 1000], "default")
+        + build_radmag_combinations([0, 125, 250, 500, 750, 1000], "fine")
+        + build_radmag_combinations(
+            [0, 62.5, 125, 187.5, 250, 500, 750, 1000], "finest")
+    )
     
     override_combinations = (
         dipole_combinations
@@ -252,6 +281,7 @@ if __name__ == "__main__":
         + pixelA_combinations
         + pixelVext_combinations
         + radialVext_combinations
+        + radialMagVext_combinations
     )
 
     base_clusters_section = deepcopy(config["io"].get("Clusters", {}))

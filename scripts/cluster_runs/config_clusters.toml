@@ -166,6 +166,7 @@ endpoints="not-a-knot"
 dist = "vector_radialmag_uniform"
 low = -10000
 high = 10000
+max_modulus = [10000, 10000, 10000, 10000, 10000]
 rknot = [0, 250, 500, 750, 1000]
 method = "cubic"
 

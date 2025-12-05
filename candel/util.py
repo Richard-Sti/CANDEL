@@ -151,6 +151,19 @@ def get_nested(config, key_path, default=None):
     return current
 
 
+def percent_h0_to_bulkflow(r, percent, *, H0=100.0, q0=-0.53):
+    """
+    Convert a fractional H0 dipole (in percent) to an equivalent bulk-flow
+    magnitude evaluated at radius `r` (array-like).
+
+    Matches the form used in `plot_Vext_radmag`: delta * (H0 r +
+    q0 H0^2 r^2 / c).
+    """
+    frac = percent / 100.0
+    r = np.asarray(r)
+    return frac * (H0 * r + q0 * (H0**2) * r**2 / SPEED_OF_LIGHT)
+
+
 ###############################################################################
 #                        Coordinate transformations                           #
 ###############################################################################
@@ -1123,21 +1136,20 @@ def _upsample_map(map_lo, nside_plot, *, nest=False):
 def plot_Vext_radmag(samples, model, r_eval_size=1000, show_fig=True,
                      filename=None):
     Vmag = samples["Vext_radmag_mag"]
+    ell = samples.get("Vext_radmag_ell", None)
+    b = samples.get("Vext_radmag_b", None)
     rknot = model.kwargs_Vext["rknot"]
     method = model.kwargs_Vext["method"]
 
     r = jnp.linspace(0.0, np.max(rknot), r_eval_size)
-    # print(Vmag.shape)
-    # interp1d is from interpax
-    # all arrays are 1D except Vmag is shape (Nsamples, Nknots)
-    # how to get V to be shape (Nsamples, r_eval_size)?
     V = vmap(lambda y: interp1d(r, rknot, y, method=method))(Vmag)
-    Vlow, Vmed, Vhigh = np.percentile(V, [16, 50, 84], axis=0)
+    V025, V16, V50, V84, V975 = np.percentile(V, [2.5, 16, 50, 84, 97.5], axis=0)
 
-    fig, ax = plt.subplots()
+    fig, ax = plt.subplots(figsize=(7, 5))
 
-    ax.fill_between(r, Vlow, Vhigh, alpha=0.4)
-    ax.plot(r, Vmed, color="C0")
+    ax.fill_between(r, V025, V975, alpha=0.2, color="C0")
+    ax.fill_between(r, V16, V84, alpha=0.4, color="C0")
+    ax.plot(r, V50, color="C0")
     ax.set_xlabel(r"$r~[h^{-1}\,\mathrm{Mpc}]$")
     ax.set_ylabel(r"$V_{\mathrm{ext}}~[\mathrm{km/s}]$")
 
@@ -1156,6 +1168,89 @@ def plot_Vext_radmag(samples, model, r_eval_size=1000, show_fig=True,
             ax.axvline(xmax - dx, **knot_line_kwargs)
         else:
             ax.axvline(rk, **knot_line_kwargs)
+
+    prior_cfg = getattr(model, "config", {})
+
+    def _get_prior_bounds():
+        """Return (lower, upper) arrays for the prior, if available."""
+        cfg = get_nested(prior_cfg, "model/priors/Vext_radial_magnitude", {})
+        if not cfg:
+            return None
+        rk_cfg = np.asarray(cfg.get("rknot", rknot))
+        if rk_cfg.shape[0] != len(rknot):
+            warn("rknot mismatch between model and prior; skipping prior overlay.")
+            return None
+
+        if "h0_dipole_percent" in cfg:
+            mag = np.abs(percent_h0_to_bulkflow(rk_cfg, cfg["h0_dipole_percent"]))
+            return -mag, mag
+
+        if "max_modulus" in cfg:
+            mag = np.abs(np.asarray(cfg["max_modulus"]))
+            if mag.shape[0] != len(rk_cfg):
+                warn("max_modulus length mismatch; skipping prior overlay.")
+                return None
+            return -mag, mag
+
+        low = cfg.get("low", None)
+        high = cfg.get("high", None)
+        if low is None or high is None:
+            return None
+        low_arr = np.asarray(low)
+        high_arr = np.asarray(high)
+        if low_arr.ndim == 0:
+            low_arr = np.full_like(rk_cfg, low_arr, dtype=float)
+        if high_arr.ndim == 0:
+            high_arr = np.full_like(rk_cfg, high_arr, dtype=float)
+        if low_arr.shape[0] != len(rk_cfg) or high_arr.shape[0] != len(rk_cfg):
+            warn("low/high length mismatch; skipping prior overlay.")
+            return None
+        return low_arr, high_arr
+
+    def add_h0_dipole_reference(ax_ref, ell_val, b_val, std_ell, std_b):
+        """Overlay the equivalent H0 dipole reference band."""
+        pct_cen = 5.0
+        pct_lo = 3.0
+        pct_hi = 7.0
+
+        bf = percent_h0_to_bulkflow(r, pct_cen)
+        bu = percent_h0_to_bulkflow(r, pct_hi)
+        bl = percent_h0_to_bulkflow(r, pct_lo)
+
+        H0_ell_val = 123.9
+        H0_b_val = 53.88
+        H0_std_ell = 99.8
+        H0_std_b = 17.71
+
+        label = (fr"Equivalent $H_0$ dipole: ${pct_cen:.1f}\%$ "
+                 fr"at "
+                 fr"$(\ell, b) = ({H0_ell_val:.1f} \pm {H0_std_ell:.1f}°, "
+                 fr"{H0_b_val:.1f} \pm {H0_std_b:.1f}°)$")
+        ax_ref.plot(r, bf, linestyle="--", color="gray", label=label)
+        ax_ref.fill_between(r, bl, bu, color="gray", alpha=0.3)
+        ax_ref.legend(loc="best", fontsize=9)
+
+    if ell is not None and b is not None:
+        mean_ell = np.mean(ell)
+        mean_b = np.mean(b)
+        std_ell = np.std(ell)
+        std_b = np.std(b)
+        ax.plot([], [], label=(fr"Radially varying $V_{{\rm ext}}$: "
+                               fr"$(\ell, b) = ({mean_ell:.1f} \pm {std_ell:.1f}°, "
+                               fr"{mean_b:.1f} \pm {std_b:.1f}°)$"),
+                color="C0")
+        add_h0_dipole_reference(ax, mean_ell, mean_b, std_ell, std_b)
+
+    prior_bounds = _get_prior_bounds()
+    if prior_bounds is not None:
+        prior_lo, prior_hi = prior_bounds
+        # Piecewise-linear prior envelope across knots.
+        prior_lo_interp = np.interp(r, rknot, prior_lo, left=prior_lo[0], right=prior_lo[-1])
+        prior_hi_interp = np.interp(r, rknot, prior_hi, left=prior_hi[0], right=prior_hi[-1])
+        ax.fill_between(r, prior_lo_interp, prior_hi_interp,
+                        color="black", alpha=0.08, label="Prior support")
+        ax.plot(rknot, prior_lo, linestyle="--", color="black", alpha=0.5)
+        ax.plot(rknot, prior_hi, linestyle="--", color="black", alpha=0.5)
 
     fig.tight_layout()
 

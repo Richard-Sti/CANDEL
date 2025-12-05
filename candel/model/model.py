@@ -299,21 +299,41 @@ def sample_spline_radial_vector(name, nval, low, high):
     return mag[..., None] * u
 
 
-def sample_radialmag_vector(name, nval, low, high):
+def sample_radialmag_vector(name, nval, low, high, max_modulus=None):
     """
     Sample a vector whose magnitude varies at `nval` knots but a direction
     is shared by all knots and sampled isotropically on the sky. The magnitude
     is sampled ~ Uniform(low, high).
 
+    If `max_modulus` is provided (sequence of length `nval`), magnitudes in
+    each bin are drawn from `[-abs(max_modulus_i), abs(max_modulus_i)]`.
     Returns the tuple (mag, rhat), where `mag` has shape (nval,) and `rhat`
     has shape (3,).
     """
+    # Convert scalar bounds to per-knot arrays.
+    low_arr = jnp.asarray(low)
+    high_arr = jnp.asarray(high)
+
+    if low_arr.ndim == 0:
+        low_arr = jnp.full((nval,), low_arr)
+    if high_arr.ndim == 0:
+        high_arr = jnp.full((nval,), high_arr)
+
+    if max_modulus is not None:
+        max_arr = jnp.abs(jnp.asarray(max_modulus))
+        if max_arr.shape[0] != nval:
+            raise ValueError(
+                f"`max_modulus` must have length {nval}, "
+                f"got {max_arr.shape[0]}")
+        low_arr = -max_arr
+        high_arr = max_arr
+
     phi = sample(f"{name}_phi", Uniform(0, 2 * jnp.pi))
     cos_theta = sample(f"{name}_cos_theta", Uniform(0, 1))
     sin_theta = jnp.sqrt(1 - cos_theta**2)
 
     with plate(f"{name}_plate", nval):
-        mag = sample(f"{name}_mag", Uniform(low, high))
+        mag = sample(f"{name}_mag", Uniform(low_arr, high_arr))
 
     rhat = jnp.array([
         sin_theta * jnp.cos(phi),
@@ -323,6 +343,18 @@ def sample_radialmag_vector(name, nval, low, high):
 
     return mag, rhat
 
+
+def h0_percent_to_bulkflow(r, percent, *, H0=100.0, q0=-0.53):
+    """
+    Convert a fractional H0 dipole (in percent) to an equivalent bulk-flow
+    magnitude evaluated at radius `r` (array-like).
+
+    Matches the form used in `plot_Vext_radmag`: delta * (H0 r +
+    q0 H0^2 r^2 / c).
+    """
+    frac = percent / 100.0
+    r = jnp.asarray(r)
+    return frac * (H0 * r + q0 * (H0**2) * r**2 / SPEED_OF_LIGHT)
 
 
 def sample_radial_spline_uniform_fixed_direction(name, nval, low, high):
@@ -411,7 +443,20 @@ def load_priors(config_priors):
         "vector_radial_spline_uniform_fixed_direction": lambda p: {"type": "vector_radial_spline_uniform_fixed_direction", "nval": len(p["rknot"]) if "rknot" in p else None, "low": p["low"], "high": p["high"]},  # noqa
         "vector_components_uniform": lambda p: {"type": "vector_components_uniform", "low": p["low"], "high": p["high"],},  # noqa
         "quadrupole_uniform_fixed": lambda p: {"type": "quadrupole_uniform_fixed", "low": p["low"], "high": p["high"],},  # noqa
-        "vector_radialmag_uniform": lambda p: {"type": "vector_radialmag_uniform", "nval": len(p["rknot"]), "low": p["low"], "high": p["high"]},  # noqa
+        "vector_radialmag_uniform": lambda p: {
+            "type": "vector_radialmag_uniform",
+            "nval": len(p["rknot"]),
+            "low": p["low"],
+            "high": p["high"],
+            # Optional per-knot max drawn from either `max_modulus` or an
+            # equivalent H0 dipole percent.
+            "max_modulus": (
+                h0_percent_to_bulkflow(
+                    p["rknot"],
+                    p["h0_dipole_percent"],
+                ) if "h0_dipole_percent" in p else p.get("max_modulus")
+            ),
+        },  # noqa
     }
     priors = {}
     prior_dist_name = {}
@@ -469,7 +514,8 @@ def _rsample(name, dist):
     
     if isinstance(dist, dict) and dist.get("type") == "vector_radialmag_uniform":  # noqa
         return sample_radialmag_vector(
-            name, dist["nval"], dist["low"], dist["high"], )
+            name, dist["nval"], dist["low"], dist["high"],
+            max_modulus=dist.get("max_modulus"))
 
 
     return sample(name, dist)
