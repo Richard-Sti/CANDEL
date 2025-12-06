@@ -41,7 +41,8 @@ from ..cosmography import (Distance2Distmod, Distance2Distmod_withOm,
                            Distance2LogAngDist, Distance2LogLumDist,
                            Distance2Redshift, Distance2Redshift_withOm,
                            Redshift2Distance)
-from ..util import SPEED_OF_LIGHT, fprint, get_nested, load_config
+from ..util import (SPEED_OF_LIGHT, fprint, galactic_to_radec_cartesian,
+                    get_nested, load_config)
 from .simpson import ln_simpson
 
 ###############################################################################
@@ -224,7 +225,7 @@ def sample_vector(name, mag_min, mag_max):
     ])
 
 
-def sample_vector_fixed(name, mag_min, mag_max):
+def sample_vector_fixed(name, mag_min, mag_max, direction=None):
     """
     Sample a 3D vector but without accounting for continuity and poles.
 
@@ -232,8 +233,11 @@ def sample_vector_fixed(name, mag_min, mag_max):
     `log_density` which is not the case for the `sample_vector` function
     because the unit vectors are drawn.
     """
-    phi = sample(f"{name}_phi", Uniform(0, 2 * jnp.pi))
-    cos_theta = sample(f"{name}_cos_theta", Uniform(-1, 1))
+    if direction is not None:
+        phi, cos_theta = _direction_from_galactic(direction)
+    else:
+        phi = sample(f"{name}_phi", Uniform(0, 2 * jnp.pi))
+        cos_theta = sample(f"{name}_cos_theta", Uniform(-1, 1))
     sin_theta = jnp.sqrt(1 - cos_theta**2)
 
     mag = sample(f"{name}_mag", Uniform(mag_min, mag_max))
@@ -299,7 +303,25 @@ def sample_spline_radial_vector(name, nval, low, high):
     return mag[..., None] * u
 
 
-def sample_radialmag_vector(name, nval, low, high, max_modulus=None):
+def _direction_from_galactic(direction):
+    """
+    Convert galactic (ell, b) in degrees to spherical angles in the ICRS frame
+    used internally. We rotate to ICRS Cartesian and then extract (phi, cos_theta).
+    """
+    xyz = jnp.asarray(
+        galactic_to_radec_cartesian(direction["ell"], direction["b"]),
+        dtype=jnp.float32,
+    )
+    x, y, z = xyz
+    norm = jnp.sqrt(x * x + y * y + z * z) + 1e-12
+    phi = jnp.arctan2(y, x)
+    phi = jnp.where(phi < 0, phi + 2 * jnp.pi, phi)
+    cos_theta = jnp.clip(z / norm, -1.0, 1.0)
+    return phi, cos_theta
+
+
+def sample_radialmag_vector(name, nval, low, high, max_modulus=None,
+                            direction=None):
     """
     Sample a vector whose magnitude varies at `nval` knots but a direction
     is shared by all knots and sampled isotropically on the sky. The magnitude
@@ -328,12 +350,18 @@ def sample_radialmag_vector(name, nval, low, high, max_modulus=None):
         low_arr = -max_arr
         high_arr = max_arr
 
-    phi = sample(f"{name}_phi", Uniform(0, 2 * jnp.pi))
-    cos_theta = sample(f"{name}_cos_theta", Uniform(0, 1))
+    if direction is not None:
+        phi, cos_theta = _direction_from_galactic(direction)
+    else:
+        phi = sample(f"{name}_phi", Uniform(0, 2 * jnp.pi))
+        cos_theta = sample(f"{name}_cos_theta", Uniform(0, 1))
     sin_theta = jnp.sqrt(1 - cos_theta**2)
 
     with plate(f"{name}_plate", nval):
         mag = sample(f"{name}_mag", Uniform(low_arr, high_arr))
+
+    # Fix the first knot/bucket magnitude to zero.
+    mag = mag.at[0].set(0.0)
 
     rhat = jnp.array([
         sin_theta * jnp.cos(phi),
@@ -438,7 +466,13 @@ def load_priors(config_priors):
         "jeffreys": lambda p: JeffreysPrior(p["low"], p["high"]),
         "maxwell": lambda p: Maxwell(p["scale"]),
         "vector_uniform": lambda p: {"type": "vector_uniform", "low": p["low"], "high": p["high"]},  # noqa
-        "vector_uniform_fixed": lambda p: {"type": "vector_uniform_fixed", "low": p["low"], "high": p["high"],},  # noqa
+        "vector_uniform_fixed": lambda p: {
+            "type": "vector_uniform_fixed",
+            "low": p["low"],
+            "high": p["high"],
+            # Optional fixed direction override (deg) as {"ell": ..., "b": ...}
+            "direction": p.get("direction"),
+        },
         "vector_radial_spline_uniform": lambda p: {"type": "vector_radial_spline_uniform", "nval": len(p["rknot"]), "low": p["low"], "high": p["high"]},  # noqa
         "vector_radial_spline_uniform_fixed_direction": lambda p: {"type": "vector_radial_spline_uniform_fixed_direction", "nval": len(p["rknot"]) if "rknot" in p else None, "low": p["low"], "high": p["high"]},  # noqa
         "vector_components_uniform": lambda p: {"type": "vector_components_uniform", "low": p["low"], "high": p["high"],},  # noqa
@@ -448,6 +482,8 @@ def load_priors(config_priors):
             "nval": len(p["rknot"]),
             "low": p["low"],
             "high": p["high"],
+            # Optional fixed direction override (deg) as {"ell": ..., "b": ...}
+            "direction": p.get("direction"),
             # Optional per-knot max drawn from either `max_modulus` or an
             # equivalent H0 dipole percent.
             "max_modulus": (
@@ -485,7 +521,7 @@ def _rsample(name, dist):
     Samples from `dist` unless it is a delta function or vector directive.
     """
     if isinstance(dist, Delta) and name == "zeropoint_dipole":
-        return jnp.zeros(3)
+        return dist.v
 
     if isinstance(dist, Delta):
         return deterministic(name, dist.v)
@@ -494,7 +530,8 @@ def _rsample(name, dist):
         return sample_vector(name, dist["low"], dist["high"])
 
     if isinstance(dist, dict) and dist.get("type") == "vector_uniform_fixed":
-        return sample_vector_fixed(name, dist["low"], dist["high"])
+        return sample_vector_fixed(
+            name, dist["low"], dist["high"], direction=dist.get("direction"))
 
     if isinstance(dist, dict) and dist.get("type") == "vector_components_uniform":  # noqa
         return sample_vector_components_uniform(
@@ -515,7 +552,8 @@ def _rsample(name, dist):
     if isinstance(dist, dict) and dist.get("type") == "vector_radialmag_uniform":  # noqa
         return sample_radialmag_vector(
             name, dist["nval"], dist["low"], dist["high"],
-            max_modulus=dist.get("max_modulus"))
+            max_modulus=dist.get("max_modulus"),
+            direction=dist.get("direction"))
 
 
     return sample(name, dist)

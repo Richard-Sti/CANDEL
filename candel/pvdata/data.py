@@ -1459,6 +1459,9 @@ def load_clusters(root, zcmb_min=None, zcmb_max=None, los_data_path=None,
     if finite_logY:
         mask &= has_logY
 
+    # # Drop intermediate-redshift clusters outright (hard-coded request)
+    # mask &= (z <= 0.04) | (z >= 0.18)
+
     if remove_noY:
         mask &= has_logY
 
