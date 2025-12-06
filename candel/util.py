@@ -1134,19 +1134,96 @@ def _upsample_map(map_lo, nside_plot, *, nest=False):
 
 
 def plot_Vext_radmag(samples, model, r_eval_size=1000, show_fig=True,
-                     filename=None):
+                     filename=None, data=None):
+    # Lazy import to avoid circular dependency at module import time.
+    from .cosmography import Redshift2Distance
+
     Vmag = samples["Vext_radmag_mag"]
     ell = samples.get("Vext_radmag_ell", None)
     b = samples.get("Vext_radmag_b", None)
     rknot = model.kwargs_Vext["rknot"]
     method = model.kwargs_Vext["method"]
 
+    # Attempt to extract zcmb (and Y, if present) for the distance histogram.
+    zcmb = None
+    Y = None
+    if data is not None:
+        try:
+            data_dict = data.data if hasattr(data, "data") else data
+            zcmb = np.asarray(data_dict.get("zcmb"))
+            Y = data_dict.get("Y", None)
+        except Exception:
+            zcmb = None
+            Y = None
+
     r = jnp.linspace(0.0, np.max(rknot), r_eval_size)
     V = vmap(lambda y: interp1d(r, rknot, y, method=method))(Vmag)
     V025, V16, V50, V84, V975 = np.percentile(V, [2.5, 16, 50, 84, 97.5], axis=0)
 
-    fig, ax = plt.subplots(figsize=(7, 5))
+    # Compute distance range from data (if available) to align the x-axis.
+    r2d = Redshift2Distance()
+    dist_max = None
+    if zcmb is not None:
+        dist = r2d(zcmb, h=1.0)
+        dist_max = float(np.nanmax(dist))
+        # Extend the evaluation grid to the max of data or knots
+        r_max = max(dist_max, float(np.max(rknot)))
+        r = jnp.linspace(0.0, r_max, r_eval_size)
+        V = vmap(lambda y: interp1d(r, rknot, y, method=method, extrap=(y[0], y[-1])))(Vmag)
+        V025, V16, V50, V84, V975 = np.percentile(V, [2.5, 16, 50, 84, 97.5], axis=0)
+    else:
+        dist_max = float(np.max(rknot))
+        r_max = float(np.max(rknot))
 
+    fig, (ax_hist, ax) = plt.subplots(
+        2, 1, figsize=(7, 8), sharex=True,
+        gridspec_kw={"height_ratios": [1.2, 2.0]})
+
+    # Top panel: distance histogram (if data is available).
+    if zcmb is not None and zcmb.size > 0 and dist_max > 0:
+        dist = np.asarray(dist)
+        n_bins = 25
+        bins = np.linspace(0.0, dist_max, n_bins + 1)
+        # If Y is present, split the histogram; otherwise single series.
+        if Y is not None:
+            Y_arr = np.asarray(Y)
+            has_Y = Y_arr > 0
+            no_Y = Y_arr <= 0
+            counts_no_Y, bin_edges = np.histogram(dist[no_Y], bins=bins)
+            counts_has_Y, _ = np.histogram(dist[has_Y], bins=bin_edges)
+            bin_centers = 0.5 * (bin_edges[1:] + bin_edges[:-1])
+            width = bin_edges[1] - bin_edges[0]
+            ax_hist.bar(bin_centers, counts_has_Y, width=width, alpha=0.7,
+                        label=f'With $Y_{{SZ}}$ (N={np.sum(has_Y)})',
+                        color="C0", edgecolor='black', linewidth=0.5)
+            ax_hist.bar(bin_centers, counts_no_Y, width=width, alpha=0.7,
+                        bottom=counts_has_Y,
+                        label=f'Without $Y_{{SZ}}$ (N={np.sum(no_Y)})',
+                        color="C1", edgecolor='black', linewidth=0.5)
+            ax_hist.legend(fontsize=9, loc="upper right")
+        else:
+            ax_hist.hist(dist, bins=bins, color="C0", alpha=0.7, edgecolor='black')
+        ax_hist.set_ylabel("Number of sources")
+        ax_hist.grid(alpha=0.3)
+        ax_hist.set_xlim(0.0, r_max)
+    else:
+        ax_hist.text(0.5, 0.5, "No redshift data provided", ha="center",
+                     va="center", transform=ax_hist.transAxes)
+        ax_hist.set_ylabel("Number of sources")
+
+    # Add secondary x-axis (redshift) on the top histogram.
+    def z_to_dist(z):
+        return r2d(z, h=1.0)
+
+    def dist_to_z(d):
+        z_grid = np.linspace(1e-5, 1.0, 1000)
+        d_grid = z_to_dist(z_grid)
+        return np.interp(d, d_grid, z_grid)
+
+    ax_top = ax_hist.secondary_xaxis('top', functions=(dist_to_z, z_to_dist))
+    ax_top.set_xlabel(r"Redshift $z_\mathrm{CMB}$")
+
+    # Bottom panel: Vext radial magnitude profile.
     ax.fill_between(r, V025, V975, alpha=0.2, color="C0")
     ax.fill_between(r, V16, V84, alpha=0.4, color="C0")
     ax.plot(r, V50, color="C0")
@@ -1251,6 +1328,10 @@ def plot_Vext_radmag(samples, model, r_eval_size=1000, show_fig=True,
                         color="black", alpha=0.08, label="Prior support")
         ax.plot(rknot, prior_lo, linestyle="--", color="black", alpha=0.5)
         ax.plot(rknot, prior_hi, linestyle="--", color="black", alpha=0.5)
+
+    # Place the main legend at lower right if present.
+    if ax.get_legend_handles_labels()[0]:
+        ax.legend(loc="lower right")
 
     fig.tight_layout()
 

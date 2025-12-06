@@ -240,7 +240,8 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
         elif model.which_Vext == "radial_magnitude":
             fname_plot = splitext(fname_out)[0] + "_profile_Vext_radmag.png"
             plot_Vext_radmag(
-                samples, model, show_fig=False, filename=fname_plot,)
+                samples, model, show_fig=False, filename=fname_plot,
+                data=model_kwargs.get("data", None))
 
         if model.which_Vext == "per_pix":
             npix = samples["Vext_pix"].shape[1]
