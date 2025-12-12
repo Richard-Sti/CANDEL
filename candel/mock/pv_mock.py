@@ -168,18 +168,6 @@ def gen_Clusters_mock(nsamples, r_grid, Vext_mag, Vext_ell, Vext_b, sigma_v,
     Vext = Vext_mag * galactic_to_radec_cartesian(Vext_ell, Vext_b)
     Vext_rad = np.sum(Vext[None, :] * rhat, axis=1)
 
-
-    def _delta_a_to_frac(delta_a):
-        delta_a = np.asarray(delta_a)
-        return np.power(10.0, 0.5 * delta_a) - 1.0
-    
-    if zeropoint_dipole_mag is not None and rescale_carrick_fields:
-        dH_over_H= _delta_a_to_frac(zeropoint_dipole_mag)
-        dH = dH_over_H * 100 * galactic_to_radec_cartesian(zeropoint_dipole_ell, zeropoint_dipole_b)
-        Hnew = 100 + np.sum(dH[None, :] * rhat, axis=1)
-
-    print('new Hubble constants',Hnew)
-
     linear_dir = None
     if linear_Vext_slope is not None:
         ell_dir = linear_Vext_ell if linear_Vext_ell is not None else Vext_ell
@@ -192,6 +180,17 @@ def gen_Clusters_mock(nsamples, r_grid, Vext_mag, Vext_ell, Vext_b, sigma_v,
     else:
         los_density = np.ones((nsamples, len(r_grid)))
         los_velocity = np.zeros_like(los_density)
+
+    def _delta_a_to_frac(delta_a):
+        delta_a = np.asarray(delta_a)
+        return np.power(10.0, 0.5 * delta_a) - 1.0
+    
+    if zeropoint_dipole_mag is not None and rescale_carrick_fields:
+        dH_over_H= _delta_a_to_frac(zeropoint_dipole_mag)
+        dH = dH_over_H * 100 * galactic_to_radec_cartesian(zeropoint_dipole_ell, zeropoint_dipole_b)
+        Hnew = 100 + np.sum(dH[None, :] * rhat, axis=1)
+
+    print('new Hubble constants',Hnew)
 
     # Sample distances
     r = np.full(nsamples, np.nan)

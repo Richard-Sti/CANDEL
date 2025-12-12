@@ -103,6 +103,12 @@ def logpdf_mvn2_broadcast(x1, x2, m1, m2, v11, v22, v12):
     quad = inv11*dx1*dx1 + 2.0*inv12*dx1*dx2 + inv22*dx2*dx2
     return -0.5*(2.0*jnp.log(two_pi) + jnp.log(det) + quad)
 
+
+def _delta_a_to_frac(delta_a):
+    """Convert a zeropoint shift ΔA to fractional H change."""
+    delta_a = jnp.asarray(delta_a)
+    return jnp.power(10.0, 0.5 * delta_a) - 1.0
+
 ###############################################################################
 #                                Priors                                       #
 ###############################################################################
@@ -1066,11 +1072,11 @@ class TFRModel(BaseModel):
 
             if data.has_precomputed_los:
                 # Reconstruction LOS velocity `(n_field, n_gal, n_step)`
-                Vrad = beta * data["los_velocity_r_grid"]
+                Vrad = beta * los_velocity_r_grid
                 # Add inhomogeneous Malmquist bias and normalize the r prior
                 lp_dist += lp_galaxy_bias(
-                    data["los_delta_r_grid"],
-                    data["los_log_density_r_grid"],
+                    los_delta_r_grid,
+                    los_log_density_r_grid,
                     bias_params, self.galaxy_bias
                     )
                 lp_dist -= ln_simpson(
@@ -1476,6 +1482,8 @@ class ClustersModel(BaseModel):
         self.which_relation = self.default_relation
         self.apply_Ez_correction = bool(
             get_nested(self.config, "io/apply_Ez_correction", True))
+        self.stretch_los_with_zeropoint = bool(
+            get_nested(self.config, "pv_model/stretch_los_with_zeropoint", False))
 
         self.distance2logda = Distance2LogAngDist(Om0=self.Om, zmax_interp=1.0)
         self.distance2logdl = Distance2LogLumDist(Om0=self.Om, zmax_interp=1.0)
@@ -1597,6 +1605,7 @@ class ClustersModel(BaseModel):
         A_LT = B_LT = None
         A_YT = B_YT = None
         sigma_LT = sigma_YT = None
+        A_dipole = None
 
         if use_LT_branch:
             A_LT = rsample("A_LT", self.priors["A_LT"], shared_params)
@@ -1778,6 +1787,28 @@ class ClustersModel(BaseModel):
             r_grid = data["r_grid"] / h
             logdl_grid = self.distance2logdl(r_grid)
             logda_grid = self.distance2logda(r_grid)
+
+            if data.has_precomputed_los:
+                los_delta_r_grid = data["los_delta_r_grid"]
+                los_velocity_r_grid = data["los_velocity_r_grid"]
+                los_log_density_r_grid = data["los_log_density_r_grid"]
+
+                if self.stretch_los_with_zeropoint and A_dipole is not None:
+                    H_base = 100.0
+                    A_norm = jnp.linalg.norm(A_dipole)
+                    cos_theta = jnp.sum(
+                        A_dipole * data["rhat"], axis=1) / jnp.maximum(A_norm, 1e-30)
+                    delta_frac = _delta_a_to_frac(A_norm)
+                    H_new = H_base * (1.0 + delta_frac * cos_theta)
+                    r_stretched = r_grid[None, :] * H_base / H_new[:, None]
+
+                    def _interp_field(f_interp):
+                        vals = vmap(lambda r_col: f_interp(r_col), in_axes=1)(r_stretched)
+                        return jnp.transpose(vals, (1, 2, 0))
+
+                    los_delta_r_grid = _interp_field(data.f_los_delta)
+                    los_velocity_r_grid = _interp_field(data.f_los_velocity)
+                    los_log_density_r_grid = _interp_field(data.f_los_log_density)
 
             # Homogeneous Malmqusit distance prior, `(n_field, n_gal, n_rbin)`
             lp_dist = log_prior_r_empirical(
