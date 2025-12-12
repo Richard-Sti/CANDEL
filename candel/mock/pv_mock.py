@@ -35,8 +35,9 @@ def gen_TFR_mock(nsamples, r_grid, Vext_mag, Vext_ell, Vext_b, sigma_v, beta,
                  a_TFR, b_TFR, c_TFR, sigma_int, zeropoint_dipole_mag,
                  zeropoint_dipole_ell, zeropoint_dipole_b, h, e_mag,
                  eta_prior_mean, eta_prior_std, e_eta, b_min, zcmb_max,
-                 R, p, n, field_loader, r2distmod, r2z, Om=0.3, seed=42,
-                 verbose=True):
+                 R, p, n, field_loader, r2distmod, r2z,
+                 linear_Vext_slope=None, linear_Vext_ell=None,
+                 linear_Vext_b=None, Om=0.3, seed=42, verbose=True):
     """
     Generate a mock TFR survey with distances sampled from an empirical
     distribution, without any further selection effects.
@@ -58,6 +59,12 @@ def gen_TFR_mock(nsamples, r_grid, Vext_mag, Vext_ell, Vext_b, sigma_v, beta,
     Vext = Vext_mag * galactic_to_radec_cartesian(Vext_ell, Vext_b)
     Vext_rad = np.sum(Vext[None, :] * rhat, axis=1)
 
+    linear_dir = None
+    if linear_Vext_slope is not None:
+        ell_dir = linear_Vext_ell if linear_Vext_ell is not None else Vext_ell
+        b_dir = linear_Vext_b if linear_Vext_b is not None else Vext_b
+        linear_dir = galactic_to_radec_cartesian(ell_dir, b_dir)
+
     if field_loader is not None:
         los_density, los_velocity = interpolate_los_density_velocity(
             field_loader, r_grid, RA, dec, verbose=False)
@@ -72,6 +79,8 @@ def gen_TFR_mock(nsamples, r_grid, Vext_mag, Vext_ell, Vext_b, sigma_v, beta,
         Vpec[i] = Vext_rad[i]
         r[i] = sample_distance(r_grid, los_density[i], b1, R, p, n, gen)
         Vpec[i] += beta * np.interp(r[i], r_grid, los_velocity[i])
+        if linear_dir is not None:
+            Vpec[i] += linear_Vext_slope * r[i] * np.dot(linear_dir, rhat[i])
 
     eta = gen.normal(eta_prior_mean, eta_prior_std, size=nsamples)
     eta_obs = gen.normal(eta, e_eta, size=nsamples)
@@ -126,7 +135,8 @@ def gen_Clusters_mock(nsamples, r_grid, Vext_mag, Vext_ell, Vext_b, sigma_v,
                       zeropoint_dipole_mag, zeropoint_dipole_ell, zeropoint_dipole_b, h,
                       e_logT, e_logY, e_logF, logT_prior_mean, logT_prior_std,
                       b_min, zcmb_max, R_dist_emp, p_dist_emp, n_dist_emp, field_loader, r2distmod, r2z,
-                      Om=0.3, seed=42, verbose=True, **kwargs):
+                      linear_Vext_slope=None, linear_Vext_ell=None,
+                      linear_Vext_b=None, Om=0.3, seed=42, verbose=True, **kwargs):
     """
     Generate a mock cluster survey with distances sampled from an empirical
     distribution, using Y-T and L-T scaling relations with uncorrelated scatter.
@@ -156,6 +166,12 @@ def gen_Clusters_mock(nsamples, r_grid, Vext_mag, Vext_ell, Vext_b, sigma_v,
     Vext = Vext_mag * galactic_to_radec_cartesian(Vext_ell, Vext_b)
     Vext_rad = np.sum(Vext[None, :] * rhat, axis=1)
 
+    linear_dir = None
+    if linear_Vext_slope is not None:
+        ell_dir = linear_Vext_ell if linear_Vext_ell is not None else Vext_ell
+        b_dir = linear_Vext_b if linear_Vext_b is not None else Vext_b
+        linear_dir = galactic_to_radec_cartesian(ell_dir, b_dir)
+
     if field_loader is not None:
         los_density, los_velocity = interpolate_los_density_velocity(
             field_loader, r_grid, RA, dec, verbose=False)
@@ -171,6 +187,8 @@ def gen_Clusters_mock(nsamples, r_grid, Vext_mag, Vext_ell, Vext_b, sigma_v,
         r[i] = sample_distance(r_grid, los_density[i], b1, 
                                R_dist_emp, p_dist_emp, n_dist_emp, gen)
         Vpec[i] += beta * np.interp(r[i], r_grid, los_velocity[i])
+        if linear_dir is not None:
+            Vpec[i] += linear_Vext_slope * r[i] * np.dot(linear_dir, rhat[i])
 
     # Sample logT with intrinsic scatter
     logT_true = gen.normal(logT_prior_mean, logT_prior_std, size=nsamples)
@@ -187,9 +205,9 @@ def gen_Clusters_mock(nsamples, r_grid, Vext_mag, Vext_ell, Vext_b, sigma_v,
     
     # Apply zeropoint dipole if present (same for both Y and L)
     if zeropoint_dipole_mag is not None:
-        dlogY = zeropoint_dipole_mag * galactic_to_radec_cartesian(
+        dZP_vec = zeropoint_dipole_mag * galactic_to_radec_cartesian(
             zeropoint_dipole_ell, zeropoint_dipole_b)
-        dipole_term = np.sum(dlogY[None, :] * rhat, axis=1)
+        dipole_term = np.sum(dZP_vec[None, :] * rhat, axis=1)
         logY_intrinsic += dipole_term
         logL_intrinsic += dipole_term
     
