@@ -135,7 +135,7 @@ def gen_Clusters_mock(nsamples, r_grid, Vext_mag, Vext_ell, Vext_b, sigma_v,
                       zeropoint_dipole_mag, zeropoint_dipole_ell, zeropoint_dipole_b, h,
                       e_logT, e_logY, e_logF, logT_prior_mean, logT_prior_std,
                       b_min, zcmb_max, R_dist_emp, p_dist_emp, n_dist_emp, field_loader, r2distmod, r2z,
-                      linear_Vext_slope=None, linear_Vext_ell=None,
+                      linear_Vext_slope=None, linear_Vext_ell=None, rescale_carrick_fields=False,
                       linear_Vext_b=None, Om=0.3, seed=42, verbose=True, **kwargs):
     """
     Generate a mock cluster survey with distances sampled from an empirical
@@ -151,6 +151,8 @@ def gen_Clusters_mock(nsamples, r_grid, Vext_mag, Vext_ell, Vext_b, sigma_v,
     """
     gen = np.random.default_rng(seed)
 
+
+
     # Sample the sky-coordinates of the sample.
     ell = gen.uniform(0, 360, size=nsamples)
     if b_min is None:
@@ -165,6 +167,18 @@ def gen_Clusters_mock(nsamples, r_grid, Vext_mag, Vext_ell, Vext_b, sigma_v,
 
     Vext = Vext_mag * galactic_to_radec_cartesian(Vext_ell, Vext_b)
     Vext_rad = np.sum(Vext[None, :] * rhat, axis=1)
+
+
+    def _delta_a_to_frac(delta_a):
+        delta_a = np.asarray(delta_a)
+        return np.power(10.0, 0.5 * delta_a) - 1.0
+    
+    if zeropoint_dipole_mag is not None and rescale_carrick_fields:
+        dH_over_H= _delta_a_to_frac(zeropoint_dipole_mag)
+        dH = dH_over_H * 100 * galactic_to_radec_cartesian(zeropoint_dipole_ell, zeropoint_dipole_b)
+        Hnew = 100 + np.sum(dH[None, :] * rhat, axis=1)
+
+    print('new Hubble constants',Hnew)
 
     linear_dir = None
     if linear_Vext_slope is not None:
@@ -184,9 +198,13 @@ def gen_Clusters_mock(nsamples, r_grid, Vext_mag, Vext_ell, Vext_b, sigma_v,
     Vpec = np.full(nsamples, np.nan)
     for i in range(nsamples):
         Vpec[i] = Vext_rad[i]
-        r[i] = sample_distance(r_grid, los_density[i], b1, 
+
+        r_stretched = r_grid.copy() * 100 / Hnew[i] if zeropoint_dipole_mag is not None and rescale_carrick_fields else r_grid
+
+        print('using stretched r grid',r_stretched)
+        r[i] = sample_distance(r_stretched, los_density[i], b1, 
                                R_dist_emp, p_dist_emp, n_dist_emp, gen)
-        Vpec[i] += beta * np.interp(r[i], r_grid, los_velocity[i])
+        Vpec[i] += beta * np.interp(r[i], r_stretched, los_velocity[i])
         if linear_dir is not None:
             Vpec[i] += linear_Vext_slope * r[i] * np.dot(linear_dir, rhat[i])
 
