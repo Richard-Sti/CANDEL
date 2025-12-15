@@ -105,6 +105,25 @@ class BaseCCHPModel(ABC):
             raise ValueError(
                 "`use_reconstruction = True` but no host LOS data provided.")
 
+        # Set up radial range for volume prior normalization
+        r_limits_malmquist = get_nested(
+            config, "model/r_limits_malmquist", [0.01, 350])
+        num_points_malmquist = get_nested(
+            config, "model/num_points_malmquist", 251)
+        r_range = jnp.linspace(
+            r_limits_malmquist[0], r_limits_malmquist[1],
+            num_points_malmquist)
+
+        fprint(f"setting radial range from {r_limits_malmquist[0]} to "
+               f"{r_limits_malmquist[1]} Mpc with {num_points_malmquist} "
+               "points for the CCHP host galaxies.")
+        self.r_host_range = r_range
+        self.Rmax = jnp.max(self.r_host_range)
+
+    def log_prior_distance(self, r):
+        """Log prior on physical distance (volume prior, r^2)."""
+        return 2.0 * jnp.log(r) - 3.0 * jnp.log(self.Rmax) + jnp.log(3.0)
+
     def replace_priors(self, config):
         """Replace priors on parameters that are not used in the model."""
         if not get_nested(config, "model/use_reconstruction", False):
@@ -187,27 +206,34 @@ class CCHPModel(BaseCCHPModel):
         # Convert to comoving distances in Mpc
         r = self.distmod2distance(mu_host, h=h)
 
-        # Volume prior via Jacobian term in distance modulus space.
-        lp_host_dist = self.log_grad_distmod2comoving_distance(mu_host, h=h)
+        # Volume prior: r^2 prior + Jacobian
+        lp_host_dist = self.log_prior_distance(r)
+        lp_host_dist += self.log_grad_distmod2comoving_distance(mu_host, h=h)
+
         if self.use_reconstruction:
             rh_host = r * h
+
+            # Add galaxy bias at host positions
             los_delta_host = self.f_host_los_delta(rh_host)
             lp_host_dist += lp_galaxy_bias(
                 los_delta_host, jnp.log(1.0 + los_delta_host),
                 bias_params, self.which_bias)
 
-            # Normalize the biased prior over the LOS grid (fields x hosts).
-            r_grid_h = self.f_host_los_delta.los_r
-            r_grid = r_grid_h / h
-            mu_grid = self.distance2distmod_scalar(r_grid, h=h)
-            lp_grid = self.log_grad_distmod2comoving_distance(mu_grid, h=h)
-            los_delta_grid = self.f_host_los_delta.interp_many_steps_per_galaxy(
-                r_grid_h)
+            # Volume prior for the grid (no Jacobian needed since integrating
+            # over r)
+            lp_grid = self.log_prior_distance(self.r_host_range)[None, None, :]
+
+            # Add galaxy bias to the grid
+            los_delta_grid = self.f_host_los_delta.interp_many_steps_per_galaxy(  # noqa
+                self.r_host_range * h)
+
             lp_grid += lp_galaxy_bias(
                 los_delta_grid, jnp.log(1.0 + los_delta_grid),
                 bias_params, self.which_bias)
+
+            # Normalize via Simpson integration
             lp_grid_norm = ln_simpson(
-                lp_grid, x=r_grid[None, None, :], axis=-1)
+                lp_grid, x=self.r_host_range[None, None, :], axis=-1)
             lp_host_dist = lp_host_dist - lp_grid_norm
 
         factor("lp_host_dist", lp_host_dist)
