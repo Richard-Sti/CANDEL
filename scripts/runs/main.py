@@ -80,7 +80,7 @@ if __name__ == "__main__":
         fprint("selected `CH0` model.")
         data = candel.pvdata.load_SH0ES_from_config(args.config, )
         model = candel.model.SH0ESModel(args.config, data)
-        candel.run_SH0ES_inference(model, )
+        candel.run_H0_inference(model, )
     else:
         data = candel.pvdata.load_PV_dataframes(args.config)
 

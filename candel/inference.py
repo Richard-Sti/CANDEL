@@ -176,11 +176,11 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
     return samples, log_density
 
 
-def run_SH0ES_inference(model, model_kwargs={}, print_summary=True,
-                        save_samples=True):
+def run_H0_inference(model, model_kwargs={}, print_summary=True,
+                     save_samples=True):
     """
-    Run MCMC inference on the SH0ES model, post-process the samples,
-    plot the corner plot and optionally save the samples to an HDF5 file.
+    Run MCMC inference on an H0 model, post-process the samples, plot the
+    corner plot and optionally save the samples to an HDF5 file.
     """
     devices = jax.devices()
     device_str = ", ".join(f"{d.device_kind}({d.platform})" for d in devices)
