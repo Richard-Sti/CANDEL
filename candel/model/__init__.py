@@ -28,6 +28,7 @@ from .model import (                                                            
     smoothclip_nr,                                                              # noqa
     )
 from .model_SH0ES import SH0ESModel                                             # noqa
+from .model_CCHP import CCHPModel                                               # noqa
 from .interp import LOSInterpolator                                             # noqa
 from .simpson import ln_simpson                                                 # noqa
 
