@@ -16,10 +16,9 @@
 Minimal NumPyro model for CCHP TRGB distance calibrators to infer H0.
 """
 from abc import ABC
-import numpy as np
 
 import jax.numpy as jnp
-from jax.scipy.special import logsumexp
+import numpy as np
 from numpyro import factor, plate, sample
 from numpyro.distributions import Normal, Uniform
 
@@ -31,8 +30,32 @@ from ..util import (fprint, get_nested, load_config, radec_to_cartesian,
 from .interp import LOSInterpolator
 from .model import (load_priors, lp_galaxy_bias, predict_cz, rsample,
                     sample_galaxy_bias)
-from .model_SH0ES import logmeanexp, log_prob_integrand_sel
+from .model_SH0ES import log_prob_integrand_sel, logmeanexp
 from .simpson import ln_simpson
+
+
+def logmeanexp_by_group(logp, idx, n_groups=None):
+    """
+    Compute per-group log-mean-exp given per-item logp and integer group
+    indices.
+    """
+    if n_groups is None:
+        n_groups = int(jnp.max(idx)) + 1
+    counts = jnp.bincount(idx, length=n_groups)
+
+    # Per-group baselines for numerical stability
+    baseline = jnp.full(n_groups, -jnp.inf)
+    baseline = baseline.at[idx].max(logp)
+
+    # Broadcast baseline to per-item
+    baseline_per_item = baseline[idx]
+    exp_shifted = jnp.exp(logp - baseline_per_item)
+
+    sum_exp = jnp.zeros(n_groups, dtype=logp.dtype)
+    sum_exp = sum_exp.at[idx].add(exp_shifted)
+
+    logsum = jnp.log(sum_exp) + baseline
+    return logsum - jnp.log(counts)
 
 
 class BaseCCHPModel(ABC):
@@ -180,6 +203,8 @@ class BaseCCHPModel(ABC):
             replace_prior_with_delta(config, "beta", 0.0, verbose=False)
         if get_nested(config, "model/which_selection", None) != "SN_magnitude":
             replace_prior_with_delta(config, "M_SN", -19.25, verbose=False)
+        if get_nested(config, "model/galaxy_bias", "linear") != "linear":
+            replace_prior_with_delta(config, "b1", 1.0, verbose=False)
         return config
 
     def set_data(self, data):
@@ -283,10 +308,12 @@ class BaseCCHPModel(ABC):
 
 class CCHPModel(BaseCCHPModel):
     """
-    Forward model for TRGB distance moduli versus cz to infer H0.
+    Forward model the TRGB magnitudes and host redshifts to infer the Hubble
+    constant.
 
-    Assumes inputs from ``load_CCHP_from_config``:
-    mag_TRGB (apparent, already mu + 4.336), e_mag_TRGB, cz_cmb, e_czcmb.
+    Duplicate objects per galaxy are handled by sampling one distance per
+    unique host and averaging per-galaxy likelihoods within groups via
+    log-mean-exp.
     """
 
     def __init__(self, config_path, data):
@@ -310,16 +337,17 @@ class CCHPModel(BaseCCHPModel):
 
         # Convert to comoving distances in Mpc (grouped hosts)
         r_group = self.distmod2distance(mu_host_group, h=h)
+        z_cosmo_group = self.distance2redshift(r_group, h=h)
 
         # Propagate to per-galaxy distance moduli and distances.
         mu_host = mu_host_group[self.group_index]
         r = r_group[self.group_index]
+        z_cosmo = z_cosmo_group[self.group_index]
 
-        # Volume prior: r^2 prior + Jacobian (group-level)
+        # Volume prior: r^2 prior + Jacobian
         lp_host_dist = self.log_prior_distance(r)
         lp_host_dist += self.log_grad_distmod2comoving_distance(
             mu_host, h=h)
-        lp_host_dist_field_host = None
 
         logp_tot = jnp.zeros((1, self.num_hosts))
 
@@ -349,7 +377,7 @@ class CCHPModel(BaseCCHPModel):
                 lp_grid, x=self.r_host_range[None, None, :], axis=-1)
 
             # Broadcast group prior to hosts and fields
-            logp_tot += lp_host_dist[None, :] - lp_grid_norm
+            logp_tot += lp_host_dist - lp_grid_norm
 
         sigma_tot_mag = jnp.sqrt(self.e_mag_TRGB**2 + sigma_int**2)
         sigma_tot_cz = jnp.sqrt(self.e_czcmb**2 + sigma_v**2)
@@ -360,9 +388,6 @@ class CCHPModel(BaseCCHPModel):
 
         # Project Vext along LOS
         Vext_rad_host = jnp.sum(Vext[None, :] * self.rhat_host, axis=1)
-
-        # Convert distance to cosmological redshift
-        z_cosmo = self.distance2redshift(r, h=h)
 
         # Get the predicted redshifts, (n_field, n_gal)
         if self.use_reconstruction:
@@ -389,26 +414,18 @@ class CCHPModel(BaseCCHPModel):
             if self.use_reconstruction:
                 los_delta_grid = self.f_host_los_delta.interp_many_steps_per_galaxy(  # noqa
                     self.r_host_range * h)
-                lp_r_grid = lp_r_grid + lp_galaxy_bias(
+                lp_r_grid += lp_galaxy_bias(
                     los_delta_grid, jnp.log1p(los_delta_grid),
                     bias_params, self.which_bias)
 
                 Vpec_grid = beta * self.f_host_los_velocity.interp_many_steps_per_galaxy(  # noqa
                     self.r_host_range * h)
                 Vpec_grid = Vpec_grid + Vext_rad_host[None, :, None]
-                log_S = self.log_S_cz(lp_r_grid, Vpec_grid, H0, sigma_v)
-                lp_host_dist_field_host = lp_host_dist_field_host - log_S
             else:
                 Vpec_grid = Vext_rad_host[None, :, None]
-                log_S = self.log_S_cz(lp_r_grid, Vpec_grid, H0, sigma_v)
-                log_S_group = (
-                    logsumexp(
-                        log_S[0][None, :],
-                        axis=1,
-                        where=self.group_mask) -
-                    jnp.log(self.group_counts)
-                )
-                logp_tot = logp_tot - jnp.sum(log_S_group)
+
+            # Shape is (nfields, ngal)
+            logp_tot -= self.log_S_cz(lp_r_grid, Vpec_grid, H0, sigma_v)
         elif self.which_selection == "SN_magnitude":
             lp_r_grid = self.log_prior_distance(
                 self.r_host_range)[None, None, :]
@@ -416,22 +433,13 @@ class CCHPModel(BaseCCHPModel):
             if self.use_reconstruction:
                 los_delta_grid = self.f_host_los_delta.interp_many_steps_per_galaxy(  # noqa
                     self.r_host_range * h)
-                lp_r_grid = lp_r_grid + lp_galaxy_bias(
+                lp_r_grid += lp_galaxy_bias(
                     los_delta_grid, jnp.log1p(los_delta_grid),
                     bias_params, self.which_bias)
 
+            # Shape is (nfields, ngal)
             log_S = self.log_S_SN_mag(lp_r_grid, M_SN, H0)
-            if self.use_reconstruction:
-                lp_host_dist_field_host = lp_host_dist_field_host - log_S
-            else:
-                log_S_group = (
-                    logsumexp(
-                        log_S[0][None, :],
-                        axis=1,
-                        where=self.group_mask) -
-                    jnp.log(self.group_counts)
-                )
-                logp_tot = logp_tot - jnp.sum(log_S_group)
+            logp_tot -= log_S
         else:
             raise ValueError(
                 f"Unknown selection '{self.which_selection}'. "
@@ -441,18 +449,13 @@ class CCHPModel(BaseCCHPModel):
         logp_tot += Normal(
             cz_th_all, sigma_tot_cz).log_prob(self.cz_cmb)
 
-        # logp_group_field = logsumexp(
-        #     logp_field[None, :, :],
-        #     axis=2,
-        #     where=self.group_mask[:, None, :])  # (groups, fields)
-        # logp_group_field = logp_group_field - jnp.log(
-        #     self.group_counts)[:, None]
-        # logp = logsumexp(logp_group_field, axis=1) - jnp.log(
-        #     self.num_fields)  # (groups,)
-
         # Average over field realisations
         logp_tot = logmeanexp(logp_tot, axis=0)
-        factor("lp_tot", jnp.sum(logp_tot))
+
+        # Average over multiple per-galaxy entries (same galaxy observed
+        # multiple times)
+        logp_tot = logmeanexp_by_group(
+            logp_tot, self.group_index, n_groups=self.num_groups)
 
         # Anchor TRGB magnitudes
         logp_tot = logp_tot + Normal(
