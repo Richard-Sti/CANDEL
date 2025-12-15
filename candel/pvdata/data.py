@@ -1311,8 +1311,8 @@ def load_CCHP_from_config(config_path):
         filling_values=np.nan,
     )
 
-    # Apparent TRGB magnitude using M = -4.336 mag (so m = mu + 4.336).
-    mag_trgb = data_tbl["mu_TRGB_CCHP"] + 4.336
+    # Check here about the wavelength!
+    mag_trgb = data_tbl["mu_TRGB_CCHP"] - 4.049
 
     # Fixed anchor values (LMC and NGC 4258) for convenience.
     # LMC (Pietrzynski et al. 2019): https://arxiv.org/abs/1903.08096
@@ -1322,10 +1322,11 @@ def load_CCHP_from_config(config_path):
     mag_LMC_TRGB = 14.456
     e_mag_LMC_TRGB = 0.018
 
-    # NGC 4258 distance (Reid et al. 2019): https://arxiv.org/abs/1901.05095
+    # NGC 4258 distance (Reid et al. 2019)
     mu_N4258_anchor = 29.398
     e_mu_N4258_anchor = 0.032
     # Jang & Lee 2020 TRGB calibration: https://arxiv.org/abs/2008.04181
+    # This is at F814W
     mag_N4258_TRGB = 25.347
     e_mag_N4258_TRGB = 0.0443
 
@@ -1364,6 +1365,9 @@ def load_CCHP_from_config(config_path):
         "e_mu_N4258_anchor": e_mu_N4258_anchor,
         "mag_N4258_TRGB": mag_N4258_TRGB,
         "e_mag_N4258_TRGB": e_mag_N4258_TRGB,
+        # Pass through anchor limits for convenience.
+        "distmod_limits_LMC": get_nested(config, "model/distmod_limits_LMC"),
+        "distmod_limits_N4258": get_nested(config, "model/distmod_limits_N4258"),  # noqa
     }
 
     # Optionally load LOS data (host and/or random) if requested in config.
