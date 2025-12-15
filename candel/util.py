@@ -219,6 +219,41 @@ def galactic_to_radec_cartesian(ell, b):
     return xyz[0] if np.isscalar(ell) and np.isscalar(b) else xyz
 
 
+def query_ned_cmb_redshift_radec(name):
+    """
+    Query NED for heliocentric redshift and ICRS coordinates and return the
+    CMB-frame velocity (cz_CMB) derived from the NED redshift.
+    """
+    try:
+        from astroquery.exceptions import RemoteServiceError
+        from astroquery.ned import Ned
+    except ImportError as exc:
+        raise ImportError("astroquery is required for querying NED.") from exc
+
+    try:
+        tab = Ned.query_object(name)
+    except (RemoteServiceError, IndexError) as exc:
+        raise RuntimeError(
+            f"NED did not return a valid entry for `{name}`: {exc}"
+        ) from exc
+
+    if len(tab) == 0:
+        raise RuntimeError(f"NED did not return any entry for `{name}`.")
+    required = {"Redshift", "RA", "DEC"}
+    if not required.issubset(tab.colnames):
+        raise RuntimeError(
+            f"Missing required columns in NED output: {tab.colnames}")
+
+    z_helio = tab["Redshift"][0]
+    ra_deg = tab["RA"][0]
+    dec_deg = tab["DEC"][0]
+
+    z_cmb = heliocentric_to_cmb(z_helio, ra_deg, dec_deg)
+    cz_cmb = z_cmb * SPEED_OF_LIGHT
+
+    return cz_cmb, ra_deg, dec_deg
+
+
 def supergalactic_to_radec(sgl, sgb):
     """
     Convert supergalactic coordinates (sgl, sgb) to equatorial
