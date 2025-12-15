@@ -23,7 +23,6 @@ from pathlib import Path
 from candel import fprint, load_config, get_nested
 
 
-
 def exists(path):
     return Path(path).is_file()
 
