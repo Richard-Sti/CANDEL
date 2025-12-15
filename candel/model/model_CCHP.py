@@ -27,8 +27,10 @@ from ..cosmography import (Distance2Distmod, Distance2Redshift,
 from ..util import (fprint, get_nested, load_config, radec_to_cartesian,
                     replace_prior_with_delta)
 from .interp import LOSInterpolator
-from .model import load_priors, predict_cz, rsample
+from .model import (load_priors, lp_galaxy_bias, predict_cz, rsample,
+                    sample_galaxy_bias)
 from .model_SH0ES import logmeanexp
+from .simpson import ln_simpson
 
 
 class BaseCCHPModel(ABC):
@@ -74,14 +76,25 @@ class BaseCCHPModel(ABC):
         self.num_fields = 1
         self.use_reconstruction = get_nested(
             config, "model/use_reconstruction", False)
+        self.which_bias = get_nested(config, "model/galaxy_bias", "linear")
         if self.use_reconstruction:
             recon_name = get_nested(config, "io/which_host_los", "unspecified")
             fprint(f"Using reconstruction: {recon_name}")
+        fprint(f"galaxy_bias set to {self.which_bias}")
 
         r0_decay_scale = get_nested(config, "io/los_r0_decay_scale", 5.0)
+        fprint(f"los_r0_decay_scale set to {r0_decay_scale}")
         if "host_los_velocity" in data and "host_los_r" in data:
             self.has_host_los = True
             self.num_fields = data["host_los_velocity"].shape[0]
+            if "host_los_density" in data:
+                los_delta = jnp.asarray(data["host_los_density"]) - 1.0
+                self.f_host_los_delta = LOSInterpolator(
+                    data["host_los_r"],
+                    los_delta,
+                    r0_decay_scale=r0_decay_scale,
+                    extrap_constant=0.0,
+                )
             self.f_host_los_velocity = LOSInterpolator(
                 data["host_los_r"],
                 jnp.asarray(data["host_los_velocity"]),
@@ -163,19 +176,40 @@ class CCHPModel(BaseCCHPModel):
                             shared_params)
         sigma_v = rsample("sigma_v", self.priors["sigma_v"], shared_params)
         beta = rsample("beta", self.priors["beta"], shared_params)
-        if not self.use_reconstruction:
-            beta = 0.0
         Vext = rsample("Vext", self.priors["Vext"], shared_params)
 
         h = H0 / 100.0
         # Sample distance moduli uniformly
         mu_host, mu_LMC, mu_N4258 = self.sample_host_distmod()
+        bias_params = sample_galaxy_bias(
+            self.priors, self.which_bias, beta=beta, Om=self.Om)
 
         # Convert to comoving distances in Mpc
         r = self.distmod2distance(mu_host, h=h)
 
         # Volume prior via Jacobian term in distance modulus space.
         lp_host_dist = self.log_grad_distmod2comoving_distance(mu_host, h=h)
+        if self.use_reconstruction:
+            rh_host = r * h
+            los_delta_host = self.f_host_los_delta(rh_host)
+            lp_host_dist += lp_galaxy_bias(
+                los_delta_host, jnp.log(1.0 + los_delta_host),
+                bias_params, self.which_bias)
+
+            # Normalize the biased prior over the LOS grid (fields x hosts).
+            r_grid_h = self.f_host_los_delta.los_r
+            r_grid = r_grid_h / h
+            mu_grid = self.distance2distmod_scalar(r_grid, h=h)
+            lp_grid = self.log_grad_distmod2comoving_distance(mu_grid, h=h)
+            los_delta_grid = self.f_host_los_delta.interp_many_steps_per_galaxy(
+                r_grid_h)
+            lp_grid += lp_galaxy_bias(
+                los_delta_grid, jnp.log(1.0 + los_delta_grid),
+                bias_params, self.which_bias)
+            lp_grid_norm = ln_simpson(
+                lp_grid, x=r_grid[None, None, :], axis=-1)
+            lp_host_dist = lp_host_dist - lp_grid_norm
+
         factor("lp_host_dist", lp_host_dist)
 
         # Convert distance to cosmological redshift
