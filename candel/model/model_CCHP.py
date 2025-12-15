@@ -16,8 +16,10 @@
 Minimal NumPyro model for CCHP TRGB distance calibrators to infer H0.
 """
 from abc import ABC
+import numpy as np
 
 import jax.numpy as jnp
+from jax.scipy.special import logsumexp
 from numpyro import factor, plate, sample
 from numpyro.distributions import Normal, Uniform
 
@@ -29,7 +31,7 @@ from ..util import (fprint, get_nested, load_config, radec_to_cartesian,
 from .interp import LOSInterpolator
 from .model import (load_priors, lp_galaxy_bias, predict_cz, rsample,
                     sample_galaxy_bias)
-from .model_SH0ES import logmeanexp
+from .model_SH0ES import logmeanexp, log_prob_integrand_sel
 from .simpson import ln_simpson
 
 
@@ -50,6 +52,32 @@ class BaseCCHPModel(ABC):
         self.priors, self.prior_dist_name = load_priors(priors)
 
         self.config = config
+        self.use_reconstruction = get_nested(
+            config, "model/use_reconstruction", False)
+        self.which_bias = get_nested(config, "model/galaxy_bias", "linear")
+        self.which_selection = get_nested(
+            config, "model/which_selection", None)
+        if self.use_reconstruction:
+            recon_name = get_nested(config, "io/which_host_los", "unspecified")
+            fprint(f"Using reconstruction: {recon_name}")
+        fprint(f"galaxy_bias set to {self.which_bias}")
+        fprint(f"selection set to {self.which_selection}")
+        self.mag_lim_SN = get_nested(config, "model/mag_lim_SN", None)
+        self.mag_lim_SN_width = get_nested(
+            config, "model/mag_lim_SN_width", None)
+
+        self.cz_lim_selection = get_nested(
+            config, "model/cz_lim_selection", 2000.0)
+        self.cz_lim_selection_width = get_nested(
+            config, "model/cz_lim_selection_width", 300.0)
+        if self.which_selection == "SN_magnitude":
+            fprint(f"SN selection: mag_lim_SN={self.mag_lim_SN}, "
+                   f"width={self.mag_lim_SN_width}")
+        elif self.which_selection == "redshift":
+            fprint(f"Redshift selection: cz_lim={self.cz_lim_selection}, "
+                   f"width={self.cz_lim_selection_width}")
+
+        # Load and possibly mask input data (depends on which_selection)
         self.set_data(data)
 
         # Initialize the interpolators
@@ -74,13 +102,6 @@ class BaseCCHPModel(ABC):
             "distmod_limits_N4258", self.distmod_limits)
         self.has_host_los = False
         self.num_fields = 1
-        self.use_reconstruction = get_nested(
-            config, "model/use_reconstruction", False)
-        self.which_bias = get_nested(config, "model/galaxy_bias", "linear")
-        if self.use_reconstruction:
-            recon_name = get_nested(config, "io/which_host_los", "unspecified")
-            fprint(f"Using reconstruction: {recon_name}")
-        fprint(f"galaxy_bias set to {self.which_bias}")
 
         r0_decay_scale = get_nested(config, "io/los_r0_decay_scale", 5.0)
         fprint(f"los_r0_decay_scale set to {r0_decay_scale}")
@@ -120,26 +141,109 @@ class BaseCCHPModel(ABC):
         self.r_host_range = r_range
         self.Rmax = jnp.max(self.r_host_range)
 
+    def log_S_cz(self, lp_r, Vpec, H0, sigma_v):
+        """Probability of detection term if redshift-truncated."""
+        zcosmo = self.distance2redshift(self.r_host_range, h=H0 / 100)
+        cz_r = predict_cz(zcosmo[None, None, :], Vpec)
+
+        sigma_v = jnp.asarray(sigma_v)
+        while sigma_v.ndim < cz_r.ndim:
+            sigma_v = sigma_v[..., None]
+        sigma_v = jnp.broadcast_to(sigma_v, cz_r.shape)
+
+        log_prob = log_prob_integrand_sel(
+            cz_r, sigma_v, self.cz_lim_selection, self.cz_lim_selection_width)
+        return ln_simpson(
+            lp_r + log_prob, x=self.r_host_range[None, None, :], axis=-1)
+
     def log_prior_distance(self, r):
         """Log prior on physical distance (volume prior, r^2)."""
         return 2.0 * jnp.log(r) - 3.0 * jnp.log(self.Rmax) + jnp.log(3.0)
+
+    def log_S_SN_mag(self, lp_r, M_SN, H0):
+        """Probability of detection term if supernova magnitude-truncated."""
+        if self.mag_lim_SN is None or self.mag_lim_SN_width is None:
+            raise ValueError(
+                "SN magnitude selection requested but mag_lim_SN or "
+                "mag_lim_SN_width not set in config.")
+
+        mag = self.distance2distmod(self.r_host_range, h=H0 / 100) + M_SN
+        log_prob = log_prob_integrand_sel(
+            mag[None, None, :], self.sigma_SN_sel,
+            self.mag_lim_SN, self.mag_lim_SN_width)
+        return ln_simpson(
+            lp_r + log_prob, x=self.r_host_range[None, None, :], axis=-1)
 
     def replace_priors(self, config):
         """Replace priors on parameters that are not used in the model."""
         if not get_nested(config, "model/use_reconstruction", False):
             replace_prior_with_delta(config, "beta", 0.0, verbose=False)
+        if get_nested(config, "model/which_selection", None) != "SN_magnitude":
+            replace_prior_with_delta(config, "M_SN", -19.25, verbose=False)
         return config
 
     def set_data(self, data):
         """Convert data to JAX arrays and set as attributes."""
-        self.mag_obs = jnp.asarray(data["mag_TRGB"])
-        self.e_mag_TRGB = jnp.asarray(data["e_mag_TRGB"])
-        self.cz_cmb = jnp.asarray(data["cz_cmb"])
-        self.e_czcmb = jnp.asarray(data["e_czcmb"])
+        mag_obs = jnp.asarray(data["mag_TRGB"])
+        e_mag_TRGB = jnp.asarray(data["e_mag_TRGB"])
+        cz_cmb = jnp.asarray(data["cz_cmb"])
+        e_czcmb = jnp.asarray(data["e_czcmb"])
+        m_Bprime = jnp.asarray(data["m_Bprime"])
+        e_m_Bprime = jnp.asarray(data["sigma_Bprime"])
+        RA = jnp.asarray(data["RA"])
+        DEC = jnp.asarray(data["DEC"])
+        galaxies = np.asarray(data["Galaxy"])
+
+        if self.which_selection == "SN_magnitude":
+            sn_mask = jnp.isfinite(m_Bprime) & jnp.isfinite(e_m_Bprime)
+            n_masked = int(jnp.sum(~sn_mask))
+            fprint(f"SN magnitude selection: masking {n_masked} hosts "
+                   "without finite SN photometry.")
+            mag_obs = mag_obs[sn_mask]
+            e_mag_TRGB = e_mag_TRGB[sn_mask]
+            cz_cmb = cz_cmb[sn_mask]
+            e_czcmb = e_czcmb[sn_mask]
+            m_Bprime = m_Bprime[sn_mask]
+            e_m_Bprime = e_m_Bprime[sn_mask]
+            RA = RA[sn_mask]
+            DEC = DEC[sn_mask]
+            galaxies = galaxies[np.array(sn_mask)]
+            # Also mask LOS data if provided.
+            if ("host_los_density" in data
+                    and data["host_los_density"] is not None):
+                data["host_los_density"] = data["host_los_density"][
+                    :, sn_mask, :]  # noqa
+            if ("host_los_velocity" in data
+                    and data["host_los_velocity"] is not None):
+                data["host_los_velocity"] = data["host_los_velocity"][
+                    :, sn_mask, :]  # noqa
+            if "host_los_r" in data and data["host_los_r"] is not None:
+                data["host_los_r"] = data["host_los_r"]
+
+        self.mag_obs = mag_obs
+        self.e_mag_TRGB = e_mag_TRGB
+        self.cz_cmb = cz_cmb
+        self.e_czcmb = e_czcmb
+        self.m_Bprime = m_Bprime
+        self.e_m_Bprime = e_m_Bprime
+        self.RA = RA
+        self.DEC = DEC
+        # Group indices for repeated galaxies.
+        galaxies_unique, inverse = np.unique(galaxies, return_inverse=True)
+        num_groups = galaxies_unique.shape[0]
+        fprint(f"{len(galaxies)} hosts, {num_groups} unique after grouping.")
+        group_mask = np.zeros((num_groups, len(galaxies)), dtype=bool)
+        for i in range(num_groups):
+            group_mask[i, inverse == i] = True
+        self.group_mask = jnp.asarray(group_mask)
+        self.num_groups = num_groups
+        self.group_index = jnp.asarray(inverse)
+        self.group_counts = jnp.sum(self.group_mask, axis=1)
+        self.sigma_SN_sel = jnp.mean(self.e_m_Bprime)
 
         # Convert RA/Dec to Cartesian coordinates
         fprint("Converting host RA/dec to Cartesian coordinates.")
-        rhat = radec_to_cartesian(data["RA"], data["DEC"])
+        rhat = radec_to_cartesian(self.RA, self.DEC)
         n = jnp.linalg.norm(rhat, axis=1, keepdims=True)
         self.rhat_host = rhat / jnp.where(n == 0.0, 1.0, n)
 
@@ -159,7 +263,7 @@ class BaseCCHPModel(ABC):
         """
         dist = Uniform(*self.distmod_limits)
 
-        with plate("hosts", self.num_hosts):
+        with plate("hosts", self.num_groups):
             mu_host = sample("mu_host", dist)
 
         # Anchors (LMC, NGC 4258) with custom limits if provided
@@ -196,27 +300,36 @@ class CCHPModel(BaseCCHPModel):
         sigma_v = rsample("sigma_v", self.priors["sigma_v"], shared_params)
         beta = rsample("beta", self.priors["beta"], shared_params)
         Vext = rsample("Vext", self.priors["Vext"], shared_params)
+        M_SN = rsample("M_SN", self.priors["M_SN"], shared_params)
 
         h = H0 / 100.0
-        # Sample distance moduli uniformly
-        mu_host, mu_LMC, mu_N4258 = self.sample_host_distmod()
+        # Sample distance moduli per each group
+        mu_host_group, mu_LMC, mu_N4258 = self.sample_host_distmod()
         bias_params = sample_galaxy_bias(
             self.priors, self.which_bias, beta=beta, Om=self.Om)
 
-        # Convert to comoving distances in Mpc
-        r = self.distmod2distance(mu_host, h=h)
+        # Convert to comoving distances in Mpc (grouped hosts)
+        r_group = self.distmod2distance(mu_host_group, h=h)
 
-        # Volume prior: r^2 prior + Jacobian
+        # Propagate to per-galaxy distance moduli and distances.
+        mu_host = mu_host_group[self.group_index]
+        r = r_group[self.group_index]
+
+        # Volume prior: r^2 prior + Jacobian (group-level)
         lp_host_dist = self.log_prior_distance(r)
-        lp_host_dist += self.log_grad_distmod2comoving_distance(mu_host, h=h)
+        lp_host_dist += self.log_grad_distmod2comoving_distance(
+            mu_host, h=h)
+        lp_host_dist_field_host = None
+
+        logp_tot = jnp.zeros((1, self.num_hosts))
 
         if self.use_reconstruction:
             rh_host = r * h
 
-            # Add galaxy bias at host positions
+            # Add galaxy bias per galaxy-distance
             los_delta_host = self.f_host_los_delta(rh_host)
             lp_host_dist += lp_galaxy_bias(
-                los_delta_host, jnp.log(1.0 + los_delta_host),
+                los_delta_host, jnp.log1p(los_delta_host),
                 bias_params, self.which_bias)
 
             # Volume prior for the grid (no Jacobian needed since integrating
@@ -228,21 +341,28 @@ class CCHPModel(BaseCCHPModel):
                 self.r_host_range * h)
 
             lp_grid += lp_galaxy_bias(
-                los_delta_grid, jnp.log(1.0 + los_delta_grid),
-                bias_params, self.which_bias)
+                los_delta_grid, jnp.log1p(los_delta_grid), bias_params,
+                self.which_bias)
 
-            # Normalize via Simpson integration
+            # Normalize via Simpson integration `(nfields, nhosts)`
             lp_grid_norm = ln_simpson(
                 lp_grid, x=self.r_host_range[None, None, :], axis=-1)
-            lp_host_dist = lp_host_dist - lp_grid_norm
 
-        factor("lp_host_dist", lp_host_dist)
+            # Broadcast group prior to hosts and fields
+            logp_tot += lp_host_dist[None, :] - lp_grid_norm
 
-        # Convert distance to cosmological redshift
-        z_cosmo = self.distance2redshift(r, h=h)
+        sigma_tot_mag = jnp.sqrt(self.e_mag_TRGB**2 + sigma_int**2)
+        sigma_tot_cz = jnp.sqrt(self.e_czcmb**2 + sigma_v**2)
+
+        # Add the magnitude likelihood, `(1, n_gal)`
+        logp_tot += Normal(
+            mu_host + M_TRGB, sigma_tot_mag).log_prob(self.mag_obs)[None, :]
 
         # Project Vext along LOS
         Vext_rad_host = jnp.sum(Vext[None, :] * self.rhat_host, axis=1)
+
+        # Convert distance to cosmological redshift
+        z_cosmo = self.distance2redshift(r, h=h)
 
         # Get the predicted redshifts, (n_field, n_gal)
         if self.use_reconstruction:
@@ -252,29 +372,94 @@ class CCHPModel(BaseCCHPModel):
         else:
             cz_th_all = predict_cz(z_cosmo[None, :], Vext_rad_host[None, :])
 
-        sigma_tot_mag = jnp.sqrt(self.e_mag_TRGB**2 + sigma_int**2)
-        sigma_tot_cz = jnp.sqrt(self.e_czcmb**2 + sigma_v**2)
+        # Add the SN magnitude likelihood if using SN magnitude selection,
+        # `(1, n_gal)`
+        if self.which_selection == "SN_magnitude":
+            logp_tot += Normal(
+                mu_host + M_SN,
+                self.e_m_Bprime).log_prob(self.m_Bprime)[None, :]
 
-        # Magnitude likelihood
-        with plate("hosts", self.num_hosts):
-            sample("mag_TRGB_ll", Normal(mu_host + M_TRGB, sigma_tot_mag),
-                   obs=self.mag_obs)
+        # Selection modelling.
+        if self.which_selection in (None, "none"):
+            pass
+        elif self.which_selection == "redshift":
+            lp_r_grid = self.log_prior_distance(
+                self.r_host_range)[None, None, :]
 
-        if self.use_reconstruction and self.has_host_los:
-            logp = logmeanexp(
-                Normal(cz_th_all, sigma_tot_cz).log_prob(self.cz_cmb),
-                axis=0)
-            with plate("hosts_cz", self.num_hosts):
-                factor("cz_ll", logp)
+            if self.use_reconstruction:
+                los_delta_grid = self.f_host_los_delta.interp_many_steps_per_galaxy(  # noqa
+                    self.r_host_range * h)
+                lp_r_grid = lp_r_grid + lp_galaxy_bias(
+                    los_delta_grid, jnp.log1p(los_delta_grid),
+                    bias_params, self.which_bias)
+
+                Vpec_grid = beta * self.f_host_los_velocity.interp_many_steps_per_galaxy(  # noqa
+                    self.r_host_range * h)
+                Vpec_grid = Vpec_grid + Vext_rad_host[None, :, None]
+                log_S = self.log_S_cz(lp_r_grid, Vpec_grid, H0, sigma_v)
+                lp_host_dist_field_host = lp_host_dist_field_host - log_S
+            else:
+                Vpec_grid = Vext_rad_host[None, :, None]
+                log_S = self.log_S_cz(lp_r_grid, Vpec_grid, H0, sigma_v)
+                log_S_group = (
+                    logsumexp(
+                        log_S[0][None, :],
+                        axis=1,
+                        where=self.group_mask) -
+                    jnp.log(self.group_counts)
+                )
+                logp_tot = logp_tot - jnp.sum(log_S_group)
+        elif self.which_selection == "SN_magnitude":
+            lp_r_grid = self.log_prior_distance(
+                self.r_host_range)[None, None, :]
+
+            if self.use_reconstruction:
+                los_delta_grid = self.f_host_los_delta.interp_many_steps_per_galaxy(  # noqa
+                    self.r_host_range * h)
+                lp_r_grid = lp_r_grid + lp_galaxy_bias(
+                    los_delta_grid, jnp.log1p(los_delta_grid),
+                    bias_params, self.which_bias)
+
+            log_S = self.log_S_SN_mag(lp_r_grid, M_SN, H0)
+            if self.use_reconstruction:
+                lp_host_dist_field_host = lp_host_dist_field_host - log_S
+            else:
+                log_S_group = (
+                    logsumexp(
+                        log_S[0][None, :],
+                        axis=1,
+                        where=self.group_mask) -
+                    jnp.log(self.group_counts)
+                )
+                logp_tot = logp_tot - jnp.sum(log_S_group)
         else:
-            with plate("hosts_cz", self.num_hosts):
-                sample("cz_ll", Normal(cz_th_all[0], sigma_tot_cz),
-                       obs=self.cz_cmb)
+            raise ValueError(
+                f"Unknown selection '{self.which_selection}'. "
+                "Use 'redshift', 'SN_magnitude' or 'none'.")
+
+        # Redshift likelihood, `(nfields, n_gal)`
+        logp_tot += Normal(
+            cz_th_all, sigma_tot_cz).log_prob(self.cz_cmb)
+
+        # logp_group_field = logsumexp(
+        #     logp_field[None, :, :],
+        #     axis=2,
+        #     where=self.group_mask[:, None, :])  # (groups, fields)
+        # logp_group_field = logp_group_field - jnp.log(
+        #     self.group_counts)[:, None]
+        # logp = logsumexp(logp_group_field, axis=1) - jnp.log(
+        #     self.num_fields)  # (groups,)
+
+        # Average over field realisations
+        logp_tot = logmeanexp(logp_tot, axis=0)
+        factor("lp_tot", jnp.sum(logp_tot))
 
         # Anchor TRGB magnitudes
-        sample("mag_LMC_TRGB_ll",
-               Normal(M_TRGB + mu_LMC, self.e_mag_LMC_TRGB),
-               obs=self.mag_LMC_TRGB)
-        sample("mag_N4258_TRGB_ll",
-               Normal(M_TRGB + mu_N4258, self.e_mag_N4258_TRGB),
-               obs=self.mag_N4258_TRGB)
+        logp_tot = logp_tot + Normal(
+            M_TRGB + mu_LMC, self.e_mag_LMC_TRGB).log_prob(
+            self.mag_LMC_TRGB)
+        logp_tot = logp_tot + Normal(
+            M_TRGB + mu_N4258, self.e_mag_N4258_TRGB).log_prob(
+            self.mag_N4258_TRGB)
+
+        factor("ll_total", logp_tot)
