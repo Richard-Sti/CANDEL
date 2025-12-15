@@ -378,6 +378,10 @@ class CCHPModel(BaseCCHPModel):
 
             # Broadcast group prior to hosts and fields
             logp_tot += lp_host_dist - lp_grid_norm
+        else:
+            # No reconstruction: apply volume prior + Jacobian
+            # The r^2 prior is already normalized, so lp_grid_norm ≈ 0
+            logp_tot += lp_host_dist[None, :]
 
         sigma_tot_mag = jnp.sqrt(self.e_mag_TRGB**2 + sigma_int**2)
         sigma_tot_cz = jnp.sqrt(self.e_czcmb**2 + sigma_v**2)
