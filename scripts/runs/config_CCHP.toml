@@ -5,8 +5,8 @@ machine = "local"
 
 # Inference settings
 [inference]
-num_warmup = 1000
-num_samples = 5000
+num_warmup = 500
+num_samples = 500
 num_chains = 1
 chain_method = "parallel"
 seed = 42
@@ -16,8 +16,8 @@ seed = 42
 Om = 0.3
 distmod_limits = [20.0, 40.0]
 use_reconstruction = true
-galaxy_bias = "double_powerlaw"
-which_selection = "none"
+galaxy_bias = "powerlaw"
+which_selection = "redshift"
 which_run = "CCHP"
 
 # Optional custom limits for anchors (distance modulus)
@@ -74,6 +74,12 @@ scale = 0.1
 dist = "delta"
 value = 1.0
 
+[model.priors.alpha]
+dist = "truncated_normal"
+low = 0.0
+mean = 1.0
+scale = 1.0
+
 [model.priors.alpha_low]
 dist = "truncated_normal"
 low = 0.0
@@ -83,12 +89,12 @@ scale = 1.0
 [model.priors.alpha_high]
 dist = "truncated_normal"
 low = 0.0
-mean = 1.0
+mean = 0.0
 scale = 1.0
 
 [model.priors.log_rho_t]
 dist = "normal"
-loc = 0.0
+loc = 1.0
 scale = 1.0
 
 # IO settings
