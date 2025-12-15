@@ -1286,7 +1286,7 @@ def load_SH0ES_from_config(config_path):
         los_data_path=los_data_path, rand_los_data_path=rand_los_data_path)
 
 
-def load_CCHP_from_config(config_path):
+def load_CCHP_from_config(config_path, ra_dec_only=False):
     """
     Load the processed CCHP TRGB catalogue from a TSV file.
 
@@ -1346,6 +1346,14 @@ def load_CCHP_from_config(config_path):
 
     e_czcmb = data_tbl["e_czcmb"]
 
+    if ra_dec_only:
+        return {
+            "RA": ra,
+            "DEC": dec,
+            "cz_cmb": cz_cmb,
+            "e_czcmb": e_czcmb,
+        }
+
     data = {
         "SN": data_tbl["SN"],
         "Galaxy": data_tbl["Galaxy"],
@@ -1365,9 +1373,6 @@ def load_CCHP_from_config(config_path):
         "e_mu_N4258_anchor": e_mu_N4258_anchor,
         "mag_N4258_TRGB": mag_N4258_TRGB,
         "e_mag_N4258_TRGB": e_mag_N4258_TRGB,
-        # Pass through anchor limits for convenience.
-        "distmod_limits_LMC": get_nested(config, "model/distmod_limits_LMC"),
-        "distmod_limits_N4258": get_nested(config, "model/distmod_limits_N4258"),  # noqa
     }
 
     # Optionally load LOS data (host and/or random) if requested in config.
