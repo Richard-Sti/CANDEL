@@ -68,7 +68,7 @@ def replace_prior_with_delta(config, param, value, verbose=True):
     if param not in config.get("model", {}).get("priors", {}):
         return config
 
-    fprint(f"replacing prior of `{param}` with a delta function.",
+    fprint(f"replacing prior of `{param}` with a delta function at {value}",
            verbose=verbose)
     priors = config.setdefault("model", {}).setdefault("priors", {})
     priors.pop(param, None)
