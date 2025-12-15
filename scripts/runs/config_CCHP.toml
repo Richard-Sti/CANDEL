@@ -7,7 +7,7 @@ machine = "local"
 [inference]
 num_warmup = 1000
 num_samples = 5000
-num_chains = 1
+num_chains = 4
 chain_method = "parallel"
 seed = 44
 
@@ -15,10 +15,22 @@ seed = 44
 [model]
 Om = 0.3
 distmod_limits = [20.0, 40.0]
-Rmax = 200.0
+use_reconstruction = true
+galaxy_bias = "linear"
+which_selection = "none"
+
 # Optional custom limits for anchors (distance modulus)
 distmod_limits_LMC = [18.0, 19.0]
 distmod_limits_N4258 = [29.0, 29.8]
+
+r_limits_malmquist = [0.01, 101.0]
+num_points_malmquist = 251
+
+cz_lim_selection = 2000.0
+cz_lim_selection_width = 300.0
+
+mag_lim_SN = 13.0
+mag_lim_SN_width = 0.3
 
 [model.priors.H0]
 dist = "uniform"
@@ -31,8 +43,13 @@ value = 0.0
 
 [model.priors.M_TRGB]
 dist = "normal"
-loc = -4.336
+loc = -4.05
 scale = 0.2
+
+[model.priors.M_SN]
+dist = "normal"
+loc = -19.3
+scale = 0.3
 
 [model.priors.sigma_v]
 dist = "jeffreys"
@@ -41,17 +58,45 @@ high = 1500.0
 
 [model.priors.Vext]
 dist = "vector_uniform_fixed"
-low = -3000.0
+low = 0
 high = 3000.0
+
+[model.priors.b1]
+dist = "normal"
+loc = 1.2
+scale = 0.1
+
+[model.priors.beta]
+dist = "normal"
+loc = 0.47
+scale = 0.02
 
 # IO settings
 [io]
-fname_output = "results/CCHP/test.hdf5"
+fname_output = "results/CCHP/test_nosel.hdf5"
+load_host_los = true
+load_rand_los = true
+
+# Templates for LOS files; <X> will be replaced by `which_host_los` if set.
+los_file = "data/CCHP/los_<X>.hdf5"
+los_file_random = "data/los_random_<X>.hdf5"
+which_host_los = "Carrick2015"
+los_r0_decay_scale = 5
 
 [io.CCHP]
 # Path to the processed TSV produced in notebooks/paper_CCHP/process_data.ipynb
 path = "data/CCHP/cchp_processed_data.tsv"
+los_file = "data/CCHP/los_<X>.hdf5"
 
 [io.CCHP_redshift_source]
 # Use cz_cmb (table default) or cz_cmb_NED (already in the TSV); no online queries.
-kind = "cz_cmb_NED"
+kind = "cz_cmb"
+
+[io.reconstruction_main]
+rmin = 0.1
+rmax = 100
+num_steps = 201
+
+[io.reconstruction_main.Carrick2015]
+path_density = "data/fields/carrick2015_twompp_density.npy"
+path_velocity = "data/fields/carrick2015_twompp_velocity.npy"
