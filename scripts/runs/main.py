@@ -75,11 +75,16 @@ if __name__ == "__main__":
         insert_comment_at_top(args.config, "skipped")
         sys.exit(0)
 
-    is_CH0 = get_nested(config, "model/is_CH0", False)
-    if is_CH0:
+    which_run = get_nested(config, "model/which_run", None)
+    if which_run == "CH0":
         fprint("selected `CH0` model.")
         data = candel.pvdata.load_SH0ES_from_config(args.config, )
         model = candel.model.SH0ESModel(args.config, data)
+        candel.run_H0_inference(model, )
+    elif which_run == "CCHP":
+        fprint("selected `CCHP` model.")
+        data = candel.pvdata.load_CCHP_from_config(args.config)
+        model = candel.model.CCHPModel(args.config, data)
         candel.run_H0_inference(model, )
     else:
         data = candel.pvdata.load_PV_dataframes(args.config)
