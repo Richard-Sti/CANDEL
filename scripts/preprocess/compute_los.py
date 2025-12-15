@@ -27,7 +27,7 @@ import candel
 from candel import fprint
 
 
-def load_los(catalogue, config, filepath=None):
+def load_los(catalogue, config, filepath=None, config_path=None):
     if "random_" in catalogue:
         d = config["io"].copy()
         los_file = d.pop("los_file_random")
@@ -92,9 +92,18 @@ def load_los(catalogue, config, filepath=None):
         los_file = d.pop("los_file")
         data = candel.pvdata.load_SH0ES_separated(**d)
         RA, dec = data["RA_host"], data["dec_host"]
+    elif catalogue == "CCHP":
+        if config_path is None:
+            raise ValueError("`config_path` must be provided for CCHP.")
+        d = config["io"].get("CCHP", {}).copy()
+        los_file = d.pop("los_file")
+        data = candel.pvdata.load_CCHP_from_config(
+            config_path, ra_dec_only=True)
+        RA, dec = data["RA"], data["DEC"]
     elif catalogue == "generic":
         if filepath is None:
-            raise ValueError("filepath must be provided for generic catalogue.")
+            raise ValueError(
+                "`filepath` must be provided for generic catalogue.")
         data = candel.pvdata.load_generic(filepath)
         RA, dec = data["RA"], data["dec"]
 
@@ -153,13 +162,14 @@ def main():
            f"for `{args.reconstruction}`.", verbose=verbose)
 
     d = config["io"]["reconstruction_main"]
-    fprint(f"settin the radial grid from {d['rmin']} to {d['rmax']} with "
+    fprint(f"setting the radial grid from {d['rmin']} to {d['rmax']} with "
            f"{d['num_steps']} steps.", verbose=verbose)
     r = np.linspace(d["rmin"], d["rmax"], d["num_steps"])
 
     fprint(f"loading the catalogue `{args.catalogue}` with "
            f"reconstruction `{args.reconstruction}`.", verbose=verbose)
-    RA, dec, los_file = load_los(args.catalogue, config, args.filepath)
+    RA, dec, los_file = load_los(
+        args.catalogue, config, args.filepath, config_path=args.config)
     fprint(f"loaded {len(RA)} galaxies from the catalogue.", verbose=verbose)
 
     n_sims = len(nsims)
