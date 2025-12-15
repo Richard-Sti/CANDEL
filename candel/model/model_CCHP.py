@@ -131,6 +131,7 @@ class BaseCCHPModel(ABC):
         if "host_los_velocity" in data and "host_los_r" in data:
             self.has_host_los = True
             self.num_fields = data["host_los_velocity"].shape[0]
+            fprint(f"Number of LOS field realisations: {self.num_fields}")
             if "host_los_density" in data:
                 los_delta = jnp.asarray(data["host_los_density"]) - 1.0
                 self.f_host_los_delta = LOSInterpolator(
