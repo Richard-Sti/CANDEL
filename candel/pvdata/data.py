@@ -18,7 +18,7 @@ Data loading and preprocessing utilities for peculiar-velocity catalogues.
 Provides dataframe-like containers, LOS interpolation helpers, covariance
 assembly, and catalogue I/O wired to the project config files.
 """
-from os.path import join
+from os.path import isabs, join
 
 import healpy as hp
 import numpy as np
@@ -32,7 +32,7 @@ from jax.nn import one_hot
 from scipy.linalg import cholesky
 
 from ..model.interp import LOSInterpolator
-from ..util import (SPEED_OF_LIGHT, fprint, galactic_to_radec,
+from ..util import (SPEED_OF_LIGHT, fprint, galactic_to_radec, get_nested,
                     heliocentric_to_cmb, load_config, radec_to_cartesian,
                     radec_to_galactic)
 from .dust import read_dustmap
@@ -1284,6 +1284,103 @@ def load_SH0ES_from_config(config_path):
     return load_SH0ES_separated(
         root, cepheid_host_cz_cmb_max, replace_SN_HF_from_PP,
         los_data_path=los_data_path, rand_los_data_path=rand_los_data_path)
+
+
+def load_CCHP_from_config(config_path):
+    """
+    Load the processed CCHP TRGB catalogue from a TSV file.
+
+    Expects the TSV to contain at least the columns:
+    SN, Galaxy, cz_cmb, e_czcmb, mu_TRGB_CCHP, sigma_TRGB_CCHP,
+    m_Bprime_CSP, sigma_Bprime_CSP.
+    """
+    config = load_config(config_path, replace_los_prior=False)
+    path = config["io"]["CCHP"]["path"]
+    redshift_source = get_nested(
+        config, "io/CCHP_redshift_source/kind", "cz_cmb")
+    if not isabs(path):
+        path = join(config["root_main"], path)
+
+    data_tbl = np.genfromtxt(
+        path,
+        delimiter="\t",
+        names=True,
+        dtype=None,
+        encoding="utf-8",
+        missing_values=["-1", "nan", "NaN"],
+        filling_values=np.nan,
+    )
+
+    # Apparent TRGB magnitude using M = -4.336 mag (so m = mu + 4.336).
+    mag_trgb = data_tbl["mu_TRGB_CCHP"] + 4.336
+
+    ra = data_tbl["ra_deg"]
+    dec = data_tbl["dec_deg"]
+
+    source = redshift_source.lower()
+    fprint(f"Using CCHP redshift source: {source}", verbose=True)
+    if source == "cz_cmb":
+        cz_cmb = data_tbl["cz_cmb"]
+    elif source == "cz_cmb_ned":
+        cz_cmb = data_tbl["cz_cmb_NED"]
+    else:
+        raise ValueError(
+            "Unknown `io/CCHP_redshift_source/kind`: "
+            f"{redshift_source}. Use 'cz_cmb' or 'cz_cmb_NED'.")
+
+    e_czcmb = data_tbl["e_czcmb"]
+
+    data = {
+        "SN": data_tbl["SN"],
+        "Galaxy": data_tbl["Galaxy"],
+        "cz_cmb": cz_cmb,
+        "e_czcmb": e_czcmb,
+        "mag_TRGB": mag_trgb,
+        "e_mag_TRGB": data_tbl["sigma_TRGB_CCHP"],
+        "m_Bprime": data_tbl["m_Bprime_CSP"],
+        "sigma_Bprime": data_tbl["sigma_Bprime_CSP"],
+        "RA": ra,
+        "DEC": dec,
+    }
+
+    # Optionally load LOS data (host and/or random) if requested in config.
+    los_data_path = None
+    rand_los_data_path = None
+
+    which_host_los = get_nested(config, "io/which_host_los", None)
+    if get_nested(config, "io/load_host_los", False):
+        los_file = get_nested(config, "io/los_file", None)
+        if los_file is not None and which_host_los is not None:
+            los_data_path = los_file.replace("<X>", which_host_los)
+        else:
+            los_data_path = los_file
+
+    if get_nested(config, "io/load_rand_los", False):
+        rand_file = get_nested(config, "io/los_file_random", None)
+        if rand_file is not None and which_host_los is not None:
+            rand_los_data_path = rand_file.replace("<X>", which_host_los)
+        else:
+            rand_los_data_path = rand_file
+
+    if los_data_path is not None:
+        host_los = load_los(los_data_path, {}, mask=None)
+        data["host_los_density"] = host_los["los_density"]
+        data["host_los_velocity"] = host_los["los_velocity"]
+        data["host_los_r"] = host_los["los_r"]
+
+    if rand_los_data_path is not None:
+        rand_los = load_los(rand_los_data_path, {}, mask=None)
+        data["rand_los_density"] = rand_los["los_density"]
+        data["rand_los_velocity"] = rand_los["los_velocity"]
+        data["rand_los_r"] = rand_los["los_r"]
+        data["rand_los_RA"] = rand_los.get("los_RA", None)
+        data["rand_los_dec"] = rand_los.get("los_dec", None)
+        data["has_rand_los"] = True
+        data["num_rand_los"] = data["rand_los_density"].shape[0]
+    else:
+        data["has_rand_los"] = False
+
+    return data
 
 
 def load_clusters(root, zcmb_min=None, zcmb_max=None, los_data_path=None,
