@@ -457,11 +457,14 @@ class CCHPModel(BaseCCHPModel):
         logp_tot = logmeanexp_by_group(
             logp_tot, self.group_index, n_groups=self.num_groups)
 
+        # Sum over all groups
+        logp_tot = jnp.sum(logp_tot)
+
         # Anchor TRGB magnitudes
-        logp_tot = logp_tot + Normal(
+        logp_tot += Normal(
             M_TRGB + mu_LMC, self.e_mag_LMC_TRGB).log_prob(
             self.mag_LMC_TRGB)
-        logp_tot = logp_tot + Normal(
+        logp_tot += Normal(
             M_TRGB + mu_N4258, self.e_mag_N4258_TRGB).log_prob(
             self.mag_N4258_TRGB)
 
