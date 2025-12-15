@@ -65,7 +65,7 @@ if __name__ == "__main__":
 
     insert_comment_at_top(args.config, "started")
 
-    config = candel.load_config(args.config)
+    config = candel.load_config(args.config, replace_los_prior=False)
 
     fname_out = get_nested(config, "io/fname_output")
     skip_if_exists = get_nested(config, "inference/skip_if_exists", False)
