@@ -7,24 +7,25 @@ machine = "local"
 [inference]
 num_warmup = 1000
 num_samples = 5000
-num_chains = 4
+num_chains = 1
 chain_method = "parallel"
-seed = 44
+seed = 42
 
 # Model hyperparameters
 [model]
 Om = 0.3
 distmod_limits = [20.0, 40.0]
 use_reconstruction = true
-galaxy_bias = "linear"
+galaxy_bias = "double_powerlaw"
 which_selection = "none"
+which_run = "CCHP"
 
 # Optional custom limits for anchors (distance modulus)
 distmod_limits_LMC = [18.0, 19.0]
 distmod_limits_N4258 = [29.0, 29.8]
 
 r_limits_malmquist = [0.01, 101.0]
-num_points_malmquist = 251
+num_points_malmquist = 301
 
 cz_lim_selection = 2000.0
 cz_lim_selection_width = 300.0
@@ -67,20 +68,40 @@ loc = 1.2
 scale = 0.1
 
 [model.priors.beta]
+# dist = "normal"
+# loc = 0.47
+# scale = 0.02
+dist = "delta"
+value = 1.0
+
+[model.priors.alpha_low]
+dist = "truncated_normal"
+low = 0.0
+mean = 1.0
+scale = 1.0
+
+[model.priors.alpha_high]
+dist = "truncated_normal"
+low = 0.0
+mean = 1.0
+scale = 1.0
+
+[model.priors.log_rho_t]
 dist = "normal"
-loc = 0.47
-scale = 0.02
+loc = 0.0
+scale = 1.0
 
 # IO settings
 [io]
-fname_output = "results/CCHP/test_nosel.hdf5"
+fname_output = "results/CCHP/test.hdf5"
 load_host_los = true
 load_rand_los = true
 
 # Templates for LOS files; <X> will be replaced by `which_host_los` if set.
 los_file = "data/CCHP/los_<X>.hdf5"
 los_file_random = "data/los_random_<X>.hdf5"
-which_host_los = "Carrick2015"
+# which_host_los = "Carrick2015"
+which_host_los = "manticore_2MPP_MULTIBIN_N256_DES_V2"
 los_r0_decay_scale = 5
 
 [io.CCHP]
@@ -100,3 +121,6 @@ num_steps = 201
 [io.reconstruction_main.Carrick2015]
 path_density = "data/fields/carrick2015_twompp_density.npy"
 path_velocity = "data/fields/carrick2015_twompp_velocity.npy"
+
+[io.reconstruction_main.manticore_2MPP_MULTIBIN_N256_DES_V2]
+fpath_root = "/mnt/extraspace/rstiskalek/MANTICORE/2MPP_MULTIBIN_N256_DES_V2/sph_fields_new_feb/sph_fields"

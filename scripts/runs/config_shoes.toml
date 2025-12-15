@@ -29,7 +29,7 @@ num_chains_harmonic = 10
 ###############################################################################
 
 [model]
-is_CH0 = true
+which_run = "CH0"
 
 Om = 0.3
 use_MNR = false
@@ -120,8 +120,8 @@ scale = 200
 
 [model.priors.log_sigma_v_rho_t]
 dist = "normal"
-loc = 0.0
-scale = 2.0
+loc = 1.0
+scale = 5.0
 
 [model.priors.sigma_v_k]
 dist = "truncated_normal"
@@ -209,7 +209,7 @@ los_r0_decay_scale = 5
 
 [io.SH0ES]
 root = "data/SH0ES"
-cepheid_host_cz_cmb_max = 3300
+cepheid_host_cz_cmb_max = 5000
 replace_SN_HF_from_PP = false
 which_host_los = "Carrick2015"
 # which_host_los = "manticore_2MPP_MULTIBIN_N256_DES_V2"
