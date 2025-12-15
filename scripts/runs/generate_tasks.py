@@ -110,12 +110,16 @@ def overwrite_subtree(config, key_path, subtree):
 def generate_dynamic_tag(config, base_tag="default"):
     """Generate a descriptive tag string based on selected config values."""
     parts = []
-    is_CH0 = get_nested(config, "model/is_CH0", False)
+    which_run = get_nested(config, "model/which_run", None)
 
-    if is_CH0:
+    if which_run == "CH0":
         model_name = "CH0"
         catalogue = "CH0"
         parts.append("CH0")
+    elif which_run == "CCHP":
+        model_name = "CCHP"
+        catalogue = "CCHP"
+        parts.append("CCHP")
     else:
         model_name = get_nested(config, "inference/model", None)
         catalogue = get_nested(config, "io/catalogue_name", None)
@@ -180,7 +184,7 @@ def generate_dynamic_tag(config, base_tag="default"):
     if dust_model is not None and dust_model.lower() != "none":
         parts.append(f"dust-{dust_model}")
 
-    if is_CH0:
+    if which_run == "CH0":
         # Which selection
         which_sel = get_nested(config, "model/which_selection", None)
         if which_sel is not None and which_sel != "none":
@@ -215,6 +219,15 @@ def generate_dynamic_tag(config, base_tag="default"):
 
         if get_nested(config, "model/weight_selection_by_covmat_Neff", False):
             parts.append("weight_by_Neff")
+    elif which_run == "CCHP":
+        which_sel = get_nested(config, "model/which_selection", None)
+        if which_sel is not None and which_sel != "none":
+            parts.append(f"sel-{which_sel}")
+        if get_nested(config, "model/use_reconstruction", False):
+            parts.append(get_nested(config, "io/which_host_los", None))
+        redshift_kind = get_nested(config, "io/CCHP_redshift_source/kind", "cz_cmb")
+        if redshift_kind != "cz_cmb":
+            parts.append(redshift_kind)
 
     if base_tag != "default":
         parts.append(base_tag)
@@ -285,7 +298,7 @@ if __name__ == "__main__":
         help="Arbitrary tag/index for this task list.")
     args = parser.parse_args()
 
-    config_path = "./config_shoes.toml"
+    config_path = "./config_CCHP.toml"
     config = load_config(
         config_path, replace_none=False, replace_los_prior=False)
 
@@ -296,19 +309,19 @@ if __name__ == "__main__":
 
     # --- CH0 overrides ---
     manual_overrides = {
-        "io/root_output": "results/test",
-        "model/which_selection": "redshift",
+        "io/root_output": "results/CCHP",
+        "model/which_selection": ["none", "SN_magnitude", "redshift"],
         "model/use_reconstruction": True,
-        "io/SH0ES/which_host_los": "Carrick2015",
-        # "io/SH0ES/which_host_los": "manticore_2MPP_MULTIBIN_N256_DES_V2",
-        "model/which_bias": "linear",
+        # "io/SH0ES/which_host_los": "Carrick2015",
+        "io/SH0ES/which_host_los": "manticore_2MPP_MULTIBIN_N256_DES_V2",
+        "model/which_bias": "powerlaw",
         # "model/priors/Vext": [
         #     {"dist": "vector_uniform_fixed", "low": 0.0, "high": 2500},
         #     # {"dist": "delta", "value": [0., 0., 0.]},
         # ],
         "model/priors/beta": [
-            {"dist": "normal", "loc": 0.43, "scale": 0.02},
-            # {"dist": "delta", "value": 1.0},
+            # {"dist": "normal", "loc": 0.43, "scale": 0.02},
+            {"dist": "delta", "value": 1.0},
             # {"dist": "normal", "loc": 1.0, "scale": 0.5},
         ],
     }
