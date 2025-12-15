@@ -1,0 +1,57 @@
+# Paths and execution
+root_main = "/Users/rstiskalek/Projects/CANDEL/"
+python_exec = "/Users/rstiskalek/Projects/CANDEL/venv_candel/bin/python"
+machine = "local"
+
+# Inference settings
+[inference]
+num_warmup = 1000
+num_samples = 5000
+num_chains = 1
+chain_method = "parallel"
+seed = 44
+
+# Model hyperparameters
+[model]
+Om = 0.3
+distmod_limits = [20.0, 40.0]
+Rmax = 200.0
+# Optional custom limits for anchors (distance modulus)
+distmod_limits_LMC = [18.0, 19.0]
+distmod_limits_N4258 = [29.0, 29.8]
+
+[model.priors.H0]
+dist = "uniform"
+low = 10.0
+high = 100.0
+
+[model.priors.sigma_int]
+dist = "delta"
+value = 0.0
+
+[model.priors.M_TRGB]
+dist = "normal"
+loc = -4.336
+scale = 0.2
+
+[model.priors.sigma_v]
+dist = "jeffreys"
+low = 25.0
+high = 1500.0
+
+[model.priors.Vext]
+dist = "vector_uniform_fixed"
+low = -3000.0
+high = 3000.0
+
+# IO settings
+[io]
+fname_output = "results/CCHP/test.hdf5"
+
+[io.CCHP]
+# Path to the processed TSV produced in notebooks/paper_CCHP/process_data.ipynb
+path = "data/CCHP/cchp_processed_data.tsv"
+
+[io.CCHP_redshift_source]
+# Use cz_cmb (table default) or cz_cmb_NED (already in the TSV); no online queries.
+kind = "cz_cmb_NED"
