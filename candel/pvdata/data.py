@@ -1314,6 +1314,21 @@ def load_CCHP_from_config(config_path):
     # Apparent TRGB magnitude using M = -4.336 mag (so m = mu + 4.336).
     mag_trgb = data_tbl["mu_TRGB_CCHP"] + 4.336
 
+    # Fixed anchor values (LMC and NGC 4258) for convenience.
+    # LMC (Pietrzynski et al. 2019): https://arxiv.org/abs/1903.08096
+    mu_LMC_anchor = 18.477
+    e_mu_LMC_anchor = 0.026
+    # Hoyt+2021 TRGB calibration: https://arxiv.org/abs/2106.13337
+    mag_LMC_TRGB = 14.456
+    e_mag_LMC_TRGB = 0.018
+
+    # NGC 4258 distance (Reid et al. 2019): https://arxiv.org/abs/1901.05095
+    mu_N4258_anchor = 29.398
+    e_mu_N4258_anchor = 0.032
+    # Jang & Lee 2020 TRGB calibration: https://arxiv.org/abs/2008.04181
+    mag_N4258_TRGB = 25.347
+    e_mag_N4258_TRGB = 0.0443
+
     ra = data_tbl["ra_deg"]
     dec = data_tbl["dec_deg"]
 
@@ -1341,6 +1356,14 @@ def load_CCHP_from_config(config_path):
         "sigma_Bprime": data_tbl["sigma_Bprime_CSP"],
         "RA": ra,
         "DEC": dec,
+        "mu_LMC_anchor": mu_LMC_anchor,
+        "e_mu_LMC_anchor": e_mu_LMC_anchor,
+        "mag_LMC_TRGB": mag_LMC_TRGB,
+        "e_mag_LMC_TRGB": e_mag_LMC_TRGB,
+        "mu_N4258_anchor": mu_N4258_anchor,
+        "e_mu_N4258_anchor": e_mu_N4258_anchor,
+        "mag_N4258_TRGB": mag_N4258_TRGB,
+        "e_mag_N4258_TRGB": e_mag_N4258_TRGB,
     }
 
     # Optionally load LOS data (host and/or random) if requested in config.
