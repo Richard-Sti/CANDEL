@@ -1284,11 +1284,11 @@ def plot_Vext_radmag(samples, model, r_eval_size=1000, show_fig=True,
             return None
         return low_arr, high_arr
 
-    def add_h0_dipole_reference(ax_ref, ell_val, b_val, std_ell, std_b):
+    def add_h0_dipole_reference(ax_ref):
         """Overlay the equivalent H0 dipole reference band."""
-        pct_cen = 5.0
-        pct_lo = 3.0
-        pct_hi = 7.0
+        pct_cen = 15.0 * 1.15
+        pct_lo = pct_cen - 2.0
+        pct_hi = pct_cen + 2.0
 
         bf = percent_h0_to_bulkflow(r, pct_cen)
         bu = percent_h0_to_bulkflow(r, pct_hi)
@@ -1299,10 +1299,10 @@ def plot_Vext_radmag(samples, model, r_eval_size=1000, show_fig=True,
         H0_std_ell = 99.8
         H0_std_b = 17.71
 
-        label = (fr"Equivalent $H_0$ dipole: ${pct_cen:.1f}\%$ "
-                 fr"at "
-                 fr"$(\ell, b) = ({H0_ell_val:.1f} \pm {H0_std_ell:.1f}°, "
-                 fr"{H0_b_val:.1f} \pm {H0_std_b:.1f}°)$")
+        label = (f"Equivalent $H_0$ dipole: ${pct_cen:.1f}\\%$ "
+                 f"at "
+                 f"$(\\ell, b) = ({H0_ell_val:.1f} \\pm {H0_std_ell:.1f}°, "
+                 f"{H0_b_val:.1f} \\pm {H0_std_b:.1f}°)$")
         ax_ref.plot(r, bf, linestyle="--", color="gray", label=label)
         ax_ref.fill_between(r, bl, bu, color="gray", alpha=0.3)
         ax_ref.legend(loc="best", fontsize=9)
@@ -1312,11 +1312,13 @@ def plot_Vext_radmag(samples, model, r_eval_size=1000, show_fig=True,
         mean_b = np.mean(b)
         std_ell = np.std(ell)
         std_b = np.std(b)
-        ax.plot([], [], label=(fr"Radially varying $V_{{\rm ext}}$: "
-                               fr"$(\ell, b) = ({mean_ell:.1f} \pm {std_ell:.1f}°, "
-                               fr"{mean_b:.1f} \pm {std_b:.1f}°)$"),
+        ax.plot([], [], label=(f"Radially varying $V_{{\\rm ext}}$: "
+                               f"$(\\ell, b) = ({mean_ell:.1f} \\pm {std_ell:.1f}°, "
+                               f"{mean_b:.1f} \\pm {std_b:.1f}°)$"),
                 color="C0")
-        add_h0_dipole_reference(ax, mean_ell, mean_b, std_ell, std_b)
+
+    # Always add the equivalent H0 dipole reference band (even if direction is fixed).
+    add_h0_dipole_reference(ax)
 
     prior_bounds = _get_prior_bounds()
     if prior_bounds is not None:
