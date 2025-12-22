@@ -27,6 +27,26 @@ import tomli_w
 
 from candel import fprint, load_config, replace_prior_with_delta
 
+# Hardcoded flags for task generation.
+scaling_relations = ["LT"]
+reconstructions = ["Carrick2015"]
+include_quad = False
+include_pairs = False
+include_pix = False
+resolution_convergence = False
+free_radial_direction = False
+
+RECONSTRUCTION_KIND_MAP = {
+    "Vext": "Vext",
+    "Carrick2015": "precomputed_los_Carrick2015",
+    "manticore": "precomputed_los_manticore",
+}
+
+PAIR_RUNS = {
+    "results/short/Carrick2015_YT_noMNR_dipA_dipVext_hasY.toml",
+    "results/short/Carrick2015_YT_noMNR_dipH0_dipVext_hasY.toml",
+}
+
 
 def overwrite_config(config, key, value):
     """Return a new config dict with a nested key overwritten."""
@@ -82,9 +102,9 @@ def generate_dynamic_tag(config, scenario_label):
     # Dipole zeropoint configuration
     dip_prior = get_nested(config, "model/priors/zeropoint_dipole", {})
     if isinstance(dip_prior, dict) and dip_prior.get("dist") == "vector_uniform_fixed":
-        parts.append("dipA")
-    else:
-        parts.append("nodipA")
+        stretch_los = get_nested(
+            config, "pv_model/stretch_los_with_zeropoint", False)
+        parts.append("dipH0" if stretch_los else "dipA")
 
     catalogue_value = get_nested(config, "io/catalogue_name", None)
     if isinstance(catalogue_value, list):
@@ -184,8 +204,13 @@ if __name__ == "__main__":
     task_file = f"tasks_{tasks_index}.txt"
     log_dir = f"logs_{tasks_index}"
 
+    unknown_recon = [name for name in reconstructions if name not in RECONSTRUCTION_KIND_MAP]
+    if unknown_recon:
+        raise ValueError(f"Unknown reconstructions: {unknown_recon}")
+    reconstruction_kinds = [RECONSTRUCTION_KIND_MAP[name] for name in reconstructions]
+
     base = {
-        "pv_model/kind": ["Vext", "precomputed_los_Carrick2015", "precomputed_los_manticore"],
+        "pv_model/kind": reconstruction_kinds,
         "pv_model/which_Vext": ["constant"],
         "io/root_output": "results/short",
         "model/priors/Vext": [
@@ -267,22 +292,26 @@ if __name__ == "__main__":
             settings["pv_model/radmag_variant"] = [variant_label]
         return expand_override_grid(settings)
 
-    radialMagVext_combinations = (
-        build_radmag_combinations([0, 250, 500, 750, 1000], "default")
-        + build_radmag_combinations([0, 125, 250, 500, 750, 1000], "fine")
-        + build_radmag_combinations(
-            [0, 62.5, 125, 187.5, 250, 500, 750, 1000], "finest")
+    radialMagVext_combinations = build_radmag_combinations(
+        [0, 250, 500, 750, 1000], "default"
     )
+    if resolution_convergence:
+        radialMagVext_combinations += build_radmag_combinations(
+            [0, 125, 250, 500, 750, 1000], "fine"
+        )
+        radialMagVext_combinations += build_radmag_combinations(
+            [0, 62.5, 125, 187.5, 250, 500, 750, 1000], "finest"
+        )
     
-    override_combinations = (
-        dipole_combinations
-        + quadVext_combinations
-        + quad_zeropoint_combinations
-        + pixelA_combinations
-        + pixelVext_combinations
-        + radialVext_combinations
-        + radialMagVext_combinations
-    )
+    override_combinations = dipole_combinations + radialMagVext_combinations
+    if free_radial_direction:
+        override_combinations.extend(radialVext_combinations)
+    if include_pix:
+        override_combinations.extend(pixelA_combinations)
+        override_combinations.extend(pixelVext_combinations)
+    if include_quad:
+        override_combinations.extend(quadVext_combinations)
+        override_combinations.extend(quad_zeropoint_combinations)
 
     base_clusters_section = deepcopy(config["io"].get("Clusters", {}))
     if not base_clusters_section:
@@ -370,6 +399,8 @@ if __name__ == "__main__":
     if not include_joint:
         scenarios = [sc for sc in scenarios if sc.get("label") != "Joint"]
         fprint("Joint scenario disabled (pass --include-joint to include it).")
+    if scaling_relations:
+        scenarios = [sc for sc in scenarios if sc.get("label") in scaling_relations]
 
     def flow_shared_params(which_vext):
         mapping = {
@@ -423,66 +454,88 @@ if __name__ == "__main__":
                     ):
                         continue
 
-                fdir_out = join(
-                    local_config["root_main"], local_config["io"]["root_output"])
-                if not exists(fdir_out):
-                    fprint(f"creating output directory `{fdir_out}`")
-                    makedirs(fdir_out, exist_ok=True)
+                dipole_prior = get_nested(
+                    local_config, "model/priors/zeropoint_dipole", {})
+                if (
+                    isinstance(dipole_prior, dict)
+                    and dipole_prior.get("dist") == "vector_uniform_fixed"
+                ):
+                    stretch_variants = [False, True]
+                else:
+                    stretch_variants = [None]
 
-                kind = get_nested(local_config, "pv_model/kind", "unknown")
-                kind_lower = str(kind).lower()
+                for stretch_los in stretch_variants:
+                    run_config = deepcopy(local_config)
+                    if stretch_los is not None:
+                        run_config = overwrite_config(
+                            run_config,
+                            "pv_model/stretch_los_with_zeropoint",
+                            stretch_los,
+                        )
 
-                if "manticore" in kind_lower:
-                    local_config = overwrite_config(
-                        local_config, "inference/num_warmup", 500)
-                    local_config = overwrite_config(
-                        local_config, "inference/num_samples", 500)
-                elif "carrick" in kind_lower or kind_lower.startswith("vext"):
-                    local_config = overwrite_config(
-                        local_config, "inference/num_warmup", 2000)
-                    local_config = overwrite_config(
-                        local_config, "inference/num_samples", 2000)
+                    fdir_out = join(
+                        run_config["root_main"], run_config["io"]["root_output"])
+                    if not exists(fdir_out):
+                        fprint(f"creating output directory `{fdir_out}`")
+                        makedirs(fdir_out, exist_ok=True)
 
-                if kind.startswith("precomputed_los_"):
+                    kind = get_nested(run_config, "pv_model/kind", "unknown")
+                    kind_lower = str(kind).lower()
+
                     if "manticore" in kind_lower:
-                        beta_prior = {"dist": "normal", "loc": 1.0, "scale": 0.05}
-                        local_config = overwrite_subtree(
-                            local_config, "model/priors/beta", beta_prior)
-                        fprint("set beta prior to Normal(1.0, 0.02) for manticore reconstruction")
+                        run_config = overwrite_config(
+                            run_config, "inference/num_warmup", 500)
+                        run_config = overwrite_config(
+                            run_config, "inference/num_samples", 500)
+                    elif "carrick" in kind_lower or kind_lower.startswith("vext"):
+                        run_config = overwrite_config(
+                            run_config, "inference/num_warmup", 2000)
+                        run_config = overwrite_config(
+                            run_config, "inference/num_samples", 2000)
 
-                        local_config = overwrite_config(
-                            local_config, "pv_model/galaxy_bias", "powerlaw")
-                        fprint("set galaxy_bias to 'powerlaw' for manticore reconstruction")
+                    if kind.startswith("precomputed_los_"):
+                        if "manticore" in kind_lower:
+                            beta_prior = {"dist": "normal", "loc": 1.0, "scale": 0.05}
+                            run_config = overwrite_subtree(
+                                run_config, "model/priors/beta", beta_prior)
+                            fprint("set beta prior to Normal(1.0, 0.02) for manticore reconstruction")
 
-                    elif "carrick" in kind_lower:
-                        beta_prior = {"dist": "normal", "loc": 0.43, "scale": 0.02}
-                        local_config = overwrite_subtree(
-                            local_config, "model/priors/beta", beta_prior)
-                        fprint("set beta prior to Normal(0.43, 0.02) for Carrick2015 reconstruction")
+                            run_config = overwrite_config(
+                                run_config, "pv_model/galaxy_bias", "powerlaw")
+                            fprint("set galaxy_bias to 'powerlaw' for manticore reconstruction")
 
-                        local_config = overwrite_config(
-                            local_config, "pv_model/galaxy_bias", "linear")
-                        fprint("set galaxy_bias to 'linear' for Carrick2015 reconstruction")
+                        elif "carrick" in kind_lower:
+                            beta_prior = {"dist": "normal", "loc": 0.43, "scale": 0.02}
+                            run_config = overwrite_subtree(
+                                run_config, "model/priors/beta", beta_prior)
+                            fprint("set beta prior to Normal(0.43, 0.02) for Carrick2015 reconstruction")
 
-                dynamic_tag = generate_dynamic_tag(local_config, scenario_label)
-                kind_for_filename = kind.replace("precomputed_los_", "")
+                            run_config = overwrite_config(
+                                run_config, "pv_model/galaxy_bias", "linear")
+                            fprint("set galaxy_bias to 'linear' for Carrick2015 reconstruction")
 
-                fname_out = join(
-                    local_config["io"]["root_output"],
-                    f"{kind_for_filename}_{dynamic_tag}.hdf5"
-                )
-                local_config = overwrite_config(
-                    local_config, "io/fname_output", fname_out)
+                    dynamic_tag = generate_dynamic_tag(run_config, scenario_label)
+                    kind_for_filename = kind.replace("precomputed_los_", "")
 
-                toml_out = join(
-                    local_config["root_main"],
-                    splitext(fname_out)[0] + ".toml"
-                )
-                fprint(f"writing the configuration file to `{toml_out}`")
-                with open(toml_out, "wb") as f:
-                    tomli_w.dump(local_config, f)
+                    fname_out = join(
+                        run_config["io"]["root_output"],
+                        f"{kind_for_filename}_{dynamic_tag}.hdf5"
+                    )
+                    run_config = overwrite_config(
+                        run_config, "io/fname_output", fname_out)
 
-                task_fh.write(f"{task_counter} {toml_out}\n")
-                task_counter += 1
+                    toml_out = join(
+                        run_config["root_main"],
+                        splitext(fname_out)[0] + ".toml"
+                    )
+                    rel_toml = splitext(fname_out)[0] + ".toml"
+                    if not include_pairs and rel_toml in PAIR_RUNS:
+                        continue
+                    fprint(f"writing the configuration file to `{toml_out}`")
+                    with open(toml_out, "wb") as f:
+                        tomli_w.dump(run_config, f)
+
+                    task_fh.write(f"{task_counter} {toml_out}\n")
+                    task_counter += 1
 
     fprint(f"wrote task list to `{task_file}`")

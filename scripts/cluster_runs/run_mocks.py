@@ -48,7 +48,10 @@ def sample_uniform(n=1, low=0.0, high=10.0, seed=None):
     return rng.uniform(low, high, size=n)
 
 
-def generate_mock(nsamples, seed, field_loader, output_dir, mock_id=0):
+def generate_mock(
+    nsamples, seed, field_loader, output_dir, mock_id=0,
+    stretch_los_with_zeropoint=False,
+):
     """
     Generate a mock cluster dataset.
     
@@ -146,6 +149,7 @@ def generate_mock(nsamples, seed, field_loader, output_dir, mock_id=0):
         'p_dist_emp': p,
         'n_dist_emp': n,
         'field_loader': field_loader,
+        'rescale_carrick_fields': stretch_los_with_zeropoint,
         'r2distmod': candel.Distance2Distmod(),
         'r2z': candel.Distance2Redshift(),
         'Om': 0.3,
@@ -178,7 +182,8 @@ def generate_mock(nsamples, seed, field_loader, output_dir, mock_id=0):
 
 def run_inference_on_mock(config_path, mock_dir, mock_id, output_dir, 
                           field_density, field_velocity, num_samples=None,
-                          temp_suffix="", verbose_name="", mock_name=None):
+                          temp_suffix="", verbose_name="", mock_name=None,
+                          stretch_los_with_zeropoint=False):
     """
     Run inference on mock data with a given config.
     
@@ -277,6 +282,8 @@ def run_inference_on_mock(config_path, mock_dir, mock_id, output_dir,
     fprint(f"  {verbose_name}: {len(data['RA'])} clusters")
     
     model = candel.model.ClustersModel(temp_config)
+    if stretch_los_with_zeropoint and hasattr(model, "stretch_los_with_zeropoint"):
+        model.stretch_los_with_zeropoint = True
     samples, log_density = candel.run_pv_inference(
         model, {'data': data}, save_samples=True, print_summary=False
     )
@@ -432,6 +439,8 @@ def main():
                         help='Only run dipole inference on full mock (skip no-dipole and removal)')
     parser.add_argument('--num_samples', type=int, default=500,
                         help='Number of samples for inference runs (default: 500)')
+    parser.add_argument('--stretch_los_with_zeropoint', action='store_true',
+                        help='Rescale LOS fields using the zeropoint dipole (dipole H0 mocks).')
     
     args = parser.parse_args()
     
@@ -491,7 +500,9 @@ def main():
         
         # Generate mock with unique seed
         seed = args.seed_offset + mock_id
-        mock, mock_path = generate_mock(args.nclusters, seed, field_loader, mock_dir, mock_id=mock_id)
+        mock, mock_path = generate_mock(
+            args.nclusters, seed, field_loader, mock_dir, mock_id=mock_id,
+            stretch_los_with_zeropoint=args.stretch_los_with_zeropoint)
     
         fprint(f"Starting cluster removal analysis...")
         fprint(f"  Initial clusters: {args.nclusters}")
@@ -508,7 +519,8 @@ def main():
                 args.config_dipole, mock_dir, mock_id, args.output_dir,
                 args.field_density, args.field_velocity,
                 temp_suffix="_dipole_full", verbose_name="Dipole (full)",
-                num_samples=args.num_samples
+                num_samples=args.num_samples,
+                stretch_los_with_zeropoint=args.stretch_los_with_zeropoint,
             )
             
             fprint(f"\n{'='*60}")
@@ -527,7 +539,8 @@ def main():
             args.config_nodipole, mock_dir, mock_id, args.output_dir,
             args.field_density, args.field_velocity,
             temp_suffix="_nodipole", verbose_name="No-dipole",
-            num_samples=args.num_samples
+            num_samples=args.num_samples,
+            stretch_los_with_zeropoint=args.stretch_los_with_zeropoint,
         )
         
         # Save initial no-dipole results
@@ -556,7 +569,8 @@ def main():
             args.config_dipole, mock_dir, mock_id, args.output_dir,
             args.field_density, args.field_velocity,
             temp_suffix="_dipole_full", verbose_name="Dipole (full)",
-            num_samples=args.num_samples
+            num_samples=args.num_samples,
+            stretch_los_with_zeropoint=args.stretch_los_with_zeropoint,
         )
         
         # ===================================================================
@@ -653,7 +667,8 @@ def main():
                 temp_suffix=f"_dipole_iter{iteration:02d}",
                 verbose_name=f"Dipole (iter {iteration})",
                 mock_name=filtered_mock_name,
-                num_samples=args.num_samples
+                num_samples=args.num_samples,
+                stretch_los_with_zeropoint=args.stretch_los_with_zeropoint,
             )
             
             # Save summary results for this iteration
