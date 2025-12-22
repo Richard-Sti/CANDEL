@@ -25,9 +25,23 @@ from ..cosmography import Distance2LogAngDist, Distance2LogLumDist
 def sample_distance(r_grid, los_density, b1, R, p, n, gen):
     los_delta = los_density - 1
     bias = np.clip(1 + b1 * los_delta, 1e-5, None)
-    pi_r = bias * r_grid**p * np.exp(-(r_grid / R)**n)
+
+    if np == np.inf:
+        # hard cutoff at R
+        pi_r = bias * r_grid**p
+        pi_r = np.where(r_grid <= R, pi_r, 0.0)
+    else:
+        # soft cutoff
+        pi_r = bias * r_grid**p * np.exp(-(r_grid / R)**n)
+
     cdf_r = cumulative_simpson(pi_r, x=r_grid, initial=0)
-    cdf_r /= cdf_r[-1]
+
+    # guard against all-zero mass (e.g., if R < r_grid[0])
+    Z = cdf_r[-1]
+    if not np.isfinite(Z) or Z <= 0:
+        raise ValueError("PDF integrates to zero or is non-finite; check R and r_grid range.")
+
+    cdf_r /= Z
     return np.interp(gen.uniform(), cdf_r, r_grid)
 
 
@@ -185,12 +199,14 @@ def gen_Clusters_mock(nsamples, r_grid, Vext_mag, Vext_ell, Vext_b, sigma_v,
         delta_a = np.asarray(delta_a)
         return np.power(10.0, 0.5 * delta_a) - 1.0
     
+    Hnew = None
     if zeropoint_dipole_mag is not None and rescale_carrick_fields:
         dH_over_H= _delta_a_to_frac(zeropoint_dipole_mag)
         dH = dH_over_H * 100 * galactic_to_radec_cartesian(zeropoint_dipole_ell, zeropoint_dipole_b)
         Hnew = 100 + np.sum(dH[None, :] * rhat, axis=1)
 
-    print('new Hubble constants',Hnew)
+    # if Hnew is not None:
+    #     print('new Hubble constants', Hnew)
 
     # Sample distances
     r = np.full(nsamples, np.nan)
@@ -200,7 +216,6 @@ def gen_Clusters_mock(nsamples, r_grid, Vext_mag, Vext_ell, Vext_b, sigma_v,
 
         r_stretched = r_grid.copy() * 100 / Hnew[i] if zeropoint_dipole_mag is not None and rescale_carrick_fields else r_grid
 
-        print('using stretched r grid',r_stretched)
         r[i] = sample_distance(r_stretched, los_density[i], b1, 
                                R_dist_emp, p_dist_emp, n_dist_emp, gen)
         Vpec[i] += beta * np.interp(r[i], r_stretched, los_velocity[i])

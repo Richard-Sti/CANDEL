@@ -351,9 +351,10 @@ def get_log_density(samples, model, model_kwargs, batch_size=5):
 
 def drop_deterministic(samples, check_all_equals=True):
     """Drop deterministic and latent variable samples."""
+    keep_skipZ = {"r_map_skipZ", "r_mean_skipZ", "r_std_skipZ"}
     for key in list(samples.keys()):
         # Remove unused, latent variables used for deterministic sampling
-        if "skipZ" in key:
+        if "skipZ" in key and key not in keep_skipZ:
             samples.pop(key,)
             continue
 
@@ -549,9 +550,10 @@ def postprocess_samples(samples):
 
 def print_clean_summary(samples):
     """Wrapper around numpyro's `print_summary`."""
+    skip_in_summary = {"r_map_skipZ", "r_mean_skipZ", "r_std_skipZ"}
     samples_print = {}
     for key, x in samples.items():
-        if "_latent" in key:
+        if "_latent" in key or key in skip_in_summary:
             continue
 
         samples_print[key] = x[None, ...]

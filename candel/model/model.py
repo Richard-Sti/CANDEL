@@ -621,6 +621,8 @@ class BaseModel(ABC):
 
         self.track_log_density_per_sample = get_nested(
             config, "inference/track_log_density_per_sample", False)
+        self.save_distances = get_nested(
+            config, "inference/save_distances", False)
 
         # Initialize interpolators for distance and redshift
         self.Om = get_nested(config, "model/Om", 0.3)
@@ -1919,6 +1921,20 @@ class ClustersModel(BaseModel):
                 Vrad + Vext_rad)
             ll += Normal(czpred, sigma_v).log_prob(
                 data["czcmb"][None, :, None])
+
+            if self.save_distances:
+                # Diagnostics: MAP and mean/std of r per field/galaxy
+                logw = ll - jnp.max(ll, axis=-1, keepdims=True)
+                w = jnp.exp(logw)
+                w /= jnp.sum(w, axis=-1, keepdims=True)
+                r_mean = jnp.sum(w * r_grid[None, None, :], axis=-1)
+                r_var = jnp.sum(
+                    w * (r_grid[None, None, :] - r_mean[..., None])**2, axis=-1)
+                r_std = jnp.sqrt(r_var)
+                r_map = r_grid[jnp.argmax(ll, axis=-1)]
+                deterministic("r_map_skipZ", r_map)
+                deterministic("r_mean_skipZ", r_mean)
+                deterministic("r_std_skipZ", r_std)
 
             # Marginalise over the radial distance, average over realisations
             # and track the log-density.

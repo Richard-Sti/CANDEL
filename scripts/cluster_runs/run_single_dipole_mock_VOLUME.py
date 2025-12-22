@@ -22,10 +22,10 @@ from h5py import File
 import candel
 
 
-def generate_mock(seed=1234, nsamples=276, field_loader=None):
+def generate_mock(seed=1234, nsamples=276, field_loader=None, rescale_carrick_fields=True):
     # Use fixed, reasonable mock truths (inside priors) to avoid sampling
     # values that fall outside prior support when initializing inference.
-    b1 = 0.0
+    b1 = 4.0 if field_loader is not None else 0.0
     beta = 0.44
     sigma_int = 0.14          # sigma_YT in the summary
     sigma_int_LT = 0.15       # keep a simple LT scatter
@@ -90,8 +90,11 @@ def generate_mock(seed=1234, nsamples=276, field_loader=None):
         "linear_Vext_slope": 0.0,
         "linear_Vext_ell": None,
         "linear_Vext_b": None,
-        # Stretch Carrick LOS fields for zeropoint dipole mocks
-        "rescale_carrick_fields": zeropoint_dipole_mag is not None,
+        # Stretch LOS fields only when using Carrick reconstruction
+        "rescale_carrick_fields": (
+            zeropoint_dipole_mag is not None and field_loader is not None
+            and rescale_carrick_fields
+        ),
     }
 
     mock = candel.mock.gen_Clusters_mock(nsamples, seed=seed, **kwargs)
@@ -125,6 +128,7 @@ def run_inference_config(config_path: str):
     generation when a zeropoint dipole is injected.
     """
     cfg = candel.load_config(config_path)
+    pv_kind = cfg.get("pv_model", {}).get("kind", "")
     data = candel.pvdata.load_PV_dataframes(config_path)
     # Drop mock truth hints to avoid invalid init if outside prior support.
     def _strip_truth(d):
@@ -143,7 +147,11 @@ def run_inference_config(config_path: str):
     model = candel.model.name2model(model_name, shared_param, config_path)
 
     # Enable LOS stretching for zeropoint-dipole runs
-    if "dipA" in config_path and hasattr(model, "stretch_los_with_zeropoint"):
+    if (
+        "dipA" in config_path
+        and "Carrick" in pv_kind
+        and hasattr(model, "stretch_los_with_zeropoint")
+    ):
         model.stretch_los_with_zeropoint = True
 
     if isinstance(data, list):
@@ -165,9 +173,9 @@ def main():
     )
 
     rng = np.random.default_rng()
-    seeds = rng.integers(0, 2**32 - 1, size=2, dtype=np.uint32)
+    seeds = rng.integers(0, 2**32 - 1, size=3, dtype=np.uint32)
 
-    # Generate Carrick2015 mock (index 0)
+    # Generate Carrick2015 mock (index 0, with LOS stretching)
     mock0, kwargs0 = generate_mock(seed=int(seeds[0]), field_loader=field_loader)
     mock0_path = save_mock(mock0, kwargs0, out_dir, mock_name="mock_0")
     print(f"Carrick2015 mock saved to: {mock0_path} (seed={kwargs0['seed']})")
@@ -177,24 +185,27 @@ def main():
     mock1_path = save_mock(mock1, kwargs1, out_dir, mock_name="mock_1")
     print(f"No-recon mock saved to: {mock1_path} (seed={kwargs1['seed']})")
 
-    # Static configs expected to exist
-    carrick_dipA_cfg = join(out_dir, "mock_0_carrick_dipA.toml")
-    carrick_radmag_cfg = join(out_dir, "mock_0_carrick_radmag.toml")
-    norecon_dipA_cfg = join(out_dir, "mock_1_norecon_dipA.toml")
-    norecon_radmag_cfg = join(out_dir, "mock_1_norecon_radmag.toml")
+    # Generate Carrick2015 mock without LOS stretching (index 2)
+    mock2, kwargs2 = generate_mock(
+        seed=int(seeds[2]), field_loader=field_loader, rescale_carrick_fields=False)
+    mock2_path = save_mock(mock2, kwargs2, out_dir, mock_name="mock_2")
+    print(f"Carrick2015 no-stretch mock saved to: {mock2_path} (seed={kwargs2['seed']})")
 
-    for cfg in [carrick_dipA_cfg, carrick_radmag_cfg, norecon_dipA_cfg, norecon_radmag_cfg]:
+    # Static configs expected to exist
+    carrick_radmag_cfg = join(out_dir, "mock_0_carrick_radmag.toml")
+    norecon_radmag_cfg = join(out_dir, "mock_1_norecon_radmag.toml")
+    carrick_nostretch_radmag_cfg = join(out_dir, "mock_2_carrick_nostretch_radmag.toml")
+
+    for cfg in [carrick_radmag_cfg, norecon_radmag_cfg, carrick_nostretch_radmag_cfg]:
         if not exists(cfg):
             raise FileNotFoundError(f"Config not found: {cfg}")
 
-    print("Running Carrick2015 dipA inference...")
-    run_inference_config(carrick_dipA_cfg)
     print("Running Carrick2015 radmag inference...")
     run_inference_config(carrick_radmag_cfg)
-    print("Running no-recon dipA inference...")
-    run_inference_config(norecon_dipA_cfg)
     print("Running no-recon radmag inference...")
     run_inference_config(norecon_radmag_cfg)
+    print("Running Carrick2015 no-stretch radmag inference...")
+    run_inference_config(carrick_nostretch_radmag_cfg)
     print("All inferences completed.")
 
 
