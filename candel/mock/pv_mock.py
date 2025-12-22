@@ -19,7 +19,7 @@ from scipy.integrate import cumulative_simpson
 from ..field import interpolate_los_density_velocity
 from ..util import (SPEED_OF_LIGHT, fprint, galactic_to_radec,
                     galactic_to_radec_cartesian, radec_to_cartesian)
-from ..cosmography import Distance2LogAngDist, Distance2LogLumDist, get_Ez
+from ..cosmography import Distance2LogAngDist, Distance2LogLumDist
 
 
 def sample_distance(r_grid, los_density, b1, R, p, n, gen):
@@ -43,6 +43,11 @@ def sample_distance(r_grid, los_density, b1, R, p, n, gen):
 
     cdf_r /= Z
     return np.interp(gen.uniform(), cdf_r, r_grid)
+
+
+def _get_Ez(z, Om):
+    z = np.asarray(z)
+    return np.sqrt(Om * (1.0 + z)**3 + (1.0 - Om))
 
 
 def gen_TFR_mock(nsamples, r_grid, Vext_mag, Vext_ell, Vext_b, sigma_v, beta,
@@ -251,7 +256,7 @@ def gen_Clusters_mock(nsamples, r_grid, Vext_mag, Vext_ell, Vext_b, sigma_v,
 
     # Apply Ez correction to the intrinsic relations if requested
     if apply_Ez_correction:
-        logEz = np.log10(get_Ez(zobs, Om=Om))
+        logEz = np.log10(_get_Ez(zobs, Om=Om))
         logY_intrinsic += -logEz
         logL_intrinsic += logEz
 
