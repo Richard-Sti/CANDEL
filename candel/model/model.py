@@ -1894,11 +1894,11 @@ class ClustersModel(BaseModel):
 
             if data.has_precomputed_los:
                 # Reconstruction LOS velocity `(n_field, n_gal, n_step)`
-                Vrad = beta * data["los_velocity_r_grid"]
+                Vrad = beta * los_velocity_r_grid
                 # Add inhomogeneous Malmquist bias and normalize the r prior
                 lp_dist += lp_galaxy_bias(
-                    data["los_delta_r_grid"],
-                    data["los_log_density_r_grid"],
+                    los_delta_r_grid,
+                    los_log_density_r_grid,
                     bias_params, self.galaxy_bias
                     )
                 lp_dist -= ln_simpson(
