@@ -455,7 +455,7 @@ def main():
                         help='Only run dipole inference on full mock (skip no-dipole and removal)')
     parser.add_argument('--mocks_only', action='store_true',
                         help='Only generate and save mocks (skip inference).')
-    parser.add_argument('--num_samples', type=int, default=500,
+    parser.add_argument('--num_samples', type=int, default=1000,
                         help='Number of samples for inference runs (default: 500)')
     parser.add_argument('--stretch_los_with_zeropoint', action='store_true',
                         help='Rescale LOS fields using the zeropoint dipole (dipole H0 mocks).')
