@@ -83,7 +83,8 @@ class LOSInterpolator:
             # sample.
             A = f_line[-1]
             C = self.extrap_constant
-            y_exp = C + (A - C) * jnp.exp(-(r_val - r_max) / self.r0_decay_scale)  # noqa
+            delta = jnp.maximum(r_val - r_max, 0.0)
+            y_exp = C + (A - C) * jnp.exp(-delta / self.r0_decay_scale)  # noqa
             return jnp.where(r_val > r_max, y_exp, y_lin)
 
         # Inner vmap over galaxy axis
@@ -117,7 +118,8 @@ class LOSInterpolator:
 
         # Exponential extrapolation
         C = self.extrap_constant
-        decay = jnp.exp(-(r_eval - r_max) / self.r0_decay_scale)  # (n_eval,)
+        delta = jnp.maximum(r_eval - r_max, 0.0)
+        decay = jnp.exp(-delta / self.r0_decay_scale)  # (n_eval,)
         extrap = C + (A - C) * decay  # shape (n_field, n_gal, n_eval)
 
         mask = r_eval > r_max  # (n_eval,)

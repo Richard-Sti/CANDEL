@@ -1812,6 +1812,7 @@ class ClustersModel(BaseModel):
                     los_velocity_r_grid = _interp_field(data.f_los_velocity)
                     los_log_density_r_grid = _interp_field(data.f_los_log_density)
 
+
             # Homogeneous Malmqusit distance prior, `(n_field, n_gal, n_rbin)`
             lp_dist = log_prior_r_empirical(
                 r_grid, **kwargs_dist, Rmax_grid=r_grid[-1])[None, None, :]

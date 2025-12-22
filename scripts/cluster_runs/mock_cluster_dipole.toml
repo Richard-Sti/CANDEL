@@ -29,9 +29,9 @@ Vext_per_pix_nside = 1
 which_A = "constant"
 A_per_pix_nside = 1
 
-r_limits_malmquist = [0.1, 1401]
-num_points_malmquist = 251
-los_decay_scale = 20.0
+r_limits_malmquist = [0.1, 1301]
+num_points_malmquist = 1301
+los_decay_scale = 5.0
 
 [model]
 Om = 0.3

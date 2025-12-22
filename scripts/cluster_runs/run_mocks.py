@@ -279,6 +279,18 @@ def run_inference_on_mock(config_path, mock_dir, mock_id, output_dir,
     
     # Load data and run inference
     data = candel.pvdata.load_PV_dataframes(temp_config)
+    # Remove LT truths that can fall outside priors for YT-only runs.
+    def _strip_lt_truths(d):
+        if hasattr(d, "data"):
+            truths = d.data.get("_mock_truths", None)
+            if isinstance(truths, dict):
+                truths.pop("A_LT", None)
+                truths.pop("B_LT", None)
+    if isinstance(data, list):
+        for d in data:
+            _strip_lt_truths(d)
+    else:
+        _strip_lt_truths(data)
     fprint(f"  {verbose_name}: {len(data['RA'])} clusters")
     
     model = candel.model.ClustersModel(temp_config)
