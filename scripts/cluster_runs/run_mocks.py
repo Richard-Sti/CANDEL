@@ -154,6 +154,7 @@ def generate_mock(
         'n_dist_emp': n,
         'field_loader': field_loader,
         'rescale_carrick_fields': stretch_los_with_zeropoint,
+        'apply_Ez_correction': True,
         'r2distmod': candel.Distance2Distmod(),
         'r2z': candel.Distance2Redshift(),
         'Om': 0.3,

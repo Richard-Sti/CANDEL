@@ -19,7 +19,7 @@ from scipy.integrate import cumulative_simpson
 from ..field import interpolate_los_density_velocity
 from ..util import (SPEED_OF_LIGHT, fprint, galactic_to_radec,
                     galactic_to_radec_cartesian, radec_to_cartesian)
-from ..cosmography import Distance2LogAngDist, Distance2LogLumDist
+from ..cosmography import Distance2LogAngDist, Distance2LogLumDist, get_Ez
 
 
 def sample_distance(r_grid, los_density, b1, R, p, n, gen):
@@ -150,7 +150,8 @@ def gen_Clusters_mock(nsamples, r_grid, Vext_mag, Vext_ell, Vext_b, sigma_v,
                       e_logT, e_logY, e_logF, logT_prior_mean, logT_prior_std,
                       b_min, zcmb_max, R_dist_emp, p_dist_emp, n_dist_emp, field_loader, r2distmod, r2z,
                       linear_Vext_slope=None, linear_Vext_ell=None, rescale_carrick_fields=False,
-                      linear_Vext_b=None, Om=0.3, seed=42, verbose=True, **kwargs):
+                      linear_Vext_b=None, Om=0.3, seed=42, verbose=True,
+                      apply_Ez_correction=True, **kwargs):
     """
     Generate a mock cluster survey with distances sampled from an empirical
     distribution, using Y-T and L-T scaling relations with uncorrelated scatter.
@@ -243,6 +244,17 @@ def gen_Clusters_mock(nsamples, r_grid, Vext_mag, Vext_ell, Vext_b, sigma_v,
         logY_intrinsic += dipole_term
         logL_intrinsic += dipole_term
     
+    # Generate observed redshift with peculiar velocities (used for Ez)
+    zobs = gen.normal(
+        (1 + r2z(r, h=h)) * (1 + Vpec / SPEED_OF_LIGHT) - 1,
+        sigma_v / SPEED_OF_LIGHT)
+
+    # Apply Ez correction to the intrinsic relations if requested
+    if apply_Ez_correction:
+        logEz = np.log10(get_Ez(zobs, Om=Om))
+        logY_intrinsic += -logEz
+        logL_intrinsic += logEz
+
     # Apply distance corrections to get observed quantities
     # Y_obs ~ Y_intrinsic / D_A^2, so logY_obs = logY_intrinsic - 2*log(D_A)
     # L_obs ~ L_intrinsic / (4*pi*D_L^2), so logF = logL - log(4*pi) - 2*log(D_L)
@@ -258,11 +270,6 @@ def gen_Clusters_mock(nsamples, r_grid, Vext_mag, Vext_ell, Vext_b, sigma_v,
     logY_obs = gen.normal(logY_true, e_logY, size=nsamples)
     logF_obs = gen.normal(logF_true, e_logF, size=nsamples)
     
-    # Generate observed redshift with peculiar velocities
-    zobs = gen.normal(
-        (1 + r2z(r, h=h)) * (1 + Vpec / SPEED_OF_LIGHT) - 1,
-        sigma_v / SPEED_OF_LIGHT)
-
     if los_density.ndim == 2:
         los_density = los_density[None, ...]
         los_velocity = los_velocity[None, ...]

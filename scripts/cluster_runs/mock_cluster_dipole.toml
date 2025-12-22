@@ -172,6 +172,7 @@ high = 1000.0
 root_output = "results/mocks"
 # catalogue_name will be set automatically by the script to Clusters_mock_{rank}
 catalogue_name = "Clusters_mock_0"
+apply_Ez_correction = true
 fname_output = "results/mocks/dipole.hdf5"
 
 # This section will be updated by the script
