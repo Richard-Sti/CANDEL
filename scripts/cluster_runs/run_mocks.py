@@ -118,6 +118,8 @@ def generate_mock(
     # Mock generation parameters (same as make_Clusters_mocks.ipynb)
     # Extra kwargs (e.g., phi, cos_theta) are accepted and ignored by gen_Clusters_mock
     # but will be saved as truth parameters for MCMC initialization
+    dH_over_H_dipole = np.power(10.0, 0.5 * zeropoint_dipole_mag) - 1.0
+
     kwargs = {
         'r_grid': np.linspace(0.1, 2001, 2001),
         'Vext_mag': 0.00,
@@ -129,10 +131,12 @@ def generate_mock(
         'A_YT': A_YT,
         'B_YT': B_YT,
         'sigma_int': sigma_int,
+        'sigma_YT': sigma_int,
         'A_LT': 0.0,
         'B_LT': 2.5,
         'sigma_int_LT': 0.15,
         'zeropoint_dipole_mag': zeropoint_dipole_mag,
+        'dH_over_H_dipole': dH_over_H_dipole,
         'zeropoint_dipole_phi': zeropoint_dipole_phi,
         'zeropoint_dipole_cos_theta': zeropoint_dipole_cos_theta,
         'zeropoint_dipole_ell': zeropoint_dipole_ell,  # For mock generation & reference
@@ -449,6 +453,8 @@ def main():
                         help='Seed offset (seed = offset + mock_id, default: 1000)')
     parser.add_argument('--dipole_only', action='store_true',
                         help='Only run dipole inference on full mock (skip no-dipole and removal)')
+    parser.add_argument('--mocks_only', action='store_true',
+                        help='Only generate and save mocks (skip inference).')
     parser.add_argument('--num_samples', type=int, default=500,
                         help='Number of samples for inference runs (default: 500)')
     parser.add_argument('--stretch_los_with_zeropoint', action='store_true',
@@ -520,7 +526,13 @@ def main():
         fprint(f"  Initial clusters: {args.nclusters}")
         fprint(f"  Removal iterations: {args.n_remove_iterations}")
         fprint(f"  Clusters per iteration: {args.n_remove_per_iteration}")
-        
+
+        if args.mocks_only:
+            fprint(f"\n{'='*60}")
+            fprint(f"MOCK {mock_id} - Mock generation only (no inference)")
+            fprint(f"{'='*60}")
+            continue
+
         # If dipole_only flag is set, just run dipole inference and exit
         if args.dipole_only:
             fprint(f"\n{'='*60}")
