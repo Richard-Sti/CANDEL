@@ -11,4 +11,4 @@ source ~/code/CANDEL/venv_candel/bin/activate
 
 exec python ~/code/CANDEL/scripts/cluster_runs/run_mocks.py \
     --n_mocks_total $NMOCKS --output_dir results/nonstretch_mocks --nclusters 275 \
-    --num_samples 275 --dipole_only # --stretch_los_with_zeropoint
+    --num_samples 275 --dipole_only 
