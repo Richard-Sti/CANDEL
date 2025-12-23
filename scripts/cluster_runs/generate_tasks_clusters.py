@@ -28,7 +28,7 @@ import tomli_w
 from candel import fprint, load_config, replace_prior_with_delta
 
 # Hardcoded flags for task generation.
-scaling_relations = ["LT"]
+scaling_relations = ["YT"]
 reconstructions = ["Carrick2015"]
 include_quad = False
 include_pairs = False
