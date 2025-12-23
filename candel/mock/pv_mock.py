@@ -156,7 +156,7 @@ def gen_Clusters_mock(nsamples, r_grid, Vext_mag, Vext_ell, Vext_b, sigma_v,
                       b_min, zcmb_max, R_dist_emp, p_dist_emp, n_dist_emp, field_loader, r2distmod, r2z,
                       linear_Vext_slope=None, linear_Vext_ell=None, rescale_carrick_fields=False,
                       linear_Vext_b=None, Om=0.3, seed=42, verbose=True,
-                      apply_Ez_correction=True, **kwargs):
+                      los_decay_scale=5.0, apply_Ez_correction=True, **kwargs):
     """
     Generate a mock cluster survey with distances sampled from an empirical
     distribution, using Y-T and L-T scaling relations with uncorrelated scatter.
@@ -231,9 +231,22 @@ def gen_Clusters_mock(nsamples, r_grid, Vext_mag, Vext_ell, Vext_b, sigma_v,
         # while sampling distances on the base grid to match inference.
         # This follows d = cz / H0: higher H0 shifts features inward.
         if zeropoint_dipole_mag is not None and rescale_carrick_fields:
-            r_stretched = r_grid * 100 / Hnew[i]
-            los_density_i = np.interp(r_grid, r_stretched, los_density[i])
-            los_velocity_i = np.interp(r_grid, r_stretched, los_velocity[i])
+            r_stretched = r_grid * Hnew[i] / 100.0
+            los_density_i = np.interp(r_stretched, r_grid, los_density[i])
+            los_velocity_i = np.interp(r_stretched, r_grid, los_velocity[i])
+            # Old remap approach (kept for comparison):
+            # r_stretched = r_grid * 100.0 / Hnew[i]
+            # los_density_i = np.interp(r_grid, r_stretched, los_density[i])
+            # los_velocity_i = np.interp(r_grid, r_stretched, los_velocity[i])
+            # if los_decay_scale is not None and los_decay_scale > 0:
+            #     r_max = r_stretched[-1]
+            #     A_rho = los_density[i][-1]
+            #     A_vel = los_velocity[i][-1]
+            #     mask = r_grid > r_max
+            #     if np.any(mask):
+            #         decay = np.exp(-(r_grid[mask] - r_max) / los_decay_scale)
+            #         los_density_i[mask] = A_rho * decay
+            #         los_velocity_i[mask] = A_vel * decay
         else:
             los_density_i = los_density[i]
             los_velocity_i = los_velocity[i]

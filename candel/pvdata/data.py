@@ -181,6 +181,8 @@ class PVDataFrame:
             fprint(f"marginalising over {self.num_fields} field realisations.")
 
             kwargs = {"r0_decay_scale": los_radial_decay_scale}
+            self.f_los_density = LOSInterpolator(
+                self.data["los_r"], self.data["los_density"], **kwargs)
             self.f_los_delta = LOSInterpolator(
                 self.data["los_r"], self.data["los_delta"], **kwargs)
             self.f_los_log_density = LOSInterpolator(

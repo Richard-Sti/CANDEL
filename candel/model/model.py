@@ -1802,7 +1802,7 @@ class ClustersModel(BaseModel):
                         A_dipole * data["rhat"], axis=1) / jnp.maximum(A_norm, 1e-30)
                     delta_frac = _delta_a_to_frac(A_norm)
                     H_new = H_base * (1.0 + delta_frac * cos_theta)
-                    r_stretched = r_grid[None, :] * H_base / H_new[:, None]
+                    r_stretched = r_grid[None, :] * H_new[:, None] / H_base
 
                     def _interp_field(f_interp):
                         vals = vmap(lambda r_col: f_interp(r_col), in_axes=1)(r_stretched)
@@ -1811,6 +1811,25 @@ class ClustersModel(BaseModel):
                     los_delta_r_grid = _interp_field(data.f_los_delta)
                     los_velocity_r_grid = _interp_field(data.f_los_velocity)
                     los_log_density_r_grid = _interp_field(data.f_los_log_density)
+
+                    # Old remap approach (kept for comparison):
+                    # r_stretched = r_grid[None, :] * H_base / H_new[:, None]
+                    #
+                    # def _stretch_field(f_interp):
+                    #     base_vals = f_interp.interp_many_steps_per_galaxy(r_grid)
+                    #
+                    #     def _interp_gal(y_gal, r_stretch_gal):
+                    #         return jnp.interp(r_grid, r_stretch_gal, y_gal)
+                    #
+                    #     def _interp_field(y_field):
+                    #         return vmap(_interp_gal, in_axes=(0, 0))(y_field, r_stretched)
+                    #
+                    #     return vmap(_interp_field, in_axes=0)(base_vals)
+                    #
+                    # los_density_r_grid = _stretch_field(data.f_los_density)
+                    # los_log_density_r_grid = jnp.log(jnp.maximum(los_density_r_grid, 1e-30))
+                    # los_delta_r_grid = los_density_r_grid - 1.0
+                    # los_velocity_r_grid = _stretch_field(data.f_los_velocity)
 
 
             # Homogeneous Malmqusit distance prior, `(n_field, n_gal, n_rbin)`

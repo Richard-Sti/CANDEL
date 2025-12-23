@@ -19,6 +19,8 @@ import numpy as np
 from h5py import File
 import copy
 import re
+from jax import numpy as jnp
+from jax import vmap
 from candel.util import radec_to_galactic
 
 try:
@@ -119,6 +121,16 @@ def generate_mock(
     # Extra kwargs (e.g., phi, cos_theta) are accepted and ignored by gen_Clusters_mock
     # but will be saved as truth parameters for MCMC initialization
     dH_over_H_dipole = np.power(10.0, 0.5 * zeropoint_dipole_mag) - 1.0
+    H0_ratio = 1.0 + dH_over_H_dipole
+    fprint(
+        "ZP dipole: mag={:.6f}, ell={:.3f}, b={:.3f}, dH/H={:.6f}, H0/H0_base={:.6f}".format(
+            zeropoint_dipole_mag,
+            zeropoint_dipole_ell,
+            zeropoint_dipole_b,
+            dH_over_H_dipole,
+            H0_ratio,
+        )
+    )
 
     kwargs = {
         'r_grid': np.linspace(0.1, 1401, 251),
@@ -155,6 +167,7 @@ def generate_mock(
         'field_loader': field_loader,
         'rescale_carrick_fields': stretch_los_with_zeropoint,
         'apply_Ez_correction': True,
+        'los_decay_scale': 5.0,
         'r2distmod': candel.Distance2Distmod(),
         'r2z': candel.Distance2Redshift(),
         'Om': 0.3,
@@ -301,6 +314,38 @@ def run_inference_on_mock(config_path, mock_dir, mock_id, output_dir,
     model = candel.model.ClustersModel(temp_config)
     if stretch_los_with_zeropoint and hasattr(model, "stretch_los_with_zeropoint"):
         model.stretch_los_with_zeropoint = True
+    if stretch_los_with_zeropoint and hasattr(data, "data"):
+        truths = data.data.get("_mock_truths", {})
+        mag = truths.get("zeropoint_dipole_mag", None)
+        ell = truths.get("zeropoint_dipole_ell", None)
+        b = truths.get("zeropoint_dipole_b", None)
+        if mag is not None and ell is not None and b is not None:
+            A_vec = mag * candel.util.galactic_to_radec_cartesian(ell, b)
+            A_norm = jnp.linalg.norm(A_vec)
+            cos_theta = jnp.sum(A_vec * data["rhat"], axis=1) / jnp.maximum(A_norm, 1e-30)
+            delta_frac = jnp.power(10.0, 0.5 * A_norm) - 1.0
+            H_new = 100.0 * (1.0 + delta_frac * cos_theta)
+            r_grid = data["r_grid"]
+            r_stretched = r_grid[None, :] * 100.0 / H_new[:, None]
+            vals = vmap(lambda r_col: data.f_los_density(r_col), in_axes=1)(r_stretched)
+            los_density_model = jnp.transpose(vals, (1, 2, 0))
+            los_density = np.array(data["los_density"])
+            r_stretched_0 = np.array(r_stretched[0])
+            r_grid_np = np.array(r_grid)
+            rho_interp = np.interp(r_stretched_0, r_grid_np, los_density[0, 0, :])
+            r_max = r_grid_np[-1]
+            decay_scale = getattr(data.f_los_density, "r0_decay_scale", None)
+            if decay_scale is not None and decay_scale > 0:
+                mask = r_stretched_0 > r_max
+                if np.any(mask):
+                    A_rho = los_density[0, 0, -1]
+                    rho_interp[mask] = A_rho * np.exp(-(r_stretched_0[mask] - r_max) / decay_scale)
+            rho_model = np.array(los_density_model[0, 0, :])
+            fprint(
+                "LOS stretch check: max|rho_model-rho_interp|={:.3e}".format(
+                    np.max(np.abs(rho_model - rho_interp))
+                )
+            )
     samples, log_density = candel.run_pv_inference(
         model, {'data': data}, save_samples=True, print_summary=False
     )
