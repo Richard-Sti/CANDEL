@@ -122,6 +122,8 @@ def main():
     config = candel.load_config(args.config)
     nreal_map = {
         "Carrick2015": 1,
+        "Carrick2015_STRETCHED_X1P05": 1,
+        "Carrick2015_STRETCHED_LOS_ELL140P34_B46P67_DA0P03": 1,
         "Lilow2024": 1,
         "CLONES": 1,
         "CB1": 100,

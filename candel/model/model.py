@@ -366,9 +366,6 @@ def sample_radialmag_vector(name, nval, low, high, max_modulus=None,
     with plate(f"{name}_plate", nval):
         mag = sample(f"{name}_mag", Uniform(low_arr, high_arr))
 
-    # Fix the first knot/bucket magnitude to zero.
-    mag = mag.at[0].set(0.0)
-
     rhat = jnp.array([
         sin_theta * jnp.cos(phi),
         sin_theta * jnp.sin(phi),

@@ -448,7 +448,11 @@ def name2field_loader(name):
     BaseFieldLoader
         Field loader.
     """
-    if name == "Carrick2015":
+    if name in [
+            "Carrick2015",
+            "Carrick2015_STRETCHED_X1P05",
+            "Carrick2015_STRETCHED_LOS_ELL140P34_B46P67_DA0P03",
+    ]:
         return Carrick2015_FieldLoader
     elif name == "Lilow2024":
         return Lilow2024_FieldLoader

@@ -28,13 +28,13 @@ import tomli_w
 from candel import fprint, load_config, replace_prior_with_delta
 
 # Hardcoded flags for task generation.
-scaling_relations = ["YT"]
-reconstructions = ["Carrick2015"]
-include_quad = False
-include_pairs = False
-include_pix = False
-resolution_convergence = False
-free_radial_direction = False
+scaling_relations = ["YT", "LT", "LTYT"]  # Set to None to run all
+reconstructions = ["Vext", "Carrick2015", "manticore"]
+include_quad = True
+include_pairs = True
+include_pix = True
+resolution_convergence = True
+free_radial_direction = True
 
 RECONSTRUCTION_KIND_MAP = {
     "Vext": "Vext",
@@ -46,7 +46,6 @@ PAIR_RUNS = {
     "results/short/Carrick2015_YT_noMNR_dipA_dipVext_hasY.toml",
     "results/short/Carrick2015_YT_noMNR_dipH0_dipVext_hasY.toml",
 }
-
 
 def overwrite_config(config, key, value):
     """Return a new config dict with a nested key overwritten."""
@@ -492,6 +491,14 @@ if __name__ == "__main__":
                             run_config, "inference/num_warmup", 2000)
                         run_config = overwrite_config(
                             run_config, "inference/num_samples", 2000)
+
+                    which_vext = get_nested(
+                        run_config, "pv_model/which_Vext", "constant")
+                    if which_vext in ("radial", "radial_magnitude"):
+                        run_config = overwrite_config(
+                            run_config, "inference/num_warmup", 4000)
+                        run_config = overwrite_config(
+                            run_config, "inference/num_samples", 4000)
 
                     if kind.startswith("precomputed_los_"):
                         if "manticore" in kind_lower:

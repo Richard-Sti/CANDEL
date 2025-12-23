@@ -44,7 +44,7 @@ Vext_radial_bin_edges = [0.0,0.075,0.35]
 
 # (Inhomogeneus Malmquist bias settings and extrapolation), in units of Mpc / h
 r_limits_malmquist = [0.1, 1401]
-num_points_malmquist = 251
+num_points_malmquist = 1001
 
 los_decay_scale = 20.0
 
@@ -138,7 +138,7 @@ high = 3
 
 [model.priors.sigma_v]
 dist = "jeffreys"
-low = 200.0
+low = 150.0
 high = 3000.0
 
 [model.priors.Vext]
