@@ -260,7 +260,11 @@ class PVDataFrame:
         data["r_grid"] = np.linspace(rmin, rmax, num_points)
 
         los_decay_scale = config_pv_model.get("los_decay_scale", 5.0)
-        fprint(f"setting los_decay_scale to {los_decay_scale}")
+        if los_decay_scale is None or los_decay_scale <= 0:
+            fprint("disabling LOS radial extrapolation.")
+            los_decay_scale = None
+        else:
+            fprint(f"setting los_decay_scale to {los_decay_scale}")
 
         if "los_density" in data:
             data["los_log_density"] = np.log(data["los_density"])

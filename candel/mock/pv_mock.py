@@ -220,11 +220,27 @@ def gen_Clusters_mock(nsamples, r_grid, Vext_mag, Vext_ell, Vext_b, sigma_v,
     for i in range(nsamples):
         Vpec[i] = Vext_rad[i]
 
-        r_stretched = r_grid.copy() * 100 / Hnew[i] if zeropoint_dipole_mag is not None and rescale_carrick_fields else r_grid
+        # Old approach (kept for reference): relabel the grid, which makes the
+        # mock and inference apply inverse stretch mappings.
+        # r_stretched = r_grid.copy() * 100 / Hnew[i] if zeropoint_dipole_mag is not None and rescale_carrick_fields else r_grid
+        # r[i] = sample_distance(r_stretched, los_density[i], b1,
+        #                        R_dist_emp, p_dist_emp, n_dist_emp, gen)
+        # Vpec[i] += beta * np.interp(r[i], r_stretched, los_velocity[i])
 
-        r[i] = sample_distance(r_stretched, los_density[i], b1, 
+        # Apply stretch by evaluating LOS fields at stretched coordinates
+        # while sampling distances on the base grid to match inference.
+        # This follows d = cz / H0: higher H0 shifts features inward.
+        if zeropoint_dipole_mag is not None and rescale_carrick_fields:
+            r_stretched = r_grid * 100 / Hnew[i]
+            los_density_i = np.interp(r_grid, r_stretched, los_density[i])
+            los_velocity_i = np.interp(r_grid, r_stretched, los_velocity[i])
+        else:
+            los_density_i = los_density[i]
+            los_velocity_i = los_velocity[i]
+
+        r[i] = sample_distance(r_grid, los_density_i, b1,
                                R_dist_emp, p_dist_emp, n_dist_emp, gen)
-        Vpec[i] += beta * np.interp(r[i], r_stretched, los_velocity[i])
+        Vpec[i] += beta * np.interp(r[i], r_grid, los_velocity_i)
         if linear_dir is not None:
             Vpec[i] += linear_Vext_slope * r[i] * np.dot(linear_dir, rhat[i])
 

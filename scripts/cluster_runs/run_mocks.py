@@ -121,7 +121,7 @@ def generate_mock(
     dH_over_H_dipole = np.power(10.0, 0.5 * zeropoint_dipole_mag) - 1.0
 
     kwargs = {
-        'r_grid': np.linspace(0.1, 2001, 2001),
+        'r_grid': np.linspace(0.1, 1401, 251),
         'Vext_mag': 0.00,
         'Vext_ell': 0.0,
         'Vext_b': 0.0,

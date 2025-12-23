@@ -75,17 +75,21 @@ class LOSInterpolator:
         r_max = self.los_r[-1]
 
         # Single LOS, single scalar r
-        def single_interp(f_line, r_val):
-            # Linear interp inside [los_r[0], r_max]; edge rule of jnp.interp
-            y_lin = jnp.interp(r_val, self.los_r, f_line)
+        if self.r0_decay_scale is None:
+            def single_interp(f_line, r_val):
+                return jnp.interp(r_val, self.los_r, f_line)
+        else:
+            def single_interp(f_line, r_val):
+                # Linear interp inside [los_r[0], r_max]; edge rule of jnp.interp
+                y_lin = jnp.interp(r_val, self.los_r, f_line)
 
-            # Exponential tail for r > r_max with amplitude fixed at last
-            # sample.
-            A = f_line[-1]
-            C = self.extrap_constant
-            delta = jnp.maximum(r_val - r_max, 0.0)
-            y_exp = C + (A - C) * jnp.exp(-delta / self.r0_decay_scale)  # noqa
-            return jnp.where(r_val > r_max, y_exp, y_lin)
+                # Exponential tail for r > r_max with amplitude fixed at last
+                # sample.
+                A = f_line[-1]
+                C = self.extrap_constant
+                delta = jnp.maximum(r_val - r_max, 0.0)
+                y_exp = C + (A - C) * jnp.exp(-delta / self.r0_decay_scale)  # noqa
+                return jnp.where(r_val > r_max, y_exp, y_lin)
 
         # Inner vmap over galaxy axis
         vmap_gal = vmap(single_interp, in_axes=(0, 0))
@@ -115,6 +119,9 @@ class LOSInterpolator:
         batched_interp = vmap(vmap_gal, in_axes=0)
 
         y_interp = batched_interp(self.f)  # (n_field, n_gal, n_eval)
+
+        if self.r0_decay_scale is None:
+            return y_interp
 
         # Exponential extrapolation
         C = self.extrap_constant
