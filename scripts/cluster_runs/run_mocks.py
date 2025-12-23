@@ -133,7 +133,7 @@ def generate_mock(
     )
 
     kwargs = {
-        'r_grid': np.linspace(0.1, 1401, 251),
+        'r_grid': np.linspace(0.1, 1401, 501),
         'Vext_mag': 0.00,
         'Vext_ell': 0.0,
         'Vext_b': 0.0,
