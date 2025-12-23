@@ -209,7 +209,7 @@ los_r0_decay_scale = 5
 
 [io.SH0ES]
 root = "data/SH0ES"
-cepheid_host_cz_cmb_max = 5000
+cepheid_host_cz_cmb_max = 3300
 replace_SN_HF_from_PP = false
 which_host_los = "Carrick2015"
 # which_host_los = "manticore_2MPP_MULTIBIN_N256_DES_V2"
