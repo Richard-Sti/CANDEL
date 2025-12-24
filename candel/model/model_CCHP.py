@@ -19,6 +19,7 @@ from abc import ABC
 
 import jax.numpy as jnp
 import numpy as np
+from jax.scipy.special import log_ndtr
 from numpyro import factor, plate, sample
 from numpyro.distributions import Normal, Uniform
 
@@ -77,13 +78,13 @@ class BaseCCHPModel(ABC):
         self.config = config
         self.use_reconstruction = get_nested(
             config, "model/use_reconstruction", False)
-        self.which_bias = get_nested(config, "model/galaxy_bias", "linear")
+        self.which_bias = get_nested(config, "model/which_bias", "linear")
         self.which_selection = get_nested(
             config, "model/which_selection", None)
         if self.use_reconstruction:
             recon_name = get_nested(config, "io/which_host_los", "unspecified")
             fprint(f"Using reconstruction: {recon_name}")
-        fprint(f"galaxy_bias set to {self.which_bias}")
+        fprint(f"which_bias set to {self.which_bias}")
         fprint(f"selection set to {self.which_selection}")
         self.mag_lim_SN = get_nested(config, "model/mag_lim_SN", None)
         self.mag_lim_SN_width = get_nested(
@@ -93,12 +94,47 @@ class BaseCCHPModel(ABC):
             config, "model/cz_lim_selection", 2000.0)
         self.cz_lim_selection_width = get_nested(
             config, "model/cz_lim_selection_width", 300.0)
+
+        # Selection inference settings
+        self.infer_sel = get_nested(config, "model/infer_sel", False)
+        if self.which_selection not in (None, "none"):
+            fprint(f"infer_sel set to {self.infer_sel}")
+        self.cz_lim_selection_min = get_nested(
+            config, "model/cz_lim_selection_min", 500.0)
+        self.cz_lim_selection_max = get_nested(
+            config, "model/cz_lim_selection_max", 10000.0)
+        self.cz_lim_selection_width_min = get_nested(
+            config, "model/cz_lim_selection_width_min", 50.0)
+        self.cz_lim_selection_width_max = get_nested(
+            config, "model/cz_lim_selection_width_max", 2000.0)
+        self.mag_lim_SN_min = get_nested(
+            config, "model/mag_lim_SN_min", 10.0)
+        self.mag_lim_SN_max = get_nested(
+            config, "model/mag_lim_SN_max", 18.0)
+        self.mag_lim_SN_width_min = get_nested(
+            config, "model/mag_lim_SN_width_min", 0.05)
+        self.mag_lim_SN_width_max = get_nested(
+            config, "model/mag_lim_SN_width_max", 2.0)
+
         if self.which_selection == "SN_magnitude":
-            fprint(f"SN selection: mag_lim_SN={self.mag_lim_SN}, "
-                   f"width={self.mag_lim_SN_width}")
+            if self.infer_sel:
+                fprint(f"SN selection: inferring mag_lim_SN in "
+                       f"[{self.mag_lim_SN_min}, {self.mag_lim_SN_max}], "
+                       f"width in [{self.mag_lim_SN_width_min}, "
+                       f"{self.mag_lim_SN_width_max}]")
+            else:
+                fprint(f"SN selection: mag_lim_SN={self.mag_lim_SN}, "
+                       f"width={self.mag_lim_SN_width}")
         elif self.which_selection == "redshift":
-            fprint(f"Redshift selection: cz_lim={self.cz_lim_selection}, "
-                   f"width={self.cz_lim_selection_width}")
+            if self.infer_sel:
+                fprint(f"Redshift selection: inferring cz_lim in "
+                       f"[{self.cz_lim_selection_min}, "
+                       f"{self.cz_lim_selection_max}], "
+                       f"width in [{self.cz_lim_selection_width_min}, "
+                       f"{self.cz_lim_selection_width_max}]")
+            else:
+                fprint(f"Redshift selection: cz_lim={self.cz_lim_selection}, "
+                       f"width={self.cz_lim_selection_width}")
 
         # Load and possibly mask input data (depends on which_selection)
         self.set_data(data)
@@ -150,6 +186,36 @@ class BaseCCHPModel(ABC):
             raise ValueError(
                 "`use_reconstruction = True` but no host LOS data provided.")
 
+        # Load random LOS interpolators if available (for selection modelling)
+        self.has_rand_los = False
+        self.num_rand_los = 1
+        if get_nested(config, "io/load_rand_los", False):
+            if "rand_los_velocity" in data and "rand_los_r" in data:
+                self.has_rand_los = True
+                self.num_rand_los = data["rand_los_velocity"].shape[1]
+                fprint(f"Number of random LOS: {self.num_rand_los}")
+
+                rand_los_delta = jnp.asarray(data["rand_los_density"]) - 1.0
+                self.f_rand_los_delta = LOSInterpolator(
+                    data["rand_los_r"],
+                    rand_los_delta,
+                    r0_decay_scale=r0_decay_scale,
+                    extrap_constant=0.0,
+                )
+                self.f_rand_los_velocity = LOSInterpolator(
+                    data["rand_los_r"],
+                    jnp.asarray(data["rand_los_velocity"]),
+                    r0_decay_scale=r0_decay_scale,
+                    extrap_constant=0.0,
+                )
+
+                # Unit vectors for random LOS directions
+                rhat = radec_to_cartesian(
+                    jnp.asarray(data["rand_los_RA"]),
+                    jnp.asarray(data["rand_los_dec"]))
+                n = jnp.linalg.norm(rhat, axis=1, keepdims=True)
+                self.rhat_rand_los = rhat / jnp.where(n == 0.0, 1.0, n)
+
         # Set up radial range for volume prior normalization
         r_limits_malmquist = get_nested(
             config, "model/r_limits_malmquist", [0.01, 350])
@@ -165,8 +231,32 @@ class BaseCCHPModel(ABC):
         self.r_host_range = r_range
         self.Rmax = jnp.max(self.r_host_range)
 
-    def log_S_cz(self, lp_r, Vpec, H0, sigma_v):
+        # Precompute log prior on the fixed radial grid (used multiple times)
+        self._log_prior_r_grid = self.log_prior_distance(self.r_host_range)
+
+        # Validate that random LOS is available when selection is used with
+        # reconstruction
+        if self.which_selection not in (None, "none"):
+            if self.use_reconstruction and not self.has_rand_los:
+                raise ValueError(
+                    "Selection modelling with reconstruction requires random "
+                    "LOS data. Set `load_rand_los = true` in config.")
+
+            # When not using reconstruction but applying selection, create
+            # dummy homogeneous random LOS (like SH0ES)
+            if not self.use_reconstruction:
+                fprint("Creating dummy random LOS for selection (no recon).")
+                self.num_rand_los = 1
+                self.rhat_rand_los = jnp.zeros((1, 3))
+
+    def log_S_cz(self, lp_r, Vpec, H0, sigma_v,
+                 cz_lim_selection=None, cz_lim_selection_width=None):
         """Probability of detection term if redshift-truncated."""
+        if cz_lim_selection is None:
+            cz_lim_selection = self.cz_lim_selection
+        if cz_lim_selection_width is None:
+            cz_lim_selection_width = self.cz_lim_selection_width
+
         zcosmo = self.distance2redshift(self.r_host_range, h=H0 / 100)
         cz_r = predict_cz(zcosmo[None, None, :], Vpec)
 
@@ -176,7 +266,7 @@ class BaseCCHPModel(ABC):
         sigma_v = jnp.broadcast_to(sigma_v, cz_r.shape)
 
         log_prob = log_prob_integrand_sel(
-            cz_r, sigma_v, self.cz_lim_selection, self.cz_lim_selection_width)
+            cz_r, sigma_v, cz_lim_selection, cz_lim_selection_width)
         return ln_simpson(
             lp_r + log_prob, x=self.r_host_range[None, None, :], axis=-1)
 
@@ -184,9 +274,15 @@ class BaseCCHPModel(ABC):
         """Log prior on physical distance (volume prior, r^2)."""
         return 2.0 * jnp.log(r) - 3.0 * jnp.log(self.Rmax) + jnp.log(3.0)
 
-    def log_S_SN_mag(self, lp_r, M_SN, H0):
+    def log_S_SN_mag(self, lp_r, M_SN, H0, mag_lim_SN=None,
+                     mag_lim_SN_width=None):
         """Probability of detection term if supernova magnitude-truncated."""
-        if self.mag_lim_SN is None or self.mag_lim_SN_width is None:
+        if mag_lim_SN is None:
+            mag_lim_SN = self.mag_lim_SN
+        if mag_lim_SN_width is None:
+            mag_lim_SN_width = self.mag_lim_SN_width
+
+        if mag_lim_SN is None or mag_lim_SN_width is None:
             raise ValueError(
                 "SN magnitude selection requested but mag_lim_SN or "
                 "mag_lim_SN_width not set in config.")
@@ -194,7 +290,7 @@ class BaseCCHPModel(ABC):
         mag = self.distance2distmod(self.r_host_range, h=H0 / 100) + M_SN
         log_prob = log_prob_integrand_sel(
             mag[None, None, :], self.sigma_SN_sel,
-            self.mag_lim_SN, self.mag_lim_SN_width)
+            mag_lim_SN, mag_lim_SN_width)
         return ln_simpson(
             lp_r + log_prob, x=self.r_host_range[None, None, :], axis=-1)
 
@@ -204,7 +300,7 @@ class BaseCCHPModel(ABC):
             replace_prior_with_delta(config, "beta", 0.0, verbose=False)
         if get_nested(config, "model/which_selection", None) != "SN_magnitude":
             replace_prior_with_delta(config, "M_SN", -19.25, verbose=False)
-        if get_nested(config, "model/galaxy_bias", "linear") != "linear":
+        if get_nested(config, "model/which_bias", "linear") != "linear":
             replace_prior_with_delta(config, "b1", 1.0, verbose=False)
         return config
 
@@ -265,7 +361,8 @@ class BaseCCHPModel(ABC):
         self.num_groups = num_groups
         self.group_index = jnp.asarray(inverse)
         self.group_counts = jnp.sum(self.group_mask, axis=1)
-        self.sigma_SN_sel = jnp.mean(self.e_m_Bprime)
+        self.sigma_SN_sel = jnp.median(self.e_m_Bprime)
+        self.sigma_cz_sel = jnp.median(self.e_czcmb)
 
         # Convert RA/Dec to Cartesian coordinates
         fprint("Converting host RA/dec to Cartesian coordinates.")
@@ -320,6 +417,128 @@ class CCHPModel(BaseCCHPModel):
     def __init__(self, config_path, data):
         super().__init__(config_path, data)
 
+    def _log_prior_with_reconstruction(self, r, mu_host, h, bias_params):
+        """Compute log prior on distance with reconstruction normalization."""
+        lp_host_dist = self.log_prior_distance(r)
+        lp_host_dist += self.log_grad_distmod2comoving_distance(mu_host, h=h)
+
+        if self.use_reconstruction:
+            rh_host = r * h
+            los_delta_host = self.f_host_los_delta(rh_host)
+            # lp_host_dist broadcasts to (nfields, ngal)
+            lp_host_dist += lp_galaxy_bias(
+                los_delta_host, jnp.log1p(los_delta_host),
+                bias_params, self.which_bias)
+
+            lp_grid = self._log_prior_r_grid[None, None, :]
+            los_delta_grid = self.f_host_los_delta.interp_many_steps_per_galaxy(  # noqa
+                self.r_host_range * h)
+            lp_grid += lp_galaxy_bias(
+                los_delta_grid, jnp.log1p(los_delta_grid),
+                bias_params, self.which_bias)
+
+            lp_grid_norm = ln_simpson(
+                lp_grid, x=self.r_host_range[None, None, :], axis=-1)
+            # Shape is (nfields, ngal)
+            return lp_host_dist - lp_grid_norm
+        else:
+            # Shape is (1, ngal)
+            return lp_host_dist[None, :]
+
+    def _selection_correction_redshift(self, h, sigma_v, beta, bias_params,
+                                       Vext, H0, cz_lim_selection,
+                                       cz_lim_selection_width):
+        """Compute redshift selection correction using random LOS."""
+        lp_r_grid = self._log_prior_r_grid[None, None, :]
+
+        # Project Vext onto random LOS directions
+        Vext_rad_rand = jnp.sum(Vext[None, :] * self.rhat_rand_los, axis=1)
+
+        if self.use_reconstruction:
+            rand_los_delta_grid = \
+                self.f_rand_los_delta.interp_many_steps_per_galaxy(
+                    self.r_host_range * h)
+            lp_r_grid += lp_galaxy_bias(
+                rand_los_delta_grid, jnp.log1p(rand_los_delta_grid),
+                bias_params, self.which_bias)
+
+            Vpec_grid = beta * \
+                self.f_rand_los_velocity.interp_many_steps_per_galaxy(
+                    self.r_host_range * h)
+            Vpec_grid = Vpec_grid + Vext_rad_rand[None, :, None]
+        else:
+            Vpec_grid = Vext_rad_rand[None, :, None]
+
+        # Marginalized selection over random LOS, shape (nfields, n_rand_los)
+        sigma_cz_sel = jnp.sqrt(self.sigma_cz_sel**2 + sigma_v**2)
+        log_S = self.log_S_cz(
+            lp_r_grid, Vpec_grid, H0, sigma_cz_sel,
+            cz_lim_selection, cz_lim_selection_width)
+
+        # Average over random LOS, shape (nfields,)
+        log_S = logmeanexp(log_S, axis=1)
+
+        # Per-source selection factor, shape (ngal,)
+        cz_lim = (cz_lim_selection if cz_lim_selection is not None
+                  else self.cz_lim_selection)
+        cz_width = (cz_lim_selection_width
+                    if cz_lim_selection_width is not None
+                    else self.cz_lim_selection_width)
+        log_p_sel_i = log_ndtr((cz_lim - self.cz_cmb) / cz_width)
+
+        return log_S, log_p_sel_i
+
+    def _selection_correction_SN_mag(self, h, bias_params, M_SN, H0,
+                                     mag_lim_SN, mag_lim_SN_width):
+        """Compute SN magnitude selection correction using random LOS."""
+        lp_r_grid = self._log_prior_r_grid[None, None, :]
+
+        if self.use_reconstruction:
+            rand_los_delta_grid = \
+                self.f_rand_los_delta.interp_many_steps_per_galaxy(
+                    self.r_host_range * h)
+            lp_r_grid += lp_galaxy_bias(
+                rand_los_delta_grid, jnp.log1p(rand_los_delta_grid),
+                bias_params, self.which_bias)
+
+        # Marginalized selection over random LOS, shape (nfields, n_rand_los)
+        log_S = self.log_S_SN_mag(
+            lp_r_grid, M_SN, H0, mag_lim_SN, mag_lim_SN_width)
+
+        # Average over random LOS, shape (nfields,)
+        log_S = logmeanexp(log_S, axis=1)
+
+        # Per-source selection factor, shape (ngal,)
+        m_lim = mag_lim_SN if mag_lim_SN is not None else self.mag_lim_SN
+        m_width = (mag_lim_SN_width if mag_lim_SN_width is not None
+                   else self.mag_lim_SN_width)
+        log_p_sel_i = log_ndtr((m_lim - self.m_Bprime) / m_width)
+
+        return log_S, log_p_sel_i
+
+    def _sample_selection_params(self):
+        """Sample selection parameters if inferring selection."""
+        cz_lim, cz_width, mag_lim, mag_width = None, None, None, None
+        if self.infer_sel:
+            if self.which_selection == "redshift":
+                cz_lim = sample(
+                    "cz_lim_selection",
+                    Uniform(self.cz_lim_selection_min,
+                            self.cz_lim_selection_max))
+                cz_width = sample(
+                    "cz_lim_selection_width",
+                    Uniform(self.cz_lim_selection_width_min,
+                            self.cz_lim_selection_width_max))
+            elif self.which_selection == "SN_magnitude":
+                mag_lim = sample(
+                    "mag_lim_SN",
+                    Uniform(self.mag_lim_SN_min, self.mag_lim_SN_max))
+                mag_width = sample(
+                    "mag_lim_SN_width",
+                    Uniform(self.mag_lim_SN_width_min,
+                            self.mag_lim_SN_width_max))
+        return cz_lim, cz_width, mag_lim, mag_width
+
     def __call__(self, shared_params=None):
         H0 = rsample("H0", self.priors["H0"], shared_params)
         M_TRGB = rsample("M_TRGB", self.priors["M_TRGB"], shared_params)
@@ -329,6 +548,9 @@ class CCHPModel(BaseCCHPModel):
         beta = rsample("beta", self.priors["beta"], shared_params)
         Vext = rsample("Vext", self.priors["Vext"], shared_params)
         M_SN = rsample("M_SN", self.priors["M_SN"], shared_params)
+
+        (cz_lim_selection, cz_lim_selection_width, mag_lim_SN,
+         mag_lim_SN_width) = self._sample_selection_params()
 
         h = H0 / 100.0
         # Sample distance moduli per each group
@@ -345,44 +567,9 @@ class CCHPModel(BaseCCHPModel):
         r = r_group[self.group_index]
         z_cosmo = z_cosmo_group[self.group_index]
 
-        # Volume prior: r^2 prior + Jacobian
-        lp_host_dist = self.log_prior_distance(r)
-        lp_host_dist += self.log_grad_distmod2comoving_distance(
-            mu_host, h=h)
-
-        logp_tot = jnp.zeros((1, self.num_hosts))
-
-        if self.use_reconstruction:
-            rh_host = r * h
-
-            # Add galaxy bias per galaxy-distance
-            los_delta_host = self.f_host_los_delta(rh_host)
-            lp_host_dist += lp_galaxy_bias(
-                los_delta_host, jnp.log1p(los_delta_host),
-                bias_params, self.which_bias)
-
-            # Volume prior for the grid (no Jacobian needed since integrating
-            # over r)
-            lp_grid = self.log_prior_distance(self.r_host_range)[None, None, :]
-
-            # Add galaxy bias to the grid
-            los_delta_grid = self.f_host_los_delta.interp_many_steps_per_galaxy(  # noqa
-                self.r_host_range * h)
-
-            lp_grid += lp_galaxy_bias(
-                los_delta_grid, jnp.log1p(los_delta_grid), bias_params,
-                self.which_bias)
-
-            # Normalize via Simpson integration `(nfields, nhosts)`
-            lp_grid_norm = ln_simpson(
-                lp_grid, x=self.r_host_range[None, None, :], axis=-1)
-
-            # Broadcast group prior to hosts and fields
-            logp_tot += lp_host_dist - lp_grid_norm
-        else:
-            # No reconstruction: apply volume prior + Jacobian
-            # The r^2 prior is already normalized, so lp_grid_norm ≈ 0
-            logp_tot += lp_host_dist[None, :]
+        # Volume prior with reconstruction normalization
+        logp_tot = self._log_prior_with_reconstruction(
+            r, mu_host, h, bias_params)
 
         sigma_tot_mag = jnp.sqrt(self.e_mag_TRGB**2 + sigma_int**2)
         sigma_tot_cz = jnp.sqrt(self.e_czcmb**2 + sigma_v**2)
@@ -409,42 +596,21 @@ class CCHPModel(BaseCCHPModel):
                 mu_host + M_SN,
                 self.e_m_Bprime).log_prob(self.m_Bprime)[None, :]
 
-        # Selection modelling.
+        # Selection modelling using random LOS.
+        # log_S has shape (nfields,), log_p_sel_i has shape (ngal,)
         if self.which_selection in (None, "none"):
             pass
         elif self.which_selection == "redshift":
-            lp_r_grid = self.log_prior_distance(
-                self.r_host_range)[None, None, :]
-
-            if self.use_reconstruction:
-                los_delta_grid = self.f_host_los_delta.interp_many_steps_per_galaxy(  # noqa
-                    self.r_host_range * h)
-                lp_r_grid += lp_galaxy_bias(
-                    los_delta_grid, jnp.log1p(los_delta_grid),
-                    bias_params, self.which_bias)
-
-                Vpec_grid = beta * self.f_host_los_velocity.interp_many_steps_per_galaxy(  # noqa
-                    self.r_host_range * h)
-                Vpec_grid = Vpec_grid + Vext_rad_host[None, :, None]
-            else:
-                Vpec_grid = Vext_rad_host[None, :, None]
-
-            # Shape is (nfields, ngal)
-            logp_tot -= self.log_S_cz(lp_r_grid, Vpec_grid, H0, sigma_v)
+            log_S, log_p_sel_i = self._selection_correction_redshift(
+                h, sigma_v, beta, bias_params, Vext, H0,
+                cz_lim_selection, cz_lim_selection_width)
+            logp_tot -= log_S[:, None]
+            logp_tot += log_p_sel_i[None, :]
         elif self.which_selection == "SN_magnitude":
-            lp_r_grid = self.log_prior_distance(
-                self.r_host_range)[None, None, :]
-
-            if self.use_reconstruction:
-                los_delta_grid = self.f_host_los_delta.interp_many_steps_per_galaxy(  # noqa
-                    self.r_host_range * h)
-                lp_r_grid += lp_galaxy_bias(
-                    los_delta_grid, jnp.log1p(los_delta_grid),
-                    bias_params, self.which_bias)
-
-            # Shape is (nfields, ngal)
-            log_S = self.log_S_SN_mag(lp_r_grid, M_SN, H0)
-            logp_tot -= log_S
+            log_S, log_p_sel_i = self._selection_correction_SN_mag(
+                h, bias_params, M_SN, H0, mag_lim_SN, mag_lim_SN_width)
+            logp_tot -= log_S[:, None]
+            logp_tot += log_p_sel_i[None, :]
         else:
             raise ValueError(
                 f"Unknown selection '{self.which_selection}'. "
