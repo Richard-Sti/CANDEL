@@ -29,12 +29,14 @@ from candel import fprint, load_config, replace_prior_with_delta
 
 # Hardcoded flags for task generation.
 scaling_relations = ["YT", "LT", "LTYT"]  # Set to None to run all
-reconstructions = ["Vext", "Carrick2015","manticore"]
-include_quad = True
-include_pairs = True
-include_pix = True
+reconstructions = ["Carrick2015","manticore"]
+include_quad = False
+include_pairs = False
+include_pix = False
 resolution_convergence = False
-free_radial_direction = True
+free_radial_direction = False
+output_root = "results/rgrid1000"
+num_chains = 4
 
 RECONSTRUCTION_KIND_MAP = {
     "Vext": "Vext",
@@ -43,8 +45,8 @@ RECONSTRUCTION_KIND_MAP = {
 }
 
 PAIR_RUNS = {
-    "results/short/Carrick2015_YT_noMNR_dipA_dipVext_hasY.toml",
-    "results/short/Carrick2015_YT_noMNR_dipH0_dipVext_hasY.toml",
+    f"{output_root}/Carrick2015_YT_noMNR_dipA_dipVext_hasY.toml",
+    f"{output_root}/Carrick2015_YT_noMNR_dipH0_dipVext_hasY.toml",
 }
 
 def overwrite_config(config, key, value):
@@ -198,6 +200,7 @@ if __name__ == "__main__":
         config_path, replace_none=False, replace_los_prior=False)
     config = overwrite_config(config, "pv_model/num_points_malmquist", 251)
     config = overwrite_config(config, "io/reconstruction_main/num_steps", 251)
+    config = overwrite_config(config, "inference/num_chains", num_chains)
 
     tasks_index = args.tasks_index
     include_joint = args.include_joint
@@ -213,7 +216,7 @@ if __name__ == "__main__":
     base = {
         "pv_model/kind": reconstruction_kinds,
         "pv_model/which_Vext": ["constant"],
-        "io/root_output": "results/short",
+        "io/root_output": output_root,
         "model/priors/Vext": [
             {"dist": "delta", "value": [0.0, 0.0, 0.0]}],
         "model/priors/zeropoint_dipole": [
@@ -477,6 +480,18 @@ if __name__ == "__main__":
                             "pv_model/stretch_los_with_zeropoint",
                             stretch_los,
                         )
+                    if not include_pairs:
+                        vext_prior = get_nested(
+                            run_config, "model/priors/Vext", {})
+                        zp_dipole_prior = get_nested(
+                            run_config, "model/priors/zeropoint_dipole", {})
+                        if (
+                            isinstance(vext_prior, dict)
+                            and vext_prior.get("dist") == "vector_uniform_fixed"
+                            and isinstance(zp_dipole_prior, dict)
+                            and zp_dipole_prior.get("dist") == "vector_uniform_fixed"
+                        ):
+                            continue
 
                     fdir_out = join(
                         run_config["root_main"], run_config["io"]["root_output"])

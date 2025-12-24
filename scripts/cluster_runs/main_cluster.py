@@ -34,11 +34,13 @@ def _set_single_thread_env_if_unset():
 
 
 def _preparse_host_devices():
+    local_run = os.getenv("LOCAL_RUN")
+    default_host_devices = int(os.getenv("LOCAL_HOST_DEVICES", "4")) if local_run else 1
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument(
         "--host-devices",
         type=int,
-        default=1,
+        default=default_host_devices,
         help=(
             "Number of NumPyro/JAX host devices to expose PER MPI RANK. "
             "For MPI task farming you almost always want 1."
