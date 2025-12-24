@@ -17,18 +17,22 @@ import jax.numpy as jnp
 import numpyro
 from candel.model.simpson import ln_simpson
 from jax.scipy.special import log_ndtr
-from numpyro import factor, plate
+from numpyro import factor, plate, sample
 from numpyro.distributions import Normal, Uniform
 
 LN10 = jnp.log(10.0)
 
 
 def log_selection_probability_cz(H0, sigma_vpec, czmax_sel, rmin, rmax, k,
+                                 czmax_sel_width=None,
                                  num_integration_points=513):
     """
-    Compute log p(S=1|H0) = log ∫ Φ((czmax - H0*r) / σ_vpec) p(r) dr
+    Compute log p(S=1|H0) = log ∫ Φ((czmax - H0*r) / σ_eff) p(r) dr
 
     where p(r) ∝ r^k on [rmin, rmax].
+
+    For hard threshold: σ_eff = sigma_vpec
+    For sigmoid selection: σ_eff = sqrt(sigma_vpec^2 + czmax_sel_width^2)
     """
     # Integration grid for r (odd number for Simpson's rule)
     r_grid = jnp.linspace(rmin, rmax, num_integration_points)
@@ -37,16 +41,26 @@ def log_selection_probability_cz(H0, sigma_vpec, czmax_sel, rmin, rmax, k,
     kp1 = k + 1
     ln_pr = k * jnp.log(r_grid) + jnp.log(kp1) - jnp.log(rmax**kp1 - rmin**kp1)
 
+    # Effective width combining velocity scatter and selection width
+    if czmax_sel_width is None:
+        sigma_eff = sigma_vpec
+    else:
+        sigma_eff = jnp.sqrt(sigma_vpec**2 + czmax_sel_width**2)
+
     # Log detection probability at each r
-    z = (czmax_sel - H0 * r_grid) / sigma_vpec
+    z = (czmax_sel - H0 * r_grid) / sigma_eff
     ln_p_detect = log_ndtr(z)
 
     # Integrate in log-space
     return ln_simpson(ln_p_detect + ln_pr, r_grid)
 
 
-def model_PV(cz, mag, sigma_mu, sigma_vpec, rmin, rmax, czmax_sel, k=2,
-             num_integration_points=201):
+def model_PV(cz, mag, sigma_mu, sigma_vpec, rmin, rmax,
+             czmax_sel=None, czmax_sel_width=None,
+             infer_sel=False,
+             czmax_sel_min=1000.0, czmax_sel_max=10000.0,
+             czmax_sel_width_min=1.0, czmax_sel_width_max=1000.0,
+             k=2, num_integration_points=201):
     """
     NumPyro model for H0 inference with explicit distance sampling and
     selection in observed redshift.
@@ -56,10 +70,14 @@ def model_PV(cz, mag, sigma_mu, sigma_vpec, rmin, rmax, czmax_sel, k=2,
         - mag ~ N(5 log10(r) + 25, sigma_mu)
         - cz ~ N(H0 * r, sigma_vpec)
 
-    Selection is modelled via the inverse detection probability:
-        p(Λ|d_obs) ∝ π(Λ) [p(S=1|Λ)]^(-n) ∏_i L(d_i|Λ)
+    Selection is modelled via:
+        p(Λ|d_obs, S=1) ∝ π(Λ) [p(S=1|Λ)]^(-n) ∏_i [L(d_i|Λ) × p(S=1|cz_i)]
 
-    where p(S=1|H0) = ∫ Φ((czmax - H0*r) / σ_vpec) p(r) dr.
+    where:
+        - p(S=1|Λ) = ∫ Φ((czmax - H0*r) / σ_eff) p(r) dr is the marginal
+          detection probability
+        - p(S=1|cz_i) = Φ((czmax - cz_i) / width) is the per-source selection
+        - σ_eff = sqrt(sigma_vpec^2 + width^2) for sigmoid selection
 
     Parameters
     ----------
@@ -73,8 +91,18 @@ def model_PV(cz, mag, sigma_mu, sigma_vpec, rmin, rmax, czmax_sel, k=2,
         Uncertainty in peculiar velocity [km/s].
     rmin, rmax : float
         Minimum and maximum distances [Mpc/h] for the power-law prior.
-    czmax_sel : float
-        Hard upper threshold in observed cz [km/s] for selection.
+    czmax_sel : float, optional
+        Selection threshold in cz [km/s]. For hard cut, this is the limit.
+        For sigmoid, this is where p(select) = 0.5. Ignored if infer_sel.
+    czmax_sel_width : float, optional
+        Width of sigmoid transition [km/s]. If None, use hard threshold.
+        Ignored if infer_sel is True.
+    infer_sel : bool
+        If True, infer both czmax_sel and czmax_sel_width from the data.
+    czmax_sel_min, czmax_sel_max : float
+        Prior bounds for czmax_sel when inferring.
+    czmax_sel_width_min, czmax_sel_width_max : float
+        Prior bounds for czmax_sel_width when inferring.
     k : float
         Power-law index for the distance prior p(r) ∝ r^k. Must be > -1.
     num_integration_points : int
@@ -82,27 +110,39 @@ def model_PV(cz, mag, sigma_mu, sigma_vpec, rmin, rmax, czmax_sel, k=2,
     """
     n = len(cz)
 
-    H0 = numpyro.sample("H0", Uniform(50.0, 100.0))
+    H0 = sample("H0", Uniform(50.0, 100.0))
 
-    # Selection correction: [p(S=1|H0)]^(-n)
+    # Infer selection parameters if requested
+    if infer_sel:
+        czmax_sel = sample("czmax_sel", Uniform(czmax_sel_min, czmax_sel_max))
+        czmax_sel_width = sample(
+            "czmax_sel_width", Uniform(
+                czmax_sel_width_min, czmax_sel_width_max))
+
+    # Selection correction: [p(S=1|H0, czmax_sel, width)]^(-n)
     if czmax_sel is not None:
         ln_p_sel = log_selection_probability_cz(
-            H0, sigma_vpec, czmax_sel, rmin, rmax, k, num_integration_points)
+            H0, sigma_vpec, czmax_sel, rmin, rmax, k,
+            czmax_sel_width, num_integration_points)
         factor("selection", -n * ln_p_sel)
 
     # Sample distances from power-law prior p(r) ∝ r^k via inverse CDF.
-    # CDF: F(r) = (r^(k+1) - rmin^(k+1)) / (rmax^(k+1) - rmin^(k+1))
-    # Inverse: r = (rmin^(k+1) + u * (rmax^(k+1) - rmin^(k+1)))^(1/(k+1))
     kp1 = k + 1
     with plate("sources", n):
-        u = numpyro.sample("u", Uniform(0, 1))
+        u = sample("u", Uniform(0, 1))
         r = (rmin**kp1 + u * (rmax**kp1 - rmin**kp1))**(1.0 / kp1)
         numpyro.deterministic("r", r)
 
         # Distance modulus likelihood
         mu_true = 5.0 * jnp.log10(r) + 25.0
-        numpyro.sample("mag_obs", Normal(mu_true, sigma_mu), obs=mag)
+        sample("mag_obs", Normal(mu_true, sigma_mu), obs=mag)
 
         # Velocity likelihood
         v_model = H0 * r
-        numpyro.sample("cz_obs", Normal(v_model, sigma_vpec), obs=cz)
+        sample("cz_obs", Normal(v_model, sigma_vpec), obs=cz)
+
+        # Per-source selection factor: p(S=1|cz_i)
+        # This completes the likelihood: p(cz|S=1) = p(cz) * p(S=1|cz) / p(S=1)
+        if czmax_sel is not None and czmax_sel_width is not None:
+            ln_p_sel_i = log_ndtr((czmax_sel - cz) / czmax_sel_width)
+            factor("selection_per_source", ln_p_sel_i)
