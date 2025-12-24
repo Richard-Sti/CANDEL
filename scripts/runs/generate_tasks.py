@@ -322,9 +322,9 @@ if __name__ == "__main__":
         "model/which_selection": "SN_magnitude",
         "model/use_reconstruction": True,
         "io/which_host_los": "Carrick2015",
-        # "io/SH0ES/which_host_los": "manticore_2MPP_MULTIBIN_N256_DES_V2",
+        # "io/which_host_los": "manticore_2MPP_MULTIBIN_N256_DES_V2",
         "model/which_bias": "linear",
-        "model/infer_sel": True,
+        "model/infer_sel": False,
         # "model/priors/Vext": [
         #     {"dist": "vector_uniform_fixed", "low": 0.0, "high": 2500},
         #     # {"dist": "delta", "value": [0., 0., 0.]},
