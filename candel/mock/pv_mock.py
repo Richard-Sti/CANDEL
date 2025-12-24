@@ -134,7 +134,7 @@ def rk_draw(n, rmin, rmax, k, rng):
     return (rmin**(k+1) + u * (rmax**(k+1) - rmin**(k+1)))**(1.0 / (k+1))
 
 
-def simulate_simple_catalog(n=1000, rmin=5.0, rmax=80.0, rmax_sel=None,
+def gen_simple_catalog(n=1000, rmin=5.0, rmax=80.0, rmax_sel=None,
                             czmax_sel=None, czmax_sel_width=None,
                             H0_true=73.0, sigma_mu=0.4, sigma_vpec=300.0,
                             seed=12345, k=2, verbose=True):
