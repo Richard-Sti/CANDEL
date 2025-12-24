@@ -405,7 +405,7 @@ class Manticore_FieldLoader(BaseFieldLoader):
 
         self.coordinate_frame = "icrs"
         self.boxsize = 681.1  # Mpc / h
-        self.Omega_m = 0.3111
+        self.Omega_m = 0.306
 
         x0 = 0.5 * self.boxsize
         self.observer_pos = np.array([x0, x0, x0], dtype=np.float32)
