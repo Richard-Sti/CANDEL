@@ -33,7 +33,7 @@ reconstructions = ["Vext", "Carrick2015", "manticore"]
 include_quad = True
 include_pairs = True
 include_pix = True
-resolution_convergence = True
+resolution_convergence = False
 free_radial_direction = True
 
 RECONSTRUCTION_KIND_MAP = {
@@ -280,6 +280,10 @@ if __name__ == "__main__":
     def radmag_prior_with_knots(knots):
         prior = deepcopy(radmag_prior_template)
         prior["rknot"] = knots
+        # Remove max_modulus if it doesn't match the new knot count.
+        # h0_dipole_percent is safe to keep since it scales with rknot.
+        if "max_modulus" in prior and len(prior["max_modulus"]) != len(knots):
+            del prior["max_modulus"]
         return prior
 
     def build_radmag_combinations(knots, variant_label):
