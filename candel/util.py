@@ -399,6 +399,13 @@ def name2label(name):
         "rho_corr": r"$\rho_{\rm corr}$",
         "Vext_radmag_ell": r"$\ell_{\mathrm{Vext}}$",
         "Vext_radmag_b": r"$b_{\mathrm{Vext}}$",
+        "H0": r"$H_0$",
+        "M_SN": r"$M_{\rm SN}$",
+        "M_TRGB": r"$M_{\rm TRGB}$",
+        "mag_lim_SN": r"$m_{\rm lim}^{\rm SN}$",
+        "mag_lim_SN_width": r"$\sigma_{m,{\rm lim}}^{\rm SN}$",
+        "mu_LMC": r"$\mu_{\rm LMC}$",
+        "mu_N4258": r"$\mu_{\rm N4258}$",
     }
 
     if "/" in name:
