@@ -29,7 +29,7 @@ from candel import fprint, load_config, replace_prior_with_delta
 
 # Hardcoded flags for task generation.
 scaling_relations = ["YT", "LT", "LTYT"]  # Set to None to run all
-reconstructions = ["Vext", "Carrick2015"]
+reconstructions = ["Vext", "Carrick2015","manticore"]
 include_quad = True
 include_pairs = True
 include_pix = True
