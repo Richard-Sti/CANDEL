@@ -393,7 +393,7 @@ class PVDataFrame:
 ###############################################################################
 
 
-def load_los(los_data_path, data, mask=None):
+def load_los(los_data_path, data, mask=None, verbose=True):
     with File(los_data_path, 'r') as f:
         if mask is None:
             data["los_density"] = f['los_density'][...]
@@ -412,24 +412,30 @@ def load_los(los_data_path, data, mask=None):
         assert np.all(np.isfinite(data["los_velocity"]))
 
         if "manticore" in los_data_path.lower():
-            fprint("normalizing the Manticore LOS density (Om = 0.3111)")
-            data["los_density"] /= 0.3111 * 275.4  # Manticore normalization
+            fprint("normalizing the Manticore LOS density (Om = 0.306)",
+                   verbose=verbose)
+            data["los_density"] /= 0.306 * 275.4  # Manticore normalization
         elif "_CB1" in los_data_path:
             data["los_density"] /= 0.307 * 275.4
-            fprint("normalizing the CB1 LOS density (Om = 0.307)")
+            fprint("normalizing the CB1 LOS density (Om = 0.307)",
+                   verbose=verbose)
 
             if len(data["los_density"]) == 100:
-                fprint("downsampling the CB1 LOS density from 100 to 20")
+                fprint("downsampling the CB1 LOS density from 100 to 20",
+                       verbose=verbose)
                 data["los_density"] = data["los_density"][::5]
                 data["los_velocity"] = data["los_velocity"][::5]
         elif "_CB2" in los_data_path:
-            fprint("normalizing the CB2 LOS density (Om = 0.3111)")
+            fprint("normalizing the CB2 LOS density (Om = 0.3111)",
+                   verbose=verbose)
             data["los_density"] /= 0.3111 * 275.4
         elif "HAMLET_V1" in los_data_path:
-            fprint("normalizing the HAMLET_V1 LOS density (Om = 0.3)")
+            fprint("normalizing the HAMLET_V1 LOS density (Om = 0.3)",
+                   verbose=verbose)
             data["los_density"] /= 0.3 * 275.4
         elif "_CF4.hdf5" in los_data_path and len(data["los_density"]) == 100:
-            fprint("downsampling the CF4 LOS density from 100 to 20")
+            fprint("downsampling the CF4 LOS density from 100 to 20",
+                   verbose=verbose)
             data["los_density"] = data["los_density"][::5]
             data["los_velocity"] = data["los_velocity"][::5]
 
@@ -1401,14 +1407,14 @@ def load_CCHP_from_config(config_path, ra_dec_only=False):
         data["host_los_r"] = host_los["los_r"]
 
     if rand_los_data_path is not None:
-        rand_los = load_los(rand_los_data_path, {}, mask=None)
+        rand_los = load_los(rand_los_data_path, {}, mask=None, verbose=False)
         data["rand_los_density"] = rand_los["los_density"]
         data["rand_los_velocity"] = rand_los["los_velocity"]
         data["rand_los_r"] = rand_los["los_r"]
         data["rand_los_RA"] = rand_los.get("los_RA", None)
         data["rand_los_dec"] = rand_los.get("los_dec", None)
         data["has_rand_los"] = True
-        data["num_rand_los"] = data["rand_los_density"].shape[0]
+        data["num_rand_los"] = data["rand_los_density"].shape[1]
     else:
         data["has_rand_los"] = False
 
