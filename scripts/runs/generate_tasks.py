@@ -107,19 +107,27 @@ def overwrite_subtree(config, key_path, subtree):
     return new_config
 
 
+def _is_active(value):
+    """Check if value is active (not None or 'none')."""
+    if value is None:
+        return False
+    return str(value).lower() != "none"
+
+
+def _is_delta_prior(prior):
+    """Check if prior is a delta distribution."""
+    return isinstance(prior, dict) and prior.get("dist") == "delta"
+
+
 def generate_dynamic_tag(config, base_tag="default"):
     """Generate a descriptive tag string based on selected config values."""
     parts = []
     which_run = get_nested(config, "model/which_run", None)
 
-    if which_run == "CH0":
-        model_name = "CH0"
-        catalogue = "CH0"
-        parts.append("CH0")
-    elif which_run == "CCHP":
-        model_name = "CCHP"
-        catalogue = "CCHP"
-        parts.append("CCHP")
+    if which_run in ("CH0", "CCHP"):
+        model_name = which_run
+        catalogue = which_run
+        parts.append(which_run)
     else:
         model_name = get_nested(config, "inference/model", None)
         catalogue = get_nested(config, "io/catalogue_name", None)
@@ -133,30 +141,30 @@ def generate_dynamic_tag(config, base_tag="default"):
         parts.append("MNR" if use_mnr else "noMNR")
 
     if get_nested(config, "pv_model/kind", "").startswith("precomputed_los"):
-        parts.append(get_nested(config, "pv_model/galaxy_bias", ""))
+        parts.append(get_nested(config, "pv_model/which_bias", ""))
 
-    if get_nested(config, "pv_model/smooth_target", None) not in (None, "none"):  # noqa
-        parts.append(f"smooth{get_nested(config, 'pv_model/smooth_target')}")
+    smooth_target = get_nested(config, "pv_model/smooth_target", None)
+    if _is_active(smooth_target):
+        parts.append(f"smooth{smooth_target}")
 
-    # Clusters scaling relation choice
     if get_nested(config, "inference/model", None) == "ClustersModel":
         parts.append(get_nested(config, "io/Clusters/which_relation", None))
 
-    if "TFR" in model_name and use_mnr and not get_nested(config, "model/marginalize_eta", True):  # noqa
-        parts.append("eta_sampled")
+    if model_name and "TFR" in model_name:
+        use_mnr = get_nested(config, "model/use_MNR", False)
+        if use_mnr and not get_nested(config, "model/marginalize_eta", True):
+            parts.append("eta_sampled")
 
     # Zeropoint dipole if it's not a delta distribution
-    zeropoint_dip_prior = get_nested(config, "model/priors/zeropoint_dipole", None)  # noqa
-    if isinstance(zeropoint_dip_prior, dict) and zeropoint_dip_prior.get("dist") != "delta":  # noqa
-        dist_name = zeropoint_dip_prior.get("dist")
-        if dist_name == "vector_components_uniform":
+    zeropoint_dip_prior = get_nested(
+        config, "model/priors/zeropoint_dipole", None)
+    if isinstance(zeropoint_dip_prior, dict):
+        if zeropoint_dip_prior.get("dist") == "vector_components_uniform":
             parts.append("zeropoint_dipole_UnifComponents")
-        else:
+        elif not _is_delta_prior(zeropoint_dip_prior):
             parts.append("zeropoint_dipole")
 
-    # If Vext is a delta distribution (not sampled)
-    Vext_prior = get_nested(config, "model/priors/Vext", None)
-    if isinstance(Vext_prior, dict) and Vext_prior.get("dist") == "delta":
+    if _is_delta_prior(get_nested(config, "model/priors/Vext", None)):
         parts.append("noVext")
 
     which_Vext = get_nested(config, "pv_model/which_Vext", None)
@@ -169,25 +177,21 @@ def generate_dynamic_tag(config, base_tag="default"):
         parts.append(f"rprior-{which_dist_prior}")
 
     beta_prior = get_nested(config, "model/priors/beta", None)
-    if isinstance(beta_prior, dict) and beta_prior.get("dist") == "delta":
-        val = beta_prior.get("value")
-        if val != 0.:
-            parts.append(f"beta_{val}")
+    if _is_delta_prior(beta_prior) and beta_prior.get("value") != 0.:
+        parts.append(f"beta_{beta_prior.get('value')}")
 
     b1_prior = get_nested(config, "model/priors/b1", None)
-    if isinstance(b1_prior, dict) and b1_prior.get("dist") == "delta":
-        val = b1_prior.get("value")
-        parts.append(f"b1_{val}")
+    if _is_delta_prior(b1_prior):
+        parts.append(f"b1_{b1_prior.get('value')}")
 
-    # Flag if sampling the dust prior
     dust_model = get_nested(config, f"io/{catalogue}/dust_model", None)
-    if dust_model is not None and dust_model.lower() != "none":
+    if _is_active(dust_model):
         parts.append(f"dust-{dust_model}")
 
+    # Run-specific tags
     if which_run == "CH0":
-        # Which selection
         which_sel = get_nested(config, "model/which_selection", None)
-        if which_sel is not None and which_sel != "none":
+        if _is_active(which_sel):
             parts.append(f"sel-{which_sel}")
             if which_sel == "SN_magnitude_or_redshift_Nmag":
                 nmag = get_nested(
@@ -205,13 +209,13 @@ def generate_dynamic_tag(config, base_tag="default"):
         if not get_nested(config, "model/use_Cepheid_host_redshift", True):
             parts.append("no_Cepheid_redshift")
 
-        use_reconstruction = get_nested(config, "model/use_reconstruction", False)  # noqa
-        if use_reconstruction:
+        if get_nested(config, "model/use_reconstruction", False):
             parts.append(get_nested(config, "io/SH0ES/which_host_los", None))
             if get_nested(config, "model/use_density_dependent_sigma_v", False):  # noqa
                 parts.append("sigv_rho")
 
-        if get_nested(config, "model/use_fiducial_Cepheid_host_PV_covariance", False):  # noqa
+        if get_nested(config, "model/use_fiducial_Cepheid_host_PV_covariance",
+                      False):
             parts.append("PV_covmat")
 
         if get_nested(config, "model/use_PV_covmat_scaling", False):
@@ -219,13 +223,17 @@ def generate_dynamic_tag(config, base_tag="default"):
 
         if get_nested(config, "model/weight_selection_by_covmat_Neff", False):
             parts.append("weight_by_Neff")
+
     elif which_run == "CCHP":
         which_sel = get_nested(config, "model/which_selection", None)
-        if which_sel is not None and which_sel != "none":
+        if _is_active(which_sel):
             parts.append(f"sel-{which_sel}")
+        if get_nested(config, "model/infer_sel", False):
+            parts.append("infer_sel")
         if get_nested(config, "model/use_reconstruction", False):
             parts.append(get_nested(config, "io/which_host_los", None))
-        redshift_kind = get_nested(config, "io/CCHP_redshift_source/kind", "cz_cmb")
+        redshift_kind = get_nested(
+            config, "io/CCHP_redshift_source/kind", "cz_cmb")
         if redshift_kind != "cz_cmb":
             parts.append(redshift_kind)
 
@@ -310,18 +318,20 @@ if __name__ == "__main__":
     # --- CH0 overrides ---
     manual_overrides = {
         "io/root_output": "results/CCHP",
-        "model/which_selection": ["none", "SN_magnitude", "redshift"],
+        # "model/which_selection": ["none", "SN_magnitude", "redshift"],
+        "model/which_selection": "SN_magnitude",
         "model/use_reconstruction": True,
-        # "io/SH0ES/which_host_los": "Carrick2015",
-        "io/SH0ES/which_host_los": "manticore_2MPP_MULTIBIN_N256_DES_V2",
-        "model/which_bias": "powerlaw",
+        "io/which_host_los": "Carrick2015",
+        # "io/SH0ES/which_host_los": "manticore_2MPP_MULTIBIN_N256_DES_V2",
+        "model/which_bias": "linear",
+        "model/infer_sel": True,
         # "model/priors/Vext": [
         #     {"dist": "vector_uniform_fixed", "low": 0.0, "high": 2500},
         #     # {"dist": "delta", "value": [0., 0., 0.]},
         # ],
         "model/priors/beta": [
-            # {"dist": "normal", "loc": 0.43, "scale": 0.02},
-            {"dist": "delta", "value": 1.0},
+            {"dist": "normal", "loc": 0.43, "scale": 0.02},
+            # {"dist": "delta", "value": 1.0},
             # {"dist": "normal", "loc": 1.0, "scale": 0.5},
         ],
     }
