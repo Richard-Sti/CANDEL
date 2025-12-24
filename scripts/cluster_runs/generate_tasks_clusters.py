@@ -196,6 +196,8 @@ if __name__ == "__main__":
     config_path = "scripts/cluster_runs/config_clusters.toml"
     config = load_config(
         config_path, replace_none=False, replace_los_prior=False)
+    config = overwrite_config(config, "pv_model/num_points_malmquist", 251)
+    config = overwrite_config(config, "io/reconstruction_main/num_steps", 251)
 
     tasks_index = args.tasks_index
     include_joint = args.include_joint
