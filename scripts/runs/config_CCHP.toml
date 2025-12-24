@@ -16,7 +16,7 @@ seed = 42
 Om = 0.3
 distmod_limits = [20.0, 40.0]
 use_reconstruction = true
-galaxy_bias = "powerlaw"
+which_bias = "powerlaw"
 which_selection = "none"
 which_run = "CCHP"
 
@@ -32,6 +32,17 @@ cz_lim_selection_width = 300.0
 
 mag_lim_SN = 13.0
 mag_lim_SN_width = 0.3
+
+# Selection inference (set infer_sel = true to infer transition and width)
+infer_sel = false
+cz_lim_selection_min = 500.0
+cz_lim_selection_max = 10000.0
+cz_lim_selection_width_min = 50.0
+cz_lim_selection_width_max = 2000.0
+mag_lim_SN_min = 10.0
+mag_lim_SN_max = 18.0
+mag_lim_SN_width_min = 0.05
+mag_lim_SN_width_max = 2.0
 
 [model.priors.H0]
 dist = "uniform"
@@ -117,7 +128,7 @@ los_file = "data/CCHP/los_<X>.hdf5"
 
 [io.CCHP_redshift_source]
 # Use cz_cmb (table default) or cz_cmb_NED (already in the TSV); no online queries.
-kind = "cz_cmb_ned"
+kind = "cz_cmb"
 
 [io.reconstruction_main]
 rmin = 0.1
