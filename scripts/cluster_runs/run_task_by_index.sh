@@ -7,6 +7,12 @@ if [ -z "${VIRTUAL_ENV:-}" ] && [ -f "venv_candel_gpu/bin/activate" ]; then
   source "venv_candel_gpu/bin/activate"
 fi
 
+# Load CUDA + cuDNN modules when the module system is available.
+if command -v module >/dev/null 2>&1; then
+  module load cuda/12.3
+  module load cudnn/9.1
+fi
+
 if [ "$#" -lt 2 ]; then
   echo "Usage: $0 <tasks_file> <index|count|max>"
   exit 1
