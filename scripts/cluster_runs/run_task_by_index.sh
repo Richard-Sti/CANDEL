@@ -8,9 +8,27 @@ if [ -z "${VIRTUAL_ENV:-}" ] && [ -f "venv_candel_gpu/bin/activate" ]; then
 fi
 
 # Load CUDA + cuDNN modules when the module system is available.
+if ! command -v module >/dev/null 2>&1; then
+  if [ -f /etc/profile.d/modules.sh ]; then
+    # shellcheck disable=SC1091
+    source /etc/profile.d/modules.sh
+  elif [ -f /usr/share/Modules/init/bash ]; then
+    # shellcheck disable=SC1091
+    source /usr/share/Modules/init/bash
+  fi
+fi
 if command -v module >/dev/null 2>&1; then
   module load cuda/12.3
   module load cudnn/9.1
+fi
+
+if [ -n "${CUDA_HOME:-}" ] && [ -d "$CUDA_HOME/extras/CUPTI/lib64" ]; then
+  export CUPTI_DIR="$CUDA_HOME/extras/CUPTI"
+  export LD_LIBRARY_PATH="$CUPTI_DIR/lib64:${LD_LIBRARY_PATH:-}"
+fi
+
+if command -v nvidia-smi >/dev/null 2>&1; then
+  nvidia-smi || true
 fi
 
 if [ "$#" -lt 2 ]; then
