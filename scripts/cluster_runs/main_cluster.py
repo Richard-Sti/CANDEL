@@ -158,6 +158,8 @@ def main():
     if RANK == 0:
         fprint(
             "[Rank 0] Env summary: "
+            f"python={sys.executable} "
+            f"VIRTUAL_ENV={os.environ.get('VIRTUAL_ENV')} "
             f"OMP_NUM_THREADS={os.environ.get('OMP_NUM_THREADS')} "
             f"MKL_NUM_THREADS={os.environ.get('MKL_NUM_THREADS')} "
             f"OPENBLAS_NUM_THREADS={os.environ.get('OPENBLAS_NUM_THREADS')} "

@@ -1,6 +1,12 @@
 #!/bin/bash
 set -euo pipefail
 
+# Prefer the GPU venv when available and no venv is active.
+if [ -z "${VIRTUAL_ENV:-}" ] && [ -f "venv_candel_gpu/bin/activate" ]; then
+  # shellcheck disable=SC1091
+  source "venv_candel_gpu/bin/activate"
+fi
+
 if [ "$#" -lt 2 ]; then
   echo "Usage: $0 <tasks_file> <index|count|max>"
   exit 1
@@ -36,4 +42,10 @@ if [ -z "$config_path" ]; then
   exit 3
 fi
 
-python scripts/runs/main.py --config "$config_path"
+python_exec=$(grep -E '^python_exec *= *' "$config_path" | sed -E 's/^python_exec *= *"([^"]+)"$/\1/')
+if [ -z "$python_exec" ]; then
+  echo "python_exec not found in $config_path; falling back to python on PATH."
+  python scripts/runs/main.py --config "$config_path"
+else
+  "$python_exec" scripts/runs/main.py --config "$config_path"
+fi
