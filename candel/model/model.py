@@ -780,9 +780,17 @@ def compute_Vext_radial(data, r_grid, Vext, which_Vext, **kwargs_Vext):
         # Unpack the tuple of magnitude and direction.
         Vext_mag, rhat = Vext
         # Interpolate the magnitude as a function of radius, shape (n_rbins,).
+        rknot = jnp.asarray(kwargs_Vext["rknot"])
+        r_grid_clamped = jnp.clip(r_grid, rknot[0], rknot[-1])
+        # Clamp instead of relying on interpax `extrap` because some versions
+        # reject 0-D JAX scalars (e.g., Vext_mag[0]) as extrap values.
         Vext_mag_r = interp1d(
-            r_grid, kwargs_Vext["rknot"], Vext_mag,
-            method=kwargs_Vext["method"], extrap=(Vext_mag[0], Vext_mag[-1]))
+            r_grid_clamped, rknot, Vext_mag,
+            method=kwargs_Vext["method"], extrap=False)
+        # Previous approach (kept for reference):
+        # Vext_mag_r = interp1d(
+        #     r_grid, kwargs_Vext["rknot"], Vext_mag,
+        #     method=kwargs_Vext["method"], extrap=(Vext_mag[0], Vext_mag[-1]))
         # Clipping to only keep positive magnitudes.
         #Vext_mag_r = smoothclip_nr(Vext_mag_r, tau=2.5)
 

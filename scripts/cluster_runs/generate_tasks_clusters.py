@@ -30,11 +30,11 @@ from candel import fprint, load_config, replace_prior_with_delta
 # Hardcoded flags for task generation.
 scaling_relations = ["YT", "LT", "LTYT"]  # Set to None to run all
 reconstructions = ["Carrick2015", "Vext", "manticore"]
-include_quad = True
-include_pairs = True
-include_pix = True
+include_quad = False
+include_pairs = False
+include_pix = False
 resolution_convergence = True
-free_radial_direction = True
+free_radial_direction = False
 split_tasks_by_kind = True
 output_root = "results/rgrid1000"
 num_chains = 4
