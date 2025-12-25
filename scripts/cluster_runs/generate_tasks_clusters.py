@@ -28,8 +28,8 @@ import tomli_w
 from candel import fprint, load_config, replace_prior_with_delta
 
 # Hardcoded flags for task generation.
-scaling_relations = ["YT", "LT", "LTYT"]  # Set to None to run all
-reconstructions = ["Carrick2015","manticore"]
+scaling_relations = ["LTYT"]  # Set to None to run all
+reconstructions = ["manticore"]
 include_quad = False
 include_pairs = False
 include_pix = False
@@ -37,6 +37,7 @@ resolution_convergence = False
 free_radial_direction = False
 output_root = "results/rgrid1000"
 num_chains = 4
+chain_method = "sequential"
 
 RECONSTRUCTION_KIND_MAP = {
     "Vext": "Vext",
@@ -198,9 +199,10 @@ if __name__ == "__main__":
     config_path = "scripts/cluster_runs/config_clusters.toml"
     config = load_config(
         config_path, replace_none=False, replace_los_prior=False)
-    config = overwrite_config(config, "pv_model/num_points_malmquist", 251)
-    config = overwrite_config(config, "io/reconstruction_main/num_steps", 251)
+    config = overwrite_config(config, "pv_model/num_points_malmquist", 1001)
+    config = overwrite_config(config, "io/reconstruction_main/num_steps", 1001)
     config = overwrite_config(config, "inference/num_chains", num_chains)
+    config = overwrite_config(config, "inference/chain_method", chain_method)
 
     tasks_index = args.tasks_index
     include_joint = args.include_joint
@@ -502,24 +504,18 @@ if __name__ == "__main__":
                     kind = get_nested(run_config, "pv_model/kind", "unknown")
                     kind_lower = str(kind).lower()
 
-                    if "manticore" in kind_lower:
-                        run_config = overwrite_config(
-                            run_config, "inference/num_warmup", 500)
-                        run_config = overwrite_config(
-                            run_config, "inference/num_samples", 500)
-                    elif "carrick" in kind_lower or kind_lower.startswith("vext"):
-                        run_config = overwrite_config(
-                            run_config, "inference/num_warmup", 2000)
-                        run_config = overwrite_config(
-                            run_config, "inference/num_samples", 2000)
+                    run_config = overwrite_config(
+                        run_config, "inference/num_warmup", 500)
+                    run_config = overwrite_config(
+                        run_config, "inference/num_samples", 500)
 
                     which_vext = get_nested(
                         run_config, "pv_model/which_Vext", "constant")
-                    if which_vext in ("radial", "radial_magnitude"):
+                    if "carrick" in kind_lower and which_vext == "radial_magnitude":
                         run_config = overwrite_config(
-                            run_config, "inference/num_warmup", 4000)
+                            run_config, "inference/num_warmup", 1000)
                         run_config = overwrite_config(
-                            run_config, "inference/num_samples", 4000)
+                            run_config, "inference/num_samples", 3000)
 
                     if kind.startswith("precomputed_los_"):
                         if "manticore" in kind_lower:

@@ -1788,11 +1788,23 @@ class ClustersModel(BaseModel):
             logda_grid = self.distance2logda(r_grid)
 
             if data.has_precomputed_los:
-                los_delta_r_grid = data["los_delta_r_grid"]
-                los_velocity_r_grid = data["los_velocity_r_grid"]
-                los_log_density_r_grid = data["los_log_density_r_grid"]
+                los_delta_r_grid = None
+                los_velocity_r_grid = None
+                los_log_density_r_grid = None
 
-                if self.stretch_los_with_zeropoint and A_dipole is not None:
+                needs_stretch = (
+                    self.stretch_los_with_zeropoint and A_dipole is not None)
+                if not needs_stretch:
+                    if "los_delta_r_grid" in data.data:
+                        los_delta_r_grid = data["los_delta_r_grid"]
+                        los_velocity_r_grid = data["los_velocity_r_grid"]
+                        los_log_density_r_grid = data["los_log_density_r_grid"]
+                    else:
+                        los_delta_r_grid = data.f_los_delta.interp_many_steps_per_galaxy(r_grid)
+                        los_velocity_r_grid = data.f_los_velocity.interp_many_steps_per_galaxy(r_grid)
+                        los_log_density_r_grid = data.f_los_log_density.interp_many_steps_per_galaxy(r_grid)
+
+                if needs_stretch:
                     H_base = 100.0
                     A_norm = jnp.linalg.norm(A_dipole)
                     cos_theta = jnp.sum(
@@ -1802,8 +1814,7 @@ class ClustersModel(BaseModel):
                     r_stretched = r_grid[None, :] * H_new[:, None] / H_base
 
                     def _interp_field(f_interp):
-                        vals = vmap(lambda r_col: f_interp(r_col), in_axes=1)(r_stretched)
-                        return jnp.transpose(vals, (1, 2, 0))
+                        return vmap(f_interp, in_axes=1, out_axes=2)(r_stretched)
 
                     los_delta_r_grid = _interp_field(data.f_los_delta)
                     los_velocity_r_grid = _interp_field(data.f_los_velocity)
@@ -1955,7 +1966,7 @@ class ClustersModel(BaseModel):
 
             # Marginalise over the radial distance, average over realisations
             # and track the log-density.
-            deterministic("ll_skipZ", ll)
+            #deterministic("ll_skipZ", ll)
             ll = ln_simpson(ll, x=r_grid[None, None, :], axis=-1)
             ll = logsumexp(ll, axis=0) - jnp.log(data.num_fields)
             factor("ll_obs", ll)

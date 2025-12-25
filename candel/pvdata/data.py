@@ -166,7 +166,7 @@ class PVDataFrame:
     """Lightweight container for PV data."""
     add_eta_truncation = False
 
-    def __init__(self, data, los_radial_decay_scale=5):
+    def __init__(self, data, los_radial_decay_scale=5, skip_los_r_grid=False):
         # Separate mock truths (metadata) from actual data arrays
         mock_truths = data.pop("_mock_truths", None)
         self.data = {k: jnp.asarray(v) for k, v in data.items()}
@@ -174,6 +174,7 @@ class PVDataFrame:
         if mock_truths is not None:
             self.data["_mock_truths"] = mock_truths
         self.name = None
+        self.skip_los_r_grid = bool(skip_los_r_grid)
 
         if "los_velocity" in self.data:
             self.has_precomputed_los = True
@@ -191,9 +192,10 @@ class PVDataFrame:
             self.f_los_velocity = LOSInterpolator(
                 self.data["los_r"], self.data["los_velocity"], **kwargs)
 
-            self.data["los_delta_r_grid"] = self.f_los_delta.interp_many_steps_per_galaxy(self.data["r_grid"])              # noqa
-            self.data["los_velocity_r_grid"] = self.f_los_velocity.interp_many_steps_per_galaxy(self.data["r_grid"])        # noqa
-            self.data["los_log_density_r_grid"] = self.f_los_log_density.interp_many_steps_per_galaxy(self.data["r_grid"])  # noqa
+            if not self.skip_los_r_grid:
+                self.data["los_delta_r_grid"] = self.f_los_delta.interp_many_steps_per_galaxy(self.data["r_grid"])              # noqa
+                self.data["los_velocity_r_grid"] = self.f_los_velocity.interp_many_steps_per_galaxy(self.data["r_grid"])        # noqa
+                self.data["los_log_density_r_grid"] = self.f_los_log_density.interp_many_steps_per_galaxy(self.data["r_grid"])  # noqa
         else:
             self.num_fields = 1
             self.has_precomputed_los = False
@@ -272,17 +274,24 @@ class PVDataFrame:
             data["los_log_density"] = np.log(data["los_density"])
             data["los_delta"] = data["los_density"] - 1
 
+        skip_los_r_grid = bool(
+            config_pv_model.get("stretch_los_with_zeropoint", False))
+        if skip_los_r_grid:
+            fprint("skipping precomputed LOS r-grid; stretch_los_with_zeropoint is enabled.")
+
         if nsamples_subsample is not None:
             if name == "PantheonPlusLane":
                 raise ValueError(
                     "Subsampling for Pantheon+ Lane is not supported because "
                     "of the complicated covariance matrix.")
 
-            frame = cls(data, los_decay_scale)
+            frame = cls(
+                data, los_decay_scale, skip_los_r_grid=skip_los_r_grid)
             frame = frame.subsample(
                 nsamples_subsample, los_decay_scale, seed=seed_subsample)
         else:
-            frame = cls(data, los_decay_scale)
+            frame = cls(
+                data, los_decay_scale, skip_los_r_grid=skip_los_r_grid)
 
         frame.sample_dust = sample_dust
 
@@ -384,7 +393,11 @@ class PVDataFrame:
                 else:
                     subsampled[key] = self.data[key]
 
-        return PVDataFrame(subsampled, los_radial_decay_scale)
+        return PVDataFrame(
+            subsampled,
+            los_radial_decay_scale,
+            skip_los_r_grid=self.skip_los_r_grid,
+        )
 
     def __getitem__(self, key):
         if key in self._cache:
