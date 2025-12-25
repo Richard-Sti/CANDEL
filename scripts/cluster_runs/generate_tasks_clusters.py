@@ -28,13 +28,14 @@ import tomli_w
 from candel import fprint, load_config, replace_prior_with_delta
 
 # Hardcoded flags for task generation.
-scaling_relations = ["LTYT"]  # Set to None to run all
-reconstructions = ["manticore"]
-include_quad = False
-include_pairs = False
-include_pix = False
-resolution_convergence = False
-free_radial_direction = False
+scaling_relations = ["YT", "LT", "LTYT"]  # Set to None to run all
+reconstructions = ["Carrick2015", "Vext", "manticore"]
+include_quad = True
+include_pairs = True
+include_pix = True
+resolution_convergence = True
+free_radial_direction = True
+split_tasks_by_kind = True
 output_root = "results/rgrid1000"
 num_chains = 4
 chain_method = "sequential"
@@ -305,23 +306,22 @@ if __name__ == "__main__":
     radialMagVext_combinations = build_radmag_combinations(
         [0, 250, 500, 750, 1000], "default"
     )
+    resolution_radmag_combinations = []
     if resolution_convergence:
-        radialMagVext_combinations += build_radmag_combinations(
+        resolution_radmag_combinations += build_radmag_combinations(
             [0, 125, 250, 500, 750, 1000], "fine"
         )
-        radialMagVext_combinations += build_radmag_combinations(
+        resolution_radmag_combinations += build_radmag_combinations(
             [0, 62.5, 125, 187.5, 250, 500, 750, 1000], "finest"
         )
-    
-    override_combinations = dipole_combinations + radialMagVext_combinations
-    if free_radial_direction:
-        override_combinations.extend(radialVext_combinations)
-    if include_pix:
-        override_combinations.extend(pixelA_combinations)
-        override_combinations.extend(pixelVext_combinations)
-    if include_quad:
-        override_combinations.extend(quadVext_combinations)
-        override_combinations.extend(quad_zeropoint_combinations)
+
+    override_groups = [
+        ("all_other_runs", dipole_combinations + radialMagVext_combinations),
+        ("pix", pixelA_combinations + pixelVext_combinations if include_pix else []),
+        ("quad", quadVext_combinations + quad_zeropoint_combinations if include_quad else []),
+        ("resolution_convergence", resolution_radmag_combinations if resolution_convergence else []),
+        ("free_radial_direction", radialVext_combinations if free_radial_direction else []),
+    ]
 
     base_clusters_section = deepcopy(config["io"].get("Clusters", {}))
     if not base_clusters_section:
@@ -420,15 +420,25 @@ if __name__ == "__main__":
         }
         return mapping.get(which_vext, [])
 
-    print(f"Total override combinations per scenario: {len(override_combinations)}")
+    total_overrides = sum(len(group[1]) for group in override_groups)
+    print(f"Total override combinations per scenario: {total_overrides}")
 
     task_counter = 0
-    with open(task_file, "w") as task_fh:
-        for scenario in scenarios:
-            scenario_overrides = scenario["overrides"]
-            scenario_label = scenario["label"]
-
-            for override_set in override_combinations:
+    tasks_by_group = {
+        "all_other_runs": [],
+        "pix": [],
+        "quad": [],
+        "pairs": [],
+        "resolution_convergence": [],
+        "free_radial_direction": [],
+    }
+    for scenario in scenarios:
+        scenario_overrides = scenario["overrides"]
+        scenario_label = scenario["label"]
+        for group_label, override_sets in override_groups:
+            if not override_sets:
+                continue
+            for override_set in override_sets:
                 local_config = deepcopy(config)
 
                 for key, value in scenario_overrides.items():
@@ -511,7 +521,7 @@ if __name__ == "__main__":
 
                     which_vext = get_nested(
                         run_config, "pv_model/which_Vext", "constant")
-                    if "carrick" in kind_lower and which_vext == "radial_magnitude":
+                    if which_vext in ("radial", "radial_magnitude"):
                         run_config = overwrite_config(
                             run_config, "inference/num_warmup", 1000)
                         run_config = overwrite_config(
@@ -559,7 +569,46 @@ if __name__ == "__main__":
                     with open(toml_out, "wb") as f:
                         tomli_w.dump(run_config, f)
 
+                    entry = (toml_out, kind_lower)
+                    if rel_toml in PAIR_RUNS:
+                        tasks_by_group["pairs"].append(entry)
+                    else:
+                        tasks_by_group[group_label].append(entry)
+
+    ordered_groups = [
+        "all_other_runs",
+        "pix",
+        "quad",
+        "pairs",
+        "resolution_convergence",
+        "free_radial_direction",
+    ]
+
+    if split_tasks_by_kind:
+        task_files = {
+            "manticore": "tasks_0.txt",
+            "other": "tasks_1.txt",
+        }
+        task_handles = {
+            key: open(path, "w") for key, path in task_files.items()
+        }
+        try:
+            for group_name in ordered_groups:
+                for toml_out, kind_lower in tasks_by_group[group_name]:
+                    bucket = "manticore" if "manticore" in kind_lower else "other"
+                    task_handles[bucket].write(f"{task_counter} {toml_out}\n")
+                    task_counter += 1
+        finally:
+            for fh in task_handles.values():
+                fh.close()
+        fprint(
+            "wrote task lists to "
+            f"`{task_files['manticore']}` and `{task_files['other']}`"
+        )
+    else:
+        with open(task_file, "w") as task_fh:
+            for group_name in ordered_groups:
+                for toml_out, _ in tasks_by_group[group_name]:
                     task_fh.write(f"{task_counter} {toml_out}\n")
                     task_counter += 1
-
-    fprint(f"wrote task list to `{task_file}`")
+        fprint(f"wrote task list to `{task_file}`")
