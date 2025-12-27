@@ -32,10 +32,11 @@ scaling_relations = ["YT", "LT", "LTYT"]  # Set to None to run all
 reconstructions = ["Carrick2015", "Vext", "manticore"]
 include_quad = False
 include_pairs = False
-include_pix = False
-resolution_convergence = True
+include_pix = True
+resolution_convergence = False
 free_radial_direction = False
-split_tasks_by_kind = True
+split_tasks_by_kind = False
+include_base = False
 output_root = "results/rgrid1000"
 num_chains = 4
 chain_method = "sequential"
@@ -146,7 +147,9 @@ def generate_dynamic_tag(config, scenario_label):
     # Zeropoint A configuration - check per_pix first
     which_A = get_nested(config, "pv_model/which_A", "constant")
     if which_A == "per_pix":
-        parts.append("pixA")
+        stretch_los = get_nested(
+            config, "pv_model/stretch_los_with_zeropoint", False)
+        parts.append("pixH0" if stretch_los else "pixA")
     else:
         # Check for quadrupole zeropoint first (implies dipole too)
         quad_prior = get_nested(config, "model/priors/zeropoint_quad", {})
@@ -239,6 +242,22 @@ if __name__ == "__main__":
         ]
 
     dipole_combinations = expand_override_grid(dipole_settings)
+
+    def is_base_run(override_set):
+        vext_prior = override_set.get("model/priors/Vext", {})
+        zp_prior = override_set.get("model/priors/zeropoint_dipole", {})
+        vext_dist = vext_prior.get("dist", "")
+        zp_dist = zp_prior.get("dist", "")
+        return (
+            (vext_dist == "delta" and zp_dist == "delta")
+            or (vext_dist == "vector_uniform_fixed" and zp_dist == "delta")
+            or (vext_dist == "delta" and zp_dist == "vector_uniform_fixed")
+        )
+
+    if not include_base:
+        dipole_combinations = [
+            combo for combo in dipole_combinations if not is_base_run(combo)
+        ]
     
     # Per-pixel Vext
     pixelVext_settings = deepcopy(base)
@@ -246,11 +265,18 @@ if __name__ == "__main__":
 
     pixelVext_combinations = expand_override_grid(pixelVext_settings)
 
-    # Per-pixel A
+    # Per-pixel A (without stretching, for calibration uncertainty)
     pixelA_settings = deepcopy(base)
     pixelA_settings["pv_model/which_A"] = ["per_pix"]
 
     pixelA_combinations = expand_override_grid(pixelA_settings)
+
+    # Per-pixel H0 (with stretching, for spatially-varying Hubble constant)
+    pixelH0_settings = deepcopy(base)
+    pixelH0_settings["pv_model/which_A"] = ["per_pix"]
+    pixelH0_settings["pv_model/stretch_los_with_zeropoint"] = [True]
+
+    pixelH0_combinations = expand_override_grid(pixelH0_settings)
 
     # Dipole and quadrupole Vext
     quadVext_settings = deepcopy(base)
@@ -306,6 +332,8 @@ if __name__ == "__main__":
     radialMagVext_combinations = build_radmag_combinations(
         [0, 250, 500, 750, 1000], "default"
     )
+    if not include_base:
+        radialMagVext_combinations = []
     resolution_radmag_combinations = []
     if resolution_convergence:
         resolution_radmag_combinations += build_radmag_combinations(
@@ -317,7 +345,7 @@ if __name__ == "__main__":
 
     override_groups = [
         ("all_other_runs", dipole_combinations + radialMagVext_combinations),
-        ("pix", pixelA_combinations + pixelVext_combinations if include_pix else []),
+        ("pix", pixelA_combinations + pixelH0_combinations + pixelVext_combinations if include_pix else []),
         ("quad", quadVext_combinations + quad_zeropoint_combinations if include_quad else []),
         ("resolution_convergence", resolution_radmag_combinations if resolution_convergence else []),
         ("free_radial_direction", radialVext_combinations if free_radial_direction else []),

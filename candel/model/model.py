@@ -1800,8 +1800,11 @@ class ClustersModel(BaseModel):
                 los_velocity_r_grid = None
                 los_log_density_r_grid = None
 
+                # Determine if stretching is needed: for dipole or per_pix/radial_binned modes
                 needs_stretch = (
-                    self.stretch_los_with_zeropoint and A_dipole is not None)
+                    self.stretch_los_with_zeropoint
+                    and (A_dipole is not None or delta_A is not None))
+
                 if not needs_stretch:
                     if "los_delta_r_grid" in data.data:
                         los_delta_r_grid = data["los_delta_r_grid"]
@@ -1814,11 +1817,18 @@ class ClustersModel(BaseModel):
 
                 if needs_stretch:
                     H_base = 100.0
-                    A_norm = jnp.linalg.norm(A_dipole)
-                    cos_theta = jnp.sum(
-                        A_dipole * data["rhat"], axis=1) / jnp.maximum(A_norm, 1e-30)
-                    delta_frac = _delta_a_to_frac(A_norm)
-                    H_new = H_base * (1.0 + delta_frac * cos_theta)
+
+                    if self.which_A in ["per_pix", "radial_binned", "radial_binned_dipole"]:
+                        # For per_pix/radial_binned: delta_A is per-galaxy (n_gal,)
+                        delta_frac = _delta_a_to_frac(delta_A)  # shape (n_gal,)
+                        H_new = H_base * (1.0 + delta_frac)
+                    else:
+                        # For dipole: project dipole onto each galaxy direction
+                        A_norm = jnp.linalg.norm(A_dipole)
+                        cos_theta = jnp.sum(
+                            A_dipole * data["rhat"], axis=1) / jnp.maximum(A_norm, 1e-30)
+                        delta_frac = _delta_a_to_frac(A_norm)
+                        H_new = H_base * (1.0 + delta_frac * cos_theta)
                     r_stretched = r_grid[None, :] * H_new[:, None] / H_base
 
                     def _interp_field(f_interp):
