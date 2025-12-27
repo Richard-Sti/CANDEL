@@ -681,7 +681,8 @@ def plot_corner_getdist(samples_list, labels=None, cols=None, show_fig=True,
                         apply_ell_offset=False, ell_zero=180,
                         mag_range=[0, None], ell_range=[0, 360],
                         b_range=[-90, 90], points=None,
-                        ranges={}, truths=None):
+                        ranges={}, truths=None, line_args=None,
+                        contour_args=None):
     """Plot a GetDist triangle plot for one or more posterior samples."""
 
     if isinstance(samples_list, dict):
@@ -764,10 +765,17 @@ def plot_corner_getdist(samples_list, labels=None, cols=None, show_fig=True,
         settings.axes_fontsize = fontsize - 1
         settings.title_limit_fontsize = fontsize - 1
 
-    if cols is not None:
+    if line_args is not None:
+        if isinstance(line_args, dict):
+            line_args = [line_args] * len(gdsamples_list)
+        if cols is not None:
+            for i, col in enumerate(cols):
+                if i >= len(line_args):
+                    line_args.append({})
+                if "color" not in line_args[i]:
+                    line_args[i] = {**line_args[i], "color": col}
+    elif cols is not None:
         line_args = [{"color": c} for c in cols]
-    else:
-        line_args = None
 
     with plt.style.context("science"):
         g = plots.get_subplot_plotter(settings=settings)
@@ -778,6 +786,7 @@ def plot_corner_getdist(samples_list, labels=None, cols=None, show_fig=True,
             colors=cols,
             contour_colors=cols,
             line_args=line_args,
+            contour_args=contour_args,
             legend_labels=labels,
             legend_loc="upper right",
         )
@@ -866,7 +875,8 @@ def plot_corner_from_hdf5(fnames, keys=None, labels=None, cols=None,
                           show_fig=True, filename=None, apply_ell_offset=False,
                           ell_zero=180, mag_range=[0, None],
                           ell_range=[0, 360], b_range=[-90, 90],
-                          points=None, ranges={}, truths=None):
+                          points=None, ranges={}, truths=None,
+                          line_args=None, contour_args=None):
     """
     Plot a triangle plot from one or more HDF5 files containing posterior
     samples.
@@ -902,6 +912,8 @@ def plot_corner_from_hdf5(fnames, keys=None, labels=None, cols=None,
         b_range=b_range,
         points=points,
         truths=truths,
+        line_args=line_args,
+        contour_args=contour_args,
     )
 
 

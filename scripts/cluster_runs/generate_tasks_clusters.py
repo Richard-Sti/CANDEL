@@ -28,8 +28,8 @@ import tomli_w
 from candel import fprint, load_config, replace_prior_with_delta
 
 # Hardcoded flags for task generation.
-scaling_relations = ["LTYT"]  # Set to None to run all
-reconstructions = ["manticore"]
+scaling_relations = ["LT"]  # Set to None to run all
+reconstructions = ["Vext"]
 include_quad = False
 include_pairs = False
 include_pix = False
@@ -39,7 +39,7 @@ split_tasks_by_kind = False
 include_base = True
 include_bias = True  # Double power law bias model tests
 output_root = "results/maxgrid"
-num_chains = 1
+num_chains = 4
 chain_method = "sequential"
 
 RECONSTRUCTION_KIND_MAP = {
@@ -61,6 +61,10 @@ MALMQUIST_GRID_SETTINGS = {
     "manticore": {
         "r_limits_malmquist": [0.001, 1400.5168],
         "num_points_malmquist": 2123,
+    },
+    "vext": {  # Same as Carrick2015 (no reconstruction)
+        "r_limits_malmquist": [0.001, 1400.5620],
+        "num_points_malmquist": 1743,
     },
 }
 
@@ -210,6 +214,11 @@ def generate_dynamic_tag(config, scenario_label):
     bias_variant = get_nested(config, "pv_model/bias_variant", None)
     if bias_variant:
         parts.append(bias_variant)
+
+    # Fixed sigma_v variant
+    sigmav_variant = get_nested(config, "pv_model/sigmav_variant", None)
+    if sigmav_variant:
+        parts.append(sigmav_variant)
 
     return "_".join(parts)
 
@@ -399,8 +408,23 @@ if __name__ == "__main__":
             }
             bias_combinations.extend(expand_override_grid(bias_settings))
 
+    # Fixed sigma_v run (Vext + LT + dipVext + sigma_v=100)
+    # This is included in base runs, so no separate flag needed
+    fixed_sigmav_settings = {
+        "pv_model/kind": ["Vext"],
+        "pv_model/which_Vext": ["constant"],
+        "pv_model/sigmav_variant": ["sigv100"],
+        "io/root_output": output_root,
+        "model/priors/Vext": [
+            {"dist": "vector_uniform_fixed", "low": 0.0, "high": 2000.0}],
+        "model/priors/zeropoint_dipole": [
+            {"dist": "delta", "value": [0.0, 0.0, 0.0]}],
+        "model/priors/sigma_v": [{"dist": "delta", "value": 100.0}],
+    }
+    fixed_sigmav_combinations = expand_override_grid(fixed_sigmav_settings) if include_base else []
+
     override_groups = [
-        ("all_other_runs", dipole_combinations + radialMagVext_combinations),
+        ("all_other_runs", dipole_combinations + radialMagVext_combinations + fixed_sigmav_combinations),
         ("pix", pixelA_combinations + pixelH0_combinations + pixelVext_combinations if include_pix else []),
         ("quad", quadVext_combinations + quad_zeropoint_combinations if include_quad else []),
         ("resolution_convergence", resolution_radmag_combinations if resolution_convergence else []),
@@ -528,6 +552,10 @@ if __name__ == "__main__":
             if group_label == "bias" and scenario_label != "LTYT":
                 continue
             for override_set in override_sets:
+                # Fixed sigma_v runs are only for LT scenario
+                if override_set.get("pv_model/sigmav_variant") and scenario_label != "LT":
+                    continue
+
                 local_config = deepcopy(config)
 
                 for key, value in scenario_overrides.items():
@@ -660,6 +688,17 @@ if __name__ == "__main__":
                                 run_config, "pv_model/num_points_malmquist",
                                 grid_settings["num_points_malmquist"])
                             fprint(f"set Malmquist grid to {grid_settings['num_points_malmquist']} points for Carrick2015")
+
+                    elif kind_lower == "vext":
+                        # Set Malmquist grid for Vext (no reconstruction, same as Carrick2015)
+                        grid_settings = MALMQUIST_GRID_SETTINGS["vext"]
+                        run_config = overwrite_config(
+                            run_config, "pv_model/r_limits_malmquist",
+                            grid_settings["r_limits_malmquist"])
+                        run_config = overwrite_config(
+                            run_config, "pv_model/num_points_malmquist",
+                            grid_settings["num_points_malmquist"])
+                        fprint(f"set Malmquist grid to {grid_settings['num_points_malmquist']} points for Vext")
 
                     dynamic_tag = generate_dynamic_tag(run_config, scenario_label)
                     kind_for_filename = kind.replace("precomputed_los_", "")

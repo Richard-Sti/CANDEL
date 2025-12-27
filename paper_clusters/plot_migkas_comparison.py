@@ -9,31 +9,40 @@ def main():
     setup_style()
 
     fnames = [
-        "Migkas_comparison/Migkas_Clusters_noMNR_linear_LT.hdf5",
-        "Migkas_comparison/Vext_Clusters_noMNR_linear_LT.hdf5",
-        "Migkas_comparison/precomputed_los_Carrick2015_Clusters_noMNR_linear_LT.hdf5",
+        str(RESULTS_ROOT / "Migkas_comparison/Migkas_Clusters_noMNR_linear_LT.hdf5"),
+        str(RESULTS_ROOT / "maxgrid/Vext_LT_noMNR_dipVext_sigv100.hdf5"),
+        str(RESULTS_ROOT / "rgrid1000/Vext_LT_noMNR_dipVext.hdf5"),
+        str(RESULTS_ROOT / "rgrid1000/Carrick2015_LT_noMNR_dipVext.hdf5"),
     ]
-    fnames = [str(RESULTS_ROOT / f) for f in fnames]
 
-    cols = [COLS[0], COLS[1], "k"]
+    cols = [COLS[1], COLS[0], COLS[2], COLS[3]]
 
     labels = [
         "Migkas model",
+        "Fiducial w/ no reconstruction, $\\sigma_v=100$ km/s",
         "Fiducial w/ no reconstruction",
         "Fiducial w/ Carrick2015 reconstruction",
     ]
 
-    keys = ['B_CL', 'Vext_mag', 'Vext_ell', 'Vext_b', 'sigma_v']
+    keys = ['Vext_mag', 'Vext_ell', 'Vext_b', 'sigma_v']
     points = {("Vext_ell", "Vext_b"): (264., 48.)}
+    contour_args = [
+        {"zorder": 3, "filled": False, "lw": 2.0},
+        {"zorder": 2},
+        {"zorder": 1},
+        {"zorder": 1},
+    ]
 
     plot_corner_from_hdf5(
         fnames,
         labels=labels,
         cols=cols,
-        filled=False,
+        filled=True,
         points=points,
         keys=keys,
+        contour_args=contour_args,
         filename=str(get_figure_path("migkas_comparison.pdf")),
+        legend_fontsize=40,
     )
     plt.close('all')
 
