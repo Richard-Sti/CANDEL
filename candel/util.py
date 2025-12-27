@@ -1134,7 +1134,7 @@ def _upsample_map(map_lo, nside_plot, *, nest=False):
 
 
 def plot_Vext_radmag(samples, model, r_eval_size=1000, show_fig=True,
-                     filename=None, data=None):
+                     filename=None, data=None, h0_samples=None):
     # Lazy import to avoid circular dependency at module import time.
     from .cosmography import Redshift2Distance
 
@@ -1293,23 +1293,54 @@ def plot_Vext_radmag(samples, model, r_eval_size=1000, show_fig=True,
 
     def add_h0_dipole_reference(ax_ref):
         """Overlay the equivalent H0 dipole reference band."""
-        pct_cen = 15.0 * 1.15
-        pct_lo = pct_cen - 2.0
-        pct_hi = pct_cen + 2.0
+        dH_over_H = None
+        ell_samples = None
+        b_samples = None
+        if h0_samples is not None:
+            dH_over_H = h0_samples.get("dH_over_H_dipole", None)
+            ell_samples = h0_samples.get("zeropoint_dipole_ell", None)
+            b_samples = h0_samples.get("zeropoint_dipole_b", None)
 
-        bf = percent_h0_to_bulkflow(r, pct_cen)
-        bu = percent_h0_to_bulkflow(r, pct_hi)
-        bl = percent_h0_to_bulkflow(r, pct_lo)
+        if dH_over_H is not None:
+            pct = 100.0 * np.asarray(dH_over_H)
+            pct_cen = float(np.mean(pct))
+            pct_std = float(np.std(pct))
+            pct_lo = pct_cen - pct_std
+            pct_hi = pct_cen + pct_std
 
-        H0_ell_val = 123.9
-        H0_b_val = 53.88
-        H0_std_ell = 99.8
-        H0_std_b = 17.71
+            bf = percent_h0_to_bulkflow(r, pct_cen)
+            bu = percent_h0_to_bulkflow(r, pct_hi)
+            bl = percent_h0_to_bulkflow(r, pct_lo)
 
-        label = (f"Equivalent $H_0$ dipole: ${pct_cen:.1f}\\%$ "
-                 f"at "
-                 f"$(\\ell, b) = ({H0_ell_val:.1f} \\pm {H0_std_ell:.1f}°, "
-                 f"{H0_b_val:.1f} \\pm {H0_std_b:.1f}°)$")
+            label = f"Equivalent $H_0$ dipole: ${pct_cen:.2f}\\% \\pm {pct_std:.2f}\\%$"
+            if ell_samples is not None and b_samples is not None:
+                H0_ell_val = float(np.mean(ell_samples))
+                H0_b_val = float(np.mean(b_samples))
+                H0_std_ell = float(np.std(ell_samples))
+                H0_std_b = float(np.std(b_samples))
+                label = (f"Equivalent $H_0$ dipole: ${pct_cen:.2f}\\% \\pm {pct_std:.2f}\\%$ "
+                         f"at "
+                         f"$(\\ell, b) = ({H0_ell_val:.1f} \\pm {H0_std_ell:.1f}°, "
+                         f"{H0_b_val:.1f} \\pm {H0_std_b:.1f}°)$")
+        else:
+            pct_cen = 15.0 * 1.15
+            pct_lo = pct_cen - 2.0
+            pct_hi = pct_cen + 2.0
+
+            bf = percent_h0_to_bulkflow(r, pct_cen)
+            bu = percent_h0_to_bulkflow(r, pct_hi)
+            bl = percent_h0_to_bulkflow(r, pct_lo)
+
+            H0_ell_val = 123.9
+            H0_b_val = 53.88
+            H0_std_ell = 99.8
+            H0_std_b = 17.71
+
+            label = (f"Equivalent $H_0$ dipole: ${pct_cen:.1f}\\%$ "
+                     f"at "
+                     f"$(\\ell, b) = ({H0_ell_val:.1f} \\pm {H0_std_ell:.1f}°, "
+                     f"{H0_b_val:.1f} \\pm {H0_std_b:.1f}°)$")
+
         ax_ref.plot(r, bf, linestyle="--", color="gray", label=label)
         ax_ref.fill_between(r, bl, bu, color="gray", alpha=0.3)
         ax_ref.legend(loc="best", fontsize=9)

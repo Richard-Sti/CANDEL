@@ -206,7 +206,10 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
     else:
         gof = None
 
-    samples = postprocess_samples(samples)
+    # Check if this is a dipH0/quadH0 run (should convert zeropoint to dH_over_H)
+    fname_out = model.config["io"]["fname_output"]
+    convert_zeropoint = "dipH0" in fname_out or "quadH0" in fname_out
+    samples = postprocess_samples(samples, convert_zeropoint_to_dH=convert_zeropoint)
 
     if print_summary:
         print_clean_summary(samples)
@@ -302,13 +305,16 @@ def run_SH0ES_inference(model, model_kwargs={}, print_summary=True,
 
     samples = mcmc.get_samples()
     samples = drop_deterministic(samples)
-    samples = postprocess_samples(samples)
+
+    # Check if this is a dipH0/quadH0 run (should convert zeropoint to dH_over_H)
+    fname_out = model.config["io"]["fname_output"]
+    convert_zeropoint = "dipH0" in fname_out or "quadH0" in fname_out
+    samples = postprocess_samples(samples, convert_zeropoint_to_dH=convert_zeropoint)
 
     if print_summary:
         print_clean_summary(samples)
 
     if save_samples:
-        fname_out = model.config["io"]["fname_output"]
         fprint(f"output directory is {dirname(fname_out)}.")
         save_mcmc_samples(samples, None, None, fname_out)
 
@@ -378,8 +384,18 @@ def drop_deterministic(samples, check_all_equals=True):
     return samples
 
 
-def postprocess_samples(samples):
-    """Postprocess MCMC samples."""
+def postprocess_samples(samples, convert_zeropoint_to_dH=False):
+    """Postprocess MCMC samples.
+
+    Parameters
+    ----------
+    samples : dict
+        Dictionary of MCMC samples.
+    convert_zeropoint_to_dH : bool, optional
+        If True, convert zeropoint_dipole_mag and zeropoint_quad_mag to
+        dH_over_H_dipole and dH_over_H_quad respectively. This should only
+        be True for dipH0/quadH0 runs, not dipA/quadA runs. Default is False.
+    """
     # Handle Vext_rad or Vext_rad_bin with FIXED direction (vector_radial_spline_uniform_fixed_direction)
     # Works for both which_Vext="radial" and which_Vext="radial_binned"
     if "Vext_rad_direction_phi" in samples and "Vext_rad_direction_cos_theta" in samples:
@@ -531,19 +547,21 @@ def postprocess_samples(samples):
             samples[f"{prefix}_ell"] = ell
             samples[f"{prefix}_b"] = b
 
-    def _delta_a_to_frac(delta_a):
-        delta_a = np.asarray(delta_a)
-        return np.power(10.0, 0.5 * delta_a) - 1.0
+    # Only convert zeropoint to dH_over_H for dipH0/quadH0 runs
+    if convert_zeropoint_to_dH:
+        def _delta_a_to_frac(delta_a):
+            delta_a = np.asarray(delta_a)
+            return np.power(10.0, 0.5 * delta_a) - 1.0
 
-    if "zeropoint_dipole_mag" in samples:
-        samples["dH_over_H_dipole"] = _delta_a_to_frac(
-            samples["zeropoint_dipole_mag"])
-        samples.pop("zeropoint_dipole_mag", None)
+        if "zeropoint_dipole_mag" in samples:
+            samples["dH_over_H_dipole"] = _delta_a_to_frac(
+                samples["zeropoint_dipole_mag"])
+            samples.pop("zeropoint_dipole_mag", None)
 
-    if "zeropoint_quad_mag" in samples:
-        samples["dH_over_H_quad"] = _delta_a_to_frac(
-            samples["zeropoint_quad_mag"])
-        samples.pop("zeropoint_quad_mag", None)
+        if "zeropoint_quad_mag" in samples:
+            samples["dH_over_H_quad"] = _delta_a_to_frac(
+                samples["zeropoint_quad_mag"])
+            samples.pop("zeropoint_quad_mag", None)
 
     return samples
 

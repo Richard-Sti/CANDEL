@@ -37,9 +37,9 @@ def plot_vext_dipole():
 def plot_h0_dipole():
     """Figure (b): H0 dipole for different reconstructions."""
     fnames = [
-        get_results_path("Vext_LTYT_noMNR_dipA_hasY.hdf5"),
-        get_results_path("carrick2015_LTYT_noMNR_dipA_hasY.hdf5"),
-        get_results_path("manticore_LTYT_noMNR_dipA_hasY.hdf5"),
+        get_results_path("Vext_LTYT_noMNR_dipH0_hasY.hdf5"),
+        get_results_path("carrick2015_LTYT_noMNR_dipH0_hasY.hdf5"),
+        get_results_path("manticore_LTYT_noMNR_dipH0_hasY.hdf5"),
     ]
     fnames = [str(f) for f in fnames]
 
@@ -63,10 +63,38 @@ def plot_h0_dipole():
     plt.close('all')
 
 
+def plot_zeropoint_dipole():
+    """Figure (c): Zeropoint dipole for different reconstructions."""
+    fnames = [
+        get_results_path("Vext_LTYT_noMNR_dipA_hasY.hdf5"),
+        get_results_path("carrick2015_LTYT_noMNR_dipA_hasY.hdf5"),
+        get_results_path("manticore_LTYT_noMNR_dipA_hasY.hdf5"),
+    ]
+    fnames = [str(f) for f in fnames]
+
+    keys = ['zeropoint_dipole_mag', 'zeropoint_dipole_ell', 'zeropoint_dipole_b']
+    cols = [COLS[0], COLS[1], COLS[2]]
+    labels = ["No reconstruction", "Carrick2015", "Manticore"]
+
+    plot_corner_from_hdf5(
+        fnames,
+        labels=labels,
+        cols=cols,
+        filled=True,
+        keys=keys,
+        filename=str(get_figure_path("reconstruction_zeropoint.pdf")),
+        legend_fontsize=40,
+        ell_zero=-90.0,
+        apply_ell_offset=True,
+    )
+    plt.close('all')
+
+
 def main():
     setup_style()
     plot_vext_dipole()
     plot_h0_dipole()
+    plot_zeropoint_dipole()
 
 
 if __name__ == "__main__":
