@@ -36,7 +36,8 @@ include_pix = False
 resolution_convergence = False
 free_radial_direction = False
 split_tasks_by_kind = False
-include_base = False
+include_base = True
+include_bias = True  # Double power law bias model tests
 output_root = "results/maxgrid"
 num_chains = 1
 chain_method = "sequential"
@@ -60,6 +61,20 @@ MALMQUIST_GRID_SETTINGS = {
     "manticore": {
         "r_limits_malmquist": [0.001, 1400.5168],
         "num_points_malmquist": 2123,
+    },
+}
+
+# Double power law bias model prior configurations
+BIAS_PRIORS = {
+    "DPLunif": {
+        "alpha_low": {"dist": "uniform", "low": 0.0, "high": 10.0},
+        "alpha_high": {"dist": "uniform", "low": 0.0, "high": 4.0},
+        "log_rho_t": {"dist": "uniform", "low": -10.0, "high": 10.0},
+    },
+    "DPLnorm": {
+        "alpha_low": {"dist": "truncated_normal", "low": 0.0, "mean": 1.0, "scale": 1.0},
+        "alpha_high": {"dist": "truncated_normal", "low": 0.0, "mean": 0.5, "scale": 1.0},
+        "log_rho_t": {"dist": "normal", "loc": 0.0, "scale": 2.0},
     },
 }
 
@@ -190,6 +205,11 @@ def generate_dynamic_tag(config, scenario_label):
             break
     if has_y:
         parts.append("hasY")
+
+    # Double power law bias variant
+    bias_variant = get_nested(config, "pv_model/bias_variant", None)
+    if bias_variant:
+        parts.append(bias_variant)
 
     return "_".join(parts)
 
@@ -360,12 +380,32 @@ if __name__ == "__main__":
             [0, 62.5, 125, 187.5, 250, 500, 750, 1000], "finest"
         )
 
+    # Double power law bias model combinations (manticore + LTYT + dipH0 only)
+    bias_combinations = []
+    if include_bias:
+        for bias_label, bias_priors in BIAS_PRIORS.items():
+            bias_settings = {
+                "pv_model/kind": ["precomputed_los_manticore"],
+                "pv_model/which_Vext": ["constant"],
+                "pv_model/stretch_los_with_zeropoint": [True],  # dipH0, not dipA
+                "pv_model/bias_variant": [bias_label],
+                "io/root_output": output_root,
+                "model/priors/Vext": [{"dist": "delta", "value": [0.0, 0.0, 0.0]}],
+                "model/priors/zeropoint_dipole": [
+                    {"dist": "vector_uniform_fixed", "low": 0.0, "high": 0.2}],
+                "model/priors/alpha_low": [bias_priors["alpha_low"]],
+                "model/priors/alpha_high": [bias_priors["alpha_high"]],
+                "model/priors/log_rho_t": [bias_priors["log_rho_t"]],
+            }
+            bias_combinations.extend(expand_override_grid(bias_settings))
+
     override_groups = [
         ("all_other_runs", dipole_combinations + radialMagVext_combinations),
         ("pix", pixelA_combinations + pixelH0_combinations + pixelVext_combinations if include_pix else []),
         ("quad", quadVext_combinations + quad_zeropoint_combinations if include_quad else []),
         ("resolution_convergence", resolution_radmag_combinations if resolution_convergence else []),
         ("free_radial_direction", radialVext_combinations if free_radial_direction else []),
+        ("bias", bias_combinations if include_bias else []),
     ]
 
     base_clusters_section = deepcopy(config["io"].get("Clusters", {}))
@@ -476,12 +516,16 @@ if __name__ == "__main__":
         "pairs": [],
         "resolution_convergence": [],
         "free_radial_direction": [],
+        "bias": [],
     }
     for scenario in scenarios:
         scenario_overrides = scenario["overrides"]
         scenario_label = scenario["label"]
         for group_label, override_sets in override_groups:
             if not override_sets:
+                continue
+            # Bias runs are only for LTYT scenario
+            if group_label == "bias" and scenario_label != "LTYT":
                 continue
             for override_set in override_sets:
                 local_config = deepcopy(config)
@@ -521,7 +565,11 @@ if __name__ == "__main__":
 
                 dipole_prior = get_nested(
                     local_config, "model/priors/zeropoint_dipole", {})
-                if (
+                # For bias runs, stretch_los is already set, so don't iterate
+                bias_variant = get_nested(local_config, "pv_model/bias_variant", None)
+                if bias_variant:
+                    stretch_variants = [None]
+                elif (
                     isinstance(dipole_prior, dict)
                     and dipole_prior.get("dist") == "vector_uniform_fixed"
                 ):
@@ -647,6 +695,7 @@ if __name__ == "__main__":
         "pairs",
         "resolution_convergence",
         "free_radial_direction",
+        "bias",
     ]
 
     if split_tasks_by_kind:
