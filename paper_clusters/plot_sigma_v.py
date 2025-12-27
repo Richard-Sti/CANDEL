@@ -12,9 +12,9 @@ def main():
     setup_style()
 
     fnames = [
-        f"{RESULTS_FOLDER}/Vext_LTYT_noMNR_nodipA_dipVext_hasY.hdf5",
-        f"{RESULTS_FOLDER}/carrick2015_LTYT_noMNR_nodipA_dipVext_hasY.hdf5",
-        f"{RESULTS_FOLDER}/manticore_LTYT_noMNR_nodipA_dipVext_hasY.hdf5",
+        f"{RESULTS_FOLDER}/Vext_LTYT_noMNR_dipVext_hasY.hdf5",
+        f"{RESULTS_FOLDER}/carrick2015_LTYT_noMNR_dipVext_hasY.hdf5",
+        f"{RESULTS_FOLDER}/manticore_LTYT_noMNR_dipVext_hasY.hdf5",
     ]
     labels = ["No reconstruction", "Carrick2015", "Manticore"]
     cols = [COLS[0], COLS[1], COLS[2]]

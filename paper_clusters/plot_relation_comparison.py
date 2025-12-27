@@ -59,10 +59,38 @@ def plot_diph0_scaling_comparison():
     plt.close('all')
 
 
+def plot_dipvext_scaling_comparison():
+    """DipVext scaling relation comparison: LT vs YT vs LTYT."""
+    fnames = [
+        get_results_path("Carrick2015_LT_noMNR_dipVext.hdf5"),
+        get_results_path("Carrick2015_YT_noMNR_dipVext_hasY.hdf5"),
+        get_results_path("Carrick2015_LTYT_noMNR_dipVext_hasY.hdf5"),
+    ]
+    fnames = [str(f) for f in fnames]
+
+    keys = ['Vext_mag', 'Vext_ell', 'Vext_b']
+    cols = [COLS[0], COLS[1], COLS[2]]
+    labels = ["LT", "YT", "LTYT"]
+
+    plot_corner_from_hdf5(
+        fnames,
+        labels=labels,
+        cols=cols,
+        filled=True,
+        keys=keys,
+        filename=str(get_figure_path("LT_YT_LTYT_dipVext.pdf")),
+        legend_fontsize=40,
+        apply_ell_offset=True,
+        ell_zero=180.0,
+    )
+    plt.close('all')
+
+
 def main():
     setup_style()
     plot_dipa_scaling_comparison()
     plot_diph0_scaling_comparison()
+    plot_dipvext_scaling_comparison()
 
 
 if __name__ == "__main__":

@@ -1,9 +1,8 @@
 """Replot radial Vext magnitude profiles for LT, YT, and LTYT."""
-from os.path import splitext
 
 from h5py import File
 
-from config import get_results_path, setup_style
+from config import get_results_path, get_figure_path, setup_style
 from candel.inference import postprocess_samples
 from candel.model.model import ClustersModel
 from candel.pvdata.data import load_PV_dataframes
@@ -26,7 +25,7 @@ def plot_radmag_run(label, radmag_stem, diph0_stem):
     results_path = get_results_path(f"{radmag_stem}.hdf5")
     diph0_path = get_results_path(f"{diph0_stem}.hdf5")
 
-    out_path = splitext(str(results_path))[0] + "_profile_Vext_radmag.png"
+    out_path = get_figure_path(f"{radmag_stem}_profile_Vext_radmag.png")
 
     fprint(f"[{label}] loading model from {config_path}")
     model = ClustersModel(str(config_path))
@@ -46,7 +45,7 @@ def plot_radmag_run(label, radmag_stem, diph0_stem):
         samples,
         model,
         show_fig=False,
-        filename=out_path,
+        filename=str(out_path),
         data=data,
         h0_samples=h0_samples,
     )

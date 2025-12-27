@@ -28,23 +28,39 @@ import tomli_w
 from candel import fprint, load_config, replace_prior_with_delta
 
 # Hardcoded flags for task generation.
-scaling_relations = ["YT", "LT", "LTYT"]  # Set to None to run all
-reconstructions = ["Carrick2015", "Vext", "manticore"]
+scaling_relations = ["LTYT"]  # Set to None to run all
+reconstructions = ["manticore"]
 include_quad = False
 include_pairs = False
-include_pix = True
+include_pix = False
 resolution_convergence = False
 free_radial_direction = False
 split_tasks_by_kind = False
 include_base = False
-output_root = "results/rgrid1000"
-num_chains = 4
+output_root = "results/maxgrid"
+num_chains = 1
 chain_method = "sequential"
 
 RECONSTRUCTION_KIND_MAP = {
     "Vext": "Vext",
     "Carrick2015": "precomputed_los_Carrick2015",
     "manticore": "precomputed_los_manticore",
+}
+
+# Malmquist grid settings matched to LOS data resolution.
+# These ensure the Malmquist integration grid perfectly matches the precomputed
+# LOS grid at low radius, then continues with the same spacing beyond.
+# Carrick2015: 251 pts from 0.001-201 Mpc, spacing 0.803996 Mpc
+# manticore: 501 pts from 0.001-330 Mpc, spacing 0.659998 Mpc
+MALMQUIST_GRID_SETTINGS = {
+    "carrick": {
+        "r_limits_malmquist": [0.001, 1400.5620],
+        "num_points_malmquist": 1743,
+    },
+    "manticore": {
+        "r_limits_malmquist": [0.001, 1400.5168],
+        "num_points_malmquist": 2123,
+    },
 }
 
 PAIR_RUNS = {
@@ -203,7 +219,8 @@ if __name__ == "__main__":
     config_path = "scripts/cluster_runs/config_clusters.toml"
     config = load_config(
         config_path, replace_none=False, replace_los_prior=False)
-    config = overwrite_config(config, "pv_model/num_points_malmquist", 1001)
+    # Note: num_points_malmquist and r_limits_malmquist are set per-reconstruction
+    # later in the script to match the LOS grid resolution exactly.
     config = overwrite_config(config, "io/reconstruction_main/num_steps", 1001)
     config = overwrite_config(config, "inference/num_chains", num_chains)
     config = overwrite_config(config, "inference/chain_method", chain_method)
@@ -566,6 +583,16 @@ if __name__ == "__main__":
                                 run_config, "pv_model/galaxy_bias", "powerlaw")
                             fprint("set galaxy_bias to 'powerlaw' for manticore reconstruction")
 
+                            # Set Malmquist grid to match manticore LOS resolution
+                            grid_settings = MALMQUIST_GRID_SETTINGS["manticore"]
+                            run_config = overwrite_config(
+                                run_config, "pv_model/r_limits_malmquist",
+                                grid_settings["r_limits_malmquist"])
+                            run_config = overwrite_config(
+                                run_config, "pv_model/num_points_malmquist",
+                                grid_settings["num_points_malmquist"])
+                            fprint(f"set Malmquist grid to {grid_settings['num_points_malmquist']} points for manticore")
+
                         elif "carrick" in kind_lower:
                             beta_prior = {"dist": "normal", "loc": 0.43, "scale": 0.02}
                             run_config = overwrite_subtree(
@@ -575,6 +602,16 @@ if __name__ == "__main__":
                             run_config = overwrite_config(
                                 run_config, "pv_model/galaxy_bias", "linear")
                             fprint("set galaxy_bias to 'linear' for Carrick2015 reconstruction")
+
+                            # Set Malmquist grid to match Carrick2015 LOS resolution
+                            grid_settings = MALMQUIST_GRID_SETTINGS["carrick"]
+                            run_config = overwrite_config(
+                                run_config, "pv_model/r_limits_malmquist",
+                                grid_settings["r_limits_malmquist"])
+                            run_config = overwrite_config(
+                                run_config, "pv_model/num_points_malmquist",
+                                grid_settings["num_points_malmquist"])
+                            fprint(f"set Malmquist grid to {grid_settings['num_points_malmquist']} points for Carrick2015")
 
                     dynamic_tag = generate_dynamic_tag(run_config, scenario_label)
                     kind_for_filename = kind.replace("precomputed_los_", "")

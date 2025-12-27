@@ -9,9 +9,9 @@ def main():
     setup_style()
 
     fnames = [
-        get_results_path("manticore_LTYT_noMNR_nodipA_hasY.hdf5"),
-        get_results_path("manticore_LTYT_noMNR_nodipA_dipVext_hasY.hdf5"),
-        get_results_path("manticore_LTYT_noMNR_dipA_hasY.hdf5"),
+        get_results_path("manticore_LTYT_noMNR_hasY.hdf5"),
+        get_results_path("manticore_LTYT_noMNR_dipVext_hasY.hdf5"),
+        get_results_path("manticore_LTYT_noMNR_dipH0_hasY.hdf5"),
     ]
     fnames = [str(f) for f in fnames]
 
@@ -22,12 +22,12 @@ def main():
         'dH_over_H_dipole', 'zeropoint_dipole_ell', 'zeropoint_dipole_b',
     ]
 
-    cols = [COLS[0], COLS[1], "k"]
+    cols = [COLS[0], COLS[1], COLS[2]]
 
     labels = [
-        "Migkas model",
-        "Fiducial w/ no reconstruction",
-        "Fiducial w/ Carrick2015 reconstruction",
+        "No dipole",
+        "Vext dipole",
+        "H0 dipole",
     ]
 
     points = {("Vext_ell", "Vext_b"): (264., 48.)}
@@ -36,7 +36,7 @@ def main():
         fnames,
         labels=labels,
         cols=cols,
-        filled=False,
+        filled=True,
         points=points,
         keys=keys,
         filename=str(get_figure_path("main_posterior.pdf")),

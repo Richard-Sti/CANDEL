@@ -11,7 +11,7 @@ DEST_PATH="/mnt/users/yasin/code/CANDEL"
 SSH_KEY="$HOME/.ssh/id_ed25519"
 
 usage() {
-    echo "Usage: $0 [results|data|scripts|all]"
+    echo "Usage: $0 [results|data|scripts|all|results/<subfolder>|data/<subfolder>|scripts/<subfolder>]"
     exit 1
 }
 
@@ -20,24 +20,23 @@ if [[ $# -ne 1 ]]; then
     usage
 fi
 
-case "$1" in
-    results)
-        echo "[INFO] Syncing 'results' -> glamdring:${DEST_PATH}"
+SYNC_TARGET="$1"
+
+case "$SYNC_TARGET" in
+    results|data|scripts)
+        echo "[INFO] Syncing '${SYNC_TARGET}' -> glamdring:${DEST_PATH}"
         rsync -avh --progress -e "ssh -i $SSH_KEY" \
-          "$SRC_BASE/results" \
+          "$SRC_BASE/$SYNC_TARGET" \
           "$DEST_USER@$DEST_HOST:$DEST_PATH/"
         ;;
-    data)
-        echo "[INFO] Syncing 'data' -> glamdring:${DEST_PATH}"
+    results/*|data/*|scripts/*)
+        ROOT_DIR="${SYNC_TARGET%%/*}"
+        SRC_DIR="$SRC_BASE/$SYNC_TARGET"
+        DEST_DIR="$DEST_PATH/$ROOT_DIR/"
+        echo "[INFO] Syncing '${SYNC_TARGET}' -> glamdring:${DEST_DIR}"
         rsync -avh --progress -e "ssh -i $SSH_KEY" \
-          "$SRC_BASE/data" \
-          "$DEST_USER@$DEST_HOST:$DEST_PATH/"
-        ;;
-    scripts)
-        echo "[INFO] Syncing 'scripts' -> glamdring:${DEST_PATH}"
-        rsync -avh --progress -e "ssh -i $SSH_KEY" \
-          "$SRC_BASE/scripts" \
-          "$DEST_USER@$DEST_HOST:$DEST_PATH/"
+          "$SRC_DIR" \
+          "$DEST_USER@$DEST_HOST:$DEST_DIR"
         ;;
     all)
         echo "[INFO] Syncing 'data', 'scripts', and 'configs' -> glamdring:${DEST_PATH}"

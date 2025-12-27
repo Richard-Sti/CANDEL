@@ -6,8 +6,8 @@ import traceback
 import plot_redshift_distribution
 import plot_scaling_relations
 import plot_whole_posterior
-import plot_dipoles_reconstructions
-import plot_scaling_comparison
+import plot_dipoles
+import plot_relation_comparison
 import plot_sigma_v
 import plot_migkas_comparison
 import plot_mnr_comparison
@@ -52,8 +52,8 @@ def main():
         ("redshift distribution plot", plot_redshift_distribution.main),
         ("scaling relations plot", plot_scaling_relations.main),
         ("whole posterior plot", plot_whole_posterior.main),
-        ("dipoles reconstructions plots", plot_dipoles_reconstructions.main),
-        ("scaling comparison plot", plot_scaling_comparison.main),
+        ("dipoles reconstructions plots", plot_dipoles.main),
+        ("scaling comparison plot", plot_relation_comparison.main),
         ("sigma_v plot", plot_sigma_v.main),
         ("Migkas comparison plot", plot_migkas_comparison.main),
         ("results table", table_results.main),

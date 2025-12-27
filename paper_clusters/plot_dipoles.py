@@ -8,9 +8,9 @@ from candel import plot_corner_from_hdf5
 def plot_vext_dipole():
     """Figure (a): Vext dipole for different reconstructions."""
     fnames = [
-        get_results_path("Vext_LTYT_noMNR_nodipA_dipVext_hasY.hdf5"),
-        get_results_path("carrick2015_LTYT_noMNR_nodipA_dipVext_hasY.hdf5"),
-        get_results_path("manticore_LTYT_noMNR_nodipA_dipVext_hasY.hdf5"),
+        get_results_path("Vext_LTYT_noMNR_dipVext_hasY.hdf5"),
+        get_results_path("carrick2015_LTYT_noMNR_dipVext_hasY.hdf5"),
+        get_results_path("manticore_LTYT_noMNR_dipVext_hasY.hdf5"),
     ]
     fnames = [str(f) for f in fnames]
 

@@ -1202,11 +1202,11 @@ def plot_Vext_radmag(samples, model, r_eval_size=1000, show_fig=True,
             width = bin_edges[1] - bin_edges[0]
             ax_hist.bar(bin_centers, counts_has_Y, width=width, alpha=0.7,
                         label=f'With $Y_{{SZ}}$ (N={np.sum(has_Y)})',
-                        color="C0", edgecolor='black', linewidth=0.5)
+                        color="#7570b3", edgecolor='black', linewidth=0.5)
             ax_hist.bar(bin_centers, counts_no_Y, width=width, alpha=0.7,
                         bottom=counts_has_Y,
                         label=f'Without $Y_{{SZ}}$ (N={np.sum(no_Y)})',
-                        color="C1", edgecolor='black', linewidth=0.5)
+                        color="#d95f02", edgecolor='black', linewidth=0.5)
             ax_hist.legend(fontsize=9, loc="upper right")
         else:
             ax_hist.hist(dist, bins=bins, color="C0", alpha=0.7, edgecolor='black')
@@ -1387,7 +1387,8 @@ def plot_Vext_radmag(samples, model, r_eval_size=1000, show_fig=True,
 
 def plot_Vext_moll(samples_pix, fname_out, coord_in="C", coord_out="G",
                    lon_step=60, lat_step=30, eps=1e-12, nside_plot=None,
-                   remove_coord_label=True):
+                   remove_coord_label=True, quantity_label=r"$V_{\mathrm{ext}}$",
+                   unit_label=r"$\mathrm{km\ s^{-1}}$"):
     """
     Plot three stacked Mollweide maps from MCMC samples (Nsamples, Npix):
       row 1: mean
@@ -1411,10 +1412,15 @@ def plot_Vext_moll(samples_pix, fname_out, coord_in="C", coord_out="G",
 
     plt.figure(figsize=(7, 10))
 
+    def _format_unit(prefix):
+        if unit_label:
+            return f"{prefix} {quantity_label} [{unit_label}]"
+        return f"{prefix} {quantity_label}"
+
     # Mean
     hp.mollview(mean_map, nest=False, coord=coord_arg, notext=False,
                 xsize=2000, cbar=True,
-                unit=r"Mean $V_{\mathrm{ext}}$ [$\mathrm{km\ s^{-1}}$]",
+                unit=_format_unit("Mean"),
                 title="", sub=311)
     hp.graticule(dpar=lat_step, dmer=lon_step)
     if remove_coord_label:
@@ -1427,7 +1433,7 @@ def plot_Vext_moll(samples_pix, fname_out, coord_in="C", coord_out="G",
     # Std
     hp.mollview(std_map, nest=False, coord=coord_arg, notext=False,
                 xsize=2000, cbar=True,
-                unit=r"Std($V_{\mathrm{ext}}$) [$\mathrm{km\ s^{-1}}$]",
+                unit=_format_unit("Std"),
                 title="", sub=312)
     hp.graticule(dpar=lat_step, dmer=lon_step)
     if remove_coord_label:
@@ -1440,7 +1446,7 @@ def plot_Vext_moll(samples_pix, fname_out, coord_in="C", coord_out="G",
     # Mean / Std
     hp.mollview(snr_map, nest=False, coord=coord_arg, notext=False,
                 xsize=2000, cbar=True,
-                unit=r"$V_{\mathrm{ext}}$/Std($V_{\mathrm{ext}}$)",
+                unit=f"SNR {quantity_label}",
                 title="", sub=313)
     hp.graticule(dpar=lat_step, dmer=lon_step)
     if remove_coord_label:
