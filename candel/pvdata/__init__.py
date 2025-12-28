@@ -30,6 +30,7 @@ from .data import (                                                             
     load_PantheonPlus,                                                          # noqa
     load_PantheonPlus_Lane,                                                     # noqa
     load_generic,                                                               # noqa
+    load_CSP,                                                                   # noqa
     PVDataFrame,                                                                # noqa
     load_PV_dataframes,                                                         # noqa
     )
