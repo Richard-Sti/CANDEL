@@ -16,6 +16,8 @@
 Minimal NumPyro model for CCHP TRGB distance calibrators to infer H0.
 """
 from abc import ABC
+from dataclasses import dataclass
+from typing import Optional
 
 import jax.numpy as jnp
 import numpy as np
@@ -57,6 +59,123 @@ def logmeanexp_by_group(logp, idx, n_groups=None):
 
     logsum = jnp.log(sum_exp) + baseline
     return logsum - jnp.log(counts)
+
+
+@dataclass
+class CCHPTRGBSelectionContext:
+    """Data container for selection computation dependencies."""
+    # Interpolators (can be None if not using reconstruction)
+    f_rand_los_delta: Optional[object]
+    f_rand_los_velocity: Optional[object]
+    # Random LOS unit vectors, shape (n_rand_los, 3)
+    rhat_rand_los: jnp.ndarray
+    # Radial grid for integration
+    r_host_range: jnp.ndarray
+    log_prior_r_grid: jnp.ndarray
+    # Cosmography functions
+    distance2redshift: object
+    distance2distmod: object
+    # Observed data for per-source selection
+    cz_cmb: jnp.ndarray
+    m_Bprime: jnp.ndarray
+    # Median errors for selection smoothing
+    sigma_cz_sel: float
+    sigma_SN_sel: float
+    # Flags
+    use_reconstruction: bool
+    which_bias: str
+
+
+class CCHPTRGBSelectionComputation:
+    """Compute selection corrections for the CCHP model."""
+
+    def __init__(self, ctx):
+        self.ctx = ctx
+
+    def log_S_cz(self, lp_r, Vpec, H0, sigma_v, cz_lim, cz_width):
+        """Probability of detection term if redshift-truncated."""
+        ctx = self.ctx
+        zcosmo = ctx.distance2redshift(ctx.r_host_range, h=H0 / 100)
+        cz_r = predict_cz(zcosmo[None, None, :], Vpec)
+
+        sigma_v = jnp.asarray(sigma_v)
+        while sigma_v.ndim < cz_r.ndim:
+            sigma_v = sigma_v[..., None]
+        sigma_v = jnp.broadcast_to(sigma_v, cz_r.shape)
+
+        log_prob = log_prob_integrand_sel(cz_r, sigma_v, cz_lim, cz_width)
+        return ln_simpson(
+            lp_r + log_prob, x=ctx.r_host_range[None, None, :], axis=-1)
+
+    def log_S_SN_mag(self, lp_r, M_SN, H0, mag_lim, mag_width):
+        """Probability of detection term if supernova magnitude-truncated."""
+        ctx = self.ctx
+        mag = ctx.distance2distmod(ctx.r_host_range, h=H0 / 100) + M_SN
+        log_prob = log_prob_integrand_sel(
+            mag[None, None, :], ctx.sigma_SN_sel, mag_lim, mag_width)
+        return ln_simpson(
+            lp_r + log_prob, x=ctx.r_host_range[None, None, :], axis=-1)
+
+    def correction_redshift(self, h, sigma_v, beta, bias_params, Vext, H0,
+                            cz_lim, cz_width):
+        """Compute redshift selection correction using random LOS."""
+        ctx = self.ctx
+        lp_r_grid = ctx.log_prior_r_grid[None, None, :]
+
+        # Project Vext onto random LOS directions
+        Vext_rad_rand = jnp.sum(Vext[None, :] * ctx.rhat_rand_los, axis=1)
+
+        if ctx.use_reconstruction:
+            rand_los_delta_grid = \
+                ctx.f_rand_los_delta.interp_many_steps_per_galaxy(
+                    ctx.r_host_range * h)
+            lp_r_grid += lp_galaxy_bias(
+                rand_los_delta_grid, jnp.log1p(rand_los_delta_grid),
+                bias_params, ctx.which_bias)
+
+            Vpec_grid = beta * \
+                ctx.f_rand_los_velocity.interp_many_steps_per_galaxy(
+                    ctx.r_host_range * h)
+            Vpec_grid = Vpec_grid + Vext_rad_rand[None, :, None]
+        else:
+            Vpec_grid = Vext_rad_rand[None, :, None]
+
+        # Marginalized selection over random LOS, shape (nfields, n_rand_los)
+        sigma_cz_sel = jnp.sqrt(ctx.sigma_cz_sel**2 + sigma_v**2)
+        log_S = self.log_S_cz(
+            lp_r_grid, Vpec_grid, H0, sigma_cz_sel, cz_lim, cz_width)
+
+        # Average over random LOS, shape (nfields,)
+        log_S = logmeanexp(log_S, axis=1)
+
+        # Per-source selection factor, shape (ngal,)
+        log_p_sel_i = log_ndtr((cz_lim - ctx.cz_cmb) / cz_width)
+
+        return log_S, log_p_sel_i
+
+    def correction_SN_mag(self, h, bias_params, M_SN, H0, mag_lim, mag_width):
+        """Compute SN magnitude selection correction using random LOS."""
+        ctx = self.ctx
+        lp_r_grid = ctx.log_prior_r_grid[None, None, :]
+
+        if ctx.use_reconstruction:
+            rand_los_delta_grid = \
+                ctx.f_rand_los_delta.interp_many_steps_per_galaxy(
+                    ctx.r_host_range * h)
+            lp_r_grid += lp_galaxy_bias(
+                rand_los_delta_grid, jnp.log1p(rand_los_delta_grid),
+                bias_params, ctx.which_bias)
+
+        # Marginalized selection over random LOS, shape (nfields, n_rand_los)
+        log_S = self.log_S_SN_mag(lp_r_grid, M_SN, H0, mag_lim, mag_width)
+
+        # Average over random LOS, shape (nfields,)
+        log_S = logmeanexp(log_S, axis=1)
+
+        # Per-source selection factor, shape (ngal,)
+        log_p_sel_i = log_ndtr((mag_lim - ctx.m_Bprime) / mag_width)
+
+        return log_S, log_p_sel_i
 
 
 class BaseCCHPModel(ABC):
@@ -249,55 +368,40 @@ class BaseCCHPModel(ABC):
                 self.num_rand_los = 1
                 self.rhat_rand_los = jnp.zeros((1, 3))
 
-    def log_S_cz(self, lp_r, Vpec, H0, sigma_v,
-                 cz_lim_selection=None, cz_lim_selection_width=None):
-        """Probability of detection term if redshift-truncated."""
-        if cz_lim_selection is None:
-            cz_lim_selection = self.cz_lim_selection
-        if cz_lim_selection_width is None:
-            cz_lim_selection_width = self.cz_lim_selection_width
-
-        zcosmo = self.distance2redshift(self.r_host_range, h=H0 / 100)
-        cz_r = predict_cz(zcosmo[None, None, :], Vpec)
-
-        sigma_v = jnp.asarray(sigma_v)
-        while sigma_v.ndim < cz_r.ndim:
-            sigma_v = sigma_v[..., None]
-        sigma_v = jnp.broadcast_to(sigma_v, cz_r.shape)
-
-        log_prob = log_prob_integrand_sel(
-            cz_r, sigma_v, cz_lim_selection, cz_lim_selection_width)
-        return ln_simpson(
-            lp_r + log_prob, x=self.r_host_range[None, None, :], axis=-1)
+        # Build selection context and computation if selection is enabled
+        self.selection = None
+        if self.which_selection not in (None, "none"):
+            ctx = CCHPTRGBSelectionContext(
+                f_rand_los_delta=getattr(self, "f_rand_los_delta", None),
+                f_rand_los_velocity=getattr(self, "f_rand_los_velocity", None),
+                rhat_rand_los=self.rhat_rand_los,
+                r_host_range=self.r_host_range,
+                log_prior_r_grid=self._log_prior_r_grid,
+                distance2redshift=self.distance2redshift,
+                distance2distmod=self.distance2distmod,
+                cz_cmb=self.cz_cmb,
+                m_Bprime=self.m_Bprime,
+                sigma_cz_sel=self.sigma_cz_sel,
+                sigma_SN_sel=self.sigma_SN_sel,
+                use_reconstruction=self.use_reconstruction,
+                which_bias=self.which_bias,
+            )
+            self.selection = CCHPTRGBSelectionComputation(ctx)
 
     def log_prior_distance(self, r):
         """Log prior on physical distance (volume prior, r^2)."""
         return 2.0 * jnp.log(r) - 3.0 * jnp.log(self.Rmax) + jnp.log(3.0)
 
-    def log_S_SN_mag(self, lp_r, M_SN, H0, mag_lim_SN=None,
-                     mag_lim_SN_width=None):
-        """Probability of detection term if supernova magnitude-truncated."""
-        if mag_lim_SN is None:
-            mag_lim_SN = self.mag_lim_SN
-        if mag_lim_SN_width is None:
-            mag_lim_SN_width = self.mag_lim_SN_width
-
-        if mag_lim_SN is None or mag_lim_SN_width is None:
-            raise ValueError(
-                "SN magnitude selection requested but mag_lim_SN or "
-                "mag_lim_SN_width not set in config.")
-
-        mag = self.distance2distmod(self.r_host_range, h=H0 / 100) + M_SN
-        log_prob = log_prob_integrand_sel(
-            mag[None, None, :], self.sigma_SN_sel,
-            mag_lim_SN, mag_lim_SN_width)
-        return ln_simpson(
-            lp_r + log_prob, x=self.r_host_range[None, None, :], axis=-1)
-
     def replace_priors(self, config):
         """Replace priors on parameters that are not used in the model."""
         if not get_nested(config, "model/use_reconstruction", False):
             replace_prior_with_delta(config, "beta", 0.0, verbose=False)
+            replace_prior_with_delta(config, "b1", 1.0, verbose=False)
+            replace_prior_with_delta(config, "alpha", 1.0, verbose=False)
+            replace_prior_with_delta(config, "delta_b1", 0.0, verbose=False)
+            replace_prior_with_delta(config, "alpha_low", 1.0, verbose=False)
+            replace_prior_with_delta(config, "alpha_high", 1.0, verbose=False)
+            replace_prior_with_delta(config, "log_rho_t", 0.0, verbose=False)
         if get_nested(config, "model/which_selection", None) != "SN_magnitude":
             replace_prior_with_delta(config, "M_SN", -19.25, verbose=False)
         if get_nested(config, "model/which_bias", "linear") != "linear":
@@ -404,7 +508,7 @@ class BaseCCHPModel(ABC):
         return mu_host, mu_LMC, mu_N4258
 
 
-class CCHPModel(BaseCCHPModel):
+class CCHPTRGBModel(BaseCCHPModel):
     """
     Forward model the TRGB magnitudes and host redshifts to infer the Hubble
     constant.
@@ -444,77 +548,6 @@ class CCHPModel(BaseCCHPModel):
         else:
             # Shape is (1, ngal)
             return lp_host_dist[None, :]
-
-    def _selection_correction_redshift(self, h, sigma_v, beta, bias_params,
-                                       Vext, H0, cz_lim_selection,
-                                       cz_lim_selection_width):
-        """Compute redshift selection correction using random LOS."""
-        lp_r_grid = self._log_prior_r_grid[None, None, :]
-
-        # Project Vext onto random LOS directions
-        Vext_rad_rand = jnp.sum(Vext[None, :] * self.rhat_rand_los, axis=1)
-
-        if self.use_reconstruction:
-            rand_los_delta_grid = \
-                self.f_rand_los_delta.interp_many_steps_per_galaxy(
-                    self.r_host_range * h)
-            lp_r_grid += lp_galaxy_bias(
-                rand_los_delta_grid, jnp.log1p(rand_los_delta_grid),
-                bias_params, self.which_bias)
-
-            Vpec_grid = beta * \
-                self.f_rand_los_velocity.interp_many_steps_per_galaxy(
-                    self.r_host_range * h)
-            Vpec_grid = Vpec_grid + Vext_rad_rand[None, :, None]
-        else:
-            Vpec_grid = Vext_rad_rand[None, :, None]
-
-        # Marginalized selection over random LOS, shape (nfields, n_rand_los)
-        sigma_cz_sel = jnp.sqrt(self.sigma_cz_sel**2 + sigma_v**2)
-        log_S = self.log_S_cz(
-            lp_r_grid, Vpec_grid, H0, sigma_cz_sel,
-            cz_lim_selection, cz_lim_selection_width)
-
-        # Average over random LOS, shape (nfields,)
-        log_S = logmeanexp(log_S, axis=1)
-
-        # Per-source selection factor, shape (ngal,)
-        cz_lim = (cz_lim_selection if cz_lim_selection is not None
-                  else self.cz_lim_selection)
-        cz_width = (cz_lim_selection_width
-                    if cz_lim_selection_width is not None
-                    else self.cz_lim_selection_width)
-        log_p_sel_i = log_ndtr((cz_lim - self.cz_cmb) / cz_width)
-
-        return log_S, log_p_sel_i
-
-    def _selection_correction_SN_mag(self, h, bias_params, M_SN, H0,
-                                     mag_lim_SN, mag_lim_SN_width):
-        """Compute SN magnitude selection correction using random LOS."""
-        lp_r_grid = self._log_prior_r_grid[None, None, :]
-
-        if self.use_reconstruction:
-            rand_los_delta_grid = \
-                self.f_rand_los_delta.interp_many_steps_per_galaxy(
-                    self.r_host_range * h)
-            lp_r_grid += lp_galaxy_bias(
-                rand_los_delta_grid, jnp.log1p(rand_los_delta_grid),
-                bias_params, self.which_bias)
-
-        # Marginalized selection over random LOS, shape (nfields, n_rand_los)
-        log_S = self.log_S_SN_mag(
-            lp_r_grid, M_SN, H0, mag_lim_SN, mag_lim_SN_width)
-
-        # Average over random LOS, shape (nfields,)
-        log_S = logmeanexp(log_S, axis=1)
-
-        # Per-source selection factor, shape (ngal,)
-        m_lim = mag_lim_SN if mag_lim_SN is not None else self.mag_lim_SN
-        m_width = (mag_lim_SN_width if mag_lim_SN_width is not None
-                   else self.mag_lim_SN_width)
-        log_p_sel_i = log_ndtr((m_lim - self.m_Bprime) / m_width)
-
-        return log_S, log_p_sel_i
 
     def _sample_selection_params(self):
         """Sample selection parameters if inferring selection."""
@@ -601,14 +634,21 @@ class CCHPModel(BaseCCHPModel):
         if self.which_selection in (None, "none"):
             pass
         elif self.which_selection == "redshift":
-            log_S, log_p_sel_i = self._selection_correction_redshift(
-                h, sigma_v, beta, bias_params, Vext, H0,
-                cz_lim_selection, cz_lim_selection_width)
+            cz_lim = (cz_lim_selection if cz_lim_selection is not None
+                      else self.cz_lim_selection)
+            cz_width = (cz_lim_selection_width
+                        if cz_lim_selection_width is not None
+                        else self.cz_lim_selection_width)
+            log_S, log_p_sel_i = self.selection.correction_redshift(
+                h, sigma_v, beta, bias_params, Vext, H0, cz_lim, cz_width)
             logp_tot -= log_S[:, None]
             logp_tot += log_p_sel_i[None, :]
         elif self.which_selection == "SN_magnitude":
-            log_S, log_p_sel_i = self._selection_correction_SN_mag(
-                h, bias_params, M_SN, H0, mag_lim_SN, mag_lim_SN_width)
+            m_lim = mag_lim_SN if mag_lim_SN is not None else self.mag_lim_SN
+            m_width = (mag_lim_SN_width if mag_lim_SN_width is not None
+                       else self.mag_lim_SN_width)
+            log_S, log_p_sel_i = self.selection.correction_SN_mag(
+                h, bias_params, M_SN, H0, m_lim, m_width)
             logp_tot -= log_S[:, None]
             logp_tot += log_p_sel_i[None, :]
         else:

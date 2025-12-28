@@ -84,7 +84,7 @@ if __name__ == "__main__":
     elif which_run == "CCHP":
         fprint("selected `CCHP` model.")
         data = candel.pvdata.load_CCHP_from_config(args.config)
-        model = candel.model.CCHPModel(args.config, data)
+        model = candel.model.CCHPTRGBModel(args.config, data)
         candel.run_H0_inference(model, )
     else:
         data = candel.pvdata.load_PV_dataframes(args.config)

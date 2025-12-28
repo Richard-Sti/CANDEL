@@ -137,8 +137,10 @@ def generate_dynamic_tag(config, base_tag="default"):
             else:
                 parts.append(str(catalogue))
 
-        use_mnr = get_nested(config, "model/use_MNR", False)
-        parts.append("MNR" if use_mnr else "noMNR")
+        # Skip MNR tag for CSPModel
+        if model_name != "CSPModel":
+            use_mnr = get_nested(config, "model/use_MNR", False)
+            parts.append("MNR" if use_mnr else "noMNR")
 
     if get_nested(config, "pv_model/kind", "").startswith("precomputed_los"):
         parts.append(get_nested(config, "pv_model/which_bias", ""))
@@ -176,13 +178,16 @@ def generate_dynamic_tag(config, base_tag="default"):
     if which_dist_prior != "empirical":
         parts.append(f"rprior-{which_dist_prior}")
 
-    beta_prior = get_nested(config, "model/priors/beta", None)
-    if _is_delta_prior(beta_prior) and beta_prior.get("value") != 0.:
-        parts.append(f"beta_{beta_prior.get('value')}")
+    # Only include beta/b1 info if using precomputed LOS (reconstruction)
+    pv_kind = get_nested(config, "pv_model/kind", "")
+    if pv_kind.startswith("precomputed_los"):
+        beta_prior = get_nested(config, "model/priors/beta", None)
+        if _is_delta_prior(beta_prior) and beta_prior.get("value") != 0.:
+            parts.append(f"beta_{beta_prior.get('value')}")
 
-    b1_prior = get_nested(config, "model/priors/b1", None)
-    if _is_delta_prior(b1_prior):
-        parts.append(f"b1_{b1_prior.get('value')}")
+        b1_prior = get_nested(config, "model/priors/b1", None)
+        if _is_delta_prior(b1_prior):
+            parts.append(f"b1_{b1_prior.get('value')}")
 
     dust_model = get_nested(config, f"io/{catalogue}/dust_model", None)
     if _is_active(dust_model):
@@ -314,17 +319,16 @@ if __name__ == "__main__":
     tasks_index = args.tasks_index
 
     # Multiple override options → this creates a job per combination
-
-    # --- CH0 overrides ---
+    # --- CCHP overrides ---
     manual_overrides = {
         "io/root_output": "results/CCHP",
         # "model/which_selection": ["none", "SN_magnitude", "redshift"],
         "model/which_selection": "SN_magnitude",
-        "model/use_reconstruction": True,
+        "model/use_reconstruction": False,
         "io/which_host_los": "Carrick2015",
         # "io/which_host_los": "manticore_2MPP_MULTIBIN_N256_DES_V2",
         "model/which_bias": "linear",
-        "model/infer_sel": False,
+        "model/infer_sel": True,
         # "model/priors/Vext": [
         #     {"dist": "vector_uniform_fixed", "low": 0.0, "high": 2500},
         #     # {"dist": "delta", "value": [0., 0., 0.]},
@@ -348,7 +352,10 @@ if __name__ == "__main__":
             for key, value in override_set.items():
                 # Special handling for kind: transform before writing
                 if key == "pv_model/kind":
-                    if "Vext" in value:
+                    if not value.startswith("precomputed_los"):
+                        # No reconstruction: force unity galaxy bias
+                        local_config = overwrite_config(
+                            local_config, "pv_model/galaxy_bias", "unity")
                         config = replace_prior_with_delta(config, "alpha", 1.)
                         config = replace_prior_with_delta(config, "beta", 0.)
                         config = replace_prior_with_delta(config, "b1", 0.)
@@ -397,21 +404,40 @@ if __name__ == "__main__":
 """
 --- UNUSED OVERRIDES ---
 
+    # --- CH0 overrides ---
+    manual_overrides = {
+        "io/root_output": "results/CCHP",
+        # "model/which_selection": ["none", "SN_magnitude", "redshift"],
+        "model/which_selection": "SN_magnitude",
+        "model/use_reconstruction": True,
+        "io/which_host_los": "Carrick2015",
+        # "io/which_host_los": "manticore_2MPP_MULTIBIN_N256_DES_V2",
+        "model/which_bias": "linear",
+        "model/infer_sel": False,
+        # "model/priors/Vext": [
+        #     {"dist": "vector_uniform_fixed", "low": 0.0, "high": 2500},
+        #     # {"dist": "delta", "value": [0., 0., 0.]},
+        # ],
+        "model/priors/beta": [
+            {"dist": "normal", "loc": 0.43, "scale": 0.02},
+            # {"dist": "delta", "value": 1.0},
+            # {"dist": "normal", "loc": 1.0, "scale": 0.5},
+        ],
+    }
+
     # --- TFR/SN/FP/Cluster flow model over-rides ---
     manual_overrides = {
         # ###### - INFERENCE - ######
         "inference/num_warmup": 500,
-        "inference/num_samples": 1500,
-        "inference/num_chains": 4,
+        "inference/num_samples": 500,
+        "inference/num_chains": 1,
         "inference/compute_log_density": False,
         "inference/compute_evidence": False,
         "inference/track_log_density_per_sample": False,
         # "inference/model": "TFRModel",
-        "inference/model": "SNModel",
+        "inference/model": "CSPModel",
         # "inference/shared_params": "beta,sigma_v,Vext",
         # ###### -- MODEL -- ######
-        "model/use_MNR": False,
-        "model/marginalize_eta": False,
         # ###### -- PV MODEL -- ######
         # "pv_model/kind": "precomputed_los_Carrick2015",
         # "pv_model/kind": "Vext",
@@ -420,8 +446,8 @@ if __name__ == "__main__":
         # "pv_model/kind": "precomputed_los_manticore_2MPP_MULTIBIN_N256_DES_V2",  # noqa
         "pv_model/kind": "Vext",  # noqa
         # "pv_model/which_Vext": "radial_magnitude",
-        # "pv_model/r_limits_malmquist": [[0.1, 751]],
-        # "pv_model/num_points_malmquist": 251,
+        "pv_model/r_limits_malmquist": [[0.1, 501]],
+        "pv_model/num_points_malmquist": 101,
         # "pv_model/which_distance_prior": "empirical",
         # "pv_model/which_distance_prior": "volume_redshift_selected",
         # ##### - PRIORS -- ######
@@ -432,6 +458,7 @@ if __name__ == "__main__":
         #     "rknot": [0, 50, 100, 150, 200, 250, 300, 350, 400, 450],
         #     "method": "linear"
         # },
+        "model/use_stretch_gmm": False,
         "model/priors/beta": [
             # {"dist": "uniform", "low": -1, "high": 2.0},
             # {"dist": "normal", "loc": 0.43, "scale": 0.25},
@@ -451,26 +478,9 @@ if __name__ == "__main__":
         # ],
         # "model/priors/Om": {"dist": "delta", "value": 0.3},
         # ###### - IO - ######
-        # "io/catalogue_name": ["2MTF", "SFI", "CF4_W1", "CF4_i"],
-        # "io/catalogue_name": "CF4_W1",
-        # "io/catalogue_name": ["LOSS", "Foundation",],
-        "io/catalogue_name": "Foundation",
+        "io/catalogue_name": "CSP",
+        "io/CSP/which_sample": "CSPII",
         "io/root_output": "results_test/",
-        # "io/Clusters/which_relation": "LT",
-        # "io/Clusters/zcmb_max": 0.055,
-        # "io/CF4_i/exclude_W1": True,
-        # "io/Clusters/nsamples_subsample": 101,
-        # "io/CF4_W1/nsamples_subsample": 300,
-        # "io/CF4_calibrated/nsamples_subsample": 500,
-        # "io/PantheonPlus/nsamples_subsample": 100,
-        # "io/PantheonPlus/zcmb_max": 0.06,
-        # "io/CF4_calibrated/zcmb_min": 4000 / SPEED_OF_LIGHT,
-        # "io/CF4_calibrated/zcmb_max": 0.055,
-        # "io/CF4_W1/best_mag_quality": False,
-        # "io/CF4_W1/dust_model": ["none", "default", "SFD", "CSFD", "Planck2016"],  # noqa
-        # "io/Clusters/which_relation": ["LT", "LTY"],
-        # "io/catalogue_name": [f"CF4_mock_{n}" for n in range(70)],
-        # "io/CF4_mock/root": "data/CF4_mock/",
     }
 
     # --- CH0 overrides ---
