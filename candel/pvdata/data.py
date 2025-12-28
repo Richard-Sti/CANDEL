@@ -1740,7 +1740,8 @@ def load_generic(filepath, los_data_path=None, **kwargs):
 def load_CSP(root, zcmb_min=None, zcmb_max=None, b_min=None, quality_min=None,
              st_min=None, st_max=None, t0_min=None, t0_max=None,
              phys_only=False, exclude_phys=True, which_sample=None,
-             los_data_path=None, return_all=False, **kwargs):
+             los_data_path=None, return_all=False, remove_duplicates=True,
+             **kwargs):
     """
     Load CSP (Carnegie Supernova Project) SNe Ia data.
 
@@ -1758,6 +1759,14 @@ def load_CSP(root, zcmb_min=None, zcmb_max=None, b_min=None, quality_min=None,
     fname = join(root, "B_all_noj21.csv")
     d = np.genfromtxt(fname, names=True, dtype=None, encoding="utf-8")
     fprint(f"initially loaded {len(d)} SNe from CSP data.")
+
+    # Remove duplicate SNe (same name, different calibration type)
+    if remove_duplicates:
+        _, unique_idx = np.unique(d["sn"], return_index=True)
+        unique_idx = np.sort(unique_idx)
+        n_duplicates = len(d) - len(unique_idx)
+        fprint(f"removed {n_duplicates} duplicate SNe (keeping first).")
+        d = d[unique_idx]
 
     # Load coordinates from multiple sources
     coords_dict = {}
