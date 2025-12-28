@@ -67,6 +67,15 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
 
     kwargs = model.config["inference"]
 
+    # Validate data if model supports it (e.g. CSPModel)
+    if hasattr(model, "submodels"):
+        # JointPVModel: validate each submodel with its corresponding data
+        for submodel, data_i in zip(model.submodels, model_kwargs["data"]):
+            if hasattr(submodel, "validate_data"):
+                submodel.validate_data(data_i)
+    elif hasattr(model, "validate_data"):
+        model.validate_data(model_kwargs["data"])
+
     kernel = NUTS(model, init_strategy=init_to_median(num_samples=5000))
     mcmc = MCMC(
         kernel, num_warmup=kwargs["num_warmup"],
