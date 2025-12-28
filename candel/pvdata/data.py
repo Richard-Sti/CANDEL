@@ -1739,7 +1739,7 @@ def load_generic(filepath, los_data_path=None, **kwargs):
 
 def load_CSP(root, zcmb_min=None, zcmb_max=None, b_min=None, quality_min=None,
              st_min=None, st_max=None, t0_min=None, t0_max=None,
-             phys_only=False, select_LSQ=False, which_sample=None,
+             phys_only=False, exclude_phys=True, which_sample=None,
              los_data_path=None, return_all=False, **kwargs):
     """
     Load CSP (Carnegie Supernova Project) SNe Ia data.
@@ -1747,18 +1747,12 @@ def load_CSP(root, zcmb_min=None, zcmb_max=None, b_min=None, quality_min=None,
     Merges photometry from B_all_noj21.csv with coordinates from
     cspallcal_sncoords.csv, csp_sncoords.csv, and missing_coords_simbad.csv.
 
-    Columns in the main file:
-    - sn: supernova name
-    - zhel, zcmb: heliocentric and CMB-frame redshifts
-    - st, est: stretch parameter and error
-    - Mmax, eMmax: peak B-band magnitude and error
-    - BV, eBV: B-V color and error
-    - covMs: covariance between M and s
-    - covBV_M: covariance between BV and M
-    - ml, m, mu: log10 host stellar mass [M_sun] (lower, central, upper)
-    - sample: CSPI or CSPII
-    - quality: quality flag (0-1)
-    - phys: physics sample flag (0/1)
+    Parameters
+    ----------
+    which_sample : str, optional
+        Sample to select: "CSPI", "CSPII", or "LSQ".
+    exclude_phys : bool
+        If True, exclude physics sample (phys=0 only).
     """
     # Load main photometry file
     fname = join(root, "B_all_noj21.csv")
@@ -1876,8 +1870,11 @@ def load_CSP(root, zcmb_min=None, zcmb_max=None, b_min=None, quality_min=None,
         mask &= data["zcmb"] < zcmb_max
     if quality_min is not None:
         mask &= data["quality"] >= quality_min
+    # phys column is read as strings
     if phys_only:
-        mask &= data["phys"] == 1
+        mask &= data["phys"] == "1"
+    if exclude_phys:
+        mask &= data["phys"] == "0"
 
     if b_min is not None:
         b = radec_to_galactic(data["RA"], data["dec"])[1]
@@ -1890,10 +1887,14 @@ def load_CSP(root, zcmb_min=None, zcmb_max=None, b_min=None, quality_min=None,
         mask &= data["t0"] >= t0_min
     if t0_max is not None:
         mask &= data["t0"] <= t0_max
-    if select_LSQ:
-        mask &= np.char.startswith(data["sn"], "LSQ")
     if which_sample is not None:
-        mask &= data["sample"] == which_sample
+        if which_sample == "LSQ":
+            mask &= np.char.startswith(data["sn"], "LSQ")
+        elif which_sample in ("CSPI", "CSPII"):
+            mask &= data["sample"] == which_sample
+        else:
+            raise ValueError(f"Unknown sample: {which_sample}. "
+                             "Must be 'CSPI', 'CSPII', or 'LSQ'.")
 
     n_removed = len(d) - np.sum(mask)
     if n_removed > 0:
