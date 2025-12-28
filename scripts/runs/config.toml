@@ -85,6 +85,19 @@ Om = 0.3
 use_MNR = true
 marginalize_eta = true
 
+# CSP selection integral grid settings (CSPModel)
+# LSQ data ranges: st=[0.50, 1.22], BV=[-0.05, 0.47], zcmb=[0.021, 0.126]
+r_limits_selection = [5, 500]
+n_r_selection = 51
+s_limits_selection = "auto"
+n_s_selection = 15
+BV_limits_selection = "auto"
+n_BV_selection = 15
+auto_limits_nsigma = 5.0  # padding for auto limits: data range ± n*sigma
+zcmb_limits_selection = "auto"
+# Use 2-component GMM for stretch distribution (CSPModel)
+use_stretch_gmm = false
+
 [model.eta_grid]
 k_sigma = 5
 n_grid = 31
@@ -179,7 +192,7 @@ value = [0.0, 0.0, 0.0]
 # low = 0.0
 # high = 0.3
 
-# SN priors
+# SN priors (Pantheon+, Foundation, LOSS)
 [model.priors.SN_absmag]
 dist = "normal"
 loc = -18.5
@@ -194,6 +207,111 @@ scale = 1.0
 dist = "normal"
 loc = 3.0
 scale = 1.0
+
+###############################################################################
+#                       CSP Model Priors (CSPModel)                           #
+###############################################################################
+
+# Tripp standardization: m_true = M_B + mu(r) - alpha_tripp*(s-1) + beta_tripp*BV
+[model.priors.M_B]
+dist = "normal"
+loc = -18.5
+scale = 1.0
+
+[model.priors.alpha_tripp]
+dist = "truncated_normal"
+low = 0.0
+mean = 0.7
+scale = 0.5
+
+[model.priors.beta_tripp]
+dist = "truncated_normal"
+low = 0.0
+mean = 2.5
+scale = 1.0
+
+# Population hyperparameters for latent (s, BV)
+[model.priors.mu_s]
+dist = "normal"
+loc = 1.0
+scale = 0.2
+
+[model.priors.sigma_s]
+dist = "truncated_normal"
+low = 0.01
+mean = 0.1
+scale = 0.1
+
+[model.priors.mu_BV]
+dist = "normal"
+loc = 0.0
+scale = 0.2
+
+[model.priors.sigma_BV]
+dist = "truncated_normal"
+low = 0.01
+mean = 0.1
+scale = 0.1
+
+[model.priors.rho_pop]
+dist = "uniform"
+low = -0.999
+high = 0.999
+
+# GMM hyperparameters for stretch (when use_stretch_gmm = true)
+# mu_s2 = mu_s + delta_mu_s, so delta_mu_s > 0 ensures mu_s2 > mu_s
+[model.priors.delta_mu_s]
+dist = "truncated_normal"
+low = 0.0
+mean = 0.2
+scale = 0.2
+
+[model.priors.sigma_s2]
+dist = "truncated_normal"
+low = 0.01
+mean = 0.1
+scale = 0.1
+
+[model.priors.rho_pop2]
+dist = "uniform"
+low = -0.999
+high = 0.999
+
+[model.priors.w_s]
+dist = "uniform"
+low = 0.0
+high = 1.0
+
+# Selection parameters: m_sel = m_obs + alpha_sel*(s-1) - beta_sel*BV
+# p(S=1|obs) = Phi((m_lim - m_sel) / sigma_sel)
+[model.priors.m_lim]
+# dist = "delta"
+# value = 19.0
+dist = "uniform"
+low = 10.0
+high = 22.0
+
+[model.priors.alpha_sel]
+# dist = "delta"
+# value = 0.0
+dist = "normal"
+loc = 0.0
+scale = 1.0
+
+[model.priors.beta_sel]
+# dist = "delta"
+# value = 0.0
+dist = "normal"
+loc = 0
+scale = 1.0
+
+[model.priors.sigma_sel]
+# dist = "delta"
+# value = 0.5
+dist = "truncated_normal"
+low = 0.001
+mean = 0.5
+scale = 0.5
 
 
 ## Cluster scaling relation priors
@@ -442,6 +560,20 @@ seed_subsample = 42
 
 los_file = "data/Pantheon+_Lane/los_CF4_PantheonPlusLane_<X>.hdf5"
 
+[io.CSP]
+root = "data/CSP"
+zcmb_min = "none"
+zcmb_max = "none"
+b_min = "none"
+quality_min = 0.9
+# exclude_phys = true  # default: exclude physics sample
+which_sample = "LSQ"  # "CSPI", "CSPII", or "LSQ"
+
+nsamples_subsample = "none"
+seed_subsample = 42
+
+los_file = "none"
+
 [io.Clusters]
 root = "data/Clusters"
 zcmb_max = 0.2
@@ -555,6 +687,10 @@ los_file = "data/SDSS/los_SDSS_FP_<X>.hdf5"
 root = "data/6dF_FP"
 return_all = true
 los_file = "data/6dF_FP/los_6dF_FP_<X>.hdf5"
+
+[io.PV_main.CSP]
+root = "data/CSP"
+return_all = true
 
 [io.PV_main.CF4_HQ]
 root = "data/CF4_HQ"
