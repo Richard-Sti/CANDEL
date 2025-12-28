@@ -14,7 +14,7 @@ def plot_dipa_scaling_comparison():
     ]
     fnames = [str(f) for f in fnames]
 
-    keys = ['dH_over_H_dipole', 'zeropoint_dipole_ell', 'zeropoint_dipole_b']
+    keys = ['zeropoint_dipole_mag', 'zeropoint_dipole_ell', 'zeropoint_dipole_b']
     cols = [COLS[0], COLS[1], COLS[2]]
     labels = ["LT", "YT", "LTYT"]
 
