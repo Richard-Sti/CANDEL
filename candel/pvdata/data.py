@@ -126,7 +126,12 @@ class PVDataFrame:
     add_eta_truncation = False
 
     def __init__(self, data, los_radial_decay_scale=5):
-        self.data = {k: jnp.asarray(v) for k, v in data.items()}
+        # Only convert numeric arrays to JAX, skip string arrays
+        self.data = {}
+        for k, v in data.items():
+            if isinstance(v, np.ndarray) and np.issubdtype(v.dtype, np.str_):
+                continue
+            self.data[k] = jnp.asarray(v)
         self.name = None
 
         if "los_velocity" in self.data:
@@ -193,6 +198,8 @@ class PVDataFrame:
             data = load_PantheonPlus(root, **config)
         elif name == "PantheonPlusLane":
             data = load_PantheonPlus_Lane(root, **config)
+        elif name == "CSP":
+            data = load_CSP(root, **config)
         elif name == "Clusters":
             data = load_clusters(root, **config)
         else:
@@ -1726,5 +1733,177 @@ def load_generic(filepath, los_data_path=None, **kwargs):
 
     if los_data_path is not None:
         data = load_los(los_data_path, data,)
+
+    return data
+
+
+def load_CSP(root, zcmb_min=None, zcmb_max=None, b_min=None, quality_min=None,
+             st_min=None, st_max=None, t0_min=None, t0_max=None,
+             phys_only=False, select_LSQ=False, which_sample=None,
+             los_data_path=None, return_all=False, **kwargs):
+    """
+    Load CSP (Carnegie Supernova Project) SNe Ia data.
+
+    Merges photometry from B_all_noj21.csv with coordinates from
+    cspallcal_sncoords.csv, csp_sncoords.csv, and missing_coords_simbad.csv.
+
+    Columns in the main file:
+    - sn: supernova name
+    - zhel, zcmb: heliocentric and CMB-frame redshifts
+    - st, est: stretch parameter and error
+    - Mmax, eMmax: peak B-band magnitude and error
+    - BV, eBV: B-V color and error
+    - covMs: covariance between M and s
+    - covBV_M: covariance between BV and M
+    - ml, m, mu: log10 host stellar mass [M_sun] (lower, central, upper)
+    - sample: CSPI or CSPII
+    - quality: quality flag (0-1)
+    - phys: physics sample flag (0/1)
+    """
+    # Load main photometry file
+    fname = join(root, "B_all_noj21.csv")
+    d = np.genfromtxt(fname, names=True, dtype=None, encoding="utf-8")
+    fprint(f"initially loaded {len(d)} SNe from CSP data.")
+
+    # Load coordinates from multiple sources
+    coords_dict = {}
+    coord_files = [
+        "cspallcal_sncoords.csv",
+        "csp_sncoords.csv",
+        "missing_coords_simbad.csv",
+    ]
+    for fname in coord_files:
+        fpath = join(root, fname)
+        try:
+            coords = np.genfromtxt(fpath, names=True, delimiter=",",
+                                   dtype=None, encoding="utf-8")
+            for row in coords:
+                sn = row["sn"]
+                if sn not in coords_dict:
+                    ra, dec = row["snra"], row["sndec"]
+                    if np.isfinite(ra) and np.isfinite(dec):
+                        coords_dict[sn] = (ra, dec)
+        except FileNotFoundError:
+            pass
+
+    # Match coordinates to main catalog
+    RA = np.full(len(d), np.nan)
+    dec_ = np.full(len(d), np.nan)
+
+    for i, sn in enumerate(d["sn"]):
+        if sn in coords_dict:
+            RA[i], dec_[i] = coords_dict[sn]
+
+    n_with_coords = np.sum(np.isfinite(RA))
+    fprint(f"matched {n_with_coords}/{len(d)} SNe with coordinates.")
+
+    # Build 3x3 covariance matrix for (peak_mag_B, st, BV)
+    n = len(d)
+    cov = np.zeros((n, 3, 3))
+    cov[:, 0, 0] = d["eMmax"]**2       # var(peak_mag_B)
+    cov[:, 1, 1] = d["est"]**2         # var(st)
+    cov[:, 2, 2] = d["eBV"]**2         # var(BV)
+    cov[:, 0, 1] = cov[:, 1, 0] = d["covMs"]      # cov(peak_mag_B, st)
+    cov[:, 0, 2] = cov[:, 2, 0] = d["covBV_M"]    # cov(peak_mag_B, BV)
+    # cov(st, BV) = 0 by assumption
+
+    # Fix non-positive definite matrices by adding minimal diagonal
+    for i in range(n):
+        min_eig = np.linalg.eigvalsh(cov[i]).min()
+        if min_eig <= 0:
+            cov[i] += np.eye(3) * (abs(min_eig) + 1e-10)
+            fprint(f"regularized non-PD covariance for {d['sn'][i]} "
+                   f"(zcmb={d['zcmb'][i]:.4f}).")
+
+    # Observation vector: (n_sn, 3) for (peak_mag_B, st, BV)
+    obs_vec = np.stack([d["Mmax"], d["st"], d["BV"]], axis=-1)
+
+    # Compute median measurement errors and correlations for selection integral
+    sigma_m = np.sqrt(cov[:, 0, 0])
+    sigma_s = np.sqrt(cov[:, 1, 1])
+    sigma_BV = np.sqrt(cov[:, 2, 2])
+
+    # Correlations from covariance
+    rho_ms = cov[:, 0, 1] / (sigma_m * sigma_s)
+    rho_mBV = cov[:, 0, 2] / (sigma_m * sigma_BV)
+    rho_sBV = cov[:, 1, 2] / (sigma_s * sigma_BV)
+
+    # Convert quality from string to float, empty strings become NaN
+    quality = np.array([
+        float(q) if q not in ('', '""') else np.nan for q in d["quality"]])
+
+    # Redshift in km/s and default error (100 km/s)
+    czcmb = d["zcmb"] * SPEED_OF_LIGHT
+    e_czcmb = np.full(len(d), 100.0)
+
+    data = {
+        "sn": d["sn"],
+        "zcmb": d["zcmb"],
+        "czcmb": czcmb,
+        "e_czcmb": e_czcmb,
+        "zhel": d["zhel"],
+        "peak_mag_B": d["Mmax"],
+        "st": d["st"],
+        "BV": d["BV"],
+        "obs_vec": obs_vec,
+        "cov": cov,
+        "t0": d["t0"],
+        "quality": quality,
+        "phys": d["phys"],
+        "sample": d["sample"],
+        "RA": RA,
+        "dec": dec_,
+        "log_stellar_mass": d["m"],
+        "log_stellar_mass_lower": d["ml"],
+        "log_stellar_mass_upper": d["mu"],
+        # Median values for selection integral
+        "median_sigma_m": np.median(sigma_m),
+        "median_sigma_s": np.median(sigma_s),
+        "median_sigma_BV": np.median(sigma_BV),
+        "median_rho_ms": np.median(rho_ms),
+        "median_rho_mBV": np.median(rho_mBV),
+        "median_rho_sBV": np.median(rho_sBV),
+    }
+
+    if return_all:
+        return data
+
+    mask = np.ones(len(d), dtype=bool)
+
+    if zcmb_min is not None:
+        mask &= data["zcmb"] > zcmb_min
+    if zcmb_max is not None:
+        mask &= data["zcmb"] < zcmb_max
+    if quality_min is not None:
+        mask &= data["quality"] >= quality_min
+    if phys_only:
+        mask &= data["phys"] == 1
+
+    if b_min is not None:
+        b = radec_to_galactic(data["RA"], data["dec"])[1]
+        mask &= np.abs(b) > b_min
+    if st_min is not None:
+        mask &= data["st"] >= st_min
+    if st_max is not None:
+        mask &= data["st"] <= st_max
+    if t0_min is not None:
+        mask &= data["t0"] >= t0_min
+    if t0_max is not None:
+        mask &= data["t0"] <= t0_max
+    if select_LSQ:
+        mask &= np.char.startswith(data["sn"], "LSQ")
+    if which_sample is not None:
+        mask &= data["sample"] == which_sample
+
+    n_removed = len(d) - np.sum(mask)
+    if n_removed > 0:
+        fprint(f"removed {n_removed} SNe, thus {np.sum(mask)} remain.")
+
+    for k in data:
+        if isinstance(data[k], np.ndarray):
+            data[k] = data[k][mask]
+
+    if los_data_path is not None:
+        data = load_los(los_data_path, data, mask=mask)
 
     return data
