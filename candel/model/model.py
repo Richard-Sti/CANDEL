@@ -452,7 +452,7 @@ class BaseModel(ABC):
     """Base class for all PV models. """
 
     def __init__(self, config_path):
-        config = load_config(config_path)
+        config = load_config(config_path, replace_los_prior=False)
 
         kind = get_nested(config, "pv_model/kind", "")
         kind_allowed = ["Vext", "Vext_radial"]
