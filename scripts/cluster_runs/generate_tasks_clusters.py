@@ -28,8 +28,8 @@ import tomli_w
 from candel import fprint, load_config, replace_prior_with_delta
 
 # Hardcoded flags for task generation.
-scaling_relations = ["LT"]  # Set to None to run all
-reconstructions = ["Vext"]
+scaling_relations = ["LTYT"]  # Set to None to run all
+reconstructions = ["manticore"]
 include_quad = False
 include_pairs = False
 include_pix = False
@@ -408,7 +408,7 @@ if __name__ == "__main__":
             }
             bias_combinations.extend(expand_override_grid(bias_settings))
 
-    # Fixed sigma_v run (Vext + LT + dipVext + sigma_v=100)
+    # Fixed sigma_v runs (Vext + LT + dipVext/dipH0 + sigma_v=100)
     # This is included in base runs, so no separate flag needed
     fixed_sigmav_settings = {
         "pv_model/kind": ["Vext"],
@@ -421,10 +421,26 @@ if __name__ == "__main__":
             {"dist": "delta", "value": [0.0, 0.0, 0.0]}],
         "model/priors/sigma_v": [{"dist": "delta", "value": 100.0}],
     }
-    fixed_sigmav_combinations = expand_override_grid(fixed_sigmav_settings) if include_base else []
+    fixed_sigmav_diph0_settings = {
+        "pv_model/kind": ["Vext"],
+        "pv_model/which_Vext": ["constant"],
+        "pv_model/stretch_los_with_zeropoint": [True],
+        "pv_model/sigmav_variant": ["sigv100"],
+        "io/root_output": output_root,
+        "model/priors/Vext": [
+            {"dist": "delta", "value": [0.0, 0.0, 0.0]}],
+        "model/priors/zeropoint_dipole": [
+            {"dist": "vector_uniform_fixed", "low": 0.0, "high": 0.2}],
+        "model/priors/sigma_v": [{"dist": "delta", "value": 100.0}],
+    }
+    fixed_sigmav_combinations = expand_override_grid(
+        fixed_sigmav_settings) if include_base else []
+    fixed_sigmav_diph0_combinations = expand_override_grid(
+        fixed_sigmav_diph0_settings) if include_base else []
 
     override_groups = [
-        ("all_other_runs", dipole_combinations + radialMagVext_combinations + fixed_sigmav_combinations),
+        ("all_other_runs", dipole_combinations + radialMagVext_combinations
+         + fixed_sigmav_combinations + fixed_sigmav_diph0_combinations),
         ("pix", pixelA_combinations + pixelH0_combinations + pixelVext_combinations if include_pix else []),
         ("quad", quadVext_combinations + quad_zeropoint_combinations if include_quad else []),
         ("resolution_convergence", resolution_radmag_combinations if resolution_convergence else []),
@@ -658,6 +674,16 @@ if __name__ == "__main__":
                             run_config = overwrite_config(
                                 run_config, "pv_model/galaxy_bias", "powerlaw")
                             fprint("set galaxy_bias to 'powerlaw' for manticore reconstruction")
+
+                            bias_variant = get_nested(
+                                run_config, "pv_model/bias_variant", None)
+                            if bias_variant in BIAS_PRIORS:
+                                run_config = overwrite_config(
+                                    run_config, "pv_model/galaxy_bias",
+                                    "double_powerlaw")
+                                fprint(
+                                    "set galaxy_bias to 'double_powerlaw' "
+                                    "for DPL bias runs")
 
                             # Set Malmquist grid to match manticore LOS resolution
                             grid_settings = MALMQUIST_GRID_SETTINGS["manticore"]

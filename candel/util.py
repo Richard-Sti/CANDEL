@@ -812,17 +812,55 @@ def plot_corner_getdist(samples_list, labels=None, cols=None, show_fig=True,
 
         if points is not None:
             plotted_pairs = set()
-            for (x_param, y_param), (x_val, y_val) in points.items():
+            for (x_param, y_param), point in points.items():
                 if x_param not in param_names or y_param not in param_names:
                     continue
+                if isinstance(point, dict):
+                    if "xy" in point:
+                        x_val, y_val = point["xy"]
+                    else:
+                        x_val, y_val = point["x"], point["y"]
+                    color = point.get("color", "red")
+                    marker = point.get("marker", "x")
+                    markersize = point.get("markersize", 10)
+                    label = point.get("label")
+                else:
+                    x_val, y_val = point
+                    color = "red"
+                    marker = "x"
+                    markersize = 10
+                    label = None
                 ix = param_names.index(x_param)
                 iy = param_names.index(y_param)
                 if iy > ix and (ix, iy) not in plotted_pairs:
                     ax = g.subplots[iy, ix]
-                    ax.plot(x_val, y_val, "x", color="red", markersize=10)
-                    __, labels_ = ax.get_legend_handles_labels()
-                    if "Reference" not in labels_:
-                        ax.legend()
+                    line = ax.plot(
+                        x_val,
+                        y_val,
+                        marker,
+                        color=color,
+                        markersize=markersize,
+                        label=label,
+                    )[0]
+                    if label:
+                        legend_loc = "upper right"
+                        legend_bbox = None
+                        if isinstance(point, dict):
+                            legend_loc = point.get("legend_loc", legend_loc)
+                            legend_bbox = point.get("legend_bbox", legend_bbox)
+                        if legend_bbox is not None:
+                            g.fig.legend(
+                                handles=[line],
+                                labels=[label],
+                                loc=legend_loc,
+                                bbox_to_anchor=legend_bbox,
+                            )
+                        else:
+                            ax.legend(
+                                handles=[line],
+                                labels=[label],
+                                loc=legend_loc,
+                            )
                     plotted_pairs.add((ix, iy))
 
         if truths is not None:
