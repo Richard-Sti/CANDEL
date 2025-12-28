@@ -13,9 +13,9 @@
 # with this program; if not, write to the Free Software Foundation, Inc.,
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 """
-CSP (Carnegie Supernova Project) forward model for LSQ SNe Ia.
+CSP (Carnegie Supernova Project)-like forward model.
 
-Flow model with UNITY-style selection correction. No H0 inference.
+No H0 inference (fixed h=1).
 """
 import jax.numpy as jnp
 from jax import random
@@ -24,12 +24,11 @@ from jax.scipy.stats import norm as jax_norm
 from numpyro import factor, plate, sample
 from numpyro.distributions import MultivariateNormal
 
-from ..util import get_nested, fprint, SPEED_OF_LIGHT
-from ..cosmography import Distance2Distmod
+from ..cosmography import Distance2Distmod, Distance2Redshift
+from ..util import SPEED_OF_LIGHT, fprint, get_nested
 from .model import (BaseModel, compute_Vext_radial, lp_galaxy_bias, predict_cz,
                     rsample, sample_galaxy_bias, sample_Vext)
 from .simpson import ln_simpson
-
 
 ###############################################################################
 #                         Selection integral                                  #
@@ -216,12 +215,25 @@ def simulate_csp(key, n_samples, r_min, r_max,
                  mu_s, sigma_s, mu_BV, sigma_BV, rho_pop,
                  m_lim, alpha_sel, beta_sel, sigma_sel,
                  sigma_s_obs, sigma_BV_obs, rho_ms, rho_mBV, rho_sBV,
-                 h, Om=0.3):
+                 h, Om=0.3, sigma_v=150.0,
+                 cz_lim=None, s_obs_lim=None, BV_obs_lim=None):
     """
     Simulate CSP SNe: draw from population, add noise, apply selection.
+
+    Parameters
+    ----------
+    cz_lim : tuple, optional
+        (cz_min, cz_max) in km/s for redshift selection.
+    s_obs_lim : tuple, optional
+        (s_min, s_max) for stretch selection.
+    BV_obs_lim : tuple, optional
+        (BV_min, BV_max) for color selection.
+    sigma_v : float
+        Velocity dispersion in km/s for cz scatter.
     """
-    keys = random.split(key, 4)
+    keys = random.split(key, 5)
     distance2distmod = Distance2Distmod(Om0=Om)
+    distance2redshift = Distance2Redshift(Om0=Om)
 
     # Distance from r^2 prior
     u = random.uniform(keys[0], (n_samples,))
@@ -254,14 +266,27 @@ def simulate_csp(key, n_samples, r_min, r_max,
     s_obs = s + eps[:, 1]
     BV_obs = BV + eps[:, 2]
 
-    # Selection
+    # Observed cz with velocity dispersion
+    cz_true = SPEED_OF_LIGHT * distance2redshift(r, h)
+    cz_obs = cz_true + sigma_v * random.normal(keys[3], (n_samples,))
+
+    # Magnitude selection
     m_sel = m_obs + alpha_sel * (s_obs - 1) - beta_sel * BV_obs
     p_sel = ndtr((m_lim - m_sel) / sigma_sel)
-    selected = random.uniform(keys[3], (n_samples,)) < p_sel
+    selected = random.uniform(keys[4], (n_samples,)) < p_sel
+
+    # Observable range selection (deterministic cuts)
+    if cz_lim is not None:
+        selected &= (cz_obs >= cz_lim[0]) & (cz_obs <= cz_lim[1])
+    if s_obs_lim is not None:
+        selected &= (s_obs >= s_obs_lim[0]) & (s_obs <= s_obs_lim[1])
+    if BV_obs_lim is not None:
+        selected &= (BV_obs >= BV_obs_lim[0]) & (BV_obs <= BV_obs_lim[1])
 
     return {
         'r': r, 's': s, 'BV': BV, 'm_true': m_true,
         'm_obs': m_obs, 's_obs': s_obs, 'BV_obs': BV_obs,
+        'cz_obs': cz_obs,
         'selected': selected,
         'selection_fraction': jnp.mean(selected.astype(float)),
     }
@@ -328,8 +353,8 @@ class CSPModel(BaseModel):
         if s_lim == "auto":
             s_lim = [s_obs_lim[0] - pad * sigma_s_typical,
                      s_obs_lim[1] + pad * sigma_s_typical]
-            fprint(f"CSP auto s_limits (true): [{s_lim[0]:.3f}, {s_lim[1]:.3f}]"
-                   f" (obs ± {pad}σ)")
+            fprint(f"CSP auto s_limits (true): [{s_lim[0]:.3f}, "
+                   f"{s_lim[1]:.3f}] (obs ± {pad}σ)")
 
         if BV_lim == "auto":
             BV_lim = [BV_obs_lim[0] - pad * sigma_BV_typical,
@@ -343,14 +368,16 @@ class CSPModel(BaseModel):
 
         if self._zcmb_lim == "auto":
             cz_lim = cz_obs_lim
-            fprint(f"CSP auto cz_limits: [{cz_lim[0]:.0f}, {cz_lim[1]:.0f}] km/s")
+            fprint(f"CSP auto cz_limits: [{cz_lim[0]:.0f}, "
+                   f"{cz_lim[1]:.0f}] km/s")
         else:
             cz_lim = [self._zcmb_lim[0] * SPEED_OF_LIGHT,
                       self._zcmb_lim[1] * SPEED_OF_LIGHT]
 
-        fprint(f"CSP observed limits: s=[{s_obs_lim[0]:.3f}, {s_obs_lim[1]:.3f}]"
-               f", BV=[{BV_obs_lim[0]:.3f}, {BV_obs_lim[1]:.3f}]"
-               f", cz=[{cz_obs_lim[0]:.0f}, {cz_obs_lim[1]:.0f}] km/s")
+        fprint(f"CSP observed limits: s=[{s_obs_lim[0]:.3f}, "
+               f"{s_obs_lim[1]:.3f}], BV=[{BV_obs_lim[0]:.3f}, "
+               f"{BV_obs_lim[1]:.3f}], cz=[{cz_obs_lim[0]:.0f}, "
+               f"{cz_obs_lim[1]:.0f}] km/s")
 
         r_grid = jnp.linspace(self._r_lim[0], self._r_lim[1], self._n_r)
         distmod_grid = self.distance2distmod(r_grid, h=1.0)
@@ -387,6 +414,14 @@ class CSPModel(BaseModel):
             raise ValueError(
                 f"Observed stretch values {s_range} outside selection "
                 f"grid [{float(s_min)}, {float(s_max)}].")
+
+        BV_obs = data["obs_vec"][:, 2]
+        BV_min, BV_max = self.selection.BV_grid[0], self.selection.BV_grid[-1]
+        if jnp.any(BV_obs < BV_min) or jnp.any(BV_obs > BV_max):
+            BV_range = (float(jnp.min(BV_obs)), float(jnp.max(BV_obs)))
+            raise ValueError(
+                f"Observed BV values {BV_range} outside selection "
+                f"grid [{float(BV_min)}, {float(BV_max)}].")
 
         # Check redshift limits (czcmb is already in km/s)
         czcmb = data["czcmb"]
