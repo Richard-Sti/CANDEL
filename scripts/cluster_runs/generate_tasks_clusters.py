@@ -28,14 +28,14 @@ import tomli_w
 from candel import fprint, load_config, replace_prior_with_delta
 
 # Hardcoded flags for task generation.
-scaling_relations = ["LTYT"]  # Set to None to run all
-reconstructions = ["manticore"]
-include_quad = False
-include_pairs = False
-include_pix = False
-resolution_convergence = False
-free_radial_direction = False
-split_tasks_by_kind = False
+scaling_relations = ["LT","YT","LTYT"]  # Set to None to run all
+reconstructions = ["Vext","Carrick2015","manticore"]
+include_quad = True
+include_pairs = True
+include_pix = True
+resolution_convergence = True
+free_radial_direction = True
+split_tasks_by_kind = True
 include_base = True
 include_bias = True  # Double power law bias model tests
 output_root = "results/maxgrid"
@@ -138,9 +138,17 @@ def generate_dynamic_tag(config, scenario_label):
     use_mnr = get_nested(config, "pv_model/use_MNR", False)
     parts.append("MNR" if use_mnr else "noMNR")
 
-    # Dipole zeropoint configuration
+    # Dipole zeropoint configuration (skip if quadrupole zeropoint is enabled)
+    quad_zp_prior = get_nested(config, "model/priors/zeropoint_quad", {})
+    quad_zp_enabled = (
+        isinstance(quad_zp_prior, dict) and quad_zp_prior.get("dist") != "delta"
+    )
     dip_prior = get_nested(config, "model/priors/zeropoint_dipole", {})
-    if isinstance(dip_prior, dict) and dip_prior.get("dist") == "vector_uniform_fixed":
+    if (
+        not quad_zp_enabled
+        and isinstance(dip_prior, dict)
+        and dip_prior.get("dist") == "vector_uniform_fixed"
+    ):
         stretch_los = get_nested(
             config, "pv_model/stretch_los_with_zeropoint", False)
         parts.append("dipH0" if stretch_los else "dipA")
@@ -187,9 +195,10 @@ def generate_dynamic_tag(config, scenario_label):
         parts.append("pixH0" if stretch_los else "pixA")
     else:
         # Check for quadrupole zeropoint first (implies dipole too)
-        quad_prior = get_nested(config, "model/priors/zeropoint_quad", {})
-        if isinstance(quad_prior, dict) and quad_prior.get("dist") != "delta":
-            parts.append("quadA")
+        if quad_zp_enabled:
+            stretch_los = get_nested(
+                config, "pv_model/stretch_los_with_zeropoint", False)
+            parts.append("quadH0" if stretch_los else "quadA")
 
     # Flag if sampling the dust prior
     dust_flags = []
