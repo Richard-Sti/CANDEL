@@ -115,6 +115,16 @@ dist = "jeffreys"
 low = 0.05
 high = 0.5
 
+[model.priors.sigma_LT]
+dist = "jeffreys"
+low = 0.05
+high = 0.5
+
+[model.priors.sigma_YT]
+dist = "jeffreys"
+low = 0.05
+high = 0.5
+
 [model.priors.A_LT]
 dist = "uniform"
 low = -2

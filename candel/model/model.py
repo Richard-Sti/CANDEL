@@ -1771,6 +1771,13 @@ class ClustersModel(BaseModel):
                 logY = data["logY"]
                 logF = data["logF"]
 
+            logY_safe = logY
+            e2_logY_safe = data["e2_logY"]
+            if relation == "LT":
+                logY_safe = jnp.where(jnp.isfinite(logY), logY, 0.0)
+                e2_logY_safe = jnp.where(
+                    jnp.isfinite(data["e2_logY"]), data["e2_logY"], 0.0)
+
             # Calculate intrinsic scatter - MNR doesn't propagate observational errors
             if self.use_MNR:
                 if relation in ["LT", "LTY"]:
@@ -1785,7 +1792,7 @@ class ClustersModel(BaseModel):
                 if relation in ["LT", "LTY"]:
                     sigma_logF = jnp.sqrt(
                         data["e2_logF"] + sigma_LT**2
-                        + B**2 * data["e2_logT"] + C**2 * data["e2_logY"])
+                        + B**2 * data["e2_logT"] + C**2 * e2_logY_safe)
                 if relation in ["YT", "YTL"]:
                     sigma_logY = jnp.sqrt(
                         data["e2_logY"] + sigma_YT**2
@@ -1877,7 +1884,7 @@ class ClustersModel(BaseModel):
                 A_vec = _broadcast_param(A, logT)
                 logF_pred = (
                     (logEz_LT + A_vec + B * logT)[:, None]
-                    + C * (logY[:, None] + 2 * logda_grid[None, :])
+                    + C * (logY_safe[:, None] + 2 * logda_grid[None, :])
                     - jnp.log10(4 * jnp.pi) - 2 * logdl_grid[None, :]
                 )
                 # Likelihood of logF , `(n_field, n_gal, n_rbin)`

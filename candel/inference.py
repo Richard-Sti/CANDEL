@@ -260,7 +260,7 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
             fname_plot = splitext(fname_out)[0] + "_moll_Vext_pix.png"
             plot_Vext_moll(samples["Vext_pix"], fname_plot,)
 
-        if model.which_A == "per_pix" and "dH_over_H_pix" in samples:
+        if getattr(model, "which_A", None) == "per_pix" and "dH_over_H_pix" in samples:
             fname_plot = splitext(fname_out)[0] + "_moll_H0_pix.png"
             plot_Vext_moll(
                 samples["dH_over_H_pix"],

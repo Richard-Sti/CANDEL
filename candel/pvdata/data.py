@@ -1398,7 +1398,8 @@ def load_SH0ES_from_config(config_path):
 def load_clusters(root, zcmb_min=None, zcmb_max=None, los_data_path=None,
                   finite_logY=True, convert_to_CMB_frame=True,
                   remove_noY=False, only_missing_Y=False,
-                  return_all=False, **kwargs):
+                  return_all=False, logT_mean=None, subtract_logT_mean=True,
+                  **kwargs):
     """
     Load the cluster scaling relation data from the given root directory.
 
@@ -1499,8 +1500,12 @@ def load_clusters(root, zcmb_min=None, zcmb_max=None, los_data_path=None,
     for key in data:
         data[key] = data[key][mask]
 
-    fprint("subtracting the mean logT from the data.")
-    data["logT"] -= np.mean(data["logT"])
+    if logT_mean is not None:
+        fprint(f"subtracting provided logT_mean={logT_mean:.6g} from the data.")
+        data["logT"] -= logT_mean
+    elif subtract_logT_mean:
+        fprint("subtracting the mean logT from the data.")
+        data["logT"] -= np.mean(data["logT"])
 
     # fprint("subtracting the mean logY from the data.")
     # data["logY"] -= np.mean(data["logY"])
