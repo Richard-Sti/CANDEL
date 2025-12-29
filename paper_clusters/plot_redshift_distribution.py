@@ -9,7 +9,8 @@ import numpy as np
 import candel
 from candel.util import radec_to_galactic
 from candel.cosmography import Redshift2Distance
-
+from astropy.coordinates import SkyCoord, Supergalactic, Galactic
+import astropy.units as u
 
 def main():
     setup_style()
@@ -55,7 +56,7 @@ def main():
     ax1.set_ylabel('Number of clusters', fontsize=12)
     ax1.set_xlim(left=0.0)
     ax1.legend(fontsize=10)
-    ax1.grid(alpha=0.3)
+    ax1.grid(False)
 
     # Secondary x-axis for comoving distance
     ax1_top = ax1.twiny()
@@ -78,26 +79,59 @@ def main():
     ax1_top.set_xlabel('Comoving distance [Mpc/h]', fontsize=12)
 
     # Right panel: Mollweide projection
-    ell_centered = np.where(ell > 180, ell - 360, ell)
-    ell_rad = np.deg2rad(ell_centered)
+    ell_centered = ((ell + 180) % 360) - 180   # degrees in [-180, 180)
+    ell_plot = -np.deg2rad(ell_centered)       # NEGATIVE makes l increase to the left
     b_rad = np.deg2rad(b)
 
-    ax2.scatter(ell_rad[has_Y], b_rad[has_Y], s=20, alpha=0.7,
-                color=COLS[0], edgecolors='black', linewidths=0.3,
-                label=f'With $Y_{{SZ}}$ (N={np.sum(has_Y)})')
-    ax2.scatter(ell_rad[no_Y], b_rad[no_Y], s=20, alpha=0.7,
-                color=COLS[1], edgecolors='black', linewidths=0.3,
-                label=f'Without $Y_{{SZ}}$ (N={np.sum(no_Y)})')
+    ax2.scatter(ell_plot[has_Y], b_rad[has_Y], s=20, alpha=0.7,
+                color=COLS[0], edgecolors='black', linewidths=0.3)
+    ax2.scatter(ell_plot[no_Y], b_rad[no_Y], s=20, alpha=0.7,
+                color=COLS[1], edgecolors='black', linewidths=0.3)
 
-    ax2.set_xlabel('$\\ell$ [deg]', fontsize=12)
-    ax2.set_ylabel('$b$ [deg]', fontsize=12)
+    ax2.set_xlabel(r'$\ell$ [deg]', fontsize=12)
+    ax2.set_ylabel(r'$b$ [deg]', fontsize=12)
 
-    # Custom tick labels for 0-360 degrees
-    tick_locs = np.array([-150, -120, -90, -60, -30, 0, 30, 60, 90, 120, 150])
-    tick_labels = [(loc + 180) % 360 for loc in tick_locs]
-    ax2.set_xticks(np.deg2rad(tick_locs))
-    ax2.set_xticklabels([f'{int(label)}°' for label in tick_labels])
+    # Ticks: positions are x (already flipped), labels should be Galactic longitude
+    tick_locs_deg = np.array([-150, -120, -90, -60, -30, 0, 30, 60, 90, 120, 150])
+    tick_locs_rad = np.deg2rad(tick_locs_deg)
+    tick_labels = [f"{int((-loc) % 360)}°" for loc in tick_locs_deg]  # note the minus
+
+    ax2.set_xticks(tick_locs_rad)
+    ax2.set_xticklabels(tick_labels)
     ax2.grid(True, alpha=0.3)
+
+    # --- Overplot Supergalactic plane: SGB = 0 deg ---
+    sgl = np.linspace(0, 360, 1000) * u.deg
+    sgb = np.zeros_like(sgl.value) * u.deg
+
+    sg_coords = SkyCoord(sgl=sgl, sgb=sgb, frame=Supergalactic)
+    gal_coords = sg_coords.transform_to(Galactic)
+
+    # Galactic lon/lat in degrees
+    l_sg = gal_coords.l.deg
+    b_sg = gal_coords.b.deg
+
+    # Match your plotting convention: l in [-180,180), and longitude increasing to the left
+    l_sg_centered = ((l_sg + 180) % 360) - 180
+    l_sg_plot = -np.deg2rad(l_sg_centered)
+    b_sg_plot = np.deg2rad(b_sg)
+
+    # Plot line; break across longitude wraps to avoid horizontal segments
+    order = np.argsort(l_sg_plot)
+    l_sorted = l_sg_plot[order]
+    b_sorted = b_sg_plot[order]
+    jumps = np.abs(np.diff(l_sorted)) > np.deg2rad(20)
+    l_plot = np.insert(l_sorted, np.where(jumps)[0] + 1, np.nan)
+    b_plot = np.insert(b_sorted, np.where(jumps)[0] + 1, np.nan)
+    ax2.plot(l_plot, b_plot, ls='--', lw=1.2, color=COLS[2], alpha=0.9, zorder=5)
+
+    # CMB dipole direction (Galactic l, b) as a black cross
+    l_cmb, b_cmb = 264.0, 48.0
+    l_cmb_centered = ((l_cmb + 180) % 360) - 180
+    l_cmb_plot = -np.deg2rad(l_cmb_centered)
+    b_cmb_plot = np.deg2rad(b_cmb)
+    ax2.scatter([l_cmb_plot], [b_cmb_plot], marker='x', s=60,
+                color='k', linewidths=1.5, zorder=6)
 
     plt.tight_layout()
     plt.savefig(get_figure_path('redshift.pdf'), dpi=300)

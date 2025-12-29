@@ -86,7 +86,7 @@ def main():
     )
     ax.set_xlabel(r'$\log_{10} T\ \mathrm{[keV]}$')
     ax.set_ylabel(r'$\log_{10} L_{\rm X}\ \mathrm{[10^{44}\ erg\,s^{-1}]}$')
-    ax.grid(True, ls=':', alpha=0.5)
+    ax.grid(False)
     ax.legend(frameon=False)
 
     # (2) Y_SZ-T on the right
@@ -99,7 +99,7 @@ def main():
     )
     ax.set_xlabel(r'$\log_{10} T\ \mathrm{[keV]}$')
     ax.set_ylabel(r'$\log_{10} Y_{\mathrm{SZ}}\ \mathrm{[kpc^2]}$')
-    ax.grid(True, ls=':', alpha=0.5)
+    ax.grid(False)
     ax.legend(frameon=False)
 
     plt.tight_layout()
