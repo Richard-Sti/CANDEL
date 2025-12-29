@@ -884,7 +884,7 @@ def sample_Vext(priors, which_Vext, shared_params=None, kwargs_Vext={}):
     #         Delta(Vext_sigma * (kwargs_Vext["Q"] @ u)), shared_params)
     elif which_Vext == "per_pix":
         with plate("Vext_pix_plate", kwargs_Vext["npix"]):
-            Vext = rsample("Vext_pix", Uniform(-10000., 10000.), shared_params)  # noqa
+            Vext = rsample("Vext_pix", priors["Vext_pix"], shared_params)  # noqa
     elif which_Vext == "constant":
         Vext = rsample("Vext", priors["Vext"], shared_params)
     else:
@@ -899,7 +899,7 @@ def sample_A_clusters(priors, which_A, shared_params=None, kwargs_A={}):
     """
     if which_A == "per_pix":
         with plate("A_pix_plate", kwargs_A["npix"]):
-            A_pix = rsample("A_pix", Uniform(-10.0, 10.0), shared_params)
+            A_pix = rsample("A_pix", priors["A_pix"], shared_params)
         return A_pix
     elif which_A == "radial_binned":
         # Sample one A value per radial bin
