@@ -32,18 +32,18 @@ from candel.pvdata.data import load_clusters
 # Hardcoded flags for task generation.
 scaling_relations = ["LTYT"]  # Set to None to run all
 reconstructions = ["Vext","Carrick2015","manticore"]
-include_quad = True
-include_pairs = True
+include_quad = False
+include_pairs = False
 include_pix = True
-resolution_convergence = True
-free_radial_direction = True
-include_base = True
-include_bias = True  # Double power law bias model tests
+resolution_convergence = False
+free_radial_direction = False
+include_base = False
+include_bias = False  # Double power law bias model tests
 output_root = "results/joint"
 num_chains = 4
 chain_method = "sequential"
 LTYT_joint = True
-split_tasks_two_to_one = True
+split_tasks_two_to_one = False
 split_tasks_by_kind = False
 
 
@@ -661,6 +661,30 @@ if __name__ == "__main__":
                         local_config = overwrite_config(local_config, key, value)
 
                 shared_base = scenario.get("shared_params_base", None)
+                if shared_base and scenario_label == "LTYT" and scenario.get("share_flow", False):
+                    which_vext = get_nested(
+                        local_config, "pv_model/which_Vext", "constant")
+                    if which_vext == "per_pix":
+                        nside = get_nested(
+                            local_config, "pv_model/Vext_per_pix_nside", 1)
+                        npix = 12 * nside**2
+                        local_config = overwrite_subtree(
+                            local_config,
+                            "model/priors/Vext_pix",
+                            {"dist": "array_uniform", "low": -10000.0, "high": 10000.0, "nval": npix},
+                        )
+                    which_a = get_nested(
+                        local_config, "pv_model/which_A", "constant")
+                    if which_a == "per_pix":
+                        nside = get_nested(
+                            local_config, "pv_model/A_per_pix_nside", 1)
+                        npix = 12 * nside**2
+                        local_config = overwrite_subtree(
+                            local_config,
+                            "model/priors/A_pix",
+                            {"dist": "array_uniform", "low": -10.0, "high": 10.0, "nval": npix},
+                        )
+
                 if shared_base:
                     shared_list = list(shared_base)
                     if scenario.get("share_flow", False):

@@ -465,6 +465,12 @@ def load_priors(config_priors):
         "normal": lambda p: Normal(p["loc"], p["scale"]),
         "truncated_normal": lambda p: TruncatedNormal(p["mean"], p["scale"], low=p.get("low", None), high= p.get("high", None)),  # noqa
         "uniform": lambda p: Uniform(p["low"], p["high"]),
+        "array_uniform": lambda p: {
+            "type": "array_uniform",
+            "low": p["low"],
+            "high": p["high"],
+            "nval": p.get("nval"),
+        },
         "delta": lambda p: Delta(p["value"]),
         "jeffreys": lambda p: JeffreysPrior(p["low"], p["high"]),
         "maxwell": lambda p: Maxwell(p["scale"]),
@@ -557,6 +563,13 @@ def _rsample(name, dist):
             name, dist["nval"], dist["low"], dist["high"],
             max_modulus=dist.get("max_modulus"),
             direction=dist.get("direction"))
+
+    if isinstance(dist, dict) and dist.get("type") == "array_uniform":
+        nval = dist.get("nval")
+        if nval is None:
+            raise ValueError(f"`nval` must be set for array_uniform '{name}'")
+        with plate(f"{name}_plate", nval):
+            return sample(name, Uniform(dist["low"], dist["high"]))
 
 
     return sample(name, dist)
@@ -883,8 +896,7 @@ def sample_Vext(priors, which_Vext, shared_params=None, kwargs_Vext={}):
     #         "Vext_pix",
     #         Delta(Vext_sigma * (kwargs_Vext["Q"] @ u)), shared_params)
     elif which_Vext == "per_pix":
-        with plate("Vext_pix_plate", kwargs_Vext["npix"]):
-            Vext = rsample("Vext_pix", priors["Vext_pix"], shared_params)  # noqa
+        Vext = rsample("Vext_pix", priors["Vext_pix"], shared_params)  # noqa
     elif which_Vext == "constant":
         Vext = rsample("Vext", priors["Vext"], shared_params)
     else:
@@ -898,8 +910,7 @@ def sample_A_clusters(priors, which_A, shared_params=None, kwargs_A={}):
     Sample zeropoint A parameters for clusters, supporting per-pixel and radial binned variation.
     """
     if which_A == "per_pix":
-        with plate("A_pix_plate", kwargs_A["npix"]):
-            A_pix = rsample("A_pix", priors["A_pix"], shared_params)
+        A_pix = rsample("A_pix", priors["A_pix"], shared_params)
         return A_pix
     elif which_A == "radial_binned":
         # Sample one A value per radial bin

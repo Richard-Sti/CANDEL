@@ -157,9 +157,10 @@ low = 0.0
 high = 5000.0
 
 [model.priors.Vext_pix]
-dist = "uniform"
+dist = "array_uniform"
 low = -10000.0
 high = 10000.0
+nval = 12
 
 [model.priors.Vext_quad]
 dist = "delta"
@@ -192,9 +193,10 @@ value = [0,0,0]
 #high = 0.3
 
 [model.priors.A_pix]
-dist = "uniform"
+dist = "array_uniform"
 low = -10.0
 high = 10.0
+nval = 12
 
 [model.priors.zeropoint_quad]
 dist = "delta"
