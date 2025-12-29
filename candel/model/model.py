@@ -854,7 +854,7 @@ def sample_Vext(priors, which_Vext, shared_params=None, kwargs_Vext={}):
         Vext = rsample("Vext_rad", priors["Vext_radial"], shared_params)
     elif which_Vext == "radial_magnitude":
         Vext = rsample(
-            "Vext_radmag", priors["Vext_radial_magnitude"],
+            "Vext_radmag", priors["Vext_radmag"],
             shared_params)
     elif which_Vext == "radial_binned":
         prior = priors["Vext_radial_binned"]

@@ -1207,7 +1207,8 @@ def plot_Vext_radmag(samples, model, r_eval_size=1000, show_fig=True,
             Y = None
 
     r = jnp.linspace(0.0, np.max(rknot), r_eval_size)
-    V = vmap(lambda y: interp1d(r, rknot, y, method=method))(Vmag)
+    r_clamped = jnp.clip(r, rknot[0], rknot[-1])
+    V = vmap(lambda y: interp1d(r_clamped, rknot, y, method=method))(Vmag)
     V025, V16, V50, V84, V975 = np.percentile(V, [2.5, 16, 50, 84, 97.5], axis=0)
 
     # Compute distance range from data (if available) to align the x-axis.
@@ -1222,8 +1223,9 @@ def plot_Vext_radmag(samples, model, r_eval_size=1000, show_fig=True,
         r_max = min(r_max, r_cap)
         dist_max = min(dist_max, r_cap)
         r = jnp.linspace(0.0, r_max, r_eval_size)
+        r_clamped = jnp.clip(r, rknot[0], rknot[-1])
         V = vmap(lambda y: interp1d(
-            r, rknot, y, method=method, extrap=(y[0], y[-1])))(Vmag)
+            r_clamped, rknot, y, method=method))(Vmag)
         V025, V16, V50, V84, V975 = np.percentile(
             V, [2.5, 16, 50, 84, 97.5], axis=0)
     else:

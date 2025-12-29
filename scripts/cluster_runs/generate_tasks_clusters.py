@@ -364,7 +364,7 @@ if __name__ == "__main__":
 
     # Radial magnitude-only Vext (direction fixed, magnitude varies)
     radmag_prior_template = get_nested(
-        config, "model/priors/Vext_radial_magnitude", {})
+        config, "model/priors/Vext_radmag", {})
 
     def radmag_prior_with_knots(knots):
         prior = deepcopy(radmag_prior_template)
@@ -378,7 +378,7 @@ if __name__ == "__main__":
     def build_radmag_combinations(knots, variant_label):
         settings = deepcopy(base)
         settings["pv_model/which_Vext"] = ["radial_magnitude"]
-        settings["model/priors/Vext_radial_magnitude"] = [
+        settings["model/priors/Vext_radmag"] = [
             radmag_prior_with_knots(knots)]
         if variant_label not in ("", "default"):
             settings["pv_model/radmag_variant"] = [variant_label]

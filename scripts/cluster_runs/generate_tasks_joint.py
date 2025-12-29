@@ -30,7 +30,7 @@ from candel import fprint, load_config, replace_prior_with_delta
 from candel.pvdata.data import load_clusters
 
 # Hardcoded flags for task generation.
-scaling_relations = ["LT","YT"]  # Set to None to run all
+scaling_relations = ["LTYT"]  # Set to None to run all
 reconstructions = ["Vext","Carrick2015","manticore"]
 include_quad = True
 include_pairs = True
@@ -369,7 +369,7 @@ if __name__ == "__main__":
 
     # Radial magnitude-only Vext (direction fixed, magnitude varies)
     radmag_prior_template = get_nested(
-        config, "model/priors/Vext_radial_magnitude", {})
+        config, "model/priors/Vext_radmag", {})
 
     def radmag_prior_with_knots(knots):
         prior = deepcopy(radmag_prior_template)
@@ -383,7 +383,7 @@ if __name__ == "__main__":
     def build_radmag_combinations(knots, variant_label):
         settings = deepcopy(base)
         settings["pv_model/which_Vext"] = ["radial_magnitude"]
-        settings["model/priors/Vext_radial_magnitude"] = [
+        settings["model/priors/Vext_radmag"] = [
             radmag_prior_with_knots(knots)]
         if variant_label not in ("", "default"):
             settings["pv_model/radmag_variant"] = [variant_label]

@@ -177,7 +177,7 @@ rknot = [0, 100, 200, 300, 500]
 k = 1
 endpoints="not-a-knot"
 
-[model.priors.Vext_radial_magnitude]
+[model.priors.Vext_radmag]
 dist = "vector_radialmag_uniform"
 low = -10000
 high = 10000
