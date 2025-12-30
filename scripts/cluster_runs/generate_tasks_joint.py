@@ -30,7 +30,7 @@ from candel import fprint, load_config, replace_prior_with_delta
 from candel.pvdata.data import load_clusters
 
 # Hardcoded flags for task generation.
-scaling_relations = ["LT", "YT", "LTYT"]  # Set to None to run all
+scaling_relations = [ "LTYT", "LT", "YT",]  # Set to None to run all
 reconstructions = ["zspace"] #"Vext","Carrick2015","manticore",
 include_quad = True
 include_pairs = True
@@ -39,6 +39,7 @@ resolution_convergence = False
 free_radial_direction = True
 include_base = True
 include_bias = False  # Double power law bias model tests
+include_fixed_sigma = False
 output_root = "results/joint"
 num_chains = 4
 chain_method = "sequential"
@@ -256,8 +257,8 @@ if __name__ == "__main__":
         "tasks_index", type=int, nargs="?", default=0,
         help="Index of the task to run (default: 0)")
     parser.add_argument(
-        "--include-joint", action="store_true",
-        help="Generate the Joint scenario tasks as well.")
+        "--include-fixed-sigma", action="store_true",
+        help="Include fixed sigma_v variation runs.")
     args = parser.parse_args()
 
     config_path = "scripts/cluster_runs/config_clusters.toml"
@@ -270,7 +271,7 @@ if __name__ == "__main__":
     config = overwrite_config(config, "inference/chain_method", chain_method)
 
     tasks_index = args.tasks_index
-    include_joint = args.include_joint
+    include_fixed_sigma = args.include_fixed_sigma
 
     task_file = f"tasks_{tasks_index}.txt"
     log_dir = f"logs_{tasks_index}"
@@ -424,7 +425,6 @@ if __name__ == "__main__":
             bias_combinations.extend(expand_override_grid(bias_settings))
 
     # Fixed sigma_v runs (Vext + LT + dipVext/dipH0 + sigma_v=100)
-    # This is included in base runs, so no separate flag needed
     fixed_sigmav_settings = {
         "pv_model/kind": ["Vext"],
         "pv_model/which_Vext": ["constant"],
@@ -449,9 +449,9 @@ if __name__ == "__main__":
         "model/priors/sigma_v": [{"dist": "delta", "value": 100.0}],
     }
     fixed_sigmav_combinations = expand_override_grid(
-        fixed_sigmav_settings) if include_base else []
+        fixed_sigmav_settings) if include_fixed_sigma else []
     fixed_sigmav_diph0_combinations = expand_override_grid(
-        fixed_sigmav_diph0_settings) if include_base else []
+        fixed_sigmav_diph0_settings) if include_fixed_sigma else []
 
     override_groups = [
         ("all_other_runs", dipole_combinations + radialMagVext_combinations
@@ -547,6 +547,7 @@ if __name__ == "__main__":
         }
 
     scenarios = [
+        ltyt_scenario,
         {
             "label": "LT",
             "overrides": {
@@ -575,39 +576,8 @@ if __name__ == "__main__":
                 ),
             },
         },
-        ltyt_scenario,
-        {
-            "label": "Joint",
-            "overrides": {
-                "inference/model": ["ClustersModel", "ClustersModel"],
-                "io/catalogue_name": ["Clusters_hasY", "Clusters_LTtail"],
-                "io/Clusters_hasY": build_cluster_section(
-                    which_relation="LTYT",
-                    finite_logY=True,
-                    remove_noY=True,
-                    only_missing_Y=False,
-                ),
-                "io/Clusters_LTtail": build_cluster_section(
-                    which_relation="LT",
-                    finite_logY=False,
-                    remove_noY=False,
-                    only_missing_Y=True,
-                ),
-            },
-            "shared_params_base": [
-                "sigma_v",
-                "zeropoint_dipole",
-                "zeropoint_quad",
-                "beta",
-                "b1",
-            ],
-            "share_flow": True,
-        },
     ]
 
-    if not include_joint:
-        scenarios = [sc for sc in scenarios if sc.get("label") != "Joint"]
-        fprint("Joint scenario disabled (pass --include-joint to include it).")
     if scaling_relations:
         scenarios = [sc for sc in scenarios if sc.get("label") in scaling_relations]
 
