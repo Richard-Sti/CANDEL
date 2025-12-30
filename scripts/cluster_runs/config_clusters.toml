@@ -29,7 +29,7 @@ skip_if_exists = false
 
 [pv_model]
 # Default kind. This gets overwritten if using a submission script.
-kind = "precomputed_los_Carrick2015" # or "Vext"
+kind = "precomputed_los_2mpp_zspace" # or "Vext"
 
 galaxy_bias = "linear"  # Ignored unless having an underlying density field
 which_Vext = "radial_magnitude"
@@ -301,12 +301,15 @@ los_file = "data/Clusters/los_Clusters_<X>.hdf5"
 
 [io.reconstruction_main]
 # Distance over which to interpolate the 3D grids along the source LOS.
-rmin = 0.1
-rmax = 2001
-num_steps = 1001
+rmin = 0.001
+rmax = 330.0
+num_steps = 501
 [io.reconstruction_main.manticore_2MPP_MULTIBIN_N256_DES_V2]
 fpath_root = "/mnt/extraspace/rstiskalek/MANTICORE/2MPP_MULTIBIN_N256_DES_V2/sph_fields_new_feb/sph_fields"
 
 [io.reconstruction_main.Carrick2015]
 path_density = "data/fields/carrick2015_twompp_density.npy"
 path_velocity = "data/fields/carrick2015_twompp_velocity.npy"
+
+[io.reconstruction_main.2mpp_zspace]
+# LOS data are loaded from data/Clusters/los_Clusters_2mpp_zspace.hdf5

@@ -857,6 +857,7 @@ def main():
     parser.add_argument("--carrick-mask", type=str, default="data/Clusters/los_Clusters_Carrick2015.hdf5")
     parser.add_argument("--carrick-mask-atol", type=float, default=1e-6)
     parser.add_argument("--no-compare-plot", action="store_true", default=False)
+    parser.add_argument("--plot-nclusters", type=int, default=312)
     args = parser.parse_args()
     if args.tracer_mode == "galaxies":
         mode_suffix = "galaxies"
@@ -944,7 +945,7 @@ def main():
                 zspace=los_output,
                 output=output_png,
                 ncols=6,
-                nclusters=312,
+                nclusters=args.plot_nclusters,
                 config_path=args.config,
             )
     print(f"Saved output to {output_path}")
