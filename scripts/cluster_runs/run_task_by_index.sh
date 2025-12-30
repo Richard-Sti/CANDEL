@@ -32,12 +32,18 @@ if command -v nvidia-smi >/dev/null 2>&1; then
 fi
 
 if [ "$#" -lt 2 ]; then
-  echo "Usage: $0 <tasks_file> <index|count|max>"
+  echo "Usage: $0 <tasks_file> <index|count|max> [--skip-if-exists]"
   exit 1
 fi
 
 tasks_file="$1"
 index="$2"
+shift 2
+
+extra_args=()
+if [ "$#" -gt 0 ]; then
+  extra_args=("$@")
+fi
 
 if [ "$index" = "count" ]; then
   wc -l < "$tasks_file" | tr -d ' '
@@ -69,7 +75,7 @@ fi
 python_exec=$(grep -E '^python_exec *= *' "$config_path" | sed -E 's/^python_exec *= *"([^"]+)"$/\1/')
 if [ -z "$python_exec" ]; then
   echo "python_exec not found in $config_path; falling back to python on PATH."
-  python scripts/runs/main.py --config "$config_path"
+  python scripts/runs/main.py --config "$config_path" "${extra_args[@]}"
 else
-  "$python_exec" scripts/runs/main.py --config "$config_path"
+  "$python_exec" scripts/runs/main.py --config "$config_path" "${extra_args[@]}"
 fi

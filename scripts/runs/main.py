@@ -58,6 +58,11 @@ if __name__ == "__main__":
     )
     parser.add_argument("--config", type=str, required=True,
                         help="Path to the configuration file.")
+    parser.add_argument(
+        "--skip-if-exists",
+        action="store_true",
+        help="Skip inference if the output file already exists.",
+    )
     # Re-expose the pre-parsed options so they show up in --help
     parser.add_argument("--host-devices", type=int,
                         help="NumPyro host device count (handled pre-import).")
@@ -68,7 +73,9 @@ if __name__ == "__main__":
     config = candel.load_config(args.config)
 
     fname_out = get_nested(config, "io/fname_output")
-    skip_if_exists = get_nested(config, "inference/skip_if_exists", False)
+    skip_if_exists = args.skip_if_exists or get_nested(
+        config, "inference/skip_if_exists", False
+    )
     if skip_if_exists and exists(fname_out):
         fprint(f"Output file `{fname_out}` already exists. "
                "Skipping inference.")

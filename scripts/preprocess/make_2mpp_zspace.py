@@ -389,7 +389,9 @@ def compute_los_delta_from_field(
     config = candel.load_config(config_path)
     d = config["io"]["reconstruction_main"].copy()
     r = np.linspace(d["rmin"], d["rmax"], d["num_steps"]).astype(np.float32)
-    s = r * H0_base
+    dist2redshift = candel.Distance2Redshift(Om0=0.3)
+    z = np.asarray(dist2redshift(r, h=H0_base / 100.0), dtype=np.float32)
+    s = z * C_LIGHT
 
     rmax = float(metadata["Rmax_kms"])
     dx = float(metadata["voxel_size_kms"])
@@ -858,6 +860,8 @@ def main():
     parser.add_argument("--carrick-mask-atol", type=float, default=1e-6)
     parser.add_argument("--no-compare-plot", action="store_true", default=False)
     parser.add_argument("--plot-nclusters", type=int, default=312)
+    parser.add_argument("--plot-ncols", type=int, default=6)
+    parser.add_argument("--compare-only", action="store_true", default=False)
     args = parser.parse_args()
     if args.tracer_mode == "galaxies":
         mode_suffix = "galaxies"
@@ -870,6 +874,29 @@ def main():
 
     output_path = _with_suffix(args.output, mode_suffix)
     los_output = _with_suffix(args.los_output, mode_suffix) if args.los_output else None
+
+    def _import_run_compare():
+        try:
+            from .compare_reconstructions import run_compare
+        except ImportError:
+            from scripts.preprocess.compare_reconstructions import run_compare
+        return run_compare
+
+    if args.compare_only:
+        if los_output is None:
+            raise ValueError("--compare-only requires --los-output.")
+        run_compare = _import_run_compare()
+        output_png = os.path.join(os.path.dirname(los_output), "compare_reconstructions_galaxies.png")
+        run_compare(
+            carrick="data/Clusters/los_Clusters_Carrick2015.hdf5",
+            manticore="data/Clusters/los_Clusters_manticore.hdf5",
+            zspace=los_output,
+            output=output_png,
+            ncols=args.plot_ncols,
+            nclusters=args.plot_nclusters,
+            config_path=args.config,
+        )
+        return
 
     t0 = time.time()
     result = build_delta_field(
@@ -937,14 +964,14 @@ def main():
         nbar_png = os.path.join(los_dir, f"nbar_profile_{mode_suffix}.png")
         plot_nbar_profile(result["metadata"], nbar_png)
         if not args.no_compare_plot:
-            from .compare_reconstructions import run_compare
-            output_png = os.path.join(los_dir, f"compare_reconstructions_{mode_suffix}.png")
+            run_compare = _import_run_compare()
+            output_png = os.path.join(los_dir, "compare_reconstructions_galaxies.png")
             run_compare(
                 carrick="data/Clusters/los_Clusters_Carrick2015.hdf5",
                 manticore="data/Clusters/los_Clusters_manticore.hdf5",
                 zspace=los_output,
                 output=output_png,
-                ncols=6,
+                ncols=args.plot_ncols,
                 nclusters=args.plot_nclusters,
                 config_path=args.config,
             )

@@ -11,6 +11,11 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 
+def _load_cluster_names(path):
+    names = np.genfromtxt(path, dtype="U32", usecols=0, skip_header=1)
+    return np.asarray(names)
+
+
 def _load_los_delta(path: Path):
     with h5py.File(path, "r") as f:
         if "los_delta" in f:
@@ -62,7 +67,17 @@ def _load_cluster_zcmb(config_path):
     return r_comov.astype(np.float32)
 
 
-def run_compare(carrick, manticore, zspace, output, ncols=6, log_floor=1e-5, nclusters=12, config_path=None):
+def run_compare(
+    carrick,
+    manticore,
+    zspace,
+    output,
+    ncols=6,
+    nclusters=12,
+    log_floor=1e-5,
+    config_path=None,
+    cluster_names_path="data/Clusters/ClustersData.txt",
+):
     delta_c, r_c = _load_los_delta(Path(carrick))
     delta_m, r_m = _load_los_delta(Path(manticore))
     delta_z, r_z = _load_los_delta(Path(zspace))
@@ -79,11 +94,19 @@ def run_compare(carrick, manticore, zspace, output, ncols=6, log_floor=1e-5, ncl
     if delta_c.ndim == 3:
         delta_c = delta_c[0]
 
-    n_gal = min(delta_c.shape[0], delta_m.shape[1], delta_z.shape[0], nclusters)
+    n_gal = min(delta_c.shape[0], delta_m.shape[1], delta_z.shape[0])
     delta_c = delta_c[:n_gal]
     delta_m = delta_m[:, :n_gal]
     delta_z = delta_z[:n_gal]
     r_marks = None
+    cluster_names = None
+    if cluster_names_path:
+        try:
+            cluster_names = _load_cluster_names(cluster_names_path)
+        except OSError:
+            cluster_names = None
+    if cluster_names is None:
+        raise ValueError("cluster names are required to label each subplot.")
     if config_path is not None:
         r_marks = _load_cluster_zcmb(config_path)[:n_gal]
         keep = r_marks < 225.0
@@ -92,6 +115,17 @@ def run_compare(carrick, manticore, zspace, output, ncols=6, log_floor=1e-5, ncl
         delta_z = delta_z[keep]
         r_marks = r_marks[keep]
         n_gal = delta_c.shape[0]
+        cluster_names = cluster_names[: len(keep)][keep]
+
+    if nclusters is not None:
+        n_gal = min(n_gal, nclusters)
+        delta_c = delta_c[:n_gal]
+        delta_m = delta_m[:, :n_gal]
+        delta_z = delta_z[:n_gal]
+        if r_marks is not None:
+            r_marks = r_marks[:n_gal]
+        if cluster_names is not None:
+            cluster_names = cluster_names[:n_gal]
 
     delta_c = np.log10(np.clip(1.0 + delta_c, log_floor, None))
     delta_z = np.log10(np.clip(1.0 + delta_z, log_floor, None))
@@ -105,6 +139,7 @@ def run_compare(carrick, manticore, zspace, output, ncols=6, log_floor=1e-5, ncl
         mean_dev = float(np.mean(diff))
         print(f"Mean |log10(1+delta) diff| vs Carrick for r<=200: {mean_dev:.4f}")
 
+    ncols = min(ncols, n_gal) if n_gal > 0 else ncols
     nrows = int(np.ceil(n_gal / ncols))
     figsize = (ncols * 3.0, nrows * 1.2)
     fig, axes = plt.subplots(nrows, ncols, figsize=figsize, sharex=True, sharey=True)
@@ -119,7 +154,7 @@ def run_compare(carrick, manticore, zspace, output, ncols=6, log_floor=1e-5, ncl
             continue
 
         ax.plot(r_c, delta_c[idx], color="tab:blue", lw=0.6, label="Carrick2015")
-        ax.plot(r_z, delta_z[idx], color="tab:orange", lw=0.6, label="2mpp_zspace")
+        ax.plot(r_z, delta_z[idx], color="tab:orange", lw=0.6, label=r"2M++$\rho(z)$")
         ax.fill_between(
             r_m,
             mean_m[idx] - std_m[idx],
@@ -131,16 +166,29 @@ def run_compare(carrick, manticore, zspace, output, ncols=6, log_floor=1e-5, ncl
         ax.plot(r_m, mean_m[idx], color="tab:green", lw=0.6, label="Manticore")
         if r_marks is not None:
             ax.axvline(r_marks[idx], color="0.5", lw=0.6, ls="--", alpha=0.7)
-        ax.text(0.02, 0.85, f"{idx}", transform=ax.transAxes, fontsize=6)
+        label = cluster_names[idx]
+        ax.text(0.02, 0.85, label, transform=ax.transAxes, fontsize=6)
         if row == nrows - 1:
             ax.set_xlabel("r [Mpc/h]", fontsize=7)
         if col == 0:
-            ax.set_ylabel("log10(1+delta)", fontsize=7)
+            ax.set_ylabel(r"$\log_{10}(1+\delta)$", fontsize=7)
         ax.set_xlim(0.0, 226.0)
 
     fig.supxlabel("r [Mpc/h]", fontsize=10)
-    fig.supylabel("log10(1+delta)", fontsize=10)
-    fig.tight_layout(rect=(0.0, 0.0, 0.98, 0.98))
+    legend_handles = [
+        plt.Line2D([0], [0], color="tab:blue", lw=0.8, label="Carrick2015"),
+        plt.Line2D([0], [0], color="tab:orange", lw=0.8, label=r"2M++$\rho(z)$"),
+        plt.Line2D([0], [0], color="tab:green", lw=0.8, label="Manticore"),
+    ]
+    fig.legend(
+        handles=legend_handles,
+        loc="upper center",
+        ncol=3,
+        frameon=False,
+        bbox_to_anchor=(0.5, 1.02),
+        fontsize=8,
+    )
+    fig.tight_layout(rect=(0.0, 0.0, 0.98, 0.94))
     fig.savefig(output, dpi=200)
     plt.close(fig)
 
@@ -161,10 +209,11 @@ def main():
         "--zspace",
         default="data/Clusters/los_Clusters_2mpp_zspace_galaxies.hdf5",
     )
-    parser.add_argument("--output", default="results/compare_reconstructions.png")
+    parser.add_argument("--output", default="paper_clusters/figures/compare_reconstructions_galaxies.png")
     parser.add_argument("--ncols", type=int, default=6)
     parser.add_argument("--nclusters", type=int, default=12)
     parser.add_argument("--config", type=str, default=None)
+    parser.add_argument("--cluster-names-path", type=str, default="data/Clusters/ClustersData.txt")
     args = parser.parse_args()
 
     run_compare(
@@ -175,6 +224,7 @@ def main():
         ncols=args.ncols,
         nclusters=args.nclusters,
         config_path=args.config,
+        cluster_names_path=args.cluster_names_path,
     )
 
 

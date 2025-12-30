@@ -13,7 +13,7 @@ except ImportError:  # Python < 3.11
     import tomli as tomllib
 
 
-def main():
+def main(include_dipA=False):
     setup_style()
 
     # Define file patterns for each row (dipole model) and column (relation)
@@ -41,7 +41,7 @@ def main():
                 {
                     "name": "LTYT",
                     "files": [
-                        f"{RESULTS_FOLDER}/Vext_LTYT_noMNR_dipVext_hasY.hdf5",
+                        f"joint/Vext_LTYT_noMNR_dipVext_hasY.hdf5",
                         f"{RESULTS_FOLDER}/Carrick2015_LTYT_noMNR_dipVext_hasY.hdf5",
                         f"{RESULTS_FOLDER}/manticore_LTYT_noMNR_dipVext_hasY.hdf5",
                     ],
@@ -70,7 +70,7 @@ def main():
                 {
                     "name": "LTYT",
                     "files": [
-                        f"{RESULTS_FOLDER}/Vext_LTYT_noMNR_dipH0_hasY.hdf5",
+                        f"joint/Vext_LTYT_noMNR_dipH0_hasY.hdf5",
                         f"{RESULTS_FOLDER}/Carrick2015_LTYT_noMNR_dipH0_hasY.hdf5",
                         f"{RESULTS_FOLDER}/manticore_LTYT_noMNR_dipH0_hasY.hdf5",
                     ],
@@ -99,7 +99,7 @@ def main():
                 {
                     "name": "LTYT",
                     "files": [
-                        f"{RESULTS_FOLDER}/Vext_LTYT_noMNR_dipA_hasY.hdf5",
+                        f"joint/Vext_LTYT_noMNR_dipA_hasY.hdf5",
                         f"{RESULTS_FOLDER}/Carrick2015_LTYT_noMNR_dipA_hasY.hdf5",
                         f"{RESULTS_FOLDER}/manticore_LTYT_noMNR_dipA_hasY.hdf5",
                     ],
@@ -107,6 +107,8 @@ def main():
             ],
         },
     ]
+    if not include_dipA:
+        rows = rows[:-1]
     labels = ["No reconstruction", "Carrick2015", "Manticore"]
     cols = [COLS[0], COLS[1], COLS[2]]
 
@@ -142,8 +144,11 @@ def main():
     settings = plots.GetDistPlotSettings()
     settings.alpha_filled_add = -0.25
     g = plots.get_subplot_plotter(settings=settings)
-    g.make_figure(nx=3, ny=3, sharex=True, sharey=True)
+    g.make_figure(nx=3, ny=len(rows), sharex=True, sharey=True)
+    fig_w, fig_h = g.fig.get_size_inches()
+    g.fig.set_size_inches(fig_w, fig_h * 0.85, forward=True)
 
+    last_row_idx = len(rows) - 1
     for row_idx, row in enumerate(rows):
         for col_idx, relation in enumerate(row["relations"]):
             ax = g.get_axes((row_idx, col_idx))
@@ -167,14 +172,14 @@ def main():
                 fontsize=10,
             )
             # Only add x-label on bottom row
-            if row_idx == 2:
+            if row_idx == last_row_idx:
                 ax.set_xlabel(r"$\sigma_v\,(\mathrm{km\,s^{-1}})$")
             else:
                 ax.set_xlabel("")
 
         # Add per-row y-axis label and a bold row label further left
         first_ax = g.subplots[row_idx][0]
-        first_ax.set_ylabel("Density", fontsize=settings.axes_fontsize)
+        first_ax.set_ylabel(r"$P(\sigma_v)$", fontsize=settings.axes_fontsize)
         first_ax.text(
             -0.28,
             0.5,
@@ -198,10 +203,19 @@ def main():
         bbox_to_anchor=(0.5, 1.04),
         fontsize=9,
     )
-    g.fig.subplots_adjust(left=0.16, right=0.98, bottom=0.10, top=0.92, wspace=0.18, hspace=0.15)
+    g.fig.subplots_adjust(left=0.16, right=0.98, bottom=0.10, top=0.92, wspace=0.0, hspace=-0.03)
     g.fig.savefig(str(get_figure_path("sigma_v.pdf")), bbox_inches="tight")
     plt.close('all')
 
 
 if __name__ == "__main__":
-    main()
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Plot sigma_v distributions.")
+    parser.add_argument(
+        "--dipA",
+        action="store_true",
+        help="Include the dipA row in the plot.",
+    )
+    args = parser.parse_args()
+    main(include_dipA=args.dipA)

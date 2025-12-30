@@ -1,8 +1,25 @@
 #!/bin/bash
 set -euo pipefail
 
+skip_if_exists=true
+positional=()
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --skip-if-exists)
+      skip_if_exists=true
+      shift
+      ;;
+    *)
+      positional+=("$1")
+      shift
+      ;;
+  esac
+done
+
+set -- "${positional[@]}"
+
 if [ "$#" -lt 2 ]; then
-  echo "Usage: $0 <tasks_file> <queue> [gputype] [gpus] [mem_gb]"
+  echo "Usage: $0 <tasks_file> <queue> [gputype] [gpus] [mem_gb] [--skip-if-exists]"
   exit 1
 fi
 
@@ -30,6 +47,12 @@ if [ -n "$gputype" ]; then
   addqueue_args+=(--gputype "$gputype")
 fi
 
+extra_run_args=()
+if [ "$skip_if_exists" = true ]; then
+  extra_run_args+=(--skip-if-exists)
+fi
+
 addqueue "${addqueue_args[@]}" \
   --range 0,"$max" \
-  ./scripts/cluster_runs/run_task_by_index.sh "$tasks_file" ARG_REPLACE
+  ./scripts/cluster_runs/run_task_by_index.sh "$tasks_file" ARG_REPLACE \
+  "${extra_run_args[@]}"

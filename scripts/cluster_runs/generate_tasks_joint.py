@@ -30,14 +30,14 @@ from candel import fprint, load_config, replace_prior_with_delta
 from candel.pvdata.data import load_clusters
 
 # Hardcoded flags for task generation.
-scaling_relations = ["LTYT"]  # Set to None to run all
+scaling_relations = ["LT", "YT", "LTYT"]  # Set to None to run all
 reconstructions = ["Vext","Carrick2015","manticore"]
-include_quad = False
-include_pairs = False
-include_pix = True
+include_quad = True
+include_pairs = True
+include_pix = False
 resolution_convergence = False
-free_radial_direction = False
-include_base = False
+free_radial_direction = True
+include_base = True
 include_bias = False  # Double power law bias model tests
 output_root = "results/joint"
 num_chains = 4
