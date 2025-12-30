@@ -31,7 +31,7 @@ from candel.pvdata.data import load_clusters
 
 # Hardcoded flags for task generation.
 scaling_relations = ["LT", "YT", "LTYT"]  # Set to None to run all
-reconstructions = ["Vext","Carrick2015","manticore"]
+reconstructions = ["zspace"] #"Vext","Carrick2015","manticore",
 include_quad = True
 include_pairs = True
 include_pix = False
@@ -51,6 +51,7 @@ RECONSTRUCTION_KIND_MAP = {
     "Vext": "Vext",
     "Carrick2015": "precomputed_los_Carrick2015",
     "manticore": "precomputed_los_manticore",
+    "zspace": "precomputed_los_2mpp_zspace_galaxies",
 }
 
 # Malmquist grid settings matched to LOS data resolution.
