@@ -34,7 +34,7 @@ import numpy as np
 from astropy.coordinates import CartesianRepresentation, SkyCoord
 from corner import corner
 from getdist import MCSamples, plots
-from h5py import File
+from h5py import File, Dataset
 from interpax import interp1d
 from jax import vmap
 from jax_cosmo.scipy.interpolate import InterpolatedUnivariateSpline
@@ -926,10 +926,12 @@ def plot_corner_from_hdf5(fnames, keys=None, labels=None, cols=None,
     for fname in fnames:
         with File(fname, 'r') as f:
             grp = f["samples"]
-            samples = {key: grp[key][...] for key in grp.keys()}
+            # Only load datasets, skip nested groups
+            samples = {key: grp[key][...] for key in grp.keys()
+                       if isinstance(grp[key], Dataset)}
             samples_list.append(samples)
 
-            full_keys = list(grp.keys())
+            full_keys = [k for k in grp.keys() if isinstance(grp[k], Dataset)]
             print(f"{basename(fname)}: {', '.join(full_keys)}")
 
     plot_corner_getdist(

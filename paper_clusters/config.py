@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 # Paths
 CANDEL_ROOT = Path("/Users/yasin/code/CANDEL")
 RESULTS_ROOT = CANDEL_ROOT / "results"
-RESULTS_FOLDER = "rgrid1000"
+RESULTS_FOLDER = "joint"
 FIGURES_FOLDER = CANDEL_ROOT / "paper_clusters/figures"
 DATA_CONFIG_PATH = CANDEL_ROOT / "paper_clusters/data.toml"
 CLUSTERS_DATA_PATH = CANDEL_ROOT / "data/Clusters/ClustersData.txt"

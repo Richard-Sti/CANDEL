@@ -7,17 +7,27 @@ from candel import plot_corner_from_hdf5
 
 def plot_vext_dipole():
     """Figure (a): Vext dipole for different reconstructions."""
+    # Order: Carrick, Manticore, 2M++, No recon
     fnames = [
-        get_results_path("Vext_LTYT_noMNR_dipVext_hasY.hdf5"),
-        get_results_path("carrick2015_LTYT_noMNR_dipVext_hasY.hdf5"),
+        get_results_path("Carrick2015_LTYT_noMNR_dipVext_hasY.hdf5"),
         get_results_path("manticore_LTYT_noMNR_dipVext_hasY.hdf5"),
+        get_results_path("2mpp_zspace_galaxies_LTYT_noMNR_dipVext_hasY.hdf5"),
+        get_results_path("Vext_LTYT_noMNR_dipVext_hasY.hdf5"),
     ]
     fnames = [str(f) for f in fnames]
 
     keys = ['Vext_mag', 'Vext_ell', 'Vext_b']
-    cols = [COLS[0], COLS[1], COLS[2]]
-    labels = ["No reconstruction", "Carrick2015", "Manticore"]
+    cols = [COLS[3], COLS[1], COLS[2], COLS[0]]  # pink, orange, green, purple
+    labels = ["Carrick2015", "Manticore", r"2M++$\rho(z)$", "No reconstruction"]
     points = {("Vext_ell", "Vext_b"): (264., 48.)}
+    # Carrick: bold unfilled contours on top; order front to back
+    contour_args = [
+        {"zorder": 4, "filled": False, "lw": 2.0},  # Carrick (front)
+        {"zorder": 3},  # Manticore
+        {"zorder": 2},  # 2M++
+        {"zorder": 1},  # No recon (back)
+    ]
+    line_args = [{"lw": 2.0}, {}, {}, {}]
 
     plot_corner_from_hdf5(
         fnames,
@@ -30,23 +40,35 @@ def plot_vext_dipole():
         legend_fontsize=40,
         apply_ell_offset=True,
         ell_zero=180.0,
+        contour_args=contour_args,
+        line_args=line_args,
     )
     plt.close('all')
 
 
 def plot_h0_dipole():
     """Figure (b): H0 dipole for different reconstructions."""
+    # Order: Carrick, Manticore, 2M++, No recon
     fnames = [
-        get_results_path("Vext_LTYT_noMNR_dipH0_hasY.hdf5"),
-        get_results_path("carrick2015_LTYT_noMNR_dipH0_hasY.hdf5"),
+        get_results_path("Carrick2015_LTYT_noMNR_dipH0_hasY.hdf5"),
         get_results_path("manticore_LTYT_noMNR_dipH0_hasY.hdf5"),
+        get_results_path("2mpp_zspace_galaxies_LTYT_noMNR_dipH0_hasY.hdf5"),
+        get_results_path("Vext_LTYT_noMNR_dipH0_hasY.hdf5"),
     ]
     fnames = [str(f) for f in fnames]
 
     keys = ['dH_over_H_dipole', 'zeropoint_dipole_ell', 'zeropoint_dipole_b']
-    cols = [COLS[0], COLS[1], COLS[2]]
-    labels = ["No reconstruction", "Carrick2015", "Manticore"]
+    cols = [COLS[3], COLS[1], COLS[2], COLS[0]]  # pink, orange, green, purple
+    labels = ["Carrick2015", "Manticore", r"2M++$\rho(z)$", "No reconstruction"]
     points = {("Vext_ell", "Vext_b"): (264., 48.)}
+    # Carrick: bold unfilled contours on top; order front to back
+    contour_args = [
+        {"zorder": 4, "filled": False, "lw": 2.0},  # Carrick (front)
+        {"zorder": 3},  # Manticore
+        {"zorder": 2},  # 2M++
+        {"zorder": 1},  # No recon (back)
+    ]
+    line_args = [{"lw": 2.0}, {}, {}, {}]
 
     plot_corner_from_hdf5(
         fnames,
@@ -59,22 +81,34 @@ def plot_h0_dipole():
         legend_fontsize=40,
         ell_zero=-90.0,
         apply_ell_offset=True,
+        contour_args=contour_args,
+        line_args=line_args,
     )
     plt.close('all')
 
 
 def plot_zeropoint_dipole():
     """Figure (c): Zeropoint dipole for different reconstructions."""
+    # Order: Carrick, Manticore, 2M++, No recon
     fnames = [
-        get_results_path("Vext_LTYT_noMNR_dipA_hasY.hdf5"),
-        get_results_path("carrick2015_LTYT_noMNR_dipA_hasY.hdf5"),
+        get_results_path("Carrick2015_LTYT_noMNR_dipA_hasY.hdf5"),
         get_results_path("manticore_LTYT_noMNR_dipA_hasY.hdf5"),
+        get_results_path("2mpp_zspace_galaxies_LTYT_noMNR_dipA_hasY.hdf5"),
+        get_results_path("Vext_LTYT_noMNR_dipA_hasY.hdf5"),
     ]
     fnames = [str(f) for f in fnames]
 
     keys = ['zeropoint_dipole_mag', 'zeropoint_dipole_ell', 'zeropoint_dipole_b']
-    cols = [COLS[0], COLS[1], COLS[2]]
-    labels = ["No reconstruction", "Carrick2015", "Manticore"]
+    cols = [COLS[3], COLS[1], COLS[2], COLS[0]]  # pink, orange, green, purple
+    labels = ["Carrick2015", "Manticore", r"2M++$\rho(z)$", "No reconstruction"]
+    # Carrick: bold unfilled contours on top; order front to back
+    contour_args = [
+        {"zorder": 4, "filled": False, "lw": 2.0},  # Carrick (front)
+        {"zorder": 3},  # Manticore
+        {"zorder": 2},  # 2M++
+        {"zorder": 1},  # No recon (back)
+    ]
+    line_args = [{"lw": 2.0}, {}, {}, {}]
 
     plot_corner_from_hdf5(
         fnames,
@@ -86,6 +120,8 @@ def plot_zeropoint_dipole():
         legend_fontsize=40,
         ell_zero=-90.0,
         apply_ell_offset=True,
+        contour_args=contour_args,
+        line_args=line_args,
     )
     plt.close('all')
 

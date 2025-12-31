@@ -28,6 +28,7 @@ def main(include_dipA=False):
                         f"{RESULTS_FOLDER}/Vext_LT_noMNR_dipVext.hdf5",
                         f"{RESULTS_FOLDER}/Carrick2015_LT_noMNR_dipVext.hdf5",
                         f"{RESULTS_FOLDER}/manticore_LT_noMNR_dipVext.hdf5",
+                        f"{RESULTS_FOLDER}/2mpp_zspace_galaxies_LT_noMNR_dipVext.hdf5",
                     ],
                 },
                 {
@@ -36,6 +37,7 @@ def main(include_dipA=False):
                         f"{RESULTS_FOLDER}/Vext_YT_noMNR_dipVext_hasY.hdf5",
                         f"{RESULTS_FOLDER}/Carrick2015_YT_noMNR_dipVext_hasY.hdf5",
                         f"{RESULTS_FOLDER}/manticore_YT_noMNR_dipVext_hasY.hdf5",
+                        f"{RESULTS_FOLDER}/2mpp_zspace_galaxies_YT_noMNR_dipVext_hasY.hdf5",
                     ],
                 },
                 {
@@ -44,6 +46,7 @@ def main(include_dipA=False):
                         f"joint/Vext_LTYT_noMNR_dipVext_hasY.hdf5",
                         f"{RESULTS_FOLDER}/Carrick2015_LTYT_noMNR_dipVext_hasY.hdf5",
                         f"{RESULTS_FOLDER}/manticore_LTYT_noMNR_dipVext_hasY.hdf5",
+                        f"{RESULTS_FOLDER}/2mpp_zspace_galaxies_LTYT_noMNR_dipVext_hasY.hdf5",
                     ],
                 },
             ],
@@ -57,6 +60,7 @@ def main(include_dipA=False):
                         f"{RESULTS_FOLDER}/Vext_LT_noMNR_dipH0.hdf5",
                         f"{RESULTS_FOLDER}/Carrick2015_LT_noMNR_dipH0.hdf5",
                         f"{RESULTS_FOLDER}/manticore_LT_noMNR_dipH0.hdf5",
+                        f"{RESULTS_FOLDER}/2mpp_zspace_galaxies_LT_noMNR_dipH0.hdf5",
                     ],
                 },
                 {
@@ -65,6 +69,7 @@ def main(include_dipA=False):
                         f"{RESULTS_FOLDER}/Vext_YT_noMNR_dipH0_hasY.hdf5",
                         f"{RESULTS_FOLDER}/Carrick2015_YT_noMNR_dipH0_hasY.hdf5",
                         f"{RESULTS_FOLDER}/manticore_YT_noMNR_dipH0_hasY.hdf5",
+                        f"{RESULTS_FOLDER}/2mpp_zspace_galaxies_YT_noMNR_dipH0_hasY.hdf5",
                     ],
                 },
                 {
@@ -73,6 +78,7 @@ def main(include_dipA=False):
                         f"joint/Vext_LTYT_noMNR_dipH0_hasY.hdf5",
                         f"{RESULTS_FOLDER}/Carrick2015_LTYT_noMNR_dipH0_hasY.hdf5",
                         f"{RESULTS_FOLDER}/manticore_LTYT_noMNR_dipH0_hasY.hdf5",
+                        f"{RESULTS_FOLDER}/2mpp_zspace_galaxies_LTYT_noMNR_dipH0_hasY.hdf5",
                     ],
                 },
             ],
@@ -86,6 +92,7 @@ def main(include_dipA=False):
                         f"{RESULTS_FOLDER}/Vext_LT_noMNR_dipA.hdf5",
                         f"{RESULTS_FOLDER}/Carrick2015_LT_noMNR_dipA.hdf5",
                         f"{RESULTS_FOLDER}/manticore_LT_noMNR_dipA.hdf5",
+                        f"{RESULTS_FOLDER}/2mpp_zspace_galaxies_LT_noMNR_dipA.hdf5",
                     ],
                 },
                 {
@@ -94,6 +101,7 @@ def main(include_dipA=False):
                         f"{RESULTS_FOLDER}/Vext_YT_noMNR_dipA_hasY.hdf5",
                         f"{RESULTS_FOLDER}/Carrick2015_YT_noMNR_dipA_hasY.hdf5",
                         f"{RESULTS_FOLDER}/manticore_YT_noMNR_dipA_hasY.hdf5",
+                        f"{RESULTS_FOLDER}/2mpp_zspace_galaxies_YT_noMNR_dipA_hasY.hdf5",
                     ],
                 },
                 {
@@ -102,6 +110,7 @@ def main(include_dipA=False):
                         f"joint/Vext_LTYT_noMNR_dipA_hasY.hdf5",
                         f"{RESULTS_FOLDER}/Carrick2015_LTYT_noMNR_dipA_hasY.hdf5",
                         f"{RESULTS_FOLDER}/manticore_LTYT_noMNR_dipA_hasY.hdf5",
+                        f"{RESULTS_FOLDER}/2mpp_zspace_galaxies_LTYT_noMNR_dipA_hasY.hdf5",
                     ],
                 },
             ],
@@ -109,8 +118,10 @@ def main(include_dipA=False):
     ]
     if not include_dipA:
         rows = rows[:-1]
-    labels = ["No reconstruction", "Carrick2015", "Manticore"]
-    cols = [COLS[0], COLS[1], COLS[2]]
+    # Order: No recon, Carrick, Manticore, 2M++ρ(z)
+    # Colors: purple (no recon), pink (Carrick), orange (Manticore), green (2M++)
+    labels = ["No reconstruction", "Carrick2015", "Manticore", r"2M++$\rho(z)$"]
+    cols = [COLS[0], COLS[3], COLS[1], COLS[2]]  # purple, pink, orange, green
 
     def read_sigma_v_lower_bound(fname):
         toml_path = RESULTS_ROOT / fname
@@ -122,24 +133,33 @@ def main(include_dipA=False):
         except (FileNotFoundError, KeyError, TypeError, ValueError):
             return 0.0
 
-    def load_sigma_samples(fnames):
-        sigma_samples = []
-        lower_bounds = []
-        smooth_scale_1d = 0.3
+    # Prior lower bound on sigma_v is 150 km/s
+    sigma_v_lower = 150.0
+    log_sigma_v_lower = np.log10(sigma_v_lower)
+
+    def load_sigma_samples_reflection_kde(fnames, n_points=500):
+        """Load samples and compute reflection KDE to handle boundary."""
+        from scipy.stats import gaussian_kde
+
+        all_curves = []
         for f in fnames:
             arr = read_samples(str(RESULTS_ROOT), f, keys="sigma_v")
-            samples = np.asarray(arr).reshape(-1, 1)
-            max_val = float(np.max(samples))
-            lower = read_sigma_v_lower_bound(f)
-            lower_bounds.append(lower)
-            sigma_samples.append(MCSamples(
-                samples=samples,
-                names=["sigma_v"],
-                labels=[r"\sigma_v\,(\mathrm{km\,s^{-1}})"],
-                ranges={"sigma_v": [lower, max_val]},
-                settings={"smooth_scale_1D": smooth_scale_1d},
-            ))
-        return sigma_samples, lower_bounds
+            samples = np.log10(np.asarray(arr)).flatten()
+
+            # Reflect samples at lower boundary
+            reflected = 2 * log_sigma_v_lower - samples[samples < log_sigma_v_lower + 0.5]
+            samples_extended = np.concatenate([samples, reflected])
+
+            # Compute KDE on extended data
+            kde = gaussian_kde(samples_extended)
+
+            # Evaluate on grid above boundary
+            x = np.linspace(log_sigma_v_lower, np.max(samples) + 0.1, n_points)
+            y = kde(x) * 2  # Factor of 2 to correct for doubled data
+
+            all_curves.append((x, y))
+
+        return all_curves
 
     settings = plots.GetDistPlotSettings()
     settings.alpha_filled_add = -0.25
@@ -152,15 +172,14 @@ def main(include_dipA=False):
     for row_idx, row in enumerate(rows):
         for col_idx, relation in enumerate(row["relations"]):
             ax = g.get_axes((row_idx, col_idx))
-            sigma_samples, lower_bounds = load_sigma_samples(relation["files"])
-            g.plot_1d(
-                sigma_samples,
-                param="sigma_v",
-                colors=cols,
-                legend_labels=labels,
-                ax=ax,
-            )
-            ax.set_xlim(left=max(lower_bounds))
+            smoothed_hists = load_sigma_samples_reflection_kde(relation["files"])
+            for (x, y), col in zip(smoothed_hists, cols):
+                y_norm = y / np.max(y)  # Normalize to peak height of 1
+                ax.plot(x, y_norm, color=col, lw=1.8)
+                ax.fill_between(x, 0, y_norm, color=col, alpha=0.2)
+            ax.set_xlim(left=log_sigma_v_lower)
+            ax.set_ylim(bottom=0)
+            ax.set_yticklabels([])
             # Relation name in top right
             ax.text(
                 0.98,
@@ -173,13 +192,13 @@ def main(include_dipA=False):
             )
             # Only add x-label on bottom row
             if row_idx == last_row_idx:
-                ax.set_xlabel(r"$\sigma_v\,(\mathrm{km\,s^{-1}})$")
+                ax.set_xlabel(r"$\log_{10}(\sigma_v/\mathrm{km\,s^{-1}})$")
             else:
                 ax.set_xlabel("")
 
         # Add per-row y-axis label and a bold row label further left
         first_ax = g.subplots[row_idx][0]
-        first_ax.set_ylabel(r"$P(\sigma_v)$", fontsize=settings.axes_fontsize)
+        first_ax.set_ylabel(r"$P(\log_{10}\sigma_v)$", fontsize=settings.axes_fontsize)
         first_ax.text(
             -0.28,
             0.5,
@@ -192,13 +211,13 @@ def main(include_dipA=False):
         )
 
     legend_handles = [
-        Line2D([0], [0], color=col, lw=1.5) for col in cols
+        Line2D([0], [0], color=col, lw=1.8) for col in cols
     ]
     g.fig.legend(
         handles=legend_handles,
         labels=labels,
         loc="upper center",
-        ncol=3,
+        ncol=4,
         frameon=False,
         bbox_to_anchor=(0.5, 1.04),
         fontsize=9,

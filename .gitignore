@@ -1,6 +1,7 @@
 .vscode/
 venv_candel/
 venv_gpu_candel/
+venv_candel_gpu/
 candel.egg-info/
 __pycache__/
 data/
@@ -22,3 +23,13 @@ scripts/runs/logs
 scripts/mocks/logs/
 
 modules_arc.sh
+
+tariq_notebooks/
+tariq_random/   
+tariq_retired_notebooks/
+tariq_retired_notebooks2/
+paper_clusters/figures/
+paper_clusters/tables/
+
+CANDEL.code-workspace
+CLAUDE.md
