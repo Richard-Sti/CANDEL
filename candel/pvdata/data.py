@@ -496,6 +496,10 @@ def load_los(los_data_path, data, mask=None):
             data["los_RA"] = f["RA"][...][mask]
             data["los_dec"] = f["dec"][...][mask]
 
+        # Load redshift grid if available (for z-space mode)
+        if "z" in f:
+            data["los_z"] = f['z'][...]
+
         assert np.all(data["los_density"] > 0)
         assert np.all(np.isfinite(data["los_velocity"]))
 

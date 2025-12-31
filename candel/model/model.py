@@ -643,8 +643,15 @@ class BaseModel(ABC):
 
         self.which_Vext = get_nested(config, "pv_model/which_Vext", "constant")
 
+        # Map which_Vext values to prior key names (some differ)
+        vext_prior_key_map = {
+            "radial": "Vext_radial",
+            "radial_magnitude": "Vext_radmag",
+        }
+
         if self.which_Vext in ["radial", "radial_magnitude"]:
-            d = priors[f"Vext_{self.which_Vext}"]
+            prior_key = vext_prior_key_map[self.which_Vext]
+            d = priors[prior_key]
             rknot = d.get("rknot")
             if rknot is None:
                 raise KeyError(
@@ -837,6 +844,82 @@ def compute_quadrupole_radial(data, quadrupole):
     Q_rad -= (1 / 3) * jnp.dot(Qq1, Qq2)  # scalar, broadcasted
 
     return Q_rad  # (N, 1)
+
+
+def compute_los_zspace_to_rspace(
+    data, los_r, z_grid, Vext, which_Vext, kwargs_Vext,
+    redshift2distance, h
+):
+    """
+    Map LOS quantities from z-space to r-space accounting for Vext.
+
+    Uses (1 + z_obs) = (1 + z_cosmo) * (1 + Vext_rad/c) to convert
+    observed redshift grid to cosmological redshift, then to real-space distance.
+
+    Parameters
+    ----------
+    data : PVDataFrame
+        Data container with galaxy directions (rhat).
+    los_r : array (n_los,)
+        r grid from LOS files (used for Vext evaluation).
+    z_grid : array (n_los,)
+        Redshift grid from LOS files.
+    Vext : array
+        External velocity parameters.
+    which_Vext : str
+        Vext mode (constant, radial, etc.).
+    kwargs_Vext : dict
+        Additional Vext parameters.
+    redshift2distance : callable
+        Redshift2Distance instance for z -> r conversion.
+    h : float or array (n_gal,)
+        Hubble parameter (per-galaxy for anisotropic H0).
+
+    Returns
+    -------
+    r_cosmo : array (n_field, n_gal, n_los)
+        Real-space distances corresponding to each z_grid point.
+    """
+    c = 299792.458  # km/s
+
+    # Compute Vext_rad at los_r positions
+    # NOTE: For radially-varying Vext, this is an approximation - we evaluate
+    # Vext at the r_grid positions from the LOS file rather than the true
+    # real-space positions (which depend on Vext itself).
+    Vext_rad = compute_Vext_radial(
+        data, los_r, Vext, which_Vext, **kwargs_Vext
+    )  # (n_field, n_gal, n_los)
+
+    # Convert z_obs to z_cosmo: (1 + z_obs) = (1 + z_cosmo) * (1 + Vext_rad/c)
+    z_cosmo = (1 + z_grid[None, None, :]) / (1 + Vext_rad / c) - 1
+
+    # Clamp z_cosmo to be non-negative. This can happen when Vext_rad is large
+    # (e.g., 2000 km/s) and z_grid is small (e.g., 0.001). Physically, this means
+    # the observed redshift is entirely due to peculiar velocity, with the object
+    # at r ~ 0. We clamp to a small positive value to avoid numerical issues.
+    z_cosmo = jnp.maximum(z_cosmo, 1e-8)
+
+    # Convert z_cosmo to r_cosmo using (anisotropic) H0
+    # Need to handle array shapes carefully since redshift2distance uses vmap
+    if jnp.ndim(h) == 0:
+        # Isotropic h - flatten, apply, reshape
+        shape = z_cosmo.shape
+        r_cosmo = redshift2distance(z_cosmo.ravel(), h=h).reshape(shape)
+    else:
+        # Per-galaxy h for anisotropic H0
+        # h shape: (n_gal,), z_cosmo shape: (n_field, n_gal, n_los)
+        # For each galaxy i, apply r = redshift2distance(z, h=h[i])
+        def _z_to_r_per_gal(z_line, h_gal):
+            return redshift2distance(z_line, h=h_gal)
+
+        # vmap over galaxies (axis 1 of z_cosmo)
+        # Take first field dimension, apply per-galaxy, then broadcast
+        r_cosmo = vmap(
+            _z_to_r_per_gal, in_axes=(0, 0)
+        )(z_cosmo[0], h)  # (n_gal, n_los)
+        r_cosmo = r_cosmo[None, ...]  # (1, n_gal, n_los) - add field dim back
+
+    return r_cosmo
 
 
 def sample_distance_prior(priors, shared_params=None):
@@ -1502,6 +1585,10 @@ class ClustersModel(BaseModel):
             get_nested(self.config, "io/apply_Ez_correction", True))
         self.stretch_los_with_zeropoint = bool(
             get_nested(self.config, "pv_model/stretch_los_with_zeropoint", False))
+        self.use_zspace = bool(
+            get_nested(self.config, "pv_model/use_zspace", False))
+        if self.use_zspace:
+            self.redshift2distance = Redshift2Distance(Om0=self.Om)
 
         self.distance2logda = Distance2LogAngDist(Om0=self.Om, zmax_interp=1.0)
         self.distance2logdl = Distance2LogLumDist(Om0=self.Om, zmax_interp=1.0)
@@ -1818,62 +1905,89 @@ class ClustersModel(BaseModel):
                 los_velocity_r_grid = None
                 los_log_density_r_grid = None
 
-                # Determine if stretching is needed: for dipole or per_pix/radial_binned modes
-                needs_stretch = (
-                    self.stretch_los_with_zeropoint
-                    and (A_dipole is not None or delta_A is not None))
+                if self.use_zspace and "los_z" in data.data:
+                    # Z-space mode: map from z_grid to r_grid accounting for Vext
+                    z_grid_los = data["los_z"]
+                    los_r = data["los_r"]
 
-                if not needs_stretch:
-                    if "los_delta_r_grid" in data.data:
-                        los_delta_r_grid = data["los_delta_r_grid"]
-                        los_velocity_r_grid = data["los_velocity_r_grid"]
-                        los_log_density_r_grid = data["los_log_density_r_grid"]
-                    else:
-                        los_delta_r_grid = data.f_los_delta.interp_many_steps_per_galaxy(r_grid)
-                        los_velocity_r_grid = data.f_los_velocity.interp_many_steps_per_galaxy(r_grid)
-                        los_log_density_r_grid = data.f_los_log_density.interp_many_steps_per_galaxy(r_grid)
-
-                if needs_stretch:
-                    H_base = 100.0
-
-                    if self.which_A in ["per_pix", "radial_binned", "radial_binned_dipole"]:
-                        # For per_pix/radial_binned: delta_A is per-galaxy (n_gal,)
-                        delta_frac = _delta_a_to_frac(delta_A)  # shape (n_gal,)
-                        H_new = H_base * (1.0 + delta_frac)
-                    else:
-                        # For dipole: project dipole onto each galaxy direction
+                    # Determine h for z->r conversion (can be anisotropic)
+                    if A_dipole is not None:
+                        # Anisotropic h based on zeropoint dipole
                         A_norm = jnp.linalg.norm(A_dipole)
                         cos_theta = jnp.sum(
                             A_dipole * data["rhat"], axis=1) / jnp.maximum(A_norm, 1e-30)
                         delta_frac = _delta_a_to_frac(A_norm)
-                        H_new = H_base * (1.0 + delta_frac * cos_theta)
-                    r_stretched = r_grid[None, :] * H_new[:, None] / H_base
+                        h_per_gal = h * (1.0 + delta_frac * cos_theta)
+                    elif delta_A is not None:
+                        # Per-galaxy delta_A (from per_pix or radial_binned modes)
+                        delta_frac = _delta_a_to_frac(delta_A)
+                        h_per_gal = h * (1.0 + delta_frac)
+                    else:
+                        h_per_gal = h
 
-                    def _interp_field(f_interp):
-                        return vmap(f_interp, in_axes=1, out_axes=2)(r_stretched)
+                    # Compute r_cosmo for each (field, galaxy, z_grid_point)
+                    r_cosmo = compute_los_zspace_to_rspace(
+                        data, los_r, z_grid_los, Vext, self.which_Vext,
+                        self.kwargs_Vext, self.redshift2distance, h_per_gal
+                    )  # (n_field, n_gal, n_los)
 
-                    los_delta_r_grid = _interp_field(data.f_los_delta)
-                    los_velocity_r_grid = _interp_field(data.f_los_velocity)
-                    los_log_density_r_grid = _interp_field(data.f_los_log_density)
+                    # Get LOS values on the original grid
+                    los_delta_orig = data.f_los_delta.interp_many_steps_per_galaxy(los_r)
+                    los_velocity_orig = data.f_los_velocity.interp_many_steps_per_galaxy(los_r)
+                    los_log_density_orig = data.f_los_log_density.interp_many_steps_per_galaxy(los_r)
 
-                    # Old remap approach (kept for comparison):
-                    # r_stretched = r_grid[None, :] * H_base / H_new[:, None]
-                    #
-                    # def _stretch_field(f_interp):
-                    #     base_vals = f_interp.interp_many_steps_per_galaxy(r_grid)
-                    #
-                    #     def _interp_gal(y_gal, r_stretch_gal):
-                    #         return jnp.interp(r_grid, r_stretch_gal, y_gal)
-                    #
-                    #     def _interp_field(y_field):
-                    #         return vmap(_interp_gal, in_axes=(0, 0))(y_field, r_stretched)
-                    #
-                    #     return vmap(_interp_field, in_axes=0)(base_vals)
-                    #
-                    # los_density_r_grid = _stretch_field(data.f_los_density)
-                    # los_log_density_r_grid = jnp.log(jnp.maximum(los_density_r_grid, 1e-30))
-                    # los_delta_r_grid = los_density_r_grid - 1.0
-                    # los_velocity_r_grid = _stretch_field(data.f_los_velocity)
+                    # Interpolate LOS quantities from r_cosmo positions to r_grid
+                    def _interp_to_rgrid(los_values, r_cosmo_line):
+                        """Interpolate los_values (on r_cosmo positions) onto r_grid."""
+                        return jnp.interp(r_grid, r_cosmo_line, los_values)
+
+                    # vmap over galaxies (axis 1), then over fields (axis 0)
+                    _interp_gal = vmap(_interp_to_rgrid, in_axes=(0, 0))
+                    _interp_field = vmap(_interp_gal, in_axes=(0, 0))
+
+                    los_delta_r_grid = _interp_field(los_delta_orig, r_cosmo)
+                    los_velocity_r_grid = _interp_field(los_velocity_orig, r_cosmo)
+                    los_log_density_r_grid = _interp_field(los_log_density_orig, r_cosmo)
+
+                else:
+                    # Original logic (when use_zspace=False)
+                    # Determine if stretching is needed: for dipole or per_pix/radial_binned modes
+                    needs_stretch = (
+                        self.stretch_los_with_zeropoint
+                        and (A_dipole is not None or delta_A is not None))
+
+                    if not needs_stretch:
+                        if "los_delta_r_grid" in data.data:
+                            los_delta_r_grid = data["los_delta_r_grid"]
+                            los_velocity_r_grid = data["los_velocity_r_grid"]
+                            los_log_density_r_grid = data["los_log_density_r_grid"]
+                        else:
+                            los_delta_r_grid = data.f_los_delta.interp_many_steps_per_galaxy(r_grid)
+                            los_velocity_r_grid = data.f_los_velocity.interp_many_steps_per_galaxy(r_grid)
+                            los_log_density_r_grid = data.f_los_log_density.interp_many_steps_per_galaxy(r_grid)
+
+                    if needs_stretch:
+                        H_base = 100.0
+
+                        if self.which_A in ["per_pix", "radial_binned", "radial_binned_dipole"]:
+                            # For per_pix/radial_binned: delta_A is per-galaxy (n_gal,)
+                            delta_frac = _delta_a_to_frac(delta_A)  # shape (n_gal,)
+                            H_new = H_base * (1.0 + delta_frac)
+                        else:
+                            # For dipole: project dipole onto each galaxy direction
+                            A_norm = jnp.linalg.norm(A_dipole)
+                            cos_theta = jnp.sum(
+                                A_dipole * data["rhat"], axis=1) / jnp.maximum(A_norm, 1e-30)
+                            delta_frac = _delta_a_to_frac(A_norm)
+                            H_new = H_base * (1.0 + delta_frac * cos_theta)
+                        r_stretched = r_grid[None, :] * H_new[:, None] / H_base
+
+                        def _interp_field(f_interp):
+                            return vmap(f_interp, in_axes=1, out_axes=2)(r_stretched)
+
+                        los_delta_r_grid = _interp_field(data.f_los_delta)
+                        los_velocity_r_grid = _interp_field(data.f_los_velocity)
+                        los_log_density_r_grid = _interp_field(data.f_los_log_density)
 
 
             # Homogeneous Malmqusit distance prior, `(n_field, n_gal, n_rbin)`
@@ -2413,6 +2527,7 @@ class JointPVModel:
 
         self.config = submodels[0].config
         self.which_Vext = submodels[0].which_Vext
+        self.kwargs_Vext = getattr(submodels[0], "kwargs_Vext", {})
 
     def _sample_shared_params(self, priors):
         shared = {}

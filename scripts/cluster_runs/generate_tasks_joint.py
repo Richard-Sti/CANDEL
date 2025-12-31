@@ -30,21 +30,37 @@ from candel import fprint, load_config, replace_prior_with_delta
 from candel.pvdata.data import load_clusters
 
 # Hardcoded flags for task generation.
-scaling_relations = [ "LTYT", "LT", "YT",]  # Set to None to run all
-reconstructions = ["zspace"] #"Vext","Carrick2015","manticore",
+scaling_relations = [ "LTYT", "LT", "YT"]  # Set to None to run all
+reconstructions = ["zspace", "Vext","Carrick2015","manticore"]
 include_quad = True
-include_pairs = True
-include_pix = False
-resolution_convergence = False
-free_radial_direction = True
-include_base = True
-include_bias = False  # Double power law bias model tests
+include_pairs = False
+include_pix = True
+resolution_convergence = True # This refers to radmag
+include_rad = True     # Radial Vext (direction free, magnitude varies with r)
+include_radmag = True   # Radial magnitude Vext (direction fixed, magnitude varies with r)
+# Base model flags (split from old include_base)
+include_base = True    # No flow/H0 model (both Vext and zeropoint are delta)
+include_dipH0 = True    # Zeropoint dipole with stretch_los=True (H0 anisotropy)
+include_dipA = True    # Zeropoint dipole with stretch_los=False (calibration)
+include_dipVext = True # Vext dipole only
+include_bias = True  # Double power law bias model tests
 include_fixed_sigma = False
-output_root = "results/joint"
+# Z-space mode flag: controls how runs are generated
+# When False (old behavior):
+#   - Vext runs: stretch_los=False
+#   - A runs: stretch_los=False
+#   - H0 runs: stretch_los=True
+# When True (new z-space behavior):
+#   - Vext runs: use_zspace=True, stretch_los=False
+#   - A runs: use_zspace=False, stretch_los=False
+#   - H0 runs: use_zspace=True, stretch_los=False
+# Note: when use_zspace=True, stretch_los value doesn't matter (but set to False)
+GENERATE_TASKS_ZSPACE = True
+output_root = "results/zspace"
 num_chains = 4
 chain_method = "sequential"
 LTYT_joint = True
-split_tasks_two_to_one = False
+split_tasks_two_to_one = True
 split_tasks_by_kind = False
 
 
@@ -269,6 +285,7 @@ if __name__ == "__main__":
     config = overwrite_config(config, "io/reconstruction_main/num_steps", 1001)
     config = overwrite_config(config, "inference/num_chains", num_chains)
     config = overwrite_config(config, "inference/chain_method", chain_method)
+    # Note: use_zspace is set per-run below based on whether it's a dipA or dipH0 run
 
     tasks_index = args.tasks_index
     include_fixed_sigma = args.include_fixed_sigma
@@ -296,7 +313,7 @@ if __name__ == "__main__":
     # Dipoles and permutations
     dipole_settings["model/priors/Vext"] = [
             {"dist": "delta", "value": [0.0, 0.0, 0.0]}, 
-            {"dist": "vector_uniform_fixed", "low": 0.0, "high": 2000.0},
+            {"dist": "vector_uniform_fixed", "low": 0.0, "high": 5000.0},
         ]
     dipole_settings["model/priors/zeropoint_dipole"] = [
             {"dist": "delta", "value": [0.0, 0.0, 0.0]},
@@ -305,21 +322,51 @@ if __name__ == "__main__":
 
     dipole_combinations = expand_override_grid(dipole_settings)
 
-    def is_base_run(override_set):
+    def classify_run(override_set):
+        """Classify a run based on its Vext and zeropoint priors.
+
+        Returns one of: 'base', 'dipVext', 'dipZP', 'dipVext_dipZP'
+        - 'base': both Vext and zeropoint are delta (no flow/H0)
+        - 'dipVext': Vext dipole only
+        - 'dipZP': zeropoint dipole only (will be split into dipA/dipH0 later)
+        - 'dipVext_dipZP': both Vext and zeropoint dipoles
+        """
         vext_prior = override_set.get("model/priors/Vext", {})
         zp_prior = override_set.get("model/priors/zeropoint_dipole", {})
         vext_dist = vext_prior.get("dist", "")
         zp_dist = zp_prior.get("dist", "")
-        return (
-            (vext_dist == "delta" and zp_dist == "delta")
-            or (vext_dist == "vector_uniform_fixed" and zp_dist == "delta")
-            or (vext_dist == "delta" and zp_dist == "vector_uniform_fixed")
-        )
 
-    if not include_base:
-        dipole_combinations = [
-            combo for combo in dipole_combinations if not is_base_run(combo)
-        ]
+        vext_is_dipole = vext_dist == "vector_uniform_fixed"
+        zp_is_dipole = zp_dist == "vector_uniform_fixed"
+
+        if vext_is_dipole and zp_is_dipole:
+            return "dipVext_dipZP"
+        elif vext_is_dipole:
+            return "dipVext"
+        elif zp_is_dipole:
+            return "dipZP"
+        else:
+            return "base"
+
+    def should_include_run(override_set):
+        """Check if a run should be included based on the include_* flags."""
+        run_type = classify_run(override_set)
+        if run_type == "base":
+            return include_base
+        elif run_type == "dipVext":
+            return include_dipVext
+        elif run_type == "dipZP":
+            # dipZP runs are split into dipA and dipH0 later via stretch_variants
+            # Include if either dipA or dipH0 is enabled
+            return include_dipA or include_dipH0
+        elif run_type == "dipVext_dipZP":
+            # Both dipoles - include if pairs are enabled
+            return include_pairs
+        return True
+
+    dipole_combinations = [
+        combo for combo in dipole_combinations if should_include_run(combo)
+    ]
     
     # Per-pixel Vext
     pixelVext_settings = deepcopy(base)
@@ -344,10 +391,10 @@ if __name__ == "__main__":
     quadVext_settings = deepcopy(base)
 
     quadVext_settings["model/priors/Vext"] = [
-        {"dist": "vector_uniform_fixed", "low": 0.0, "high": 2000.0},
+        {"dist": "vector_uniform_fixed", "low": 0.0, "high": 5000.0},
     ]
     quadVext_settings["model/priors/Vext_quad"] = [
-        {"dist": "quadrupole_uniform_fixed", "low": 0.0, "high": 2000.0},
+        {"dist": "quadrupole_uniform_fixed", "low": 0.0, "high": 5000.0},
     ]
 
     quadVext_combinations = expand_override_grid(quadVext_settings)
@@ -394,7 +441,7 @@ if __name__ == "__main__":
     radialMagVext_combinations = build_radmag_combinations(
         [0, 250, 500, 750, 1000], "default"
     )
-    if not include_base:
+    if not include_radmag:
         radialMagVext_combinations = []
     resolution_radmag_combinations = []
     if resolution_convergence:
@@ -431,7 +478,7 @@ if __name__ == "__main__":
         "pv_model/sigmav_variant": ["sigv100"],
         "io/root_output": output_root,
         "model/priors/Vext": [
-            {"dist": "vector_uniform_fixed", "low": 0.0, "high": 2000.0}],
+            {"dist": "vector_uniform_fixed", "low": 0.0, "high": 5000.0}],
         "model/priors/zeropoint_dipole": [
             {"dist": "delta", "value": [0.0, 0.0, 0.0]}],
         "model/priors/sigma_v": [{"dist": "delta", "value": 100.0}],
@@ -454,12 +501,13 @@ if __name__ == "__main__":
         fixed_sigmav_diph0_settings) if include_fixed_sigma else []
 
     override_groups = [
-        ("all_other_runs", dipole_combinations + radialMagVext_combinations
+        ("all_other_runs", dipole_combinations
          + fixed_sigmav_combinations + fixed_sigmav_diph0_combinations),
         ("pix", pixelA_combinations + pixelH0_combinations + pixelVext_combinations if include_pix else []),
         ("quad", quadVext_combinations + quad_zeropoint_combinations if include_quad else []),
         ("resolution_convergence", resolution_radmag_combinations if resolution_convergence else []),
-        ("free_radial_direction", radialVext_combinations if free_radial_direction else []),
+        ("rad", radialVext_combinations if include_rad else []),
+        ("radmag", radialMagVext_combinations),
         ("bias", bias_combinations if include_bias else []),
     ]
 
@@ -600,7 +648,8 @@ if __name__ == "__main__":
         "quad": [],
         "pairs": [],
         "resolution_convergence": [],
-        "free_radial_direction": [],
+        "rad": [],
+        "radmag": [],
         "bias": [],
     }
     for scenario in scenarios:
@@ -690,18 +739,69 @@ if __name__ == "__main__":
                     isinstance(dipole_prior, dict)
                     and dipole_prior.get("dist") == "vector_uniform_fixed"
                 ):
-                    stretch_variants = [False, True]
+                    # Build stretch_variants based on include_dipA and include_dipH0
+                    stretch_variants = []
+                    if include_dipA:
+                        stretch_variants.append(False)  # dipA: stretch_los=False
+                    if include_dipH0:
+                        stretch_variants.append(True)   # dipH0: stretch_los=True
+                    if not stretch_variants:
+                        # Neither dipA nor dipH0 enabled, skip this run
+                        continue
                 else:
                     stretch_variants = [None]
 
                 for stretch_los in stretch_variants:
                     run_config = deepcopy(local_config)
-                    if stretch_los is not None:
-                        run_config = overwrite_config(
-                            run_config,
-                            "pv_model/stretch_los_with_zeropoint",
-                            stretch_los,
+                    # stretch_los determines run type for tagging:
+                    # - None: base/Vext run (no zeropoint dipole)
+                    # - False: A run (calibration uncertainty)
+                    # - True: H0 run (Hubble anisotropy)
+                    is_H0_run = (stretch_los is True)
+                    is_A_run = (stretch_los is False)
+                    is_vext_or_base_run = (stretch_los is None)
+
+                    if GENERATE_TASKS_ZSPACE:
+                        # Z-space mode: use_zspace handles the physics
+                        # - Vext runs (has Vext model): use_zspace=True
+                        # - H0 runs: use_zspace=True
+                        # - A runs: use_zspace=False
+                        # - Base runs (no dipoles): use_zspace=False
+                        # stretch_los is always False (doesn't matter when use_zspace=True)
+                        vext_prior = override_set.get("model/priors/Vext", {})
+                        has_vext_dipole = (
+                            isinstance(vext_prior, dict)
+                            and vext_prior.get("dist") == "vector_uniform_fixed"
                         )
+                        which_vext = override_set.get("pv_model/which_Vext", "constant")
+                        has_radial_vext = which_vext in ("radial", "radial_magnitude")
+                        has_vext_model = has_vext_dipole or has_radial_vext
+                        if is_H0_run or has_vext_model:
+                            run_config = overwrite_config(
+                                run_config, "pv_model/use_zspace", True)
+                        else:
+                            # A runs and base runs (no Vext model)
+                            run_config = overwrite_config(
+                                run_config, "pv_model/use_zspace", False)
+                        # Set stretch_los for tagging, then override to False later
+                        if stretch_los is not None:
+                            run_config = overwrite_config(
+                                run_config,
+                                "pv_model/stretch_los_with_zeropoint",
+                                stretch_los,
+                            )
+                    else:
+                        # Old behavior: stretch_los controls the physics
+                        # - Vext/A runs: stretch_los=False
+                        # - H0 runs: stretch_los=True
+                        run_config = overwrite_config(
+                            run_config, "pv_model/use_zspace", False)
+                        if stretch_los is not None:
+                            run_config = overwrite_config(
+                                run_config,
+                                "pv_model/stretch_los_with_zeropoint",
+                                stretch_los,
+                            )
                     if not include_pairs:
                         vext_prior = get_nested(
                             run_config, "model/priors/Vext", {})
@@ -800,6 +900,17 @@ if __name__ == "__main__":
                         fprint(f"set Malmquist grid to {grid_settings['num_points_malmquist']} points for Vext")
 
                     dynamic_tag = generate_dynamic_tag(run_config, scenario_label)
+
+                    # In z-space mode, override stretch_los to False after tagging
+                    # (the physics is handled by use_zspace, stretch_los was only
+                    # needed for the dipA vs dipH0 filename distinction)
+                    if GENERATE_TASKS_ZSPACE and is_H0_run:
+                        run_config = overwrite_config(
+                            run_config,
+                            "pv_model/stretch_los_with_zeropoint",
+                            False,
+                        )
+
                     kind_for_filename = kind.replace("precomputed_los_", "")
 
                     fname_out = join(
@@ -828,11 +939,12 @@ if __name__ == "__main__":
 
     ordered_groups = [
         "all_other_runs",
-        "pix",
-        "quad",
-        "pairs",
+        "radmag",
         "resolution_convergence",
-        "free_radial_direction",
+        "quad",
+        "rad",
+        "pix",
+        "pairs",
         "bias",
     ]
 
