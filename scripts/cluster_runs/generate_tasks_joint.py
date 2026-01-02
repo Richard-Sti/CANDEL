@@ -31,7 +31,7 @@ from candel.pvdata.data import load_clusters
 
 # Hardcoded flags for task generation.
 scaling_relations = [ "LTYT", "LT", "YT"]  # Set to None to run all
-reconstructions = ["zspace", "Vext","Carrick2015","manticore"]
+reconstructions = ["zspace", "Carrick2015","manticore"]
 include_quad = True
 include_pairs = False
 include_pix = True
@@ -40,9 +40,10 @@ include_rad = True     # Radial Vext (direction free, magnitude varies with r)
 include_radmag = True   # Radial magnitude Vext (direction fixed, magnitude varies with r)
 # Base model flags (split from old include_base)
 include_base = True    # No flow/H0 model (both Vext and zeropoint are delta)
-include_dipH0 = True    # Zeropoint dipole with stretch_los=True (H0 anisotropy)
+include_dipH0 = True   # Zeropoint dipole with stretch_los=True (H0 anisotropy)
 include_dipA = True    # Zeropoint dipole with stretch_los=False (calibration)
 include_dipVext = True # Vext dipole only
+include_A = False    # Master switch for all A runs (dipA, quadA, pixA, pairs with A)
 include_bias = True  # Double power law bias model tests
 include_fixed_sigma = False
 # Z-space mode flag: controls how runs are generated
@@ -357,8 +358,8 @@ if __name__ == "__main__":
             return include_dipVext
         elif run_type == "dipZP":
             # dipZP runs are split into dipA and dipH0 later via stretch_variants
-            # Include if either dipA or dipH0 is enabled
-            return include_dipA or include_dipH0
+            # Include if either (dipA and include_A) or dipH0 is enabled
+            return (include_dipA and include_A) or include_dipH0
         elif run_type == "dipVext_dipZP":
             # Both dipoles - include if pairs are enabled
             return include_pairs
@@ -503,7 +504,7 @@ if __name__ == "__main__":
     override_groups = [
         ("all_other_runs", dipole_combinations
          + fixed_sigmav_combinations + fixed_sigmav_diph0_combinations),
-        ("pix", pixelA_combinations + pixelH0_combinations + pixelVext_combinations if include_pix else []),
+        ("pix", (pixelA_combinations if include_A else []) + pixelH0_combinations + pixelVext_combinations if include_pix else []),
         ("quad", quadVext_combinations + quad_zeropoint_combinations if include_quad else []),
         ("resolution_convergence", resolution_radmag_combinations if resolution_convergence else []),
         ("rad", radialVext_combinations if include_rad else []),
@@ -739,9 +740,9 @@ if __name__ == "__main__":
                     isinstance(dipole_prior, dict)
                     and dipole_prior.get("dist") == "vector_uniform_fixed"
                 ):
-                    # Build stretch_variants based on include_dipA and include_dipH0
+                    # Build stretch_variants based on include_dipA/include_dipH0 and include_A
                     stretch_variants = []
-                    if include_dipA:
+                    if include_dipA and include_A:
                         stretch_variants.append(False)  # dipA: stretch_los=False
                     if include_dipH0:
                         stretch_variants.append(True)   # dipH0: stretch_los=True
