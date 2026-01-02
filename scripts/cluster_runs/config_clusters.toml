@@ -183,10 +183,13 @@ endpoints="not-a-knot"
 
 [model.priors.Vext_radmag]
 dist = "vector_radialmag_uniform"
-low = -2000
-high = 2000
+low = -5000
+high = 5000
 rknot = [0, 250, 500, 750, 1000]
 method = "cubic"
+# Optional smoothness prior: penalizes differences between adjacent knots
+# with Normal(0, smoothness_scale). Set to 0 or omit to disable.
+smoothness_scale = 500
 
 [model.priors.zeropoint_dipole]
 dist = "delta"

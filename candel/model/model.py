@@ -327,7 +327,7 @@ def _direction_from_galactic(direction):
 
 
 def sample_radialmag_vector(name, nval, low, high, max_modulus=None,
-                            direction=None):
+                            direction=None, smoothness_scale=None):
     """
     Sample a vector whose magnitude varies at `nval` knots but a direction
     is shared by all knots and sampled isotropically on the sky. The magnitude
@@ -335,6 +335,11 @@ def sample_radialmag_vector(name, nval, low, high, max_modulus=None,
 
     If `max_modulus` is provided (sequence of length `nval`), magnitudes in
     each bin are drawn from `[-abs(max_modulus_i), abs(max_modulus_i)]`.
+
+    If `smoothness_scale` is provided (in km/s), a smoothness prior is applied
+    that penalizes differences between adjacent knots using a Normal(0, scale)
+    distribution on the differences.
+
     Returns the tuple (mag, rhat), where `mag` has shape (nval,) and `rhat`
     has shape (3,).
     """
@@ -365,6 +370,13 @@ def sample_radialmag_vector(name, nval, low, high, max_modulus=None,
 
     with plate(f"{name}_plate", nval):
         mag = sample(f"{name}_mag", Uniform(low_arr, high_arr))
+
+    # Apply smoothness prior on differences between adjacent knots
+    if smoothness_scale is not None and smoothness_scale > 0:
+        diffs = jnp.diff(mag)
+        # Add log-probability: Normal(0, smoothness_scale) for each difference
+        smoothness_logp = -0.5 * jnp.sum((diffs / smoothness_scale) ** 2)
+        factor(f"{name}_smoothness", smoothness_logp)
 
     rhat = jnp.array([
         sin_theta * jnp.cos(phi),
@@ -501,6 +513,8 @@ def load_priors(config_priors):
                     p["h0_dipole_percent"],
                 ) if "h0_dipole_percent" in p else p.get("max_modulus")
             ),
+            # Optional smoothness prior (km/s scale for penalizing knot differences)
+            "smoothness_scale": p.get("smoothness_scale"),
         },  # noqa
     }
     priors = {}
@@ -562,7 +576,8 @@ def _rsample(name, dist):
         return sample_radialmag_vector(
             name, dist["nval"], dist["low"], dist["high"],
             max_modulus=dist.get("max_modulus"),
-            direction=dist.get("direction"))
+            direction=dist.get("direction"),
+            smoothness_scale=dist.get("smoothness_scale"))
 
     if isinstance(dist, dict) and dist.get("type") == "array_uniform":
         nval = dist.get("nval")
