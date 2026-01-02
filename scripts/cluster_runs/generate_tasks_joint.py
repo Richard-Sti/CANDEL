@@ -30,11 +30,11 @@ from candel import fprint, load_config, replace_prior_with_delta
 from candel.pvdata.data import load_clusters
 
 # Hardcoded flags for task generation.
-scaling_relations = [ "LTYT", "LT", "YT"]  # Set to None to run all
-reconstructions = ["zspace", "Carrick2015","manticore"]
+scaling_relations = [ "LTYT"]  # Set to None to run all
+reconstructions = ["manticore"] #"zspace", "Carrick2015",
 include_quad = True
 include_pairs = False
-include_pix = True
+include_pix = False
 resolution_convergence = True # This refers to radmag
 include_rad = True     # Radial Vext (direction free, magnitude varies with r)
 include_radmag = True   # Radial magnitude Vext (direction fixed, magnitude varies with r)
@@ -57,12 +57,14 @@ include_fixed_sigma = False
 #   - H0 runs: use_zspace=True, stretch_los=False
 # Note: when use_zspace=True, stretch_los value doesn't matter (but set to False)
 GENERATE_TASKS_ZSPACE = True
+n_zspace_iterations = 0  # Iterations to refine z->r mapping for radial Vext models
 output_root = "results/zspace"
 num_chains = 4
 chain_method = "sequential"
 LTYT_joint = True
 split_tasks_two_to_one = True
 split_tasks_by_kind = False
+overwrite_existing = True  # If False, sets skip_if_exists=True in configs
 
 
 RECONSTRUCTION_KIND_MAP = {
@@ -286,6 +288,8 @@ if __name__ == "__main__":
     config = overwrite_config(config, "io/reconstruction_main/num_steps", 1001)
     config = overwrite_config(config, "inference/num_chains", num_chains)
     config = overwrite_config(config, "inference/chain_method", chain_method)
+    if not overwrite_existing:
+        config = overwrite_config(config, "inference/skip_if_exists", True)
     # Note: use_zspace is set per-run below based on whether it's a dipA or dipH0 run
 
     tasks_index = args.tasks_index
@@ -780,6 +784,9 @@ if __name__ == "__main__":
                         if is_H0_run or has_vext_model:
                             run_config = overwrite_config(
                                 run_config, "pv_model/use_zspace", True)
+                            run_config = overwrite_config(
+                                run_config, "pv_model/n_zspace_iterations",
+                                n_zspace_iterations)
                         else:
                             # A runs and base runs (no Vext model)
                             run_config = overwrite_config(

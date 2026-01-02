@@ -848,7 +848,7 @@ def compute_quadrupole_radial(data, quadrupole):
 
 def compute_los_zspace_to_rspace(
     data, los_r, z_grid, Vext, which_Vext, kwargs_Vext,
-    redshift2distance, h
+    redshift2distance, h, n_iterations=0
 ):
     """
     Map LOS quantities from z-space to r-space accounting for Vext.
@@ -874,6 +874,10 @@ def compute_los_zspace_to_rspace(
         Redshift2Distance instance for z -> r conversion.
     h : float or array (n_gal,)
         Hubble parameter (per-galaxy for anisotropic H0).
+    n_iterations : int
+        Number of iterations to refine r_cosmo for radial Vext models.
+        Only applies when which_Vext is 'radial' or 'radial_magnitude'.
+        Default 0 means use the approximation (evaluate Vext at los_r).
 
     Returns
     -------
@@ -882,42 +886,54 @@ def compute_los_zspace_to_rspace(
     """
     c = 299792.458  # km/s
 
-    # Compute Vext_rad at los_r positions
-    # NOTE: For radially-varying Vext, this is an approximation - we evaluate
-    # Vext at the r_grid positions from the LOS file rather than the true
-    # real-space positions (which depend on Vext itself).
+    def _z_cosmo_to_r_cosmo(z_cosmo, h_val):
+        """Convert z_cosmo to r_cosmo, handling scalar or per-galaxy h."""
+        if jnp.ndim(h_val) == 0:
+            # Scalar h - vectorized over all dimensions
+            shape = z_cosmo.shape
+            return redshift2distance(z_cosmo.ravel(), h=h_val).reshape(shape)
+        else:
+            # Per-galaxy h for anisotropic H0
+            # h_val shape: (n_gal,), z_cosmo shape: (n_field, n_gal, n_los)
+            # vmap over fields (axis 0), then over galaxies (axis 0 of inner)
+            def _z_to_r_per_gal(z_line, h_gal):
+                return redshift2distance(z_line, h=h_gal)
+
+            def _process_field(z_field):
+                # z_field: (n_gal, n_los), h_val: (n_gal,)
+                return vmap(_z_to_r_per_gal, in_axes=(0, 0))(z_field, h_val)
+
+            # vmap over field dimension
+            return vmap(_process_field)(z_cosmo)  # (n_field, n_gal, n_los)
+
+    # Initial computation: evaluate Vext at los_r (the approximation)
+    r_eval = los_r
     Vext_rad = compute_Vext_radial(
-        data, los_r, Vext, which_Vext, **kwargs_Vext
+        data, r_eval, Vext, which_Vext, **kwargs_Vext
     )  # (n_field, n_gal, n_los)
 
     # Convert z_obs to z_cosmo: (1 + z_obs) = (1 + z_cosmo) * (1 + Vext_rad/c)
     z_cosmo = (1 + z_grid[None, None, :]) / (1 + Vext_rad / c) - 1
-
-    # Clamp z_cosmo to be non-negative. This can happen when Vext_rad is large
-    # (e.g., 2000 km/s) and z_grid is small (e.g., 0.001). Physically, this means
-    # the observed redshift is entirely due to peculiar velocity, with the object
-    # at r ~ 0. We clamp to a small positive value to avoid numerical issues.
     z_cosmo = jnp.maximum(z_cosmo, 1e-8)
 
-    # Convert z_cosmo to r_cosmo using (anisotropic) H0
-    # Need to handle array shapes carefully since redshift2distance uses vmap
-    if jnp.ndim(h) == 0:
-        # Isotropic h - flatten, apply, reshape
-        shape = z_cosmo.shape
-        r_cosmo = redshift2distance(z_cosmo.ravel(), h=h).reshape(shape)
-    else:
-        # Per-galaxy h for anisotropic H0
-        # h shape: (n_gal,), z_cosmo shape: (n_field, n_gal, n_los)
-        # For each galaxy i, apply r = redshift2distance(z, h=h[i])
-        def _z_to_r_per_gal(z_line, h_gal):
-            return redshift2distance(z_line, h=h_gal)
+    # Convert z_cosmo to r_cosmo (preserves all dimensions)
+    r_cosmo = _z_cosmo_to_r_cosmo(z_cosmo, h)
 
-        # vmap over galaxies (axis 1 of z_cosmo)
-        # Take first field dimension, apply per-galaxy, then broadcast
-        r_cosmo = vmap(
-            _z_to_r_per_gal, in_axes=(0, 0)
-        )(z_cosmo[0], h)  # (n_gal, n_los)
-        r_cosmo = r_cosmo[None, ...]  # (1, n_gal, n_los) - add field dim back
+    # Iterate to refine r_cosmo (only for radial Vext models)
+    if n_iterations > 0 and which_Vext in ("radial", "radial_magnitude"):
+        for _ in range(n_iterations):
+            # Re-evaluate Vext at the current r_cosmo estimate
+            # Use mean over fields as representative r_eval
+            r_eval = jnp.mean(r_cosmo, axis=0)  # (n_gal, n_los)
+
+            Vext_rad = compute_Vext_radial(
+                data, r_eval, Vext, which_Vext, **kwargs_Vext
+            )
+
+            z_cosmo = (1 + z_grid[None, None, :]) / (1 + Vext_rad / c) - 1
+            z_cosmo = jnp.maximum(z_cosmo, 1e-8)
+
+            r_cosmo = _z_cosmo_to_r_cosmo(z_cosmo, h)
 
     return r_cosmo
 
@@ -1587,6 +1603,12 @@ class ClustersModel(BaseModel):
             get_nested(self.config, "pv_model/stretch_los_with_zeropoint", False))
         self.use_zspace = bool(
             get_nested(self.config, "pv_model/use_zspace", False))
+        self.n_zspace_iterations = int(
+            get_nested(self.config, "pv_model/n_zspace_iterations", 0))
+        # Check if zeropoint_dipole is varying (not a delta prior)
+        zp_prior = self.priors.get("zeropoint_dipole", {})
+        self.has_varying_zeropoint_dipole = (
+            isinstance(zp_prior, dict) and zp_prior.get("dist") != "delta")
         if self.use_zspace:
             self.redshift2distance = Redshift2Distance(Om0=self.Om)
 
@@ -1916,7 +1938,10 @@ class ClustersModel(BaseModel):
                     los_r = data["los_r"]
 
                     # Determine h for z->r conversion (can be anisotropic)
-                    if A_dipole is not None:
+                    # Use compile-time flag to avoid JAX tracing issues with
+                    # runtime checks on A_norm. Delta priors return [0,0,0] not None,
+                    # but we don't want per-galaxy h in that case.
+                    if self.has_varying_zeropoint_dipole and A_dipole is not None:
                         # Anisotropic h based on zeropoint dipole
                         A_norm = jnp.linalg.norm(A_dipole)
                         cos_theta = jnp.sum(
@@ -1933,7 +1958,8 @@ class ClustersModel(BaseModel):
                     # Compute r_cosmo for each (field, galaxy, z_grid_point)
                     r_cosmo = compute_los_zspace_to_rspace(
                         data, los_r, z_grid_los, Vext, self.which_Vext,
-                        self.kwargs_Vext, self.redshift2distance, h_per_gal
+                        self.kwargs_Vext, self.redshift2distance, h_per_gal,
+                        n_iterations=self.n_zspace_iterations
                     )  # (n_field, n_gal, n_los)
 
                     # Get LOS values on the original grid
