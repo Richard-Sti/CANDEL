@@ -14,6 +14,9 @@ FIGURES_FOLDER = CANDEL_ROOT / "paper_clusters/figures"
 DATA_CONFIG_PATH = CANDEL_ROOT / "paper_clusters/data.toml"
 CLUSTERS_DATA_PATH = CANDEL_ROOT / "data/Clusters/ClustersData.txt"
 
+# Flags
+INCLUDE_MANTICORE = False
+
 # Color palette
 COLS = ["#7570b3", "#d95f02", "#1b9e77", "#e7298a", "#66a61e"]
 

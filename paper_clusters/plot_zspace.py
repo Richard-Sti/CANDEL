@@ -1,5 +1,5 @@
 """2M++ z-space posterior comparison."""
-from config import setup_style, COLS, RESULTS_ROOT, get_figure_path
+from config import setup_style, COLS, RESULTS_ROOT, get_figure_path, INCLUDE_MANTICORE
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -13,9 +13,34 @@ def plot_zspace():
     fnames = [
         RESULTS_ROOT / "zspace/2mpp_zspace_galaxies_LTYT_noMNR_dipA_hasY.hdf5",
         RESULTS_ROOT / "zspace/2mpp_zspace_galaxies_LTYT_noMNR_dipH0_hasY.hdf5",
-        RESULTS_ROOT / "zspace/manticore_LTYT_noMNR_dipH0_hasY.hdf5",
-        RESULTS_ROOT / "zspace/Carrick2015_LTYT_noMNR_dipH0_hasY.hdf5",
     ]
+    cols = [COLS[1], COLS[0]]
+    labels = [
+        r"2M++$\rho(z)$ ZP dipole",
+        r"2M++$\rho(z)$ $H_0$ dipole",
+    ]
+    contour_args = [
+        {"zorder": 1},
+        {"zorder": 1},
+    ]
+    line_args = [
+        {},
+        {},
+    ]
+
+    if INCLUDE_MANTICORE:
+        fnames.append(RESULTS_ROOT / "zspace/manticore_LTYT_noMNR_dipH0_hasY.hdf5")
+        cols.append(COLS[3])
+        labels.append("Manticore $H_0$ dipole")
+        contour_args.append({"zorder": 1})
+        line_args.append({})
+
+    fnames.append(RESULTS_ROOT / "zspace/Carrick2015_LTYT_noMNR_dipH0_hasY.hdf5")
+    cols.append(COLS[2])
+    labels.append(r"Carrick 2015 $H_0$ dipole")
+    contour_args.append({"zorder": 3, "filled": False, "lw": 2.0})
+    line_args.append({"lw": 2.0})
+
     fnames = [str(f) for f in fnames]
 
     def delta_a_to_frac(delta_a):
@@ -41,25 +66,6 @@ def plot_zspace():
         samples_list.append(samples)
 
     keys = ["dH_over_H_dipole", "zeropoint_dipole_ell", "zeropoint_dipole_b"]
-    cols = [COLS[1], COLS[0], COLS[3], COLS[2]]
-    labels = [
-        r"2M++$\rho(z)$ ZP dipole",
-        r"2M++$\rho(z)$ $H_0$ dipole",
-        "Manticore $H_0$ dipole",
-        r"Carrick 2015 $H_0$ dipole",
-    ]
-    contour_args = [
-        {"zorder": 1},
-        {"zorder": 1},
-        {"zorder": 1},
-        {"zorder": 3, "filled": False, "lw": 2.0},
-    ]
-    line_args = [
-        {},
-        {},
-        {},
-        {"lw": 2.0},
-    ]
 
     plot_corner_getdist(
         samples_list,

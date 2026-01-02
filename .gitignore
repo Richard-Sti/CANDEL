@@ -33,3 +33,4 @@ paper_clusters/tables/
 
 CANDEL.code-workspace
 CLAUDE.md
+scripts/cluster_runs/generate_tasks_joint.py

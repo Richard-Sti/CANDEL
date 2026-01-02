@@ -799,27 +799,36 @@ def compute_Vext_radial(data, r_grid, Vext, which_Vext, **kwargs_Vext):
     elif which_Vext == "radial_magnitude":
         # Unpack the tuple of magnitude and direction.
         Vext_mag, rhat = Vext
-        # Interpolate the magnitude as a function of radius, shape (n_rbins,).
+        # Interpolate the magnitude as a function of radius.
         rknot = jnp.asarray(kwargs_Vext["rknot"])
         r_grid_clamped = jnp.clip(r_grid, rknot[0], rknot[-1])
         # Clamp instead of relying on interpax `extrap` because some versions
         # reject 0-D JAX scalars (e.g., Vext_mag[0]) as extrap values.
-        Vext_mag_r = interp1d(
-            r_grid_clamped, rknot, Vext_mag,
-            method=kwargs_Vext["method"], extrap=False)
-        # Previous approach (kept for reference):
-        # Vext_mag_r = interp1d(
-        #     r_grid, kwargs_Vext["rknot"], Vext_mag,
-        #     method=kwargs_Vext["method"], extrap=(Vext_mag[0], Vext_mag[-1]))
-        # Clipping to only keep positive magnitudes.
-        #Vext_mag_r = smoothclip_nr(Vext_mag_r, tau=2.5)
+
+        # Handle both 1D r_grid (n_rbins,) and 2D r_grid (n_gal, n_rbins)
+        # during z-space iteration.
+        if r_grid_clamped.ndim == 1:
+            Vext_mag_r = interp1d(
+                r_grid_clamped, rknot, Vext_mag,
+                method=kwargs_Vext["method"], extrap=False)
+        else:
+            # 2D case: flatten, interpolate, reshape
+            orig_shape = r_grid_clamped.shape
+            Vext_mag_r = interp1d(
+                r_grid_clamped.ravel(), rknot, Vext_mag,
+                method=kwargs_Vext["method"], extrap=False
+            ).reshape(orig_shape)
 
         # Project the LOS of each galaxy onto the dipole direction, shape
         # is (n_gal,).
         cos_theta = jnp.sum(data["rhat"] * rhat[None, :], axis=1)
 
         # Finally, the shape is (n_field, n_gal, n_rbins).
-        Vext_rad = (cos_theta[:, None] * Vext_mag_r[None, :])[None, :, :]
+        if r_grid_clamped.ndim == 1:
+            Vext_rad = (cos_theta[:, None] * Vext_mag_r[None, :])[None, :, :]
+        else:
+            # 2D case: Vext_mag_r is (n_gal, n_rbins), cos_theta is (n_gal,)
+            Vext_rad = (cos_theta[:, None] * Vext_mag_r)[None, :, :]
     elif which_Vext == "per_pix":
         Vext_rad = (data["C_pix"] @ Vext)[None, :, None]
     elif which_Vext == "constant":

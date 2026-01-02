@@ -1,5 +1,5 @@
 """Sigma_v 1D distribution plot."""
-from config import setup_style, COLS, RESULTS_ROOT, RESULTS_FOLDER, get_figure_path
+from config import setup_style, COLS, RESULTS_ROOT, RESULTS_FOLDER, get_figure_path, INCLUDE_MANTICORE
 
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
@@ -13,41 +13,49 @@ except ImportError:  # Python < 3.11
     import tomli as tomllib
 
 
+def _filter_manticore(files):
+    """Remove manticore file (index 2) if INCLUDE_MANTICORE is False."""
+    if INCLUDE_MANTICORE:
+        return files
+    return [f for i, f in enumerate(files) if i != 2]
+
+
 def main(include_dipA=False):
     setup_style()
 
     # Define file patterns for each row (dipole model) and column (relation)
     # Row 0: dipVext, Row 1: dipH0, Row 2: dipA
+    # Order within each: [Vext, Carrick, Manticore, 2mpp_zspace]
     rows = [
         {
             "label": r"$\mathbf{\mathrm{dip}\,V_\mathrm{ext}}$",
             "relations": [
                 {
                     "name": "LT",
-                    "files": [
+                    "files": _filter_manticore([
                         f"{RESULTS_FOLDER}/Vext_LT_noMNR_dipVext.hdf5",
                         f"{RESULTS_FOLDER}/Carrick2015_LT_noMNR_dipVext.hdf5",
                         f"{RESULTS_FOLDER}/manticore_LT_noMNR_dipVext.hdf5",
                         f"{RESULTS_FOLDER}/2mpp_zspace_galaxies_LT_noMNR_dipVext.hdf5",
-                    ],
+                    ]),
                 },
                 {
                     "name": "YT",
-                    "files": [
+                    "files": _filter_manticore([
                         f"{RESULTS_FOLDER}/Vext_YT_noMNR_dipVext_hasY.hdf5",
                         f"{RESULTS_FOLDER}/Carrick2015_YT_noMNR_dipVext_hasY.hdf5",
                         f"{RESULTS_FOLDER}/manticore_YT_noMNR_dipVext_hasY.hdf5",
                         f"{RESULTS_FOLDER}/2mpp_zspace_galaxies_YT_noMNR_dipVext_hasY.hdf5",
-                    ],
+                    ]),
                 },
                 {
                     "name": "LTYT",
-                    "files": [
+                    "files": _filter_manticore([
                         f"joint/Vext_LTYT_noMNR_dipVext_hasY.hdf5",
                         f"{RESULTS_FOLDER}/Carrick2015_LTYT_noMNR_dipVext_hasY.hdf5",
                         f"{RESULTS_FOLDER}/manticore_LTYT_noMNR_dipVext_hasY.hdf5",
                         f"{RESULTS_FOLDER}/2mpp_zspace_galaxies_LTYT_noMNR_dipVext_hasY.hdf5",
-                    ],
+                    ]),
                 },
             ],
         },
@@ -56,30 +64,30 @@ def main(include_dipA=False):
             "relations": [
                 {
                     "name": "LT",
-                    "files": [
+                    "files": _filter_manticore([
                         f"{RESULTS_FOLDER}/Vext_LT_noMNR_dipH0.hdf5",
                         f"{RESULTS_FOLDER}/Carrick2015_LT_noMNR_dipH0.hdf5",
                         f"{RESULTS_FOLDER}/manticore_LT_noMNR_dipH0.hdf5",
                         f"{RESULTS_FOLDER}/2mpp_zspace_galaxies_LT_noMNR_dipH0.hdf5",
-                    ],
+                    ]),
                 },
                 {
                     "name": "YT",
-                    "files": [
+                    "files": _filter_manticore([
                         f"{RESULTS_FOLDER}/Vext_YT_noMNR_dipH0_hasY.hdf5",
                         f"{RESULTS_FOLDER}/Carrick2015_YT_noMNR_dipH0_hasY.hdf5",
                         f"{RESULTS_FOLDER}/manticore_YT_noMNR_dipH0_hasY.hdf5",
                         f"{RESULTS_FOLDER}/2mpp_zspace_galaxies_YT_noMNR_dipH0_hasY.hdf5",
-                    ],
+                    ]),
                 },
                 {
                     "name": "LTYT",
-                    "files": [
+                    "files": _filter_manticore([
                         f"joint/Vext_LTYT_noMNR_dipH0_hasY.hdf5",
                         f"{RESULTS_FOLDER}/Carrick2015_LTYT_noMNR_dipH0_hasY.hdf5",
                         f"{RESULTS_FOLDER}/manticore_LTYT_noMNR_dipH0_hasY.hdf5",
                         f"{RESULTS_FOLDER}/2mpp_zspace_galaxies_LTYT_noMNR_dipH0_hasY.hdf5",
-                    ],
+                    ]),
                 },
             ],
         },
@@ -88,40 +96,45 @@ def main(include_dipA=False):
             "relations": [
                 {
                     "name": "LT",
-                    "files": [
+                    "files": _filter_manticore([
                         f"{RESULTS_FOLDER}/Vext_LT_noMNR_dipA.hdf5",
                         f"{RESULTS_FOLDER}/Carrick2015_LT_noMNR_dipA.hdf5",
                         f"{RESULTS_FOLDER}/manticore_LT_noMNR_dipA.hdf5",
                         f"{RESULTS_FOLDER}/2mpp_zspace_galaxies_LT_noMNR_dipA.hdf5",
-                    ],
+                    ]),
                 },
                 {
                     "name": "YT",
-                    "files": [
+                    "files": _filter_manticore([
                         f"{RESULTS_FOLDER}/Vext_YT_noMNR_dipA_hasY.hdf5",
                         f"{RESULTS_FOLDER}/Carrick2015_YT_noMNR_dipA_hasY.hdf5",
                         f"{RESULTS_FOLDER}/manticore_YT_noMNR_dipA_hasY.hdf5",
                         f"{RESULTS_FOLDER}/2mpp_zspace_galaxies_YT_noMNR_dipA_hasY.hdf5",
-                    ],
+                    ]),
                 },
                 {
                     "name": "LTYT",
-                    "files": [
+                    "files": _filter_manticore([
                         f"joint/Vext_LTYT_noMNR_dipA_hasY.hdf5",
                         f"{RESULTS_FOLDER}/Carrick2015_LTYT_noMNR_dipA_hasY.hdf5",
                         f"{RESULTS_FOLDER}/manticore_LTYT_noMNR_dipA_hasY.hdf5",
                         f"{RESULTS_FOLDER}/2mpp_zspace_galaxies_LTYT_noMNR_dipA_hasY.hdf5",
-                    ],
+                    ]),
                 },
             ],
         },
     ]
     if not include_dipA:
         rows = rows[:-1]
-    # Order: No recon, Carrick, Manticore, 2M++ρ(z)
+
+    # Order: No recon, Carrick, [Manticore], 2M++ρ(z)
     # Colors: purple (no recon), pink (Carrick), orange (Manticore), green (2M++)
-    labels = ["No reconstruction", "Carrick2015", "Manticore", r"2M++$\rho(z)$"]
-    cols = [COLS[0], COLS[3], COLS[1], COLS[2]]  # purple, pink, orange, green
+    if INCLUDE_MANTICORE:
+        labels = ["No reconstruction", "Carrick2015", "Manticore", r"2M++$\rho(z)$"]
+        cols = [COLS[0], COLS[3], COLS[1], COLS[2]]  # purple, pink, orange, green
+    else:
+        labels = ["No reconstruction", "Carrick2015", r"2M++$\rho(z)$"]
+        cols = [COLS[0], COLS[3], COLS[2]]  # purple, pink, green
 
     def read_sigma_v_lower_bound(fname):
         toml_path = RESULTS_ROOT / fname

@@ -31,20 +31,21 @@ from candel.pvdata.data import load_clusters
 
 # Hardcoded flags for task generation.
 scaling_relations = [ "LTYT"]  # Set to None to run all
-reconstructions = ["manticore"] #"zspace", "Carrick2015",
-include_quad = True
+reconstructions = ["zspace"] #"zspace", "Carrick2015",
+include_quad = False
 include_pairs = False
 include_pix = False
-resolution_convergence = True # This refers to radmag
-include_rad = True     # Radial Vext (direction free, magnitude varies with r)
-include_radmag = True   # Radial magnitude Vext (direction fixed, magnitude varies with r)
+include_radmag_fine = False    # Radmag with finer knot spacing
+include_radmag_finest = True  # Radmag with finest knot spacing
+include_rad = False    # Radial Vext (direction free, magnitude varies with r)
+include_radmag = False  # Radial magnitude Vext (direction fixed, magnitude varies with r)
 # Base model flags (split from old include_base)
-include_base = True    # No flow/H0 model (both Vext and zeropoint are delta)
-include_dipH0 = True   # Zeropoint dipole with stretch_los=True (H0 anisotropy)
-include_dipA = True    # Zeropoint dipole with stretch_los=False (calibration)
-include_dipVext = True # Vext dipole only
+include_base = False # No flow/H0 model (both Vext and zeropoint are delta)
+include_dipH0 = False  # Zeropoint dipole with stretch_los=True (H0 anisotropy)
+include_dipA =  False    # Zeropoint dipole with stretch_los=False (calibration)
+include_dipVext = False # Vext dipole only
 include_A = False    # Master switch for all A runs (dipA, quadA, pixA, pairs with A)
-include_bias = True  # Double power law bias model tests
+include_bias = False  # Double power law bias model tests
 include_fixed_sigma = False
 # Z-space mode flag: controls how runs are generated
 # When False (old behavior):
@@ -57,12 +58,12 @@ include_fixed_sigma = False
 #   - H0 runs: use_zspace=True, stretch_los=False
 # Note: when use_zspace=True, stretch_los value doesn't matter (but set to False)
 GENERATE_TASKS_ZSPACE = True
-n_zspace_iterations = 0  # Iterations to refine z->r mapping for radial Vext models
+n_zspace_iterations = 3  # Iterations to refine z->r mapping for radial Vext models
 output_root = "results/zspace"
-num_chains = 4
+num_chains = 1
 chain_method = "sequential"
 LTYT_joint = True
-split_tasks_two_to_one = True
+split_tasks_two_to_one = False
 split_tasks_by_kind = False
 overwrite_existing = True  # If False, sets skip_if_exists=True in configs
 
@@ -448,12 +449,14 @@ if __name__ == "__main__":
     )
     if not include_radmag:
         radialMagVext_combinations = []
-    resolution_radmag_combinations = []
-    if resolution_convergence:
-        resolution_radmag_combinations += build_radmag_combinations(
+    radmag_fine_combinations = []
+    radmag_finest_combinations = []
+    if include_radmag_fine:
+        radmag_fine_combinations = build_radmag_combinations(
             [0, 125, 250, 500, 750, 1000], "fine"
         )
-        resolution_radmag_combinations += build_radmag_combinations(
+    if include_radmag_finest:
+        radmag_finest_combinations = build_radmag_combinations(
             [0, 62.5, 125, 187.5, 250, 500, 750, 1000], "finest"
         )
 
@@ -510,7 +513,8 @@ if __name__ == "__main__":
          + fixed_sigmav_combinations + fixed_sigmav_diph0_combinations),
         ("pix", (pixelA_combinations if include_A else []) + pixelH0_combinations + pixelVext_combinations if include_pix else []),
         ("quad", quadVext_combinations + quad_zeropoint_combinations if include_quad else []),
-        ("resolution_convergence", resolution_radmag_combinations if resolution_convergence else []),
+        ("radmag_fine", radmag_fine_combinations),
+        ("radmag_finest", radmag_finest_combinations),
         ("rad", radialVext_combinations if include_rad else []),
         ("radmag", radialMagVext_combinations),
         ("bias", bias_combinations if include_bias else []),
@@ -652,7 +656,8 @@ if __name__ == "__main__":
         "pix": [],
         "quad": [],
         "pairs": [],
-        "resolution_convergence": [],
+        "radmag_fine": [],
+        "radmag_finest": [],
         "rad": [],
         "radmag": [],
         "bias": [],
@@ -948,7 +953,8 @@ if __name__ == "__main__":
     ordered_groups = [
         "all_other_runs",
         "radmag",
-        "resolution_convergence",
+        "radmag_fine",
+        "radmag_finest",
         "quad",
         "rad",
         "pix",

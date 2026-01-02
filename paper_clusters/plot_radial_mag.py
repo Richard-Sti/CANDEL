@@ -2,7 +2,7 @@
 
 from h5py import File
 
-from config import get_results_path, get_figure_path, setup_style
+from config import get_results_path, get_figure_path, setup_style, CANDEL_ROOT
 from candel.inference import postprocess_samples
 from candel.model.model import ClustersModel
 from candel.pvdata.data import load_PV_dataframes
@@ -31,7 +31,7 @@ def plot_radmag_run(label, radmag_stem, diph0_stem):
     model = ClustersModel(str(config_path))
 
     fprint(f"[{label}] loading data from {config_path}")
-    data = load_PV_dataframes(str(config_path))
+    data = load_PV_dataframes(str(config_path), local_root=str(CANDEL_ROOT))
 
     fprint(f"[{label}] loading samples from {results_path}")
     samples = postprocess_samples(load_samples(str(results_path)))

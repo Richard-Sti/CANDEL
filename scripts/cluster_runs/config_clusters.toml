@@ -175,7 +175,7 @@ value = [[0, 0], [0, 0], [0, 0]]
 [model.priors.Vext_radial]
 dist = "vector_radial_spline_uniform"
 low = 0.0
-high = 5000
+high = 2000
 
 rknot = [0, 100, 200, 300, 500]
 k = 1
@@ -183,8 +183,8 @@ endpoints="not-a-knot"
 
 [model.priors.Vext_radmag]
 dist = "vector_radialmag_uniform"
-low = -5000
-high = 5000
+low = -2000
+high = 2000
 rknot = [0, 250, 500, 750, 1000]
 method = "cubic"
 

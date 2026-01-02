@@ -117,8 +117,18 @@ def precompute_radial_bin_assignment(zcmb_data, bin_edges, use_comoving=True, Om
 ###############################################################################
 
 
-def load_PV_dataframes(config_path):
-    """Loads PV dataframes from the given configuration file."""
+def load_PV_dataframes(config_path, local_root=None):
+    """Loads PV dataframes from the given configuration file.
+
+    Parameters
+    ----------
+    config_path : str
+        Path to the configuration file.
+    local_root : str, optional
+        If provided, replace paths in the config with this local root.
+        Finds 'CANDEL/' in paths and replaces everything before it.
+        Useful when running locally with configs that have remote server paths.
+    """
     config = load_config(config_path)
 
     if config["pv_model"]["kind"].startswith("precomputed_los_"):
@@ -127,6 +137,18 @@ def load_PV_dataframes(config_path):
         los_reconstruction = None
 
     config_io = config["io"]
+
+    # Override paths with local root if specified
+    if local_root is not None:
+        for key in config_io:
+            if isinstance(config_io[key], dict):
+                for path_key in ("root", "los_file"):
+                    if path_key in config_io[key]:
+                        old_path = config_io[key][path_key]
+                        # Find 'CANDEL/' and replace everything before it
+                        if "CANDEL/" in old_path:
+                            suffix = old_path.split("CANDEL/", 1)[1]
+                            config_io[key][path_key] = f"{local_root}/{suffix}"
     config_pv_model = config["pv_model"]
     names = config_io.pop("catalogue_name")
     if isinstance(names, str):
