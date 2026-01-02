@@ -37,7 +37,8 @@ include_pairs = False
 include_pix = False
 include_radmag_fine = False    # Radmag with finer knot spacing
 include_radmag_finest = True  # Radmag with finest knot spacing
-radmag_smoothness_scale = 1000  # Smoothness prior scale (km/s), 0 or None to disable
+radmag_smoothness_threshold = 1000  # Flat region (km/s), no penalty within this
+radmag_smoothness_scale = 200  # Gaussian scale (km/s) beyond threshold, 0 or None to disable
 include_rad = False    # Radial Vext (direction free, magnitude varies with r)
 include_radmag = False  # Radial magnitude Vext (direction fixed, magnitude varies with r)
 # Base model flags (split from old include_base)
@@ -60,7 +61,7 @@ include_fixed_sigma = False
 # Note: when use_zspace=True, stretch_los value doesn't matter (but set to False)
 GENERATE_TASKS_ZSPACE = True
 n_zspace_iterations = 4  # Iterations to refine z->r mapping for radial Vext models
-output_root = "results/zspace"
+output_root = "results/radtest"
 num_chains = 1
 chain_method = "sequential"
 LTYT_joint = True
@@ -434,11 +435,16 @@ if __name__ == "__main__":
         # h0_dipole_percent is safe to keep since it scales with rknot.
         if "max_modulus" in prior and len(prior["max_modulus"]) != len(knots):
             del prior["max_modulus"]
-        # Override smoothness_scale from the global flag
+        # Override smoothness prior from the global flags
         if radmag_smoothness_scale:
             prior["smoothness_scale"] = radmag_smoothness_scale
-        elif "smoothness_scale" in prior:
-            del prior["smoothness_scale"]
+            prior["smoothness_threshold"] = radmag_smoothness_threshold
+        else:
+            # Disable smoothness prior
+            if "smoothness_scale" in prior:
+                del prior["smoothness_scale"]
+            if "smoothness_threshold" in prior:
+                del prior["smoothness_threshold"]
         return prior
 
     def build_radmag_combinations(knots, variant_label):

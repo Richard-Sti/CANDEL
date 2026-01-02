@@ -327,7 +327,8 @@ def _direction_from_galactic(direction):
 
 
 def sample_radialmag_vector(name, nval, low, high, max_modulus=None,
-                            direction=None, smoothness_scale=None):
+                            direction=None, smoothness_scale=None,
+                            smoothness_threshold=None):
     """
     Sample a vector whose magnitude varies at `nval` knots but a direction
     is shared by all knots and sampled isotropically on the sky. The magnitude
@@ -337,8 +338,9 @@ def sample_radialmag_vector(name, nval, low, high, max_modulus=None,
     each bin are drawn from `[-abs(max_modulus_i), abs(max_modulus_i)]`.
 
     If `smoothness_scale` is provided (in km/s), a smoothness prior is applied
-    that penalizes differences between adjacent knots using a Normal(0, scale)
-    distribution on the differences.
+    that penalizes differences between adjacent knots. If `smoothness_threshold`
+    is also provided, differences within the threshold are not penalized (flat
+    region), and only the excess beyond threshold is penalized with a Gaussian.
 
     Returns the tuple (mag, rhat), where `mag` has shape (nval,) and `rhat`
     has shape (3,).
@@ -374,8 +376,10 @@ def sample_radialmag_vector(name, nval, low, high, max_modulus=None,
     # Apply smoothness prior on differences between adjacent knots
     if smoothness_scale is not None and smoothness_scale > 0:
         diffs = jnp.diff(mag)
-        # Add log-probability: Normal(0, smoothness_scale) for each difference
-        smoothness_logp = -0.5 * jnp.sum((diffs / smoothness_scale) ** 2)
+        threshold = smoothness_threshold if smoothness_threshold is not None else 0.0
+        # Soft threshold: no penalty within threshold, Gaussian beyond
+        excess = jnp.maximum(jnp.abs(diffs) - threshold, 0.0)
+        smoothness_logp = -0.5 * jnp.sum((excess / smoothness_scale) ** 2)
         factor(f"{name}_smoothness", smoothness_logp)
 
     rhat = jnp.array([
@@ -515,6 +519,7 @@ def load_priors(config_priors):
             ),
             # Optional smoothness prior (km/s scale for penalizing knot differences)
             "smoothness_scale": p.get("smoothness_scale"),
+            "smoothness_threshold": p.get("smoothness_threshold"),
         },  # noqa
     }
     priors = {}
@@ -577,7 +582,8 @@ def _rsample(name, dist):
             name, dist["nval"], dist["low"], dist["high"],
             max_modulus=dist.get("max_modulus"),
             direction=dist.get("direction"),
-            smoothness_scale=dist.get("smoothness_scale"))
+            smoothness_scale=dist.get("smoothness_scale"),
+            smoothness_threshold=dist.get("smoothness_threshold"))
 
     if isinstance(dist, dict) and dist.get("type") == "array_uniform":
         nval = dist.get("nval")

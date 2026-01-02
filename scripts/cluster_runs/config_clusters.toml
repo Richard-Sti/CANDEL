@@ -187,9 +187,11 @@ low = -5000
 high = 5000
 rknot = [0, 250, 500, 750, 1000]
 method = "cubic"
-# Optional smoothness prior: penalizes differences between adjacent knots
-# with Normal(0, smoothness_scale). Set to 0 or omit to disable.
-smoothness_scale = 1000
+# Optional smoothness prior: penalizes differences between adjacent knots.
+# Flat within threshold, then Gaussian penalty with given scale beyond.
+# Set smoothness_scale to 0 or omit to disable.
+smoothness_threshold = 1000
+smoothness_scale = 200
 
 [model.priors.zeropoint_dipole]
 dist = "delta"
