@@ -30,7 +30,7 @@ from candel import fprint, load_config, replace_prior_with_delta
 from candel.pvdata.data import load_clusters
 
 # Hardcoded flags for task generation.
-scaling_relations = [ "LT", "YT"]  # Set to None to run all
+scaling_relations = [ "LTYT"]  # Set to None to run all
 reconstructions = ["manticore"] #"zspace", "Carrick2015",
 include_quad = True
 include_pairs = False
