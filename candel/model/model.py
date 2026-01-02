@@ -1960,10 +1960,17 @@ class ClustersModel(BaseModel):
                         data, los_r, z_grid_los, Vext, self.which_Vext,
                         self.kwargs_Vext, self.redshift2distance, h_per_gal,
                         n_iterations=self.n_zspace_iterations
-                    )  # (n_field, n_gal, n_los)
+                    )  # (n_field, n_gal, n_los) or (1, n_gal, n_los) for constant Vext
 
                     # Get LOS values on the original grid
                     los_delta_orig = data.f_los_delta.interp_many_steps_per_galaxy(los_r)
+
+                    # For constant Vext, r_cosmo is (1, n_gal, n_los) but LOS data
+                    # may have multiple fields. Broadcast to match.
+                    n_field = los_delta_orig.shape[0]
+                    if r_cosmo.shape[0] == 1 and n_field > 1:
+                        r_cosmo = jnp.broadcast_to(
+                            r_cosmo, (n_field, r_cosmo.shape[1], r_cosmo.shape[2]))
                     los_velocity_orig = data.f_los_velocity.interp_many_steps_per_galaxy(los_r)
                     los_log_density_orig = data.f_los_log_density.interp_many_steps_per_galaxy(los_r)
 
