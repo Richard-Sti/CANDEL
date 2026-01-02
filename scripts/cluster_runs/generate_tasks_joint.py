@@ -37,7 +37,7 @@ include_pairs = False
 include_pix = False
 include_radmag_fine = False    # Radmag with finer knot spacing
 include_radmag_finest = True  # Radmag with finest knot spacing
-radmag_smoothness_scale = 500  # Smoothness prior scale (km/s), 0 or None to disable
+radmag_smoothness_scale = 1000  # Smoothness prior scale (km/s), 0 or None to disable
 include_rad = False    # Radial Vext (direction free, magnitude varies with r)
 include_radmag = False  # Radial magnitude Vext (direction fixed, magnitude varies with r)
 # Base model flags (split from old include_base)
@@ -59,7 +59,7 @@ include_fixed_sigma = False
 #   - H0 runs: use_zspace=True, stretch_los=False
 # Note: when use_zspace=True, stretch_los value doesn't matter (but set to False)
 GENERATE_TASKS_ZSPACE = True
-n_zspace_iterations = 3  # Iterations to refine z->r mapping for radial Vext models
+n_zspace_iterations = 4  # Iterations to refine z->r mapping for radial Vext models
 output_root = "results/zspace"
 num_chains = 1
 chain_method = "sequential"
