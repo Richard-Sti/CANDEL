@@ -1964,28 +1964,26 @@ class ClustersModel(BaseModel):
 
                     # Get LOS values on the original grid
                     los_delta_orig = data.f_los_delta.interp_many_steps_per_galaxy(los_r)
-
-                    # For constant Vext, r_cosmo is (1, n_gal, n_los) but LOS data
-                    # may have multiple fields. Broadcast to match.
-                    n_field = los_delta_orig.shape[0]
-                    if r_cosmo.shape[0] == 1 and n_field > 1:
-                        r_cosmo = jnp.broadcast_to(
-                            r_cosmo, (n_field, r_cosmo.shape[1], r_cosmo.shape[2]))
                     los_velocity_orig = data.f_los_velocity.interp_many_steps_per_galaxy(los_r)
                     los_log_density_orig = data.f_los_log_density.interp_many_steps_per_galaxy(los_r)
 
-                    # Interpolate LOS quantities from r_cosmo positions to r_grid
+                    # Interpolate LOS quantities from r_cosmo positions to r_grid.
+                    # r_cosmo is always (1, n_gal, n_los) since Vext is sampled,
+                    # not field-dependent. Squeeze and share across fields.
+                    r_cosmo_2d = r_cosmo[0]  # (n_gal, n_los)
+
                     def _interp_to_rgrid(los_values, r_cosmo_line):
                         """Interpolate los_values (on r_cosmo positions) onto r_grid."""
                         return jnp.interp(r_grid, r_cosmo_line, los_values)
 
-                    # vmap over galaxies (axis 1), then over fields (axis 0)
-                    _interp_gal = vmap(_interp_to_rgrid, in_axes=(0, 0))
-                    _interp_field = vmap(_interp_gal, in_axes=(0, 0))
+                    def _interp_field(los_field):
+                        """Interpolate one field's LOS values using shared r_cosmo."""
+                        return vmap(_interp_to_rgrid, in_axes=(0, 0))(
+                            los_field, r_cosmo_2d)
 
-                    los_delta_r_grid = _interp_field(los_delta_orig, r_cosmo)
-                    los_velocity_r_grid = _interp_field(los_velocity_orig, r_cosmo)
-                    los_log_density_r_grid = _interp_field(los_log_density_orig, r_cosmo)
+                    los_delta_r_grid = vmap(_interp_field)(los_delta_orig)
+                    los_velocity_r_grid = vmap(_interp_field)(los_velocity_orig)
+                    los_log_density_r_grid = vmap(_interp_field)(los_log_density_orig)
 
                 else:
                     # Original logic (when use_zspace=False)
