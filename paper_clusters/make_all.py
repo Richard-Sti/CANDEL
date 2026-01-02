@@ -11,6 +11,9 @@ import plot_relation_comparison
 import plot_sigma_v
 import plot_migkas_comparison
 import plot_mnr_comparison
+import plot_radial_mag
+import plot_zspace
+import plot_reconstruction
 import table_results
 
 
@@ -56,6 +59,9 @@ def main():
         ("scaling comparison plot", plot_relation_comparison.main),
         ("sigma_v plot", plot_sigma_v.main),
         ("Migkas comparison plot", plot_migkas_comparison.main),
+        ("radial magnitude Vext plot", plot_radial_mag.main),
+        ("z-space plot", plot_zspace.main),
+        ("reconstruction plot", plot_reconstruction.main),
         ("results table", table_results.main),
         #("MNR comparison plot", plot_mnr_comparison.main),
     ]

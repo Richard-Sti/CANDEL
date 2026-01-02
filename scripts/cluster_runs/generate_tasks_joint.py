@@ -632,7 +632,7 @@ if __name__ == "__main__":
     def flow_shared_params(which_vext):
         mapping = {
             "constant": ["Vext", "Vext_quad"],
-            "radial": ["Vext_rad"],
+            "radial": ["Vext_radial"],
             "radial_magnitude": ["Vext_radmag"],
             "per_pix": ["Vext_pix"],
         }

@@ -1905,6 +1905,11 @@ class ClustersModel(BaseModel):
                 los_velocity_r_grid = None
                 los_log_density_r_grid = None
 
+                if self.use_zspace and "los_z" not in data.data:
+                    raise ValueError(
+                        "use_zspace=True but LOS file does not contain 'z' array. "
+                        "Run scripts/preprocess/los_real2redshift.py to add it.")
+
                 if self.use_zspace and "los_z" in data.data:
                     # Z-space mode: map from z_grid to r_grid accounting for Vext
                     z_grid_los = data["los_z"]
