@@ -828,17 +828,30 @@ def compute_Vext_radial(data, r_grid, Vext, which_Vext, **kwargs_Vext):
 
         # Handle both 1D r_grid (n_rbins,) and 2D r_grid (n_gal, n_rbins)
         # during z-space iteration.
-        if r_grid_clamped.ndim == 1:
-            Vext_mag_r = interp1d(
-                r_grid_clamped, rknot, Vext_mag,
-                method=kwargs_Vext["method"], extrap=False)
+        method = kwargs_Vext.get("method", "cubic")
+        if method == "jax_linear":
+            # Use JAX's built-in linear interpolation (faster on GPU)
+            if r_grid_clamped.ndim == 1:
+                Vext_mag_r = jnp.interp(r_grid_clamped, rknot, Vext_mag)
+            else:
+                # 2D case: flatten, interpolate, reshape
+                orig_shape = r_grid_clamped.shape
+                Vext_mag_r = jnp.interp(
+                    r_grid_clamped.ravel(), rknot, Vext_mag
+                ).reshape(orig_shape)
         else:
-            # 2D case: flatten, interpolate, reshape
-            orig_shape = r_grid_clamped.shape
-            Vext_mag_r = interp1d(
-                r_grid_clamped.ravel(), rknot, Vext_mag,
-                method=kwargs_Vext["method"], extrap=False
-            ).reshape(orig_shape)
+            # Use interpax for cubic or other methods
+            if r_grid_clamped.ndim == 1:
+                Vext_mag_r = interp1d(
+                    r_grid_clamped, rknot, Vext_mag,
+                    method=method, extrap=False)
+            else:
+                # 2D case: flatten, interpolate, reshape
+                orig_shape = r_grid_clamped.shape
+                Vext_mag_r = interp1d(
+                    r_grid_clamped.ravel(), rknot, Vext_mag,
+                    method=method, extrap=False
+                ).reshape(orig_shape)
 
         # Project the LOS of each galaxy onto the dipole direction, shape
         # is (n_gal,).

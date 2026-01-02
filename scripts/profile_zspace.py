@@ -179,6 +179,20 @@ def main():
             n_runs=5
         )
 
+    # 7b. Test jax_linear vs cubic interpolation
+    print("\n7b. Interpolation method comparison (4 iterations):")
+    for method_name in ["cubic", "jax_linear"]:
+        kwargs_test = dict(kwargs_Vext)
+        kwargs_test["method"] = method_name
+        _, t_method = profile_component(
+            f"   method={method_name}",
+            lambda kw=kwargs_test: compute_los_zspace_to_rspace(
+                data, los_r, z_grid, Vext, which_Vext, kw,
+                redshift2distance, h, n_iterations=4
+            ),
+            n_runs=5
+        )
+
     # 8. Test effect of Malmquist grid size
     print("\n8. ln_simpson integration cost by grid size:")
     from candel.model.simpson import ln_simpson
