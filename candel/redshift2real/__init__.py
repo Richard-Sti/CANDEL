@@ -15,5 +15,6 @@
 
 from .model import (                                                            # noqa
     Redshift2Real,                                                              # noqa
+    Redshift2RealNumerical,                                                     # noqa
     run_batched_inference,                                                      # noqa
     )

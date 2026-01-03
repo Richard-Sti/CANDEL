@@ -18,7 +18,10 @@ calibrated density and velocity field.
 """
 from abc import ABC, abstractmethod
 
-from jax import numpy as jnp, random as jrandom
+import numpy as np
+from jax import grad, jit, vmap
+from jax import numpy as jnp
+from jax import random as jrandom
 from jax.scipy.special import logsumexp
 from numpyro import factor, plate, sample
 from numpyro.diagnostics import gelman_rubin
@@ -231,6 +234,242 @@ class Redshift2Real(BaseRedshift2Real):
             "log_density",
             log_mean_exp(ll, axis=0) - jnp.log(ll.shape[0])
             )
+
+
+@jit
+def _process_batch_no_bias(lp_r, z_grid, log_jacobian, Vpec, Vext_radial,
+                           beta, sigma_v, cz_cmb):
+    """JIT-compiled batch processing without galaxy bias."""
+    lp_r_full = lp_r[None, None, None, :]
+
+    # Peculiar velocity redshift (nfield, batch, ncal, nrad)
+    zpec = (
+        beta[None, None, :, None] * Vpec[:, :, None, :]
+        + Vext_radial[None, :, :, None]) / SPEED_OF_LIGHT
+    # Predicted cz (nfield, batch, ncal, nrad)
+    cz_pred = SPEED_OF_LIGHT * (
+        (1 + z_grid)[None, None, None, :] * (1 + zpec) - 1)
+
+    # Log-likelihood (nfield, batch, ncal, nrad)
+    ll = Normal(cz_pred, sigma_v[None, None, :, None]).log_prob(
+        cz_cmb[None, :, None, None])
+    ll += lp_r_full
+
+    # Average over calibration samples, shape (nfield, batch, nrad)
+    ll = log_mean_exp(ll, axis=2)
+    # Average over velocity field realizations, shape (batch, nrad)
+    log_posterior_unnorm = log_mean_exp(ll, axis=0)
+
+    # Apply Jacobian for p(z) = p(r) * |dr/dz|
+    log_posterior_unnorm += log_jacobian[None, :]
+
+    # Normalize using Simpson integration in z-space
+    log_norm = ln_simpson(log_posterior_unnorm, z_grid[None, :], axis=-1)
+    return log_posterior_unnorm - log_norm[:, None]
+
+
+@jit
+def _process_batch_linear_bias(lp_r, z_grid, log_jacobian, Vpec, Vext_radial,
+                               beta, sigma_v, cz_cmb, los_delta, b1, lp_norm):
+    """JIT-compiled batch processing with linear bias."""
+    bias_params = [b1[None, None, :, None]]
+    lp_bias = lp_galaxy_bias(
+        los_delta[:, :, None, :], None, bias_params, galaxy_bias="linear")
+    lp_r_full = lp_r[None, None, None, :] + lp_bias - lp_norm[..., None]
+
+    # Peculiar velocity redshift (nfield, batch, ncal, nrad)
+    zpec = (
+        beta[None, None, :, None] * Vpec[:, :, None, :]
+        + Vext_radial[None, :, :, None]) / SPEED_OF_LIGHT
+    cz_pred = SPEED_OF_LIGHT * (
+        (1 + z_grid)[None, None, None, :] * (1 + zpec) - 1)
+
+    ll = Normal(cz_pred, sigma_v[None, None, :, None]).log_prob(
+        cz_cmb[None, :, None, None])
+    ll += lp_r_full
+
+    ll = log_mean_exp(ll, axis=2)
+    log_posterior_unnorm = log_mean_exp(ll, axis=0)
+
+    # Apply Jacobian for p(z) = p(r) * |dr/dz|
+    log_posterior_unnorm += log_jacobian[None, :]
+
+    log_norm = ln_simpson(log_posterior_unnorm, z_grid[None, :], axis=-1)
+    return log_posterior_unnorm - log_norm[:, None]
+
+
+@jit
+def _process_batch_double_powerlaw_bias(lp_r, z_grid, log_jacobian, Vpec,
+                                        Vext_radial, beta, sigma_v, cz_cmb,
+                                        los_log_density, alpha_low, alpha_high,
+                                        log_rho_t, lp_norm):
+    """JIT-compiled batch processing with double powerlaw bias."""
+    bias_params = [
+        alpha_low[None, None, :, None],
+        alpha_high[None, None, :, None],
+        log_rho_t[None, None, :, None],
+    ]
+    lp_bias = lp_galaxy_bias(
+        None, los_log_density[:, :, None, :], bias_params,
+        galaxy_bias="double_powerlaw")
+    lp_r_full = lp_r[None, None, None, :] + lp_bias - lp_norm[..., None]
+
+    zpec = (
+        beta[None, None, :, None] * Vpec[:, :, None, :]
+        + Vext_radial[None, :, :, None]) / SPEED_OF_LIGHT
+    cz_pred = SPEED_OF_LIGHT * (
+        (1 + z_grid)[None, None, None, :] * (1 + zpec) - 1)
+
+    ll = Normal(cz_pred, sigma_v[None, None, :, None]).log_prob(
+        cz_cmb[None, :, None, None])
+    ll += lp_r_full
+
+    ll = log_mean_exp(ll, axis=2)
+    log_posterior_unnorm = log_mean_exp(ll, axis=0)
+
+    # Apply Jacobian for p(z) = p(r) * |dr/dz|
+    log_posterior_unnorm += log_jacobian[None, :]
+
+    log_norm = ln_simpson(log_posterior_unnorm, z_grid[None, :], axis=-1)
+    return log_posterior_unnorm - log_norm[:, None]
+
+
+class Redshift2RealNumerical(BaseRedshift2Real):
+    """
+    Numerical evaluation of the posterior `p(z_cosmo | z_obs, calibration)`.
+
+    Instead of MCMC sampling, this class evaluates the log-posterior on a grid
+    of `z_cosmo` values and normalizes numerically using Simpson integration.
+    """
+
+    def __call__(self, batch_size=100):
+        """
+        Compute the posterior PDF for each galaxy on a grid of z_cosmo.
+
+        Parameters
+        ----------
+        batch_size : int
+            Number of galaxies to process at once.
+
+        Returns
+        -------
+        z_grid : array, shape (num_rgrid,)
+            Grid of cosmological redshift values.
+        log_posterior : array, shape (ngal, num_rgrid)
+            Normalized log-posterior PDF at each grid point.
+        """
+        r_grid = self.los_grid_r
+        ngal = self.len_input_data
+        nrad = len(r_grid)
+
+        # Precompute quantities independent of galaxy
+        lp_r = 2 * jnp.log(r_grid)
+        z_grid = self.dist2redshift(r_grid)
+
+        # Compute Jacobian |dr/dz| via |dz/dr|^{-1} on a denser grid
+        r_grid_np = np.asarray(r_grid)
+        r_dense = np.linspace(r_grid_np[0], r_grid_np[-1], 2 * len(r_grid) - 1)
+        z_dense = np.asarray(self.dist2redshift(r_dense))
+        dz_dr_dense = np.gradient(z_dense, r_dense)
+        dz_dr = np.interp(r_grid_np, r_dense, dz_dr_dense)
+        log_jacobian = -jnp.log(dz_dr)  # log|dr/dz|
+
+        log_posterior = np.zeros((ngal, nrad))
+        n_batches = (ngal + batch_size - 1) // batch_size
+
+        for i in tqdm(range(n_batches), desc="Processing batches",
+                      disable=not self.verbose):
+            start = i * batch_size
+            end = min((i + 1) * batch_size, ngal)
+
+            log_posterior[start:end] = self._process_batch(
+                start, end, r_grid, lp_r, z_grid, log_jacobian)
+
+        return np.asarray(z_grid), log_posterior
+
+    def _process_batch(self, start, end, r_grid, lp_r, z_grid, log_jacobian):
+        """Dispatch to appropriate JIT-compiled function."""
+        Vpec = self.f_los_velocity.interp_many_steps_per_galaxy(
+            r_grid)[:, start:end, :]
+        Vext_radial = self.Vext_radial[start:end, :]
+        cz_cmb = self.cz_cmb[start:end]
+
+        if self.which_bias == "linear":
+            los_delta = self.f_los_delta.interp_many_steps_per_galaxy(
+                r_grid)[:, start:end, :]
+            return _process_batch_linear_bias(
+                lp_r, z_grid, log_jacobian, Vpec, Vext_radial,
+                self.beta, self.sigma_v, cz_cmb,
+                los_delta, self.b1, self.lp_norm[:, start:end, :])
+        elif self.which_bias == "double_powerlaw":
+            los_log_density = self.f_los_log_density.interp_many_steps_per_galaxy(r_grid)[:, start:end, :]  # noqa
+            return _process_batch_double_powerlaw_bias(
+                lp_r, z_grid, log_jacobian, Vpec, Vext_radial,
+                self.beta, self.sigma_v, cz_cmb,
+                los_log_density, self.alpha_low, self.alpha_high,
+                self.log_rho_t, self.lp_norm[:, start:end, :])
+        else:
+            return _process_batch_no_bias(
+                lp_r, z_grid, log_jacobian, Vpec, Vext_radial,
+                self.beta, self.sigma_v, cz_cmb)
+
+    def posterior_summary(self, z_grid, log_posterior, ci=0.68):
+        """
+        Compute summary statistics from the posterior.
+
+        Parameters
+        ----------
+        z_grid : array, shape (nz,)
+        log_posterior : array, shape (ngal, nz)
+        ci : float
+            Credible interval (default 0.68 for 1-sigma).
+
+        Returns
+        -------
+        dict with keys:
+            - 'mean': posterior mean
+            - 'median': posterior median
+            - 'std': posterior standard deviation
+            - 'map': maximum a posteriori estimate
+            - 'ci_low', 'ci_high': credible interval bounds
+        """
+        posterior = np.exp(log_posterior)
+        ngal = posterior.shape[0]
+        dz = z_grid[1] - z_grid[0]
+
+        # Mean
+        mean = np.sum(posterior * z_grid[None, :], axis=-1) * dz
+
+        # Variance and std
+        var = np.sum(posterior * (z_grid[None, :] - mean[:, None])**2,
+                     axis=-1) * dz
+        std = np.sqrt(var)
+
+        # MAP
+        map_idx = np.argmax(posterior, axis=-1)
+        map_val = z_grid[map_idx]
+
+        # CDF for median and CI
+        cdf = np.cumsum(posterior, axis=-1) * dz
+
+        def find_quantile(cdf_row, q):
+            idx = np.searchsorted(cdf_row, q)
+            return z_grid[min(idx, len(z_grid) - 1)]
+
+        median = np.array([find_quantile(cdf[i], 0.5) for i in range(ngal)])
+        ci_low = np.array([find_quantile(cdf[i], (1 - ci) / 2)
+                           for i in range(ngal)])
+        ci_high = np.array([find_quantile(cdf[i], 1 - (1 - ci) / 2)
+                            for i in range(ngal)])
+
+        return {
+            'mean': mean,
+            'median': median,
+            'std': std,
+            'map': map_val,
+            'ci_low': ci_low,
+            'ci_high': ci_high,
+        }
 
 
 def run_batched_inference(model_kwargs, batch_size=50, num_warmup=500,
