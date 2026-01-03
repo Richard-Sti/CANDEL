@@ -28,8 +28,10 @@ from .model import (                                                            
     smoothclip_nr,                                                              # noqa
     )
 from .model_SH0ES import SH0ESModel                                             # noqa
-from .model_CCHP import CCHPTRGBModel                                           # noqa
-from .model_CSP import CSPSelection, CSPModel, simulate_csp                     # noqa
+from .model_CCHP import CCHPTRGBModel, JointTRGBCSPModel                        # noqa
+from .model_CSP import (CSPSelection, CSPModel, VolumePrior, simulate_csp,      # noqa
+                        compute_per_source_selection,                           # noqa
+                        extract_csp_median_errors)                              # noqa
 from .interp import LOSInterpolator                                             # noqa
 from .simpson import ln_simpson                                                 # noqa
 
