@@ -364,7 +364,8 @@ def _direction_from_galactic(direction):
 def sample_radialmag_vector(name, nval, low, high, max_modulus=None,
                             direction=None, smoothness_scale=None,
                             smoothness_threshold=None,
-                            sample_galactic=False, half_sky=False):
+                            sample_galactic=False, half_sky=False,
+                            fixed_knots=None):
     """
     Sample a vector whose magnitude varies at `nval` knots but a direction
     is shared by all knots and sampled isotropically on the sky. The magnitude
@@ -383,6 +384,9 @@ def sample_radialmag_vector(name, nval, low, high, max_modulus=None,
 
     If `half_sky` is True, the galactic latitude is restricted to [0, 90°]
     (northern hemisphere) to break the sign degeneracy. Implies `sample_galactic=True`.
+
+    If `fixed_knots` is provided (dict mapping knot index to fixed value),
+    those knots are fixed at the specified values instead of being sampled.
 
     Returns the tuple (mag, rhat), where `mag` has shape (nval,) and `rhat`
     has shape (3,).
@@ -428,8 +432,38 @@ def sample_radialmag_vector(name, nval, low, high, max_modulus=None,
         cos_theta = sample(f"{name}_cos_theta", Uniform(-1, 1))
     sin_theta = jnp.sqrt(1 - cos_theta**2)
 
-    with plate(f"{name}_plate", nval):
-        mag = sample(f"{name}_mag", Uniform(low_arr, high_arr))
+    # Handle fixed knots
+    if fixed_knots is not None and len(fixed_knots) > 0:
+        # Convert string keys to integers (TOML parses numeric keys as strings)
+        fixed_knots = {int(k): v for k, v in fixed_knots.items()}
+        # Identify which knots to sample vs fix
+        fixed_indices = set(fixed_knots.keys())
+        sample_indices = [i for i in range(nval) if i not in fixed_indices]
+        n_sample = len(sample_indices)
+
+        if n_sample > 0:
+            # Sample only the non-fixed knots
+            sample_low = jnp.array([low_arr[i] for i in sample_indices])
+            sample_high = jnp.array([high_arr[i] for i in sample_indices])
+            with plate(f"{name}_plate", n_sample):
+                sampled_mag = sample(f"{name}_mag", Uniform(sample_low, sample_high))
+
+            # Build full mag array by combining fixed and sampled values
+            mag_list = []
+            sample_idx = 0
+            for i in range(nval):
+                if i in fixed_indices:
+                    mag_list.append(fixed_knots[i])
+                else:
+                    mag_list.append(sampled_mag[sample_idx])
+                    sample_idx += 1
+            mag = jnp.array(mag_list)
+        else:
+            # All knots are fixed
+            mag = jnp.array([fixed_knots[i] for i in range(nval)])
+    else:
+        with plate(f"{name}_plate", nval):
+            mag = sample(f"{name}_mag", Uniform(low_arr, high_arr))
 
     # Apply smoothness prior on differences between adjacent knots
     if smoothness_scale is not None and smoothness_scale > 0:
@@ -582,6 +616,8 @@ def load_priors(config_priors):
             "sample_galactic": p.get("sample_galactic", False),
             # Restrict ell to [0, 180°] to break sign degeneracy (implies sample_galactic)
             "half_sky": p.get("half_sky", False),
+            # Optional dict mapping knot index -> fixed value (e.g., {0: 0.0})
+            "fixed_knots": p.get("fixed_knots"),
         },  # noqa
     }
     priors = {}
@@ -647,7 +683,8 @@ def _rsample(name, dist):
             smoothness_scale=dist.get("smoothness_scale"),
             smoothness_threshold=dist.get("smoothness_threshold"),
             sample_galactic=dist.get("sample_galactic", False),
-            half_sky=dist.get("half_sky", False))
+            half_sky=dist.get("half_sky", False),
+            fixed_knots=dist.get("fixed_knots"))
 
     if isinstance(dist, dict) and dist.get("type") == "array_uniform":
         nval = dist.get("nval")
