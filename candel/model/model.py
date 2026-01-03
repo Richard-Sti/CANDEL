@@ -313,12 +313,47 @@ def _direction_from_galactic(direction):
     """
     Convert galactic (ell, b) in degrees to spherical angles in the ICRS frame
     used internally. We rotate to ICRS Cartesian and then extract (phi, cos_theta).
+
+    This is a JAX-compatible version that doesn't use astropy.
     """
-    xyz = jnp.asarray(
-        galactic_to_radec_cartesian(direction["ell"], direction["b"]),
-        dtype=jnp.float32,
-    )
-    x, y, z = xyz
+    # Handle both scalar JAX traced values and numpy arrays
+    ell_deg = direction["ell"]
+    b_deg = direction["b"]
+
+    # Check if inputs are JAX traced values (from numpyro sampling)
+    is_jax_traced = hasattr(ell_deg, 'shape') and not isinstance(ell_deg, np.ndarray)
+
+    if is_jax_traced or isinstance(ell_deg, (jnp.ndarray, float, int)):
+        # JAX-compatible path: do the rotation manually
+        ell_rad = jnp.deg2rad(ell_deg)
+        b_rad = jnp.deg2rad(b_deg)
+
+        # Galactic Cartesian coordinates
+        cos_b = jnp.cos(b_rad)
+        x_gal = cos_b * jnp.cos(ell_rad)
+        y_gal = cos_b * jnp.sin(ell_rad)
+        z_gal = jnp.sin(b_rad)
+
+        # Rotation matrix from galactic to ICRS (from astropy)
+        # Columns are ICRS coords of galactic X, Y, Z unit vectors
+        R = jnp.array([
+            [-0.0548756577,  0.4941094372, -0.8676661376],
+            [-0.8734370520, -0.4448297212, -0.1980763373],
+            [-0.4838350736,  0.7469821840,  0.4559838137],
+        ])
+
+        # Apply rotation
+        x = R[0, 0] * x_gal + R[0, 1] * y_gal + R[0, 2] * z_gal
+        y = R[1, 0] * x_gal + R[1, 1] * y_gal + R[1, 2] * z_gal
+        z = R[2, 0] * x_gal + R[2, 1] * y_gal + R[2, 2] * z_gal
+    else:
+        # NumPy path: use astropy for accuracy
+        xyz = jnp.asarray(
+            galactic_to_radec_cartesian(ell_deg, b_deg),
+            dtype=jnp.float32,
+        )
+        x, y, z = xyz
+
     norm = jnp.sqrt(x * x + y * y + z * z) + 1e-12
     phi = jnp.arctan2(y, x)
     phi = jnp.where(phi < 0, phi + 2 * jnp.pi, phi)
@@ -328,7 +363,8 @@ def _direction_from_galactic(direction):
 
 def sample_radialmag_vector(name, nval, low, high, max_modulus=None,
                             direction=None, smoothness_scale=None,
-                            smoothness_threshold=None):
+                            smoothness_threshold=None,
+                            sample_galactic=False, half_sky=False):
     """
     Sample a vector whose magnitude varies at `nval` knots but a direction
     is shared by all knots and sampled isotropically on the sky. The magnitude
@@ -342,9 +378,19 @@ def sample_radialmag_vector(name, nval, low, high, max_modulus=None,
     is also provided, differences within the threshold are not penalized (flat
     region), and only the excess beyond threshold is penalized with a Gaussian.
 
+    If `sample_galactic` is True, the direction is sampled directly in galactic
+    coordinates (ell, b) rather than ICRS spherical coordinates.
+
+    If `half_sky` is True, the galactic latitude is restricted to [0, 90°]
+    (northern hemisphere) to break the sign degeneracy. Implies `sample_galactic=True`.
+
     Returns the tuple (mag, rhat), where `mag` has shape (nval,) and `rhat`
     has shape (3,).
     """
+    # half_sky implies sample_galactic
+    if half_sky:
+        sample_galactic = True
+
     # Convert scalar bounds to per-knot arrays.
     low_arr = jnp.asarray(low)
     high_arr = jnp.asarray(high)
@@ -365,9 +411,21 @@ def sample_radialmag_vector(name, nval, low, high, max_modulus=None,
 
     if direction is not None:
         phi, cos_theta = _direction_from_galactic(direction)
+    elif sample_galactic:
+        # Sample directly in galactic coordinates
+        ell_rad = sample(f"{name}_ell", Uniform(0, 2 * jnp.pi))
+        # half_sky restricts to northern galactic hemisphere (b >= 0)
+        sin_b_low = 0.0 if half_sky else -1.0
+        sin_b = sample(f"{name}_sin_b", Uniform(sin_b_low, 1))
+        b_rad = jnp.arcsin(sin_b)
+        # Convert to ICRS for internal use
+        phi, cos_theta = _direction_from_galactic({
+            "ell": jnp.degrees(ell_rad),
+            "b": jnp.degrees(b_rad)
+        })
     else:
         phi = sample(f"{name}_phi", Uniform(0, 2 * jnp.pi))
-        cos_theta = sample(f"{name}_cos_theta", Uniform(0, 1))
+        cos_theta = sample(f"{name}_cos_theta", Uniform(-1, 1))
     sin_theta = jnp.sqrt(1 - cos_theta**2)
 
     with plate(f"{name}_plate", nval):
@@ -520,6 +578,10 @@ def load_priors(config_priors):
             # Optional smoothness prior (km/s scale for penalizing knot differences)
             "smoothness_scale": p.get("smoothness_scale"),
             "smoothness_threshold": p.get("smoothness_threshold"),
+            # Sample in galactic coordinates (ell, b) instead of ICRS
+            "sample_galactic": p.get("sample_galactic", False),
+            # Restrict ell to [0, 180°] to break sign degeneracy (implies sample_galactic)
+            "half_sky": p.get("half_sky", False),
         },  # noqa
     }
     priors = {}
@@ -583,7 +645,9 @@ def _rsample(name, dist):
             max_modulus=dist.get("max_modulus"),
             direction=dist.get("direction"),
             smoothness_scale=dist.get("smoothness_scale"),
-            smoothness_threshold=dist.get("smoothness_threshold"))
+            smoothness_threshold=dist.get("smoothness_threshold"),
+            sample_galactic=dist.get("sample_galactic", False),
+            half_sky=dist.get("half_sky", False))
 
     if isinstance(dist, dict) and dist.get("type") == "array_uniform":
         nval = dist.get("nval")

@@ -532,6 +532,19 @@ def postprocess_samples(samples, convert_zeropoint_to_dH=False):
             samples[f"A_radial_bin__{bin_idx}"] = A_bin
     
     for prefix in ["dH0", "Vext_rad", "Vext_radmag", "Vext", "zeropoint_dipole"]:
+        # Galactic form: ell (radians) + sin_b (+ mag optional)
+        # This is used when sample_galactic=True in the prior
+        if f"{prefix}_ell" in samples and f"{prefix}_sin_b" in samples:
+            ell_rad = samples.pop(f"{prefix}_ell")
+            sin_b = samples.pop(f"{prefix}_sin_b")
+            # Convert to degrees
+            samples[f"{prefix}_ell"] = np.rad2deg(ell_rad)
+            samples[f"{prefix}_b"] = np.rad2deg(np.arcsin(sin_b))
+
+            if f"{prefix}_mag" in samples:
+                samples[f"{prefix}_mag"] = samples.pop(f"{prefix}_mag")
+            continue
+
         # Spherical form: phi + cos_theta (+ mag optional)
         if f"{prefix}_phi" in samples and f"{prefix}_cos_theta" in samples:
             phi = np.rad2deg(samples.pop(f"{prefix}_phi"))

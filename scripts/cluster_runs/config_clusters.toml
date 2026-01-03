@@ -192,6 +192,10 @@ method = "cubic"
 # Set smoothness_scale to 0 or omit to disable.
 smoothness_threshold = 1000
 smoothness_scale = 200
+# Sample direction in galactic coordinates (ell, b) instead of ICRS
+sample_galactic = true
+# Restrict ell to [0, 180°] to break sign degeneracy with magnitude
+half_sky = true
 
 [model.priors.zeropoint_dipole]
 dist = "delta"

@@ -37,8 +37,10 @@ include_pairs = False
 include_pix = False
 include_radmag_fine = False    # Radmag with finer knot spacing
 include_radmag_finest = True  # Radmag with finest knot spacing
-radmag_smoothness_threshold = 1000  # Flat region (km/s), no penalty within this
+radmag_smoothness_threshold = 4000  # Flat region (km/s), no penalty within this
 radmag_smoothness_scale = 200  # Gaussian scale (km/s) beyond threshold, 0 or None to disable
+radmag_sample_galactic = True  # Sample direction in galactic coords (ell, b) instead of ICRS
+radmag_half_sky = True  # Restrict ell to [0, 180°] to break sign degeneracy with magnitude
 include_rad = False    # Radial Vext (direction free, magnitude varies with r)
 include_radmag = False  # Radial magnitude Vext (direction fixed, magnitude varies with r)
 # Base model flags (split from old include_base)
@@ -60,7 +62,7 @@ include_fixed_sigma = False
 #   - H0 runs: use_zspace=True, stretch_los=False
 # Note: when use_zspace=True, stretch_los value doesn't matter (but set to False)
 GENERATE_TASKS_ZSPACE = True
-n_zspace_iterations = 4  # Iterations to refine z->r mapping for radial Vext models
+n_zspace_iterations = 2  # Iterations to refine z->r mapping for radial Vext models
 output_root = "results/radtest"
 num_chains = 1
 chain_method = "sequential"
@@ -445,6 +447,9 @@ if __name__ == "__main__":
                 del prior["smoothness_scale"]
             if "smoothness_threshold" in prior:
                 del prior["smoothness_threshold"]
+        # Override galactic sampling options from the global flags
+        prior["sample_galactic"] = radmag_sample_galactic
+        prior["half_sky"] = radmag_half_sky
         return prior
 
     def build_radmag_combinations(knots, variant_label):
