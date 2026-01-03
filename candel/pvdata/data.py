@@ -126,7 +126,7 @@ class PVDataFrame:
     add_eta_truncation = False
 
     def __init__(self, data, los_radial_decay_scale=5):
-        # Only convert numeric arrays to JAX, skip string arrays
+        # Convert numeric arrays to JAX, skip string arrays
         self.data = {}
         for k, v in data.items():
             if isinstance(v, np.ndarray) and np.issubdtype(v.dtype, np.str_):
@@ -211,10 +211,37 @@ class PVDataFrame:
                     fprint(f"removing `{key}` from data.")
                     data.pop(key, None)
 
-        rmin, rmax = config_pv_model["r_limits_malmquist"]
+        r_limits = config_pv_model["r_limits_malmquist"]
         num_points = config_pv_model["num_points_malmquist"]
-        fprint(f"setting the LOS radial grid from {rmin} to {rmax} with "
-               f"{num_points} points.")
+
+        if isinstance(r_limits, str) and r_limits.startswith("auto"):
+            # Parse h from "auto" or "auto_0.7" format
+            if "_" in r_limits:
+                h_auto = float(r_limits.split("_")[1])
+            else:
+                h_auto = 1.0
+            # Compute from observed cz with 25% buffer, min 15 Mpc
+            from ..cosmography import Redshift2Distance
+            Om = config.get("model", {}).get("Om", 0.3)
+            cz_obs = data["czcmb"]
+            cz_obs_lim = [float(np.min(cz_obs)), float(np.max(cz_obs))]
+            redshift2distance = Redshift2Distance(Om0=Om)
+            r_from_cz = redshift2distance(
+                np.array(cz_obs_lim), h=h_auto, is_velocity=True)
+            r_min_raw = float(r_from_cz[0])
+            r_max_raw = float(r_from_cz[1])
+            buffer_low = max(r_min_raw * 0.25, 15.0)
+            buffer_high = max(r_max_raw * 0.25, 15.0)
+            rmin = max(r_min_raw - buffer_low, 0.15)
+            rmax = r_max_raw + buffer_high
+            fprint(f"auto r_limits_malmquist (h={h_auto}): [{rmin:.1f}, "
+                   f"{rmax:.1f}] Mpc "
+                   f"(buffer: -{buffer_low:.1f}, +{buffer_high:.1f} Mpc)")
+        else:
+            rmin, rmax = r_limits
+            fprint(f"setting the LOS radial grid from {rmin} to {rmax} with "
+                   f"{num_points} points.")
+
         data["r_grid"] = np.linspace(rmin, rmax, num_points)
 
         los_decay_scale = config_pv_model.get("los_decay_scale", 5.0)
@@ -1306,8 +1333,12 @@ def load_CCHP_from_config(config_path, ra_dec_only=False):
     Expects the TSV to contain at least the columns:
     SN, Galaxy, cz_cmb, e_czcmb, mu_TRGB_CCHP, sigma_TRGB_CCHP,
     m_Bprime_CSP, sigma_Bprime_CSP.
+
+    Set io.CSP.load_CSP_matches = true in config to load matched CSP data
+    (st, BV, obs_vec, cov, RA, dec, stellar masses) with CSP_ prefix.
     """
     config = load_config(config_path, replace_los_prior=False)
+    load_csp_match = get_nested(config, "io/CSP/load_CSP_matches", False)
     path = config["io"]["CCHP"]["path"]
     redshift_source = get_nested(
         config, "io/CCHP_redshift_source/kind", "cz_cmb")
@@ -1425,6 +1456,144 @@ def load_CCHP_from_config(config_path, ra_dec_only=False):
     else:
         data["has_rand_los"] = False
 
+    # Optionally load matched CSP data
+    if load_csp_match:
+        csp_root = get_nested(config, "io/CSP/root", None)
+        if csp_root is None:
+            raise ValueError("CSP root not specified in config [io.CSP.root]")
+        if not isabs(csp_root):
+            csp_root = join(config["root_main"], csp_root)
+
+        csp_data = load_CSP(csp_root, return_all=True)
+        cchp_idx, csp_idx = match_cchp_to_csp(data, csp_data)
+
+        # Store matching indices
+        data["CSP_match_cchp_idx"] = cchp_idx
+        data["CSP_match_csp_idx"] = csp_idx
+
+        # Add matched CSP fields with prefix
+        n_cchp = len(data["SN"])
+        csp_fields = ["st", "BV", "obs_vec", "cov", "RA", "dec",
+                      "log_stellar_mass", "log_stellar_mass_lower",
+                      "log_stellar_mass_upper"]
+        for field in csp_fields:
+            arr = csp_data[field]
+            # Create array of NaN with CCHP shape, fill matched entries
+            if arr.ndim == 1:
+                out = np.full(n_cchp, np.nan)
+            elif arr.ndim == 2:
+                out = np.full((n_cchp, arr.shape[1]), np.nan)
+            else:
+                out = np.full((n_cchp,) + arr.shape[1:], np.nan)
+            out[cchp_idx] = arr[csp_idx]
+            data[f"CSP_{field}"] = out
+
+    return data
+
+
+def match_cchp_to_csp(cchp_data, csp_data):
+    """
+    Match CCHP TRGB hosts to CSP SNe by SN name.
+
+    Handles naming convention differences: CCHP uses '2011fe' while CSP uses
+    'SN2011fe'.
+
+    Returns
+    -------
+    cchp_idx : ndarray
+        Indices into cchp_data for matched SNe.
+    csp_idx : ndarray
+        Indices into csp_data for matched SNe.
+    """
+    cchp_names = cchp_data["SN"]
+    csp_names = csp_data["sn"]
+
+    # CSP names have "SN" prefix, strip it for matching
+    csp_name_to_idx = {}
+    for i, name in enumerate(csp_names):
+        key = name[2:] if name.startswith("SN") else name
+        csp_name_to_idx[key] = i
+
+    cchp_idx, csp_idx = [], []
+    for i, name in enumerate(cchp_names):
+        if name in csp_name_to_idx:
+            cchp_idx.append(i)
+            csp_idx.append(csp_name_to_idx[name])
+
+    cchp_idx = np.array(cchp_idx, dtype=int)
+    csp_idx = np.array(csp_idx, dtype=int)
+
+    fprint(f"matched {len(cchp_idx)}/{len(cchp_names)} CCHP SNe to CSP.")
+
+    # Print unmatched CCHP SNe
+    matched_set = set(cchp_idx)
+    unmatched = [cchp_names[i] for i in range(len(cchp_names))
+                 if i not in matched_set]
+    if unmatched:
+        fprint(f"unmatched CCHP SNe: {unmatched}")
+
+    return cchp_idx, csp_idx
+
+
+def load_CSP_from_config(config_path):
+    """
+    Load CSP SNe data from config, wrapped in PVDataFrame for inference.
+
+    Uses config keys:
+    - io.CSP.root: path to CSP data directory
+    - io.CSP.which_sample: sample to select ("CSPI", "CSPII", or "LSQ")
+    - model.r_limits_malmquist: radial grid limits for Malmquist bias
+    - model.num_points_malmquist: number of grid points
+    """
+    config = load_config(config_path, replace_los_prior=False)
+
+    csp_root = get_nested(config, "io/CSP/root", None)
+    if csp_root is None:
+        raise ValueError("CSP root not specified in config [io.CSP.root]")
+    if not isabs(csp_root):
+        csp_root = join(config["root_main"], csp_root)
+
+    # Get optional CSP loading parameters
+    which_sample = get_nested(config, "io/CSP/which_sample", None)
+    sample_str = which_sample if which_sample else "all"
+    fprint(f"loading CSP sample: {sample_str}")
+
+    data = load_CSP(csp_root, which_sample=which_sample)
+
+    # Add radial grid for selection integral
+    r_limits = config["model"]["r_limits_malmquist"]
+    num_points = config["model"]["num_points_malmquist"]
+
+    if isinstance(r_limits, str) and r_limits.startswith("auto"):
+        # Parse h from "auto" or "auto_0.7" format
+        if "_" in r_limits:
+            h_auto = float(r_limits.split("_")[1])
+        else:
+            h_auto = 1.0
+        # Compute from observed cz with 25% buffer, min 15 Mpc
+        from ..cosmography import Redshift2Distance
+        Om = get_nested(config, "model/Om", 0.3)
+        cz_obs = data["czcmb"]
+        cz_obs_lim = [float(np.min(cz_obs)), float(np.max(cz_obs))]
+        redshift2distance = Redshift2Distance(Om0=Om)
+        r_from_cz = redshift2distance(
+            np.array(cz_obs_lim), h=h_auto, is_velocity=True)
+        r_min_raw = float(r_from_cz[0])
+        r_max_raw = float(r_from_cz[1])
+        buffer_low = max(r_min_raw * 0.25, 15.0)
+        buffer_high = max(r_max_raw * 0.25, 15.0)
+        rmin = max(r_min_raw - buffer_low, 0.15)
+        rmax = r_max_raw + buffer_high
+        fprint(f"auto r_limits_malmquist (h={h_auto}): "
+               f"[{rmin:.1f}, {rmax:.1f}] Mpc "
+               f"(buffer: -{buffer_low:.1f}, +{buffer_high:.1f} Mpc)")
+    else:
+        rmin, rmax = r_limits
+
+    data["r_grid"] = np.linspace(rmin, rmax, num_points)
+
+    fprint(f"loaded {len(data['sn'])} CSP SNe (sample: {sample_str}).")
+    # Return raw dict; JointTRGBCSPModel wraps in PVDataFrame after matching
     return data
 
 
@@ -1761,7 +1930,7 @@ def load_CSP(root, zcmb_min=None, zcmb_max=None, b_min=None, quality_min=None,
     fprint(f"initially loaded {len(d)} SNe from CSP data.")
 
     # Remove duplicate SNe (same name, different calibration type)
-    if remove_duplicates:
+    if remove_duplicates and not return_all:
         _, unique_idx = np.unique(d["sn"], return_index=True)
         unique_idx = np.sort(unique_idx)
         n_duplicates = len(d) - len(unique_idx)
@@ -1873,6 +2042,13 @@ def load_CSP(root, zcmb_min=None, zcmb_max=None, b_min=None, quality_min=None,
 
     mask = np.ones(len(d), dtype=bool)
 
+    # Filter out SNe without valid coordinates
+    has_coords = np.isfinite(RA) & np.isfinite(dec_)
+    n_no_coords = np.sum(~has_coords)
+    if n_no_coords > 0:
+        fprint(f"removing {n_no_coords} SNe without valid coordinates.")
+    mask &= has_coords
+
     if zcmb_min is not None:
         mask &= data["zcmb"] > zcmb_min
     if zcmb_max is not None:
@@ -1897,6 +2073,7 @@ def load_CSP(root, zcmb_min=None, zcmb_max=None, b_min=None, quality_min=None,
     if t0_max is not None:
         mask &= data["t0"] <= t0_max
     if which_sample is not None:
+        fprint(f"selecting CSP sample: {which_sample}")
         if which_sample == "LSQ":
             mask &= np.char.startswith(data["sn"], "LSQ")
         elif which_sample in ("CSPI", "CSPII"):
