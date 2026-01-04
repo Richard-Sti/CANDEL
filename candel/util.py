@@ -1196,6 +1196,27 @@ def plot_Vext_radmag(samples, model, r_eval_size=1000, show_fig=True,
     rknot = model.kwargs_Vext["rknot"]
     method = model.kwargs_Vext["method"]
 
+    # Handle fixed_knots: if some knots were fixed during sampling,
+    # the samples array is shorter than rknot. We need to reconstruct
+    # the full magnitude array by inserting the fixed values.
+    prior_cfg = getattr(model, "config", {})
+    fixed_knots = get_nested(prior_cfg, "model/priors/Vext_radmag/fixed_knots", {})
+    if fixed_knots:
+        # Convert string keys to integers (TOML parses numeric keys as strings)
+        fixed_knots = {int(k): v for k, v in fixed_knots.items()}
+        nknot = len(rknot)
+        nsamples = Vmag.shape[0]
+        # Reconstruct the full magnitude array
+        Vmag_full = np.zeros((nsamples, nknot))
+        sample_idx = 0
+        for i in range(nknot):
+            if i in fixed_knots:
+                Vmag_full[:, i] = fixed_knots[i]
+            else:
+                Vmag_full[:, i] = Vmag[:, sample_idx]
+                sample_idx += 1
+        Vmag = Vmag_full
+
     # Attempt to extract zcmb (and Y, if present) for the distance histogram.
     zcmb = None
     Y = None
@@ -1306,8 +1327,6 @@ def plot_Vext_radmag(samples, model, r_eval_size=1000, show_fig=True,
             ax.axvline(xmax - dx, **knot_line_kwargs)
         else:
             ax.axvline(rk, **knot_line_kwargs)
-
-    prior_cfg = getattr(model, "config", {})
 
     def _get_prior_bounds():
         """Return (lower, upper) arrays for the prior, if available."""

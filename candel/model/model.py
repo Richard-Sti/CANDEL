@@ -382,8 +382,10 @@ def sample_radialmag_vector(name, nval, low, high, max_modulus=None,
     If `sample_galactic` is True, the direction is sampled directly in galactic
     coordinates (ell, b) rather than ICRS spherical coordinates.
 
-    If `half_sky` is True, the galactic latitude is restricted to [0, 90°]
-    (northern hemisphere) to break the sign degeneracy. Implies `sample_galactic=True`.
+    If `half_sky` is True or "north", the galactic latitude is restricted to
+    [0, 90°] (northern hemisphere) to break the sign degeneracy. If `half_sky`
+    is "south", restricts to [-90°, 0°] (southern hemisphere). Implies
+    `sample_galactic=True`.
 
     If `fixed_knots` is provided (dict mapping knot index to fixed value),
     those knots are fixed at the specified values instead of being sampled.
@@ -392,8 +394,14 @@ def sample_radialmag_vector(name, nval, low, high, max_modulus=None,
     has shape (3,).
     """
     # half_sky implies sample_galactic
-    if half_sky:
+    # Normalize half_sky to False, "north", or "south"
+    if half_sky is True or half_sky == "north":
+        half_sky = "north"
         sample_galactic = True
+    elif half_sky == "south":
+        sample_galactic = True
+    else:
+        half_sky = False
 
     # Convert scalar bounds to per-knot arrays.
     low_arr = jnp.asarray(low)
@@ -418,9 +426,14 @@ def sample_radialmag_vector(name, nval, low, high, max_modulus=None,
     elif sample_galactic:
         # Sample directly in galactic coordinates
         ell_rad = sample(f"{name}_ell", Uniform(0, 2 * jnp.pi))
-        # half_sky restricts to northern galactic hemisphere (b >= 0)
-        sin_b_low = 0.0 if half_sky else -1.0
-        sin_b = sample(f"{name}_sin_b", Uniform(sin_b_low, 1))
+        # half_sky restricts to one galactic hemisphere
+        if half_sky == "north":
+            sin_b_low, sin_b_high = 0.0, 1.0
+        elif half_sky == "south":
+            sin_b_low, sin_b_high = -1.0, 0.0
+        else:
+            sin_b_low, sin_b_high = -1.0, 1.0
+        sin_b = sample(f"{name}_sin_b", Uniform(sin_b_low, sin_b_high))
         b_rad = jnp.arcsin(sin_b)
         # Convert to ICRS for internal use
         phi, cos_theta = _direction_from_galactic({
