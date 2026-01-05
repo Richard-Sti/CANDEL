@@ -19,23 +19,44 @@ calibrated density and velocity field.
 from abc import ABC, abstractmethod
 
 import numpy as np
-from jax import grad, jit, vmap
-from jax import numpy as jnp
-from jax import random as jrandom
-from jax.scipy.special import logsumexp
-from numpyro import factor, plate, sample
-from numpyro.diagnostics import gelman_rubin
-from numpyro.distributions import Normal, Uniform
-from numpyro.infer import MCMC, NUTS, init_to_median, init_to_value
-from tqdm import tqdm
+from scipy.integrate import simpson
+from scipy.special import logsumexp as logsumexp_np
+from tqdm import tqdm, trange
 
 from ..cosmography import Distance2Redshift
-from ..model import LOSInterpolator, ln_simpson, lp_galaxy_bias
+from ..model import LOSInterpolator
 from ..util import SPEED_OF_LIGHT, fprint, radec_to_cartesian
 
 
-def log_mean_exp(logp, axis=-1):
-    return logsumexp(logp, axis=axis) - jnp.log(logp.shape[axis])
+def log_mean_exp_np(logp, axis=-1):
+    """NumPy version of log_mean_exp."""
+    return logsumexp_np(logp, axis=axis) - np.log(logp.shape[axis])
+
+
+def ln_simpson_np(ln_y, x, axis=-1):
+    """
+    Numerically stable log-Simpson integration using scipy.
+
+    Computes log(integral(exp(ln_y), x)) by shifting to avoid overflow.
+    """
+    # Shift by max for numerical stability
+    ln_y = np.asarray(ln_y)
+    max_ln_y = np.max(ln_y, axis=axis, keepdims=True)
+    y_shifted = np.exp(ln_y - max_ln_y)
+
+    # Integrate the shifted values
+    integral = simpson(y_shifted, x=x, axis=axis)
+
+    # Return log of integral, adding back the shift
+    return np.log(integral) + np.squeeze(max_ln_y, axis=axis)
+
+
+_LOG_2PI_HALF = 0.5 * np.log(2 * np.pi)
+
+
+def normal_logpdf_np(x, loc, scale):
+    """NumPy implementation of Normal log-pdf."""
+    return -0.5 * ((x - loc) / scale)**2 - _LOG_2PI_HALF - np.log(scale)
 
 
 class BaseRedshift2Real(ABC):
@@ -47,10 +68,10 @@ class BaseRedshift2Real(ABC):
                  r_init=None):
         self.verbose = verbose
         self.dist2redshift = Distance2Redshift(Om0=Om0)
-        self.r_init = jnp.asarray(r_init) if r_init is not None else None
+        self.r_init = np.asarray(r_init) if r_init is not None else None
 
         if self.r_init is not None:
-            if jnp.any(self.r_init < Rmin) or jnp.any(self.r_init > Rmax):
+            if np.any(self.r_init < Rmin) or np.any(self.r_init > Rmax):
                 raise ValueError("r_init values must be within [Rmin, Rmax]")
 
         self.Rmin = Rmin
@@ -59,18 +80,18 @@ class BaseRedshift2Real(ABC):
         assert num_rgrid % 2 == 1
 
         self.len_input_data = len(zcmb)
-        self.cz_cmb = jnp.asarray(zcmb * SPEED_OF_LIGHT)  # in km/s
+        self.cz_cmb = np.asarray(zcmb * SPEED_OF_LIGHT)  # in km/s
 
-        los_r = jnp.asarray(los_r)
-        los_density = jnp.asarray(los_density)
-        los_velocity = jnp.asarray(los_velocity)
+        los_r = np.asarray(los_r)
+        los_density = np.asarray(los_density)
+        los_velocity = np.asarray(los_velocity)
 
         self.f_los_velocity = LOSInterpolator(
             los_r, los_velocity, r0_decay_scale=r0_decay_scale)
 
         rhat = radec_to_cartesian(RA, dec)
 
-        self.los_grid_r = jnp.linspace(Rmin, Rmax, num_rgrid)
+        self.los_grid_r = np.linspace(Rmin, Rmax, num_rgrid)
 
         self.calibration_samples = calibration_samples
         calibration_keys = list(calibration_samples.keys())
@@ -78,43 +99,44 @@ class BaseRedshift2Real(ABC):
 
         # LOS Vext, (ngal, ncalibration_samples)
         if "Vext" in calibration_samples:
-            self.Vext_radial = jnp.sum(
+            self.Vext_radial = np.sum(
                 rhat[:, None, :] * calibration_samples["Vext"][None, :, :],
                 axis=-1)
         else:
             fprint("No Vext in calibration samples.", verbose=self.verbose)
-            self.Vext_radial = jnp.zeros(
+            self.Vext_radial = np.zeros(
                 (self.len_input_data, self.num_cal))
 
         self.use_im = True
         self.which_bias = which_bias
+        fprint(f"Preparing galaxy bias model: {which_bias}",)
         if which_bias is None:
             self.use_im = False
         elif which_bias == "linear":
-            self.b1 = jnp.asarray(calibration_samples["b1"])
+            self.b1 = np.asarray(calibration_samples["b1"])
             self.f_los_delta = LOSInterpolator(
                 los_r, los_density - 1, r0_decay_scale=r0_decay_scale)
             self.lp_norm = self.compute_linear_bias_lp_normalization(
                 self.los_grid_r)
         elif which_bias == "double_powerlaw":
-            self.alpha_low = jnp.asarray(calibration_samples["alpha_low"])
-            self.alpha_high = jnp.asarray(calibration_samples["alpha_high"])
-            self.log_rho_t = jnp.asarray(calibration_samples["log_rho_t"])
+            self.alpha_low = np.asarray(calibration_samples["alpha_low"])
+            self.alpha_high = np.asarray(calibration_samples["alpha_high"])
+            self.log_rho_t = np.asarray(calibration_samples["log_rho_t"])
             self.f_los_log_density = LOSInterpolator(
-                los_r, jnp.log(los_density), r0_decay_scale=r0_decay_scale)
+                los_r, np.log(los_density), r0_decay_scale=r0_decay_scale)
 
             self.lp_norm = self.compute_double_powerlaw_bias_lp_normalization(
                 self.los_grid_r)
         else:
             raise ValueError(f"Unknown bias model: {which_bias}")
 
-        self.sigma_v = jnp.asarray(calibration_samples["sigma_v"])
+        self.sigma_v = np.asarray(calibration_samples["sigma_v"])
         if "beta" in calibration_samples:
-            self.beta = jnp.asarray(calibration_samples["beta"])
+            self.beta = np.asarray(calibration_samples["beta"])
         else:
             fprint("Beta not in calibration samples. Setting beta=1.",
                    verbose=self.verbose)
-            self.beta = jnp.ones_like(self.sigma_v)
+            self.beta = np.ones_like(self.sigma_v)
 
         fprint(f"Loaded {self.len_input_data} objects and "
                f"{self.num_cal} calibration samples.", verbose=self.verbose)
@@ -124,50 +146,34 @@ class BaseRedshift2Real(ABC):
     def print_sample_stats(self):
         if not self.verbose:
             return
-        print("Calibration sample statistics:")
-        print(f"sigma_v : {jnp.mean(self.sigma_v):.3f} +- {jnp.std(self.sigma_v):.3f}")  # noqa
-        print(f"beta    : {jnp.mean(self.beta):.3f} +- {jnp.std(self.beta):.3f}")        # noqa
+        # DEBUG: print shapes
+        print(f"DEBUG: sigma_v={self.sigma_v.shape}, "
+              f"beta={self.beta.shape}")
+        print(f"DEBUG: Vext_radial={self.Vext_radial.shape}, "
+              f"cz_cmb={self.cz_cmb.shape}")
+        print(f"DEBUG: los_grid_r={self.los_grid_r.shape}")
         if self.which_bias == "linear":
-            print(f"b1      : {jnp.mean(self.b1):.3f} +- {jnp.std(self.b1):.3f}")          # noqa
+            print(f"DEBUG: b1={self.b1.shape}, "
+                  f"lp_norm={self.lp_norm.shape}")
         elif self.which_bias == "double_powerlaw":
-            print(f"alpha_low  : {jnp.mean(self.alpha_low):.3f} +- {jnp.std(self.alpha_low):.3f}")      # noqa
-            print(f"alpha_high : {jnp.mean(self.alpha_high):.3f} +- {jnp.std(self.alpha_high):.3f}")    # noqa
-            print(f"log_rho_t  : {jnp.mean(self.log_rho_t):.3f} +- {jnp.std(self.log_rho_t):.3f}")      # noqa
+            print(f"DEBUG: alpha_low={self.alpha_low.shape}, "
+                  f"lp_norm={self.lp_norm.shape}")
 
-    def compute_linear_bias_lp_normalization(self, los_grid_r):
-        """
-        Compute the normalization of the linear bias term in the distance
-        prior.
-        """
-        if self.verbose:
-            print("Computing `linear` bias lp normalization...")
-        # Density constrast along the LOS, (nfield, ngal, nrad_steps)
-        los_grid_delta = self.f_los_delta.interp_many_steps_per_galaxy(
-            los_grid_r)
-        bias_params = [self.b1[None, None, :, None],]
-
-        intg = lp_galaxy_bias(
-            los_grid_delta[:, :, None, :], None, bias_params,
-            galaxy_bias="linear")
-        return ln_simpson(intg, los_grid_r[None, None, None, :], axis=-1)
-
-    def compute_double_powerlaw_bias_lp_normalization(self, los_grid_r):
-        """
-        Compute the normalization of the double powerlaw bias term in the
-        distance prior.
-        """
-        if self.verbose:
-            print("Computing `double_powerlaw` bias lp normalization...")
-        los_log_density = self.f_los_log_density.interp_many_steps_per_galaxy(
-            los_grid_r)
-        bias_params = [self.alpha_low[None, None, :, None],
-                       self.alpha_high[None, None, :, None],
-                       self.log_rho_t[None, None, :, None],
-                       ]
-        intg = lp_galaxy_bias(
-            None, los_log_density[:, :, None, :], bias_params,
-            galaxy_bias="double_powerlaw")
-        return ln_simpson(intg, los_grid_r[None, None, None, :], axis=-1)
+        print("Calibration sample statistics:")
+        sv = self.sigma_v
+        print(f"sigma_v : {np.mean(sv):.3f} +- {np.std(sv):.3f}")
+        print(f"beta    : {np.mean(self.beta):.3f} +- "
+              f"{np.std(self.beta):.3f}")
+        if self.which_bias == "linear":
+            print(f"b1      : {np.mean(self.b1):.3f} +- "
+                  f"{np.std(self.b1):.3f}")
+        elif self.which_bias == "double_powerlaw":
+            print(f"alpha_low  : {np.mean(self.alpha_low):.3f} +- "
+                  f"{np.std(self.alpha_low):.3f}")
+            print(f"alpha_high : {np.mean(self.alpha_high):.3f} +- "
+                  f"{np.std(self.alpha_high):.3f}")
+            print(f"log_rho_t  : {np.mean(self.log_rho_t):.3f} +- "
+                  f"{np.std(self.log_rho_t):.3f}")
 
     @abstractmethod
     def __call__(self, *args, **kwargs):
@@ -176,173 +182,91 @@ class BaseRedshift2Real(ABC):
 
 class Redshift2Real(BaseRedshift2Real):
     """
-    A model for mapping observed redshift to cosmological redshift.
-    """
-
-    def __call__(self, ):
-        """
-        `p(z_cosmo | z_CMB, calibration)` for a single object.
-        """
-        with plate("data", self.len_input_data):
-            r = sample("r", Uniform(self.Rmin, self.Rmax))
-
-        # Homogeneous Malmquist bias term, shape (ngal,)
-        lp_r = 2 * jnp.log(r)
-
-        if self.which_bias == "linear":
-            bias_params = [self.b1[None, None, :],]
-            lp_r_bias = lp_galaxy_bias(
-                self.f_los_delta(r)[..., None], None, bias_params,
-                galaxy_bias="linear")
-            lp_r = lp_r[None, :, None] + lp_r_bias - self.lp_norm
-        elif self.which_bias == "double_powerlaw":
-            bias_params = [
-                self.alpha_low[None, None, :],
-                self.alpha_high[None, None, :],
-                self.log_rho_t[None, None, :],
-                ]
-            lp_r_bias = lp_galaxy_bias(
-                None, self.f_los_log_density(r)[..., None],
-                bias_params,
-                galaxy_bias="double_powerlaw")
-            lp_r = lp_r[None, :, None] + lp_r_bias - self.lp_norm
-        else:
-            lp_r = lp_r[None, :, None]
-
-        # Cosmological redshift, shape (ngal,)
-        zcosmo = self.dist2redshift(r)
-
-        # Peculiar velocity from the reconstruction, (nfield, ngal,)
-        Vpec = self.f_los_velocity(r)
-
-        # Peculiar velocity redshift (nfield, ngal, ncalibration_samples)
-        zpec = (
-            self.beta[None, None, :] * Vpec[..., None]
-            + self.Vext_radial[None, ...]) / SPEED_OF_LIGHT
-        # Predicted redshift (nfield, ngal, ncalibration_samples)
-        cz_pred = SPEED_OF_LIGHT * (
-            (1 + zcosmo)[None, :, None] * (1 + zpec) - 1)
-
-        ll = Normal(cz_pred, self.sigma_v[None, None, :],).log_prob(
-            self.cz_cmb[None, :, None])
-        ll += lp_r
-
-        # Average over the calibration samples, shape (nfield, ngal)
-        ll = log_mean_exp(ll, axis=-1) - jnp.log(ll.shape[-1])
-        # Average over the density and velocity field samples
-        factor(
-            "log_density",
-            log_mean_exp(ll, axis=0) - jnp.log(ll.shape[0])
-            )
-
-
-@jit
-def _process_batch_no_bias(lp_r, z_grid, log_jacobian, Vpec, Vext_radial,
-                           beta, sigma_v, cz_cmb):
-    """JIT-compiled batch processing without galaxy bias."""
-    lp_r_full = lp_r[None, None, None, :]
-
-    # Peculiar velocity redshift (nfield, batch, ncal, nrad)
-    zpec = (
-        beta[None, None, :, None] * Vpec[:, :, None, :]
-        + Vext_radial[None, :, :, None]) / SPEED_OF_LIGHT
-    # Predicted cz (nfield, batch, ncal, nrad)
-    cz_pred = SPEED_OF_LIGHT * (
-        (1 + z_grid)[None, None, None, :] * (1 + zpec) - 1)
-
-    # Log-likelihood (nfield, batch, ncal, nrad)
-    ll = Normal(cz_pred, sigma_v[None, None, :, None]).log_prob(
-        cz_cmb[None, :, None, None])
-    ll += lp_r_full
-
-    # Average over calibration samples, shape (nfield, batch, nrad)
-    ll = log_mean_exp(ll, axis=2)
-    # Average over velocity field realizations, shape (batch, nrad)
-    log_posterior_unnorm = log_mean_exp(ll, axis=0)
-
-    # Apply Jacobian for p(z) = p(r) * |dr/dz|
-    log_posterior_unnorm += log_jacobian[None, :]
-
-    # Normalize using Simpson integration in z-space
-    log_norm = ln_simpson(log_posterior_unnorm, z_grid[None, :], axis=-1)
-    return log_posterior_unnorm - log_norm[:, None]
-
-
-@jit
-def _process_batch_linear_bias(lp_r, z_grid, log_jacobian, Vpec, Vext_radial,
-                               beta, sigma_v, cz_cmb, los_delta, b1, lp_norm):
-    """JIT-compiled batch processing with linear bias."""
-    bias_params = [b1[None, None, :, None]]
-    lp_bias = lp_galaxy_bias(
-        los_delta[:, :, None, :], None, bias_params, galaxy_bias="linear")
-    lp_r_full = lp_r[None, None, None, :] + lp_bias - lp_norm[..., None]
-
-    # Peculiar velocity redshift (nfield, batch, ncal, nrad)
-    zpec = (
-        beta[None, None, :, None] * Vpec[:, :, None, :]
-        + Vext_radial[None, :, :, None]) / SPEED_OF_LIGHT
-    cz_pred = SPEED_OF_LIGHT * (
-        (1 + z_grid)[None, None, None, :] * (1 + zpec) - 1)
-
-    ll = Normal(cz_pred, sigma_v[None, None, :, None]).log_prob(
-        cz_cmb[None, :, None, None])
-    ll += lp_r_full
-
-    ll = log_mean_exp(ll, axis=2)
-    log_posterior_unnorm = log_mean_exp(ll, axis=0)
-
-    # Apply Jacobian for p(z) = p(r) * |dr/dz|
-    log_posterior_unnorm += log_jacobian[None, :]
-
-    log_norm = ln_simpson(log_posterior_unnorm, z_grid[None, :], axis=-1)
-    return log_posterior_unnorm - log_norm[:, None]
-
-
-@jit
-def _process_batch_double_powerlaw_bias(lp_r, z_grid, log_jacobian, Vpec,
-                                        Vext_radial, beta, sigma_v, cz_cmb,
-                                        los_log_density, alpha_low, alpha_high,
-                                        log_rho_t, lp_norm):
-    """JIT-compiled batch processing with double powerlaw bias."""
-    bias_params = [
-        alpha_low[None, None, :, None],
-        alpha_high[None, None, :, None],
-        log_rho_t[None, None, :, None],
-    ]
-    lp_bias = lp_galaxy_bias(
-        None, los_log_density[:, :, None, :], bias_params,
-        galaxy_bias="double_powerlaw")
-    lp_r_full = lp_r[None, None, None, :] + lp_bias - lp_norm[..., None]
-
-    zpec = (
-        beta[None, None, :, None] * Vpec[:, :, None, :]
-        + Vext_radial[None, :, :, None]) / SPEED_OF_LIGHT
-    cz_pred = SPEED_OF_LIGHT * (
-        (1 + z_grid)[None, None, None, :] * (1 + zpec) - 1)
-
-    ll = Normal(cz_pred, sigma_v[None, None, :, None]).log_prob(
-        cz_cmb[None, :, None, None])
-    ll += lp_r_full
-
-    ll = log_mean_exp(ll, axis=2)
-    log_posterior_unnorm = log_mean_exp(ll, axis=0)
-
-    # Apply Jacobian for p(z) = p(r) * |dr/dz|
-    log_posterior_unnorm += log_jacobian[None, :]
-
-    log_norm = ln_simpson(log_posterior_unnorm, z_grid[None, :], axis=-1)
-    return log_posterior_unnorm - log_norm[:, None]
-
-
-class Redshift2RealNumerical(BaseRedshift2Real):
-    """
     Numerical evaluation of the posterior `p(z_cosmo | z_obs, calibration)`.
 
     Instead of MCMC sampling, this class evaluates the log-posterior on a grid
     of `z_cosmo` values and normalizes numerically using Simpson integration.
+    Uses pure NumPy for computation (no JAX JIT overhead).
     """
 
-    def __call__(self, batch_size=100):
+    def compute_linear_bias_lp_normalization(self, los_grid_r, batch_size=10):
+        """NumPy version of linear bias normalization (batched)."""
+        fprint("Computing `linear` bias lp normalization (NumPy)...",
+               verbose=self.verbose)
+        los_grid_r = np.asarray(los_grid_r)
+        ngal = self.len_input_data
+        ncal = self.num_cal
+
+        # Interpolate all at once, then batch the bias computation
+        fprint("  Interpolating LOS delta for all galaxies...",
+               verbose=self.verbose)
+        los_grid_delta_all = np.asarray(
+            self.f_los_delta.interp_many_steps_per_galaxy(los_grid_r))
+        nfield = los_grid_delta_all.shape[0]
+
+        b1 = np.asarray(self.b1)
+
+        lp_norm = np.zeros((nfield, ngal, ncal))
+        n_batches = (ngal + batch_size - 1) // batch_size
+
+        for i in trange(n_batches, desc="  Computing bias norm",
+                        disable=not self.verbose):
+            start = i * batch_size
+            end = min((i + 1) * batch_size, ngal)
+
+            los_grid_delta = los_grid_delta_all[:, start:end, :]
+
+            bias_params = [b1[None, None, :, None]]
+            intg = lp_galaxy_bias_np(
+                los_grid_delta[:, :, None, :], None, bias_params,
+                galaxy_bias="linear")
+            lp_norm[:, start:end, :] = ln_simpson_np(intg, los_grid_r, axis=-1)
+
+        return lp_norm
+
+    def compute_double_powerlaw_bias_lp_normalization(self, los_grid_r,
+                                                      batch_size=10):
+        """NumPy version of double powerlaw bias normalization (batched)."""
+        fprint("Computing `double_powerlaw` bias lp normalization (NumPy)...",
+               verbose=self.verbose)
+        los_grid_r = np.asarray(los_grid_r)
+        ngal = self.len_input_data
+        ncal = self.num_cal
+
+        # Interpolate all at once, then batch the bias computation
+        fprint("Interpolating LOS log-density for all galaxies...",
+               verbose=self.verbose)
+        los_log_density_all = np.asarray(
+            self.f_los_log_density.interp_many_steps_per_galaxy(los_grid_r))
+        nfield = los_log_density_all.shape[0]
+
+        alpha_low = np.asarray(self.alpha_low)
+        alpha_high = np.asarray(self.alpha_high)
+        log_rho_t = np.asarray(self.log_rho_t)
+
+        lp_norm = np.zeros((nfield, ngal, ncal))
+        n_batches = (ngal + batch_size - 1) // batch_size
+
+        for i in trange(n_batches, desc="  Computing bias norm",
+                        disable=not self.verbose):
+            start = i * batch_size
+            end = min((i + 1) * batch_size, ngal)
+
+            los_log_density = los_log_density_all[:, start:end, :]
+
+            bias_params = [
+                alpha_low[None, None, :, None],
+                alpha_high[None, None, :, None],
+                log_rho_t[None, None, :, None],
+            ]
+            intg = lp_galaxy_bias_np(
+                None, los_log_density[:, :, None, :], bias_params,
+                galaxy_bias="double_powerlaw")
+            lp_norm[:, start:end, :] = ln_simpson_np(intg, los_grid_r, axis=-1)
+
+        return lp_norm
+
+    def __call__(self, batch_size=10):
         """
         Compute the posterior PDF for each galaxy on a grid of z_cosmo.
 
@@ -363,16 +287,31 @@ class Redshift2RealNumerical(BaseRedshift2Real):
         nrad = len(r_grid)
 
         # Precompute quantities independent of galaxy
-        lp_r = 2 * jnp.log(r_grid)
-        z_grid = self.dist2redshift(r_grid)
+        lp_r = 2 * np.log(r_grid)
+        z_grid = np.asarray(self.dist2redshift(r_grid))
 
         # Compute Jacobian |dr/dz| via |dz/dr|^{-1} on a denser grid
-        r_grid_np = np.asarray(r_grid)
-        r_dense = np.linspace(r_grid_np[0], r_grid_np[-1], 2 * len(r_grid) - 1)
+        r_dense = np.linspace(r_grid[0], r_grid[-1], 2 * len(r_grid) - 1)
         z_dense = np.asarray(self.dist2redshift(r_dense))
         dz_dr_dense = np.gradient(z_dense, r_dense)
-        dz_dr = np.interp(r_grid_np, r_dense, dz_dr_dense)
-        log_jacobian = -jnp.log(dz_dr)  # log|dr/dz|
+        dz_dr = np.interp(r_grid, r_dense, dz_dr_dense)
+        log_jacobian = -np.log(dz_dr)  # log|dr/dz|
+
+        # Pre-interpolate LOS fields (do once, not per batch)
+        fprint("Interpolating LOS velocity...", verbose=self.verbose)
+        Vpec_all = np.asarray(
+            self.f_los_velocity.interp_many_steps_per_galaxy(r_grid))
+
+        los_delta_all = None
+        los_log_density_all = None
+        if self.which_bias == "linear":
+            fprint("Interpolating LOS delta...", verbose=self.verbose)
+            los_delta_all = np.asarray(
+                self.f_los_delta.interp_many_steps_per_galaxy(r_grid))
+        elif self.which_bias == "double_powerlaw":
+            fprint("Interpolating LOS log-density...", verbose=self.verbose)
+            los_log_density_all = np.asarray(
+                self.f_los_log_density.interp_many_steps_per_galaxy(r_grid))
 
         log_posterior = np.zeros((ngal, nrad))
         n_batches = (ngal + batch_size - 1) // batch_size
@@ -383,35 +322,71 @@ class Redshift2RealNumerical(BaseRedshift2Real):
             end = min((i + 1) * batch_size, ngal)
 
             log_posterior[start:end] = self._process_batch(
-                start, end, r_grid, lp_r, z_grid, log_jacobian)
+                start, end, lp_r, z_grid, log_jacobian,
+                Vpec_all, los_delta_all, los_log_density_all)
 
-        return np.asarray(z_grid), log_posterior
+        return z_grid, log_posterior
 
-    def _process_batch(self, start, end, r_grid, lp_r, z_grid, log_jacobian):
-        """Dispatch to appropriate JIT-compiled function."""
-        Vpec = self.f_los_velocity.interp_many_steps_per_galaxy(
-            r_grid)[:, start:end, :]
+    def _process_batch(self, start, end, lp_r, z_grid, log_jacobian,
+                       Vpec_all, los_delta_all, los_log_density_all):
+        """Process a batch of galaxies using pure NumPy."""
+        # Slice pre-interpolated data for this batch
+        Vpec = Vpec_all[:, start:end, :]
         Vext_radial = self.Vext_radial[start:end, :]
         cz_cmb = self.cz_cmb[start:end]
 
         if self.which_bias == "linear":
-            los_delta = self.f_los_delta.interp_many_steps_per_galaxy(
-                r_grid)[:, start:end, :]
-            return _process_batch_linear_bias(
-                lp_r, z_grid, log_jacobian, Vpec, Vext_radial,
-                self.beta, self.sigma_v, cz_cmb,
-                los_delta, self.b1, self.lp_norm[:, start:end, :])
+            los_delta = los_delta_all[:, start:end, :]
+            lp_norm = self.lp_norm[:, start:end, :]
+
+            bias_params = [self.b1[None, None, :, None]]
+            lp_bias = lp_galaxy_bias_np(
+                los_delta[:, :, None, :], None, bias_params, "linear")
+            lp_r_full = (lp_r[None, None, None, :]
+                         + lp_bias - lp_norm[..., None])
+
         elif self.which_bias == "double_powerlaw":
-            los_log_density = self.f_los_log_density.interp_many_steps_per_galaxy(r_grid)[:, start:end, :]  # noqa
-            return _process_batch_double_powerlaw_bias(
-                lp_r, z_grid, log_jacobian, Vpec, Vext_radial,
-                self.beta, self.sigma_v, cz_cmb,
-                los_log_density, self.alpha_low, self.alpha_high,
-                self.log_rho_t, self.lp_norm[:, start:end, :])
+            los_log_density = los_log_density_all[:, start:end, :]
+            lp_norm = self.lp_norm[:, start:end, :]
+
+            bias_params = [
+                self.alpha_low[None, None, :, None],
+                self.alpha_high[None, None, :, None],
+                self.log_rho_t[None, None, :, None],
+            ]
+            lp_bias = lp_galaxy_bias_np(
+                None, los_log_density[:, :, None, :], bias_params,
+                "double_powerlaw")
+            lp_r_full = (lp_r[None, None, None, :]
+                         + lp_bias - lp_norm[..., None])
         else:
-            return _process_batch_no_bias(
-                lp_r, z_grid, log_jacobian, Vpec, Vext_radial,
-                self.beta, self.sigma_v, cz_cmb)
+            lp_r_full = lp_r[None, None, None, :]
+
+        # Peculiar velocity redshift (nfield, batch, ncal, nrad)
+        zpec = (
+            self.beta[None, None, :, None] * Vpec[:, :, None, :]
+            + Vext_radial[None, :, :, None]) / SPEED_OF_LIGHT
+
+        # Predicted cz (nfield, batch, ncal, nrad)
+        cz_pred = SPEED_OF_LIGHT * (
+            (1 + z_grid)[None, None, None, :] * (1 + zpec) - 1)
+
+        # Log-likelihood (nfield, batch, ncal, nrad)
+        ll = normal_logpdf_np(cz_cmb[None, :, None, None], cz_pred,
+                              self.sigma_v[None, None, :, None])
+        ll += lp_r_full
+
+        # Average over calibration samples, shape (nfield, batch, nrad)
+        ll = log_mean_exp_np(ll, axis=2)
+        # Average over velocity field realizations, shape (batch, nrad)
+        log_posterior_unnorm = log_mean_exp_np(ll, axis=0)
+
+        # Apply Jacobian for p(z) = p(r) * |dr/dz|
+        log_posterior_unnorm += log_jacobian[None, :]
+
+        # Normalize using Simpson integration in z-space
+        log_norm = ln_simpson_np(log_posterior_unnorm, z_grid, axis=-1)
+        return log_posterior_unnorm - log_norm[:, None]
 
     def posterior_summary(self, z_grid, log_posterior, ci=0.68):
         """
@@ -435,6 +410,7 @@ class Redshift2RealNumerical(BaseRedshift2Real):
         """
         posterior = np.exp(log_posterior)
         ngal = posterior.shape[0]
+        nz = len(z_grid)
         dz = z_grid[1] - z_grid[0]
 
         # Mean
@@ -452,15 +428,17 @@ class Redshift2RealNumerical(BaseRedshift2Real):
         # CDF for median and CI
         cdf = np.cumsum(posterior, axis=-1) * dz
 
-        def find_quantile(cdf_row, q):
-            idx = np.searchsorted(cdf_row, q)
-            return z_grid[min(idx, len(z_grid) - 1)]
+        # Vectorized quantile finding
+        def find_quantiles_vectorized(cdf, q):
+            idx = np.argmax(cdf >= q, axis=-1)
+            # Handle case where q is never reached (return last index)
+            not_reached = np.all(cdf < q, axis=-1)
+            idx[not_reached] = nz - 1
+            return z_grid[idx]
 
-        median = np.array([find_quantile(cdf[i], 0.5) for i in range(ngal)])
-        ci_low = np.array([find_quantile(cdf[i], (1 - ci) / 2)
-                           for i in range(ngal)])
-        ci_high = np.array([find_quantile(cdf[i], 1 - (1 - ci) / 2)
-                            for i in range(ngal)])
+        median = find_quantiles_vectorized(cdf, 0.5)
+        ci_low = find_quantiles_vectorized(cdf, (1 - ci) / 2)
+        ci_high = find_quantiles_vectorized(cdf, 1 - (1 - ci) / 2)
 
         return {
             'mean': mean,
@@ -472,172 +450,22 @@ class Redshift2RealNumerical(BaseRedshift2Real):
         }
 
 
-def run_batched_inference(model_kwargs, batch_size=50, num_warmup=500,
-                          num_samples=2000, num_chains=1, rng_seed=0,
-                          progress_bar=False, galaxy_idx=None):
-    """
-    Run batched inference for redshift2real model.
+def smoothclip_nr_np(nr, tau):
+    """Smooth zero-clipping for the number density (NumPy version)."""
+    return 0.5 * (nr + np.sqrt(nr**2 + tau**2))
 
-    Parameters
-    ----------
-    batch_size : int
-    num_warmup, num_samples, num_chains : int
-    rng_seed : int
-    progress_bar : bool
-        Show MCMC progress bar for each batch (default False)
-    galaxy_idx : int, optional
-        If provided, run inference only on this galaxy index
-    **model_kwargs : All arguments for Redshift2Real (RA, dec, zcmb, los_r,
-        los_density, los_velocity, calibration_samples, which_bias, Rmax, etc.)
 
-    Returns
-    -------
-    r_samples : array, shape (ngal, num_samples * num_chains) or
-        (num_samples * num_chains,) if galaxy_idx provided
-    rhat_values : array, shape (ngal,) or scalar if galaxy_idx provided
-    """
-    RA = model_kwargs["RA"]
-    dec = model_kwargs["dec"]
-    zcmb = model_kwargs["zcmb"]
-    los_r = model_kwargs["los_r"]
-    los_density = model_kwargs["los_density"]
-    los_velocity = model_kwargs["los_velocity"]
-    r_init = model_kwargs.get("r_init", None)
-
-    # Extract remaining kwargs for model (excluding data arrays and verbose)
-    data_keys = ["RA", "dec", "zcmb", "los_r", "los_density", "los_velocity",
-                 "verbose", "r_init"]
-    remaining_kwargs = {
-        k: v for k, v in model_kwargs.items() if k not in data_keys}
-
-    # Handle single galaxy case
-    if galaxy_idx is not None:
-        fprint(f"Running inference for single galaxy at index {galaxy_idx}.")
-
-        # Slice data for the single galaxy
-        single_RA = RA[galaxy_idx:galaxy_idx+1]
-        single_dec = dec[galaxy_idx:galaxy_idx+1]
-        single_zcmb = zcmb[galaxy_idx:galaxy_idx+1]
-        single_los_density = los_density[:, galaxy_idx:galaxy_idx+1, :]
-        single_los_velocity = los_velocity[:, galaxy_idx:galaxy_idx+1, :]
-        single_r_init = r_init[galaxy_idx:galaxy_idx+1] if r_init is not None else None  # noqa
-
-        # Instantiate model for single galaxy
-        model = Redshift2Real(
-            RA=single_RA,
-            dec=single_dec,
-            zcmb=single_zcmb,
-            los_r=los_r,
-            los_density=single_los_density,
-            los_velocity=single_los_velocity,
-            r_init=single_r_init,
-            verbose=True,
-            **remaining_kwargs
-        )
-
-        # Run MCMC with appropriate initialization
-        if single_r_init is not None:
-            init_strategy = init_to_value(values={"r": single_r_init})
-        else:
-            init_strategy = init_to_median(num_samples=1000)
-        nuts_kernel = NUTS(model, init_strategy=init_strategy)
-        mcmc = MCMC(
-            nuts_kernel, num_warmup=num_warmup, num_samples=num_samples,
-            num_chains=num_chains, progress_bar=True)
-
-        rng_key = jrandom.PRNGKey(rng_seed)
-        mcmc.run(rng_key)
-
-        mcmc.print_summary()
-
-        # Extract samples and rhat
-        samples = mcmc.get_samples()["r"]
-        r_samples = samples.T.squeeze()
-
-        if num_chains > 1:
-            samples_by_chain = mcmc.get_samples(
-                group_by_chain=True)["r"][:, :, 0]
-            rhat = gelman_rubin(samples_by_chain)
-        else:
-            rhat = 1.0
-
-        fprint("Inference complete.")
-        return r_samples, rhat
-
-    # Batch processing for all galaxies
-    ngal = len(zcmb)
-    n_batches = (ngal + batch_size - 1) // batch_size
-
-    fprint(f"Running inference for {ngal} galaxies in {n_batches} batches of "
-           f"size {batch_size}.")
-
-    # If only one batch, always show MCMC progress bar
-    show_mcmc_progress = True if n_batches == 1 else progress_bar
-
-    r_samples = jnp.zeros((ngal, num_samples * num_chains))
-    rhat_values = jnp.zeros(ngal)
-
-    for i in tqdm(range(n_batches), desc="Processing batches",
-                  disable=show_mcmc_progress):
-        start_idx = i * batch_size
-        end_idx = min((i + 1) * batch_size, ngal)
-
-        # Slice data for this batch
-        batch_RA = RA[start_idx:end_idx]
-        batch_dec = dec[start_idx:end_idx]
-        batch_zcmb = zcmb[start_idx:end_idx]
-        batch_los_density = los_density[:, start_idx:end_idx, :]
-        batch_los_velocity = los_velocity[:, start_idx:end_idx, :]
-        batch_r_init = r_init[start_idx:end_idx] if r_init is not None else None  # noqa
-
-        # Instantiate model for this batch
-        # Only print for first batch
-        model = Redshift2Real(
-            RA=batch_RA,
-            dec=batch_dec,
-            zcmb=batch_zcmb,
-            los_r=los_r,
-            los_density=batch_los_density,
-            los_velocity=batch_los_velocity,
-            r_init=batch_r_init,
-            verbose=(i == 0),
-            **remaining_kwargs
-        )
-
-        # Run MCMC with appropriate initialization
-        if batch_r_init is not None:
-            init_strategy = init_to_value(values={"r": batch_r_init})
-        else:
-            init_strategy = init_to_median(num_samples=1000)
-        nuts_kernel = NUTS(model, init_strategy=init_strategy)
-        mcmc = MCMC(
-            nuts_kernel, num_warmup=num_warmup, num_samples=num_samples,
-            num_chains=num_chains, progress_bar=show_mcmc_progress)
-
-        rng_key = jrandom.PRNGKey(rng_seed + i)
-        mcmc.run(rng_key)
-
-        # Extract samples for 'r', shape (num_samples * num_chains, batch_ngal)
-        batch_samples = mcmc.get_samples()["r"]
-        # Transpose to (batch_ngal, num_samples * num_chains)
-        batch_samples = batch_samples.T
-        r_samples = r_samples.at[start_idx:end_idx, :].set(batch_samples)
-
-        # Compute Rhat for this batch
-        if num_chains > 1:
-            # Get samples grouped by chain, shape
-            # (num_chains, num_samples, batch_ngal)
-            batch_samples_by_chain = mcmc.get_samples(group_by_chain=True)["r"]
-            batch_ngal = end_idx - start_idx
-            batch_rhat = jnp.zeros(batch_ngal)
-            # Compute R-hat for each galaxy in the batch
-            for j in range(batch_ngal):
-                # Extract samples for galaxy j, shape (num_chains, num_samples)
-                galaxy_samples = batch_samples_by_chain[:, :, j]
-                batch_rhat = batch_rhat.at[j].set(gelman_rubin(galaxy_samples))
-        else:
-            batch_rhat = jnp.ones(end_idx - start_idx)
-        rhat_values = rhat_values.at[start_idx:end_idx].set(batch_rhat)
-
-    fprint("Batched inference complete.")
-    return r_samples, rhat_values
+def lp_galaxy_bias_np(delta, log_rho, bias_params, galaxy_bias):
+    """NumPy version of lp_galaxy_bias."""
+    if galaxy_bias == "powerlaw":
+        lp = bias_params[0] * log_rho
+    elif galaxy_bias == "double_powerlaw":
+        alpha_low, alpha_high, log_rho_t = bias_params
+        log_x = log_rho - log_rho_t
+        lp = (alpha_low * log_x
+              + (alpha_high - alpha_low) * np.logaddexp(0.0, log_x))
+    elif "linear" in galaxy_bias or galaxy_bias == "unity":
+        lp = np.log(smoothclip_nr_np(1 + bias_params[0] * delta, tau=0.1))
+    else:
+        raise ValueError(f"Invalid galaxy bias model '{galaxy_bias}'.")
+    return lp
