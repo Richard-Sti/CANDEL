@@ -454,7 +454,7 @@ class BaseModel(ABC):
     def __init__(self, config_path):
         config = load_config(config_path, replace_los_prior=False)
 
-        kind = get_nested(config, "pv_model/kind", "")
+        kind = get_nested(config, "pv_model/kind", "Vext")
         kind_allowed = ["Vext", "Vext_radial"]
         if kind not in kind_allowed and not kind.startswith("precomputed_los_"):  # noqa
             raise ValueError(
@@ -506,13 +506,14 @@ class BaseModel(ABC):
         self.marginalize_eta = get_nested(
             config, "model/marginalize_eta", True)
         if self.marginalize_eta:
-            self.eta_grid_kwargs = config["model"]["eta_grid"]
-            fprint(
-                "marginalizing eta with "
-                f"k_sigma = {self.eta_grid_kwargs['k_sigma']} and "
-                f"n_grid = {self.eta_grid_kwargs['n_grid']} (if TFR).")
+            self.eta_grid_kwargs = get_nested(config, "model/eta_grid", None)
+            if self.eta_grid_kwargs is not None:
+                fprint(
+                    "marginalizing eta with "
+                    f"k_sigma = {self.eta_grid_kwargs['k_sigma']} and "
+                    f"n_grid = {self.eta_grid_kwargs['n_grid']} (if TFR).")
 
-        self.galaxy_bias = config["pv_model"]["galaxy_bias"]
+        self.galaxy_bias = get_nested(config, "pv_model/galaxy_bias", "unity")
         if self.galaxy_bias not in ["unity", "powerlaw", "linear",
                                     "linear_from_beta",
                                     "linear_from_beta_stochastic",
