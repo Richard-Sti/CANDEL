@@ -15,20 +15,52 @@
 """
 CSP (Carnegie Supernova Project)-like forward model.
 
-No H0 inference (fixed h=1).
+By default h=1.0, but h can be passed to __call__ for joint H0 inference.
 """
 import jax.numpy as jnp
 from jax import random
 from jax.scipy.special import log_ndtr, logsumexp, ndtr
 from jax.scipy.stats import norm as jax_norm
 from numpyro import factor, plate, sample
-from numpyro.distributions import MultivariateNormal
+from numpyro.distributions import Distribution, MultivariateNormal, constraints
 
-from ..cosmography import Distance2Distmod, Distance2Redshift
+from ..cosmography import (Distance2Distmod, Distance2Redshift,
+                           Redshift2Distance)
 from ..util import SPEED_OF_LIGHT, fprint, get_nested
-from .model import (BaseModel, compute_Vext_radial, lp_galaxy_bias, predict_cz,
-                    rsample, sample_galaxy_bias, sample_Vext)
+from .model import (BaseModel, predict_cz, rsample, sample_galaxy_bias,
+                    sample_Vext)
 from .simpson import ln_simpson
+
+###############################################################################
+#                         Volume prior for distance                           #
+###############################################################################
+
+
+class VolumePrior(Distribution):
+    """Distance prior p(r) ∝ r² on [r_min, r_max]."""
+
+    arg_constraints = {"r_min": constraints.positive,
+                       "r_max": constraints.positive}
+
+    def __init__(self, r_min, r_max):
+        self.r_min = r_min
+        self.r_max = r_max
+        self._log_norm = jnp.log((r_max**3 - r_min**3) / 3)
+        self._r3_diff = r_max**3 - r_min**3
+        self._support = constraints.interval(r_min, r_max)
+        super().__init__(batch_shape=(), event_shape=())
+
+    @constraints.dependent_property
+    def support(self):
+        return self._support
+
+    def sample(self, key, sample_shape=()):
+        u = random.uniform(key, sample_shape)
+        return (u * self._r3_diff + self.r_min**3)**(1/3)
+
+    def log_prob(self, r):
+        return 2 * jnp.log(r) - self._log_norm
+
 
 ###############################################################################
 #                         Selection integral                                  #
@@ -59,6 +91,42 @@ def log_ndtr_diff(a, b):
     return log_hi + log1mexp(log_lo - log_hi)
 
 
+def compute_per_source_selection(obs_vec, m_lim, alpha_sel, beta_sel,
+                                 sigma_sel):
+    """Compute per-source selection probability for CSP SNe.
+
+    Selection: m_sel = m_obs + alpha_sel * (s_obs - 1) - beta_sel * BV_obs
+    """
+    m_sel_obs = (obs_vec[:, 0] + alpha_sel * (obs_vec[:, 1] - 1)
+                 - beta_sel * obs_vec[:, 2])
+    return jax_norm.logcdf((m_lim - m_sel_obs) / sigma_sel)
+
+
+def extract_csp_median_errors(cov):
+    """Extract median measurement errors and correlations from CSP covariance.
+
+    Parameters
+    ----------
+    cov : ndarray of shape (n_sne, 3, 3)
+        Covariance matrices for (m, s, BV) observables.
+
+    Returns
+    -------
+    dict with: sigma_m, sigma_s, sigma_BV, rho_ms, rho_mBV, rho_sBV
+    """
+    sigma_m = jnp.median(jnp.sqrt(cov[:, 0, 0]))
+    sigma_s = jnp.median(jnp.sqrt(cov[:, 1, 1]))
+    sigma_BV = jnp.median(jnp.sqrt(cov[:, 2, 2]))
+    rho_ms = jnp.median(
+        cov[:, 0, 1] / (jnp.sqrt(cov[:, 0, 0]) * jnp.sqrt(cov[:, 1, 1])))
+    rho_mBV = jnp.median(
+        cov[:, 0, 2] / (jnp.sqrt(cov[:, 0, 0]) * jnp.sqrt(cov[:, 2, 2])))
+    rho_sBV = jnp.median(
+        cov[:, 1, 2] / (jnp.sqrt(cov[:, 1, 1]) * jnp.sqrt(cov[:, 2, 2])))
+    return {"sigma_m": sigma_m, "sigma_s": sigma_s, "sigma_BV": sigma_BV,
+            "rho_ms": rho_ms, "rho_mBV": rho_mBV, "rho_sBV": rho_sBV}
+
+
 class CSPSelection:
     """
     Compute p(S=1 | Lambda) for UNITY-style magnitude-limited selection.
@@ -77,17 +145,19 @@ class CSPSelection:
     correlation rho_pop, and correlated measurement noise.
     """
 
-    def __init__(self, r_grid, s_grid, BV_grid, distmod_grid,
-                 distance2redshift, cz_lim, s_obs_lim, BV_obs_lim):
+    def __init__(self, r_grid, s_grid, BV_grid,
+                 distance2redshift, distance2distmod, cz_lim,
+                 s_obs_lim, BV_obs_lim, use_cz_selection=True):
         self.r_grid = r_grid
         self.s_grid = s_grid
         self.BV_grid = BV_grid
-        self.distmod_grid = distmod_grid
         self.distance2redshift = distance2redshift
+        self.distance2distmod = distance2distmod
         self.cz_min, self.cz_max = cz_lim
         self.s_obs_min, self.s_obs_max = s_obs_lim
         self.BV_obs_min, self.BV_obs_max = BV_obs_lim
         self.r_min, self.r_max = r_grid[0], r_grid[-1]
+        self.use_cz_selection = use_cz_selection
 
     def log_prior_r(self, r):
         """Log prior: pi(r) ~ r^2."""
@@ -145,7 +215,7 @@ class CSPSelection:
                  mu_s, sigma_s, mu_BV, sigma_BV, rho_pop,
                  m_lim, alpha_sel, beta_sel, sigma_sel,
                  sigma_s_obs, sigma_BV_obs, rho_ms, rho_mBV, rho_sBV,
-                 sigma_v, use_gmm=False, mu_s2=None, sigma_s2=None,
+                 sigma_v, h=1.0, use_gmm=False, mu_s2=None, sigma_s2=None,
                  rho_pop2=None, w_s=None):
         """Compute log p(S=1 | Lambda)."""
         sig_eff = self.sigma_eff(sigma_sel, sigma_m, alpha_sel, beta_sel,
@@ -165,18 +235,22 @@ class CSPSelection:
             rho_pop2=rho_pop2, w_s=w_s)
 
         # True magnitude and selection probability
-        mu = self.distmod_grid[:, None, None]
+        distmod_grid = self.distance2distmod(self.r_grid, h=h)
+        mu = distmod_grid[:, None, None]
         m_true = M_B + mu - alpha * (s_3d - 1) + beta * BV_3d
         m_sel_true = m_true + alpha_sel * (s_3d - 1) - beta_sel * BV_3d
         log_p_mag_sel = jax_norm.logcdf((m_lim - m_sel_true) / sig_eff)
 
         # Redshift selection: p(cz_min < cz_obs < cz_max | r)
         # cz_obs ~ N(cz_pred(r), sigma_v), where cz_pred = c * z(r)
-        cz_pred = SPEED_OF_LIGHT * self.distance2redshift(self.r_grid, h=1.0)
-        cz_pred = cz_pred[:, None, None]
-        a_cz = (self.cz_max - cz_pred) / sigma_v
-        b_cz = (self.cz_min - cz_pred) / sigma_v
-        log_p_cz_sel = log_ndtr_diff(a_cz, b_cz)
+        if self.use_cz_selection:
+            cz_pred = SPEED_OF_LIGHT * self.distance2redshift(self.r_grid, h=h)
+            cz_pred = cz_pred[:, None, None]
+            a_cz = (self.cz_max - cz_pred) / sigma_v
+            b_cz = (self.cz_min - cz_pred) / sigma_v
+            log_p_cz_sel = log_ndtr_diff(a_cz, b_cz)
+        else:
+            log_p_cz_sel = 0.0
 
         # Stretch selection: p(s_obs_min < s_obs < s_obs_max | s_true)
         # s_obs ~ N(s_true, sigma_s_obs)
@@ -301,7 +375,8 @@ class CSPModel(BaseModel):
     """
     CSP SNe Ia flow model with UNITY-style selection.
 
-    Distance is marginalized at each MCMC step. No H0 inference (fixed h=1).
+    Distance is sampled explicitly from an r^2 prior. By default h=1.0, but
+    can be passed as an argument to __call__ for joint H0 inference.
     """
 
     def __init__(self, config_path):
@@ -321,6 +396,8 @@ class CSPModel(BaseModel):
             self.config, "model/zcmb_limits_selection", [0.01, 0.15])
         self._auto_padding_nsigma = get_nested(
             self.config, "model/auto_limits_nsigma", 5.0)
+        self._use_cz_selection = get_nested(
+            self.config, "model/use_cz_selection", True)
 
         self.selection = None  # Created lazily if auto limits
 
@@ -329,6 +406,9 @@ class CSPModel(BaseModel):
             self.config, "model/use_stretch_gmm", False)
         if self.use_stretch_gmm:
             fprint("CSP stretch distribution: 2-component GMM")
+
+        fprint("setting `compute_evidence` to False.")
+        self.config["inference"]["compute_evidence"] = False
 
     def _setup_selection(self, data):
         """Setup selection grids, using data to compute auto limits."""
@@ -379,25 +459,48 @@ class CSPModel(BaseModel):
                f"{BV_obs_lim[1]:.3f}], cz=[{cz_obs_lim[0]:.0f}, "
                f"{cz_obs_lim[1]:.0f}] km/s")
 
-        r_grid = jnp.linspace(self._r_lim[0], self._r_lim[1], self._n_r)
-        distmod_grid = self.distance2distmod(r_grid, h=1.0)
+        # Distance limits: auto from observed cz or manual
+        r_lim = self._r_lim
+        if isinstance(r_lim, str) and r_lim.startswith("auto"):
+            # Parse h from "auto" or "auto_0.7" format
+            if "_" in r_lim:
+                h_auto = float(r_lim.split("_")[1])
+            else:
+                h_auto = 1.0
+            # Convert observed cz to comoving distance
+            redshift2distance = Redshift2Distance(Om0=self.Om)
+            r_from_cz = redshift2distance(
+                jnp.array(cz_obs_lim), h=h_auto, is_velocity=True)
+            # Buffer is 25% or at least 15 Mpc, final r_min >= 0.15 Mpc
+            r_min_raw = float(r_from_cz[0])
+            r_max_raw = float(r_from_cz[1])
+            buffer_low = max(r_min_raw * 0.25, 15.0)
+            buffer_high = max(r_max_raw * 0.25, 15.0)
+            r_lim = [max(r_min_raw - buffer_low, 0.15),
+                     r_max_raw + buffer_high]
+            fprint(f"CSP auto r_limits (h={h_auto}): "
+                   f"[{r_lim[0]:.1f}, {r_lim[1]:.1f}] Mpc "
+                   f"(buffer: -{buffer_low:.1f}, +{buffer_high:.1f} Mpc)")
+
+        r_grid = jnp.linspace(r_lim[0], r_lim[1], self._n_r)
 
         self.selection = CSPSelection(
             r_grid=r_grid,
             s_grid=jnp.linspace(s_lim[0], s_lim[1], self._n_s),
             BV_grid=jnp.linspace(BV_lim[0], BV_lim[1], self._n_BV),
-            distmod_grid=distmod_grid,
             distance2redshift=self.distance2redshift,
+            distance2distmod=self.distance2distmod,
             cz_lim=cz_lim,
             s_obs_lim=s_obs_lim,
             BV_obs_lim=BV_obs_lim,
+            use_cz_selection=self._use_cz_selection,
         )
 
         n_eval = self._n_r * self._n_s * self._n_BV
-        fprint(f"CSP selection grid: r=[{self._r_lim[0]}, {self._r_lim[1]}] "
+        fprint(f"CSP selection grid: r=[{r_lim[0]:.1f}, {r_lim[1]:.1f}] "
                f"({self._n_r}), s=[{s_lim[0]:.3f}, {s_lim[1]:.3f}] "
                f"({self._n_s}), BV=[{BV_lim[0]:.2f}, {BV_lim[1]:.2f}] "
-               f"({self._n_BV})")
+               f"({self._n_BV}), use_cz_selection={self._use_cz_selection}")
         fprint(f"CSP selection cz=[{cz_lim[0]:.0f}, {cz_lim[1]:.0f}] km/s, "
                f"total evaluations: {n_eval}")
 
@@ -437,12 +540,10 @@ class CSPModel(BaseModel):
         self._setup_selection(data)
         self._validate_data(data)
 
-    def __call__(self, data, shared_params=None):
+    def __call__(self, data, shared_params=None, h=1.0):
         """NumPyro model for MCMC inference."""
         if self.selection is None:
             raise RuntimeError("Call validate_data(data) before inference.")
-
-        h = 1.0  # Fixed, no H0 inference
         nsamples = len(data)
 
         # --- Tripp parameters ---
@@ -451,8 +552,8 @@ class CSPModel(BaseModel):
             "alpha_tripp", self.priors["alpha_tripp"], shared_params)
         beta_tripp = rsample(
             "beta_tripp", self.priors["beta_tripp"], shared_params)
-        sigma_int = rsample(
-            "sigma_int", self.priors["sigma_int"], shared_params)
+        sigma_int_SN = rsample(
+            "sigma_int_SN", self.priors["sigma_int_SN"], shared_params)
 
         # --- Population hyperparameters (hierarchical prior on s, BV) ---
         mu_s = rsample("mu_s", self.priors["mu_s"], shared_params)
@@ -510,115 +611,97 @@ class CSPModel(BaseModel):
         sigma_v = rsample("sigma_v", self.priors["sigma_v"], shared_params)
         beta = rsample("beta", self.priors["beta"], shared_params)
 
-        # Galaxy bias
-        bias_params = sample_galaxy_bias(
+        # Galaxy bias (sampled for NumPyro but not used in CSP likelihood)
+        sample_galaxy_bias(
             self.priors, self.galaxy_bias, shared_params,
             Om=self.Om, beta=beta)
 
         # --- Selection correction ---
         # Total scatter on observed magnitude = intrinsic + measurement
-        sigma_m_total = jnp.sqrt(sigma_int**2 + sigma_m_obs**2)
+        sigma_m_total = jnp.sqrt(sigma_int_SN**2 + sigma_m_obs**2)
         log_p_sel = self.selection(
             M_B, alpha_tripp, beta_tripp, sigma_m_total,
             mu_s, sigma_s, mu_BV, sigma_BV, rho_pop,
             m_lim, alpha_sel, beta_sel, sigma_sel,
             sigma_s_obs, sigma_BV_obs, rho_ms, rho_mBV, rho_sBV,
-            sigma_v, use_gmm=self.use_stretch_gmm,
+            sigma_v, h=h, use_gmm=self.use_stretch_gmm,
             mu_s2=mu_s2, sigma_s2=sigma_s2, rho_pop2=rho_pop2, w_s=w_s)
 
-        # Per-source selection: p(S=1 | obs_i)
-        # m_sel = m_obs + alpha_sel * (s_obs - 1) - beta_sel * BV_obs
-        m_sel_obs = (data["obs_vec"][:, 0]
-                     + alpha_sel * (data["obs_vec"][:, 1] - 1)
-                     - beta_sel * data["obs_vec"][:, 2])
-        log_p_sel_i = jax_norm.logcdf((m_lim - m_sel_obs) / sigma_sel)
-
-        # --- Per-SN likelihood with latent (s, BV) ---
-        r_grid = data["r_grid"]
-
-        # Distance prior: volume prior r^2, shape (n_field, n_sn, n_r)
-        r_min, r_max = r_grid[0], r_grid[-1]
-        log_norm = jnp.log((r_max**3 - r_min**3) / 3)
-        lp_dist = (2 * jnp.log(r_grid) - log_norm)[None, None, :]
+        # --- Per-SN likelihood with explicit distance sampling ---
+        r_min, r_max = self.selection.r_min, self.selection.r_max
 
         if data.has_precomputed_los:
-            # Add inhomogeneous Malmquist bias
-            lp_dist = lp_dist + lp_galaxy_bias(
-                data["los_delta_r_grid"], data["los_log_density_r_grid"],
-                bias_params, self.galaxy_bias)
-            # Normalize
-            lp_dist = lp_dist - ln_simpson(
-                lp_dist, x=r_grid[None, None, :], axis=-1)[..., None]
-            # Peculiar velocity from reconstruction
-            Vrad = beta * data["los_velocity_r_grid"]
+            raise NotImplementedError(
+                "Explicit distance sampling not yet implemented with "
+                "reconstruction. Set use_reconstruction=False.")
+
+        obs_vec = data["obs_vec"]
+        cov = data["cov"]
+        rhat = data["rhat"]
+        czcmb = data["czcmb"]
+        e_czcmb = data["e_czcmb"]
+
+        # Vext projection
+        if self.which_Vext == "constant":
+            Vext_rad = jnp.sum(rhat * Vext[None, :], axis=1)
         else:
-            Vrad = 0.0
+            raise NotImplementedError(
+                f"which_Vext='{self.which_Vext}' not supported with explicit "
+                "distance sampling. Use 'constant'.")
 
-        # Predicted cz
-        Vext_rad = compute_Vext_radial(
-            data, r_grid, Vext, which_Vext=self.which_Vext, **self.kwargs_Vext)
-        zcosmo = self.distance2redshift(r_grid, h=h)
-        czpred = predict_cz(zcosmo[None, None, :], Vrad + Vext_rad)
+        e_cz = jnp.sqrt(e_czcmb**2 + sigma_v**2)
 
-        e_cz = jnp.sqrt(data["e_czcmb"]**2 + sigma_v**2)
-        ll_cz = jax_norm.logpdf(
-            data["czcmb"][None, :, None], czpred, e_cz[None, :, None])
+        # Measurement covariance with intrinsic scatter: (nsamples, 3, 3)
+        cov_obs = cov.at[:, 0, 0].add(sigma_int_SN**2)
+        L_cov = jnp.linalg.cholesky(cov_obs)
+        log_det_cov = jnp.sum(
+            jnp.log(jnp.diagonal(L_cov, axis1=-2, axis2=-1)), axis=-1)
 
-        with plate("data", nsamples):
-            # Sample latent (s, BV) from population prior
+        # Sample latent (s, BV)
+        with plate("sn_latent", nsamples):
             pop_dist = MultivariateNormal(pop_mean, pop_cov)
             x_latent = sample("x_latent", pop_dist)
-            s_true = x_latent[:, 0]
-            BV_true = x_latent[:, 1]
 
-            if self.use_stretch_gmm:
-                # Compute mixture PDF explicitly and correct for proposal
-                pop_dist2 = MultivariateNormal(pop_mean2, pop_cov2)
-                log_p1 = pop_dist.log_prob(x_latent)
-                log_p2 = pop_dist2.log_prob(x_latent)
-                log_mixture = logsumexp(
-                    jnp.stack([jnp.log(w_s) + log_p1,
-                               jnp.log(1 - w_s) + log_p2], axis=0), axis=0)
-                # sample() added log_p1, replace with log_mixture
-                factor("mixture_correction", log_mixture - log_p1)
+        s_true = x_latent[:, 0]
+        BV_true = x_latent[:, 1]
 
-            # Measurement covariance: (n_sn, 3, 3) for (m, s, BV)
-            # Add intrinsic scatter to magnitude variance
-            cov_obs = data["cov"].copy()
-            cov_obs = cov_obs.at[:, 0, 0].add(sigma_int**2)
+        if self.use_stretch_gmm:
+            # Compute mixture PDF explicitly and correct for proposal
+            pop_dist2 = MultivariateNormal(pop_mean2, pop_cov2)
+            log_p1 = pop_dist.log_prob(x_latent)
+            log_p2 = pop_dist2.log_prob(x_latent)
+            log_mixture = logsumexp(
+                jnp.stack([jnp.log(w_s) + log_p1,
+                           jnp.log(1 - w_s) + log_p2], axis=0), axis=0)
+            # sample() added log_p1, replace with log_mixture
+            factor("mixture_correction", log_mixture - log_p1)
 
-            # True magnitude at each distance: (n_sn, n_r)
-            mu_r = self.distance2distmod(r_grid, h=h)
-            m_true = (M_B + mu_r - alpha_tripp * (s_true - 1)[:, None]
-                      + beta_tripp * BV_true[:, None])
+        # Sample distance
+        with plate("sn_dist", nsamples):
+            r = sample("r_latent", VolumePrior(r_min, r_max))
+        mu = self.distance2distmod(r, h=h)
 
-            # Log-likelihood of observed | true for each distance in r_grid
-            # Mean vector at each r: (n_sn, n_r, 3)
-            s_broadcast = jnp.broadcast_to(s_true[:, None], m_true.shape)
-            BV_broadcast = jnp.broadcast_to(BV_true[:, None], m_true.shape)
-            mean_vec = jnp.stack([m_true, s_broadcast, BV_broadcast], axis=-1)
+        # True magnitude
+        m_true = M_B + mu - alpha_tripp * (s_true - 1) + beta_tripp * BV_true
 
-            # Compute MVN log-pdf for each (sn, r) pair
-            # obs_vec: (n_sn, 3), mean_vec: (n_sn, n_r, 3), cov: (n_sn, 3, 3)
-            diff = data["obs_vec"][:, None, :] - mean_vec
-            L = jnp.linalg.cholesky(cov_obs)
-            z = jnp.linalg.solve(L[:, None, :, :], diff[..., None])[..., 0]
-            log_det = jnp.sum(
-                jnp.log(jnp.diagonal(L, axis1=-2, axis2=-1)), axis=-1)
-            ll_obs_mvn = -0.5 * (
-                3 * jnp.log(2 * jnp.pi) + 2 * log_det[:, None]
-                + jnp.sum(z**2, axis=-1))
+        # Log-likelihood of observed (m, s, BV) | true
+        mean_vec = jnp.stack([m_true, s_true, BV_true], axis=-1)
+        diff = obs_vec - mean_vec
+        z = jnp.linalg.solve(L_cov, diff[..., None])[..., 0]
+        ll_obs_mvn = -0.5 * (3 * jnp.log(2 * jnp.pi) + 2 * log_det_cov
+                             + jnp.sum(z**2, axis=-1))
 
-            # Combine with cz likelihood and distance prior
-            # ll_cz: (n_field, n_sn, n_r), ll_obs_mvn: (n_sn, n_r)
-            ll = ll_cz + ll_obs_mvn[None, :, :] + lp_dist
-            ll = ln_simpson(ll, x=r_grid[None, None, :], axis=-1)
+        # cz likelihood
+        zcosmo = self.distance2redshift(r, h=h)
+        czpred = predict_cz(zcosmo, Vext_rad)
+        ll_cz = jax_norm.logpdf(czcmb, czpred, e_cz)
 
-            # Average over field realizations
-            ll = logsumexp(ll, axis=0) - jnp.log(data.num_fields)
+        # Per-source selection: p(S=1 | obs_i)
+        log_p_sel_i = compute_per_source_selection(
+            obs_vec, m_lim, alpha_sel, beta_sel, sigma_sel)
 
-            # Add per-SN log-likelihood + per-source selection probability
-            factor("ll_obs", ll + log_p_sel_i)
+        # Combined per-SN log-likelihood + selection
+        factor("ll_obs", jnp.sum(ll_obs_mvn + ll_cz + log_p_sel_i))
 
         # Selection correction: -N * log p(S=1 | Lambda)
         factor("ll_selection", -nsamples * log_p_sel)

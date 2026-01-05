@@ -22,29 +22,30 @@ from typing import Optional
 import jax.numpy as jnp
 import numpy as np
 from jax.scipy.special import log_ndtr
-from numpyro import factor, plate, sample
-from numpyro.distributions import Normal, Uniform
+from numpyro import factor, handlers, plate, sample
+from numpyro.distributions import MultivariateNormal, Normal, Uniform
 
 from ..cosmography import (Distance2Distmod, Distance2Redshift,
                            Distmod2Distance, Distmod2Redshift,
-                           LogGrad_Distmod2ComovingDistance)
+                           LogGrad_Distmod2ComovingDistance, Redshift2Distance)
 from ..util import (fprint, get_nested, load_config, radec_to_cartesian,
                     replace_prior_with_delta)
 from .interp import LOSInterpolator
 from .model import (load_priors, lp_galaxy_bias, predict_cz, rsample,
                     sample_galaxy_bias)
+from .model_CSP import (CSPModel, CSPSelection, compute_per_source_selection,
+                        extract_csp_median_errors, log1mexp)
 from .model_SH0ES import log_prob_integrand_sel, logmeanexp
 from .simpson import ln_simpson
 
 
-def logmeanexp_by_group(logp, idx, n_groups=None):
+def logsumexp_by_group(logp, idx, n_groups=None):
     """
-    Compute per-group log-mean-exp given per-item logp and integer group
-    indices.
+    Compute per-group logsumexp given per-item logp and integer group indices.
+    This sums (in probability space) the likelihoods within each group.
     """
     if n_groups is None:
         n_groups = int(jnp.max(idx)) + 1
-    counts = jnp.bincount(idx, length=n_groups)
 
     # Per-group baselines for numerical stability
     baseline = jnp.full(n_groups, -jnp.inf)
@@ -57,8 +58,59 @@ def logmeanexp_by_group(logp, idx, n_groups=None):
     sum_exp = jnp.zeros(n_groups, dtype=logp.dtype)
     sum_exp = sum_exp.at[idx].add(exp_shifted)
 
-    logsum = jnp.log(sum_exp) + baseline
-    return logsum - jnp.log(counts)
+    return jnp.log(sum_exp) + baseline
+
+
+def logmeanexp_by_group(logp, idx, n_groups=None):
+    """
+    Compute per-group log-mean-exp given per-item logp and integer group
+    indices.
+    """
+    if n_groups is None:
+        n_groups = int(jnp.max(idx)) + 1
+    counts = jnp.bincount(idx, length=n_groups)
+    return logsumexp_by_group(logp, idx, n_groups) - jnp.log(counts)
+
+
+def log_at_least_one_selected(log_p_sel_i, idx, n_groups=None):
+    """
+    Compute log P(at least one SN selected) per host.
+
+    For host j with SNe i in group j:
+        P(at least one) = 1 - prod_i(1 - p_i)
+        log P(at least one) = log(1 - exp(sum_i log(1 - p_i)))
+                            = log1mexp(sum_i log1mexp(log_p_i))
+
+    Parameters
+    ----------
+    log_p_sel_i : array (n_sn,)
+        Log selection probability for each SN.
+    idx : array (n_sn,)
+        Group index mapping each SN to its host.
+    n_groups : int, optional
+        Number of groups (hosts).
+
+    Returns
+    -------
+    log_p_host : array (n_groups,)
+        Log probability that at least one SN is selected per host.
+    """
+    if n_groups is None:
+        n_groups = int(jnp.max(idx)) + 1
+
+    # log(1 - p_i) for each SN
+    log_one_minus_p_i = log1mexp(log_p_sel_i)
+
+    # Sum per host: log(prod_i (1 - p_i)) = sum_i log(1 - p_i)
+    log_prod_one_minus_p = jnp.zeros(n_groups, dtype=log_p_sel_i.dtype)
+    log_prod_one_minus_p = log_prod_one_minus_p.at[idx].add(log_one_minus_p_i)
+
+    # Clip away from 0 to avoid log1mexp(0) = -inf
+    # When sum ≈ 0, all p_i ≈ 0, so P(at least one) ≈ sum(p_i) via Taylor
+    log_prod_one_minus_p = jnp.minimum(log_prod_one_minus_p, -1e-7)
+
+    # log(1 - prod(1 - p_i)) = log P(at least one selected)
+    return log1mexp(log_prod_one_minus_p)
 
 
 @dataclass
@@ -107,10 +159,10 @@ class CCHPTRGBSelectionComputation:
         return ln_simpson(
             lp_r + log_prob, x=ctx.r_host_range[None, None, :], axis=-1)
 
-    def log_S_SN_mag(self, lp_r, M_SN, H0, mag_lim, mag_width):
+    def log_S_SN_mag(self, lp_r, M_B, H0, mag_lim, mag_width):
         """Probability of detection term if supernova magnitude-truncated."""
         ctx = self.ctx
-        mag = ctx.distance2distmod(ctx.r_host_range, h=H0 / 100) + M_SN
+        mag = ctx.distance2distmod(ctx.r_host_range, h=H0 / 100) + M_B
         log_prob = log_prob_integrand_sel(
             mag[None, None, :], ctx.sigma_SN_sel, mag_lim, mag_width)
         return ln_simpson(
@@ -153,7 +205,7 @@ class CCHPTRGBSelectionComputation:
 
         return log_S, log_p_sel_i
 
-    def correction_SN_mag(self, h, bias_params, M_SN, H0, mag_lim, mag_width):
+    def correction_SN_mag(self, h, bias_params, M_B, H0, mag_lim, mag_width):
         """Compute SN magnitude selection correction using random LOS."""
         ctx = self.ctx
         lp_r_grid = ctx.log_prior_r_grid[None, None, :]
@@ -167,7 +219,7 @@ class CCHPTRGBSelectionComputation:
                 bias_params, ctx.which_bias)
 
         # Marginalized selection over random LOS, shape (nfields, n_rand_los)
-        log_S = self.log_S_SN_mag(lp_r_grid, M_SN, H0, mag_lim, mag_width)
+        log_S = self.log_S_SN_mag(lp_r_grid, M_B, H0, mag_lim, mag_width)
 
         # Average over random LOS, shape (nfields,)
         log_S = logmeanexp(log_S, axis=1)
@@ -205,6 +257,10 @@ class BaseCCHPModel(ABC):
             fprint(f"Using reconstruction: {recon_name}")
         fprint(f"which_bias set to {self.which_bias}")
         fprint(f"selection set to {self.which_selection}")
+        self.use_cz_likelihood = get_nested(
+            config, "model/use_cz_likelihood", True)
+        if not self.use_cz_likelihood:
+            fprint("TRGB cz likelihood DISABLED")
         self.mag_lim_SN = get_nested(config, "model/mag_lim_SN", None)
         self.mag_lim_SN_width = get_nested(
             config, "model/mag_lim_SN_width", None)
@@ -254,6 +310,14 @@ class BaseCCHPModel(ABC):
             else:
                 fprint(f"Redshift selection: cz_lim={self.cz_lim_selection}, "
                        f"width={self.cz_lim_selection_width}")
+        elif self.which_selection == "CSP":
+            if get_nested(config, "model/use_stretch_gmm", False):
+                raise NotImplementedError(
+                    "CSP selection with GMM for stretch is not yet supported.")
+            if self.use_reconstruction:
+                raise NotImplementedError(
+                    "CSP selection with reconstruction is not yet supported.")
+            fprint("CSP selection: using stretch and color from matched CSP")
 
         # Load and possibly mask input data (depends on which_selection)
         self.set_data(data)
@@ -340,12 +404,39 @@ class BaseCCHPModel(ABC):
             config, "model/r_limits_malmquist", [0.01, 350])
         num_points_malmquist = get_nested(
             config, "model/num_points_malmquist", 251)
+
+        # Auto r_limits from observed cz
+        is_auto = (isinstance(r_limits_malmquist, str)
+                   and r_limits_malmquist.startswith("auto"))
+        if is_auto:
+            # Parse h from "auto" or "auto_0.7" format
+            if "_" in r_limits_malmquist:
+                h_auto = float(r_limits_malmquist.split("_")[1])
+            else:
+                h_auto = 1.0
+            cz_obs = jnp.asarray(data["cz_cmb"])
+            cz_obs_lim = [float(jnp.min(cz_obs)), float(jnp.max(cz_obs))]
+            redshift2distance = Redshift2Distance(Om0=self.Om)
+            r_from_cz = redshift2distance(
+                jnp.array(cz_obs_lim), h=h_auto, is_velocity=True)
+            # Buffer is 25% or at least 15 Mpc, final r_min >= 0.15 Mpc
+            r_min_raw = float(r_from_cz[0])
+            r_max_raw = float(r_from_cz[1])
+            buffer_low = max(r_min_raw * 0.25, 15.0)
+            buffer_high = max(r_max_raw * 0.25, 15.0)
+            r_limits_malmquist = [max(r_min_raw - buffer_low, 0.15),
+                                  r_max_raw + buffer_high]
+            fprint(f"auto r_limits_malmquist (h={h_auto}): "
+                   f"[{r_limits_malmquist[0]:.1f}, "
+                   f"{r_limits_malmquist[1]:.1f}] Mpc "
+                   f"(buffer: -{buffer_low:.1f}, +{buffer_high:.1f} Mpc)")
+
         r_range = jnp.linspace(
             r_limits_malmquist[0], r_limits_malmquist[1],
             num_points_malmquist)
 
-        fprint(f"setting radial range from {r_limits_malmquist[0]} to "
-               f"{r_limits_malmquist[1]} Mpc with {num_points_malmquist} "
+        fprint(f"setting radial range from {r_limits_malmquist[0]:.1f} to "
+               f"{r_limits_malmquist[1]:.1f} Mpc with {num_points_malmquist} "
                "points for the CCHP host galaxies.")
         self.r_host_range = r_range
         self.Rmax = jnp.max(self.r_host_range)
@@ -370,23 +461,106 @@ class BaseCCHPModel(ABC):
 
         # Build selection context and computation if selection is enabled
         self.selection = None
+        self.csp_selection = None
         if self.which_selection not in (None, "none"):
-            ctx = CCHPTRGBSelectionContext(
-                f_rand_los_delta=getattr(self, "f_rand_los_delta", None),
-                f_rand_los_velocity=getattr(self, "f_rand_los_velocity", None),
-                rhat_rand_los=self.rhat_rand_los,
-                r_host_range=self.r_host_range,
-                log_prior_r_grid=self._log_prior_r_grid,
-                distance2redshift=self.distance2redshift,
-                distance2distmod=self.distance2distmod,
-                cz_cmb=self.cz_cmb,
-                m_Bprime=self.m_Bprime,
-                sigma_cz_sel=self.sigma_cz_sel,
-                sigma_SN_sel=self.sigma_SN_sel,
-                use_reconstruction=self.use_reconstruction,
-                which_bias=self.which_bias,
-            )
-            self.selection = CCHPTRGBSelectionComputation(ctx)
+            if self.which_selection == "CSP":
+                # CSP selection uses CSPSelection class
+                cz_lim = (100.0, self.cz_lim_selection)
+                use_cz_selection = False  # Disable redshift selection for TRGB
+                # Read grid settings from config
+                r_lim = get_nested(
+                    config, "model/r_limits_selection", [5, 300])
+                n_r = get_nested(config, "model/n_r_selection", 51)
+                n_s = get_nested(config, "model/n_s_selection", 31)
+                n_BV = get_nested(config, "model/n_BV_selection", 31)
+                pad = get_nested(config, "model/auto_limits_nsigma", 5.0)
+                # Get observed limits from data
+                s_obs = self.CSP_obs_vec[:, 1]
+                BV_obs = self.CSP_obs_vec[:, 2]
+                csp_errors = extract_csp_median_errors(self.CSP_cov)
+                s_obs_lim = (float(jnp.min(s_obs)), float(jnp.max(s_obs)))
+                BV_obs_lim = (float(jnp.min(BV_obs)), float(jnp.max(BV_obs)))
+                # True (latent) limits: observed range ± padding for error
+                s_lim = (s_obs_lim[0] - pad * csp_errors["sigma_s"],
+                         s_obs_lim[1] + pad * csp_errors["sigma_s"])
+                BV_lim = (BV_obs_lim[0] - pad * csp_errors["sigma_BV"],
+                          BV_obs_lim[1] + pad * csp_errors["sigma_BV"])
+                fprint(f"TRGB-CSP auto s_limits (true): [{s_lim[0]:.3f}, "
+                       f"{s_lim[1]:.3f}] (obs ± {pad}σ)")
+                fprint(f"TRGB-CSP auto BV_limits (true): [{BV_lim[0]:.3f}, "
+                       f"{BV_lim[1]:.3f}] (obs ± {pad}σ)")
+                fprint(f"TRGB-CSP observed limits: s=[{s_obs_lim[0]:.3f}, "
+                       f"{s_obs_lim[1]:.3f}], BV=[{BV_obs_lim[0]:.3f}, "
+                       f"{BV_obs_lim[1]:.3f}]")
+                # Auto r_lim from observed cz
+                if isinstance(r_lim, str) and r_lim.startswith("auto"):
+                    # Parse h from "auto" or "auto_0.7" format
+                    if "_" in r_lim:
+                        h_auto = float(r_lim.split("_")[1])
+                    else:
+                        h_auto = 1.0
+                    cz_obs = self.cz_cmb  # per-SN cz in km/s
+                    cz_obs_lim = [float(jnp.min(cz_obs)),
+                                  float(jnp.max(cz_obs))]
+                    redshift2distance = Redshift2Distance(Om0=self.Om)
+                    r_from_cz = redshift2distance(
+                        jnp.array(cz_obs_lim), h=h_auto, is_velocity=True)
+                    # Buffer is 25% or at least 15 Mpc, final r_min >= 0.15 Mpc
+                    r_min_raw = float(r_from_cz[0])
+                    r_max_raw = float(r_from_cz[1])
+                    buffer_low = max(r_min_raw * 0.25, 15.0)
+                    buffer_high = max(r_max_raw * 0.25, 15.0)
+                    r_lim = [max(r_min_raw - buffer_low, 0.15),
+                             r_max_raw + buffer_high]
+                    fprint(f"TRGB-CSP auto r_limits (h={h_auto}): "
+                           f"[{r_lim[0]:.1f}, {r_lim[1]:.1f}] Mpc "
+                           f"(buffer: -{buffer_low:.1f}, "
+                           f"+{buffer_high:.1f} Mpc)")
+                # Build grids
+                r_grid = jnp.linspace(r_lim[0], r_lim[1], n_r)
+                s_grid = jnp.linspace(s_lim[0], s_lim[1], n_s)
+                BV_grid = jnp.linspace(BV_lim[0], BV_lim[1], n_BV)
+                self.csp_selection = CSPSelection(
+                    r_grid=r_grid, s_grid=s_grid, BV_grid=BV_grid,
+                    distance2redshift=self.distance2redshift,
+                    distance2distmod=self.distance2distmod,
+                    cz_lim=cz_lim, s_obs_lim=s_obs_lim, BV_obs_lim=BV_obs_lim,
+                    use_cz_selection=use_cz_selection)
+                n_eval = n_r * n_s * n_BV
+                fprint(f"CSP selection grid: r=[{r_lim[0]:.1f}, "
+                       f"{r_lim[1]:.1f}] ({n_r}), "
+                       f"s=[{s_lim[0]:.3f}, {s_lim[1]:.3f}] ({n_s}), "
+                       f"BV=[{BV_lim[0]:.2f}, {BV_lim[1]:.2f}] ({n_BV})")
+                if use_cz_selection:
+                    fprint(f"CSP selection cz=[{cz_lim[0]:.0f}, "
+                           f"{cz_lim[1]:.0f}] km/s")
+                fprint(f"CSP selection: use_cz_selection={use_cz_selection}, "
+                       f"total evaluations: {n_eval}")
+                # Store median measurement errors for selection
+                self.CSP_sigma_m = csp_errors["sigma_m"]
+                self.CSP_sigma_s = csp_errors["sigma_s"]
+                self.CSP_sigma_BV = csp_errors["sigma_BV"]
+                self.CSP_rho_ms = csp_errors["rho_ms"]
+                self.CSP_rho_mBV = csp_errors["rho_mBV"]
+                self.CSP_rho_sBV = csp_errors["rho_sBV"]
+            else:
+                ctx = CCHPTRGBSelectionContext(
+                    f_rand_los_delta=getattr(self, "f_rand_los_delta", None),
+                    f_rand_los_velocity=getattr(
+                        self, "f_rand_los_velocity", None),
+                    rhat_rand_los=self.rhat_rand_los,
+                    r_host_range=self.r_host_range,
+                    log_prior_r_grid=self._log_prior_r_grid,
+                    distance2redshift=self.distance2redshift,
+                    distance2distmod=self.distance2distmod,
+                    cz_cmb=self.cz_cmb,
+                    m_Bprime=self.m_Bprime,
+                    sigma_cz_sel=self.sigma_cz_sel,
+                    sigma_SN_sel=self.sigma_SN_sel,
+                    use_reconstruction=self.use_reconstruction,
+                    which_bias=self.which_bias,
+                )
+                self.selection = CCHPTRGBSelectionComputation(ctx)
 
     def log_prior_distance(self, r):
         """Log prior on physical distance (volume prior, r^2)."""
@@ -402,8 +576,12 @@ class BaseCCHPModel(ABC):
             replace_prior_with_delta(config, "alpha_low", 1.0, verbose=False)
             replace_prior_with_delta(config, "alpha_high", 1.0, verbose=False)
             replace_prior_with_delta(config, "log_rho_t", 0.0, verbose=False)
-        if get_nested(config, "model/which_selection", None) != "SN_magnitude":
-            replace_prior_with_delta(config, "M_SN", -19.25, verbose=False)
+        which_sel = get_nested(config, "model/which_selection", None)
+        if which_sel not in ("SN_magnitude", "CSP"):
+            replace_prior_with_delta(config, "M_B", -18.5, verbose=False)
+        if which_sel != "CSP":
+            replace_prior_with_delta(config, "alpha_tripp", 0.7, verbose=False)
+            replace_prior_with_delta(config, "beta_tripp", 2.5, verbose=False)
         if get_nested(config, "model/which_bias", "linear") != "linear":
             replace_prior_with_delta(config, "b1", 1.0, verbose=False)
         return config
@@ -446,6 +624,40 @@ class BaseCCHPModel(ABC):
             if "host_los_r" in data and data["host_los_r"] is not None:
                 data["host_los_r"] = data["host_los_r"]
 
+        # CSP selection: require matched CSP data
+        self.CSP_obs_vec = None
+        self.CSP_cov = None
+        if self.which_selection == "CSP":
+            if "CSP_obs_vec" not in data:
+                raise ValueError(
+                    "CSP selection requires load_CSP_matches=true in config.")
+            # Mask to hosts with CSP matches (finite obs_vec)
+            csp_mask = jnp.isfinite(data["CSP_obs_vec"][:, 0])
+            n_masked = int(jnp.sum(~csp_mask))
+            fprint(f"CSP selection: masking {n_masked} hosts without "
+                   "CSP matches.")
+            mag_obs = mag_obs[csp_mask]
+            e_mag_TRGB = e_mag_TRGB[csp_mask]
+            cz_cmb = cz_cmb[csp_mask]
+            e_czcmb = e_czcmb[csp_mask]
+            m_Bprime = m_Bprime[csp_mask]
+            e_m_Bprime = e_m_Bprime[csp_mask]
+            RA = RA[csp_mask]
+            DEC = DEC[csp_mask]
+            galaxies = galaxies[np.array(csp_mask)]
+            # Store CSP data
+            self.CSP_obs_vec = jnp.asarray(data["CSP_obs_vec"][csp_mask])
+            self.CSP_cov = jnp.asarray(data["CSP_cov"][csp_mask])
+            # Also mask LOS data if provided.
+            if ("host_los_density" in data
+                    and data["host_los_density"] is not None):
+                data["host_los_density"] = data["host_los_density"][
+                    :, csp_mask, :]
+            if ("host_los_velocity" in data
+                    and data["host_los_velocity"] is not None):
+                data["host_los_velocity"] = data["host_los_velocity"][
+                    :, csp_mask, :]
+
         self.mag_obs = mag_obs
         self.e_mag_TRGB = e_mag_TRGB
         self.cz_cmb = cz_cmb
@@ -454,10 +666,10 @@ class BaseCCHPModel(ABC):
         self.e_m_Bprime = e_m_Bprime
         self.RA = RA
         self.DEC = DEC
-        # Group indices for repeated galaxies.
+        # Group indices for repeated galaxies (multiple SNe per host).
         galaxies_unique, inverse = np.unique(galaxies, return_inverse=True)
         num_groups = galaxies_unique.shape[0]
-        fprint(f"{len(galaxies)} hosts, {num_groups} unique after grouping.")
+        fprint(f"{len(galaxies)} SNe in {num_groups} unique hosts.")
         group_mask = np.zeros((num_groups, len(galaxies)), dtype=bool)
         for i in range(num_groups):
             group_mask[i, inverse == i] = True
@@ -468,11 +680,22 @@ class BaseCCHPModel(ABC):
         self.sigma_SN_sel = jnp.median(self.e_m_Bprime)
         self.sigma_cz_sel = jnp.median(self.e_czcmb)
 
-        # Convert RA/Dec to Cartesian coordinates
-        fprint("Converting host RA/dec to Cartesian coordinates.")
+        # Host-level arrays (one value per unique host, not per SN).
+        # TRGB magnitude and cz are properties of the host, not the SN.
+        first_idx = np.array([np.where(inverse == i)[0][0]
+                              for i in range(num_groups)])
+        self.first_idx = jnp.asarray(first_idx)
+        self.mag_obs_host = jnp.asarray(mag_obs[first_idx])
+        self.e_mag_TRGB_host = jnp.asarray(e_mag_TRGB[first_idx])
+        self.cz_cmb_host = jnp.asarray(cz_cmb[first_idx])
+        self.e_czcmb_host = jnp.asarray(e_czcmb[first_idx])
+
+        # Convert RA/Dec to Cartesian coordinates (per SN entry)
         rhat = radec_to_cartesian(self.RA, self.DEC)
         n = jnp.linalg.norm(rhat, axis=1, keepdims=True)
-        self.rhat_host = rhat / jnp.where(n == 0.0, 1.0, n)
+        self.rhat = rhat / jnp.where(n == 0.0, 1.0, n)
+        # Host-level rhat (one per unique host)
+        self.rhat_host = self.rhat[first_idx]
 
         self.mu_LMC_anchor = data["mu_LMC_anchor"]
         self.e_mu_LMC_anchor = data["e_mu_LMC_anchor"]
@@ -513,9 +736,15 @@ class CCHPTRGBModel(BaseCCHPModel):
     Forward model the TRGB magnitudes and host redshifts to infer the Hubble
     constant.
 
-    Duplicate objects per galaxy are handled by sampling one distance per
-    unique host and averaging per-galaxy likelihoods within groups via
-    log-mean-exp.
+    Data structure:
+    - Each row is one SN, multiple SNe can be in the same host galaxy
+    - TRGB magnitude and cz are host properties (counted once per host)
+    - SN observables (m_Bprime, CSP m/s/BV) are independent per SN
+
+    Likelihood structure:
+    - Host-level: volume prior, TRGB magnitude, cz (one per unique host)
+    - SN-level: SN magnitude or CSP likelihood (summed over all SNe)
+    - Selection correction: -N_host * log p(S=1|Lambda)
     """
 
     def __init__(self, config_path, data):
@@ -580,57 +809,78 @@ class CCHPTRGBModel(BaseCCHPModel):
         sigma_v = rsample("sigma_v", self.priors["sigma_v"], shared_params)
         beta = rsample("beta", self.priors["beta"], shared_params)
         Vext = rsample("Vext", self.priors["Vext"], shared_params)
-        M_SN = rsample("M_SN", self.priors["M_SN"], shared_params)
+        M_B = rsample("M_B", self.priors["M_B"], shared_params)
 
-        (cz_lim_selection, cz_lim_selection_width, mag_lim_SN,
-         mag_lim_SN_width) = self._sample_selection_params()
+        # Sample selection parameters only for redshift/SN_magnitude selection
+        cz_lim_selection, cz_lim_selection_width = None, None
+        mag_lim_SN, mag_lim_SN_width = None, None
+        if self.which_selection in ("redshift", "SN_magnitude"):
+            (cz_lim_selection, cz_lim_selection_width, mag_lim_SN,
+             mag_lim_SN_width) = self._sample_selection_params()
 
         h = H0 / 100.0
-        # Sample distance moduli per each group
-        mu_host_group, mu_LMC, mu_N4258 = self.sample_host_distmod()
+        # Sample distance moduli per unique host galaxy
+        mu_host, mu_LMC, mu_N4258 = self.sample_host_distmod()
         bias_params = sample_galaxy_bias(
             self.priors, self.which_bias, beta=beta, Om=self.Om)
 
-        # Convert to comoving distances in Mpc (grouped hosts)
-        r_group = self.distmod2distance(mu_host_group, h=h)
-        z_cosmo_group = self.distance2redshift(r_group, h=h)
+        # Convert to comoving distances in Mpc (per unique host)
+        r_host = self.distmod2distance(mu_host, h=h)
+        z_cosmo_host = self.distance2redshift(r_host, h=h)
 
-        # Propagate to per-galaxy distance moduli and distances.
-        mu_host = mu_host_group[self.group_index]
-        r = r_group[self.group_index]
-        z_cosmo = z_cosmo_group[self.group_index]
+        # Broadcast to per-SN for interpolator compatibility
+        mu_per_sn = mu_host[self.group_index]
+        r_per_sn = r_host[self.group_index]
 
-        # Volume prior with reconstruction normalization
-        logp_tot = self._log_prior_with_reconstruction(
-            r, mu_host, h, bias_params)
+        # =====================================================================
+        # Host-level likelihood (one per unique host galaxy)
+        # =====================================================================
+        # Volume prior with reconstruction normalization. LOS interpolator is
+        # built per-SN, so we compute per-SN then extract.
+        logp_prior_per_sn = self._log_prior_with_reconstruction(
+            r_per_sn, mu_per_sn, h, bias_params)
+        # Extract per-host (shape: nfields, num_groups)
+        logp_host = logp_prior_per_sn[:, self.first_idx]
 
-        sigma_tot_mag = jnp.sqrt(self.e_mag_TRGB**2 + sigma_int**2)
-        sigma_tot_cz = jnp.sqrt(self.e_czcmb**2 + sigma_v**2)
+        sigma_tot_mag = jnp.sqrt(self.e_mag_TRGB_host**2 + sigma_int**2)
+        sigma_tot_cz = jnp.sqrt(self.e_czcmb_host**2 + sigma_v**2)
 
-        # Add the magnitude likelihood, `(1, n_gal)`
-        logp_tot += Normal(
-            mu_host + M_TRGB, sigma_tot_mag).log_prob(self.mag_obs)[None, :]
+        # TRGB magnitude likelihood (once per host), shape: (1, num_groups)
+        logp_host += Normal(
+            mu_host + M_TRGB, sigma_tot_mag).log_prob(
+            self.mag_obs_host)[None, :]
 
-        # Project Vext along LOS
+        # Project Vext along LOS (per host)
         Vext_rad_host = jnp.sum(Vext[None, :] * self.rhat_host, axis=1)
 
-        # Get the predicted redshifts, (n_field, n_gal)
+        # Predicted redshifts per host, shape: (n_field, num_groups)
         if self.use_reconstruction:
-            Vpec = self.f_host_los_velocity(r)
-            cz_th_all = predict_cz(
-                z_cosmo[None, :], Vext_rad_host[None, :] + beta * Vpec)
+            # Vpec interpolator is built per-SN, so compute per-SN then extract
+            Vpec_per_sn = self.f_host_los_velocity(r_per_sn)
+            Vpec_host = Vpec_per_sn[:, self.first_idx]
+            Vpec_tot = Vext_rad_host[None, :] + beta * Vpec_host
+            cz_th_host = predict_cz(z_cosmo_host[None, :], Vpec_tot)
         else:
-            cz_th_all = predict_cz(z_cosmo[None, :], Vext_rad_host[None, :])
+            cz_th_host = predict_cz(
+                z_cosmo_host[None, :], Vext_rad_host[None, :])
 
-        # Add the SN magnitude likelihood if using SN magnitude selection,
-        # `(1, n_gal)`
+        # cz likelihood (once per host), shape: (n_field, num_groups)
+        if self.use_cz_likelihood:
+            ll_cz = Normal(cz_th_host, sigma_tot_cz).log_prob(self.cz_cmb_host)
+            logp_host += ll_cz
+
+        # =====================================================================
+        # SN-level likelihood (independent per SN, log-likelihoods summed)
+        # =====================================================================
+        logp_sn = jnp.zeros((1, len(self.group_index)))
+
+        # Add the SN magnitude likelihood if using SN magnitude selection
         if self.which_selection == "SN_magnitude":
-            logp_tot += Normal(
-                mu_host + M_SN,
+            logp_sn += Normal(
+                mu_per_sn + M_B,
                 self.e_m_Bprime).log_prob(self.m_Bprime)[None, :]
 
-        # Selection modelling using random LOS.
-        # log_S has shape (nfields,), log_p_sel_i has shape (ngal,)
+        # Selection modelling
         if self.which_selection in (None, "none"):
             pass
         elif self.which_selection == "redshift":
@@ -641,35 +891,114 @@ class CCHPTRGBModel(BaseCCHPModel):
                         else self.cz_lim_selection_width)
             log_S, log_p_sel_i = self.selection.correction_redshift(
                 h, sigma_v, beta, bias_params, Vext, H0, cz_lim, cz_width)
-            logp_tot -= log_S[:, None]
-            logp_tot += log_p_sel_i[None, :]
+            # Selection correction: -N_host * log p(S=1|Lambda)
+            # Subtract per host; summing over hosts gives -N * log_S
+            logp_host -= log_S[:, None]
+            # Per-source selection (sum over SNe)
+            logp_sn += log_p_sel_i[None, :]
         elif self.which_selection == "SN_magnitude":
             m_lim = mag_lim_SN if mag_lim_SN is not None else self.mag_lim_SN
             m_width = (mag_lim_SN_width if mag_lim_SN_width is not None
                        else self.mag_lim_SN_width)
             log_S, log_p_sel_i = self.selection.correction_SN_mag(
-                h, bias_params, M_SN, H0, m_lim, m_width)
-            logp_tot -= log_S[:, None]
-            logp_tot += log_p_sel_i[None, :]
+                h, bias_params, M_B, H0, m_lim, m_width)
+            # Selection correction: -N_host * log p(S=1|Lambda)
+            # Subtract per host; summing over hosts gives -N * log_S
+            logp_host -= log_S[:, None]
+            # Per-source selection (sum over SNe)
+            logp_sn += log_p_sel_i[None, :]
+        elif self.which_selection == "CSP":
+            # Sample Tripp standardization parameters
+            alpha_tripp = rsample(
+                "alpha_tripp", self.priors["alpha_tripp"], shared_params)
+            beta_tripp = rsample(
+                "beta_tripp", self.priors["beta_tripp"], shared_params)
+            sigma_int_SN = rsample(
+                "sigma_int_SN", self.priors["sigma_int_SN"], shared_params)
+            # Sample CSP population parameters (may come from shared_params)
+            mu_s = rsample("mu_s", self.priors["mu_s"], shared_params)
+            sigma_s = rsample(
+                "sigma_s", self.priors["sigma_s"], shared_params)
+            mu_BV = rsample("mu_BV", self.priors["mu_BV"], shared_params)
+            sigma_BV = rsample(
+                "sigma_BV", self.priors["sigma_BV"], shared_params)
+            rho_pop = rsample(
+                "rho_pop", self.priors["rho_pop"], shared_params)
+            # Sample selection parameters
+            m_lim = rsample("m_lim", self.priors["m_lim"], shared_params)
+            alpha_sel = rsample(
+                "alpha_sel", self.priors["alpha_sel"], shared_params)
+            beta_sel = rsample(
+                "beta_sel", self.priors["beta_sel"], shared_params)
+            sigma_sel = rsample(
+                "sigma_sel", self.priors["sigma_sel"], shared_params)
+
+            # CSP magnitude likelihood with full covariance
+            # Sample true (s, BV) from population hyperprior for each SN
+            pop_mean = jnp.array([mu_s, mu_BV])
+            pop_cov = jnp.array([
+                [sigma_s**2, rho_pop * sigma_s * sigma_BV],
+                [rho_pop * sigma_s * sigma_BV, sigma_BV**2]])
+            n_csp = self.CSP_obs_vec.shape[0]
+            pop_dist = MultivariateNormal(pop_mean, pop_cov)
+            with plate("csp_latent", n_csp):
+                x_latent = sample("x_latent", pop_dist)
+            s_true = x_latent[:, 0]
+            BV_true = x_latent[:, 1]
+
+            # True magnitude: m_true = M_B + mu - alpha*(s-1) + beta*BV
+            m_true = (M_B + mu_per_sn - alpha_tripp * (s_true - 1)
+                      + beta_tripp * BV_true)
+
+            # Log-likelihood of observed (m, s, BV) | true using full cov
+            # Add intrinsic scatter to magnitude variance
+            cov_obs = self.CSP_cov.at[:, 0, 0].add(sigma_int_SN**2)
+            mean_vec = jnp.stack([m_true, s_true, BV_true], axis=-1)
+            L_cov = jnp.linalg.cholesky(cov_obs)
+            log_det_cov = jnp.sum(
+                jnp.log(jnp.diagonal(L_cov, axis1=-2, axis2=-1)), axis=-1)
+            diff = self.CSP_obs_vec - mean_vec
+            z = jnp.linalg.solve(L_cov, diff[..., None])[..., 0]
+            ll_obs_mvn = -0.5 * (3 * jnp.log(2 * jnp.pi) + 2 * log_det_cov
+                                 + jnp.sum(z**2, axis=-1))
+            # SN likelihood (per SN)
+            logp_sn += ll_obs_mvn[None, :]
+
+            # Global selection probability
+            # Total scatter on observed magnitude = intrinsic + measurement
+            sigma_m_total = jnp.sqrt(sigma_int_SN**2 + self.CSP_sigma_m**2)
+            log_p_sel = self.csp_selection(
+                M_B, alpha_tripp, beta_tripp, sigma_m_total,
+                mu_s, sigma_s, mu_BV, sigma_BV, rho_pop,
+                m_lim, alpha_sel, beta_sel, sigma_sel,
+                self.CSP_sigma_s, self.CSP_sigma_BV,
+                self.CSP_rho_ms, self.CSP_rho_mBV, self.CSP_rho_sBV,
+                sigma_v, h=h)
+            # Selection correction: -N_host * log p(S=1|Lambda)
+            # Subtract per host; summing over hosts gives -N * log_p_sel
+            logp_host -= log_p_sel
+
+            # Per-source selection (sum over SNe)
+            log_p_sel_i = compute_per_source_selection(
+                self.CSP_obs_vec, m_lim, alpha_sel, beta_sel, sigma_sel)
+            logp_sn += log_p_sel_i[None, :]
         else:
             raise ValueError(
                 f"Unknown selection '{self.which_selection}'. "
-                "Use 'redshift', 'SN_magnitude' or 'none'.")
+                "Use 'redshift', 'SN_magnitude', 'CSP', or 'none'.")
 
-        # Redshift likelihood, `(nfields, n_gal)`
-        logp_tot += Normal(
-            cz_th_all, sigma_tot_cz).log_prob(self.cz_cmb)
+        # =====================================================================
+        # Combine host and SN likelihoods
+        # =====================================================================
+        # Average host likelihood over field realisations, sum over hosts
+        logp_host = logmeanexp(logp_host, axis=0)
+        logp_host = jnp.sum(logp_host)
 
-        # Average over field realisations
-        logp_tot = logmeanexp(logp_tot, axis=0)
+        # Sum SN likelihoods (product over independent SNe)
+        # No field averaging needed for SN likelihood (no reconstruction dep)
+        logp_sn = jnp.sum(logp_sn)
 
-        # Average over multiple per-galaxy entries (same galaxy observed
-        # multiple times)
-        logp_tot = logmeanexp_by_group(
-            logp_tot, self.group_index, n_groups=self.num_groups)
-
-        # Sum over all groups
-        logp_tot = jnp.sum(logp_tot)
+        logp_tot = logp_host + logp_sn
 
         # Anchor TRGB magnitudes
         logp_tot += Normal(
@@ -680,3 +1009,107 @@ class CCHPTRGBModel(BaseCCHPModel):
             self.mag_N4258_TRGB)
 
         factor("ll_total", logp_tot)
+
+
+###############################################################################
+#                    Joint TRGB + CSP Model for H0 inference                  #
+###############################################################################
+
+
+class JointTRGBCSPModel:
+    """
+    Joint model combining TRGB calibrators and CSP SNe for H0 inference.
+
+    Shared parameters between models:
+    - Cosmology: H0, Vext, sigma_v, beta
+    - SN standardization: M_B, alpha_tripp, beta_tripp
+    - Population: mu_s, sigma_s, mu_BV, sigma_BV, rho_pop
+    - Selection: m_lim, alpha_sel, beta_sel, sigma_sel
+
+    For overlapping hosts (SNe in both TRGB and CSP samples), distances
+    are sampled once by the TRGB model and shared with the CSP likelihood.
+    """
+
+    shared_param_names = [
+        # Cosmology
+        "H0", "Vext", "sigma_v", "beta",
+        # SN standardization
+        "M_B", "alpha_tripp", "beta_tripp",  # "sigma_int_SN",
+        # Population hyperparameters
+        "mu_s", "sigma_s", "mu_BV", "sigma_BV", "rho_pop",
+    ]
+
+    def __init__(self, config_path, trgb_data, csp_data):
+        """
+        Initialize the joint model.
+
+        Parameters
+        ----------
+        config_path : str
+            Path to the configuration file.
+        trgb_data : object
+            TRGB data container (from load_CCHP_from_config with CSP matches).
+        csp_data : dict
+            CSP data dict (from load_CSP_from_config). Must be disjoint from
+            TRGB hosts.
+        """
+        # Check for overlap between TRGB and CSP samples (should be disjoint)
+        trgb_sn_names = set(trgb_data["SN"])
+        # CSP names have "SN" prefix, strip for comparison
+        csp_sn_names = set(
+            n[2:] if n.startswith("SN") else n for n in csp_data["sn"])
+        overlap = trgb_sn_names & csp_sn_names
+        if overlap:
+            raise ValueError(
+                f"CSP sample overlaps with TRGB hosts: {overlap}. "
+                "Use a CSP sample that excludes TRGB hosts.")
+
+        n_trgb_sne = len(trgb_data["SN"])
+        n_trgb_hosts = len(np.unique(trgb_data["Galaxy"]))
+        n_csp = len(csp_data["sn"])
+        fprint(f"Joint model: {n_trgb_sne} TRGB SNe in {n_trgb_hosts} hosts, "
+               f"{n_csp} CSP SNe (disjoint)")
+
+        # Wrap CSP data in PVDataFrame (drops strings, converts to JAX)
+        from ..pvdata import PVDataFrame
+        csp_data = PVDataFrame(csp_data)
+
+        # Initialize submodels
+        self.trgb_model = CCHPTRGBModel(config_path, trgb_data)
+        self.csp_model = CSPModel(config_path)
+
+        # Validate and store CSP data
+        self.csp_model.validate_data(csp_data)
+        self.csp_data = csp_data
+
+        # Store config
+        self.config = self.trgb_model.config
+
+        # Disable evidence computation
+        fprint("setting `compute_evidence` to False.")
+        self.config["inference"]["compute_evidence"] = False
+
+    def _sample_shared_params(self):
+        """Sample parameters shared between TRGB and CSP models."""
+        shared = {}
+        # Use TRGB model priors for shared params
+        priors = self.trgb_model.priors
+        for name in self.shared_param_names:
+            if name in priors:
+                shared[name] = rsample(name, priors[name])
+        return shared
+
+    def __call__(self):
+        """NumPyro model for joint MCMC inference."""
+        # Sample shared parameters once
+        shared_params = self._sample_shared_params()
+        H0 = shared_params["H0"]
+        h = H0 / 100.0
+
+        # Run TRGB model (computes likelihood for anchored SNe)
+        with handlers.scope(prefix="TRGB"):
+            self.trgb_model(shared_params=shared_params)
+
+        # Run CSP model (all SNe, disjoint from TRGB)
+        with handlers.scope(prefix="CSP"):
+            self.csp_model(self.csp_data, shared_params=shared_params, h=h)
