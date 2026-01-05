@@ -86,6 +86,13 @@ if __name__ == "__main__":
         data = candel.pvdata.load_CCHP_from_config(args.config)
         model = candel.model.CCHPTRGBModel(args.config, data)
         candel.run_H0_inference(model, )
+    elif which_run == "CCHP_CSP":
+        fprint("selected `CCHP_CSP` joint TRGB-CSP model.")
+        trgb_data = candel.pvdata.load_CCHP_from_config(args.config)
+        csp_data = candel.pvdata.load_CSP_from_config(args.config)
+        model = candel.model.JointTRGBCSPModel(
+            args.config, trgb_data, csp_data)
+        candel.run_H0_inference(model, )
     else:
         data = candel.pvdata.load_PV_dataframes(args.config)
 
