@@ -51,10 +51,7 @@ from .inference import (                                                        
     get_log_density,                                                            # noqa
     )
 
-from .redshift2real import (                                                    # noqa
-    Redshift2Real,                                                              # noqa
-    run_batched_inference,                                                      # noqa
-    )
+from .redshift2real import Redshift2Real  # noqa
 
 from .util import (                                                             # noqa
     SPEED_OF_LIGHT,                                                             # noqa
