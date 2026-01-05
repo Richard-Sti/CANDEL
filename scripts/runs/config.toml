@@ -52,7 +52,7 @@ which_Vext = "constant"
 # (Inhomogeneus Malmquist bias settings and extrapolation), in units of Mpc / h.
 # However, for `CalibratedDistanceModel` this is interpreted in Mpc because of
 # the inferred H0.
-r_limits_malmquist = [0.1, 251]
+r_limits_malmquist = "auto"
 num_points_malmquist = 251
 
 los_decay_scale = 10.0
@@ -87,7 +87,7 @@ marginalize_eta = true
 
 # CSP selection integral grid settings (CSPModel)
 # LSQ data ranges: st=[0.50, 1.22], BV=[-0.05, 0.47], zcmb=[0.021, 0.126]
-r_limits_selection = [5, 500]
+r_limits_selection = "auto"
 n_r_selection = 51
 s_limits_selection = "auto"
 n_s_selection = 15
@@ -160,6 +160,11 @@ loc = 0.43
 scale = 0.1
 
 [model.priors.sigma_int]
+dist = "jeffreys"
+low = 0.005
+high = 1.0
+
+[model.priors.sigma_int_SN]
 dist = "jeffreys"
 low = 0.005
 high = 1.0
@@ -699,7 +704,7 @@ los_file = "data/CF4_HQ/los_CF4_HQ_<X>.hdf5"
 [io.reconstruction_main]
 # Distance over which to interpolate the 3D grids along the source LOS.
 rmin = 0.001
-rmax = 201
+rmax = 251
 num_steps = 251
 
 [io.reconstruction_main.manticore_2MPP_MULTIBIN_N256_DES_V2]
