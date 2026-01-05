@@ -124,7 +124,7 @@ def generate_dynamic_tag(config, base_tag="default"):
     parts = []
     which_run = get_nested(config, "model/which_run", None)
 
-    if which_run in ("CH0", "CCHP"):
+    if which_run in ("CH0", "CCHP", "CCHP_CSP"):
         model_name = which_run
         catalogue = which_run
         parts.append(which_run)
@@ -229,7 +229,7 @@ def generate_dynamic_tag(config, base_tag="default"):
         if get_nested(config, "model/weight_selection_by_covmat_Neff", False):
             parts.append("weight_by_Neff")
 
-    elif which_run == "CCHP":
+    elif which_run in ("CCHP", "CCHP_CSP"):
         which_sel = get_nested(config, "model/which_selection", None)
         if _is_active(which_sel):
             parts.append(f"sel-{which_sel}")
@@ -319,20 +319,77 @@ if __name__ == "__main__":
     tasks_index = args.tasks_index
 
     # Multiple override options → this creates a job per combination
+    # manual_overrides = {
+    #     # ###### - INFERENCE - ######
+    #     "inference/num_warmup": 500,
+    #     "inference/num_samples": 5000,
+    #     "inference/num_chains": 1,
+    #     "inference/compute_log_density": False,
+    #     "inference/compute_evidence": False,
+    #     "inference/track_log_density_per_sample": False,
+    #     # "inference/model": "TFRModel",
+    #     "inference/model": "CSPModel",
+    #     # "inference/shared_params": "beta,sigma_v,Vext",
+    #     # ###### -- MODEL -- ######
+    #     # ###### -- PV MODEL -- ######
+    #     # "pv_model/kind": "precomputed_los_Carrick2015",
+    #     # "pv_model/kind": "Vext",
+    #     # "pv_model/smooth_target": "none",
+    #     "pv_model/galaxy_bias": "double_powerlaw",
+    #     # "pv_model/kind": "precomputed_los_manticore_2MPP_MULTIBIN_N256_DES_V2",  # noqa
+    #     "pv_model/kind": "Vext",  # noqa
+    #     # "pv_model/which_Vext": "radial_magnitude",
+    #     "pv_model/r_limits_malmquist": ["auto"],
+    #     "pv_model/num_points_malmquist": 101,
+    #     # "pv_model/which_distance_prior": "empirical",
+    #     # "pv_model/which_distance_prior": "volume_redshift_selected",
+    #     # ##### - PRIORS -- ######
+    #     # "model/priors/Vext_radial_magnitude": {
+    #     #     "dist": "vector_radialmag_uniform",
+    #     #     "low": 0.0,
+    #     #     "high": 10_000,
+    #     #     "rknot": [0, 50, 100, 150, 200, 250, 300, 350, 400, 450],
+    #     #     "method": "linear"
+    #     # },
+    #     "model/use_stretch_gmm": False,
+    #     "model/priors/beta": [
+    #         # {"dist": "uniform", "low": -1, "high": 2.0},
+    #         # {"dist": "normal", "loc": 0.43, "scale": 0.25},
+    #         # {"dist": "normal", "loc": 0.43, "scale": 0.25},
+    #         {"dist": "delta", "value": 1.0},
+    #     ],
+    #     # "model/priors/b1": [{"dist": "delta", "value": x}
+    #     #                     for x in [round(0.1 * n, 1) for n in range(16)]],  # noqa
+    #     # "model/priors/zeropoint_dipole": [
+    #     #     {"dist": "delta", "value": [0.0, 0.0, 0.0]},
+    #     #     {"dist": "vector_uniform_fixed", "low": 0.0, "high": 0.3},
+    #     #     # {"dist": "vector_components_uniform", "low": -0.3, "high": 0.3},  # noqa
+    #     # ],
+    #     # "model/priors/Vext": [
+    #         # {"dist": "delta", "value": [0.0, 0.0, 0.0]},
+    #     #     # {"dist": "vector_components_uniform", "low": -0.3, "high": 0.3},  # noqa
+    #     # ],
+    #     # "model/priors/Om": {"dist": "delta", "value": 0.3},
+    #     # ###### - IO - ######
+    #     "io/catalogue_name": "CSP",
+    #     "io/CSP/which_sample": "CSPII",
+    #     # "io/CSP/zcmb_max": 0.05,
+    #     "io/root_output": "results_test/",
+    # }
     # --- CCHP overrides ---
     manual_overrides = {
-        "io/root_output": "results/CCHP",
+        "io/root_output": "results_test",
         # "model/which_selection": ["none", "SN_magnitude", "redshift"],
-        "model/which_selection": "SN_magnitude",
+        "model/which_run": "CCHP_CSP",
+        "model/which_selection": "CSP",
         "model/use_reconstruction": False,
         "io/which_host_los": "Carrick2015",
         # "io/which_host_los": "manticore_2MPP_MULTIBIN_N256_DES_V2",
         "model/which_bias": "linear",
         "model/infer_sel": True,
-        # "model/priors/Vext": [
-        #     {"dist": "vector_uniform_fixed", "low": 0.0, "high": 2500},
-        #     # {"dist": "delta", "value": [0., 0., 0.]},
-        # ],
+        "model/priors/Vext": [
+            {"dist": "delta", "value": [0., 0., 0.]},
+        ],
         "model/priors/beta": [
             {"dist": "normal", "loc": 0.43, "scale": 0.02},
             # {"dist": "delta", "value": 1.0},
@@ -356,16 +413,28 @@ if __name__ == "__main__":
                         # No reconstruction: force unity galaxy bias
                         local_config = overwrite_config(
                             local_config, "pv_model/galaxy_bias", "unity")
-                        config = replace_prior_with_delta(config, "alpha", 1.)
-                        config = replace_prior_with_delta(config, "beta", 0.)
-                        config = replace_prior_with_delta(config, "b1", 0.)
-                        config = replace_prior_with_delta(
-                            config, "delta_b1", 0.)
+                        local_config = overwrite_config(
+                            local_config, "model/use_reconstruction", False)
+                        local_config = replace_prior_with_delta(
+                            local_config, "alpha", 1.)
+                        local_config = replace_prior_with_delta(
+                            local_config, "beta", 0.)
+                        local_config = replace_prior_with_delta(
+                            local_config, "b1", 0.)
+                        local_config = replace_prior_with_delta(
+                            local_config, "delta_b1", 0.)
 
                 if isinstance(value, dict):
                     local_config = overwrite_subtree(local_config, key, value)
                 else:
                     local_config = overwrite_config(local_config, key, value)
+
+            # Validate which_run
+            which_run = get_nested(local_config, "model/which_run", None)
+            if which_run is not None and which_run not in ("CCHP", "CCHP_CSP"):
+                raise ValueError(
+                    f"Invalid which_run='{which_run}'. "
+                    "Must be 'CCHP' or 'CCHP_CSP'.")
 
             # Check that the output directory exists
             fdir_out = join(
@@ -404,32 +473,13 @@ if __name__ == "__main__":
 """
 --- UNUSED OVERRIDES ---
 
-    # --- CH0 overrides ---
-    manual_overrides = {
-        "io/root_output": "results/CCHP",
-        # "model/which_selection": ["none", "SN_magnitude", "redshift"],
-        "model/which_selection": "SN_magnitude",
-        "model/use_reconstruction": True,
-        "io/which_host_los": "Carrick2015",
-        # "io/which_host_los": "manticore_2MPP_MULTIBIN_N256_DES_V2",
-        "model/which_bias": "linear",
-        "model/infer_sel": False,
-        # "model/priors/Vext": [
-        #     {"dist": "vector_uniform_fixed", "low": 0.0, "high": 2500},
-        #     # {"dist": "delta", "value": [0., 0., 0.]},
-        # ],
-        "model/priors/beta": [
-            {"dist": "normal", "loc": 0.43, "scale": 0.02},
-            # {"dist": "delta", "value": 1.0},
-            # {"dist": "normal", "loc": 1.0, "scale": 0.5},
-        ],
-    }
 
-    # --- TFR/SN/FP/Cluster flow model over-rides ---
+
+    #    # --- TFR/SN/FP/Cluster flow model over-rides ---
     manual_overrides = {
         # ###### - INFERENCE - ######
         "inference/num_warmup": 500,
-        "inference/num_samples": 500,
+        "inference/num_samples": 5000,
         "inference/num_chains": 1,
         "inference/compute_log_density": False,
         "inference/compute_evidence": False,
@@ -473,13 +523,14 @@ if __name__ == "__main__":
         #     # {"dist": "vector_components_uniform", "low": -0.3, "high": 0.3},  # noqa
         # ],
         # "model/priors/Vext": [
-        #     {"dist": "delta", "value": [0.0, 0.0, 0.0]},
+            # {"dist": "delta", "value": [0.0, 0.0, 0.0]},
         #     # {"dist": "vector_components_uniform", "low": -0.3, "high": 0.3},  # noqa
         # ],
         # "model/priors/Om": {"dist": "delta", "value": 0.3},
         # ###### - IO - ######
         "io/catalogue_name": "CSP",
         "io/CSP/which_sample": "CSPII",
+        # "io/CSP/zcmb_max": 0.05,
         "io/root_output": "results_test/",
     }
 
