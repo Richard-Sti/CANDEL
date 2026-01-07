@@ -26,6 +26,7 @@ def simname2label(simname):
            "Lilow2024": "Lilow+24",
            "CB1": r"\texttt{CSiBORG}1",
            "CB2": r"\texttt{CSiBORG}2",
+           "Manticore": r"\texttt{Manticore}",
            "manticore_2MPP_MULTIBIN_N256_DES_V2": r"\texttt{Manticore-Local}",
            "CF4": "Courtois+23",
            "CLONES": "Sorce+2018",
@@ -68,8 +69,9 @@ def simname2color(simname, gen=None):
     colors_per_sim = {
         "Carrick2015": '#0C5DA5',
         "Lilow2024": '#00B945',
-        "CB1": '#FF9500',
+        "CB1": '#D97800',
         "CB2": '#FF2C00',
+        "Manticore": "#E6B800",
         "CF4": '#845B97',
         "CLONES": '#9e9e9e',
         "HAMLET_V0": "#9310D4",
