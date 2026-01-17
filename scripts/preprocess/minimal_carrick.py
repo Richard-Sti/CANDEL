@@ -484,6 +484,11 @@ delta_2mrs = (rho_2mrs / rho_2mrs_mean - 1.0) / psi_2mrs_3d
 delta_deep[rr > RMAX] = 0.0
 delta_2mrs[rr > RMAX] = 0.0
 
+# Check delta ranges
+print(f"Delta deep: min={np.min(delta_deep):.2f}, max={np.max(delta_deep):.2f}, std={np.std(delta_deep):.3f}")
+print(f"Delta 2MRS: min={np.min(delta_2mrs):.2f}, max={np.max(delta_2mrs):.2f}, std={np.std(delta_2mrs):.3f}")
+print(f"Carrick:    min={np.min(delta_carrick):.2f}, max={np.max(delta_carrick):.2f}, std={np.std(delta_carrick):.3f}")
+
 # Carrick is already delta (normalized to b*)
 delta_carrick_field = delta_carrick  # Already loaded as delta
 

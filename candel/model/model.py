@@ -49,6 +49,9 @@ from .simpson import ln_simpson
 #                         Configuration file checks                           #
 ###############################################################################
 
+def smoothclip_nr(nr, tau):
+    """Smooth zero-clipping for the number density."""
+    return 0.5 * (nr + jnp.sqrt(nr**2 + tau**2))
 
 def make_json_safe(obj):
     if isinstance(obj, dict):
@@ -108,6 +111,12 @@ def _delta_a_to_frac(delta_a):
     """Convert a zeropoint shift ΔA to fractional H change."""
     delta_a = jnp.asarray(delta_a)
     return jnp.power(10.0, 0.5 * delta_a) - 1.0
+
+
+def _frac_to_mag(frac):
+    """Convert fractional δH to magnitude ΔA: ΔA = 2·log10(1 + δH)."""
+    frac = jnp.asarray(frac)
+    return 2.0 * jnp.log10(1.0 + frac)
 
 ###############################################################################
 #                                Priors                                       #
@@ -903,7 +912,7 @@ def lp_galaxy_bias(delta, log_rho, bias_params, galaxy_bias):
         lp = (alpha_low * log_x
               + (alpha_high - alpha_low) * jnp.logaddexp(0.0, log_x))
     elif "linear" in galaxy_bias or galaxy_bias == "unity":
-        lp = jnp.log(jnp.clip(1 + bias_params[0] * delta, 1e-5))
+        lp = jnp.log(smoothclip_nr(1 + bias_params[0] * delta, tau=0.1))
     else:
         raise ValueError(f"Invalid galaxy bias model '{galaxy_bias}'.")
 
@@ -1161,59 +1170,82 @@ def sample_Vext(priors, which_Vext, shared_params=None, kwargs_Vext={}):
     return Vext
 
 
-def sample_A_clusters(priors, which_A, shared_params=None, kwargs_A={}):
+def sample_A_clusters(priors, which_zeropoint, shared_params=None, kwargs_zeropoint={}):
     """
-    Sample zeropoint A parameters for clusters, supporting per-pixel and radial binned variation.
+    Sample zeropoint parameters for clusters, supporting per-pixel and radial binned variation.
+
+    Note: Uses 'zeropoint_pix' as the sample name, with backward compatibility for 'A_pix'.
+
+    Parameters
+    ----------
+    priors : dict
+        Prior distributions.
+    which_zeropoint : str
+        Mode: "per_pix", "radial_binned", "radial_binned_dipole", or "constant".
+    shared_params : dict, optional
+        Shared parameters for joint inference.
+    kwargs_zeropoint : dict, optional
+        Additional arguments (e.g., n_bins for radial modes).
     """
-    if which_A == "per_pix":
-        A_pix = rsample("A_pix", priors["A_pix"], shared_params)
-        return A_pix
-    elif which_A == "radial_binned":
-        # Sample one A value per radial bin
-        with plate("A_radial_bin_plate", kwargs_A["n_bins"]):
-            A_radial_bin = rsample("A_radial_bin", priors["A_LT"], shared_params)
-        return A_radial_bin
-    elif which_A == "radial_binned_dipole":
+    if which_zeropoint == "per_pix":
+        # Prefer zeropoint_pix, fall back to legacy A_pix for backward compatibility
+        prior_key = "zeropoint_pix" if "zeropoint_pix" in priors else "A_pix"
+        zp_pix = rsample("zeropoint_pix", priors[prior_key], shared_params)
+        return zp_pix
+    elif which_zeropoint == "radial_binned":
+        # Sample one zeropoint value per radial bin
+        with plate("zeropoint_radial_bin_plate", kwargs_zeropoint["n_bins"]):
+            zp_radial_bin = rsample("zeropoint_radial_bin", priors["A_LT"], shared_params)
+        return zp_radial_bin
+    elif which_zeropoint == "radial_binned_dipole":
         # Sample a 3D dipole vector per radial bin
-        with plate("A_dipole_radial_bin_plate", kwargs_A["n_bins"]):
-            A_dipole_radial_bin = rsample("A_dipole_radial_bin", priors["zeropoint_dipole"], shared_params)
+        with plate("zeropoint_dipole_radial_bin_plate", kwargs_zeropoint["n_bins"]):
+            zp_dipole_radial_bin = rsample(
+                "zeropoint_dipole_radial_bin", priors["zeropoint_dipole"], shared_params)
         # Flatten to shape (n_bins * 3,) for consistency with compute_A_clusters_radial
-        A_dipole_radial_bin = A_dipole_radial_bin.reshape(-1)
-        return A_dipole_radial_bin
-    elif which_A == "constant":
-        # Use regular A from priors (will be handled by rsample in main model)
+        zp_dipole_radial_bin = zp_dipole_radial_bin.reshape(-1)
+        return zp_dipole_radial_bin
+    elif which_zeropoint == "constant":
+        # Use regular zeropoint from priors (will be handled by rsample in main model)
         return None
     else:
-        raise ValueError(f"Invalid which_A '{which_A}'.")
+        raise ValueError(f"Invalid which_zeropoint '{which_zeropoint}'.")
 
 
-def compute_A_clusters_radial(data, A_pix, which_A, **kwargs_A):
+def compute_A_clusters_radial(data, zp_pix, which_zeropoint, **kwargs_zeropoint):
     """
-    Compute the per-pixel or radial binned A variation.
-    Returns per-galaxy A values: shape (n_gal,).
+    Compute the per-pixel or radial binned zeropoint variation.
+    Returns per-galaxy zeropoint offset values: shape (n_gal,).
+
+    Parameters
+    ----------
+    zp_pix : array
+        Zeropoint values (per-pixel or per-bin).
+    which_zeropoint : str
+        Mode: "per_pix", "radial_binned", "radial_binned_dipole", or "constant".
     """
-    if which_A == "per_pix":
-        # A_pix has shape (npix,), data["C_pix"] has shape (n_gal, npix)
-        A_radial = data["C_pix"] @ A_pix  # shape (n_gal,)
-        return A_radial
-    elif which_A == "radial_binned":
-        # A_pix has shape (n_bins,), data["C_A_radial_bin"] has shape (n_gal, n_bins)
-        A_radial = data["C_A_radial_bin"] @ A_pix  # shape (n_gal,)
-        return A_radial
-    elif which_A == "radial_binned_dipole":
-        # A_pix has shape (n_bins * 3,), need to reshape to (n_bins, 3)
-        n_bins = kwargs_A["n_bins"]
-        A_dipole_3d = A_pix.reshape(n_bins, 3)  # shape (n_bins, 3)
+    if which_zeropoint == "per_pix":
+        # zp_pix has shape (npix,), data["C_pix"] has shape (n_gal, npix)
+        zp_radial = data["C_pix"] @ zp_pix  # shape (n_gal,)
+        return zp_radial
+    elif which_zeropoint == "radial_binned":
+        # zp_pix has shape (n_bins,), data["C_A_radial_bin"] has shape (n_gal, n_bins)
+        zp_radial = data["C_A_radial_bin"] @ zp_pix  # shape (n_gal,)
+        return zp_radial
+    elif which_zeropoint == "radial_binned_dipole":
+        # zp_pix has shape (n_bins * 3,), need to reshape to (n_bins, 3)
+        n_bins = kwargs_zeropoint["n_bins"]
+        zp_dipole_3d = zp_pix.reshape(n_bins, 3)  # shape (n_bins, 3)
         # Project each bin's dipole onto line of sight for each galaxy
-        # data["C_A_radial_bin"] @ A_dipole_3d gives (n_gal, 3)
-        A_dipole_per_gal = data["C_A_radial_bin"] @ A_dipole_3d  # shape (n_gal, 3)
+        # data["C_A_radial_bin"] @ zp_dipole_3d gives (n_gal, 3)
+        zp_dipole_per_gal = data["C_A_radial_bin"] @ zp_dipole_3d  # shape (n_gal, 3)
         # Dot with rhat to get radial component
-        A_radial = jnp.sum(A_dipole_per_gal * data["rhat"], axis=1)  # shape (n_gal,)
-        return A_radial
-    elif which_A == "constant":
+        zp_radial = jnp.sum(zp_dipole_per_gal * data["rhat"], axis=1)  # shape (n_gal,)
+        return zp_radial
+    elif which_zeropoint == "constant":
         return 0.0  # No per-pixel or radial variation
     else:
-        raise ValueError(f"Invalid which_A '{which_A}'.")
+        raise ValueError(f"Invalid which_zeropoint '{which_zeropoint}'.")
 
 
 ###############################################################################
@@ -1756,17 +1788,66 @@ class ClustersModel(BaseModel):
         self.which_relation = self.default_relation
         self.apply_Ez_correction = bool(
             get_nested(self.config, "io/apply_Ez_correction", True))
-        self.stretch_los_with_zeropoint = bool(
-            get_nested(self.config, "pv_model/stretch_los_with_zeropoint", False))
-        self.use_zspace = bool(
-            get_nested(self.config, "pv_model/use_zspace", False))
         self.n_zspace_iterations = int(
             get_nested(self.config, "pv_model/n_zspace_iterations", 0))
-        # Check if zeropoint_dipole is varying (not a delta prior)
-        zp_prior = self.priors.get("zeropoint_dipole", {})
-        self.has_varying_zeropoint_dipole = (
-            isinstance(zp_prior, dict) and zp_prior.get("dist") != "delta")
-        if self.use_zspace:
+        self.density_prior = bool(
+            get_nested(self.config, "pv_model/density_prior", True))
+
+        # Zeropoint parameterization: "fracH0" or "magnitude"
+        # - "fracH0": prior is flat in fractional δH, converted to magnitude
+        # - "magnitude": prior is flat in magnitude ΔA (legacy)
+        self.zeropoint_parameterization = get_nested(
+            self.config, "pv_model/zeropoint_parameterization", "magnitude")
+
+        # Single shared nside for per-pixel anisotropy modes (zeropoint and H0)
+        self.anisotropy_per_pix_nside = get_nested(
+            self.config, "pv_model/anisotropy_per_pix_nside", 1)
+
+        # Detect varying H0 parameters (cosmological anisotropy - affects z→r)
+        self._has_varying_H0_dipole = self._prior_is_varying("H0_dipole")
+        self._has_varying_H0_quad = self._prior_is_varying("H0_quad")
+        self.which_H0 = get_nested(self.config, "pv_model/which_H0", "constant")
+        self._has_varying_H0_pix = (self.which_H0 == "per_pix")
+        self._has_varying_H0 = (
+            self._has_varying_H0_dipole or
+            self._has_varying_H0_quad or
+            self._has_varying_H0_pix
+        )
+
+        # Detect varying zeropoint parameters (calibration - doesn't affect z→r)
+        self._has_varying_zeropoint_dipole = self._prior_is_varying("zeropoint_dipole")
+        self._has_varying_zeropoint_quad = self._prior_is_varying("zeropoint_quad")
+        self.which_zeropoint = get_nested(
+            self.config, "pv_model/which_zeropoint",
+            get_nested(self.config, "pv_model/which_A", "constant"))  # Backward compat
+        self._has_varying_zeropoint_pix = (self.which_zeropoint == "per_pix")
+
+        # Detect varying Vext
+        self._has_varying_Vext = (
+            self.which_Vext != "constant" or
+            self._prior_is_varying("Vext")
+        )
+
+        # Auto-detect if z-space mapping is needed
+        # Required when H0 or Vext is varying (affects z→r conversion)
+        self._needs_zspace = self._has_varying_H0 or self._has_varying_Vext
+
+        # Backward compatibility: still support use_zspace config flag
+        use_zspace_config = get_nested(self.config, "pv_model/use_zspace", None)
+        if use_zspace_config is not None:
+            self._needs_zspace = bool(use_zspace_config) or self._needs_zspace
+
+        # Also support legacy stretch_los_with_zeropoint flag
+        # If set, treat varying zeropoint as H0 anisotropy (affects z→r)
+        self._legacy_stretch_mode = bool(
+            get_nested(self.config, "pv_model/stretch_los_with_zeropoint", False))
+        if self._legacy_stretch_mode and self._has_varying_zeropoint_dipole:
+            self._needs_zspace = True
+
+        # Backward compat attribute
+        self.has_varying_zeropoint_dipole = self._has_varying_zeropoint_dipole
+
+        if self._needs_zspace:
             self.redshift2distance = Redshift2Distance(Om0=self.Om)
 
         self.distance2logda = Distance2LogAngDist(Om0=self.Om, zmax_interp=1.0)
@@ -1776,53 +1857,79 @@ class ClustersModel(BaseModel):
             self.priors["CL_C"] = Delta(jnp.asarray(0.0))
         if "LY" in self.used_relations:
             self.priors["CL_B"] = Delta(jnp.asarray(0.0))
-        # Configuration for per-pixel A variation (similar to Vext)
-        self.which_A = get_nested(self.config, "pv_model/which_A", "constant")
-        
-        if self.which_A == "per_pix":
-            nside = get_nested(self.config, "pv_model/A_per_pix_nside", None)
-            if nside is None:
-                raise ValueError(
-                    "Must specify `A_per_pix_nside` in config when "
-                    "`which_A = 'per_pix'`.")
+
+        # Configure per-pixel H0 anisotropy
+        if self.which_H0 == "per_pix":
+            nside = self.anisotropy_per_pix_nside
+            npix = 12 * nside**2
+            fprint(f"using per-pixel `H0` at nside={nside}.")
+            self.kwargs_H0 = {"nside": nside, "npix": npix}
+        else:
+            self.kwargs_H0 = {}
+
+        # Configuration for per-pixel zeropoint variation (similar to Vext)
+        # Support both new 'which_zeropoint' and legacy 'which_A'
+        self.which_A = self.which_zeropoint  # Backward compat alias
+
+        if self.which_zeropoint == "per_pix":
+            # Use shared anisotropy nside
+            nside = self.anisotropy_per_pix_nside
+            # Also check legacy config
+            nside_legacy = get_nested(self.config, "pv_model/A_per_pix_nside", None)
+            if nside_legacy is not None:
+                nside = nside_legacy
             if not (nside > 0 and ((nside & (nside - 1)) == 0)):
                 raise ValueError(
                     f"Invalid nside={nside} in "
-                    f"which_A = '{self.which_A}'. "
+                    f"which_zeropoint = '{self.which_zeropoint}'. "
                     "Must be a positive power of 2.")
-            fprint(f"using per-pixel `A` at nside={nside}.")
+            fprint(f"using per-pixel `zeropoint` at nside={nside}.")
             npix = 12 * nside**2
-            self.kwargs_A = {
+            self.kwargs_zeropoint = {
                 "nside": nside, "npix": npix,
                 "Q": jnp.asarray(sumzero_basis(npix))}
-        elif self.which_A == "radial_binned":
+        elif self.which_zeropoint == "radial_binned":
             bin_edges = get_nested(self.config, "pv_model/A_radial_bin_edges", None)
             if bin_edges is None:
                 raise ValueError(
                     "Must specify `A_radial_bin_edges` in config when "
-                    "`which_A = 'radial_binned'`.")
+                    "`which_zeropoint = 'radial_binned'`.")
             bin_edges = jnp.asarray(bin_edges)
             n_bins = len(bin_edges) - 1
-            fprint(f"using radial binned `A` with {n_bins} bins.")
-            self.kwargs_A = {"n_bins": n_bins, "bin_edges": bin_edges}
-        elif self.which_A == "radial_binned_dipole":
+            fprint(f"using radial binned `zeropoint` with {n_bins} bins.")
+            self.kwargs_zeropoint = {"n_bins": n_bins, "bin_edges": bin_edges}
+        elif self.which_zeropoint == "radial_binned_dipole":
             bin_edges = get_nested(self.config, "pv_model/A_radial_bin_edges", None)
             if bin_edges is None:
                 raise ValueError(
                     "Must specify `A_radial_bin_edges` in config when "
-                    "`which_A = 'radial_binned_dipole'`.")
+                    "`which_zeropoint = 'radial_binned_dipole'`.")
             bin_edges = jnp.asarray(bin_edges)
             n_bins = len(bin_edges) - 1
-            fprint(f"using radial binned dipole `A` with {n_bins} bins.")
-            self.kwargs_A = {"n_bins": n_bins, "bin_edges": bin_edges}
-        elif self.which_A == "constant":
-            self.kwargs_A = {}
+            fprint(f"using radial binned dipole `zeropoint` with {n_bins} bins.")
+            self.kwargs_zeropoint = {"n_bins": n_bins, "bin_edges": bin_edges}
+        elif self.which_zeropoint == "constant":
+            self.kwargs_zeropoint = {}
         else:
-            raise ValueError(f"Invalid which_A '{self.which_A}'.")
+            raise ValueError(f"Invalid which_zeropoint '{self.which_zeropoint}'.")
+
+        # Backward compat alias
+        self.kwargs_A = self.kwargs_zeropoint
 
         if self.use_MNR:
             fprint("setting `compute_evidence` to False.")
             self.config["inference"]["compute_evidence"] = False
+
+    def _prior_is_varying(self, prior_name):
+        """Check if a prior is varying (not a delta function)."""
+        prior = self.priors.get(prior_name, None)
+        if prior is None:
+            return False
+        if isinstance(prior, Delta):
+            return False
+        if isinstance(prior, dict):
+            return prior.get("type") != "delta" and prior.get("dist") != "delta"
+        return True
 
     def _validate_relation(self, relation):
         if relation not in self._VALID_RELATIONS:
@@ -1902,24 +2009,107 @@ class ClustersModel(BaseModel):
 
         C = rsample("C_CL", self.priors["CL_C"], shared_params)
 
+        # =================================================================
+        # Sample H0 anisotropy parameters (always fractional δH)
+        # These affect z→r mapping (cosmological anisotropy)
+        # =================================================================
+        H0_dipole = None
+        H0_quad = None
+        H0_pix = None
+        h_per_gal = None  # Will be set if H0 is varying
+
+        if "H0_dipole" in self.priors:
+            H0_dipole = rsample("H0_dipole", self.priors["H0_dipole"], shared_params)
+        if "H0_quad" in self.priors:
+            H0_quad = rsample("H0_quad", self.priors["H0_quad"], shared_params)
+        if self.which_H0 == "per_pix" and "H0_pix" in self.priors:
+            H0_pix = rsample("H0_pix", self.priors["H0_pix"], shared_params)
+
+        # =================================================================
+        # Sample zeropoint parameters (calibration offsets)
+        # These only affect the likelihood, not z→r mapping
+        # =================================================================
+        zp_dipole_sampled = None
+        zp_quad_sampled = None
+        zp_pix_sampled = None
+        A_dipole = None  # For backward compatibility
+
         delta_A = None
-        if self.which_A in ["per_pix", "radial_binned", "radial_binned_dipole"]:
-            A_pix = sample_A_clusters(
-                self.priors, self.which_A, shared_params, self.kwargs_A)
+        if self.which_zeropoint in ["per_pix", "radial_binned", "radial_binned_dipole"]:
+            zp_pix_sampled = sample_A_clusters(
+                self.priors, self.which_zeropoint, shared_params, self.kwargs_zeropoint)
             delta_A = compute_A_clusters_radial(
-                data, A_pix, self.which_A, **self.kwargs_A)
+                data, zp_pix_sampled, self.which_zeropoint, **self.kwargs_zeropoint)
         else:
             # Traditional dipole/quadrupole approach
-            A_dipole = rsample(
+            zp_dipole_sampled = rsample(
                 "zeropoint_dipole", self.priors["zeropoint_dipole"], shared_params)
-            A_quad = rsample(
+            zp_quad_sampled = rsample(
                 "zeropoint_quad", self.priors["zeropoint_quad"], shared_params)
+            A_dipole = zp_dipole_sampled  # Backward compat alias
 
-            A_dipole_radial = jnp.sum(A_dipole * data["rhat"], axis=1)
-            A_quad_radial = compute_quadrupole_radial(data, A_quad)
+        # =================================================================
+        # Compute effective zeropoint magnitude for likelihood
+        # =================================================================
+        # Determine the effective zeropoint based on the mode:
+        # - dipH0: H0 affects z→r, auto-derive zeropoint from H0
+        # - dipA: Zeropoint affects likelihood only
+        # - Legacy stretch mode: Treat zeropoint as H0
 
-            delta_A = A_dipole_radial + A_quad_radial
+        if self._has_varying_H0_dipole and H0_dipole is not None:
+            # dipH0 run: H0 affects z→r mapping
+            # Auto-derive zeropoint magnitude from H0 for the likelihood
+            H0_mag = jnp.linalg.norm(H0_dipole)
+            H0_dir = H0_dipole / jnp.maximum(H0_mag, 1e-30)
+            zp_dipole_mag = _frac_to_mag(H0_mag) * H0_dir
 
+            # Compute radial projection for likelihood
+            zp_dipole_radial = jnp.sum(zp_dipole_mag * data["rhat"], axis=1)
+            delta_A = zp_dipole_radial if delta_A is None else delta_A + zp_dipole_radial
+
+        elif self._legacy_stretch_mode and self._has_varying_zeropoint_dipole:
+            # Legacy stretch mode: treat varying zeropoint as H0 anisotropy
+            # The z→r mapping will use the zeropoint, so no extra delta_A here
+            # (handled in the z-space section below)
+            if zp_dipole_sampled is not None:
+                zp_dipole_radial = jnp.sum(zp_dipole_sampled * data["rhat"], axis=1)
+                zp_quad_radial = compute_quadrupole_radial(data, zp_quad_sampled) if zp_quad_sampled is not None else 0.0
+                delta_A = zp_dipole_radial + zp_quad_radial
+
+        elif self._has_varying_zeropoint_dipole and zp_dipole_sampled is not None:
+            # dipA run: zeropoint affects likelihood only
+            if self.zeropoint_parameterization == "fracH0":
+                # Sampled as fractional δH, convert to magnitude
+                zp_frac_mag = jnp.linalg.norm(zp_dipole_sampled)
+                zp_frac_dir = zp_dipole_sampled / jnp.maximum(zp_frac_mag, 1e-30)
+                zp_dipole_mag = _frac_to_mag(zp_frac_mag) * zp_frac_dir
+            else:
+                # Sampled as magnitude, use directly
+                zp_dipole_mag = zp_dipole_sampled
+
+            zp_dipole_radial = jnp.sum(zp_dipole_mag * data["rhat"], axis=1)
+            zp_quad_radial = 0.0
+            if self._has_varying_zeropoint_quad and zp_quad_sampled is not None:
+                if self.zeropoint_parameterization == "fracH0":
+                    zp_quad_mag = _frac_to_mag(zp_quad_sampled)
+                else:
+                    zp_quad_mag = zp_quad_sampled
+                zp_quad_radial = compute_quadrupole_radial(data, zp_quad_mag)
+            delta_A = zp_dipole_radial + zp_quad_radial
+
+        # Handle H0 quadrupole contribution to zeropoint
+        if self._has_varying_H0_quad and H0_quad is not None:
+            H0_quad_mag = _frac_to_mag(H0_quad)
+            H0_quad_radial = compute_quadrupole_radial(data, H0_quad_mag)
+            delta_A = H0_quad_radial if delta_A is None else delta_A + H0_quad_radial
+
+        # Handle per-pixel H0 contribution to zeropoint
+        if self._has_varying_H0_pix and H0_pix is not None:
+            H0_pix_mag = _frac_to_mag(H0_pix)
+            pix_delta = data["C_pix"] @ H0_pix_mag
+            delta_A = pix_delta if delta_A is None else delta_A + pix_delta
+
+        # Apply zeropoint offset to scaling relation intercepts
         if delta_A is not None:
             if A_LT is not None:
                 A_LT = A_LT + delta_A
@@ -1961,9 +2151,12 @@ class ClustersModel(BaseModel):
 
         # Remaining parameters
         beta = rsample("beta", self.priors["beta"], shared_params)
-        bias_params = sample_galaxy_bias(
-            self.priors, self.galaxy_bias, shared_params, Om=self.Om,
-            beta=beta)
+        if self.density_prior:
+            bias_params = sample_galaxy_bias(
+                self.priors, self.galaxy_bias, shared_params, Om=self.Om,
+                beta=beta)
+        else:
+            bias_params = [1.]  # Dummy value, not used
 
         # MNR hyperpriors for cluster observables
         if self.use_MNR:
@@ -2084,33 +2277,50 @@ class ClustersModel(BaseModel):
                 los_velocity_r_grid = None
                 los_log_density_r_grid = None
 
-                if self.use_zspace and "los_z" not in data.data:
+                if self._needs_zspace and "los_z" not in data.data:
                     raise ValueError(
-                        "use_zspace=True but LOS file does not contain 'z' array. "
+                        "_needs_zspace=True but LOS file does not contain 'z' array. "
                         "Run scripts/preprocess/los_real2redshift.py to add it.")
 
-                if self.use_zspace and "los_z" in data.data:
-                    # Z-space mode: map from z_grid to r_grid accounting for Vext
+                if self._needs_zspace and "los_z" in data.data:
+                    # Z-space mode: map from z_grid to r_grid accounting for Vext/H0
                     z_grid_los = data["los_z"]
                     los_r = data["los_r"]
 
-                    # Determine h for z->r conversion (can be anisotropic)
-                    # Use compile-time flag to avoid JAX tracing issues with
-                    # runtime checks on A_norm. Delta priors return [0,0,0] not None,
-                    # but we don't want per-galaxy h in that case.
-                    if self.has_varying_zeropoint_dipole and A_dipole is not None:
-                        # Anisotropic h based on zeropoint dipole
-                        A_norm = jnp.linalg.norm(A_dipole)
+                    # =================================================================
+                    # Compute h_per_gal for z→r conversion
+                    # H0 anisotropy affects the conversion: r = c*z / H(θ)
+                    # =================================================================
+                    delta_h = jnp.zeros(data["rhat"].shape[0])  # (n_gal,)
+
+                    # H0 dipole contribution (always fractional)
+                    if self._has_varying_H0_dipole and H0_dipole is not None:
+                        H0_dip_norm = jnp.linalg.norm(H0_dipole)
                         cos_theta = jnp.sum(
-                            A_dipole * data["rhat"], axis=1) / jnp.maximum(A_norm, 1e-30)
-                        delta_frac = _delta_a_to_frac(A_norm)
-                        h_per_gal = h * (1.0 + delta_frac * cos_theta)
-                    elif delta_A is not None:
-                        # Per-galaxy delta_A (from per_pix or radial_binned modes)
-                        delta_frac = _delta_a_to_frac(delta_A)
-                        h_per_gal = h * (1.0 + delta_frac)
-                    else:
-                        h_per_gal = h
+                            H0_dipole * data["rhat"], axis=1
+                        ) / jnp.maximum(H0_dip_norm, 1e-30)
+                        delta_h = delta_h + H0_dip_norm * cos_theta
+
+                    # H0 quadrupole contribution (already fractional)
+                    if self._has_varying_H0_quad and H0_quad is not None:
+                        delta_h = delta_h + compute_quadrupole_radial(data, H0_quad)
+
+                    # H0 per-pixel contribution (fractional)
+                    if self._has_varying_H0_pix and H0_pix is not None:
+                        delta_h = delta_h + data["C_pix"] @ H0_pix
+
+                    # Legacy mode: treat varying zeropoint as H0 anisotropy
+                    if self._legacy_stretch_mode and self._has_varying_zeropoint_dipole:
+                        if A_dipole is not None:
+                            A_norm = jnp.linalg.norm(A_dipole)
+                            cos_theta = jnp.sum(
+                                A_dipole * data["rhat"], axis=1
+                            ) / jnp.maximum(A_norm, 1e-30)
+                            legacy_delta = _delta_a_to_frac(A_norm)
+                            delta_h = delta_h + legacy_delta * cos_theta
+
+                    # Compute effective h per galaxy
+                    h_per_gal = h * (1.0 + delta_h)
 
                     # Compute r_cosmo for each (field, galaxy, z_grid_point)
                     r_cosmo = compute_los_zspace_to_rspace(
@@ -2143,44 +2353,15 @@ class ClustersModel(BaseModel):
                     los_log_density_r_grid = vmap(_interp_field)(los_log_density_orig)
 
                 else:
-                    # Original logic (when use_zspace=False)
-                    # Determine if stretching is needed: for dipole or per_pix/radial_binned modes
-                    needs_stretch = (
-                        self.stretch_los_with_zeropoint
-                        and (A_dipole is not None or delta_A is not None))
-
-                    if not needs_stretch:
-                        if "los_delta_r_grid" in data.data:
-                            los_delta_r_grid = data["los_delta_r_grid"]
-                            los_velocity_r_grid = data["los_velocity_r_grid"]
-                            los_log_density_r_grid = data["los_log_density_r_grid"]
-                        else:
-                            los_delta_r_grid = data.f_los_delta.interp_many_steps_per_galaxy(r_grid)
-                            los_velocity_r_grid = data.f_los_velocity.interp_many_steps_per_galaxy(r_grid)
-                            los_log_density_r_grid = data.f_los_log_density.interp_many_steps_per_galaxy(r_grid)
-
-                    if needs_stretch:
-                        H_base = 100.0
-
-                        if self.which_A in ["per_pix", "radial_binned", "radial_binned_dipole"]:
-                            # For per_pix/radial_binned: delta_A is per-galaxy (n_gal,)
-                            delta_frac = _delta_a_to_frac(delta_A)  # shape (n_gal,)
-                            H_new = H_base * (1.0 + delta_frac)
-                        else:
-                            # For dipole: project dipole onto each galaxy direction
-                            A_norm = jnp.linalg.norm(A_dipole)
-                            cos_theta = jnp.sum(
-                                A_dipole * data["rhat"], axis=1) / jnp.maximum(A_norm, 1e-30)
-                            delta_frac = _delta_a_to_frac(A_norm)
-                            H_new = H_base * (1.0 + delta_frac * cos_theta)
-                        r_stretched = r_grid[None, :] * H_new[:, None] / H_base
-
-                        def _interp_field(f_interp):
-                            return vmap(f_interp, in_axes=1, out_axes=2)(r_stretched)
-
-                        los_delta_r_grid = _interp_field(data.f_los_delta)
-                        los_velocity_r_grid = _interp_field(data.f_los_velocity)
-                        los_log_density_r_grid = _interp_field(data.f_los_log_density)
+                    # No z-space mapping needed - use precomputed or interpolate directly
+                    if "los_delta_r_grid" in data.data:
+                        los_delta_r_grid = data["los_delta_r_grid"]
+                        los_velocity_r_grid = data["los_velocity_r_grid"]
+                        los_log_density_r_grid = data["los_log_density_r_grid"]
+                    else:
+                        los_delta_r_grid = data.f_los_delta.interp_many_steps_per_galaxy(r_grid)
+                        los_velocity_r_grid = data.f_los_velocity.interp_many_steps_per_galaxy(r_grid)
+                        los_log_density_r_grid = data.f_los_log_density.interp_many_steps_per_galaxy(r_grid)
 
 
             # Homogeneous Malmqusit distance prior, `(n_field, n_gal, n_rbin)`
@@ -2267,13 +2448,14 @@ class ClustersModel(BaseModel):
                 # Reconstruction LOS velocity `(n_field, n_gal, n_step)`
                 Vrad = beta * los_velocity_r_grid
                 # Add inhomogeneous Malmquist bias and normalize the r prior
-                lp_dist += lp_galaxy_bias(
-                    los_delta_r_grid,
-                    los_log_density_r_grid,
-                    bias_params, self.galaxy_bias
-                    )
-                lp_dist -= ln_simpson(
-                    lp_dist, x=r_grid[None, None, :], axis=-1)[..., None]
+                if self.density_prior:
+                    lp_dist += lp_galaxy_bias(
+                        los_delta_r_grid,
+                        los_log_density_r_grid,
+                        bias_params, self.galaxy_bias
+                        )
+                    lp_dist -= ln_simpson(
+                        lp_dist, x=r_grid[None, None, :], axis=-1)[..., None]
             else:
                 Vrad = 0.
 
@@ -2293,7 +2475,7 @@ class ClustersModel(BaseModel):
             ll += Normal(czpred, sigma_v).log_prob(
                 data["czcmb"][None, :, None])
 
-            if self.save_distances:
+            if self.save_distances or self.track_log_density_per_sample:
                 # Diagnostics: MAP and mean/std of r per field/galaxy
                 logw = ll - jnp.max(ll, axis=-1, keepdims=True)
                 w = jnp.exp(logw)
@@ -2306,6 +2488,32 @@ class ClustersModel(BaseModel):
                 deterministic("r_map_skipZ", r_map)
                 deterministic("r_mean_skipZ", r_mean)
                 deterministic("r_std_skipZ", r_std)
+
+            if self.track_log_density_per_sample:
+                # Save distance prior (shape: n_field, n_gal, n_rbin)
+                deterministic("lp_dist_skipZ", lp_dist)
+
+                # Save redshift/cz likelihood components
+                ll_cz = Normal(czpred, sigma_v).log_prob(
+                    data["czcmb"][None, :, None])
+                cz_nsigma = (data["czcmb"][None, :, None] - czpred) / sigma_v
+                deterministic("ll_cz_skipZ", ll_cz)
+                deterministic("cz_nsigma_skipZ", cz_nsigma)
+
+                # Save scaling relation likelihood components (LT or YT only)
+                if relation == "LT":
+                    ll_cluster = Normal(logF_pred, sigma_logF[:, None]).log_prob(
+                        data["logF"][:, None])
+                    cluster_nsigma = (data["logF"][:, None] - logF_pred) / sigma_logF[:, None]
+                    deterministic("ll_cluster_skipZ", ll_cluster[None, ...])
+                    deterministic("cluster_nsigma_skipZ", cluster_nsigma[None, ...])
+                elif relation == "YT":
+                    ll_cluster = Normal(logY_pred, sigma_logY[:, None]).log_prob(
+                        data["logY"][:, None])
+                    cluster_nsigma = (data["logY"][:, None] - logY_pred) / sigma_logY[:, None]
+                    deterministic("ll_cluster_skipZ", ll_cluster[None, ...])
+                    deterministic("cluster_nsigma_skipZ", cluster_nsigma[None, ...])
+                # LTYT skipped (bivariate gaussian)
 
             # Marginalise over the radial distance, average over realisations
             # and track the log-density.

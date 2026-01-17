@@ -80,6 +80,17 @@ M_MIN_DEFAULT = -20.0   # Minimum absolute magnitude for L_min
 BIAS_CONST = 0.73
 BIAS_SLOPE = 0.24
 
+# Beta* parameter (Carrick Section 3.1): β* = f(Ω_m)/b* ≈ 0.43
+BETA_STAR = 0.43
+
+# Universal magnitude limit for ψ(r) computation (Equation 8)
+# Use 11.5 (2MRS limit) or 12.5 (full 2M++ limit)
+PSI_MLIM_UNIVERSAL = 11.5
+
+# If True, use PSI_MLIM_UNIVERSAL (11.5) for both 2MRS and Deep regions
+# If False, use 11.5 for 2MRS and 12.5 for Deep regions
+PSI_USE_UNIFORM_MLIM = True
+
 # Deceleration parameter for distance calculation
 # q0 = Omega_m/2 - Omega_Lambda = 0.3/2 - 0.7 = -0.55 for standard LCDM
 Q0_DEFAULT = -0.55
@@ -555,12 +566,12 @@ def compute_anisotropic_h0(
 
 def build_carrick_field(
     data_dir: str,
-    N: int = 256,
+    N: int = 257,
     box_side_mpc: float = 400.0,
     sigma_mpc: float = 4.0,
     n_iterations: int = 101,
     n_avg: int = 5,
-    r_2mrs_cutoff: float = 200.0,  # 125 for velocity, 200 (no cutoff) for density
+    r_2mrs_cutoff: float = 125.0,  # Carrick: "Galaxies from 2MRS with distances > 125 h^-1 Mpc are assigned weight zero"
     cmin: float = 0.5,
     alpha: float = ALPHA_DEFAULT,
     M_star: float = MSTAR_DEFAULT,
@@ -581,6 +592,9 @@ def build_carrick_field(
     dipole_ell: float = 140.34,
     dipole_b: float = 46.67,
     dipole_mag: float = 0.03,
+    # Diagnostics
+    plot_psi: bool = True,  # Plot psi(r) bias correction curve
+    save_intermediate_iters: Optional[list] = None,  # List of iteration indices to save delta fields
     verbose: bool = True,
 ) -> Dict[str, object]:
     """
@@ -730,22 +744,24 @@ def build_carrick_field(
 
     n_gal = len(vcmb)
 
-    # FoF Grouping: Place all group members at group centroid
+    # FoF Grouping: Collapse group members to common redshift (distance only)
     # Per Carrick2015 §2.5: "Objects were first grouped using the FoF algorithm,
     # and then placed at the mean of their group redshift distance to suppress
     # the Fingers-of-God effect."
+    # NOTE: Only vcmb (distance) is collapsed - angular positions (l, b) are preserved.
+    # This matches the behavior in aquila catalogues where group members have
+    # identical r but different l, b.
     # Two options:
-    #   sum_group_luminosities=True: Keep all members, sum luminosities at centroid
+    #   sum_group_luminosities=True: Keep all members, sum luminosities at common distance
     #   sum_group_luminosities=False: Keep first member only (original behavior)
     is_grouped = gid >= 0
     n_in_groups = 0
 
-    # Assign group positions to grouped galaxies
+    # Assign group redshift to grouped galaxies (keep original l, b)
     for i in range(n_gal):
         if is_grouped[i] and gid[i] in group_id_to_idx:
             idx = group_id_to_idx[gid[i]]
-            l_deg[i] = group_l[idx]
-            b_deg[i] = group_b[idx]
+            # Only collapse distance (vcmb), preserve angular positions (l_deg, b_deg)
             vcmb[i] = group_v[idx]
             n_in_groups += 1
 
@@ -809,22 +825,24 @@ def build_carrick_field(
     # Rolling buffer for distance averaging (suppress oscillations in triple-valued regions)
     distance_history = deque(maxlen=n_avg)
 
-    # Beta values for iteration (adiabatically increase from 0 to 1)
-    beta_values = np.linspace(0.0, 1.0, n_iterations)
+    # Beta values for iteration (adiabatically increase from 0 to β*)
+    beta_values = np.linspace(0.0, BETA_STAR, n_iterations)
 
     # Storage for final fields
     delta_final = None
     velocity_final = None
     dx_mpc = None
 
+    # Storage for intermediate fields (if requested)
+    intermediate_deltas = {}
+    if save_intermediate_iters is None:
+        save_intermediate_iters = []
+
     t0 = time.time()
 
     for i_iter, beta in enumerate(beta_values):
         # Compute luminosity weights with current distances (in h^-1 Mpc)
         w_L = compute_luminosity_weight(r_mpc, m_lim, alpha, M_star, M_min)
-
-        # Compute bias normalization psi(r)
-        psi = compute_bias_normalization(r_mpc, m_lim, alpha, M_star, b_const, b_slope)
 
         # Compute galaxy luminosities L/L* from apparent magnitude and distance
         # M_i = K2Mpp_i - distance_modulus = K2Mpp_i - 5*log10(r) - 25
@@ -839,7 +857,9 @@ def build_carrick_field(
         w_total = w_ang * w_L * L_over_Lstar
 
         # Zero out 2MRS galaxies beyond 125 h^-1 Mpc
-        is_2mrs = m_lim < 12.0
+        # Carrick: "Galaxies from 2MRS with distances > 125 h^-1 Mpc are assigned weight zero"
+        # 2MRS galaxies are those with K < 11.75 (the 2MRS survey limit)
+        is_2mrs = K2Mpp < 11.75
         beyond_cutoff = r_mpc > r_2mrs_cutoff
         w_total[is_2mrs & beyond_cutoff] = 0.0
 
@@ -863,16 +883,56 @@ def build_carrick_field(
         rr_grid = np.sqrt(xx**2 + yy**2 + zz**2)
         valid_mask = rr_grid <= Rmax_mpc
 
-        # Carrick2015 order (Section 2.5 step 4):
-        # 1. Compute density contrast δ_g
-        # 2. Normalize by bias → δ_g*
-        # 3. Smooth with Gaussian
+        # Create mask for non-zeroed regions
+        # Zeroed regions = 2MRS-only angular directions (m_lim=11.5) AND r > 125 Mpc/h
+        # These have no galaxy data due to the 2MRS cutoff
+        if i_iter == 0:
+            # Build 3D mask for non-zeroed regions (only need to do once)
+            # For each voxel, check if its angular direction is 2MRS-only
+            nside_coverage = hp.get_nside(map12)
+
+            # Normalize grid positions to unit vectors
+            rr_safe = np.maximum(rr_grid, 1e-10)
+            ux = xx / rr_safe
+            uy = yy / rr_safe
+            uz = zz / rr_safe
+
+            # Convert to theta, phi for HEALPix
+            theta_grid = np.arccos(np.clip(uz, -1, 1))  # z = cos(theta)
+            phi_grid = np.arctan2(uy, ux)  # in range [-pi, pi]
+            phi_grid = np.where(phi_grid < 0, phi_grid + 2*np.pi, phi_grid)  # to [0, 2pi]
+
+            # Get HEALPix pixel for each voxel
+            pix_grid = hp.ang2pix(nside_coverage, theta_grid.ravel(), phi_grid.ravel())
+
+            # Check if each voxel is in 2MRS-only region (map12 <= 0)
+            is_2mrs_only_angular = (map12[pix_grid] <= 0).reshape(rr_grid.shape)
+
+            # Zeroed regions: 2MRS-only AND r > 125
+            zeroed_mask = is_2mrs_only_angular & (rr_grid > r_2mrs_cutoff)
+
+            if verbose:
+                n_zeroed = np.sum(zeroed_mask & valid_mask)
+                n_valid = np.sum(valid_mask)
+                print(f"  Non-zeroed region: {100*(1 - n_zeroed/n_valid):.1f}% of valid voxels")
+
+        # Carrick2015 order (per Carrick's clarification):
+        # 1. Mask regions: r > 200, or (2MRS-only AND r > 125)
+        # 2. Compute rho_bar from non-masked regions only
+        # 3. Compute delta = rho/rho_bar - 1, set delta = 0 for masked regions
+        # 4. Apply bias scaling (m_lim=11.5 for 2MRS, 12.5 for deep) - should not change mean
+        # 5. Smooth with Gaussian
+
+        # Non-masked region: valid AND not zeroed
+        nonmasked = valid_mask & ~zeroed_mask
 
         if use_global_mean:
-            # Per Carrick paper: "normalized with respect to mean density within 200 h^-1 Mpc"
-            rho_mean = np.mean(rho[valid_mask])
+            # Normalize using non-masked region only (Carrick's procedure)
+            rho_mean = np.mean(rho[nonmasked])
             rho_mean = max(rho_mean, 1e-10)
             delta_g = rho / rho_mean - 1.0
+            # Set masked regions to delta = 0
+            delta_g = np.where(nonmasked, delta_g, 0.0)
         else:
             # Radial profile normalization (empirically better for LOS comparison)
             n_rbins = 40
@@ -898,24 +958,61 @@ def build_carrick_field(
 
             delta_g = rho / rho_expected_3d - 1.0
 
-        # Step 2: Map psi to 3D grid and apply bias normalization
-        r_sorted_idx = np.argsort(r_mpc)
-        r_sorted = r_mpc[r_sorted_idx]
-        psi_sorted = psi[r_sorted_idx]
-        _, unique_idx = np.unique(r_sorted, return_index=True)
-        r_unique = r_sorted[unique_idx]
-        psi_unique = psi_sorted[unique_idx]
-
-        psi_3d = np.interp(rr_grid.ravel(), r_unique, psi_unique,
-                          left=psi_unique[0], right=psi_unique[-1])
-        psi_3d = psi_3d.reshape(rr_grid.shape)
+        # Step 2: Apply bias normalization (Carrick Eq. 8): delta_g* = delta_g / psi(r)
+        # psi(r) is computed using the appropriate magnitude limit for each region:
+        #   - m_lim = 11.5 for 2MRS-only regions
+        #   - m_lim = 12.5 for deep (6dF/SDSS) regions (if PSI_USE_UNIFORM_MLIM=False)
+        # psi(r) = 0.73 + 0.24 * <L/L*>_L
+        # where <L/L*>_L = Gamma(alpha+3, x_min) / Gamma(alpha+2, x_min)
+        r_grid_flat = rr_grid.ravel()
+        # Create m_lim array based on PSI_USE_UNIFORM_MLIM flag
+        if PSI_USE_UNIFORM_MLIM:
+            m_lim_3d = np.full(rr_grid.shape, PSI_MLIM_UNIVERSAL)
+        else:
+            m_lim_3d = np.where(is_2mrs_only_angular, 11.5, 12.5)
+        psi_3d = compute_bias_normalization(
+            r_grid_flat,
+            m_lim_3d.ravel(),
+            alpha, M_star, b_const, b_slope
+        ).reshape(rr_grid.shape)
         psi_3d = np.maximum(psi_3d, 0.1)
 
-        # Apply bias normalization: delta_g* = delta_g / psi
-        delta_g_star = delta_g / psi_3d
+        # Plot psi(r) on first iteration only
+        if plot_psi and i_iter == 0:
+            import matplotlib.pyplot as plt
+            r_plot = np.linspace(1, Rmax_mpc, 200)
+            psi_plot = compute_bias_normalization(
+                r_plot,
+                np.full_like(r_plot, PSI_MLIM_UNIVERSAL),
+                alpha, M_star, b_const, b_slope
+            )
+            fig, ax = plt.subplots(figsize=(8, 5))
+            ax.plot(r_plot, psi_plot, 'b-', linewidth=2)
+            ax.axhline(1.0, color='gray', linestyle='--', alpha=0.5)
+            ax.set_xlabel('r [h⁻¹ Mpc]', fontsize=12)
+            ax.set_ylabel('ψ(r)', fontsize=12)
+            ax.set_title(f'Bias correction ψ(r) = {b_const} + {b_slope}×⟨L/L*⟩\n'
+                        f'(m_lim={PSI_MLIM_UNIVERSAL}, α={alpha}, M*={M_star})')
+            ax.set_xlim(0, Rmax_mpc)
+            ax.grid(True, alpha=0.3)
+            # Add key values as text
+            psi_50 = compute_bias_normalization(np.array([50.0]), np.array([PSI_MLIM_UNIVERSAL]), alpha, M_star, b_const, b_slope)[0]
+            psi_100 = compute_bias_normalization(np.array([100.0]), np.array([PSI_MLIM_UNIVERSAL]), alpha, M_star, b_const, b_slope)[0]
+            psi_200 = compute_bias_normalization(np.array([200.0]), np.array([PSI_MLIM_UNIVERSAL]), alpha, M_star, b_const, b_slope)[0]
+            ax.text(0.95, 0.05, f'ψ(50)={psi_50:.3f}\nψ(100)={psi_100:.3f}\nψ(200)={psi_200:.3f}',
+                   transform=ax.transAxes, fontsize=10, verticalalignment='bottom',
+                   horizontalalignment='right', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+            plt.tight_layout()
+            plt.savefig('psi_r_diagnostic.png', dpi=150)
+            plt.close()
+            print(f"Saved psi(r) plot to psi_r_diagnostic.png")
 
-        # Set to 0 outside valid region
-        delta_g_star = np.where(valid_mask, delta_g_star, 0.0)
+        # Apply bias normalization: delta_g* = delta_g / psi
+        # Per Carrick: this should not change the mean of delta
+        # (The mean is already 0 for non-masked regions by construction)
+        delta_g_star = delta_g / psi_3d
+        # Keep masked regions at 0
+        delta_g_star = np.where(nonmasked, delta_g_star, 0.0)
 
         # Step 3: Gaussian smoothing AFTER bias correction (Carrick's order)
         delta_smooth = np.asarray(_gaussian_smooth_fft(
@@ -925,6 +1022,12 @@ def build_carrick_field(
         ))
 
         delta_final = delta_smooth.astype(np.float32)
+
+        # Save intermediate field if requested
+        if i_iter in save_intermediate_iters:
+            intermediate_deltas[i_iter] = delta_final.copy()
+            if verbose:
+                print(f"  Saved delta field at iteration {i_iter}")
 
         if beta > 0:
             # Compute velocity field from smoothed, bias-corrected delta
@@ -1006,6 +1109,7 @@ def build_carrick_field(
         "delta": np.asarray(delta_final, dtype=np.float32),
         "velocity": np.asarray(velocity_final, dtype=np.float32) if velocity_final is not None else None,
         "r_mpc_final": r_mpc.astype(np.float32),
+        "intermediate_deltas": intermediate_deltas,
         "metadata": metadata,
     }
 

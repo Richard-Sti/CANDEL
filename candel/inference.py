@@ -206,10 +206,9 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
     else:
         gof = None
 
-    # Check if this is a dipH0/quadH0/pixH0 run (should convert zeropoint to dH_over_H)
-    fname_out = model.config["io"]["fname_output"]
-    convert_zeropoint = "dipH0" in fname_out or "quadH0" in fname_out or "pixH0" in fname_out
-    samples = postprocess_samples(samples, convert_zeropoint_to_dH=convert_zeropoint)
+    # Note: convert_zeropoint_to_dH is legacy for old runs using stretch_los_with_zeropoint.
+    # New runs sample H0_dipole directly as fractional δH, so no conversion needed.
+    samples = postprocess_samples(samples, convert_zeropoint_to_dH=False)
 
     if print_summary:
         print_clean_summary(samples)
@@ -315,15 +314,15 @@ def run_SH0ES_inference(model, model_kwargs={}, print_summary=True,
     samples = mcmc.get_samples()
     samples = drop_deterministic(samples)
 
-    # Check if this is a dipH0/quadH0/pixH0 run (should convert zeropoint to dH_over_H)
-    fname_out = model.config["io"]["fname_output"]
-    convert_zeropoint = "dipH0" in fname_out or "quadH0" in fname_out or "pixH0" in fname_out
-    samples = postprocess_samples(samples, convert_zeropoint_to_dH=convert_zeropoint)
+    # Note: convert_zeropoint_to_dH is legacy for old runs using stretch_los_with_zeropoint.
+    # New runs sample H0_dipole directly as fractional δH, so no conversion needed.
+    samples = postprocess_samples(samples, convert_zeropoint_to_dH=False)
 
     if print_summary:
         print_clean_summary(samples)
 
     if save_samples:
+        fname_out = model.config["io"]["fname_output"]
         fprint(f"output directory is {dirname(fname_out)}.")
         save_mcmc_samples(samples, None, None, fname_out)
 
@@ -366,7 +365,12 @@ def get_log_density(samples, model, model_kwargs, batch_size=5):
 
 def drop_deterministic(samples, check_all_equals=True):
     """Drop deterministic and latent variable samples."""
-    keep_skipZ = {"r_map_skipZ", "r_mean_skipZ", "r_std_skipZ"}
+    keep_skipZ = {
+        "r_map_skipZ", "r_mean_skipZ", "r_std_skipZ",
+        "lp_dist_skipZ",
+        "ll_cz_skipZ", "cz_nsigma_skipZ",
+        "ll_cluster_skipZ", "cluster_nsigma_skipZ"
+    }
     for key in list(samples.keys()):
         # Remove unused, latent variables used for deterministic sampling
         if "skipZ" in key and key not in keep_skipZ:
@@ -401,7 +405,7 @@ def postprocess_samples(samples, convert_zeropoint_to_dH=False):
     samples : dict
         Dictionary of MCMC samples.
     convert_zeropoint_to_dH : bool, optional
-        If True, convert zeropoint_dipole_mag, zeropoint_quad_mag, and A_pix
+        If True, convert zeropoint_dipole_mag, zeropoint_quad_mag, and zeropoint_pix
         to dH_over_H_dipole, dH_over_H_quad, and dH_over_H_pix respectively.
         This should only be True for dipH0/quadH0/pixH0 runs, not
         dipA/quadA/pixA runs. Default is False.
@@ -487,14 +491,21 @@ def postprocess_samples(samples, convert_zeropoint_to_dH=False):
         if mag_arr is not None:
             samples["Vext_rad_mag"] = mag_arr
     
-    # Handle A_dipole_radial_bin (vector per bin, needs coordinate conversion)
-    if "A_dipole_radial_bin_phi" in samples and "A_dipole_radial_bin_cos_theta" in samples:
-        phi_arr = samples.pop("A_dipole_radial_bin_phi")  # shape: (n_samples, n_bins)
-        cos_theta_arr = samples.pop("A_dipole_radial_bin_cos_theta")  # shape: (n_samples, n_bins)
-        mag_arr = samples.pop("A_dipole_radial_bin_mag", None)  # shape: (n_samples, n_bins) or None
-        
+    # Handle A_dipole_radial_bin / zeropoint_dipole_radial_bin (vector per bin, needs coordinate conversion)
+    # Check for new name first, then fall back to old name
+    dipole_bin_prefix = None
+    if "zeropoint_dipole_radial_bin_phi" in samples:
+        dipole_bin_prefix = "zeropoint_dipole_radial_bin"
+    elif "A_dipole_radial_bin_phi" in samples:
+        dipole_bin_prefix = "A_dipole_radial_bin"
+
+    if dipole_bin_prefix is not None and f"{dipole_bin_prefix}_cos_theta" in samples:
+        phi_arr = samples.pop(f"{dipole_bin_prefix}_phi")  # shape: (n_samples, n_bins)
+        cos_theta_arr = samples.pop(f"{dipole_bin_prefix}_cos_theta")  # shape: (n_samples, n_bins)
+        mag_arr = samples.pop(f"{dipole_bin_prefix}_mag", None)  # shape: (n_samples, n_bins) or None
+
         n_bins = phi_arr.shape[1] if phi_arr.ndim > 1 else 1
-        
+
         # Process each bin separately
         for bin_idx in range(n_bins):
             if phi_arr.ndim > 1:
@@ -505,33 +516,46 @@ def postprocess_samples(samples, convert_zeropoint_to_dH=False):
                 phi = np.rad2deg(phi_arr)
                 cos_theta = cos_theta_arr
                 mag = mag_arr if mag_arr is not None else None
-            
+
             theta = np.arccos(cos_theta)
             dec = np.rad2deg(0.5 * np.pi - theta)
-            
+
             ell, b = radec_to_galactic(phi, dec)
-            samples[f"A_dipole_radial_bin_ell__{bin_idx}"] = ell
-            samples[f"A_dipole_radial_bin_b__{bin_idx}"] = b
-            
+            samples[f"zeropoint_dipole_radial_bin_ell__{bin_idx}"] = ell
+            samples[f"zeropoint_dipole_radial_bin_b__{bin_idx}"] = b
+
             if mag is not None:
-                samples[f"A_dipole_radial_bin_mag__{bin_idx}"] = mag
+                samples[f"zeropoint_dipole_radial_bin_mag__{bin_idx}"] = mag
     
     # Handle A_radial_bin (scalar per bin, no coordinate conversion needed)
-    if "A_radial_bin" in samples:
-        A_arr = samples.pop("A_radial_bin")  # shape: (n_samples, n_bins)
-        
-        n_bins = A_arr.shape[1] if A_arr.ndim > 1 else 1
-        
+    # Also handles new name zeropoint_radial_bin
+    radial_bin_key = None
+    if "zeropoint_radial_bin" in samples:
+        radial_bin_key = "zeropoint_radial_bin"
+    elif "A_radial_bin" in samples:
+        radial_bin_key = "A_radial_bin"
+
+    if radial_bin_key is not None:
+        zp_arr = samples.pop(radial_bin_key)  # shape: (n_samples, n_bins)
+
+        n_bins = zp_arr.shape[1] if zp_arr.ndim > 1 else 1
+
         # Split into individual bin parameters
         for bin_idx in range(n_bins):
-            if A_arr.ndim > 1:
-                A_bin = A_arr[:, bin_idx]
+            if zp_arr.ndim > 1:
+                zp_bin = zp_arr[:, bin_idx]
             else:
-                A_bin = A_arr
-            
-            samples[f"A_radial_bin__{bin_idx}"] = A_bin
-    
-    for prefix in ["dH0", "Vext_rad", "Vext_radmag", "Vext", "zeropoint_dipole"]:
+                zp_bin = zp_arr
+
+            samples[f"zeropoint_radial_bin__{bin_idx}"] = zp_bin
+
+    # Convert dipole/quadrupole vectors from Cartesian/spherical to galactic (ell, b)
+    # Now includes H0 parameters alongside zeropoint/Vext
+    vector_prefixes = [
+        "dH0", "Vext_rad", "Vext_radmag", "Vext",
+        "zeropoint_dipole", "H0_dipole", "H0_quad"
+    ]
+    for prefix in vector_prefixes:
         # Galactic form: ell (radians) + sin_b (+ mag optional)
         # This is used when sample_galactic=True in the prior
         if f"{prefix}_ell" in samples and f"{prefix}_sin_b" in samples:
@@ -570,7 +594,21 @@ def postprocess_samples(samples, convert_zeropoint_to_dH=False):
             samples[f"{prefix}_ell"] = ell
             samples[f"{prefix}_b"] = b
 
-    # Only convert zeropoint to dH_over_H for dipH0/quadH0/pixH0 runs
+    # Handle H0_dipole which is stored as full 3D vector (n_samples, 3)
+    if "H0_dipole" in samples and samples["H0_dipole"].ndim == 2:
+        H0_dip = samples.pop("H0_dipole")
+        x, y, z = H0_dip[:, 0], H0_dip[:, 1], H0_dip[:, 2]
+        r, ell, b = radec_cartesian_to_galactic(x, y, z)
+        samples["H0_dipole_mag"] = r
+        samples["H0_dipole_ell"] = ell
+        samples["H0_dipole_b"] = b
+
+    # Rename A_pix to zeropoint_pix for consistency
+    if "A_pix" in samples:
+        samples["zeropoint_pix"] = samples.pop("A_pix")
+
+    # Only convert zeropoint to dH_over_H for legacy dipH0/quadH0/pixH0 runs
+    # (runs using stretch_los_with_zeropoint flag)
     if convert_zeropoint_to_dH:
         def _delta_a_to_frac(delta_a):
             delta_a = np.asarray(delta_a)
@@ -586,9 +624,9 @@ def postprocess_samples(samples, convert_zeropoint_to_dH=False):
                 samples["zeropoint_quad_mag"])
             samples.pop("zeropoint_quad_mag", None)
 
-        if "A_pix" in samples:
-            samples["dH_over_H_pix"] = _delta_a_to_frac(samples["A_pix"])
-            samples.pop("A_pix", None)
+        if "zeropoint_pix" in samples:
+            samples["dH_over_H_pix"] = _delta_a_to_frac(samples["zeropoint_pix"])
+            samples.pop("zeropoint_pix", None)
 
     return samples
 

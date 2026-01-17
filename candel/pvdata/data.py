@@ -150,6 +150,7 @@ def load_PV_dataframes(config_path, local_root=None):
                             suffix = old_path.split("CANDEL/", 1)[1]
                             config_io[key][path_key] = f"{local_root}/{suffix}"
     config_pv_model = config["pv_model"]
+    config_priors = config.get("model", {}).get("priors", {})
     names = config_io.pop("catalogue_name")
     if isinstance(names, str):
         names = [names]
@@ -175,7 +176,7 @@ def load_PV_dataframes(config_path, local_root=None):
 
         df = PVDataFrame.from_config_dict(
             kwargs, name, try_pop_los=try_pop_los,
-            config_pv_model=config_pv_model)
+            config_pv_model=config_pv_model, config_priors=config_priors)
         dfs.append(df)
 
     if len(dfs) == 1:
@@ -226,7 +227,8 @@ class PVDataFrame:
         self._cache = {}
 
     @classmethod
-    def from_config_dict(cls, config, name, try_pop_los, config_pv_model):
+    def from_config_dict(cls, config, name, try_pop_los, config_pv_model,
+                         config_priors=None):
         root = config.pop("root")
         nsamples_subsample = config.pop("nsamples_subsample", None)
         seed_subsample = config.pop("seed_subsample", 42)
@@ -296,9 +298,29 @@ class PVDataFrame:
             data["los_log_density"] = np.log(data["los_density"])
             data["los_delta"] = data["los_density"] - 1
 
+        # Determine if we need to skip precomputed LOS r-grid
+        # This is needed when z-space mapping will be applied at runtime
         skip_los_r_grid = bool(
             config_pv_model.get("stretch_los_with_zeropoint", False))
-        if skip_los_r_grid:
+
+        # Also skip if H0 anisotropy priors are varying (requires z-space mapping)
+        if not skip_los_r_grid and config_priors:
+            h0_dip_prior = config_priors.get("H0_dipole", {})
+            h0_quad_prior = config_priors.get("H0_quad", {})
+            h0_dip_varying = (
+                isinstance(h0_dip_prior, dict)
+                and h0_dip_prior.get("dist") not in (None, "delta"))
+            h0_quad_varying = (
+                isinstance(h0_quad_prior, dict)
+                and h0_quad_prior.get("dist") not in (None, "delta"))
+            which_h0 = config_pv_model.get("which_H0", "constant")
+            if h0_dip_varying or h0_quad_varying or which_h0 == "per_pix":
+                skip_los_r_grid = True
+                fprint("skipping precomputed LOS r-grid; H0 anisotropy is enabled.")
+
+        if skip_los_r_grid and not config_pv_model.get("stretch_los_with_zeropoint", False):
+            pass  # Already printed message above
+        elif skip_los_r_grid:
             fprint("skipping precomputed LOS r-grid; stretch_los_with_zeropoint is enabled.")
 
         if nsamples_subsample is not None:

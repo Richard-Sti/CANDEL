@@ -44,25 +44,15 @@ radmag_half_sky = True  # Restrict ell to [0, 180°] to break sign degeneracy wi
 include_rad = False    # Radial Vext (direction free, magnitude varies with r)
 include_radmag = False  # Radial magnitude Vext (direction fixed, magnitude varies with r)
 # Base model flags (split from old include_base)
-include_base = False # No flow/H0 model (both Vext and zeropoint are delta)
-include_dipH0 = False  # Zeropoint dipole with stretch_los=True (H0 anisotropy)
-include_dipA =  False    # Zeropoint dipole with stretch_los=False (calibration)
-include_dipVext = False # Vext dipole only
-include_A = False    # Master switch for all A runs (dipA, quadA, pixA, pairs with A)
+include_base = False  # No flow/H0 model (both Vext and zeropoint are delta)
+include_dipH0 = False  # H0_dipole varies (H0 anisotropy, affects z→r conversion)
+include_dipA = False   # zeropoint_dipole varies (calibration only, no z→r effect)
+include_dipVext = False  # Vext dipole only
+include_A = False  # Master switch for all A runs (dipA, quadA, pixA, pairs with A)
 include_bias = False  # Double power law bias model tests
 include_fixed_sigma = False
-# Z-space mode flag: controls how runs are generated
-# When False (old behavior):
-#   - Vext runs: stretch_los=False
-#   - A runs: stretch_los=False
-#   - H0 runs: stretch_los=True
-# When True (new z-space behavior):
-#   - Vext runs: use_zspace=True, stretch_los=False
-#   - A runs: use_zspace=False, stretch_los=False
-#   - H0 runs: use_zspace=True, stretch_los=False
-# Note: when use_zspace=True, stretch_los value doesn't matter (but set to False)
-GENERATE_TASKS_ZSPACE = True
-n_zspace_iterations = 2  # Iterations to refine z->r mapping for radial Vext models
+# Z-space mode is auto-detected by the model based on H0 or Vext priors.
+n_zspace_iterations = 2  # Iterations to refine z->r mapping for H0/Vext models
 output_root = "results/radtest"
 num_chains = 1
 chain_method = "sequential"
@@ -158,6 +148,15 @@ def get_nested(config, key_path, default=None):
     return current
 
 
+def _prior_is_varying(config, prior_name):
+    """Helper to check if a prior is varying (not delta)."""
+    prior = get_nested(config, f"model/priors/{prior_name}", {})
+    if not isinstance(prior, dict):
+        return False
+    dist = prior.get("dist", "delta")
+    return dist != "delta"
+
+
 def generate_dynamic_tag(config, scenario_label):
     """Generate a concise tag string for the output filename."""
     parts = []
@@ -169,20 +168,19 @@ def generate_dynamic_tag(config, scenario_label):
     use_mnr = get_nested(config, "pv_model/use_MNR", False)
     parts.append("MNR" if use_mnr else "noMNR")
 
-    # Dipole zeropoint configuration (skip if quadrupole zeropoint is enabled)
-    quad_zp_prior = get_nested(config, "model/priors/zeropoint_quad", {})
-    quad_zp_enabled = (
-        isinstance(quad_zp_prior, dict) and quad_zp_prior.get("dist") != "delta"
-    )
-    dip_prior = get_nested(config, "model/priors/zeropoint_dipole", {})
-    if (
-        not quad_zp_enabled
-        and isinstance(dip_prior, dict)
-        and dip_prior.get("dist") == "vector_uniform_fixed"
-    ):
-        stretch_los = get_nested(
-            config, "pv_model/stretch_los_with_zeropoint", False)
-        parts.append("dipH0" if stretch_los else "dipA")
+    # Check H0 and zeropoint dipole priors
+    h0_dip_varying = _prior_is_varying(config, "H0_dipole")
+    h0_quad_varying = _prior_is_varying(config, "H0_quad")
+    zp_dip_varying = _prior_is_varying(config, "zeropoint_dipole")
+    zp_quad_varying = _prior_is_varying(config, "zeropoint_quad")
+
+    # Determine dipole/quadrupole tags
+    if not h0_quad_varying and not zp_quad_varying:
+        # Dipole-only case
+        if h0_dip_varying:
+            parts.append("dipH0")
+        elif zp_dip_varying:
+            parts.append("dipA")
 
     catalogue_value = get_nested(config, "io/catalogue_name", None)
     if isinstance(catalogue_value, list):
@@ -205,7 +203,8 @@ def generate_dynamic_tag(config, scenario_label):
     else:
         # Check for separate Vext_quad component first
         Vext_quad_prior = get_nested(config, "model/priors/Vext_quad", {})
-        if isinstance(Vext_quad_prior, dict) and Vext_quad_prior.get("dist") != "delta":
+        vext_quad_dist = Vext_quad_prior.get("dist") if isinstance(Vext_quad_prior, dict) else None
+        if vext_quad_dist is not None and vext_quad_dist != "delta":
             parts.append("quadVext")  # Quadrupole implicitly includes dipole
         else:
             # Check regular Vext prior
@@ -218,18 +217,20 @@ def generate_dynamic_tag(config, scenario_label):
                     parts.append("quadVext")  # Main Vext is quadrupole
                 # delta case is default, don't add anything
 
-    # Zeropoint A configuration - check per_pix first
-    which_A = get_nested(config, "pv_model/which_A", "constant")
-    if which_A == "per_pix":
-        stretch_los = get_nested(
-            config, "pv_model/stretch_los_with_zeropoint", False)
-        parts.append("pixH0" if stretch_los else "pixA")
-    else:
-        # Check for quadrupole zeropoint first (implies dipole too)
-        if quad_zp_enabled:
-            stretch_los = get_nested(
-                config, "pv_model/stretch_los_with_zeropoint", False)
-            parts.append("quadH0" if stretch_los else "quadA")
+    # Per-pixel anisotropy configuration
+    which_zp = get_nested(config, "pv_model/which_zeropoint", "constant")
+    which_h0 = get_nested(config, "pv_model/which_H0", "constant")
+
+    if which_h0 == "per_pix":
+        parts.append("pixH0")
+    elif which_zp == "per_pix":
+        parts.append("pixA")
+
+    # Quadrupole case
+    if h0_quad_varying:
+        parts.append("quadH0")
+    elif zp_quad_varying:
+        parts.append("quadA")
 
     # Flag if sampling the dust prior
     dust_flags = []
@@ -295,7 +296,6 @@ if __name__ == "__main__":
     config = overwrite_config(config, "inference/chain_method", chain_method)
     if not overwrite_existing:
         config = overwrite_config(config, "inference/skip_if_exists", True)
-    # Note: use_zspace is set per-run below based on whether it's a dipA or dipH0 run
 
     tasks_index = args.tasks_index
     include_fixed_sigma = args.include_fixed_sigma
@@ -384,16 +384,15 @@ if __name__ == "__main__":
 
     pixelVext_combinations = expand_override_grid(pixelVext_settings)
 
-    # Per-pixel A (without stretching, for calibration uncertainty)
+    # Per-pixel zeropoint (calibration uncertainty, no z→r effect)
     pixelA_settings = deepcopy(base)
-    pixelA_settings["pv_model/which_A"] = ["per_pix"]
+    pixelA_settings["pv_model/which_zeropoint"] = ["per_pix"]
 
     pixelA_combinations = expand_override_grid(pixelA_settings)
 
-    # Per-pixel H0 (with stretching, for spatially-varying Hubble constant)
+    # Per-pixel H0 (spatially-varying Hubble constant, affects z→r)
     pixelH0_settings = deepcopy(base)
-    pixelH0_settings["pv_model/which_A"] = ["per_pix"]
-    pixelH0_settings["pv_model/stretch_los_with_zeropoint"] = [True]
+    pixelH0_settings["pv_model/which_H0"] = ["per_pix"]
 
     pixelH0_combinations = expand_override_grid(pixelH0_settings)
 
@@ -478,18 +477,21 @@ if __name__ == "__main__":
         )
 
     # Double power law bias model combinations (manticore + LTYT + dipH0 only)
+    # Now uses explicit H0_dipole prior instead of stretch_los_with_zeropoint
     bias_combinations = []
     if include_bias:
         for bias_label, bias_priors in BIAS_PRIORS.items():
             bias_settings = {
                 "pv_model/kind": ["precomputed_los_manticore"],
                 "pv_model/which_Vext": ["constant"],
-                "pv_model/stretch_los_with_zeropoint": [True],  # dipH0, not dipA
                 "pv_model/bias_variant": [bias_label],
                 "io/root_output": output_root,
                 "model/priors/Vext": [{"dist": "delta", "value": [0.0, 0.0, 0.0]}],
+                # Use new H0_dipole prior (fractional δH) for dipH0 runs
+                "model/priors/H0_dipole": [
+                    {"dist": "vector_uniform_fixed", "low": 0.0, "high": 0.15}],
                 "model/priors/zeropoint_dipole": [
-                    {"dist": "vector_uniform_fixed", "low": 0.0, "high": 0.2}],
+                    {"dist": "delta", "value": [0.0, 0.0, 0.0]}],
                 "model/priors/alpha_low": [bias_priors["alpha_low"]],
                 "model/priors/alpha_high": [bias_priors["alpha_high"]],
                 "model/priors/log_rho_t": [bias_priors["log_rho_t"]],
@@ -506,18 +508,23 @@ if __name__ == "__main__":
             {"dist": "vector_uniform_fixed", "low": 0.0, "high": 5000.0}],
         "model/priors/zeropoint_dipole": [
             {"dist": "delta", "value": [0.0, 0.0, 0.0]}],
+        "model/priors/H0_dipole": [
+            {"dist": "delta", "value": [0.0, 0.0, 0.0]}],
         "model/priors/sigma_v": [{"dist": "delta", "value": 100.0}],
     }
+    # Fixed sigma_v + dipH0 runs using new H0_dipole prior
     fixed_sigmav_diph0_settings = {
         "pv_model/kind": ["Vext"],
         "pv_model/which_Vext": ["constant"],
-        "pv_model/stretch_los_with_zeropoint": [True],
         "pv_model/sigmav_variant": ["sigv100"],
         "io/root_output": output_root,
         "model/priors/Vext": [
             {"dist": "delta", "value": [0.0, 0.0, 0.0]}],
         "model/priors/zeropoint_dipole": [
-            {"dist": "vector_uniform_fixed", "low": 0.0, "high": 0.2}],
+            {"dist": "delta", "value": [0.0, 0.0, 0.0]}],
+        # Use new H0_dipole prior (fractional δH) for dipH0 runs
+        "model/priors/H0_dipole": [
+            {"dist": "vector_uniform_fixed", "low": 0.0, "high": 0.15}],
         "model/priors/sigma_v": [{"dist": "delta", "value": 100.0}],
     }
     fixed_sigmav_combinations = expand_override_grid(
@@ -591,6 +598,10 @@ if __name__ == "__main__":
             "Vext_quad",
             "zeropoint_dipole",
             "zeropoint_quad",
+            "zeropoint_pix",
+            "H0_dipole",
+            "H0_quad",
+            "H0_pix",
             "sigma_v",
             "beta",
             "b1",
@@ -720,16 +731,16 @@ if __name__ == "__main__":
                             "model/priors/Vext_pix",
                             {"dist": "array_uniform", "low": -10000.0, "high": 10000.0, "nval": npix},
                         )
-                    which_a = get_nested(
-                        local_config, "pv_model/which_A", "constant")
-                    if which_a == "per_pix":
+                    which_zp = get_nested(
+                        local_config, "pv_model/which_zeropoint", "constant")
+                    if which_zp == "per_pix":
                         nside = get_nested(
-                            local_config, "pv_model/A_per_pix_nside", 1)
+                            local_config, "pv_model/anisotropy_per_pix_nside", 1)
                         npix = 12 * nside**2
                         local_config = overwrite_subtree(
                             local_config,
-                            "model/priors/A_pix",
-                            {"dist": "array_uniform", "low": -10.0, "high": 10.0, "nval": npix},
+                            "model/priors/zeropoint_pix",
+                            {"dist": "array_uniform", "low": -0.1, "high": 0.1, "nval": npix},
                         )
 
                 if shared_base:
@@ -738,10 +749,10 @@ if __name__ == "__main__":
                         which_vext = get_nested(
                             local_config, "pv_model/which_Vext", "constant")
                         shared_list.extend(flow_shared_params(which_vext))
-                        which_a = get_nested(
-                            local_config, "pv_model/which_A", "constant")
-                        if which_a == "per_pix":
-                            shared_list.append("A_pix")
+                        which_zp = get_nested(
+                            local_config, "pv_model/which_zeropoint", "constant")
+                        if which_zp == "per_pix":
+                            shared_list.append("zeropoint_pix")
                     shared_list = list(dict.fromkeys(shared_list))
                     shared_str = ",".join(shared_list)
                     local_config = overwrite_config(
@@ -756,82 +767,87 @@ if __name__ == "__main__":
                     ):
                         continue
 
-                dipole_prior = get_nested(
+                # Check for varying H0_dipole or zeropoint_dipole
+                h0_dipole_prior = get_nested(
+                    local_config, "model/priors/H0_dipole", {})
+                zp_dipole_prior = get_nested(
                     local_config, "model/priors/zeropoint_dipole", {})
-                # For bias runs, stretch_los is already set, so don't iterate
+
+                h0_dip_varying = (
+                    isinstance(h0_dipole_prior, dict)
+                    and h0_dipole_prior.get("dist") not in (None, "delta"))
+                zp_dip_varying = (
+                    isinstance(zp_dipole_prior, dict)
+                    and zp_dipole_prior.get("dist") == "vector_uniform_fixed")
+
+                # For bias runs, H0_dipole is already configured, don't iterate
                 bias_variant = get_nested(local_config, "pv_model/bias_variant", None)
                 if bias_variant:
-                    stretch_variants = [None]
-                elif (
-                    isinstance(dipole_prior, dict)
-                    and dipole_prior.get("dist") == "vector_uniform_fixed"
-                ):
-                    # Build stretch_variants based on include_dipA/include_dipH0 and include_A
-                    stretch_variants = []
+                    # Bias runs already have H0_dipole set, just run once
+                    h0_variants = [None]
+                elif h0_dip_varying:
+                    # H0_dipole already varying, just run once
+                    h0_variants = [None]
+                elif zp_dip_varying:
+                    # zeropoint_dipole varying: generate dipA and/or dipH0 runs
+                    h0_variants = []
                     if include_dipA and include_A:
-                        stretch_variants.append(False)  # dipA: stretch_los=False
+                        h0_variants.append("dipA")
                     if include_dipH0:
-                        stretch_variants.append(True)   # dipH0: stretch_los=True
-                    if not stretch_variants:
+                        h0_variants.append("dipH0")
+                    if not h0_variants:
                         # Neither dipA nor dipH0 enabled, skip this run
                         continue
                 else:
-                    stretch_variants = [None]
+                    h0_variants = [None]
 
-                for stretch_los in stretch_variants:
+                for h0_variant in h0_variants:
                     run_config = deepcopy(local_config)
-                    # stretch_los determines run type for tagging:
-                    # - None: base/Vext run (no zeropoint dipole)
-                    # - False: A run (calibration uncertainty)
-                    # - True: H0 run (Hubble anisotropy)
-                    is_H0_run = (stretch_los is True)
-                    is_A_run = (stretch_los is False)
-                    is_vext_or_base_run = (stretch_los is None)
 
-                    if GENERATE_TASKS_ZSPACE:
-                        # Z-space mode: use_zspace handles the physics
-                        # - Vext runs (has Vext model): use_zspace=True
-                        # - H0 runs: use_zspace=True
-                        # - A runs: use_zspace=False
-                        # - Base runs (no dipoles): use_zspace=False
-                        # stretch_los is always False (doesn't matter when use_zspace=True)
-                        vext_prior = override_set.get("model/priors/Vext", {})
-                        has_vext_dipole = (
-                            isinstance(vext_prior, dict)
-                            and vext_prior.get("dist") == "vector_uniform_fixed"
+                    # Configure priors based on variant
+                    if h0_variant == "dipA":
+                        # dipA run: zeropoint varies, H0 fixed
+                        run_config = overwrite_subtree(
+                            run_config,
+                            "model/priors/H0_dipole",
+                            {"dist": "delta", "value": [0.0, 0.0, 0.0]},
                         )
-                        which_vext = override_set.get("pv_model/which_Vext", "constant")
-                        has_radial_vext = which_vext in ("radial", "radial_magnitude")
-                        has_vext_model = has_vext_dipole or has_radial_vext
-                        if is_H0_run or has_vext_model:
-                            run_config = overwrite_config(
-                                run_config, "pv_model/use_zspace", True)
-                            run_config = overwrite_config(
-                                run_config, "pv_model/n_zspace_iterations",
-                                n_zspace_iterations)
-                        else:
-                            # A runs and base runs (no Vext model)
-                            run_config = overwrite_config(
-                                run_config, "pv_model/use_zspace", False)
-                        # Set stretch_los for tagging, then override to False later
-                        if stretch_los is not None:
-                            run_config = overwrite_config(
-                                run_config,
-                                "pv_model/stretch_los_with_zeropoint",
-                                stretch_los,
-                            )
-                    else:
-                        # Old behavior: stretch_los controls the physics
-                        # - Vext/A runs: stretch_los=False
-                        # - H0 runs: stretch_los=True
+                    elif h0_variant == "dipH0":
+                        # dipH0 run: H0 varies, zeropoint fixed
+                        zp_high = zp_dipole_prior.get("high", 0.2)
+                        h0_high = min(0.15, zp_high)  # Fractional δH
+                        run_config = overwrite_subtree(
+                            run_config,
+                            "model/priors/H0_dipole",
+                            {"dist": "vector_uniform_fixed", "low": 0.0, "high": h0_high},
+                        )
+                        run_config = overwrite_subtree(
+                            run_config,
+                            "model/priors/zeropoint_dipole",
+                            {"dist": "delta", "value": [0.0, 0.0, 0.0]},
+                        )
+
+                    # Determine run type flags
+                    is_H0_run = (h0_variant == "dipH0") or h0_dip_varying
+                    is_A_run = (h0_variant == "dipA")
+                    is_vext_or_base_run = (h0_variant is None and not h0_dip_varying)
+
+                    # Check if Vext model is active
+                    vext_prior = override_set.get("model/priors/Vext", {})
+                    has_vext_dipole = (
+                        isinstance(vext_prior, dict)
+                        and vext_prior.get("dist") == "vector_uniform_fixed"
+                    )
+                    which_vext = override_set.get("pv_model/which_Vext", "constant")
+                    has_radial_vext = which_vext in ("radial", "radial_magnitude")
+                    has_vext_model = has_vext_dipole or has_radial_vext
+
+                    # Set n_zspace_iterations for models that need it
+                    if is_H0_run or has_vext_model:
                         run_config = overwrite_config(
-                            run_config, "pv_model/use_zspace", False)
-                        if stretch_los is not None:
-                            run_config = overwrite_config(
-                                run_config,
-                                "pv_model/stretch_los_with_zeropoint",
-                                stretch_los,
-                            )
+                            run_config, "pv_model/n_zspace_iterations",
+                            n_zspace_iterations)
+
                     if not include_pairs:
                         vext_prior = get_nested(
                             run_config, "model/priors/Vext", {})
@@ -930,16 +946,6 @@ if __name__ == "__main__":
                         fprint(f"set Malmquist grid to {grid_settings['num_points_malmquist']} points for Vext")
 
                     dynamic_tag = generate_dynamic_tag(run_config, scenario_label)
-
-                    # In z-space mode, override stretch_los to False after tagging
-                    # (the physics is handled by use_zspace, stretch_los was only
-                    # needed for the dipA vs dipH0 filename distinction)
-                    if GENERATE_TASKS_ZSPACE and is_H0_run:
-                        run_config = overwrite_config(
-                            run_config,
-                            "pv_model/stretch_los_with_zeropoint",
-                            False,
-                        )
 
                     kind_for_filename = kind.replace("precomputed_los_", "")
 

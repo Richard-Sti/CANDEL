@@ -346,7 +346,7 @@ def fit_schechter_lf(M_abs, r_mpc, m_lim, vcmb, M_bright=-25.0, M_faint=-17.0,
     """
     from scipy.optimize import minimize
 
-    # Apply Lavaux 2011 cuts: velocity range and magnitude range
+    # Lavaux 2011 cuts: velocity range and magnitude range
     valid = (np.isfinite(M_abs) & (r_mpc > 0.1) & np.isfinite(m_lim) &
              (vcmb >= v_min) & (vcmb <= v_max) &
              (M_abs >= M_bright) & (M_abs <= M_faint))
@@ -354,7 +354,8 @@ def fit_schechter_lf(M_abs, r_mpc, m_lim, vcmb, M_bright=-25.0, M_faint=-17.0,
     r_fit = r_mpc[valid]
     mlim_fit = m_lim[valid]
 
-    print(f"    LF fitting: {valid.sum()} galaxies in range v=[{v_min},{v_max}], M=[{M_bright},{M_faint}]")
+    print(f"    LF fitting: {valid.sum()} galaxies (v=[{v_min},{v_max}], M=[{M_bright},{M_faint}])")
+    print(f"      M_abs range: [{M_fit.min():.2f}, {M_fit.max():.2f}], median={np.median(M_fit):.2f}")
 
     # Compute M_lim for each galaxy
     mu_fit = 5.0 * np.log10(r_fit) + 25.0
@@ -404,9 +405,9 @@ with open(f"{DATA_DIR}/2m++.txt") as f:
     lines = f.readlines()
 
 header_idx = next(i for i, line in enumerate(lines) if "Designation" in line and "|" in line)
-# Load columns: l, b, K, Vcmb, GID, ZoA_flag, FC_clone_flag
+# Load columns: l, b, K, Vcmb, GID, ZoA_flag, FC_clone_flag, M0, M1, M2
 data = np.genfromtxt(f"{DATA_DIR}/2m++.txt", delimiter="|", skip_header=header_idx + 2,
-                     usecols=[3, 4, 5, 7, 9, 12, 13], filling_values=0)
+                     usecols=[3, 4, 5, 7, 9, 12, 13, 14, 15, 16], filling_values=0)
 
 l_deg = data[:, 0]
 b_deg = data[:, 1]
@@ -415,12 +416,18 @@ vcmb = data[:, 3]
 gid = np.where(np.isfinite(data[:, 4]), data[:, 4], -1).astype(int)
 zoa_flag = np.where(np.isfinite(data[:, 5]), data[:, 5], 0).astype(int)
 fc_clone_flag = np.where(np.isfinite(data[:, 6]), data[:, 6], 0).astype(int)
+# Survey flags: M0=2MRS exclusive, M1=SDSS, M2=6dFGRS
+is_2mrs_only = np.where(np.isfinite(data[:, 7]), data[:, 7], 0).astype(int) == 1
+is_sdss = np.where(np.isfinite(data[:, 8]), data[:, 8], 0).astype(int) == 1
+is_6df = np.where(np.isfinite(data[:, 9]), data[:, 9], 0).astype(int) == 1
 print(f"  ZoA clones in catalogue: {np.sum(zoa_flag == 1)}")
 print(f"  Fibre collision clones in catalogue: {np.sum(fc_clone_flag == 1)}")
+print(f"  Survey flags: 2MRS-only={is_2mrs_only.sum()}, SDSS={is_sdss.sum()}, 6dF={is_6df.sum()}")
 
 valid = np.isfinite(l_deg) & np.isfinite(b_deg) & np.isfinite(vcmb) & np.isfinite(K2Mpp) & (vcmb > 0)
 l_deg, b_deg, K2Mpp, vcmb, gid = l_deg[valid], b_deg[valid], K2Mpp[valid], vcmb[valid], gid[valid]
 zoa_flag, fc_clone_flag = zoa_flag[valid], fc_clone_flag[valid]
+is_2mrs_only = is_2mrs_only[valid]
 print(f"  {len(vcmb)} galaxies after filtering")
 
 # =============================================================================
@@ -463,6 +470,7 @@ for i in range(len(vcmb)):
 valid = vcmb > 0
 l_deg, b_deg, K2Mpp, vcmb, gid = l_deg[valid], b_deg[valid], K2Mpp[valid], vcmb[valid], gid[valid]
 zoa_flag, fc_clone_flag = zoa_flag[valid], fc_clone_flag[valid]
+is_2mrs_only = is_2mrs_only[valid]
 L_over_Lstar = L_over_Lstar[valid]
 print(f"  {len(vcmb)} galaxies after FoF collapse")
 
@@ -485,6 +493,7 @@ if CLONE_ZOA:
     keep = ~in_zoa
     l_deg, b_deg, K2Mpp, vcmb, gid = l_deg[keep], b_deg[keep], K2Mpp[keep], vcmb[keep], gid[keep]
     zoa_flag, fc_clone_flag = zoa_flag[keep], fc_clone_flag[keep]
+    is_2mrs_only = is_2mrs_only[keep]
     L_over_Lstar = L_over_Lstar[keep]
     print(f"  Removed {n_removed} galaxies in ZoA target region, {len(vcmb)} remaining")
 
@@ -517,13 +526,14 @@ pix12 = hp.ang2pix(hp.get_nside(map12), theta, phi)
 
 c11 = map11[pix11]
 c12 = map12[pix12]
-use_deep = c12 > 0
 
-m_lim = np.where(use_deep, 12.5, 11.5)
-comp = np.where(use_deep, c12, c11)
+# Use catalogue flags for m_lim (2MRS=11.5, deep=12.5)
+m_lim = np.where(is_2mrs_only, 11.5, 12.5)
+# Use appropriate completeness map based on survey
+comp = np.where(is_2mrs_only, c11, c12)
 comp = np.clip(np.where(np.isfinite(comp) & (comp > 0), comp, CMIN), CMIN, 1.0)
 
-print(f"  {np.sum(~use_deep)} in 2MRS-only, {np.sum(use_deep)} in deep regions")
+print(f"  {np.sum(is_2mrs_only)} in 2MRS-only, {np.sum(~is_2mrs_only)} in deep regions")
 
 # Angular weight
 w_ang = 1.0 / comp
@@ -617,13 +627,14 @@ for i_iter, beta in enumerate(beta_values):
     mu_current = 5.0 * np.log10(r_safe) + 25.0
     M_abs_current = K2Mpp - mu_current
 
-    # Fit Schechter LF with Lavaux 2011 cuts
+    # Fit Schechter LF at first iteration only (use fixed values after)
     if i_iter == 0:
         alpha_fit, Mstar_fit = fit_schechter_lf(M_abs_current, r_mpc, m_lim, vcmb)
-        print(f"    Fitted LF: alpha={alpha_fit:.3f}, M*={Mstar_fit:.2f}")
+        print(f"    LF: alpha={alpha_fit:.3f}, M*={Mstar_fit:.2f}")
+        # Store for later iterations
+        _alpha_stored, _Mstar_stored = alpha_fit, Mstar_fit
     else:
-        # Use fixed parameters after first iteration
-        alpha_fit, Mstar_fit = ALPHA, MSTAR
+        alpha_fit, Mstar_fit = _alpha_stored, _Mstar_stored
 
     # Recompute L/L* with fitted M*
     L_over_Lstar = 10.0 ** (-0.4 * (M_abs_current - Mstar_fit))
@@ -636,7 +647,7 @@ for i_iter, beta in enumerate(beta_values):
     w_total = w_ang * w_L * L_over_Lstar
 
     # Zero out 2MRS beyond cutoff and outside box
-    w_total[(~use_deep) & (r_mpc > R_2MRS_CUTOFF)] = 0.0
+    w_total[is_2mrs_only & (r_mpc > R_2MRS_CUTOFF)] = 0.0
     w_total[r_mpc > RMAX] = 0.0
 
     # Clone ZoA galaxies
@@ -766,22 +777,41 @@ for i_iter, beta in enumerate(beta_values):
 
     # Save diagnostic plots every PLOT_EVERY iterations
     if i_iter % PLOT_EVERY == 0 or i_iter == N_ITERATIONS - 1:
-        # Plot psi(r) on first iteration
+        # Plot psi(r) and w_L(r) on first iteration
         if i_iter == 0:
             r_plot = np.linspace(1, 200, 200)
             psi_2mrs = compute_psi(r_plot, np.full_like(r_plot, 11.5))
             psi_deep = compute_psi(r_plot, np.full_like(r_plot, 12.5))
+            S_2mrs = compute_selection_function(r_plot, np.full_like(r_plot, 11.5))
+            S_deep = compute_selection_function(r_plot, np.full_like(r_plot, 12.5))
+            wL_2mrs = 1.0 / S_2mrs
+            wL_deep = 1.0 / S_deep
 
-            fig, ax = plt.subplots(figsize=(8, 5))
-            ax.plot(r_plot, psi_2mrs, 'b-', lw=2, label='2MRS (m=11.5)')
-            ax.plot(r_plot, psi_deep, 'r-', lw=2, label='Deep (m=12.5)')
-            ax.axvline(R_2MRS_CUTOFF, color='orange', ls='--', alpha=0.7, label='2MRS cutoff')
-            ax.set_xlabel('r [Mpc/h]')
-            ax.set_ylabel(r'$\psi(r) = b_{const} + b_{slope} \langle L/L^* \rangle$')
-            ax.set_title('Bias normalization factor')
-            ax.legend()
-            ax.set_xlim(0, 200)
-            ax.grid(True, alpha=0.3)
+            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+
+            # Left panel: psi(r)
+            ax1.plot(r_plot, psi_2mrs, 'b-', lw=2, label='2MRS (m=11.5)')
+            ax1.plot(r_plot, psi_deep, 'r-', lw=2, label='Deep (m=12.5)')
+            ax1.axvline(R_2MRS_CUTOFF, color='orange', ls='--', alpha=0.7, label='2MRS cutoff')
+            ax1.set_xlabel('r [Mpc/h]')
+            ax1.set_ylabel(r'$\psi(r) = b_{const} + b_{slope} \langle L/L^* \rangle$')
+            ax1.set_title('Bias normalization factor')
+            ax1.legend()
+            ax1.set_xlim(0, 200)
+            ax1.grid(True, alpha=0.3)
+
+            # Right panel: w_L(r) = 1/S(r)
+            ax2.plot(r_plot, wL_2mrs, 'b-', lw=2, label='2MRS (m=11.5)')
+            ax2.plot(r_plot, wL_deep, 'r-', lw=2, label='Deep (m=12.5)')
+            ax2.axvline(R_2MRS_CUTOFF, color='orange', ls='--', alpha=0.7, label='2MRS cutoff')
+            ax2.set_xlabel('r [Mpc/h]')
+            ax2.set_ylabel(r'$w_L(r) = 1/S(r)$')
+            ax2.set_title('Luminosity selection weight')
+            ax2.legend()
+            ax2.set_xlim(0, 200)
+            ax2.set_yscale('log')
+            ax2.grid(True, alpha=0.3)
+
             plt.tight_layout()
             plt.savefig('psi_r_diagnostic.png', dpi=100)
             plt.close()
@@ -817,25 +847,58 @@ for i_iter, beta in enumerate(beta_values):
                 print(f"    Saved zoa_cloning_diagnostic.png")
 
             # Scatter plot of combined weights vs r (each point = galaxy, excluding masked)
-            fig, ax = plt.subplots(figsize=(10, 6))
+            # Side-by-side comparison with aquila weights
+            fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+
             # Split by 2MRS vs deep, excluding masked galaxies (2MRS beyond 125)
-            is_2mrs_gal = ~use_deep
+            is_2mrs_gal = is_2mrs_only
             is_masked = is_2mrs_gal & (r_mpc > R_2MRS_CUTOFF)  # 2MRS galaxies beyond 125
             w_combined = w_ang * w_L  # Angular x luminosity weight
             # 2MRS galaxies within 125
             sel_2mrs = is_2mrs_gal & ~is_masked
-            ax.scatter(r_mpc[sel_2mrs], w_combined[sel_2mrs], s=1, alpha=0.3, c='blue', label=f'2MRS (m=11.5, n={sel_2mrs.sum()})')
             # Deep galaxies (all used)
             sel_deep = ~is_2mrs_gal
+
+            # Left panel: Computed w_ang * w_L
+            ax = axes[0]
+            ax.scatter(r_mpc[sel_2mrs], w_combined[sel_2mrs], s=1, alpha=0.3, c='blue', label=f'2MRS (m=11.5, n={sel_2mrs.sum()})')
             ax.scatter(r_mpc[sel_deep], w_combined[sel_deep], s=1, alpha=0.3, c='red', label=f'Deep (m=12.5, n={sel_deep.sum()})')
             ax.axvline(R_2MRS_CUTOFF, color='orange', ls='--', lw=2, label='2MRS cutoff')
             ax.set_xlabel('r [Mpc/h]')
             ax.set_ylabel(r'$w_{ang} \times w_L$ (angular $\times$ luminosity weight)')
-            ax.set_title(f'Combined weights per galaxy vs distance (excluding {is_masked.sum()} masked)')
+            ax.set_title(f'Computed $w_{{ang}} \\times w_L$ (excluding {is_masked.sum()} masked)')
             ax.legend()
             ax.set_xlim(0, 200)
             ax.set_ylim(0, 10.5)
             ax.grid(True, alpha=0.3)
+
+            # Right panel: Aquila weight column for comparison
+            ax = axes[1]
+            try:
+                aquila = np.load("data/Carrick_reconstruction_2015/2m++_0Runs.npy")
+                aquila_weight = aquila['weight']
+                aquila_r = aquila['distance'] / 100.0
+                aquila_K = aquila['K2MRS']
+                aquila_is_2mrs = aquila_K < 11.75
+                aquila_sel_2mrs = aquila_is_2mrs & (aquila_weight > 0) & (aquila_r < R_2MRS_CUTOFF)
+                aquila_sel_deep = ~aquila_is_2mrs & (aquila_weight > 0) & (aquila_r < 200)
+
+                ax.scatter(aquila_r[aquila_sel_2mrs], aquila_weight[aquila_sel_2mrs], s=1, alpha=0.3, c='blue',
+                          label=f'2MRS (n={aquila_sel_2mrs.sum()})')
+                ax.scatter(aquila_r[aquila_sel_deep], aquila_weight[aquila_sel_deep], s=1, alpha=0.3, c='red',
+                          label=f'Deep (n={aquila_sel_deep.sum()})')
+                ax.axvline(R_2MRS_CUTOFF, color='orange', ls='--', lw=2, label='2MRS cutoff')
+                ax.set_xlabel('r [Mpc/h]')
+                ax.set_ylabel('Aquila weight')
+                ax.set_title('Aquila weight column')
+                ax.legend()
+                ax.set_xlim(0, 200)
+                ax.set_ylim(0, 10.5)
+                ax.grid(True, alpha=0.3)
+            except Exception as e:
+                ax.text(0.5, 0.5, f'Could not load aquila data:\n{e}',
+                       transform=ax.transAxes, ha='center', va='center')
+
             plt.tight_layout()
             plt.savefig('weights_vs_r.png', dpi=100)
             plt.close()

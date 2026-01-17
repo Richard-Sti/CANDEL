@@ -61,6 +61,10 @@ def dict_samples_to_array(samples):
     names = []
 
     for key, x in samples.items():
+        # Skip diagnostic arrays (skipZ suffix) - these are not model parameters
+        if "skipZ" in key:
+            continue
+
         if x.ndim == 1:
             data.append(x)
             names.append(key)
@@ -74,7 +78,8 @@ def dict_samples_to_array(samples):
                     data.append(x[:, j, i])
                     names.append(f"{key}_{j}_{i}")
         else:
-            raise ValueError("Invalid dimensionality of samples to stack.")
+            # Skip high-dimensional arrays
+            continue
 
     return np.vstack(data).T, names
 

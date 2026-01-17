@@ -358,9 +358,17 @@ def name2label(name):
         "a": r"$a$",
         "m1": r"$m_1$",
         "m2": r"$m_2$",
-        "zeropoint_dipole_mag": r"$\Delta \mathrm{ZP}$",
-        "zeropoint_dipole_ell": r"$\ell_{\Delta H_0}$",
-        "zeropoint_dipole_b": r"$b_{\Delta H_0}$",
+        # Zeropoint (calibration) parameters - in magnitudes
+        "zeropoint_dipole_mag": r"$|\Delta A|$",
+        "zeropoint_dipole_ell": r"$\ell_{\mathrm{ZP}}$",
+        "zeropoint_dipole_b": r"$b_{\mathrm{ZP}}$",
+        "zeropoint_pix": r"$\Delta A_{\mathrm{pix}}$",
+        # H0 anisotropy parameters - fractional δH
+        "H0_dipole_mag": r"$|\delta H_0/H_0|$",
+        "H0_dipole_ell": r"$\ell_{H_0}$",
+        "H0_dipole_b": r"$b_{H_0}$",
+        "H0_pix": r"$\delta H_{0,\mathrm{pix}}/H_0$",
+        # Legacy labels
         "dH_over_H_dipole": r"$\Delta H_0/H_0$",
         "dH_over_H_quad": r"$\Delta H_0/H_0$",
         "SN_absmag": r"$M_{\rm SN}$",
@@ -403,24 +411,26 @@ def name2label(name):
             elif "b" in name:
                 return rf"$b_{{\mathrm{{ext}},{bin_idx}}}$"
     
-    # Handle radial_binned dipole A parameters (e.g., A_dipole_radial_bin_mag__0)
-    if "A_dipole_radial_bin" in name:
+    # Handle radial_binned dipole zeropoint parameters
+    # (e.g., zeropoint_dipole_radial_bin_mag__0 or A_dipole_radial_bin_mag__0)
+    if "dipole_radial_bin" in name:
         parts = name.split("__")
         if len(parts) >= 2:
             bin_idx = parts[-1]
             if "mag" in name:
-                return rf"$A_{{\mathrm{{dip}},{bin_idx}}}$"
+                return rf"$\Delta A_{{\mathrm{{dip}},{bin_idx}}}$"
             elif "ell" in name:
                 return rf"$\ell_{{A,{bin_idx}}}$"
             elif "b" in name:
                 return rf"$b_{{A,{bin_idx}}}$"
-    
-    # Handle radial_binned A parameters (e.g., A_radial_bin__0)
-    if "A_radial_bin" in name and "dipole" not in name:
+
+    # Handle radial_binned zeropoint parameters
+    # (e.g., zeropoint_radial_bin__0 or A_radial_bin__0)
+    if "radial_bin" in name and "dipole" not in name:
         parts = name.split("__")
         if len(parts) >= 2:
             bin_idx = parts[-1]
-            return rf"$A_{{\mathrm{{CL}},{bin_idx}}}$"
+            return rf"$\Delta A_{{\mathrm{{CL}},{bin_idx}}}$"
     
     if "/" in name:
         prefix, base = name.split("/", 1)
@@ -467,9 +477,16 @@ def name2labelgetdist(name):
         "a": r"a",
         "m1": r"m_1",
         "m2": r"m_2",
-        "zeropoint_dipole_mag": r"\Delta_\mathrm{ZP}",         # noqa
-        "zeropoint_dipole_ell": r"\ell_{\Delta H_0}~\left[\mathrm{deg}\right]",  # noqa
-        "zeropoint_dipole_b": r"b_{\Delta H_0}~\left[\mathrm{deg}\right]",       # noqa
+        # Zeropoint (calibration) parameters - in magnitudes
+        "zeropoint_dipole_mag": r"|\Delta A|~\left[\mathrm{mag}\right]",         # noqa
+        "zeropoint_dipole_ell": r"\ell_{\mathrm{ZP}}~\left[\mathrm{deg}\right]",  # noqa
+        "zeropoint_dipole_b": r"b_{\mathrm{ZP}}~\left[\mathrm{deg}\right]",       # noqa
+        "zeropoint_pix": r"\Delta A_{\mathrm{pix}}~\left[\mathrm{mag}\right]",
+        # H0 anisotropy parameters - fractional δH
+        "H0_dipole_mag": r"|\delta H_0/H_0|",
+        "H0_dipole_ell": r"\ell_{H_0}~\left[\mathrm{deg}\right]",
+        "H0_dipole_b": r"b_{H_0}~\left[\mathrm{deg}\right]",
+        "H0_pix": r"\delta H_{0,\mathrm{pix}}/H_0",
         "M_dipole_mag": r"\Delta M_\mathrm{SN}",
         "M_dipole_ell": r"\ell_{\Delta M_{\rm SN}}~\left[\mathrm{deg}\right]",
         "M_dipole_b": r"b_{\Delta M_{\rm SN}}~\left[\mathrm{deg}\right]",
@@ -513,24 +530,26 @@ def name2labelgetdist(name):
             elif "b" in name:
                 return rf"b_{{\mathrm{{ext}},{bin_idx}}}~\left[\mathrm{{deg}}\right]"
     
-    # Handle radial_binned dipole A parameters (e.g., A_dipole_radial_bin_mag__0)
-    if "A_dipole_radial_bin" in name:
+    # Handle radial_binned dipole zeropoint parameters
+    # (e.g., zeropoint_dipole_radial_bin_mag__0 or A_dipole_radial_bin_mag__0)
+    if "dipole_radial_bin" in name:
         parts = name.split("__")
         if len(parts) >= 2:
             bin_idx = parts[-1]
             if "mag" in name:
-                return rf"A_{{\mathrm{{dip}},{bin_idx}}}~\left[\mathrm{{mag}}\right]"
+                return rf"\Delta A_{{\mathrm{{dip}},{bin_idx}}}~\left[\mathrm{{mag}}\right]"
             elif "ell" in name:
                 return rf"\ell_{{A,{bin_idx}}}~\left[\mathrm{{deg}}\right]"
             elif "b" in name:
                 return rf"b_{{A,{bin_idx}}}~\left[\mathrm{{deg}}\right]"
-    
-    # Handle radial_binned A parameters (e.g., A_radial_bin__0)
-    if "A_radial_bin" in name and "dipole" not in name:
+
+    # Handle radial_binned zeropoint parameters
+    # (e.g., zeropoint_radial_bin__0 or A_radial_bin__0)
+    if "radial_bin" in name and "dipole" not in name:
         parts = name.split("__")
         if len(parts) >= 2:
             bin_idx = parts[-1]
-            return rf"A_{{\mathrm{{CL}},{bin_idx}}}~\left[\mathrm{{mag}}\right]"
+            return rf"\Delta A_{{\mathrm{{CL}},{bin_idx}}}~\left[\mathrm{{mag}}\right]"
 
     if "/" in name:
         prefix, base = name.split("/", 1)
