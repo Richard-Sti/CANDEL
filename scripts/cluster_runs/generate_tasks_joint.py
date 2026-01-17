@@ -30,31 +30,31 @@ from candel import fprint, load_config, replace_prior_with_delta
 from candel.pvdata.data import load_clusters
 
 # Hardcoded flags for task generation.
-scaling_relations = [ "LTYT"]  # Set to None to run all
-reconstructions = ["zspace"] #"zspace", "Carrick2015",
-include_quad = False
-include_pairs = False
-include_pix = False
-include_radmag_fine = False    # Radmag with finer knot spacing
+scaling_relations = [ "LTYT", "LT", "YT"]  # Set to None to run all
+reconstructions = ["Vext", "Carrick2015", "Manticore"] #"zspace", "Carrick2015",
+include_quad = True
+include_pairs = True
+include_pix = True
+include_radmag_fine = True    # Radmag with finer knot spacing
 include_radmag_finest = True  # Radmag with finest knot spacing
 radmag_smoothness_threshold = 4000  # Flat region (km/s), no penalty within this
 radmag_smoothness_scale = 200  # Gaussian scale (km/s) beyond threshold, 0 or None to disable
-radmag_sample_galactic = True  # Sample direction in galactic coords (ell, b) instead of ICRS
-radmag_half_sky = True  # Restrict ell to [0, 180°] to break sign degeneracy with magnitude
-include_rad = False    # Radial Vext (direction free, magnitude varies with r)
-include_radmag = False  # Radial magnitude Vext (direction fixed, magnitude varies with r)
+radmag_sample_galactic = False # Sample direction in galactic coords (ell, b) instead of ICRS
+radmag_half_sky = False # Restrict ell to [0, 180°] to break sign degeneracy with magnitude
+include_rad = False   # Radial Vext (direction free, magnitude varies with r)
+include_radmag = True  # Radial magnitude Vext (direction fixed, magnitude varies with r)
 # Base model flags (split from old include_base)
-include_base = False  # No flow/H0 model (both Vext and zeropoint are delta)
-include_dipH0 = False  # H0_dipole varies (H0 anisotropy, affects z→r conversion)
-include_dipA = False   # zeropoint_dipole varies (calibration only, no z→r effect)
-include_dipVext = False  # Vext dipole only
-include_A = False  # Master switch for all A runs (dipA, quadA, pixA, pairs with A)
+include_base = True  # No flow/H0 model (both Vext and zeropoint are delta)
+include_dipH0 = True # H0_dipole varies (H0 anisotropy, affects z→r conversion)
+include_dipA = True   # zeropoint_dipole varies (calibration only, no z→r effect)
+include_dipVext = True  # Vext dipole only
+include_A = True  # Master switch for all A runs (dipA, quadA, pixA, pairs with A)
 include_bias = False  # Double power law bias model tests
 include_fixed_sigma = False
 # Z-space mode is auto-detected by the model based on H0 or Vext priors.
 n_zspace_iterations = 2  # Iterations to refine z->r mapping for H0/Vext models
-output_root = "results/radtest"
-num_chains = 1
+output_root = "results/nodensity"
+num_chains = 4
 chain_method = "sequential"
 LTYT_joint = True
 split_tasks_two_to_one = False
