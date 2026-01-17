@@ -57,7 +57,7 @@ output_root = "results/nodensity"
 num_chains = 4
 chain_method = "sequential"
 LTYT_joint = True
-split_tasks_two_to_one = False
+split_tasks_two_to_one = True
 split_tasks_by_kind = False
 overwrite_existing = True  # If False, sets skip_if_exists=True in configs
 
