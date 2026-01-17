@@ -31,7 +31,7 @@ from candel.pvdata.data import load_clusters
 
 # Hardcoded flags for task generation.
 scaling_relations = [ "LTYT", "LT", "YT"]  # Set to None to run all
-reconstructions = ["Vext", "Carrick2015", "Manticore"] #"zspace", "Carrick2015",
+reconstructions = ["Vext", "Carrick2015", "manticore"] #"zspace", "Carrick2015",
 include_quad = True
 include_pairs = True
 include_pix = True
@@ -985,6 +985,20 @@ if __name__ == "__main__":
         "bias",
     ]
 
+    # Helper to iterate tasks with Manticore runs last (across all kinematic groups)
+    def iter_tasks_manticore_last(tasks_by_group, ordered_groups):
+        """Yield (toml_out, kind_lower) with Manticore runs last."""
+        # First pass: non-Manticore runs
+        for group_name in ordered_groups:
+            for toml_out, kind_lower in tasks_by_group[group_name]:
+                if "manticore" not in kind_lower:
+                    yield toml_out, kind_lower
+        # Second pass: Manticore runs
+        for group_name in ordered_groups:
+            for toml_out, kind_lower in tasks_by_group[group_name]:
+                if "manticore" in kind_lower:
+                    yield toml_out, kind_lower
+
     if split_tasks_two_to_one:
         task_files = {
             "tasks_0": "tasks_0.txt",
@@ -994,11 +1008,10 @@ if __name__ == "__main__":
             key: open(path, "w") for key, path in task_files.items()
         }
         try:
-            for group_name in ordered_groups:
-                for toml_out, _ in tasks_by_group[group_name]:
-                    target = "tasks_1" if task_counter % 3 == 2 else "tasks_0"
-                    task_handles[target].write(f"{task_counter} {toml_out}\n")
-                    task_counter += 1
+            for toml_out, _ in iter_tasks_manticore_last(tasks_by_group, ordered_groups):
+                target = "tasks_1" if task_counter % 3 == 2 else "tasks_0"
+                task_handles[target].write(f"{task_counter} {toml_out}\n")
+                task_counter += 1
         finally:
             for fh in task_handles.values():
                 fh.close()
@@ -1015,11 +1028,10 @@ if __name__ == "__main__":
             key: open(path, "w") for key, path in task_files.items()
         }
         try:
-            for group_name in ordered_groups:
-                for toml_out, kind_lower in tasks_by_group[group_name]:
-                    bucket = "manticore" if "manticore" in kind_lower else "other"
-                    task_handles[bucket].write(f"{task_counter} {toml_out}\n")
-                    task_counter += 1
+            for toml_out, kind_lower in iter_tasks_manticore_last(tasks_by_group, ordered_groups):
+                bucket = "manticore" if "manticore" in kind_lower else "other"
+                task_handles[bucket].write(f"{task_counter} {toml_out}\n")
+                task_counter += 1
         finally:
             for fh in task_handles.values():
                 fh.close()
@@ -1029,8 +1041,7 @@ if __name__ == "__main__":
         )
     else:
         with open(task_file, "w") as task_fh:
-            for group_name in ordered_groups:
-                for toml_out, _ in tasks_by_group[group_name]:
-                    task_fh.write(f"{task_counter} {toml_out}\n")
-                    task_counter += 1
+            for toml_out, _ in iter_tasks_manticore_last(tasks_by_group, ordered_groups):
+                task_fh.write(f"{task_counter} {toml_out}\n")
+                task_counter += 1
         fprint(f"wrote task list to `{task_file}`")
