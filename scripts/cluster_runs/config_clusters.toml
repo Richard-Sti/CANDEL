@@ -19,7 +19,7 @@ chain_method = "sequential"
 seed = 44
 compute_log_density = true
 compute_evidence =  true
-track_log_density_per_sample = true
+track_log_density_per_sample = false
 num_chains_harmonic = 10
 
 skip_if_exists = false
