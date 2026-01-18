@@ -32,22 +32,25 @@ from candel.pvdata.data import load_clusters
 # Hardcoded flags for task generation.
 scaling_relations = [ "LTYT", "LT", "YT"]  # Set to None to run all
 reconstructions = ["Vext", "Carrick2015", "manticore"] #"zspace", "Carrick2015",
+# === TEMPORARY: Only regenerate runs affected by bugs ===
+# Bug 1: quadA/quadH0 - zeropoint_quad wasn't being fixed for dipH0 variant
+# Bug 2: radmag-finest - low array had wrong size (4 instead of 8)
 include_quad = True
-include_pairs = True
-include_pix = True
-include_radmag_fine = True    # Radmag with finer knot spacing
-include_radmag_finest = True  # Radmag with finest knot spacing
+include_pairs = False
+include_pix = False
+include_radmag_fine = True    # Radmag with finer knot spacing (BUGFIX - 6 knots vs 4)
+include_radmag_finest = True  # Radmag with finest knot spacing (BUGFIX - 8 knots vs 4)
 radmag_smoothness_threshold = 4000  # Flat region (km/s), no penalty within this
 radmag_smoothness_scale = 200  # Gaussian scale (km/s) beyond threshold, 0 or None to disable
 radmag_sample_galactic = False # Sample direction in galactic coords (ell, b) instead of ICRS
 radmag_half_sky = False # Restrict ell to [0, 180°] to break sign degeneracy with magnitude
 include_rad = False   # Radial Vext (direction free, magnitude varies with r)
-include_radmag = True  # Radial magnitude Vext (direction fixed, magnitude varies with r)
+include_radmag = True  # Radial magnitude Vext (BUGFIX - 5 knots vs 4 in template)
 # Base model flags (split from old include_base)
-include_base = True  # No flow/H0 model (both Vext and zeropoint are delta)
-include_dipH0 = True # H0_dipole varies (H0 anisotropy, affects z→r conversion)
-include_dipA = True   # zeropoint_dipole varies (calibration only, no z→r effect)
-include_dipVext = True  # Vext dipole only
+include_base = False  # No flow/H0 model (both Vext and zeropoint are delta)
+include_dipH0 = False # H0_dipole varies (H0 anisotropy, affects z→r conversion)
+include_dipA = False   # zeropoint_dipole varies (calibration only, no z→r effect)
+include_dipVext = False  # Vext dipole only
 include_A = True  # Master switch for all A runs (dipA, quadA, pixA, pairs with A)
 include_bias = False  # Double power law bias model tests
 include_fixed_sigma = False
@@ -432,9 +435,16 @@ if __name__ == "__main__":
     def radmag_prior_with_knots(knots):
         prior = deepcopy(radmag_prior_template)
         prior["rknot"] = knots
+        nknots = len(knots)
+        # Update low array to match knot count: [0, -5000, -5000, ...]
+        # First knot low=0 to break sign degeneracy with direction
+        template_low = prior.get("low", [0, -5000, -5000, -5000])
+        if isinstance(template_low, list) and len(template_low) != nknots:
+            neg_val = template_low[1] if len(template_low) > 1 else -5000
+            prior["low"] = [0] + [neg_val] * (nknots - 1)
         # Remove max_modulus if it doesn't match the new knot count.
         # h0_dipole_percent is safe to keep since it scales with rknot.
-        if "max_modulus" in prior and len(prior["max_modulus"]) != len(knots):
+        if "max_modulus" in prior and len(prior["max_modulus"]) != nknots:
             del prior["max_modulus"]
         # Override smoothness prior from the global flags
         if radmag_smoothness_scale:
@@ -461,7 +471,7 @@ if __name__ == "__main__":
         return expand_override_grid(settings)
 
     radialMagVext_combinations = build_radmag_combinations(
-        [0, 250, 500, 750, 1000], "default"
+        [0, 250, 500, 1000], "default"
     )
     if not include_radmag:
         radialMagVext_combinations = []
@@ -469,11 +479,11 @@ if __name__ == "__main__":
     radmag_finest_combinations = []
     if include_radmag_fine:
         radmag_fine_combinations = build_radmag_combinations(
-            [0, 125, 250, 500, 750, 1000], "fine"
+            [0, 125, 250, 500, 1000], "fine"
         )
     if include_radmag_finest:
         radmag_finest_combinations = build_radmag_combinations(
-            [0, 62.5, 125, 187.5, 250, 500, 750, 1000], "finest"
+            [0, 62.5, 125, 187.5, 250, 500, 1000], "finest"
         )
 
     # Double power law bias model combinations (manticore + LTYT + dipH0 only)
@@ -812,8 +822,14 @@ if __name__ == "__main__":
                             "model/priors/H0_dipole",
                             {"dist": "delta", "value": [0.0, 0.0, 0.0]},
                         )
+                        run_config = overwrite_subtree(
+                            run_config,
+                            "model/priors/H0_quad",
+                            {"dist": "delta", "value": [[0.0, 0.0], [0.0, 0.0], [0.0, 0.0]]},
+                        )
                     elif h0_variant == "dipH0":
                         # dipH0 run: H0 varies, zeropoint fixed
+                        # Convert zeropoint prior bounds to H0 prior bounds
                         zp_high = zp_dipole_prior.get("high", 0.2)
                         h0_high = min(0.15, zp_high)  # Fractional δH
                         run_config = overwrite_subtree(
@@ -826,6 +842,22 @@ if __name__ == "__main__":
                             "model/priors/zeropoint_dipole",
                             {"dist": "delta", "value": [0.0, 0.0, 0.0]},
                         )
+                        # Also fix zeropoint_quad and set H0_quad if quad was varying
+                        zp_quad_prior = get_nested(
+                            local_config, "model/priors/zeropoint_quad", {})
+                        if isinstance(zp_quad_prior, dict) and zp_quad_prior.get("dist") not in (None, "delta"):
+                            zp_quad_high = zp_quad_prior.get("high", 0.15)
+                            h0_quad_high = min(0.15, zp_quad_high)
+                            run_config = overwrite_subtree(
+                                run_config,
+                                "model/priors/H0_quad",
+                                {"dist": "quadrupole_uniform_fixed", "low": 0.0, "high": h0_quad_high},
+                            )
+                            run_config = overwrite_subtree(
+                                run_config,
+                                "model/priors/zeropoint_quad",
+                                {"dist": "delta", "value": [[0.0, 0.0], [0.0, 0.0], [0.0, 0.0]]},
+                            )
 
                     # Determine run type flags
                     is_H0_run = (h0_variant == "dipH0") or h0_dip_varying
