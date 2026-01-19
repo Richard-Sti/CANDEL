@@ -26,8 +26,7 @@ from os.path import exists, join, splitext
 import numpy as np
 import tomli_w
 
-from candel import fprint, load_config, replace_prior_with_delta
-from candel.pvdata.data import load_clusters
+from util_light import fprint, load_config, replace_prior_with_delta
 
 # Hardcoded flags for task generation.
 scaling_relations = [ "LTYT", "LT", "YT"]  # Set to None to run all
@@ -36,27 +35,27 @@ reconstructions = ["Vext", "Carrick2015", "manticore"] #"zspace", "Carrick2015",
 # Bug 1: quadA/quadH0 - zeropoint_quad wasn't being fixed for dipH0 variant
 # Bug 2: radmag-finest - low array had wrong size (4 instead of 8)
 include_quad = True
-include_pairs = False
-include_pix = False
+include_pairs = True
+include_pix = True
 include_radmag_fine = True    # Radmag with finer knot spacing (BUGFIX - 6 knots vs 4)
 include_radmag_finest = True  # Radmag with finest knot spacing (BUGFIX - 8 knots vs 4)
 radmag_smoothness_threshold = 4000  # Flat region (km/s), no penalty within this
 radmag_smoothness_scale = 200  # Gaussian scale (km/s) beyond threshold, 0 or None to disable
 radmag_sample_galactic = False # Sample direction in galactic coords (ell, b) instead of ICRS
 radmag_half_sky = False # Restrict ell to [0, 180°] to break sign degeneracy with magnitude
-include_rad = False   # Radial Vext (direction free, magnitude varies with r)
+include_rad = False  # Radial Vext (direction free, magnitude varies with r)
 include_radmag = True  # Radial magnitude Vext (BUGFIX - 5 knots vs 4 in template)
 # Base model flags (split from old include_base)
-include_base = False  # No flow/H0 model (both Vext and zeropoint are delta)
-include_dipH0 = False # H0_dipole varies (H0 anisotropy, affects z→r conversion)
-include_dipA = False   # zeropoint_dipole varies (calibration only, no z→r effect)
-include_dipVext = False  # Vext dipole only
+include_base = True  # No flow/H0 model (both Vext and zeropoint are delta)
+include_dipH0 = True # H0_dipole varies (H0 anisotropy, affects z→r conversion)
+include_dipA = True   # zeropoint_dipole varies (calibration only, no z→r effect)
+include_dipVext = True  # Vext dipole only
 include_A = True  # Master switch for all A runs (dipA, quadA, pixA, pairs with A)
 include_bias = False  # Double power law bias model tests
 include_fixed_sigma = False
 # Z-space mode is auto-detected by the model based on H0 or Vext priors.
 n_zspace_iterations = 2  # Iterations to refine z->r mapping for H0/Vext models
-output_root = "results/nodensity"
+output_root = "results/nodensity2"
 num_chains = 4
 chain_method = "sequential"
 LTYT_joint = True
@@ -560,6 +559,9 @@ if __name__ == "__main__":
 
     shared_logT_mean = None
     if LTYT_joint:
+        # Lazy import to avoid JAX initialization when LTYT_joint=False
+        from candel.pvdata.data import load_clusters
+
         base_clusters_full = deepcopy(base_clusters_section)
         root = base_clusters_full.pop("root", None)
         if root is None:
@@ -597,6 +599,10 @@ if __name__ == "__main__":
                 logT_mean=shared_logT_mean,
             ),
         }
+        # Base shared params - always shared between joint models
+        # Note: Vext, Vext_quad, zeropoint_dipole, H0_dipole, zeropoint_pix,
+        # H0_pix, zeropoint_quad, H0_quad are added conditionally based on
+        # model config (see below)
         ltyt_shared_params = [
             "A_LT",
             "B_LT",
@@ -604,17 +610,7 @@ if __name__ == "__main__":
             "B_YT",
             "sigma_LT",
             "sigma_YT",
-            "Vext",
-            "Vext_quad",
-            "zeropoint_dipole",
-            "zeropoint_quad",
-            "zeropoint_pix",
-            "H0_dipole",
-            "H0_quad",
-            "H0_pix",
             "sigma_v",
-            "beta",
-            "b1",
             "R_dist_emp",
             "p_dist_emp",
             "n_dist_emp",
@@ -677,8 +673,13 @@ if __name__ == "__main__":
         scenarios = [sc for sc in scenarios if sc.get("label") in scaling_relations]
 
     def flow_shared_params(which_vext):
+        """Return Vext-related shared params based on which_vext setting.
+
+        Note: For 'constant' mode, Vext and Vext_quad are added conditionally
+        based on whether their priors are varying (handled separately).
+        """
         mapping = {
-            "constant": ["Vext", "Vext_quad"],
+            "constant": [],  # Vext/Vext_quad added conditionally if priors vary
             "radial": ["Vext_radial"],
             "radial_magnitude": ["Vext_radmag"],
             "per_pix": ["Vext_pix"],
@@ -728,45 +729,68 @@ if __name__ == "__main__":
                     else:
                         local_config = overwrite_config(local_config, key, value)
 
-                shared_base = scenario.get("shared_params_base", None)
-                if shared_base and scenario_label == "LTYT" and scenario.get("share_flow", False):
-                    which_vext = get_nested(
-                        local_config, "pv_model/which_Vext", "constant")
-                    if which_vext == "per_pix":
-                        nside = get_nested(
-                            local_config, "pv_model/Vext_per_pix_nside", 1)
-                        npix = 12 * nside**2
-                        local_config = overwrite_subtree(
-                            local_config,
-                            "model/priors/Vext_pix",
-                            {"dist": "array_uniform", "low": -10000.0, "high": 10000.0, "nval": npix},
-                        )
-                    which_zp = get_nested(
-                        local_config, "pv_model/which_zeropoint", "constant")
-                    if which_zp == "per_pix":
-                        nside = get_nested(
-                            local_config, "pv_model/anisotropy_per_pix_nside", 1)
-                        npix = 12 * nside**2
-                        local_config = overwrite_subtree(
-                            local_config,
-                            "model/priors/zeropoint_pix",
-                            {"dist": "array_uniform", "low": -0.1, "high": 0.1, "nval": npix},
-                        )
+                # Fix pixel priors based on which_* settings (applies to ALL scenarios)
+                # Set Vext_pix prior based on which_Vext
+                which_vext = get_nested(
+                    local_config, "pv_model/which_Vext", "constant")
+                if which_vext == "per_pix":
+                    nside = get_nested(
+                        local_config, "pv_model/Vext_per_pix_nside", 1)
+                    npix = 12 * nside**2
+                    local_config = overwrite_subtree(
+                        local_config,
+                        "model/priors/Vext_pix",
+                        {"dist": "array_uniform", "low": -10000.0, "high": 10000.0, "nval": npix},
+                    )
+                else:
+                    # Not per_pix mode: fix Vext_pix to zero
+                    local_config = overwrite_subtree(
+                        local_config,
+                        "model/priors/Vext_pix",
+                        {"dist": "delta", "value": [0.0] * 12},
+                    )
 
-                if shared_base:
-                    shared_list = list(shared_base)
-                    if scenario.get("share_flow", False):
-                        which_vext = get_nested(
-                            local_config, "pv_model/which_Vext", "constant")
-                        shared_list.extend(flow_shared_params(which_vext))
-                        which_zp = get_nested(
-                            local_config, "pv_model/which_zeropoint", "constant")
-                        if which_zp == "per_pix":
-                            shared_list.append("zeropoint_pix")
-                    shared_list = list(dict.fromkeys(shared_list))
-                    shared_str = ",".join(shared_list)
-                    local_config = overwrite_config(
-                        local_config, "inference/shared_params", shared_str)
+                # Set zeropoint_pix prior based on which_zeropoint
+                which_zp = get_nested(
+                    local_config, "pv_model/which_zeropoint", "constant")
+                if which_zp == "per_pix":
+                    nside = get_nested(
+                        local_config, "pv_model/anisotropy_per_pix_nside", 1)
+                    npix = 12 * nside**2
+                    local_config = overwrite_subtree(
+                        local_config,
+                        "model/priors/zeropoint_pix",
+                        {"dist": "array_uniform", "low": -0.1, "high": 0.1, "nval": npix},
+                    )
+                else:
+                    # Not per_pix mode: fix zeropoint_pix to zero
+                    local_config = overwrite_subtree(
+                        local_config,
+                        "model/priors/zeropoint_pix",
+                        {"dist": "delta", "value": [0.0] * 12},
+                    )
+
+                # Set H0_pix prior based on which_H0
+                which_h0 = get_nested(
+                    local_config, "pv_model/which_H0", "constant")
+                if which_h0 == "per_pix":
+                    nside = get_nested(
+                        local_config, "pv_model/anisotropy_per_pix_nside", 1)
+                    npix = 12 * nside**2
+                    local_config = overwrite_subtree(
+                        local_config,
+                        "model/priors/H0_pix",
+                        {"dist": "array_uniform", "low": -0.1, "high": 0.1, "nval": npix},
+                    )
+                else:
+                    # Not per_pix mode: fix H0_pix to zero
+                    local_config = overwrite_subtree(
+                        local_config,
+                        "model/priors/H0_pix",
+                        {"dist": "delta", "value": [0.0] * 12},
+                    )
+
+                shared_base = scenario.get("shared_params_base", None)
 
                 if scenario_label == "Joint":
                     dipole_prior = get_nested(
@@ -858,6 +882,53 @@ if __name__ == "__main__":
                                 "model/priors/zeropoint_quad",
                                 {"dist": "delta", "value": [[0.0, 0.0], [0.0, 0.0], [0.0, 0.0]]},
                             )
+
+                    # Build shared_params based on run_config (after priors are set)
+                    if shared_base:
+                        shared_list = list(shared_base)
+                        if scenario.get("share_flow", False):
+                            which_vext = get_nested(
+                                run_config, "pv_model/which_Vext", "constant")
+                            shared_list.extend(flow_shared_params(which_vext))
+
+                            # Add beta only for reconstruction runs (not Vext-only)
+                            kind = get_nested(run_config, "pv_model/kind", "")
+                            if "carrick" in kind.lower() or "manticore" in kind.lower():
+                                shared_list.append("beta")
+
+                            # Conditionally add Vext dipole/quadrupole if priors vary
+                            if _prior_is_varying(run_config, "Vext"):
+                                shared_list.append("Vext")
+                            if _prior_is_varying(run_config, "Vext_quad"):
+                                shared_list.append("Vext_quad")
+
+                            # Conditionally add zeropoint/H0 dipole if priors vary
+                            if _prior_is_varying(run_config, "zeropoint_dipole"):
+                                shared_list.append("zeropoint_dipole")
+                            if _prior_is_varying(run_config, "H0_dipole"):
+                                shared_list.append("H0_dipole")
+
+                            # Conditionally add per-pixel parameters
+                            which_zp = get_nested(
+                                run_config, "pv_model/which_zeropoint", "constant")
+                            if which_zp == "per_pix":
+                                shared_list.append("zeropoint_pix")
+
+                            which_h0 = get_nested(
+                                run_config, "pv_model/which_H0", "constant")
+                            if which_h0 == "per_pix":
+                                shared_list.append("H0_pix")
+
+                            # Conditionally add quadrupole parameters if priors are varying
+                            if _prior_is_varying(run_config, "zeropoint_quad"):
+                                shared_list.append("zeropoint_quad")
+                            if _prior_is_varying(run_config, "H0_quad"):
+                                shared_list.append("H0_quad")
+
+                        shared_list = list(dict.fromkeys(shared_list))
+                        shared_str = ",".join(shared_list)
+                        run_config = overwrite_config(
+                            run_config, "inference/shared_params", shared_str)
 
                     # Determine run type flags
                     is_H0_run = (h0_variant == "dipH0") or h0_dip_varying

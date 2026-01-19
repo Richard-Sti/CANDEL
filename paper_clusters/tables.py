@@ -24,7 +24,10 @@ import tomli
 from astropy.coordinates import SkyCoord
 import astropy.units as u
 
-from config import RESULTS_FOLDER, RESULTS_ROOT
+from config import (
+    RESULTS_FOLDER, RESULTS_ROOT, RECON_LABELS_SHORT,
+    RECONSTRUCTIONS, get_active_reconstructions,
+)
 from utils import quadrature
 
 
@@ -293,12 +296,7 @@ class RunMetadata:
     @property
     def recon_pretty(self) -> str:
         """Pretty name for reconstruction."""
-        return {
-            "Carrick2015": "C15",
-            "manticore": "Manticore",
-            "2mpp_zspace_galaxies": r"\TWOMZ",
-            "Vext": "No Recon",
-        }.get(self.reconstruction, self.reconstruction)
+        return RECON_LABELS_SHORT.get(self.reconstruction, self.reconstruction)
 
 
 def parse_filename(fname: str) -> Optional[RunMetadata]:
@@ -629,9 +627,8 @@ def generate_table1_dipoles(results: list[RunResult],
 
     if relations is None:
         relations = ["LT", "YT", "LTYT"]
-    recons = ["Vext", "manticore", "Carrick2015", "2mpp_zspace_galaxies"]
-    recon_pretty_map = {"Carrick2015": "C15", "manticore": "Manticore",
-                        "2mpp_zspace_galaxies": r"\TWOMZ", "Vext": "No Recon"}
+    recons = RECONSTRUCTIONS
+    recon_pretty_map = RECON_LABELS_SHORT
     models = ["dipVext", "dipH0", "dipA"]  # No base row
 
     lines = []
@@ -783,8 +780,8 @@ def generate_table2_beyond_dipoles(results: list[RunResult],
         "dipH0_dipVext": r"$H_0$ dip. + $\mathbf{V}_{\rm ext}$ dip.",
     }
 
-    recons = ["Vext", "manticore", "Carrick2015", "2mpp_zspace_galaxies"]
-    recon_labels = ["No Recon", "Manticore", "C15", r"\TWOMZ"]
+    recons = RECONSTRUCTIONS
+    recon_labels = [RECON_LABELS_SHORT[r] for r in RECONSTRUCTIONS]
 
     lines = []
     lines.append(r"\begin{tabular}{|l|cccc|}")
@@ -832,8 +829,8 @@ def generate_table_full_evidence(results: list[RunResult],
     groups = group_results(results)
 
     relations = ["LT", "YT", "LTYT"]
-    recons = ["Vext", "manticore", "Carrick2015", "2mpp_zspace_galaxies"]
-    recon_labels = ["No Recon", "Manticore", "C15", r"\TWOMZ"]
+    recons = RECONSTRUCTIONS
+    recon_labels = [RECON_LABELS_SHORT[r] for r in RECONSTRUCTIONS]
 
     # All model types found
     all_models = set()
@@ -903,9 +900,8 @@ def generate_appendix_radial(results: list[RunResult],
     groups = group_results(results)
 
     relations = ["LT", "YT", "LTYT"]
-    recons = ["Vext", "manticore", "Carrick2015", "2mpp_zspace_galaxies"]
-    recon_pretty_map = {"Carrick2015": "C15", "manticore": "Manticore",
-                        "2mpp_zspace_galaxies": r"\TWOMZ", "Vext": "No Recon"}
+    recons = RECONSTRUCTIONS
+    recon_pretty_map = RECON_LABELS_SHORT
 
     lines = []
     lines.append(r"\begin{tabular}{|ll|ccccc|cc|c|}")
@@ -995,9 +991,8 @@ def generate_appendix_pixel(results: list[RunResult],
     groups = group_results(results)
 
     relations = ["LT", "YT", "LTYT"]
-    recons = ["Vext", "manticore", "Carrick2015", "2mpp_zspace_galaxies"]
-    recon_pretty_map = {"Carrick2015": "C15", "manticore": "Manticore",
-                        "2mpp_zspace_galaxies": r"\TWOMZ", "Vext": "No Recon"}
+    recons = RECONSTRUCTIONS
+    recon_pretty_map = RECON_LABELS_SHORT
 
     models = ["pixVext", "pixA", "pixH0"]
     model_names = {
@@ -1111,9 +1106,8 @@ def generate_appendix_quadrupole(results: list[RunResult],
     groups = group_results(results)
 
     relations = ["LT", "YT", "LTYT"]
-    recons = ["Vext", "manticore", "Carrick2015", "2mpp_zspace_galaxies"]
-    recon_pretty_map = {"Carrick2015": "C15", "manticore": "Manticore",
-                        "2mpp_zspace_galaxies": r"\TWOMZ", "Vext": "No Recon"}
+    recons = RECONSTRUCTIONS
+    recon_pretty_map = RECON_LABELS_SHORT
 
     # Models to include: quadVext, quadA, quadH0
     models = ["quadVext", "quadA", "quadH0"]
@@ -1279,9 +1273,8 @@ def generate_appendix_mixed_dipoles(results: list[RunResult],
     groups = group_results(results)
 
     relations = ["LT", "YT", "LTYT"]
-    recons = ["Vext", "manticore", "Carrick2015", "2mpp_zspace_galaxies"]
-    recon_pretty_map = {"Carrick2015": "C15", "manticore": "Manticore",
-                        "2mpp_zspace_galaxies": r"\TWOMZ", "Vext": "No Recon"}
+    recons = RECONSTRUCTIONS
+    recon_pretty_map = RECON_LABELS_SHORT
 
     models = ["dipA_dipVext", "dipH0_dipVext"]
     model_names = {

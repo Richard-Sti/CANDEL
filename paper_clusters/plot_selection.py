@@ -4,8 +4,9 @@ import matplotlib.pyplot as plt
 from scipy.special import gammainc, gammaln
 
 from config import (
-    setup_style, COLS, get_results_path, get_figure_path, INCLUDE_MANTICORE,
-    DATA_CONFIG_PATH
+    setup_style, get_results_path, get_figure_path,
+    get_active_reconstructions, RECON_LABELS, RECON_COLORS,
+    DATA_CONFIG_PATH,
 )
 from candel import read_samples
 import candel
@@ -86,59 +87,25 @@ def main():
     # Convert zcmb to comoving distance (assuming zcmb = zcosmo)
     cluster_radii = r2d(zcmb, h=1.0)
 
+    # Get active reconstructions
+    recons = get_active_reconstructions()
+
     # Define files for each dipole model
-    dipole_configs = [
-        {
-            "name": "dipVext",
-            "title": r"$\mathrm{dip}\,V_\mathrm{ext}$",
-            "files": {
-                "Carrick2015": "Carrick2015_LTYT_noMNR_dipVext_hasY.hdf5",
-                "Manticore": "manticore_LTYT_noMNR_dipVext_hasY.hdf5",
-                "2M++": "2mpp_zspace_galaxies_LTYT_noMNR_dipVext_hasY.hdf5",
-                "No recon": "Vext_LTYT_noMNR_dipVext_hasY.hdf5",
-            },
-        },
-        {
-            "name": "dipH0",
-            "title": r"$\mathrm{dip}\,H_0$",
-            "files": {
-                "Carrick2015": "Carrick2015_LTYT_noMNR_dipH0_hasY.hdf5",
-                "Manticore": "manticore_LTYT_noMNR_dipH0_hasY.hdf5",
-                "2M++": "2mpp_zspace_galaxies_LTYT_noMNR_dipH0_hasY.hdf5",
-                "No recon": "Vext_LTYT_noMNR_dipH0_hasY.hdf5",
-            },
-        },
-        {
-            "name": "dipA",
-            "title": r"$\mathrm{dip}\,A$",
-            "files": {
-                "Carrick2015": "Carrick2015_LTYT_noMNR_dipA_hasY.hdf5",
-                "Manticore": "manticore_LTYT_noMNR_dipA_hasY.hdf5",
-                "2M++": "2mpp_zspace_galaxies_LTYT_noMNR_dipA_hasY.hdf5",
-                "No recon": "Vext_LTYT_noMNR_dipA_hasY.hdf5",
-            },
-        },
-    ]
-
-    # Reconstruction order and colors
-    # Order: Carrick (pink), Manticore (orange), 2M++ (green), No recon (purple)
-    recon_order = ["Carrick2015", "Manticore", "2M++", "No recon"]
-    recon_cols = {
-        "Carrick2015": COLS[3],  # pink
-        "Manticore": COLS[1],    # orange
-        "2M++": COLS[2],         # green
-        "No recon": COLS[0],     # purple
-    }
-    recon_labels = {
-        "Carrick2015": "Carrick2015",
-        "Manticore": "Manticore",
-        "2M++": r"2M++$\rho(z)$",
-        "No recon": "No reconstruction",
-    }
-
-    # Filter out manticore if not included
-    if not INCLUDE_MANTICORE:
-        recon_order = [r for r in recon_order if r != "Manticore"]
+    dipole_configs = []
+    for model, title in [("dipVext", r"$\mathrm{dip}\,V_\mathrm{ext}$"),
+                          ("dipH0", r"$\mathrm{dip}\,H_0$"),
+                          ("dipA", r"$\mathrm{dip}\,A$")]:
+        files = {}
+        for recon in recons:
+            suffix = "_hasY" if recon != "Vext" or model != "dipVext" else ""
+            # LTYT always has _hasY
+            suffix = "_hasY"
+            files[recon] = f"{recon}_LTYT_noMNR_{model}{suffix}.hdf5"
+        dipole_configs.append({
+            "name": model,
+            "title": title,
+            "files": files,
+        })
 
     # r grid for plotting
     r_grid = np.linspace(R_MIN, R_MAX, N_POINTS)
@@ -149,10 +116,10 @@ def main():
 
     for ax, config in zip(axes, dipole_configs):
         # Plot selection functions
-        for recon in recon_order:
+        for recon in recons:
             fname = config["files"][recon]
-            col = recon_cols[recon]
-            label = recon_labels[recon]
+            col = RECON_COLORS[recon]
+            label = RECON_LABELS[recon]
 
             try:
                 R_samp, p_samp, n_samp = load_selection_samples(fname)

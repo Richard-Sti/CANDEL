@@ -1,5 +1,7 @@
 """Whole posterior corner plot."""
-from config import setup_style, COLS, get_results_path, get_figure_path, INCLUDE_MANTICORE
+from config import (
+    setup_style, COLS, get_results_path, get_figure_path, INCLUDE_MANTICORE,
+)
 
 import matplotlib.pyplot as plt
 from candel import plot_corner_from_hdf5
@@ -8,18 +10,14 @@ from candel import plot_corner_from_hdf5
 def main():
     setup_style()
 
-    if INCLUDE_MANTICORE:
-        fnames = [
-            get_results_path("manticore_LTYT_noMNR_hasY.hdf5"),
-            get_results_path("manticore_LTYT_noMNR_dipVext_hasY.hdf5"),
-            get_results_path("manticore_LTYT_noMNR_dipH0_hasY.hdf5"),
-        ]
-    else:
-        fnames = [
-            get_results_path("Carrick2015_LTYT_noMNR_hasY.hdf5"),
-            get_results_path("Carrick2015_LTYT_noMNR_dipVext_hasY.hdf5"),
-            get_results_path("Carrick2015_LTYT_noMNR_dipH0_hasY.hdf5"),
-        ]
+    # Use Manticore if enabled, otherwise use Carrick2015
+    recon = "manticore" if INCLUDE_MANTICORE else "Carrick2015"
+
+    fnames = [
+        get_results_path(f"{recon}_LTYT_noMNR_hasY.hdf5"),
+        get_results_path(f"{recon}_LTYT_noMNR_dipVext_hasY.hdf5"),
+        get_results_path(f"{recon}_LTYT_noMNR_dipH0_hasY.hdf5"),
+    ]
     fnames = [str(f) for f in fnames]
 
     keys = [

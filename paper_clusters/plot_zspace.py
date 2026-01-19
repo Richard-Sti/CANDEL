@@ -1,5 +1,8 @@
 """2M++ z-space posterior comparison."""
-from config import setup_style, COLS, RESULTS_ROOT, get_figure_path, INCLUDE_MANTICORE
+from config import (
+    setup_style, COLS, RESULTS_ROOT, get_figure_path, INCLUDE_MANTICORE,
+    RECON_LABELS, RECON_COLORS,
+)
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -9,15 +12,15 @@ from candel import plot_corner_getdist
 
 
 def plot_zspace():
-    """Compare Carrick2015 vs 2M++-rho(z) dipole directions."""
+    """Compare dipole directions for 2M++ρ(z) and other reconstructions."""
     fnames = [
         RESULTS_ROOT / "zspace/2mpp_zspace_galaxies_LTYT_noMNR_dipA_hasY.hdf5",
         RESULTS_ROOT / "zspace/2mpp_zspace_galaxies_LTYT_noMNR_dipH0_hasY.hdf5",
     ]
     cols = [COLS[1], COLS[0]]
     labels = [
-        r"2M++$\rho(z)$ ZP dipole",
-        r"2M++$\rho(z)$ $H_0$ dipole",
+        RECON_LABELS["2mpp_zspace_galaxies"] + " ZP dipole",
+        RECON_LABELS["2mpp_zspace_galaxies"] + r" $H_0$ dipole",
     ]
     contour_args = [
         {"zorder": 1},
@@ -31,13 +34,13 @@ def plot_zspace():
     if INCLUDE_MANTICORE:
         fnames.append(RESULTS_ROOT / "zspace/manticore_LTYT_noMNR_dipH0_hasY.hdf5")
         cols.append(COLS[3])
-        labels.append("Manticore $H_0$ dipole")
+        labels.append(RECON_LABELS["manticore"] + r" $H_0$ dipole")
         contour_args.append({"zorder": 1})
         line_args.append({})
 
     fnames.append(RESULTS_ROOT / "zspace/Carrick2015_LTYT_noMNR_dipH0_hasY.hdf5")
-    cols.append(COLS[2])
-    labels.append(r"Carrick 2015 $H_0$ dipole")
+    cols.append(RECON_COLORS["Carrick2015"])
+    labels.append(RECON_LABELS["Carrick2015"] + r" $H_0$ dipole")
     contour_args.append({"zorder": 3, "filled": False, "lw": 2.0})
     line_args.append({"lw": 2.0})
 

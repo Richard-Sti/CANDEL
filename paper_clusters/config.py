@@ -9,16 +9,70 @@ import matplotlib.pyplot as plt
 # Paths
 CANDEL_ROOT = Path("/Users/yasin/code/CANDEL")
 RESULTS_ROOT = CANDEL_ROOT / "results"
-RESULTS_FOLDER = "zspace"
+RESULTS_FOLDER = "nodensity"
 FIGURES_FOLDER = CANDEL_ROOT / "paper_clusters/figures"
 DATA_CONFIG_PATH = CANDEL_ROOT / "paper_clusters/data.toml"
 CLUSTERS_DATA_PATH = CANDEL_ROOT / "data/Clusters/ClustersData.txt"
 
 # Flags
-INCLUDE_MANTICORE = False
+INCLUDE_MANTICORE = True
 
 # Color palette
 COLS = ["#7570b3", "#d95f02", "#1b9e77", "#e7298a", "#66a61e"]
+
+# Reconstruction configuration
+# Keys are the prefixes used in filenames (e.g., "Carrick2015_LT_noMNR_dipVext.hdf5")
+RECONSTRUCTIONS = ["Vext", "Carrick2015", "manticore"]
+
+# Display names for plots/tables
+RECON_LABELS = {
+    "Vext": "No reconstruction",
+    "Carrick2015": "Carrick2015",
+    "manticore": "Manticore",
+}
+
+# Short labels for tables
+RECON_LABELS_SHORT = {
+    "Vext": "No Recon",
+    "Carrick2015": "C15",
+    "manticore": "Manticore",
+}
+
+# Colors for each reconstruction (matched to COLS palette)
+RECON_COLORS = {
+    "Vext": COLS[2],        # green
+    "Carrick2015": COLS[3], # pink
+    "manticore": COLS[0],   # purple
+}
+
+# Z-order for plotting (higher = on top)
+RECON_ZORDER = {
+    "Vext": 1,
+    "Carrick2015": 4,
+    "manticore": 3,
+}
+
+
+def get_active_reconstructions():
+    """Return list of active reconstructions, respecting INCLUDE_MANTICORE flag."""
+    if INCLUDE_MANTICORE:
+        return RECONSTRUCTIONS
+    return [r for r in RECONSTRUCTIONS if r != "manticore"]
+
+
+def get_recon_labels():
+    """Return labels for active reconstructions."""
+    return [RECON_LABELS[r] for r in get_active_reconstructions()]
+
+
+def get_recon_colors():
+    """Return colors for active reconstructions."""
+    return [RECON_COLORS[r] for r in get_active_reconstructions()]
+
+
+def get_recon_zorders():
+    """Return z-orders for active reconstructions."""
+    return [RECON_ZORDER[r] for r in get_active_reconstructions()]
 
 # Alternative colors used in some plots
 C_WITH_Y = "#87193d"
@@ -63,3 +117,35 @@ def get_results_path(fname):
 def get_figure_path(fname):
     """Get full path for saving a figure."""
     return FIGURES_FOLDER / fname
+
+
+def build_recon_file_list(relation, model, has_y=False, folder=None):
+    """Build file list for active reconstructions.
+
+    Parameters
+    ----------
+    relation : str
+        Relation name (e.g., "LT", "YT", "LTYT")
+    model : str
+        Model suffix (e.g., "dipVext", "dipH0", "base" or "")
+    has_y : bool
+        Whether to append "_hasY" suffix
+    folder : str, optional
+        Override results folder. Defaults to RESULTS_FOLDER.
+
+    Returns
+    -------
+    list
+        List of file paths for each active reconstruction.
+    """
+    if folder is None:
+        folder = RESULTS_FOLDER
+
+    suffix = "_hasY" if has_y else ""
+    model_part = f"_{model}" if model and model != "base" else ""
+
+    files = []
+    for recon in get_active_reconstructions():
+        fname = f"{folder}/{recon}_{relation}_noMNR{model_part}{suffix}.hdf5"
+        files.append(str(RESULTS_ROOT / fname))
+    return files
