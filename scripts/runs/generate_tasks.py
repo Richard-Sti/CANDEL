@@ -143,7 +143,7 @@ def generate_dynamic_tag(config, base_tag="default"):
             parts.append("MNR" if use_mnr else "noMNR")
 
     if get_nested(config, "pv_model/kind", "").startswith("precomputed_los"):
-        parts.append(get_nested(config, "pv_model/which_bias", ""))
+        parts.append(get_nested(config, "pv_model/galaxy_bias", ""))
 
     smooth_target = get_nested(config, "pv_model/smooth_target", None)
     if _is_active(smooth_target):
