@@ -10,6 +10,11 @@ import numpy as np
 import healpy as hp
 from scipy import special as sps
 from scipy.ndimage import gaussian_filter
+from numba import njit, prange
+import pyfftw
+
+# Enable pyfftw cache for repeated FFTs
+pyfftw.interfaces.cache.enable()
 from collections import deque
 from astropy.coordinates import SkyCoord
 import astropy.units as u
@@ -23,7 +28,7 @@ N = 257
 BOX_SIDE = 400.0
 RMAX = BOX_SIDE / 2.0
 R_2MRS_CUTOFF = 125.0
-CMIN = 0.1  # Minimum completeness
+CMIN = 0.5  # Minimum completeness (as in Code_2M++)
 H0 = 100.0
 C_LIGHT = 299792.458
 Q0 = -0.55  # Deceleration parameter for LCDM (Ωm=0.3, ΩΛ=0.7)
@@ -50,6 +55,172 @@ PLOT_EVERY = 10  # Save diagnostic plots every N iterations
 
 # ZoA cloning
 CLONE_ZOA = True  # Enable Zone of Avoidance cloning
+
+# FFT padding: 4-sigma padding for smoothing (much faster than 2N)
+SIGMA_SMOOTH = 4.0  # Mpc/h
+N_PAD = 288  # FFT-friendly size (2^5 * 3^2), provides ~4σ padding for N=257
+
+
+# =============================================================================
+# Numba-optimized CIC deposition
+# =============================================================================
+@njit(parallel=True)
+def cic_deposit_numba(positions, weights, N, dx, RMAX):
+    """Cloud-in-Cell deposition with numba acceleration."""
+    rho = np.zeros((N, N, N), dtype=np.float64)
+    n_particles = len(weights)
+
+    for p in prange(n_particles):
+        if weights[p] <= 0:
+            continue
+
+        # Compute CIC coordinates
+        cx = (positions[p, 0] + RMAX) / dx - 0.5
+        cy = (positions[p, 1] + RMAX) / dx - 0.5
+        cz = (positions[p, 2] + RMAX) / dx - 0.5
+
+        i0 = int(np.floor(cx))
+        j0 = int(np.floor(cy))
+        k0 = int(np.floor(cz))
+
+        fx = cx - i0
+        fy = cy - j0
+        fz = cz - k0
+
+        # Deposit to 8 neighboring cells with clipping
+        for di in range(2):
+            for dj in range(2):
+                for dk in range(2):
+                    ii = min(max(i0 + di, 0), N - 1)
+                    jj = min(max(j0 + dj, 0), N - 1)
+                    kk = min(max(k0 + dk, 0), N - 1)
+
+                    wx = (1.0 - fx) if di == 0 else fx
+                    wy = (1.0 - fy) if dj == 0 else fy
+                    wz = (1.0 - fz) if dk == 0 else fz
+
+                    # Atomic add for thread safety
+                    rho[ii, jj, kk] += weights[p] * wx * wy * wz
+
+    return rho
+
+
+# =============================================================================
+# Numba-optimized trilinear interpolation
+# =============================================================================
+@njit(parallel=True)
+def trilinear_interp_vector_numba(field, positions, N, dx, RMAX):
+    """Trilinear interpolation of 3D vector field at positions."""
+    n_pos = positions.shape[0]
+    result = np.zeros((n_pos, 3), dtype=np.float64)
+
+    for p in prange(n_pos):
+        cx = (positions[p, 0] + RMAX) / dx
+        cy = (positions[p, 1] + RMAX) / dx
+        cz = (positions[p, 2] + RMAX) / dx
+
+        i0 = int(np.floor(cx))
+        j0 = int(np.floor(cy))
+        k0 = int(np.floor(cz))
+
+        # Clip to valid range
+        i0 = min(max(i0, 0), N - 2)
+        j0 = min(max(j0, 0), N - 2)
+        k0 = min(max(k0, 0), N - 2)
+
+        fx = cx - i0
+        fy = cy - j0
+        fz = cz - k0
+
+        # Clamp fractions
+        fx = min(max(fx, 0.0), 1.0)
+        fy = min(max(fy, 0.0), 1.0)
+        fz = min(max(fz, 0.0), 1.0)
+
+        i1 = i0 + 1
+        j1 = j0 + 1
+        k1 = k0 + 1
+
+        wx0, wx1 = 1.0 - fx, fx
+        wy0, wy1 = 1.0 - fy, fy
+        wz0, wz1 = 1.0 - fz, fz
+
+        for c in range(3):
+            v000 = field[i0, j0, k0, c]
+            v100 = field[i1, j0, k0, c]
+            v010 = field[i0, j1, k0, c]
+            v110 = field[i1, j1, k0, c]
+            v001 = field[i0, j0, k1, c]
+            v101 = field[i1, j0, k1, c]
+            v011 = field[i0, j1, k1, c]
+            v111 = field[i1, j1, k1, c]
+
+            result[p, c] = (v000*wx0*wy0*wz0 + v100*wx1*wy0*wz0 +
+                           v010*wx0*wy1*wz0 + v110*wx1*wy1*wz0 +
+                           v001*wx0*wy0*wz1 + v101*wx1*wy0*wz1 +
+                           v011*wx0*wy1*wz1 + v111*wx1*wy1*wz1)
+
+    return result
+
+
+# =============================================================================
+# pyfftw-based velocity from density (with pre-planning)
+# =============================================================================
+class VelocityFFTSolver:
+    """Velocity solver with pre-planned FFTs for speed."""
+
+    def __init__(self, N, N_pad, box_side, n_threads=4):
+        self.N = N
+        self.N_pad = N_pad
+        self.box_side = box_side
+        self.dx_pad = box_side * N_pad / N / N_pad  # Effective dx for padded grid
+
+        # Pre-compute k-vectors (done once)
+        kx = 2.0 * np.pi * np.fft.fftfreq(N_pad, d=self.dx_pad)
+        ky = 2.0 * np.pi * np.fft.fftfreq(N_pad, d=self.dx_pad)
+        kz = 2.0 * np.pi * np.fft.rfftfreq(N_pad, d=self.dx_pad)
+        self.KX, self.KY, self.KZ = np.meshgrid(kx, ky, kz, indexing='ij')
+        self.K2 = self.KX**2 + self.KY**2 + self.KZ**2
+        self.K2[0, 0, 0] = 1.0  # Avoid division by zero
+
+        # Pre-allocate aligned arrays for pyfftw
+        self.delta_padded = pyfftw.empty_aligned((N_pad, N_pad, N_pad), dtype='float64')
+        self.delta_k = pyfftw.empty_aligned((N_pad, N_pad, N_pad//2+1), dtype='complex128')
+        self.v_k = pyfftw.empty_aligned((N_pad, N_pad, N_pad//2+1), dtype='complex128')
+        self.v_real = pyfftw.empty_aligned((N_pad, N_pad, N_pad), dtype='float64')
+
+        # Plan FFTs (done once, reused many times)
+        self.fft_forward = pyfftw.FFTW(self.delta_padded, self.delta_k,
+                                        axes=(0, 1, 2), threads=n_threads,
+                                        flags=['FFTW_MEASURE'])
+        self.fft_backward = pyfftw.FFTW(self.v_k, self.v_real,
+                                         axes=(0, 1, 2), direction='FFTW_BACKWARD',
+                                         threads=n_threads, flags=['FFTW_MEASURE'])
+        print(f"  FFT solver initialized: N={N}, N_pad={N_pad}, threads={n_threads}")
+
+    def compute_velocity(self, delta, beta):
+        """Compute velocity field from density field."""
+        N = self.N
+
+        # Zero-pad the input
+        self.delta_padded[:] = 0
+        self.delta_padded[:N, :N, :N] = delta
+
+        # Forward FFT
+        self.fft_forward()
+
+        # Compute velocity in k-space and inverse FFT for each component
+        prefactor = 1j * beta * H0 / self.K2
+
+        velocity = np.zeros((N, N, N, 3), dtype=np.float32)
+
+        for i, K in enumerate([self.KX, self.KY, self.KZ]):
+            self.v_k[:] = prefactor * K * self.delta_k
+            self.v_k[0, 0, 0] = 0.0  # Zero mean velocity
+            self.fft_backward()
+            velocity[:, :, :, i] = self.v_real[:N, :N, :N]
+
+        return velocity
 
 
 # =============================================================================
@@ -459,6 +630,9 @@ AbsMag = data['AbsMag'].copy()
 c1_all = data['c1_all'].copy()  # Completeness at K<11.5
 c2_all = data['c2_all'].copy()  # Completeness at K<12.5
 
+# Stored lumWeight from catalogue (Carrick's selection)
+lumWeight_stored = data['lumWeight'].copy()
+
 # Determine survey: 2MRS-only if K2MRS < 11.75 (close to 11.5 limit)
 is_2mrs_only = K2Mpp < 11.75
 
@@ -466,10 +640,22 @@ print(f"  Total galaxies: {len(l_deg)}")
 print(f"  ZoA clones in catalogue: {np.sum(flag_zoa == 1)}")
 print(f"  Fibre collision clones in catalogue: {np.sum(flag_copied == 1)}")
 print(f"  2MRS-only (K<11.75): {is_2mrs_only.sum()}, Deep: {(~is_2mrs_only).sum()}")
+print(f"  Galaxies with lumWeight=0 in catalogue: {(lumWeight_stored == 0).sum()}")
 
 # Filter valid galaxies (positive distance, finite values)
+# Apply completeness cut exactly as Code_2M++ (weights.py line 43):
+# (K<=11.5)*(c1_all>0.5) + (c2_all>0.5)*(K<=12.5)*(K>11.5)
+# ALSO exclude galaxies that Carrick excluded (lumWeight=0 in catalogue)
+completeness_ok = (
+    ((K2Mpp <= 11.5) & (c1_all > 0.5)) |
+    ((c2_all > 0.5) & (K2Mpp <= 12.5) & (K2Mpp > 11.5))
+)
+carrick_included = lumWeight_stored > 0
 valid = (np.isfinite(l_deg) & np.isfinite(b_deg) & np.isfinite(K2Mpp) &
-         np.isfinite(r_mpc) & (r_mpc > 0) & (distance_kms > 0))
+         np.isfinite(r_mpc) & (r_mpc > 0) & (distance_kms > 0) &
+         completeness_ok & carrick_included)
+print(f"  Completeness filter (Code_2M++ condition): removes {(~completeness_ok).sum()} galaxies")
+print(f"  Carrick exclusion filter (lumWeight>0): removes {(~carrick_included).sum()} galaxies")
 l_deg = l_deg[valid]
 b_deg = b_deg[valid]
 K2Mpp = K2Mpp[valid]
@@ -483,6 +669,7 @@ c1_all = c1_all[valid]
 c2_all = c2_all[valid]
 is_2mrs_only = is_2mrs_only[valid]
 AbsMag = AbsMag[valid]
+lumWeight_stored = lumWeight_stored[valid]
 print(f"  {len(r_mpc)} galaxies after filtering")
 
 # =============================================================================
@@ -521,6 +708,7 @@ if CLONE_ZOA:
     is_2mrs_only = is_2mrs_only[keep]
     L_over_Lstar = L_over_Lstar[keep]
     AbsMag = AbsMag[keep]
+    lumWeight_stored = lumWeight_stored[keep]
     print(f"  Removed {n_zoa_clones} ZoA clones from catalogue, {len(r_mpc)} remaining")
 
     # Also remove galaxies in ZoA target regions (will be replaced by clones)
@@ -546,6 +734,7 @@ if CLONE_ZOA:
     is_2mrs_only = is_2mrs_only[keep]
     L_over_Lstar = L_over_Lstar[keep]
     AbsMag = AbsMag[keep]
+    lumWeight_stored = lumWeight_stored[keep]
     print(f"  Removed {n_removed} galaxies in ZoA target region, {len(r_mpc)} remaining")
 
 # Fibre collision clones (flag_copied=1) already have correct distances in catalogue
@@ -732,7 +921,21 @@ sigma_voxels = 4.0 / dx
 schechter_params = np.load(f"{DATA_DIR}/../Carrick_reconstruction_2015/SchecterParams.npy")
 print(f"  Loaded Schechter params for {len(schechter_params)} iterations")
 
-import time as _time
+# Initialize pyfftw-based velocity solver (plans FFTs once for speed)
+velocity_solver = VelocityFFTSolver(N, N_PAD, BOX_SIDE, n_threads=4)
+
+# Warm up numba JIT (first call compiles, subsequent calls are fast)
+print("  Warming up numba JIT...")
+_dummy_pos = np.zeros((10, 3), dtype=np.float64)
+_dummy_w = np.ones(10, dtype=np.float64)
+_ = cic_deposit_numba(_dummy_pos, _dummy_w, N, dx, RMAX)
+_dummy_field = np.zeros((N, N, N, 3), dtype=np.float64)
+_ = trilinear_interp_vector_numba(_dummy_field, _dummy_pos, N, dx, RMAX)
+print("  JIT warmup complete")
+
+# Track MSE between our LOS profiles and Carrick LOS file
+mse_density_history = []
+mse_velocity_history = []
 
 for i_iter, beta in enumerate(beta_values):
     # Compute cosmological luminosity distance for mu (matching compare_lumweight_aquila.py)
@@ -804,32 +1007,11 @@ for i_iter, beta in enumerate(beta_values):
         is_clone = np.zeros(len(w_total), dtype=bool)
         source_idx = np.full(len(w_total), -1, dtype=int)
 
-    x, y, z = positions[:, 0], positions[:, 1], positions[:, 2]
-
-    # Compare NGP vs CIC
-    x, y, z = positions[:, 0], positions[:, 1], positions[:, 2]
-
-    # CIC deposition (matching compare_lumweight_aquila.py exactly: clip instead of filter)
-    rho_cic = np.zeros((N, N, N), dtype=np.float64)
-    cic_coords = (positions + RMAX) / dx - 0.5
-    i0 = np.floor(cic_coords).astype(int)
-    f = cic_coords - i0
-    for di in range(2):
-        for dj in range(2):
-            for dk in range(2):
-                wx = (1.0 - f[:, 0]) if di == 0 else f[:, 0]
-                wy = (1.0 - f[:, 1]) if dj == 0 else f[:, 1]
-                wz = (1.0 - f[:, 2]) if dk == 0 else f[:, 2]
-                # Use clip like compare_lumweight_aquila.py (not filter)
-                ii = np.clip(i0[:, 0] + di, 0, N-1)
-                jj = np.clip(i0[:, 1] + dj, 0, N-1)
-                kk = np.clip(i0[:, 2] + dk, 0, N-1)
-                np.add.at(rho_cic, (ii, jj, kk), w_dep * wx * wy * wz)
+    # CIC deposition (numba-optimized)
+    rho = cic_deposit_numba(positions, w_dep, N, dx, RMAX)
 
     if i_iter == 0:
-        print(f"    CIC: sum={rho_cic.sum():.1f}, max={rho_cic.max():.1f}")
-
-    rho = rho_cic
+        print(f"    CIC: sum={rho.sum():.1f}, max={rho.max():.1f}")
 
     # Normalize
     rho_mean = np.mean(rho[nonmasked])
@@ -855,13 +1037,13 @@ for i_iter, beta in enumerate(beta_values):
         print(f"    DEBUG: delta (smoothed) max={delta[nonmasked].max():.1f}, std={delta[nonmasked].std():.3f}")
 
     if beta > 0:
-        # Compute velocity
-        velocity = velocity_from_density_fft(delta, beta, BOX_SIDE)
+        # Compute velocity (using pyfftw solver)
+        velocity = velocity_solver.compute_velocity(delta, beta)
 
         # Interpolate at ORIGINAL galaxy positions only (not clones)
         # Clones inherit distances from source galaxies, not from velocity field
         positions_orig = r_mpc[:, None] * rhat
-        v_at_gal = trilinear_interp(velocity, positions_orig, BOX_SIDE)
+        v_at_gal = trilinear_interp_vector_numba(velocity, positions_orig, N, dx, RMAX)
         v_los = np.sum(v_at_gal * rhat, axis=1)
 
         # Update distances for original galaxies only
@@ -1237,20 +1419,24 @@ for i_iter, beta in enumerate(beta_values):
             (coords_c, coords_c, coords_c), delta_carrick,
             bounds_error=False, fill_value=0.0, method='linear')
 
-        # Compute velocity from our delta using FFT (if beta > 0)
+        # Compute velocity from our delta for LOS comparison (use BETA_MAX)
+        # If we already computed velocity for distance updates, just rescale
         if beta > 0:
-            v_ours = velocity_from_density_fft(delta, beta, BOX_SIDE)
-            # v_ours is already shape (N, N, N, 3)
+            # velocity was computed with current beta, rescale to BETA_MAX
+            v_ours = velocity * (BETA_MAX / beta)
+        else:
+            # At beta=0, need to compute fresh (using pyfftw solver)
+            v_ours = velocity_solver.compute_velocity(delta, BETA_MAX)
 
-            interp_vx_ours = RegularGridInterpolator(
-                (coords, coords, coords), v_ours[:, :, :, 0],
-                bounds_error=False, fill_value=0.0, method='linear')
-            interp_vy_ours = RegularGridInterpolator(
-                (coords, coords, coords), v_ours[:, :, :, 1],
-                bounds_error=False, fill_value=0.0, method='linear')
-            interp_vz_ours = RegularGridInterpolator(
-                (coords, coords, coords), v_ours[:, :, :, 2],
-                bounds_error=False, fill_value=0.0, method='linear')
+        interp_vx_ours = RegularGridInterpolator(
+            (coords, coords, coords), v_ours[:, :, :, 0],
+            bounds_error=False, fill_value=0.0, method='linear')
+        interp_vy_ours = RegularGridInterpolator(
+            (coords, coords, coords), v_ours[:, :, :, 1],
+            bounds_error=False, fill_value=0.0, method='linear')
+        interp_vz_ours = RegularGridInterpolator(
+            (coords, coords, coords), v_ours[:, :, :, 2],
+            bounds_error=False, fill_value=0.0, method='linear')
 
         # Carrick velocity interpolators
         interp_vx_carrick = RegularGridInterpolator(
@@ -1277,16 +1463,15 @@ for i_iter, beta in enumerate(beta_values):
             los_density_ours[i_cl] = interp_delta_ours(pos)
             los_density_carrick_interp[i_cl] = interp_delta_carrick(pos)
 
-            # Interpolate velocity
-            if beta > 0:
-                vx = interp_vx_ours(pos)
-                vy = interp_vy_ours(pos)
-                vz = interp_vz_ours(pos)
-                los_velocity_ours[i_cl] = (
-                    vx * cluster_rhat[i_cl, 0] +
-                    vy * cluster_rhat[i_cl, 1] +
-                    vz * cluster_rhat[i_cl, 2]
-                )
+            # Interpolate velocity (always using BETA_MAX)
+            vx = interp_vx_ours(pos)
+            vy = interp_vy_ours(pos)
+            vz = interp_vz_ours(pos)
+            los_velocity_ours[i_cl] = (
+                vx * cluster_rhat[i_cl, 0] +
+                vy * cluster_rhat[i_cl, 1] +
+                vz * cluster_rhat[i_cl, 2]
+            )
 
             vx_c = interp_vx_carrick(pos)
             vy_c = interp_vy_carrick(pos)
@@ -1296,6 +1481,14 @@ for i_iter, beta in enumerate(beta_values):
                 vy_c * cluster_rhat[i_cl, 1] +
                 vz_c * cluster_rhat[i_cl, 2]
             )
+
+        # Compute MSE between our LOS profiles and Carrick LOS file
+        # Density: Carrick stores 1+delta, ours is delta
+        mse_density = np.mean((los_density_carrick - (1 + los_density_ours))**2)
+        mse_velocity = np.mean((los_velocity_carrick - los_velocity_ours)**2)
+        mse_density_history.append(mse_density)
+        mse_velocity_history.append(mse_velocity)
+        print(f"    MSE density: {mse_density:.6f}, MSE velocity: {mse_velocity:.1f}")
 
         # Plot LOS density comparison (sample of 12 clusters)
         np.random.seed(42)
@@ -1332,8 +1525,7 @@ for i_iter, beta in enumerate(beta_values):
             ax = axes[i]
             ax.plot(los_r, los_velocity_carrick[idx], 'g-', lw=2, label='Carrick LOS file')
             ax.plot(los_r, los_velocity_carrick_interp[idx], 'c--', lw=2, alpha=0.8, label='vField interp')
-            if beta > 0:
-                ax.plot(los_r, los_velocity_ours[idx], 'r-', lw=2, alpha=0.8, label='Ours')
+            ax.plot(los_r, los_velocity_ours[idx], 'r-', lw=2, alpha=0.8, label=f'Ours (β={BETA_MAX})')
             ax.axhline(0, color='k', ls=':', alpha=0.5)
             ax.set_xlabel('r [Mpc/h]')
             ax.set_ylabel(r'$v_{los}$ [km/s]')
@@ -1346,6 +1538,72 @@ for i_iter, beta in enumerate(beta_values):
         plt.suptitle(f'LOS Velocity: Iteration {i_iter}, beta={beta:.2f}', fontsize=14)
         plt.tight_layout()
         plt.savefig(f'iter_{i_iter:03d}_los_velocity.png', dpi=100)
+        plt.close()
+
+        # Compute per-cluster MSE and angular distance from LG apex
+        mse_per_cluster_density = np.mean((los_density_carrick - (1 + los_density_ours))**2, axis=1)
+        mse_per_cluster_velocity = np.mean((los_velocity_carrick - los_velocity_ours)**2, axis=1)
+
+        # Angular distance from LG apex
+        l_apex_rad = np.deg2rad(L_APEX)
+        b_apex_rad = np.deg2rad(B_APEX)
+        apex_rhat = np.array([
+            np.cos(b_apex_rad) * np.cos(l_apex_rad),
+            np.cos(b_apex_rad) * np.sin(l_apex_rad),
+            np.sin(b_apex_rad)
+        ])
+        cos_apex_dist = np.dot(cluster_rhat, apex_rhat)
+        apex_dist_deg = np.rad2deg(np.arccos(np.clip(cos_apex_dist, -1, 1)))
+
+        # Find 12 worst MSE clusters for velocity
+        worst_vel_idx = np.argsort(mse_per_cluster_velocity)[-12:][::-1]
+
+        # Plot worst velocity MSE clusters
+        fig, axes = plt.subplots(3, 4, figsize=(16, 12))
+        axes = axes.flatten()
+
+        for i, idx in enumerate(worst_vel_idx):
+            ax = axes[i]
+            ax.plot(los_r, los_velocity_carrick[idx], 'g-', lw=2, label='Carrick LOS file')
+            ax.plot(los_r, los_velocity_ours[idx], 'r-', lw=2, alpha=0.8, label=f'Ours (β={BETA_MAX})')
+            ax.axhline(0, color='k', ls=':', alpha=0.5)
+            ax.set_xlabel('r [Mpc/h]')
+            ax.set_ylabel(r'$v_{los}$ [km/s]')
+            ax.set_title(f'Cluster {idx}: l={cluster_l[idx]:.1f}°, b={cluster_b[idx]:.1f}°\n'
+                        f'MSE={mse_per_cluster_velocity[idx]:.0f}, apex dist={apex_dist_deg[idx]:.0f}°')
+            ax.set_xlim(0, 200)
+            ax.grid(True, alpha=0.3)
+            if i == 0:
+                ax.legend(fontsize=6)
+
+        plt.suptitle(f'LOS Velocity: 12 WORST MSE Clusters, Iteration {i_iter}, beta={beta:.2f}', fontsize=14)
+        plt.tight_layout()
+        plt.savefig(f'iter_{i_iter:03d}_los_velocity_worst.png', dpi=100)
+        plt.close()
+
+        # Plot worst density MSE clusters
+        worst_den_idx = np.argsort(mse_per_cluster_density)[-12:][::-1]
+
+        fig, axes = plt.subplots(3, 4, figsize=(16, 12))
+        axes = axes.flatten()
+
+        for i, idx in enumerate(worst_den_idx):
+            ax = axes[i]
+            ax.plot(los_r, los_density_carrick[idx], 'g-', lw=2, label='Carrick LOS file')
+            ax.plot(los_r, 1 + los_density_ours[idx], 'r-', lw=2, alpha=0.8, label='Ours')
+            ax.axhline(1, color='k', ls=':', alpha=0.5)
+            ax.set_xlabel('r [Mpc/h]')
+            ax.set_ylabel(r'$1 + \delta$')
+            ax.set_title(f'Cluster {idx}: l={cluster_l[idx]:.1f}°, b={cluster_b[idx]:.1f}°\n'
+                        f'MSE={mse_per_cluster_density[idx]:.4f}, apex dist={apex_dist_deg[idx]:.0f}°')
+            ax.set_xlim(0, 200)
+            ax.grid(True, alpha=0.3)
+            if i == 0:
+                ax.legend(fontsize=6)
+
+        plt.suptitle(f'LOS Density: 12 WORST MSE Clusters, Iteration {i_iter}, beta={beta:.2f}', fontsize=14)
+        plt.tight_layout()
+        plt.savefig(f'iter_{i_iter:03d}_los_density_worst.png', dpi=100)
         plt.close()
 
         # Plot mean LOS comparison
@@ -1365,8 +1623,7 @@ for i_iter, beta in enumerate(beta_values):
             mean_delta_carrick_los[i] = np.mean(los_density_carrick[:, mask].flatten() - 1)
             mean_delta_ours[i] = np.mean(los_density_ours[:, mask].flatten())
             mean_vel_carrick_los[i] = np.mean(los_velocity_carrick[:, mask].flatten())
-            if beta > 0:
-                mean_vel_ours[i] = np.mean(los_velocity_ours[:, mask].flatten())
+            mean_vel_ours[i] = np.mean(los_velocity_ours[:, mask].flatten())
 
         fig, axes = plt.subplots(1, 2, figsize=(14, 5))
 
@@ -1383,8 +1640,7 @@ for i_iter, beta in enumerate(beta_values):
 
         ax = axes[1]
         ax.plot(r_bin_cen, mean_vel_carrick_los, 'g-', lw=2, label='Carrick LOS file')
-        if beta > 0:
-            ax.plot(r_bin_cen, mean_vel_ours, 'r--', lw=2, label='Ours')
+        ax.plot(r_bin_cen, mean_vel_ours, 'r--', lw=2, label=f'Ours (β={BETA_MAX})')
         ax.axhline(0, color='k', ls=':', alpha=0.5)
         ax.axvline(R_2MRS_CUTOFF, color='orange', ls='--', alpha=0.7, label='2MRS cutoff')
         ax.set_xlabel('r [Mpc/h]')
@@ -1484,3 +1740,304 @@ plt.tight_layout()
 plt.savefig('carrick_iterated_SGP.png', dpi=150)
 plt.close()
 print("Saved carrick_iterated_SGP.png")
+
+# =============================================================================
+# Plot MSE convergence
+# =============================================================================
+if len(mse_density_history) > 1:
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+
+    ax = axes[0]
+    ax.plot(beta_values[:len(mse_density_history)], mse_density_history, 'b-o', lw=2, markersize=4)
+    ax.set_xlabel(r'$\beta$')
+    ax.set_ylabel('MSE (density)')
+    ax.set_title('LOS Density MSE vs Carrick')
+    ax.grid(True, alpha=0.3)
+
+    ax = axes[1]
+    ax.plot(beta_values[:len(mse_velocity_history)], mse_velocity_history, 'r-o', lw=2, markersize=4)
+    ax.set_xlabel(r'$\beta$')
+    ax.set_ylabel('MSE (velocity) [km²/s²]')
+    ax.set_title('LOS Velocity MSE vs Carrick')
+    ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.savefig('mse_convergence.png', dpi=150)
+    plt.close()
+    print("Saved mse_convergence.png")
+
+    print(f"\nMSE Summary:")
+    print(f"  Density: initial={mse_density_history[0]:.6f}, final={mse_density_history[-1]:.6f}")
+    print(f"  Velocity: initial={mse_velocity_history[0]:.1f}, final={mse_velocity_history[-1]:.1f}")
+
+# =============================================================================
+# Final LG→CMB frame correction comparison
+# =============================================================================
+print("\n" + "="*60)
+print("Computing LG→CMB frame correction for final comparison...")
+print("="*60)
+
+from scipy.interpolate import interp1d
+
+# Compute delta_r_lg for each cluster
+l_apex_rad = np.deg2rad(L_APEX)
+b_apex_rad = np.deg2rad(B_APEX)
+apex_rhat = np.array([
+    np.cos(b_apex_rad) * np.cos(l_apex_rad),
+    np.cos(b_apex_rad) * np.sin(l_apex_rad),
+    np.sin(b_apex_rad)
+])
+cos_apex_dist = np.dot(cluster_rhat, apex_rhat)
+apex_dist_deg = np.rad2deg(np.arccos(np.clip(cos_apex_dist, -1, 1)))
+
+# Radial shift: delta_r = v_LG·r̂ / H0 (Mpc/h)
+v_lg_proj = V_LG * np.dot(cluster_rhat, apex_rhat)  # km/s per cluster
+delta_r_lg = v_lg_proj / 100.0  # Mpc/h (H0=100)
+
+print(f"  delta_r range: [{delta_r_lg.min():.2f}, {delta_r_lg.max():.2f}] Mpc/h")
+print(f"  Apex clusters (θ<30°): shift by ~{delta_r_lg[apex_dist_deg < 30].mean():.1f} Mpc/h")
+print(f"  Anti-apex clusters (θ>150°): shift by ~{delta_r_lg[apex_dist_deg > 150].mean():.1f} Mpc/h")
+
+# Re-compute final LOS profiles from our final delta field
+print("Computing final LOS profiles...")
+interp_delta_final = RegularGridInterpolator(
+    (coords, coords, coords), delta, bounds_error=False, fill_value=0.0)
+
+# Compute velocity from final delta
+v_final = velocity_from_density_fft(delta, BETA_MAX, BOX_SIDE)  # Shape (N, N, N, 3)
+interp_vx_final = RegularGridInterpolator((coords, coords, coords), v_final[:,:,:,0], bounds_error=False, fill_value=0.0)
+interp_vy_final = RegularGridInterpolator((coords, coords, coords), v_final[:,:,:,1], bounds_error=False, fill_value=0.0)
+interp_vz_final = RegularGridInterpolator((coords, coords, coords), v_final[:,:,:,2], bounds_error=False, fill_value=0.0)
+
+los_density_final = np.zeros((n_clusters, n_r_los))
+los_velocity_final = np.zeros((n_clusters, n_r_los))
+
+for i_cl in range(n_clusters):
+    pos = los_r[:, None] * cluster_rhat[i_cl]
+    los_density_final[i_cl] = interp_delta_final(pos)
+    vx = interp_vx_final(pos)
+    vy = interp_vy_final(pos)
+    vz = interp_vz_final(pos)
+    los_velocity_final[i_cl] = (
+        vx * cluster_rhat[i_cl, 0] +
+        vy * cluster_rhat[i_cl, 1] +
+        vz * cluster_rhat[i_cl, 2]
+    )
+
+# MSE: LG frame (no shift)
+mse_density_lg = np.mean((los_density_carrick - (1 + los_density_final))**2, axis=1)
+mse_velocity_lg = np.mean((los_velocity_carrick - los_velocity_final)**2, axis=1)
+
+# MSE: CMB frame (with shift) - interpolate shifted profiles back to los_r grid
+mse_density_cmb = np.zeros(n_clusters)
+mse_velocity_cmb = np.zeros(n_clusters)
+
+for i_cl in range(n_clusters):
+    dr = delta_r_lg[i_cl]
+    r_shifted = los_r + dr
+
+    # Interpolate our profiles (shifted to CMB) back to los_r grid
+    f_den = interp1d(r_shifted, 1 + los_density_final[i_cl],
+                     kind='linear', bounds_error=False, fill_value='extrapolate')
+    f_vel = interp1d(r_shifted, los_velocity_final[i_cl],
+                     kind='linear', bounds_error=False, fill_value='extrapolate')
+
+    den_cmb = f_den(los_r)
+    vel_cmb = f_vel(los_r)
+
+    mse_density_cmb[i_cl] = np.mean((los_density_carrick[i_cl] - den_cmb)**2)
+    mse_velocity_cmb[i_cl] = np.mean((los_velocity_carrick[i_cl] - vel_cmb)**2)
+
+# Print comparison
+print(f"\n=== Final MSE Comparison: LG vs CMB Frame ===")
+print(f"Density MSE:")
+print(f"  LG frame:  mean={mse_density_lg.mean():.4f}, median={np.median(mse_density_lg):.4f}")
+print(f"  CMB frame: mean={mse_density_cmb.mean():.4f}, median={np.median(mse_density_cmb):.4f}")
+print(f"  Improvement: {100*(1 - mse_density_cmb.mean()/mse_density_lg.mean()):.1f}%")
+print(f"Velocity MSE:")
+print(f"  LG frame:  mean={mse_velocity_lg.mean():.0f}, median={np.median(mse_velocity_lg):.0f}")
+print(f"  CMB frame: mean={mse_velocity_cmb.mean():.0f}, median={np.median(mse_velocity_cmb):.0f}")
+print(f"  Improvement: {100*(1 - mse_velocity_cmb.mean()/mse_velocity_lg.mean()):.1f}%")
+
+print(f"\nCorrelation of MSE with apex distance:")
+print(f"  Density  - LG: r={np.corrcoef(apex_dist_deg, mse_density_lg)[0,1]:.3f}, CMB: r={np.corrcoef(apex_dist_deg, mse_density_cmb)[0,1]:.3f}")
+print(f"  Velocity - LG: r={np.corrcoef(apex_dist_deg, mse_velocity_lg)[0,1]:.3f}, CMB: r={np.corrcoef(apex_dist_deg, mse_velocity_cmb)[0,1]:.3f}")
+
+# Plot final LOS comparison with both LG and CMB frames
+print("\nPlotting final LOS comparison with frame correction...")
+np.random.seed(42)
+sample_idx = np.random.choice(n_clusters, min(12, n_clusters), replace=False)
+
+# Density comparison
+fig, axes = plt.subplots(3, 4, figsize=(16, 12))
+axes = axes.flatten()
+
+for i, idx in enumerate(sample_idx):
+    ax = axes[i]
+    dr = delta_r_lg[idx]
+    # Carrick LOS file (CMB frame) - no shift
+    ax.plot(los_r, los_density_carrick[idx], 'g-', lw=2, label='Carrick LOS (CMB)')
+    # Our profile - LG frame (dashed)
+    ax.plot(los_r, 1 + los_density_final[idx], 'r--', lw=1.5, alpha=0.5, label='Ours (LG)')
+    # Our profile - CMB frame (solid)
+    ax.plot(los_r + dr, 1 + los_density_final[idx], 'r-', lw=2, alpha=0.8, label='Ours (CMB)')
+    ax.axhline(1, color='k', ls=':', alpha=0.5)
+    ax.set_xlabel('r [Mpc/h]')
+    ax.set_ylabel(r'$1 + \delta$')
+    ax.set_title(f'Cluster {idx}: l={cluster_l[idx]:.1f}°, b={cluster_b[idx]:.1f}°, Δr={dr:.1f}')
+    ax.set_xlim(0, 200)
+    ax.grid(True, alpha=0.3)
+    if i == 0:
+        ax.legend(fontsize=6)
+
+plt.suptitle('Final LOS Density: Dashed=LG frame, Solid=CMB frame', fontsize=14)
+plt.tight_layout()
+plt.savefig('final_los_density_frame_comparison.png', dpi=150)
+plt.close()
+print("Saved final_los_density_frame_comparison.png")
+
+# Velocity comparison
+fig, axes = plt.subplots(3, 4, figsize=(16, 12))
+axes = axes.flatten()
+
+for i, idx in enumerate(sample_idx):
+    ax = axes[i]
+    dr = delta_r_lg[idx]
+    ax.plot(los_r, los_velocity_carrick[idx], 'g-', lw=2, label='Carrick LOS (CMB)')
+    ax.plot(los_r, los_velocity_final[idx], 'r--', lw=1.5, alpha=0.5, label='Ours (LG)')
+    ax.plot(los_r + dr, los_velocity_final[idx], 'r-', lw=2, alpha=0.8, label='Ours (CMB)')
+    ax.axhline(0, color='k', ls=':', alpha=0.5)
+    ax.set_xlabel('r [Mpc/h]')
+    ax.set_ylabel(r'$v_{los}$ [km/s]')
+    ax.set_title(f'Cluster {idx}: l={cluster_l[idx]:.1f}°, b={cluster_b[idx]:.1f}°, Δr={dr:.1f}')
+    ax.set_xlim(0, 200)
+    ax.grid(True, alpha=0.3)
+    if i == 0:
+        ax.legend(fontsize=6)
+
+plt.suptitle('Final LOS Velocity: Dashed=LG frame, Solid=CMB frame', fontsize=14)
+plt.tight_layout()
+plt.savefig('final_los_velocity_frame_comparison.png', dpi=150)
+plt.close()
+print("Saved final_los_velocity_frame_comparison.png")
+
+# Worst MSE clusters (using CMB frame MSE)
+worst_den_idx_cmb = np.argsort(mse_density_cmb)[-12:][::-1]
+worst_vel_idx_cmb = np.argsort(mse_velocity_cmb)[-12:][::-1]
+
+fig, axes = plt.subplots(3, 4, figsize=(16, 12))
+axes = axes.flatten()
+
+for i, idx in enumerate(worst_den_idx_cmb):
+    ax = axes[i]
+    dr = delta_r_lg[idx]
+    ax.plot(los_r, los_density_carrick[idx], 'g-', lw=2, label='Carrick LOS (CMB)')
+    ax.plot(los_r, 1 + los_density_final[idx], 'r--', lw=1.5, alpha=0.5, label='Ours (LG)')
+    ax.plot(los_r + dr, 1 + los_density_final[idx], 'r-', lw=2, alpha=0.8, label='Ours (CMB)')
+    ax.axhline(1, color='k', ls=':', alpha=0.5)
+    ax.set_xlabel('r [Mpc/h]')
+    ax.set_ylabel(r'$1 + \delta$')
+    ax.set_title(f'Cluster {idx}: l={cluster_l[idx]:.1f}°, b={cluster_b[idx]:.1f}°\n'
+                f'MSE(CMB)={mse_density_cmb[idx]:.4f}, apex={apex_dist_deg[idx]:.0f}°, Δr={dr:.1f}')
+    ax.set_xlim(0, 200)
+    ax.grid(True, alpha=0.3)
+    if i == 0:
+        ax.legend(fontsize=6)
+
+plt.suptitle('Final LOS Density: 12 WORST CMB-frame MSE Clusters', fontsize=14)
+plt.tight_layout()
+plt.savefig('final_los_density_worst_cmb.png', dpi=150)
+plt.close()
+print("Saved final_los_density_worst_cmb.png")
+
+fig, axes = plt.subplots(3, 4, figsize=(16, 12))
+axes = axes.flatten()
+
+for i, idx in enumerate(worst_vel_idx_cmb):
+    ax = axes[i]
+    dr = delta_r_lg[idx]
+    ax.plot(los_r, los_velocity_carrick[idx], 'g-', lw=2, label='Carrick LOS (CMB)')
+    ax.plot(los_r, los_velocity_final[idx], 'r--', lw=1.5, alpha=0.5, label='Ours (LG)')
+    ax.plot(los_r + dr, los_velocity_final[idx], 'r-', lw=2, alpha=0.8, label='Ours (CMB)')
+    ax.axhline(0, color='k', ls=':', alpha=0.5)
+    ax.set_xlabel('r [Mpc/h]')
+    ax.set_ylabel(r'$v_{los}$ [km/s]')
+    ax.set_title(f'Cluster {idx}: l={cluster_l[idx]:.1f}°, b={cluster_b[idx]:.1f}°\n'
+                f'MSE(CMB)={mse_velocity_cmb[idx]:.0f}, apex={apex_dist_deg[idx]:.0f}°, Δr={dr:.1f}')
+    ax.set_xlim(0, 200)
+    ax.grid(True, alpha=0.3)
+    if i == 0:
+        ax.legend(fontsize=6)
+
+plt.suptitle('Final LOS Velocity: 12 WORST CMB-frame MSE Clusters', fontsize=14)
+plt.tight_layout()
+plt.savefig('final_los_velocity_worst_cmb.png', dpi=150)
+plt.close()
+print("Saved final_los_velocity_worst_cmb.png")
+
+# =============================================================================
+# Save CMB-frame LOS profiles to HDF5
+# =============================================================================
+print("\n" + "="*60)
+print("Saving CMB-frame LOS profiles to HDF5...")
+print("="*60)
+
+# Interpolate CMB-shifted profiles onto original los_r grid
+los_density_cmb = np.zeros((n_clusters, n_r_los), dtype=np.float32)
+los_velocity_cmb = np.zeros((n_clusters, n_r_los), dtype=np.float32)
+
+for i_cl in range(n_clusters):
+    dr = delta_r_lg[i_cl]
+    r_shifted = los_r + dr  # Where our LG-frame data now lives in CMB frame
+
+    # Interpolate density (convert to 1+delta convention for LOS file)
+    f_den = interp1d(r_shifted, 1 + los_density_final[i_cl],
+                     kind='linear', bounds_error=False, fill_value='extrapolate')
+    los_density_cmb[i_cl] = f_den(los_r)
+
+    # Interpolate velocity
+    f_vel = interp1d(r_shifted, los_velocity_final[i_cl],
+                     kind='linear', bounds_error=False, fill_value='extrapolate')
+    los_velocity_cmb[i_cl] = f_vel(los_r)
+
+# Clip density to physical range (1+delta > 0)
+los_density_cmb = np.maximum(los_density_cmb, 0.01)
+
+# Scale velocity back to beta=1 (Carrick LOS files store v/beta, i.e. unscaled)
+los_velocity_cmb = los_velocity_cmb / BETA_MAX
+
+# Compute redshift from distance: z = r * H0 / c (for small z)
+los_z = (los_r * H0 / C_LIGHT).astype(np.float32)
+
+# Save to HDF5 in same format as los_Clusters_Carrick2015.hdf5
+output_file = 'data/Clusters/los_Clusters_carrick_iterated.hdf5'
+with h5py.File(output_file, 'w') as f:
+    f.create_dataset('RA', data=cluster_RA.astype(np.float32))
+    f.create_dataset('dec', data=cluster_dec.astype(np.float32))
+    f.create_dataset('r', data=los_r.astype(np.float32))
+    f.create_dataset('z', data=los_z)
+    # Add leading dimension of 1 to match Carrick format: (1, n_clusters, n_r)
+    f.create_dataset('los_density', data=los_density_cmb[np.newaxis, :, :])
+    f.create_dataset('los_velocity', data=los_velocity_cmb[np.newaxis, :, :])
+
+print(f"Saved: {output_file}")
+print(f"  RA: {cluster_RA.shape}, dec: {cluster_dec.shape}")
+print(f"  r: {los_r.shape}, z: {los_z.shape}")
+print(f"  los_density: (1, {n_clusters}, {n_r_los})")
+print(f"  los_velocity: (1, {n_clusters}, {n_r_los})")
+
+# Verify by comparing with original Carrick file
+print("\nVerification - comparing with original Carrick LOS file:")
+with h5py.File(los_file, 'r') as f:
+    print(f"  Original Carrick file: {los_file}")
+    for key in f.keys():
+        print(f"    {key}: {f[key].shape}, {f[key].dtype}")
+
+with h5py.File(output_file, 'r') as f:
+    print(f"  New iterated file: {output_file}")
+    for key in f.keys():
+        print(f"    {key}: {f[key].shape}, {f[key].dtype}")
+
+print("\n" + "="*60)
+print("All done!")
+print("="*60)
