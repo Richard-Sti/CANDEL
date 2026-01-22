@@ -26,11 +26,11 @@ R_2MRS_CUTOFF = 125.0
 CMIN = 0.1  # Minimum completeness
 H0 = 100.0
 C_LIGHT = 299792.458
-Q0 = -0.55  # Deceleration parameter for LCDM
+Q0 = -0.55  # Deceleration parameter for LCDM (Ωm=0.3, ΩΛ=0.7)
 
-# Schechter LF parameters (Carrick2015 values)
-ALPHA = -0.85
-MSTAR = -23.25
+# Schechter LF parameters (Lavaux & Hudson 2011 Table 2, LG frame)
+ALPHA = -0.83
+MSTAR = -23.28
 M_MIN = -20.0  # Faintest absolute magnitude for selection function integration
 
 # Local Group velocity relative to CMB
@@ -43,13 +43,24 @@ BIAS_CONST = 0.73
 BIAS_SLOPE = 0.24
 
 # Iteration parameters
-N_ITERATIONS = 1  # beta from 0 to 0.43
+N_ITERATIONS = 44  # beta from 0 to 0.43 in 44 steps
 BETA_MAX = 0.43
 N_AVG = 5  # Average last N distance estimates
 PLOT_EVERY = 10  # Save diagnostic plots every N iterations
 
 # ZoA cloning
 CLONE_ZOA = True  # Enable Zone of Avoidance cloning
+
+
+# =============================================================================
+# Luminosity distance using quadratic approximation (equivalent to full integral)
+# =============================================================================
+def luminosity_distance_vec(z_arr):
+    """Compute luminosity distance using quadratic expansion with q0=-0.55."""
+    z = np.asarray(z_arr)
+    d_c = (C_LIGHT / H0) * (z - (1 + Q0) / 2 * z**2)  # Comoving distance
+    d_L = (1 + z) * d_c  # Luminosity distance
+    return d_L
 
 
 def gamma_upper(s, x):
@@ -64,6 +75,28 @@ def gamma_upper(s, x):
         result = (result - np.power(x, sp - 1) * np.exp(-x)) / (sp - 1)
         sp -= 1
     return result
+
+
+def integral_lw_lumfun(M, alpha=None, Mstar=None):
+    """
+    Integral of luminosity-weighted LF from M to infinity.
+    This is the incomplete gamma function Gamma(alpha+2, x) where x = 10^(0.4*(Mstar-M)).
+    """
+    if alpha is None:
+        alpha = ALPHA
+    if Mstar is None:
+        Mstar = MSTAR
+    x = 10.0 ** (0.4 * (Mstar - M))
+    a = alpha + 2.0
+    return gamma_upper(a, x)
+
+
+def integral_lw_lumfun_2m(M_faint, M_bright, alpha=None, Mstar=None):
+    """
+    Integral of luminosity-weighted LF from M_bright to M_faint.
+    Returns integral_lw_lumfun(M_faint) - integral_lw_lumfun(M_bright).
+    """
+    return integral_lw_lumfun(M_faint, alpha, Mstar) - integral_lw_lumfun(M_bright, alpha, Mstar)
 
 
 def compute_selection_function(r_mpc, m_lim, alpha=None, Mstar=None):
@@ -194,13 +227,13 @@ def trilinear_interp(field, positions, box_side):
 def clone_zoa_galaxies(l_deg, b_deg, vcmb, K2Mpp, gid, w_total):
     """
     Clone galaxies from strips above/below ZoA to fill masked region.
-    Uses MIRROR approach (Lavaux/Carrick): mirror across ZoA boundary.
+    Uses Carrick2015 method: reflect across b=0 plus translate (equivalently,
+    reflect across the midpoint between source strip and target ZoA).
 
-    For |ℓ| > 30° (narrow ZoA): mirror 5° < |b| < 10° across b=±5° into |b| < 5°
-    For |ℓ| < 30° (wide ZoA):   mirror 10° < |b| < 20° across b=±10° into |b| < 10°
+    For |ℓ| >= 30° (narrow ZoA): sources 5° < |b| < 10° → opposite ZoA |b| < 5°
+    For |ℓ| < 30° (wide ZoA):   sources 10° < |b| < 20° → opposite ZoA |b| < 10°
 
-    Mirror formula: clone_b = 2 * boundary - source_b
-    This means north sources go to south ZoA and vice versa.
+    Formula: clone_b = boundary - source_b (north sources → south ZoA, vice versa)
 
     Returns: (l_ext, b_ext, vcmb_ext, K_ext, gid_ext, w_ext, is_clone, source_idx)
     source_idx[i] = index of source galaxy for clone i (or -1 for originals)
@@ -215,46 +248,46 @@ def clone_zoa_galaxies(l_deg, b_deg, vcmb, K2Mpp, gid, w_total):
     clone_l, clone_b, clone_v, clone_K, clone_gid, clone_w = [], [], [], [], [], []
     clone_src_idx = []  # Track which original galaxy each clone comes from
 
-    # ===== NARROW ZOA (|ℓ| > 30°): mirror across b=±5° =====
-    # North: 5° < b < 10° → mirror across b=5 → -5° < clone_b < 0°
+    # ===== NARROW ZOA (|ℓ| >= 30°): boundary at |b|=5° =====
+    # North sources (5° < b < 10°) → South ZoA (-5° < clone_b < 0°)
     src_n = (~near_gc) & (b_deg > 5) & (b_deg < 10)
     if np.any(src_n):
         clone_l.append(l_deg[src_n])
-        clone_b.append(10.0 - b_deg[src_n])  # 2*5 - b = 10 - b
+        clone_b.append(5.0 - b_deg[src_n])  # b=5→0, b=10→-5
         clone_v.append(vcmb[src_n])
         clone_K.append(K2Mpp[src_n])
         clone_gid.append(gid[src_n])
         clone_w.append(w_total[src_n])
         clone_src_idx.append(np.where(src_n)[0])
 
-    # South: -10° < b < -5° → mirror across b=-5 → 0° < clone_b < 5°
+    # South sources (-10° < b < -5°) → North ZoA (0° < clone_b < 5°)
     src_s = (~near_gc) & (b_deg > -10) & (b_deg < -5)
     if np.any(src_s):
         clone_l.append(l_deg[src_s])
-        clone_b.append(-10.0 - b_deg[src_s])  # 2*(-5) - b = -10 - b
+        clone_b.append(-5.0 - b_deg[src_s])  # b=-5→0, b=-10→5
         clone_v.append(vcmb[src_s])
         clone_K.append(K2Mpp[src_s])
         clone_gid.append(gid[src_s])
         clone_w.append(w_total[src_s])
         clone_src_idx.append(np.where(src_s)[0])
 
-    # ===== WIDE ZOA (|ℓ| < 30°): mirror across b=±10° =====
-    # North: 10° < b < 20° → mirror across b=10 → -10° < clone_b < 0°
+    # ===== WIDE ZOA (|ℓ| < 30°): boundary at |b|=10° =====
+    # North sources (10° < b < 20°) → South ZoA (-10° < clone_b < 0°)
     src_n_wide = near_gc & (b_deg > 10) & (b_deg < 20)
     if np.any(src_n_wide):
         clone_l.append(l_deg[src_n_wide])
-        clone_b.append(20.0 - b_deg[src_n_wide])  # 2*10 - b = 20 - b
+        clone_b.append(10.0 - b_deg[src_n_wide])  # b=10→0, b=20→-10
         clone_v.append(vcmb[src_n_wide])
         clone_K.append(K2Mpp[src_n_wide])
         clone_gid.append(gid[src_n_wide])
         clone_w.append(w_total[src_n_wide])
         clone_src_idx.append(np.where(src_n_wide)[0])
 
-    # South: -20° < b < -10° → mirror across b=-10 → 0° < clone_b < 10°
+    # South sources (-20° < b < -10°) → North ZoA (0° < clone_b < 10°)
     src_s_wide = near_gc & (b_deg > -20) & (b_deg < -10)
     if np.any(src_s_wide):
         clone_l.append(l_deg[src_s_wide])
-        clone_b.append(-20.0 - b_deg[src_s_wide])  # 2*(-10) - b = -20 - b
+        clone_b.append(-10.0 - b_deg[src_s_wide])  # b=-10→0, b=-20→10
         clone_v.append(vcmb[src_s_wide])
         clone_K.append(K2Mpp[src_s_wide])
         clone_gid.append(gid[src_s_wide])
@@ -398,169 +431,197 @@ def fit_schechter_lf(M_abs, r_mpc, m_lim, vcmb, M_bright=-25.0, M_faint=-17.0,
 
 
 # =============================================================================
-# Load galaxies
+# Load galaxies from 2m++_0Runs.npy
 # =============================================================================
-print("Loading galaxies...")
-with open(f"{DATA_DIR}/2m++.txt") as f:
-    lines = f.readlines()
+print("Loading galaxies from 2m++_0Runs.npy...")
+data = np.load("data/Carrick_reconstruction_2015/2m++_0Runs.npy")
 
-header_idx = next(i for i, line in enumerate(lines) if "Designation" in line and "|" in line)
-# Load columns: l, b, K, Vcmb, GID, ZoA_flag, FC_clone_flag, M0, M1, M2
-data = np.genfromtxt(f"{DATA_DIR}/2m++.txt", delimiter="|", skip_header=header_idx + 2,
-                     usecols=[3, 4, 5, 7, 9, 12, 13, 14, 15, 16], filling_values=0)
+# Extract columns
+l_deg = data['gal_long'].copy()
+b_deg = data['gal_lat'].copy()
+K2Mpp = data['K2MRS'].copy()
+vcmb = data['best_velcmb'].copy()  # Use best_velcmb (groups already have group velocity)
+gid = data['group_id'].copy()
 
-l_deg = data[:, 0]
-b_deg = data[:, 1]
-K2Mpp = data[:, 2]
-vcmb = data[:, 3]
-gid = np.where(np.isfinite(data[:, 4]), data[:, 4], -1).astype(int)
-zoa_flag = np.where(np.isfinite(data[:, 5]), data[:, 5], 0).astype(int)
-fc_clone_flag = np.where(np.isfinite(data[:, 6]), data[:, 6], 0).astype(int)
-# Survey flags: M0=2MRS exclusive, M1=SDSS, M2=6dFGRS
-is_2mrs_only = np.where(np.isfinite(data[:, 7]), data[:, 7], 0).astype(int) == 1
-is_sdss = np.where(np.isfinite(data[:, 8]), data[:, 8], 0).astype(int) == 1
-is_6df = np.where(np.isfinite(data[:, 9]), data[:, 9], 0).astype(int) == 1
-print(f"  ZoA clones in catalogue: {np.sum(zoa_flag == 1)}")
-print(f"  Fibre collision clones in catalogue: {np.sum(fc_clone_flag == 1)}")
-print(f"  Survey flags: 2MRS-only={is_2mrs_only.sum()}, SDSS={is_sdss.sum()}, 6dF={is_6df.sum()}")
+# Distance is in km/s (velLG), convert to Mpc/h
+distance_kms = data['distance'].copy()  # velLG in km/s
+r_mpc = distance_kms / 100.0  # Convert km/s to Mpc/h (H0=100)
 
-valid = np.isfinite(l_deg) & np.isfinite(b_deg) & np.isfinite(vcmb) & np.isfinite(K2Mpp) & (vcmb > 0)
-l_deg, b_deg, K2Mpp, vcmb, gid = l_deg[valid], b_deg[valid], K2Mpp[valid], vcmb[valid], gid[valid]
-zoa_flag, fc_clone_flag = zoa_flag[valid], fc_clone_flag[valid]
+# Flags
+flag_zoa = data['flag_zoa'].copy()  # ZoA clones in catalogue
+flag_copied = data['flag_copied'].copy()  # Fibre collision clones (already have correct distances)
+flag_2mrs_mask = data['flag_2mrs_mask_final'].copy()
+
+# Stored absolute magnitude from catalogue
+AbsMag = data['AbsMag'].copy()
+
+# Completeness values
+c1_all = data['c1_all'].copy()  # Completeness at K<11.5
+c2_all = data['c2_all'].copy()  # Completeness at K<12.5
+
+# Determine survey: 2MRS-only if K2MRS < 11.75 (close to 11.5 limit)
+is_2mrs_only = K2Mpp < 11.75
+
+print(f"  Total galaxies: {len(l_deg)}")
+print(f"  ZoA clones in catalogue: {np.sum(flag_zoa == 1)}")
+print(f"  Fibre collision clones in catalogue: {np.sum(flag_copied == 1)}")
+print(f"  2MRS-only (K<11.75): {is_2mrs_only.sum()}, Deep: {(~is_2mrs_only).sum()}")
+
+# Filter valid galaxies (positive distance, finite values)
+valid = (np.isfinite(l_deg) & np.isfinite(b_deg) & np.isfinite(K2Mpp) &
+         np.isfinite(r_mpc) & (r_mpc > 0) & (distance_kms > 0))
+l_deg = l_deg[valid]
+b_deg = b_deg[valid]
+K2Mpp = K2Mpp[valid]
+vcmb = vcmb[valid]
+gid = gid[valid]
+r_mpc = r_mpc[valid]
+flag_zoa = flag_zoa[valid]
+flag_copied = flag_copied[valid]
+flag_2mrs_mask = flag_2mrs_mask[valid]
+c1_all = c1_all[valid]
+c2_all = c2_all[valid]
 is_2mrs_only = is_2mrs_only[valid]
-print(f"  {len(vcmb)} galaxies after filtering")
+AbsMag = AbsMag[valid]
+print(f"  {len(r_mpc)} galaxies after filtering")
 
 # =============================================================================
-# Compute L/L* from ORIGINAL positions in LG frame (before group centering)
+# Compute L/L* from K2Mpp - mu (computed, not stored AbsMag)
 # =============================================================================
-print("Computing L/L* from original positions (LG frame)...")
-
-# Convert CMB to LG frame for L/L* calculation
-l_rad_orig = np.deg2rad(l_deg)
-b_rad_orig = np.deg2rad(b_deg)
-l_apex_rad = np.deg2rad(L_APEX)
-b_apex_rad = np.deg2rad(B_APEX)
-cos_theta_orig = (np.sin(b_rad_orig) * np.sin(b_apex_rad) +
-                  np.cos(b_rad_orig) * np.cos(b_apex_rad) * np.cos(l_rad_orig - l_apex_rad))
-v_lg_orig = vcmb - V_LG * cos_theta_orig
-
-# Use LG frame for distance/luminosity calculation
-z_orig = v_lg_orig / C_LIGHT
-r_orig = (C_LIGHT / H0) * z_orig
-r_orig_safe = np.maximum(r_orig, 0.1)
-mu_orig = 5.0 * np.log10(r_orig_safe) + 25.0
-M_abs_orig = K2Mpp - mu_orig
-L_over_Lstar = 10.0 ** (-0.4 * (M_abs_orig - MSTAR))
+print("Computing L/L* from K2Mpp - mu...")
+# Compute mu from luminosity distance (consistent with weight calculation)
+r_safe_init = np.maximum(r_mpc, 0.1)
+z_init = np.maximum(r_safe_init * H0 / C_LIGHT, 100.0 / C_LIGHT)
+d_L_init = luminosity_distance_vec(z_init)
+mu_init = 5.0 * np.log10(np.maximum(d_L_init, 0.01) * 1e5)
+M_abs_computed = K2Mpp - mu_init
+L_over_Lstar = 10.0 ** (-0.4 * (M_abs_computed - MSTAR))
 print(f"  Mean L/L* = {np.mean(L_over_Lstar):.2f}")
 
 # =============================================================================
-# Load groups and collapse FoF
-# =============================================================================
-print("Loading groups...")
-groups = np.genfromtxt(f"{DATA_DIR}/2m++_groups.txt", delimiter="|", skip_header=12, usecols=[0, 1, 2, 6])
-group_gid = groups[:, 0].astype(int)
-group_l, group_b, group_v = groups[:, 1], groups[:, 2], groups[:, 3]
-group_dict = {gid_val: i for i, gid_val in enumerate(group_gid)}
-
-for i in range(len(vcmb)):
-    if gid[i] >= 0 and gid[i] in group_dict:
-        idx = group_dict[gid[i]]
-        l_deg[i], b_deg[i], vcmb[i] = group_l[idx], group_b[idx], group_v[idx]
-
-valid = vcmb > 0
-l_deg, b_deg, K2Mpp, vcmb, gid = l_deg[valid], b_deg[valid], K2Mpp[valid], vcmb[valid], gid[valid]
-zoa_flag, fc_clone_flag = zoa_flag[valid], fc_clone_flag[valid]
-is_2mrs_only = is_2mrs_only[valid]
-L_over_Lstar = L_over_Lstar[valid]
-print(f"  {len(vcmb)} galaxies after FoF collapse")
-
-# =============================================================================
-# Remove galaxies in ZoA target region (before cloning)
+# Remove ZoA clones from catalogue (will recreate our own)
 # =============================================================================
 if CLONE_ZOA:
-    # ZoA target regions:
-    # - |ℓ| > 30°: |b| < 5° (narrow ZoA)
-    # - |ℓ| < 30°: |b| < 10° (wide ZoA near Galactic center)
+    # Remove galaxies with flag_zoa=1 (existing ZoA clones in catalogue)
+    # We will recreate our own ZoA clones using clone_zoa_galaxies()
+    is_zoa_clone = flag_zoa == 1
+    n_zoa_clones = is_zoa_clone.sum()
+    keep = ~is_zoa_clone
+    l_deg = l_deg[keep]
+    b_deg = b_deg[keep]
+    K2Mpp = K2Mpp[keep]
+    vcmb = vcmb[keep]
+    gid = gid[keep]
+    r_mpc = r_mpc[keep]
+    flag_zoa = flag_zoa[keep]
+    flag_copied = flag_copied[keep]
+    flag_2mrs_mask = flag_2mrs_mask[keep]
+    c1_all = c1_all[keep]
+    c2_all = c2_all[keep]
+    is_2mrs_only = is_2mrs_only[keep]
+    L_over_Lstar = L_over_Lstar[keep]
+    AbsMag = AbsMag[keep]
+    print(f"  Removed {n_zoa_clones} ZoA clones from catalogue, {len(r_mpc)} remaining")
+
+    # Also remove galaxies in ZoA target regions (will be replaced by clones)
     l_norm = np.mod(l_deg + 180, 360) - 180
     near_gc = np.abs(l_norm) < 30
-
-    # Galaxies in ZoA target region
     in_narrow_zoa = (~near_gc) & (np.abs(b_deg) < 5)
     in_wide_zoa = near_gc & (np.abs(b_deg) < 10)
     in_zoa = in_narrow_zoa | in_wide_zoa
 
     n_removed = in_zoa.sum()
     keep = ~in_zoa
-    l_deg, b_deg, K2Mpp, vcmb, gid = l_deg[keep], b_deg[keep], K2Mpp[keep], vcmb[keep], gid[keep]
-    zoa_flag, fc_clone_flag = zoa_flag[keep], fc_clone_flag[keep]
+    l_deg = l_deg[keep]
+    b_deg = b_deg[keep]
+    K2Mpp = K2Mpp[keep]
+    vcmb = vcmb[keep]
+    gid = gid[keep]
+    r_mpc = r_mpc[keep]
+    flag_zoa = flag_zoa[keep]
+    flag_copied = flag_copied[keep]
+    flag_2mrs_mask = flag_2mrs_mask[keep]
+    c1_all = c1_all[keep]
+    c2_all = c2_all[keep]
     is_2mrs_only = is_2mrs_only[keep]
     L_over_Lstar = L_over_Lstar[keep]
-    print(f"  Removed {n_removed} galaxies in ZoA target region, {len(vcmb)} remaining")
+    AbsMag = AbsMag[keep]
+    print(f"  Removed {n_removed} galaxies in ZoA target region, {len(r_mpc)} remaining")
+
+# Fibre collision clones (flag_copied=1) already have correct distances in catalogue
+# No need to match them to sources - they are handled correctly
+print(f"  Fibre collision clones in data: {np.sum(flag_copied == 1)} (distances already correct)")
 
 # =============================================================================
-# Match fibre collision clones to sources
+# Compute weights using c1_all/c2_all from catalogue (Carrick2015 method)
 # =============================================================================
-print("Matching fibre collision clones to sources...")
-fc_source_idx = match_fibre_collision_pairs(l_deg, b_deg, vcmb, fc_clone_flag)
-n_fc_clones = np.sum(fc_clone_flag == 1)
-n_fc_matched = np.sum(fc_source_idx >= 0)
-print(f"  Matched {n_fc_matched}/{n_fc_clones} fibre collision clones to sources")
+print("Computing weights from catalogue completeness...")
 
-# =============================================================================
-# Load completeness maps (EQUATORIAL coordinates!)
-# =============================================================================
-print("Loading completeness maps...")
+# Load completeness maps for 3D mask building (still needed for 3D grid)
 map11 = hp.read_map(f"{DATA_DIR}/incompleteness_11_5.fits", verbose=False)
 map12 = hp.read_map(f"{DATA_DIR}/incompleteness_12_5.fits", verbose=False)
 
-# Convert galactic (l, b) to equatorial (RA, DEC) for HEALPix query
-coords_gal = SkyCoord(l=l_deg*u.deg, b=b_deg*u.deg, frame='galactic')
-coords_eq = coords_gal.icrs
-ra_deg = coords_eq.ra.deg
-dec_deg = coords_eq.dec.deg
+# Load coverage map (matching compare_lumweight_aquila.py)
+coverage_map = hp.read_map('coverage_aquila_filled.fits', verbose=False)
+coverage_nside = hp.get_nside(coverage_map)
 
-theta = np.deg2rad(90.0 - dec_deg)
-phi = np.deg2rad(ra_deg)
-pix11 = hp.ang2pix(hp.get_nside(map11), theta, phi)
-pix12 = hp.ang2pix(hp.get_nside(map12), theta, phi)
+# Use catalogue completeness values (c1_all for K<11.5, c2_all for K<12.5)
+# These are already combined completeness from all surveys
+cb = c1_all.copy()  # Completeness at K<11.5 (bright limit)
+cf = c2_all.copy()  # Completeness at K<12.5 (faint limit)
 
-c11 = map11[pix11]
-c12 = map12[pix12]
+# Apply completeness threshold (as in Carrick2015)
+cb[cb < 0.5] = 0
+cf[cf < 0.5] = 0
+cf[np.isnan(cf)] = 0
+cb[np.isnan(cb)] = 0
 
-# Use catalogue flags for m_lim (2MRS=11.5, deep=12.5)
-m_lim = np.where(is_2mrs_only, 11.5, 12.5)
-# Use appropriate completeness map based on survey
-comp = np.where(is_2mrs_only, c11, c12)
+# Apparent magnitude limits
+m_b, m_f = 11.5, 12.5
+
+# Cosmological luminosity distance for mu (matching compare_lumweight_aquila.py)
+print("  Computing cosmological luminosity distances...")
+distance_kms_for_mu = r_mpc * 100.0  # Convert back to km/s
+z_for_mu = np.maximum(distance_kms_for_mu / C_LIGHT, 100.0 / C_LIGHT)
+d_L = luminosity_distance_vec(z_for_mu)
+mu = 5.0 * np.log10(np.maximum(d_L, 0.01) * 1e5)
+M = K2Mpp - mu
+
+# Absolute magnitude limits at this distance (clipped to LF range)
+Mb = np.clip(m_b - mu, -26, -17)  # Brightest observable abs mag at K<11.5
+Mf = np.clip(m_f - mu, -26, -17)  # Brightest observable abs mag at K<12.5
+
+# Luminosity weight using Schechter integral (Carrick2015 Eq. 3)
+# Numerator: integral of L*Phi(L) over observable range
+# Denominator: integral of L*Phi(L) over full LF range
+numer = (cf * integral_lw_lumfun_2m(Mf, Mb) +
+         cb * integral_lw_lumfun_2m(Mb, -26))
+denom = integral_lw_lumfun_2m(-17, -26)
+
+getWeight = numer / denom
+getWeight = np.maximum(getWeight, 1e-10)  # Avoid division by zero
+lumWeight = 1.0 / getWeight
+
+# w_ang from completeness (use c2_all for deep, c1_all for 2MRS-only)
+comp = np.where(is_2mrs_only, c1_all, c2_all)
 comp = np.clip(np.where(np.isfinite(comp) & (comp > 0), comp, CMIN), CMIN, 1.0)
-
-print(f"  {np.sum(is_2mrs_only)} in 2MRS-only, {np.sum(~is_2mrs_only)} in deep regions")
-
-# Angular weight
 w_ang = 1.0 / comp
 
-# FC clones inherit w_ang and m_lim from their source (once, position-based)
-fc_matched = fc_source_idx >= 0
-if np.any(fc_matched):
-    w_ang[fc_matched] = w_ang[fc_source_idx[fc_matched]]
-    m_lim[fc_matched] = m_lim[fc_source_idx[fc_matched]]
-    print(f"  FC clones: inherited w_ang and m_lim from sources")
+# m_lim for selection function
+m_lim = np.where(is_2mrs_only, 11.5, 12.5)
+
+print(f"  {np.sum(is_2mrs_only)} in 2MRS-only, {np.sum(~is_2mrs_only)} in deep regions")
+print(f"  lumWeight: min={lumWeight.min():.3f}, max={lumWeight.max():.3f}, mean={lumWeight.mean():.3f}")
 
 # =============================================================================
-# Initial distances (LG frame)
+# Distances already computed from catalogue (velLG)
 # =============================================================================
-# Convert CMB to LG frame
-ell_rad = np.deg2rad(l_deg)
-b_rad = np.deg2rad(b_deg)
-cos_theta = (np.sin(b_rad) * np.sin(b_apex_rad) +
-             np.cos(b_rad) * np.cos(b_apex_rad) * np.cos(ell_rad - l_apex_rad))
-v_lg = vcmb - V_LG * cos_theta
+print(f"  Using catalogue distances: mean r = {np.mean(r_mpc):.1f} Mpc/h")
 
-# Use LG frame for initial distances
-z_obs = v_lg / C_LIGHT
-z_obs = np.maximum(z_obs, 1e-6)  # Avoid negative redshifts
-r_mpc = (C_LIGHT / H0) * (z_obs - (1.0 + Q0) / 2.0 * z_obs**2)
-r_mpc = np.maximum(r_mpc, 0.1)  # Minimum distance
-print(f"  Using LG frame: mean shift = {np.mean(V_LG * cos_theta):.1f} km/s")
+# Compute z_obs for iteration updates (needed later)
+# r_mpc = (c/H0) * (z - (1+Q0)/2 * z^2), solve for z
+# For small z: z ≈ r_mpc * H0 / c
+z_obs = r_mpc * H0 / C_LIGHT  # First-order approximation
 
 # Unit direction vectors in galactic cartesian
 ell_rad = np.deg2rad(l_deg)
@@ -571,6 +632,52 @@ rhat = np.stack([
     cos_b * np.sin(ell_rad),
     np.sin(b_rad)
 ], axis=-1)
+
+# =============================================================================
+# Build 3D grid and masks
+# =============================================================================
+# =============================================================================
+# Load cluster LOS data for comparison
+# =============================================================================
+print("Loading cluster LOS data for comparison...")
+import h5py
+
+los_file = 'data/Clusters/los_Clusters_Carrick2015.hdf5'
+with h5py.File(los_file, 'r') as f:
+    cluster_RA = f['RA'][:]
+    cluster_dec = f['dec'][:]
+    los_r = f['r'][:]
+    los_density_carrick = f['los_density'][0]  # Shape (n_clusters, n_r)
+    los_velocity_carrick_raw = f['los_velocity'][0]
+
+n_clusters = len(cluster_RA)
+n_r_los = len(los_r)
+print(f"  {n_clusters} clusters, {n_r_los} radial bins from {los_r.min():.1f} to {los_r.max():.1f} Mpc/h")
+
+# Apply beta* scaling to Carrick LOS velocities (LOS file has v/beta*)
+los_velocity_carrick = los_velocity_carrick_raw * BETA_MAX
+print(f"  Applied beta*={BETA_MAX} scaling to Carrick LOS velocities")
+
+# Load Carrick velocity field
+print("Loading Carrick velocity field...")
+v_carrick = np.load('data/Carrick_reconstruction_2015/vField_0Runs.npy') * BETA_MAX
+print(f"  vField shape: {v_carrick.shape}")
+
+# Convert cluster RA/dec to Galactic coordinates
+def radec_to_galactic(ra, dec):
+    c = SkyCoord(ra=ra*u.degree, dec=dec*u.degree, frame='icrs')
+    return c.galactic.l.degree, c.galactic.b.degree
+
+cluster_l, cluster_b = radec_to_galactic(cluster_RA, cluster_dec)
+
+# Unit vectors for each cluster (in Galactic frame)
+cluster_l_rad = np.deg2rad(cluster_l)
+cluster_b_rad = np.deg2rad(cluster_b)
+cluster_rhat = np.stack([
+    np.cos(cluster_b_rad) * np.cos(cluster_l_rad),
+    np.cos(cluster_b_rad) * np.sin(cluster_l_rad),
+    np.sin(cluster_b_rad)
+], axis=1)  # Shape (n_clusters, 3)
 
 # =============================================================================
 # Build 3D grid and masks
@@ -596,12 +703,14 @@ coords_eq_3d = coords_gal_3d.icrs
 ra_3d = coords_eq_3d.ra.deg.reshape(rr.shape)
 dec_3d = coords_eq_3d.dec.deg.reshape(rr.shape)
 
-theta_3d = np.deg2rad(90.0 - dec_3d)
-phi_3d = np.deg2rad(ra_3d)
-pix_3d = hp.ang2pix(hp.get_nside(map12), theta_3d.ravel(), phi_3d.ravel()).reshape(rr.shape)
+# Use galactic coordinates for coverage lookup (matching compare_lumweight_aquila.py)
+theta_3d = np.pi/2 - gal_b_3d  # theta = pi/2 - b
+phi_3d = np.mod(gal_l_3d, 2*np.pi)  # phi = l (already in radians)
+pix_3d = hp.ang2pix(coverage_nside, theta_3d.ravel(), phi_3d.ravel()).reshape(rr.shape)
 
-is_2mrs_only_3d = map12[pix_3d] <= 0
-is_deep_3d = ~is_2mrs_only_3d
+# Match compare_lumweight_aquila.py: is_deep = (coverage_map == 1)
+is_deep_3d = (coverage_map[pix_3d] == 1)
+is_2mrs_only_3d = ~is_deep_3d
 
 # Masks
 valid_region = rr <= RMAX
@@ -619,35 +728,44 @@ beta_values = np.linspace(0.0, BETA_MAX, N_ITERATIONS)
 distance_history = deque(maxlen=N_AVG)
 sigma_voxels = 4.0 / dx
 
+# Load iteration-dependent Schechter parameters from Carrick
+schechter_params = np.load(f"{DATA_DIR}/../Carrick_reconstruction_2015/SchecterParams.npy")
+print(f"  Loaded Schechter params for {len(schechter_params)} iterations")
+
 import time as _time
 
 for i_iter, beta in enumerate(beta_values):
-    # Fit Schechter LF with current distances
-    r_safe = np.maximum(r_mpc, 0.1)
-    mu_current = 5.0 * np.log10(r_safe) + 25.0
-    M_abs_current = K2Mpp - mu_current
+    # Compute cosmological luminosity distance for mu (matching compare_lumweight_aquila.py)
+    distance_kms_iter = r_mpc * 100.0  # Convert back to km/s
+    z_iter = np.maximum(distance_kms_iter / C_LIGHT, 100.0 / C_LIGHT)
+    d_L_iter = luminosity_distance_vec(z_iter)
+    mu_current = 5.0 * np.log10(np.maximum(d_L_iter, 0.01) * 1e5)
 
-    # Fit Schechter LF at first iteration only (use fixed values after)
-    if i_iter == 0:
-        alpha_fit, Mstar_fit = fit_schechter_lf(M_abs_current, r_mpc, m_lim, vcmb)
-        print(f"    LF: alpha={alpha_fit:.3f}, M*={Mstar_fit:.2f}")
-        # Store for later iterations
-        _alpha_stored, _Mstar_stored = alpha_fit, Mstar_fit
-    else:
-        alpha_fit, Mstar_fit = _alpha_stored, _Mstar_stored
+    # Use iteration-dependent Schechter params from Carrick
+    Mstar_fit = schechter_params[i_iter, 0]
+    alpha_fit = schechter_params[i_iter, 1]
+    if i_iter == 0 or i_iter == N_ITERATIONS - 1:
+        print(f"    LF iter {i_iter}: alpha={alpha_fit:.3f}, M*={Mstar_fit:.2f}")
 
-    # Recompute L/L* with fitted M*
-    L_over_Lstar = 10.0 ** (-0.4 * (M_abs_current - Mstar_fit))
+    # Recompute L/L* with current Mstar and distances
+    M_abs_iter = K2Mpp - mu_current
+    L_over_Lstar = 10.0 ** (-0.4 * (M_abs_iter - Mstar_fit))
 
-    # Compute weights with current distances and fitted LF
-    S_r = compute_selection_function(r_mpc, m_lim, alpha=alpha_fit, Mstar=Mstar_fit)
-    w_L = 1.0 / S_r
+    # Recompute lumWeight with current distances (matches compare_lumweight_aquila.py)
+    Mb_iter = np.clip(m_b - mu_current, -26, -17)
+    Mf_iter = np.clip(m_f - mu_current, -26, -17)
+    numer = (cf * integral_lw_lumfun_2m(Mf_iter, Mb_iter, alpha_fit, Mstar_fit) +
+             cb * integral_lw_lumfun_2m(Mb_iter, -26, alpha_fit, Mstar_fit))
+    denom = integral_lw_lumfun_2m(-17, -26, alpha_fit, Mstar_fit)
+    getWeight_iter = np.maximum(numer / denom, 1e-10)
+    lumWeight_iter = 1.0 / getWeight_iter
 
-    # Total weight
-    w_total = w_ang * w_L * L_over_Lstar
+    # Total weight = lumWeight * L/L* (matching compare_lumweight_aquila.py)
+    # Note: NO w_ang multiplier - compare_lumweight_aquila doesn't use it
+    w_total = lumWeight_iter * L_over_Lstar
 
-    # Zero out 2MRS beyond cutoff and outside box
-    w_total[is_2mrs_only & (r_mpc > R_2MRS_CUTOFF)] = 0.0
+    # Zero out 2MRS beyond cutoff and outside box (matching compare_lumweight_aquila.py)
+    w_total[(flag_2mrs_mask == 1) & (r_mpc > R_2MRS_CUTOFF)] = 0.0
     w_total[r_mpc > RMAX] = 0.0
 
     # Clone ZoA galaxies
@@ -691,37 +809,27 @@ for i_iter, beta in enumerate(beta_values):
     # Compare NGP vs CIC
     x, y, z = positions[:, 0], positions[:, 1], positions[:, 2]
 
-    # NGP
-    rho_ngp = np.zeros((N, N, N), dtype=np.float64)
-    ix = np.floor((x + RMAX) / dx).astype(int)
-    iy = np.floor((y + RMAX) / dx).astype(int)
-    iz = np.floor((z + RMAX) / dx).astype(int)
-    valid_ngp = (ix >= 0) & (ix < N) & (iy >= 0) & (iy < N) & (iz >= 0) & (iz < N) & (w_dep > 0)
-    np.add.at(rho_ngp, (ix[valid_ngp], iy[valid_ngp], iz[valid_ngp]), w_dep[valid_ngp])
-
-    # CIC
+    # CIC deposition (matching compare_lumweight_aquila.py exactly: clip instead of filter)
     rho_cic = np.zeros((N, N, N), dtype=np.float64)
-    cic_coords = (positions + RMAX) / dx
+    cic_coords = (positions + RMAX) / dx - 0.5
     i0 = np.floor(cic_coords).astype(int)
     f = cic_coords - i0
     for di in range(2):
         for dj in range(2):
             for dk in range(2):
-                ii = i0[:, 0] + di
-                jj = i0[:, 1] + dj
-                kk = i0[:, 2] + dk
                 wx = (1.0 - f[:, 0]) if di == 0 else f[:, 0]
                 wy = (1.0 - f[:, 1]) if dj == 0 else f[:, 1]
                 wz = (1.0 - f[:, 2]) if dk == 0 else f[:, 2]
-                w_cic = wx * wy * wz * w_dep
-                valid = (ii >= 0) & (ii < N) & (jj >= 0) & (jj < N) & (kk >= 0) & (kk < N) & (w_cic > 0)
-                np.add.at(rho_cic, (ii[valid], jj[valid], kk[valid]), w_cic[valid])
+                # Use clip like compare_lumweight_aquila.py (not filter)
+                ii = np.clip(i0[:, 0] + di, 0, N-1)
+                jj = np.clip(i0[:, 1] + dj, 0, N-1)
+                kk = np.clip(i0[:, 2] + dk, 0, N-1)
+                np.add.at(rho_cic, (ii, jj, kk), w_dep * wx * wy * wz)
 
     if i_iter == 0:
-        print(f"    NGP: sum={rho_ngp.sum():.1f}, max={rho_ngp.max():.1f}")
         print(f"    CIC: sum={rho_cic.sum():.1f}, max={rho_cic.max():.1f}")
 
-    rho = rho_cic  # Use CIC
+    rho = rho_cic
 
     # Normalize
     rho_mean = np.mean(rho[nonmasked])
@@ -733,8 +841,8 @@ for i_iter, beta in enumerate(beta_values):
     if i_iter == 0:
         print(f"    DEBUG: delta (pre-psi) max={delta[nonmasked].max():.1f}, std={delta[nonmasked].std():.3f}")
 
-    # Bias normalization (using fitted LF parameters)
-    psi_3d = compute_psi(rr.ravel(), m_lim_3d.ravel(), alpha=alpha_fit, Mstar=Mstar_fit).reshape(rr.shape)
+    # Bias normalization (uniform m_lim=11.5, matching compare_lumweight_aquila.py)
+    psi_3d = compute_psi(rr.ravel(), np.full(rr.size, 11.5), alpha=alpha_fit, Mstar=Mstar_fit).reshape(rr.shape)
     psi_3d = np.maximum(psi_3d, 0.1)
     delta = delta / psi_3d
     delta = np.where(nonmasked, delta, 0.0)
@@ -768,9 +876,8 @@ for i_iter, beta in enumerate(beta_values):
         else:
             r_mpc = r_new
 
-        # FC clones inherit r_mpc from their source galaxy
-        if np.any(fc_matched):
-            r_mpc[fc_matched] = r_mpc[fc_source_idx[fc_matched]]
+        # FC clones (flag_copied=1) already have correct distances in catalogue
+        # No need to update them during iterations
 
     delta_std = np.std(delta[nonmasked])
     print(f"  {i_iter}/{N_ITERATIONS}, beta={beta:.2f}, std={delta_std:.3f}")
@@ -853,20 +960,19 @@ for i_iter, beta in enumerate(beta_values):
             # Split by 2MRS vs deep, excluding masked galaxies (2MRS beyond 125)
             is_2mrs_gal = is_2mrs_only
             is_masked = is_2mrs_gal & (r_mpc > R_2MRS_CUTOFF)  # 2MRS galaxies beyond 125
-            w_combined = w_ang * w_L  # Angular x luminosity weight
             # 2MRS galaxies within 125
             sel_2mrs = is_2mrs_gal & ~is_masked
             # Deep galaxies (all used)
             sel_deep = ~is_2mrs_gal
 
-            # Left panel: Computed w_ang * w_L
+            # Left panel: Computed lumWeight
             ax = axes[0]
-            ax.scatter(r_mpc[sel_2mrs], w_combined[sel_2mrs], s=1, alpha=0.3, c='blue', label=f'2MRS (m=11.5, n={sel_2mrs.sum()})')
-            ax.scatter(r_mpc[sel_deep], w_combined[sel_deep], s=1, alpha=0.3, c='red', label=f'Deep (m=12.5, n={sel_deep.sum()})')
+            ax.scatter(r_mpc[sel_2mrs], lumWeight_iter[sel_2mrs], s=1, alpha=0.3, c='blue', label=f'2MRS (m=11.5, n={sel_2mrs.sum()})')
+            ax.scatter(r_mpc[sel_deep], lumWeight_iter[sel_deep], s=1, alpha=0.3, c='red', label=f'Deep (m=12.5, n={sel_deep.sum()})')
             ax.axvline(R_2MRS_CUTOFF, color='orange', ls='--', lw=2, label='2MRS cutoff')
             ax.set_xlabel('r [Mpc/h]')
-            ax.set_ylabel(r'$w_{ang} \times w_L$ (angular $\times$ luminosity weight)')
-            ax.set_title(f'Computed $w_{{ang}} \\times w_L$ (excluding {is_masked.sum()} masked)')
+            ax.set_ylabel(r'lumWeight')
+            ax.set_title(f'Computed lumWeight (excluding {is_masked.sum()} masked)')
             ax.legend()
             ax.set_xlim(0, 200)
             ax.set_ylim(0, 10.5)
@@ -1112,6 +1218,187 @@ for i_iter, beta in enumerate(beta_values):
         plt.close()
 
         print(f"    Saved iter_{i_iter:03d}_profile.png and iter_{i_iter:03d}_SGP.png")
+
+        # =================================================================
+        # LOS comparison to clusters (like compare_lumweight_aquila.py)
+        # =================================================================
+        print(f"    Computing LOS profiles to {n_clusters} clusters...")
+
+        # Build interpolators for current delta field
+        interp_delta_ours = RegularGridInterpolator(
+            (coords, coords, coords), delta,
+            bounds_error=False, fill_value=0.0, method='linear')
+
+        # Carrick delta field coordinates (may differ from ours)
+        N_c = delta_carrick.shape[0]
+        cell_c = BOX_SIDE / N_c
+        coords_c = np.linspace(-RMAX + cell_c/2, RMAX - cell_c/2, N_c)
+        interp_delta_carrick = RegularGridInterpolator(
+            (coords_c, coords_c, coords_c), delta_carrick,
+            bounds_error=False, fill_value=0.0, method='linear')
+
+        # Compute velocity from our delta using FFT (if beta > 0)
+        if beta > 0:
+            v_ours = velocity_from_density_fft(delta, beta, BOX_SIDE)
+            # v_ours is already shape (N, N, N, 3)
+
+            interp_vx_ours = RegularGridInterpolator(
+                (coords, coords, coords), v_ours[:, :, :, 0],
+                bounds_error=False, fill_value=0.0, method='linear')
+            interp_vy_ours = RegularGridInterpolator(
+                (coords, coords, coords), v_ours[:, :, :, 1],
+                bounds_error=False, fill_value=0.0, method='linear')
+            interp_vz_ours = RegularGridInterpolator(
+                (coords, coords, coords), v_ours[:, :, :, 2],
+                bounds_error=False, fill_value=0.0, method='linear')
+
+        # Carrick velocity interpolators
+        interp_vx_carrick = RegularGridInterpolator(
+            (coords_c, coords_c, coords_c), v_carrick[0],
+            bounds_error=False, fill_value=0.0, method='linear')
+        interp_vy_carrick = RegularGridInterpolator(
+            (coords_c, coords_c, coords_c), v_carrick[1],
+            bounds_error=False, fill_value=0.0, method='linear')
+        interp_vz_carrick = RegularGridInterpolator(
+            (coords_c, coords_c, coords_c), v_carrick[2],
+            bounds_error=False, fill_value=0.0, method='linear')
+
+        # Compute LOS profiles
+        los_density_ours = np.zeros((n_clusters, n_r_los))
+        los_density_carrick_interp = np.zeros((n_clusters, n_r_los))
+        los_velocity_ours = np.zeros((n_clusters, n_r_los))
+        los_velocity_carrick_interp = np.zeros((n_clusters, n_r_los))
+
+        for i_cl in range(n_clusters):
+            # Positions along LOS (in Galactic cartesian)
+            pos = los_r[:, None] * cluster_rhat[i_cl]  # Shape (n_r, 3)
+
+            # Interpolate density
+            los_density_ours[i_cl] = interp_delta_ours(pos)
+            los_density_carrick_interp[i_cl] = interp_delta_carrick(pos)
+
+            # Interpolate velocity
+            if beta > 0:
+                vx = interp_vx_ours(pos)
+                vy = interp_vy_ours(pos)
+                vz = interp_vz_ours(pos)
+                los_velocity_ours[i_cl] = (
+                    vx * cluster_rhat[i_cl, 0] +
+                    vy * cluster_rhat[i_cl, 1] +
+                    vz * cluster_rhat[i_cl, 2]
+                )
+
+            vx_c = interp_vx_carrick(pos)
+            vy_c = interp_vy_carrick(pos)
+            vz_c = interp_vz_carrick(pos)
+            los_velocity_carrick_interp[i_cl] = (
+                vx_c * cluster_rhat[i_cl, 0] +
+                vy_c * cluster_rhat[i_cl, 1] +
+                vz_c * cluster_rhat[i_cl, 2]
+            )
+
+        # Plot LOS density comparison (sample of 12 clusters)
+        np.random.seed(42)
+        sample_idx = np.random.choice(n_clusters, min(12, n_clusters), replace=False)
+
+        fig, axes = plt.subplots(3, 4, figsize=(16, 12))
+        axes = axes.flatten()
+
+        for i, idx in enumerate(sample_idx):
+            ax = axes[i]
+            # Carrick LOS file stores 1+delta, our interpolated values are delta
+            ax.plot(los_r, los_density_carrick[idx], 'g-', lw=2, label='Carrick LOS file')
+            ax.plot(los_r, 1 + los_density_carrick_interp[idx], 'c--', lw=2, alpha=0.8, label='dField interp')
+            ax.plot(los_r, 1 + los_density_ours[idx], 'r-', lw=2, alpha=0.8, label='Ours')
+            ax.axhline(1, color='k', ls=':', alpha=0.5)
+            ax.set_xlabel('r [Mpc/h]')
+            ax.set_ylabel(r'$1 + \delta$')
+            ax.set_title(f'Cluster {idx}: l={cluster_l[idx]:.1f}°, b={cluster_b[idx]:.1f}°')
+            ax.set_xlim(0, 200)
+            ax.grid(True, alpha=0.3)
+            if i == 0:
+                ax.legend(fontsize=6)
+
+        plt.suptitle(f'LOS Density: Iteration {i_iter}, beta={beta:.2f}', fontsize=14)
+        plt.tight_layout()
+        plt.savefig(f'iter_{i_iter:03d}_los_density.png', dpi=100)
+        plt.close()
+
+        # Plot LOS velocity comparison
+        fig, axes = plt.subplots(3, 4, figsize=(16, 12))
+        axes = axes.flatten()
+
+        for i, idx in enumerate(sample_idx):
+            ax = axes[i]
+            ax.plot(los_r, los_velocity_carrick[idx], 'g-', lw=2, label='Carrick LOS file')
+            ax.plot(los_r, los_velocity_carrick_interp[idx], 'c--', lw=2, alpha=0.8, label='vField interp')
+            if beta > 0:
+                ax.plot(los_r, los_velocity_ours[idx], 'r-', lw=2, alpha=0.8, label='Ours')
+            ax.axhline(0, color='k', ls=':', alpha=0.5)
+            ax.set_xlabel('r [Mpc/h]')
+            ax.set_ylabel(r'$v_{los}$ [km/s]')
+            ax.set_title(f'Cluster {idx}: l={cluster_l[idx]:.1f}°, b={cluster_b[idx]:.1f}°')
+            ax.set_xlim(0, 200)
+            ax.grid(True, alpha=0.3)
+            if i == 0:
+                ax.legend(fontsize=6)
+
+        plt.suptitle(f'LOS Velocity: Iteration {i_iter}, beta={beta:.2f}', fontsize=14)
+        plt.tight_layout()
+        plt.savefig(f'iter_{i_iter:03d}_los_velocity.png', dpi=100)
+        plt.close()
+
+        # Plot mean LOS comparison
+        r_bin_edges = np.linspace(0, 200, 21)
+        r_bin_cen = 0.5 * (r_bin_edges[:-1] + r_bin_edges[1:])
+
+        mean_delta_ours = np.zeros(len(r_bin_cen))
+        mean_delta_carrick_los = np.zeros(len(r_bin_cen))
+        mean_vel_ours = np.zeros(len(r_bin_cen))
+        mean_vel_carrick_los = np.zeros(len(r_bin_cen))
+
+        for i in range(len(r_bin_cen)):
+            mask = (los_r >= r_bin_edges[i]) & (los_r < r_bin_edges[i+1])
+            if mask.sum() == 0:
+                continue
+            # Carrick LOS stores 1+delta, convert to delta
+            mean_delta_carrick_los[i] = np.mean(los_density_carrick[:, mask].flatten() - 1)
+            mean_delta_ours[i] = np.mean(los_density_ours[:, mask].flatten())
+            mean_vel_carrick_los[i] = np.mean(los_velocity_carrick[:, mask].flatten())
+            if beta > 0:
+                mean_vel_ours[i] = np.mean(los_velocity_ours[:, mask].flatten())
+
+        fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+        ax = axes[0]
+        ax.plot(r_bin_cen, mean_delta_carrick_los, 'g-', lw=2, label='Carrick LOS file')
+        ax.plot(r_bin_cen, mean_delta_ours, 'r--', lw=2, label='Ours')
+        ax.axhline(0, color='k', ls=':', alpha=0.5)
+        ax.axvline(R_2MRS_CUTOFF, color='orange', ls='--', alpha=0.7, label='2MRS cutoff')
+        ax.set_xlabel('r [Mpc/h]')
+        ax.set_ylabel(r'$\langle\delta\rangle$')
+        ax.set_title('Mean LOS overdensity (all clusters)')
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+
+        ax = axes[1]
+        ax.plot(r_bin_cen, mean_vel_carrick_los, 'g-', lw=2, label='Carrick LOS file')
+        if beta > 0:
+            ax.plot(r_bin_cen, mean_vel_ours, 'r--', lw=2, label='Ours')
+        ax.axhline(0, color='k', ls=':', alpha=0.5)
+        ax.axvline(R_2MRS_CUTOFF, color='orange', ls='--', alpha=0.7, label='2MRS cutoff')
+        ax.set_xlabel('r [Mpc/h]')
+        ax.set_ylabel(r'$\langle v_{los}\rangle$ [km/s]')
+        ax.set_title('Mean LOS velocity (all clusters)')
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+
+        plt.suptitle(f'Iteration {i_iter}, beta={beta:.2f}', fontsize=14)
+        plt.tight_layout()
+        plt.savefig(f'iter_{i_iter:03d}_los_mean.png', dpi=100)
+        plt.close()
+
+        print(f"    Saved iter_{i_iter:03d}_los_density.png, iter_{i_iter:03d}_los_velocity.png, iter_{i_iter:03d}_los_mean.png")
 
 # =============================================================================
 # Final output
