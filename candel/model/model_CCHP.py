@@ -136,6 +136,7 @@ class CCHPTRGBSelectionContext:
     # Flags
     use_reconstruction: bool
     which_bias: str
+    quadratic_bias_delta0: float = 0.0
 
 
 class CCHPTRGBSelectionComputation:
@@ -183,7 +184,8 @@ class CCHPTRGBSelectionComputation:
                     ctx.r_host_range * h)
             lp_r_grid += lp_galaxy_bias(
                 rand_los_delta_grid, jnp.log1p(rand_los_delta_grid),
-                bias_params, ctx.which_bias)
+                bias_params, ctx.which_bias,
+                ctx.quadratic_bias_delta0)
 
             Vpec_grid = beta * \
                 ctx.f_rand_los_velocity.interp_many_steps_per_galaxy(
@@ -216,7 +218,8 @@ class CCHPTRGBSelectionComputation:
                     ctx.r_host_range * h)
             lp_r_grid += lp_galaxy_bias(
                 rand_los_delta_grid, jnp.log1p(rand_los_delta_grid),
-                bias_params, ctx.which_bias)
+                bias_params, ctx.which_bias,
+                ctx.quadratic_bias_delta0)
 
         # Marginalized selection over random LOS, shape (nfields, n_rand_los)
         log_S = self.log_S_SN_mag(lp_r_grid, M_B, H0, mag_lim, mag_width)
@@ -250,6 +253,8 @@ class BaseCCHPModel(ABC):
         self.use_reconstruction = get_nested(
             config, "model/use_reconstruction", False)
         self.which_bias = get_nested(config, "model/which_bias", "linear")
+        self.quadratic_bias_delta0 = get_nested(
+            config, "pv_model/quadratic_bias_delta0", 0.0)
         self.which_selection = get_nested(
             config, "model/which_selection", None)
         if self.use_reconstruction:
@@ -559,6 +564,7 @@ class BaseCCHPModel(ABC):
                     sigma_SN_sel=self.sigma_SN_sel,
                     use_reconstruction=self.use_reconstruction,
                     which_bias=self.which_bias,
+                    quadratic_bias_delta0=self.quadratic_bias_delta0,
                 )
                 self.selection = CCHPTRGBSelectionComputation(ctx)
 
@@ -571,6 +577,7 @@ class BaseCCHPModel(ABC):
         if not get_nested(config, "model/use_reconstruction", False):
             replace_prior_with_delta(config, "beta", 0.0, verbose=False)
             replace_prior_with_delta(config, "b1", 1.0, verbose=False)
+            replace_prior_with_delta(config, "b2", 0.0, verbose=False)
             replace_prior_with_delta(config, "alpha", 1.0, verbose=False)
             replace_prior_with_delta(config, "delta_b1", 0.0, verbose=False)
             replace_prior_with_delta(config, "alpha_low", 1.0, verbose=False)
@@ -582,8 +589,11 @@ class BaseCCHPModel(ABC):
         if which_sel != "CSP":
             replace_prior_with_delta(config, "alpha_tripp", 0.7, verbose=False)
             replace_prior_with_delta(config, "beta_tripp", 2.5, verbose=False)
-        if get_nested(config, "model/which_bias", "linear") != "linear":
+        which_bias = get_nested(config, "model/which_bias", "linear")
+        if which_bias not in ["linear", "quadratic"]:
             replace_prior_with_delta(config, "b1", 1.0, verbose=False)
+        if which_bias != "quadratic":
+            replace_prior_with_delta(config, "b2", 0.0, verbose=False)
         return config
 
     def set_data(self, data):
@@ -761,14 +771,16 @@ class CCHPTRGBModel(BaseCCHPModel):
             # lp_host_dist broadcasts to (nfields, ngal)
             lp_host_dist += lp_galaxy_bias(
                 los_delta_host, jnp.log1p(los_delta_host),
-                bias_params, self.which_bias)
+                bias_params, self.which_bias,
+                self.quadratic_bias_delta0)
 
             lp_grid = self._log_prior_r_grid[None, None, :]
             los_delta_grid = self.f_host_los_delta.interp_many_steps_per_galaxy(  # noqa
                 self.r_host_range * h)
             lp_grid += lp_galaxy_bias(
                 los_delta_grid, jnp.log1p(los_delta_grid),
-                bias_params, self.which_bias)
+                bias_params, self.which_bias,
+                self.quadratic_bias_delta0)
 
             lp_grid_norm = ln_simpson(
                 lp_grid, x=self.r_host_range[None, None, :], axis=-1)

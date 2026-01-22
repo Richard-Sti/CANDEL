@@ -517,9 +517,11 @@ class BaseModel(ABC):
         if self.galaxy_bias not in ["unity", "powerlaw", "linear",
                                     "linear_from_beta",
                                     "linear_from_beta_stochastic",
-                                    "double_powerlaw"]:
+                                    "double_powerlaw", "quadratic"]:
             raise ValueError(
                 f"Invalid galaxy bias model '{self.galaxy_bias}'.")
+        self.quadratic_bias_delta0 = get_nested(
+            config, "pv_model/quadratic_bias_delta0", 0.0)
 
         self.which_distance_prior = get_nested(
             config, "pv_model/which_distance_prior", "empirical")
@@ -556,13 +558,18 @@ def sample_galaxy_bias(priors, galaxy_bias, shared_params=None, **kwargs):
         alpha_high = rsample("alpha_high", priors["alpha_high"], shared_params)
         log_rho_t = rsample("log_rho_t", priors["log_rho_t"], shared_params)
         bias_params = [alpha_low, alpha_high, log_rho_t]
+    elif galaxy_bias == "quadratic":
+        b1 = rsample("b1", priors["b1"], shared_params)
+        b2 = rsample("b2", priors["b2"], shared_params)
+        bias_params = [b1, b2]
     else:
         raise ValueError(f"Invalid galaxy bias model '{galaxy_bias}'.")
 
     return bias_params
 
 
-def lp_galaxy_bias(delta, log_rho, bias_params, galaxy_bias):
+def lp_galaxy_bias(delta, log_rho, bias_params, galaxy_bias,
+                   quadratic_bias_delta0=0.0):
     """
     Given the galaxy bias probabibility, given some density and a bias model.
     """
@@ -575,6 +582,10 @@ def lp_galaxy_bias(delta, log_rho, bias_params, galaxy_bias):
               + (alpha_high - alpha_low) * jnp.logaddexp(0.0, log_x))
     elif "linear" in galaxy_bias or galaxy_bias == "unity":
         lp = jnp.log(smoothclip_nr(1 + bias_params[0] * delta, tau=0.1))
+    elif galaxy_bias == "quadratic":
+        b1, b2 = bias_params
+        d = delta - quadratic_bias_delta0
+        lp = jnp.log(smoothclip_nr(1 + b1 * d + b2 * d**2, tau=0.1))
     else:
         raise ValueError(f"Invalid galaxy bias model '{galaxy_bias}'.")
 
@@ -805,8 +816,8 @@ class TFRModel(BaseModel):
                 lp_dist += lp_galaxy_bias(
                     data["los_delta_r_grid"],
                     data["los_log_density_r_grid"],
-                    bias_params, self.galaxy_bias
-                    )
+                    bias_params, self.galaxy_bias,
+                    self.quadratic_bias_delta0)
                 lp_dist -= ln_simpson(
                     lp_dist, x=r_grid[None, None, :], axis=-1)[..., None]
             else:
@@ -976,7 +987,8 @@ class SNModel(BaseModel):
                 lp_dist += lp_galaxy_bias(
                     data["los_delta_r_grid"],
                     data["los_log_density_r_grid"],
-                    bias_params, self.galaxy_bias)
+                    bias_params, self.galaxy_bias,
+                    self.quadratic_bias_delta0)
 
                 lp_dist -= ln_simpson(
                     lp_dist, x=r_grid[None, None, :], axis=-1)[..., None]
@@ -1136,7 +1148,8 @@ class PantheonPlusModel(BaseModel):
             # Inhomogeneous Malmquist bias contribution.
             lp_dist += lp_galaxy_bias(
                 data.f_los_delta(r), data.f_los_log_density(r),
-                bias_params, self.galaxy_bias)
+                bias_params, self.galaxy_bias,
+                self.quadratic_bias_delta0)
 
             # Distance prior normalization grid, `(n_field, n_gal, n_rbin)`
             lp_dist_norm = log_prior_r_empirical(
@@ -1144,7 +1157,8 @@ class PantheonPlusModel(BaseModel):
             lp_dist_norm += lp_galaxy_bias(
                 data["los_delta_r_grid"],
                 data["los_log_density_r_grid"],
-                bias_params, self.galaxy_bias)
+                bias_params, self.galaxy_bias,
+                self.quadratic_bias_delta0)
             # Finally integrate over the radial bins and normalize.
             lp_dist -= ln_simpson(
                 lp_dist_norm, x=r_grid[None, None, :], axis=-1)
@@ -1277,8 +1291,8 @@ class ClustersModel(BaseModel):
                 lp_dist += lp_galaxy_bias(
                     data["los_delta_r_grid"],
                     data["los_log_density_r_grid"],
-                    bias_params, self.galaxy_bias
-                    )
+                    bias_params, self.galaxy_bias,
+                    self.quadratic_bias_delta0)
                 lp_dist -= ln_simpson(
                     lp_dist, x=r_grid[None, None, :], axis=-1)[..., None]
             else:
@@ -1430,8 +1444,8 @@ class FPModel(BaseModel):
                 lp_dist += lp_galaxy_bias(
                     data["los_delta_r_grid"],
                     data["los_log_density_r_grid"],
-                    bias_params, self.galaxy_bias
-                    )
+                    bias_params, self.galaxy_bias,
+                    self.quadratic_bias_delta0)
                 lp_dist -= ln_simpson(
                     lp_dist, x=r_grid[None, None, :], axis=-1)[..., None]
             else:

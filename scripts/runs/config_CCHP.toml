@@ -14,6 +14,7 @@ seed = 44
 # PV model settings (for CSPModel in joint inference)
 [pv_model]
 kind = "Vext"
+quadratic_bias_delta0 = 1.15  # Expansion point for quadratic bias
 
 # Model hyperparameters
 [model]
@@ -92,6 +93,11 @@ high = 3000.0
 dist = "normal"
 loc = 1.2
 scale = 0.1
+
+[model.priors.b2]
+dist = "normal"
+loc = 0
+scale = 1.0
 
 [model.priors.beta]
 # dist = "normal"
