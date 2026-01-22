@@ -231,6 +231,8 @@ class PVDataFrame:
                 except KeyError:
                     raise KeyError("Data must contain 'czcmb' or 'zcmb'.")
             cz_obs_lim = [float(np.min(cz_obs)), float(np.max(cz_obs))]
+            # Ensure minimum cz is positive for distance conversion
+            cz_obs_lim[0] = max(cz_obs_lim[0], 50.0)  # At least 50 km/s
             redshift2distance = Redshift2Distance(Om0=Om)
             r_from_cz = redshift2distance(
                 np.array(cz_obs_lim), h=h_auto, is_velocity=True)
@@ -238,7 +240,7 @@ class PVDataFrame:
             r_max_raw = float(r_from_cz[1])
             buffer_low = max(r_min_raw * 0.25, 15.0)
             buffer_high = max(r_max_raw * 0.25, 15.0)
-            rmin = max(r_min_raw - buffer_low, 0.15)
+            rmin = max(r_min_raw - buffer_low, 0.01)
             rmax = r_max_raw + buffer_high
             fprint(f"auto r_limits_malmquist (h={h_auto}): [{rmin:.1f}, "
                    f"{rmax:.1f}] Mpc "
@@ -1587,6 +1589,8 @@ def load_CSP_from_config(config_path):
             except KeyError:
                 raise KeyError("Data must contain 'czcmb' or 'zcmb'.")
         cz_obs_lim = [float(np.min(cz_obs)), float(np.max(cz_obs))]
+        # Ensure minimum cz is positive for distance conversion
+        cz_obs_lim[0] = max(cz_obs_lim[0], 50.0)  # At least 50 km/s
         redshift2distance = Redshift2Distance(Om0=Om)
         r_from_cz = redshift2distance(
             np.array(cz_obs_lim), h=h_auto, is_velocity=True)
@@ -1594,7 +1598,7 @@ def load_CSP_from_config(config_path):
         r_max_raw = float(r_from_cz[1])
         buffer_low = max(r_min_raw * 0.25, 15.0)
         buffer_high = max(r_max_raw * 0.25, 15.0)
-        rmin = max(r_min_raw - buffer_low, 0.15)
+        rmin = max(r_min_raw - buffer_low, 0.01)
         rmax = r_max_raw + buffer_high
         fprint(f"auto r_limits_malmquist (h={h_auto}): "
                f"[{rmin:.1f}, {rmax:.1f}] Mpc "
