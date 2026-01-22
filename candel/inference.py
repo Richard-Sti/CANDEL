@@ -312,31 +312,43 @@ def drop_deterministic(samples, check_all_equals=True):
 
 def postprocess_samples(samples):
     """Postprocess MCMC samples."""
-    for prefix in ["Vext_rad", "Vext_radmag", "Vext", "zeropoint_dipole"]:
-        # Spherical form: phi + cos_theta (+ mag optional)
-        if f"{prefix}_phi" in samples and f"{prefix}_cos_theta" in samples:
-            phi = np.rad2deg(samples.pop(f"{prefix}_phi"))
-            theta = np.arccos(samples.pop(f"{prefix}_cos_theta"))
-            dec = np.rad2deg(0.5 * np.pi - theta)
+    # Collect all unique model prefixes (e.g., "Foundation/", "LOSS/")
+    model_prefixes = set()
+    for key in samples.keys():
+        if "/" in key:
+            model_prefixes.add(key.split("/")[0] + "/")
+    model_prefixes.add("")  # Also handle unprefixed keys
 
-            ell, b = radec_to_galactic(phi, dec)
-            samples[f"{prefix}_ell"] = ell
-            samples[f"{prefix}_b"] = b
+    for model_prefix in model_prefixes:
+        for prefix in ["Vext_rad", "Vext_radmag", "Vext", "zeropoint_dipole"]:
+            full_prefix = f"{model_prefix}{prefix}"
+            # Spherical form: phi + cos_theta (+ mag optional)
+            phi_key = f"{full_prefix}_phi"
+            cos_theta_key = f"{full_prefix}_cos_theta"
+            if phi_key in samples and cos_theta_key in samples:
+                phi = np.rad2deg(samples.pop(phi_key))
+                theta = np.arccos(samples.pop(cos_theta_key))
+                dec = np.rad2deg(0.5 * np.pi - theta)
 
-            if f"{prefix}_mag" in samples:
-                samples[f"{prefix}_mag"] = samples.pop(f"{prefix}_mag")
-            continue
+                ell, b = radec_to_galactic(phi, dec)
+                samples[f"{full_prefix}_ell"] = ell
+                samples[f"{full_prefix}_b"] = b
 
-        # Cartesian form: x, y, z
-        if all(f"{prefix}_{c}" in samples for c in "xyz"):
-            x = samples.pop(f"{prefix}_x")
-            y = samples.pop(f"{prefix}_y")
-            z = samples.pop(f"{prefix}_z")
+                mag_key = f"{full_prefix}_mag"
+                if mag_key in samples:
+                    samples[mag_key] = samples.pop(mag_key)
+                continue
 
-            r, ell, b = radec_cartesian_to_galactic(x, y, z)
-            samples[f"{prefix}_mag"] = r
-            samples[f"{prefix}_ell"] = ell
-            samples[f"{prefix}_b"] = b
+            # Cartesian form: x, y, z
+            if all(f"{full_prefix}_{c}" in samples for c in "xyz"):
+                x = samples.pop(f"{full_prefix}_x")
+                y = samples.pop(f"{full_prefix}_y")
+                z = samples.pop(f"{full_prefix}_z")
+
+                r, ell, b = radec_cartesian_to_galactic(x, y, z)
+                samples[f"{full_prefix}_mag"] = r
+                samples[f"{full_prefix}_ell"] = ell
+                samples[f"{full_prefix}_b"] = b
 
     return samples
 
