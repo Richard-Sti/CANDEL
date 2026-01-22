@@ -223,7 +223,13 @@ class PVDataFrame:
             # Compute from observed cz with 25% buffer, min 15 Mpc
             from ..cosmography import Redshift2Distance
             Om = config.get("model", {}).get("Om", 0.3)
-            cz_obs = data["czcmb"]
+            try:
+                cz_obs = data["czcmb"]
+            except KeyError:
+                try:
+                    cz_obs = data["zcmb"] * SPEED_OF_LIGHT
+                except KeyError:
+                    raise KeyError("Data must contain 'czcmb' or 'zcmb'.")
             cz_obs_lim = [float(np.min(cz_obs)), float(np.max(cz_obs))]
             redshift2distance = Redshift2Distance(Om0=Om)
             r_from_cz = redshift2distance(
@@ -1573,7 +1579,13 @@ def load_CSP_from_config(config_path):
         # Compute from observed cz with 25% buffer, min 15 Mpc
         from ..cosmography import Redshift2Distance
         Om = get_nested(config, "model/Om", 0.3)
-        cz_obs = data["czcmb"]
+        try:
+            cz_obs = data["czcmb"]
+        except KeyError:
+            try:
+                cz_obs = data["zcmb"] * SPEED_OF_LIGHT
+            except KeyError:
+                raise KeyError("Data must contain 'czcmb' or 'zcmb'.")
         cz_obs_lim = [float(np.min(cz_obs)), float(np.max(cz_obs))]
         redshift2distance = Redshift2Distance(Om0=Om)
         r_from_cz = redshift2distance(
