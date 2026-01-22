@@ -327,10 +327,8 @@ if __name__ == "__main__":
         "inference/compute_log_density": False,
         "inference/compute_evidence": False,
         "inference/track_log_density_per_sample": False,
-        # "inference/model": "TFRModel",
-        "inference/model": ["SNModel", "SNModel"],
+        "inference/model": "TFRModel",
         # "inference/shared_params": "beta,sigma_v,Vext",
-        "inference/shared_params": "beta",
         # ###### -- MODEL -- ######
         # ###### -- PV MODEL -- ######
         "pv_model/kind": "precomputed_los_Carrick2015",
@@ -342,7 +340,7 @@ if __name__ == "__main__":
         # "pv_model/which_Vext": "radial_magnitude",
         "pv_model/r_limits_malmquist": ["auto"],
         # "pv_model/r_limits_malmquist": [[0.1, 251.0]],
-        "pv_model/num_points_malmquist": 251,
+        "pv_model/num_points_malmquist": 301,
         # "pv_model/which_distance_prior": "empirical",
         # "pv_model/which_distance_prior": "volume_redshift_selected",
         # ##### - PRIORS -- ######
@@ -354,7 +352,8 @@ if __name__ == "__main__":
         #     "method": "linear"
         # },
         # "model/use_stretch_gmm": False,
-        "model/use_MNR": False,
+        "model/use_MNR": True,
+        "model/marginalize_eta": False,
         "model/priors/beta": [
             {"dist": "uniform", "low": -1, "high": 2.0},
             # {"dist": "normal", "loc": 0.43, "scale": 0.25},
@@ -374,10 +373,11 @@ if __name__ == "__main__":
         # ],
         # "model/priors/Om": {"dist": "delta", "value": 0.3},
         # ###### - IO - ######
-        "io/catalogue_name": ["Foundation", "LOSS"],
+        "io/catalogue_name": ["CF4_i", "CF4_W1"],
+        "io/CF4_i/exclude_W1": True,
         # "io/CSP/which_sample": "CSPII",
         # "io/CSP/zcmb_max": 0.05,
-        "io/root_output": "results_test/",
+        "io/root_output": "results_S8_V2/",
     }
     # # --- CCHP overrides ---
     # manual_overrides = {
