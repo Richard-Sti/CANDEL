@@ -1335,8 +1335,8 @@ class FPModel(BaseModel):
         super().__init__(config_path)
 
         if self.use_MNR:
-            fprint("setting `compute_evidence` to False.")
-            self.config["inference"]["compute_evidence"] = False
+            fprint("FPModel does not support MNR, setting `use_MNR` to False.")
+            self.use_MNR = False
 
         if self.track_log_density_per_sample:
             raise NotImplementedError(
