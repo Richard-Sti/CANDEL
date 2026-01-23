@@ -56,6 +56,27 @@ PLOT_EVERY = 10  # Save diagnostic plots every N iterations
 # ZoA cloning
 CLONE_ZOA = True  # Enable Zone of Avoidance cloning
 
+# Anisotropic H0 Model
+# H0(n̂) = H0_bar * (1 + d · n̂) where d is the dipole vector
+ANISOTROPIC_H0 = True
+H0_DIPOLE_AMP = 0.05  # Fractional dipole amplitude (5%)
+H0_DIPOLE_L = 118.48  # Galactic longitude of dipole direction (degrees)
+H0_DIPOLE_B = 37.29  # Galactic latitude of dipole direction (degrees)
+ANISOTROPIC_PSI = False  # Apply anisotropic H0 to psi_3d computation
+
+
+def _compute_dipole_vector(amp, l_deg, b_deg):
+    """Compute dipole vector in Galactic Cartesian coordinates."""
+    l_rad, b_rad = np.deg2rad(l_deg), np.deg2rad(b_deg)
+    return amp * np.array([
+        np.cos(b_rad) * np.cos(l_rad),
+        np.cos(b_rad) * np.sin(l_rad),
+        np.sin(b_rad)
+    ])
+
+
+H0_DIPOLE = _compute_dipole_vector(H0_DIPOLE_AMP, H0_DIPOLE_L, H0_DIPOLE_B)
+
 # FFT padding: 4-sigma padding for smoothing (much faster than 2N)
 SIGMA_SMOOTH = 4.0  # Mpc/h
 N_PAD = 288  # FFT-friendly size (2^5 * 3^2), provides ~4σ padding for N=257
@@ -234,6 +255,121 @@ def luminosity_distance_vec(z_arr):
     return d_L
 
 
+def H0_local(n_hat, H0_bar=H0, d_dipole=H0_DIPOLE):
+    """
+    Compute direction-dependent H0 for anisotropic model.
+
+    H0(n̂) = H0_bar * (1 + d · n̂)
+
+    Parameters
+    ----------
+    n_hat : array
+        Unit direction vector(s) in Galactic Cartesian, shape (3,) or (N, 3)
+    H0_bar : float
+        Mean H0 value
+    d_dipole : array
+        Dipole vector (amplitude * unit direction)
+
+    Returns
+    -------
+    H0_dir : float or array
+        H0 in the direction(s) n_hat
+    """
+    if not ANISOTROPIC_H0 or np.allclose(d_dipole, 0):
+        return H0_bar
+    n_hat = np.asarray(n_hat)
+    if n_hat.ndim == 1:
+        return H0_bar * (1 + np.dot(n_hat, d_dipole))
+    else:
+        return H0_bar * (1 + np.dot(n_hat, d_dipole))
+
+
+def luminosity_distance_vec_aniso(z_arr, n_hat):
+    """
+    Compute luminosity distance with direction-dependent H0.
+
+    Uses H0(n̂) instead of global H0 for the distance-redshift relation.
+    """
+    z = np.asarray(z_arr)
+    H0_dir = H0_local(n_hat)
+    d_c = (C_LIGHT / H0_dir) * (z - (1 + Q0) / 2 * z**2)
+    d_L = (1 + z) * d_c
+    return d_L
+
+
+def redshift_to_distance_aniso(z_cos, n_hat):
+    """
+    Convert cosmological redshift to comoving distance with direction-dependent H0.
+    """
+    H0_dir = H0_local(n_hat)
+    return (C_LIGHT / H0_dir) * (z_cos - (1 + Q0) / 2 * z_cos**2)
+
+
+# =============================================================================
+# Distance to redshift interpolator (quadratic inversion)
+# =============================================================================
+def _build_distance_to_redshift_interp(H0_val=H0, r_max=500.0, n_points=5000):
+    """
+    Build interpolator for r -> z using quadratic distance-redshift relation.
+
+    The forward relation is: r = (c/H0) * (z - (1+Q0)/2 * z²)
+    We build a table of (r, z) and interpolate.
+    """
+    from scipy.interpolate import interp1d
+
+    # Build z array from 0 to z_max where z_max gives r_max
+    # For r_max=500 Mpc/h with H0=100: z_max ~ 0.17
+    z_max = 0.25  # Conservative upper limit
+    z_arr = np.linspace(0, z_max, n_points)
+
+    # Compute r for each z
+    r_arr = (C_LIGHT / H0_val) * (z_arr - (1 + Q0) / 2 * z_arr**2)
+
+    # Build interpolator: r -> z
+    return interp1d(r_arr, z_arr, kind='cubic', bounds_error=False,
+                    fill_value=(0.0, z_max))
+
+
+# Build default interpolator at module load time
+_r_to_z_interp = _build_distance_to_redshift_interp(H0)
+
+
+def distance_to_redshift(r_mpc, H0_val=None):
+    """
+    Convert comoving distance to redshift using quadratic relation.
+
+    Uses pre-built interpolator, scaling r for different H0 values.
+    Since r = (c/H0) * f(z), we have r * (H0_val/H0) gives the equivalent
+    distance at the reference H0, which we can then invert.
+
+    Parameters
+    ----------
+    r_mpc : array-like
+        Comoving distance in Mpc/h
+    H0_val : float or array-like, optional
+        H0 value(s). If None or equal to global H0, uses r directly.
+        Can be array of same shape as r_mpc for direction-dependent H0.
+
+    Returns
+    -------
+    z : array
+        Cosmological redshift
+    """
+    r_mpc = np.asarray(r_mpc)
+
+    if H0_val is None:
+        return _r_to_z_interp(r_mpc)
+
+    H0_val = np.asarray(H0_val)
+    if H0_val.shape == () and H0_val == H0:
+        # Scalar equal to global H0
+        return _r_to_z_interp(r_mpc)
+    else:
+        # Scale r to equivalent distance at reference H0
+        r_scaled = r_mpc * (H0_val / H0)
+        return _r_to_z_interp(r_scaled)
+
+
 def gamma_upper(s, x):
     """Upper incomplete gamma function."""
     x = np.asarray(x)
@@ -298,6 +434,49 @@ def compute_psi(r_mpc, m_lim, alpha=None, Mstar=None):
 
     r_safe = np.maximum(r_mpc, 0.1)
     mu = 5.0 * np.log10(r_safe) + 25.0
+    M_lim = m_lim - mu
+    x_lim = 10.0 ** (-0.4 * (M_lim - Mstar))
+
+    a2 = alpha + 2.0
+    a3 = alpha + 3.0
+    gamma_a2 = gamma_upper(a2, x_lim)
+    gamma_a3 = gamma_upper(a3, x_lim)
+    gamma_a2 = np.where(np.abs(gamma_a2) < 1e-12, 1e-12, gamma_a2)
+
+    L_mean = gamma_a3 / gamma_a2
+    return BIAS_CONST + BIAS_SLOPE * L_mean
+
+
+def compute_psi_aniso(r_mpc, n_hat, m_lim, alpha=None, Mstar=None):
+    """
+    Compute bias normalization psi(r) with direction-dependent H0.
+
+    Uses luminosity distance computed with H0(n̂) instead of isotropic H0.
+
+    Parameters
+    ----------
+    r_mpc : array
+        Comoving distances in Mpc/h
+    n_hat : array
+        Unit direction vectors, shape (N, 3)
+    m_lim : array
+        Apparent magnitude limits
+    alpha, Mstar : float, optional
+        Schechter LF parameters
+    """
+    if alpha is None:
+        alpha = ALPHA
+    if Mstar is None:
+        Mstar = MSTAR
+
+    r_safe = np.maximum(r_mpc, 0.1)
+
+    # Compute direction-dependent luminosity distance
+    H0_dir = H0_local(n_hat)
+    z_approx = r_safe * H0_dir / C_LIGHT
+    d_L = (1 + z_approx) * r_safe
+
+    mu = 5.0 * np.log10(np.maximum(d_L, 0.01)) + 25.0
     M_lim = m_lim - mu
     x_lim = 10.0 ** (-0.4 * (M_lim - Mstar))
 
@@ -808,9 +987,8 @@ print(f"  lumWeight: min={lumWeight.min():.3f}, max={lumWeight.max():.3f}, mean=
 print(f"  Using catalogue distances: mean r = {np.mean(r_mpc):.1f} Mpc/h")
 
 # Compute z_obs for iteration updates (needed later)
-# r_mpc = (c/H0) * (z - (1+Q0)/2 * z^2), solve for z
-# For small z: z ≈ r_mpc * H0 / c
-z_obs = r_mpc * H0 / C_LIGHT  # First-order approximation
+# r_mpc = (c/H0) * (z - (1+Q0)/2 * z^2), solve for z using interpolator
+z_obs = distance_to_redshift(r_mpc)
 
 # Unit direction vectors in galactic cartesian
 ell_rad = np.deg2rad(l_deg)
@@ -821,6 +999,18 @@ rhat = np.stack([
     cos_b * np.sin(ell_rad),
     np.sin(b_rad)
 ], axis=-1)
+
+# Recompute initial distances with anisotropic H0 if enabled
+# Catalogue distances assume isotropic H0: r_iso = c*z/H0_bar
+# Recover redshift then apply anisotropic H0:
+#   r_aniso = r_iso * H0_bar / H0(n̂) = r_iso / (1 + d·n̂)
+if ANISOTROPIC_H0:
+    print(f"  Recomputing initial distances with anisotropic H0...")
+    print(f"    Dipole: amp={H0_DIPOLE_AMP:.4f}, (l,b)=({H0_DIPOLE_L:.1f},{H0_DIPOLE_B:.1f})")
+    H0_ratio = H0 / H0_local(rhat)  # H0_bar / H0(n̂) = 1 / (1 + d·n̂)
+    r_mpc = r_mpc * H0_ratio
+    print(f"    r_mpc range: {r_mpc.min():.1f} - {r_mpc.max():.1f} Mpc/h")
+    print(f"    H0 ratio range: {H0_ratio.min():.4f} - {H0_ratio.max():.4f}")
 
 # =============================================================================
 # Build 3D grid and masks
@@ -939,9 +1129,16 @@ mse_velocity_history = []
 
 for i_iter, beta in enumerate(beta_values):
     # Compute cosmological luminosity distance for mu (matching compare_lumweight_aquila.py)
-    distance_kms_iter = r_mpc * 100.0  # Convert back to km/s
-    z_iter = np.maximum(distance_kms_iter / C_LIGHT, 100.0 / C_LIGHT)
-    d_L_iter = luminosity_distance_vec(z_iter)
+    # Use quadratic r->z relation, direction-dependent for anisotropic H0
+    if ANISOTROPIC_H0:
+        # Each galaxy has direction-dependent H0, so scale r accordingly
+        # H0_local returns H0 * (1 + d·n̂), vectorized over rhat
+        H0_arr = H0 * (1 + np.dot(rhat, H0_DIPOLE))
+        z_iter = distance_to_redshift(r_mpc, H0_arr)
+    else:
+        z_iter = distance_to_redshift(r_mpc)
+    z_iter = np.maximum(z_iter, 100.0 / C_LIGHT)
+    d_L_iter = (1 + z_iter) * r_mpc  # d_L = (1+z) * r
     mu_current = 5.0 * np.log10(np.maximum(d_L_iter, 0.01) * 1e5)
 
     # Use iteration-dependent Schechter params from Carrick
@@ -967,8 +1164,35 @@ for i_iter, beta in enumerate(beta_values):
     # Note: NO w_ang multiplier - compare_lumweight_aquila doesn't use it
     w_total = lumWeight_iter * L_over_Lstar
 
+    # DEBUG: Check weights by direction
+    if i_iter == 0:
+        # Compute apex angle for each galaxy
+        apex_unit = np.array([np.cos(np.deg2rad(B_APEX))*np.cos(np.deg2rad(L_APEX)),
+                              np.cos(np.deg2rad(B_APEX))*np.sin(np.deg2rad(L_APEX)),
+                              np.sin(np.deg2rad(B_APEX))])
+        cos_apex_gal = np.dot(rhat, apex_unit)
+        apex_gal = cos_apex_gal > 0.87  # ~30 degrees
+        antiapex_gal = cos_apex_gal < -0.87
+        print(f"    DEBUG weights: apex={w_total[apex_gal].mean():.3f} ({apex_gal.sum()} gals), "
+              f"anti-apex={w_total[antiapex_gal].mean():.3f} ({antiapex_gal.sum()} gals), "
+              f"all={w_total.mean():.3f}")
+        print(f"    DEBUG lumW: apex={lumWeight_iter[apex_gal].mean():.3f}, anti-apex={lumWeight_iter[antiapex_gal].mean():.3f}")
+        print(f"    DEBUG L/L*: apex={L_over_Lstar[apex_gal].mean():.3f}, anti-apex={L_over_Lstar[antiapex_gal].mean():.3f}")
+
     # Zero out 2MRS beyond cutoff and outside box (matching compare_lumweight_aquila.py)
     w_total[(flag_2mrs_mask == 1) & (r_mpc > R_2MRS_CUTOFF)] = 0.0
+
+    # DEBUG: Check how many galaxies are beyond RMAX by direction
+    if i_iter == 0:
+        beyond_rmax = r_mpc > RMAX
+        apex_beyond = beyond_rmax & (cos_apex_gal > 0.87)
+        antiapex_beyond = beyond_rmax & (cos_apex_gal < -0.87)
+        print(f"    DEBUG beyond RMAX: apex={apex_beyond.sum()}/{apex_gal.sum()}, "
+              f"anti-apex={antiapex_beyond.sum()}/{antiapex_gal.sum()}, "
+              f"total={beyond_rmax.sum()}/{len(r_mpc)}")
+        print(f"    DEBUG weight lost: apex={w_total[apex_beyond].sum():.0f}, "
+              f"anti-apex={w_total[antiapex_beyond].sum():.0f}")
+
     w_total[r_mpc > RMAX] = 0.0
 
     # Clone ZoA galaxies
@@ -1007,11 +1231,35 @@ for i_iter, beta in enumerate(beta_values):
         is_clone = np.zeros(len(w_total), dtype=bool)
         source_idx = np.full(len(w_total), -1, dtype=int)
 
+    # Save galaxy catalogue quantities (values just before CIC deposition)
+    catalogue_filename = f"carrick_iterated_catalogue_{'aniso' if ANISOTROPIC_H0 else 'iso'}_iter{i_iter:03d}.npz"
+    np.savez(catalogue_filename,
+        z_obs=z_obs,              # Observed redshift
+        r_mpc=r_mpc,              # Distance in Mpc/h (current iteration)
+        lumWeight=lumWeight_iter, # Luminosity weight (current iteration)
+        L_over_Lstar=L_over_Lstar,# L/L* ratio (current iteration)
+        l_deg=l_deg,              # Galactic longitude
+        b_deg=b_deg,              # Galactic latitude
+        gid=gid                   # Galaxy ID for matching
+    )
+    print(f"    Saved {catalogue_filename}")
+
     # CIC deposition (numba-optimized)
     rho = cic_deposit_numba(positions, w_dep, N, dx, RMAX)
 
     if i_iter == 0:
         print(f"    CIC: sum={rho.sum():.1f}, max={rho.max():.1f}")
+        print(f"    DEBUG w_dep: sum={w_dep.sum():.1f}, n={len(w_dep)}")
+        # Check by direction (for non-clone galaxies)
+        n_orig = len(r_mpc)
+        apex_dep = cos_apex_gal > 0.87
+        antiapex_dep = cos_apex_gal < -0.87
+        print(f"    DEBUG w_dep by dir: apex={w_dep[:n_orig][apex_dep].sum():.0f}, "
+              f"anti-apex={w_dep[:n_orig][antiapex_dep].sum():.0f}")
+        # Save raw rho for debugging
+        rho_filename = f"rho_raw_{'aniso' if ANISOTROPIC_H0 else 'iso'}.npy"
+        np.save(rho_filename, rho.astype(np.float32))
+        print(f"    Saved {rho_filename}")
 
     # Normalize
     rho_mean = np.mean(rho[nonmasked])
@@ -1024,7 +1272,17 @@ for i_iter, beta in enumerate(beta_values):
         print(f"    DEBUG: delta (pre-psi) max={delta[nonmasked].max():.1f}, std={delta[nonmasked].std():.3f}")
 
     # Bias normalization (uniform m_lim=11.5, matching compare_lumweight_aquila.py)
-    psi_3d = compute_psi(rr.ravel(), np.full(rr.size, 11.5), alpha=alpha_fit, Mstar=Mstar_fit).reshape(rr.shape)
+    if ANISOTROPIC_H0 and ANISOTROPIC_PSI:
+        # Compute direction vectors for each 3D grid point
+        rr_safe_3d = np.maximum(rr, 1e-10)
+        n_hat_3d = np.stack([xx / rr_safe_3d, yy / rr_safe_3d, zz / rr_safe_3d], axis=-1)
+        psi_3d = compute_psi_aniso(
+            rr.ravel(), n_hat_3d.reshape(-1, 3),
+            np.full(rr.size, 11.5), alpha=alpha_fit, Mstar=Mstar_fit
+        ).reshape(rr.shape)
+    else:
+        psi_3d = compute_psi(rr.ravel(), np.full(rr.size, 11.5),
+                             alpha=alpha_fit, Mstar=Mstar_fit).reshape(rr.shape)
     psi_3d = np.maximum(psi_3d, 0.1)
     delta = delta / psi_3d
     delta = np.where(nonmasked, delta, 0.0)
@@ -1049,7 +1307,10 @@ for i_iter, beta in enumerate(beta_values):
         # Update distances for original galaxies only
         z_cos = (1.0 + z_obs) / (1.0 + v_los / C_LIGHT) - 1.0
         z_cos = np.maximum(z_cos, 1e-8)
-        r_new = (C_LIGHT / H0) * (z_cos - (1.0 + Q0) / 2.0 * z_cos**2)
+        if ANISOTROPIC_H0:
+            r_new = redshift_to_distance_aniso(z_cos, rhat)
+        else:
+            r_new = (C_LIGHT / H0) * (z_cos - (1.0 + Q0) / 2.0 * z_cos**2)
 
         # Average
         distance_history.append(r_new.copy())
@@ -1673,8 +1934,9 @@ print(f"  Ours:    min={np.min(delta):.2f}, max={np.max(delta):.2f}, std={np.std
 print(f"  Carrick: min={np.min(delta_carrick):.2f}, max={np.max(delta_carrick):.2f}, std={np.std(delta_carrick[nonmasked]):.3f}")
 
 # Save
-np.save("carrick_iterated_delta.npy", delta.astype(np.float32))
-print("Saved carrick_iterated_delta.npy")
+delta_filename = f"carrick_iterated_delta_{'aniso' if ANISOTROPIC_H0 else 'iso'}.npy"
+np.save(delta_filename, delta.astype(np.float32))
+print(f"Saved {delta_filename}")
 
 # =============================================================================
 # Plot comparison
@@ -2006,19 +2268,68 @@ los_density_cmb = np.maximum(los_density_cmb, 0.01)
 # Scale velocity back to beta=1 (Carrick LOS files store v/beta, i.e. unscaled)
 los_velocity_cmb = los_velocity_cmb / BETA_MAX
 
-# Compute redshift from distance: z = r * H0 / c (for small z)
-los_z = (los_r * H0 / C_LIGHT).astype(np.float32)
+# Compute global z grid (same for all directions, using fiducial H0)
+# This ensures consistent comparison between isotropic and anisotropic runs
+los_z = distance_to_redshift(los_r).astype(np.float32)  # Shape: (n_r_los,)
+
+if ANISOTROPIC_H0:
+    # For anisotropic H0, we need to interpolate density/velocity onto the global z grid
+    # For each cluster direction:
+    #   1. Convert global z to direction-dependent r: r = r(z, H0(n̂))
+    #   2. Interpolate density/velocity at those r values
+
+    los_density_aniso = np.zeros((n_clusters, n_r_los), dtype=np.float32)
+    los_velocity_aniso = np.zeros((n_clusters, n_r_los), dtype=np.float32)
+
+    for i_cl in range(n_clusters):
+        H0_dir = H0_local(cluster_rhat[i_cl])
+        # Convert global z to r for this direction
+        # r = (c/H0) * (z - (1+Q0)/2 * z²)
+        r_at_z = (C_LIGHT / H0_dir) * (los_z - (1 + Q0) / 2 * los_z**2)
+
+        # Interpolate density (currently on los_r grid) to r_at_z
+        # los_density_cmb is in 1+delta convention
+        f_den = interp1d(los_r, los_density_cmb[i_cl], kind='linear',
+                         bounds_error=False, fill_value=(los_density_cmb[i_cl, 0], 1.0))
+        los_density_aniso[i_cl] = f_den(r_at_z)
+
+        # Interpolate velocity
+        f_vel = interp1d(los_r, los_velocity_cmb[i_cl], kind='linear',
+                         bounds_error=False, fill_value=(los_velocity_cmb[i_cl, 0], 0.0))
+        los_velocity_aniso[i_cl] = f_vel(r_at_z)
+
+    # Replace with interpolated values
+    los_density_cmb = los_density_aniso
+    los_velocity_cmb = los_velocity_aniso
+
+    # Clip density to physical range
+    los_density_cmb = np.maximum(los_density_cmb, 0.01)
+
+    print(f"  Anisotropic: interpolated onto global z grid")
+    print(f"    z range: {los_z.min():.5f} - {los_z.max():.5f}")
+    print(f"    Example r range at apex (H0={H0*(1+H0_DIPOLE_AMP):.1f}): {(C_LIGHT/H0/(1+H0_DIPOLE_AMP))*los_z[-1]:.1f} Mpc/h")
+    print(f"    Example r range at anti-apex (H0={H0*(1-H0_DIPOLE_AMP):.1f}): {(C_LIGHT/H0/(1-H0_DIPOLE_AMP))*los_z[-1]:.1f} Mpc/h")
 
 # Save to HDF5 in same format as los_Clusters_Carrick2015.hdf5
-output_file = 'data/Clusters/los_Clusters_carrick_iterated.hdf5'
+suffix = 'aniso' if ANISOTROPIC_H0 else 'iso'
+output_file = f'data/Clusters/los_Clusters_carrick_iterated_{suffix}.hdf5'
 with h5py.File(output_file, 'w') as f:
     f.create_dataset('RA', data=cluster_RA.astype(np.float32))
     f.create_dataset('dec', data=cluster_dec.astype(np.float32))
     f.create_dataset('r', data=los_r.astype(np.float32))
+    # z is always global grid (n_r,) - same for isotropic and anisotropic
     f.create_dataset('z', data=los_z)
     # Add leading dimension of 1 to match Carrick format: (1, n_clusters, n_r)
     f.create_dataset('los_density', data=los_density_cmb[np.newaxis, :, :])
     f.create_dataset('los_velocity', data=los_velocity_cmb[np.newaxis, :, :])
+    # Store anisotropic H0 parameters if used
+    if ANISOTROPIC_H0:
+        f.attrs['anisotropic_H0'] = True
+        f.attrs['H0_dipole_amp'] = H0_DIPOLE_AMP
+        f.attrs['H0_dipole_l'] = H0_DIPOLE_L
+        f.attrs['H0_dipole_b'] = H0_DIPOLE_B
+    else:
+        f.attrs['anisotropic_H0'] = False
 
 print(f"Saved: {output_file}")
 print(f"  RA: {cluster_RA.shape}, dec: {cluster_dec.shape}")
@@ -2037,6 +2348,26 @@ with h5py.File(output_file, 'r') as f:
     print(f"  New iterated file: {output_file}")
     for key in f.keys():
         print(f"    {key}: {f[key].shape}, {f[key].dtype}")
+
+# =============================================================================
+# Note on anisotropic H0 output
+# =============================================================================
+# With anisotropic H0, galaxies at observed redshift z_obs are placed at:
+#   r = c × z_obs / H0(n̂)
+# When converting back to z:
+#   z = r × H0(n̂) / c = z_obs
+# So in z-space, features appear at the SAME location regardless of H0 model.
+# The difference is in AMPLITUDE (weights, selection effects, normalization),
+# not in the position of features.
+#
+# To compare anisotropic vs isotropic, run both and compare δ(z) at same z values.
+# The los_z array in the HDF5 file provides the correct z for each direction.
+if ANISOTROPIC_H0:
+    print("\nAnisotropic H0 output notes:")
+    print(f"  Dipole: amp={H0_DIPOLE_AMP:.0%}, (l,b)=({H0_DIPOLE_L:.0f}°,{H0_DIPOLE_B:.0f}°)")
+    print("  LOS file contains direction-dependent z values")
+    print("  Features appear at same z as isotropic case")
+    print("  Differences are in amplitude (weights/selection/normalization)")
 
 print("\n" + "="*60)
 print("All done!")

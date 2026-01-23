@@ -455,23 +455,23 @@ def postprocess_samples(samples, convert_zeropoint_to_dH=False):
                 else:
                     samples[f"Vext_rad_mag__{i}"] = mag_arr
     
-    # Handle Vext_rad with independent vectors (vector_radial_spline_uniform)
-    elif "Vext_rad_phi" in samples and "Vext_rad_cos_theta" in samples:
-        phi_arr = samples.pop("Vext_rad_phi")
-        cos_theta_arr = samples.pop("Vext_rad_cos_theta")
-        mag_arr = samples.pop("Vext_rad_mag", None)
-        
+    # Handle Vext_radial with independent vectors (vector_radial_spline_uniform)
+    elif "Vext_radial_phi" in samples and "Vext_radial_cos_theta" in samples:
+        phi_arr = samples.pop("Vext_radial_phi")
+        cos_theta_arr = samples.pop("Vext_radial_cos_theta")
+        mag_arr = samples.pop("Vext_radial_mag", None)
+
         # Convert to galactic coordinates
         phi = np.rad2deg(phi_arr)
         theta = np.arccos(cos_theta_arr)
         dec = np.rad2deg(0.5 * np.pi - theta)
-        
+
         ell, b = radec_to_galactic(phi, dec)
-        samples["Vext_rad_ell"] = ell
-        samples["Vext_rad_b"] = b
-        
+        samples["Vext_radial_ell"] = ell
+        samples["Vext_radial_b"] = b
+
         if mag_arr is not None:
-            samples["Vext_rad_mag"] = mag_arr
+            samples["Vext_radial_mag"] = mag_arr
     
     # Handle Vext_rad_bin with independent vectors (backward compatibility)
     elif "Vext_rad_bin_phi" in samples and "Vext_rad_bin_cos_theta" in samples:

@@ -1129,7 +1129,7 @@ def sumzero_basis(npix):
 
 def sample_Vext(priors, which_Vext, shared_params=None, kwargs_Vext={}):
     if which_Vext == "radial":
-        Vext = rsample("Vext_rad", priors["Vext_radial"], shared_params)
+        Vext = rsample("Vext_radial", priors["Vext_radial"], shared_params)
     elif which_Vext == "radial_magnitude":
         Vext = rsample(
             "Vext_radmag", priors["Vext_radmag"],
@@ -2908,6 +2908,7 @@ class CalibratedDistanceModel_DistMarg(BaseModel):
 ###############################################################################
 #                               Joint model                                   #
 ###############################################################################
+
 
 class JointPVModel:
     """

@@ -87,9 +87,9 @@ def _plot_cluster(ax, data, cluster_index, cluster_name, r_mark):
 
 
 def plot_cluster_reconstruction(
-    carrick_path="data/Clusters/los_Clusters_Carrick2015.hdf5",
-    manticore_path="data/Clusters/los_Clusters_manticore.hdf5",
-    zspace_path="data/Clusters/los_Clusters_2mpp_zspace_galaxies.hdf5",
+    carrick_path=None,
+    manticore_path=None,
+    zspace_path=None,
     cluster_name=None,
     log_floor=1e-5,
     output=None,
@@ -99,6 +99,15 @@ def plot_cluster_reconstruction(
     r_marks=None,
 ):
     setup_style()
+
+    # Set default paths using CANDEL_ROOT
+    from config import CANDEL_ROOT
+    if carrick_path is None:
+        carrick_path = CANDEL_ROOT / "data/Clusters/los_Clusters_Carrick2015.hdf5"
+    if manticore_path is None:
+        manticore_path = CANDEL_ROOT / "data/Clusters/los_Clusters_manticore.hdf5"
+    if zspace_path is None:
+        zspace_path = CANDEL_ROOT / "data/Clusters/los_Clusters_2mpp_zspace_galaxies.hdf5"
 
     if data is None:
         data = _load_reconstruction_data(carrick_path, manticore_path, zspace_path, log_floor)
@@ -133,14 +142,12 @@ def plot_cluster_reconstruction(
     plt.close(fig)
 
 
-def main():
-    import argparse
+def main(cluster_name="Coma"):
+    """Plot LOS reconstruction for a single cluster.
 
-    parser = argparse.ArgumentParser(description="Plot LOS reconstruction comparisons.")
-    parser.add_argument("--cluster-name", type=str, required=True)
-    args = parser.parse_args()
-
-    plot_cluster_reconstruction(cluster_name=args.cluster_name)
+    Default cluster is Coma.
+    """
+    plot_cluster_reconstruction(cluster_name=cluster_name)
 
 
 if __name__ == "__main__":

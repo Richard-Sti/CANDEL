@@ -12,9 +12,10 @@ import plot_sigma_v
 import plot_migkas_comparison
 import plot_mnr_comparison
 import plot_radial_mag
-import plot_zspace
 import plot_reconstruction
-import table_results
+import tables
+# import plot_dipoles_all
+# import plot_base_all
 
 
 def run_silent(name, func):
@@ -60,10 +61,11 @@ def main():
         ("sigma_v plot", plot_sigma_v.main),
         ("Migkas comparison plot", plot_migkas_comparison.main),
         ("radial magnitude Vext plot", plot_radial_mag.main),
-        ("z-space plot", plot_zspace.main),
         ("reconstruction plot", plot_reconstruction.main),
-        ("results table", table_results.main),
-        #("MNR comparison plot", plot_mnr_comparison.main),
+        ("results tables", tables.main),
+        # ("MNR comparison plot", plot_mnr_comparison.main),
+        # ("dipoles all plot", plot_dipoles_all.main),
+        # ("base all plot", plot_base_all.main),
     ]
 
     failed = []

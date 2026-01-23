@@ -41,7 +41,7 @@ def plot_diph0_scaling_comparison():
     ]
     fnames = [str(f) for f in fnames]
 
-    keys = ['dH_over_H_dipole', 'zeropoint_dipole_ell', 'zeropoint_dipole_b']
+    keys = ['H0_dipole_mag', 'H0_dipole_ell', 'H0_dipole_b']
     cols = [COLS[0], COLS[1], COLS[2]]
     labels = ["LT", "YT", "LTYT"]
 
@@ -86,11 +86,44 @@ def plot_dipvext_scaling_comparison():
     plt.close('all')
 
 
+def plot_dipvext_scaling_comparison_all():
+    """DipVext scaling relation comparison: LT vs YT vs LTYT - all common parameters."""
+    fnames = [
+        get_results_path("Carrick2015_LT_noMNR_dipVext.hdf5"),
+        get_results_path("Carrick2015_YT_noMNR_dipVext_hasY.hdf5"),
+        get_results_path("Carrick2015_LTYT_noMNR_dipVext_hasY.hdf5"),
+    ]
+    fnames = [str(f) for f in fnames]
+
+    # Common parameters across LT, YT, and LTYT
+    keys = [
+        'beta', 'sigma_v',
+        'R_dist_emp', 'n_dist_emp', 'p_dist_emp',
+        'Vext_mag', 'Vext_ell', 'Vext_b',
+    ]
+    cols = [COLS[0], COLS[1], COLS[2]]
+    labels = ["LT", "YT", "LTYT"]
+
+    plot_corner_from_hdf5(
+        fnames,
+        labels=labels,
+        cols=cols,
+        filled=True,
+        keys=keys,
+        filename=str(get_figure_path("LT_YT_LTYT_dipVext_all.pdf")),
+        legend_fontsize=40,
+        apply_ell_offset=True,
+        ell_zero=180.0,
+    )
+    plt.close('all')
+
+
 def main():
     setup_style()
     plot_dipa_scaling_comparison()
     plot_diph0_scaling_comparison()
     plot_dipvext_scaling_comparison()
+    plot_dipvext_scaling_comparison_all()
 
 
 if __name__ == "__main__":

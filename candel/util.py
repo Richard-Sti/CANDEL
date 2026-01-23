@@ -622,42 +622,42 @@ def plot_corner(samples, show_fig=True, filename=None, smooth=1, keys=None):
 
 def plot_Vext_rad_corner(samples, show_fig=True, filename=None, smooth=1):
     """
-    Plot a corner plot of Vext_rad_{mag, ell, b} samples.
-    
+    Plot a corner plot of Vext_radial_{mag, ell, b} samples.
+
     Handles both:
-    - vector_radial_spline_uniform: Vext_rad_mag, Vext_rad_ell, Vext_rad_b (per knot)
-    - vector_radial_spline_uniform_fixed_direction: Vext_rad_direction_ell/b (single), Vext_rad_mag__{i} (per knot)
+    - vector_radial_spline_uniform: Vext_radial_mag, Vext_radial_ell, Vext_radial_b (per knot)
+    - vector_radial_spline_uniform_fixed_direction: Vext_radial_direction_ell/b (single), Vext_radial_mag__{i} (per knot)
     """
     # Check if using fixed direction variant
-    is_fixed_direction = "Vext_rad_direction_ell" in samples
-    
+    is_fixed_direction = "Vext_radial_direction_ell" in samples
+
     if is_fixed_direction:
         # For fixed direction: plot direction + magnitudes
-        ell = samples["Vext_rad_direction_ell"]
-        b = samples["Vext_rad_direction_b"]
-        
+        ell = samples["Vext_radial_direction_ell"]
+        b = samples["Vext_radial_direction_b"]
+
         # Extract per-knot magnitudes
-        mag_keys = sorted([k for k in samples.keys() if k.startswith("Vext_rad_mag__")])
-        
+        mag_keys = sorted([k for k in samples.keys() if k.startswith("Vext_radial_mag__")])
+
         arrays = []
         labels = []
-        
+
         # Add direction (single value)
         arrays.append(ell[:, None])
         labels.append(r"$\ell_{\rm dir}$")
-        
+
         arrays.append(b[:, None])
         labels.append(r"$b_{\rm dir}$")
-        
+
         # Add magnitudes per knot
         for i, key in enumerate(mag_keys):
             arrays.append(samples[key][:, None])
             labels.append(fr"$V_{{{i}}}$")
-        
+
         data = np.hstack(arrays)
     else:
         # Independent vectors per knot
-        keys = ["Vext_rad_mag", "Vext_rad_ell", "Vext_rad_b"]
+        keys = ["Vext_radial_mag", "Vext_radial_ell", "Vext_radial_b"]
         base_labels = [r"V", r"\ell", r"b"]
 
         arrays = []
@@ -1037,46 +1037,46 @@ def interpolate_all_radial_fields(model, Vmag, ell, b, r_eval_size=1000):
 def plot_radial_profiles(samples, model, r_eval_size=1000, show_fig=True,
                          filename=None):
     """
-    Plot the radial profiles of Vext_rad_{mag, ell, b} from the samples,
+    Plot the radial profiles of Vext_radial_{mag, ell, b} from the samples,
     including 1sigma and 2sigma percentile bands.
-    
+
     Handles both:
     - vector_radial_spline_uniform: independent directions at each knot
     - vector_radial_spline_uniform_fixed_direction: fixed direction, variable magnitude
     """
     # Check if using fixed direction variant
-    is_fixed_direction = "Vext_rad_direction_ell" in samples
-    
+    is_fixed_direction = "Vext_radial_direction_ell" in samples
+
     if is_fixed_direction:
         # Fixed direction: extract single direction and per-knot magnitudes
-        ell = samples["Vext_rad_direction_ell"]
-        b = samples["Vext_rad_direction_b"]
-        
+        ell = samples["Vext_radial_direction_ell"]
+        b = samples["Vext_radial_direction_b"]
+
         # Extract per-knot magnitudes
-        mag_keys = sorted([k for k in samples.keys() if k.startswith("Vext_rad_mag__")])
+        mag_keys = sorted([k for k in samples.keys() if k.startswith("Vext_radial_mag__")])
         Vmag = np.stack([samples[k] for k in mag_keys], axis=1)
-        
+
         # Get radial positions
         rknot = jnp.asarray(model.kwargs_Vext["rknot"])
         k_spline = model.kwargs_Vext.get("k", 3)
         endpoints = model.kwargs_Vext.get("endpoints", "not-a-knot")
         r = jnp.linspace(0, jnp.max(rknot), r_eval_size)
-        
+
         # Interpolate magnitudes
         V_interp = interpolate_scalar_field(
             jnp.array(Vmag), r, rknot, k_spline, endpoints)
         V_interp = np.array(V_interp)
-        
+
         # Direction is constant, just replicate for plotting
         ell_interp = np.tile(ell[:, None], (1, r_eval_size))
         b_interp = np.tile(b[:, None], (1, r_eval_size))
         r = np.array(r)
     else:
         # Independent vectors: extract per-knot mag/ell/b
-        Vmag = samples["Vext_rad_mag"]
-        ell = samples["Vext_rad_ell"]
-        b = samples["Vext_rad_b"]
-        
+        Vmag = samples["Vext_radial_mag"]
+        ell = samples["Vext_radial_ell"]
+        b = samples["Vext_radial_b"]
+
         r, V_interp, ell_interp, b_interp = interpolate_all_radial_fields(
             model, Vmag, ell, b, r_eval_size=r_eval_size
         )

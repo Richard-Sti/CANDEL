@@ -11,11 +11,13 @@ from candel.util import fprint, plot_Vext_radmag
 
 def load_samples(h5_path):
     """Load the samples group from a saved HDF5 file into a dict of arrays."""
+    import h5py
     samples = {}
     with File(h5_path, "r") as f:
         grp = f["samples"]
         for key in grp.keys():
-            samples[key] = grp[key][()]
+            if isinstance(grp[key], h5py.Dataset):
+                samples[key] = grp[key][()]
     return samples
 
 
