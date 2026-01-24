@@ -589,6 +589,85 @@ def interp_spline_radial_vector(rq, bin_values, **kwargs):
     return vmap(spline_eval)(bin_values.T)
 
 
+def _slerp(u0, u1, t, eps=1e-8):
+    """Spherical linear interpolation between unit vectors u0 and u1."""
+    dot = jnp.clip(jnp.dot(u0, u1), -1.0, 1.0)
+    theta = jnp.arccos(dot)
+    sin_th = jnp.sin(theta)
+
+    def slerp_core(_):
+        a = jnp.sin((1.0 - t) * theta) / sin_th
+        b = jnp.sin(t * theta) / sin_th
+        return a * u0 + b * u1
+
+    def lerp_norm(_):
+        # Fall back to normalized linear interpolation for nearly parallel vectors
+        v = (1.0 - t) * u0 + t * u1
+        n = jnp.linalg.norm(v)
+        return jnp.where(n > 0.0, v / n, u0)
+
+    return cond(sin_th < eps, lerp_norm, slerp_core, operand=None)
+
+
+def interp_cartesian_vector(rq, v_knot, **kwargs):
+    """
+    Interpolate a 3D Cartesian vector field as a function of radius.
+
+    Uses SLERP for direction interpolation (stays on unit sphere) and
+    interpax for magnitude interpolation. This prevents magnitude overshoot
+    that can occur with component-wise spline interpolation.
+
+    Parameters
+    ----------
+    rq : array
+        Query radii at which to interpolate.
+    v_knot : array of shape (K, 3)
+        Velocity vectors at K radial knots.
+    **kwargs : dict
+        Must contain 'rknot' (radial knot positions).
+        Optional 'method' for magnitude interpolation (default 'cubic').
+
+    Returns
+    -------
+    array of shape (3, len(rq))
+        Interpolated velocity vectors (transposed for compatibility).
+    """
+    rknot = jnp.asarray(kwargs["rknot"])
+    method = kwargs.get("method", "cubic")
+
+    rq = jnp.asarray(rq)
+    y = jnp.asarray(v_knot)  # (K, 3)
+    K = y.shape[0]
+
+    # Compute magnitudes and unit directions at knots
+    mk = jnp.linalg.norm(y, axis=-1)  # (K,)
+    mk_safe = jnp.where(mk > 0.0, mk, 1.0)
+    uk = y / mk_safe[:, None]  # (K, 3)
+
+    # Interpolate magnitude using interpax
+    x0, x1 = rknot[0], rknot[-1]
+    m_r = interp1d(rq, rknot, mk, method=method)
+    # Constant extrapolation at boundaries
+    m_r = jnp.where(rq < x0, mk[0], m_r)
+    m_r = jnp.where(rq > x1, mk[-1], m_r)
+
+    # Interpolate direction using SLERP
+    def dir_at_r(r):
+        i = jnp.clip(jnp.searchsorted(rknot, r, side="right") - 1, 0, K - 2)
+        xl, xr = rknot[i], rknot[i + 1]
+        t = jnp.where(xr > xl, (r - xl) / (xr - xl), 0.0)
+        return _slerp(uk[i], uk[i + 1], t)
+
+    u_r = vmap(dir_at_r)(rq)  # (R, 3)
+    # Constant extrapolation at boundaries
+    u_r = jnp.where((rq < x0)[:, None], uk[0], u_r)
+    u_r = jnp.where((rq > x1)[:, None], uk[-1], u_r)
+
+    # Combine magnitude and direction, transpose for compatibility
+    result = m_r[:, None] * u_r  # (R, 3)
+    return result.T  # (3, R) to match interp_spline_radial_vector output
+
+
 def load_priors(config_priors):
     """Load a dictionary of NumPyro distributions from a TOML file."""
     _DIST_MAP = {
@@ -612,7 +691,8 @@ def load_priors(config_priors):
             # Optional fixed direction override (deg) as {"ell": ..., "b": ...}
             "direction": p.get("direction"),
         },
-        "vector_radial_spline_uniform": lambda p: {"type": "vector_radial_spline_uniform", "nval": len(p["rknot"]), "low": p["low"], "high": p["high"]},  # noqa
+        "vector_radial_uniform": lambda p: {"type": "vector_radial_uniform", "nval": len(p["rknot"]), "low": p["low"], "high": p["high"]},  # noqa
+        "vector_radial_spline_uniform": lambda p: {"type": "vector_radial_uniform", "nval": len(p["rknot"]), "low": p["low"], "high": p["high"]},  # noqa (alias for vector_radial_uniform)
         "vector_radial_spline_uniform_fixed_direction": lambda p: {"type": "vector_radial_spline_uniform_fixed_direction", "nval": len(p["rknot"]) if "rknot" in p else None, "low": p["low"], "high": p["high"]},  # noqa
         "vector_components_uniform": lambda p: {"type": "vector_components_uniform", "low": p["low"], "high": p["high"],},  # noqa
         "quadrupole_uniform_fixed": lambda p: {"type": "quadrupole_uniform_fixed", "low": p["low"], "high": p["high"],},  # noqa
@@ -688,6 +768,10 @@ def _rsample(name, dist):
     # New quadrupole sampling
     if isinstance(dist, dict) and dist.get("type") == "quadrupole_uniform_fixed":  # noqa
         return sample_quadrupole_fixed(name, dist["low"], dist["high"])
+
+    if isinstance(dist, dict) and dist.get("type") == "vector_radial_uniform":  # noqa
+        return sample_spline_radial_vector(
+            name, dist["nval"], dist["low"], dist["high"], )
 
     if isinstance(dist, dict) and dist.get("type") == "vector_radial_spline_uniform":  # noqa
         return sample_spline_radial_vector(
@@ -926,8 +1010,9 @@ def compute_Vext_radial(data, r_grid, Vext, which_Vext, **kwargs_Vext):
     Promote the final output to shape `(n_field, n_gal, n_rbins)`.
     """
     if which_Vext == "radial":
-        # Shape (3, n_rbins)
-        Vext = interp_spline_radial_vector(r_grid, Vext, **kwargs_Vext)
+        # Shape (3, n_rbins) - use SLERP-based interpolation to prevent
+        # magnitude overshoot between knots
+        Vext = interp_cartesian_vector(r_grid, Vext, **kwargs_Vext)
         Vext_rad = jnp.sum(
             data["rhat"][..., None] * Vext[None, ...], axis=1)[None, ...]
     elif which_Vext == "radial_binned":
