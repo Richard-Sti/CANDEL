@@ -646,6 +646,14 @@ def interp_cartesian_vector(rq, v_knot, **kwargs):
     y = jnp.asarray(v_knot)  # (K, 3)
     K = y.shape[0]
 
+    # Handle 2D rq (n_gal, n_los) during z-space iteration with LOS data
+    input_shape = rq.shape
+    is_2d = rq.ndim == 2
+    if is_2d:
+        rq_flat = rq.ravel()
+    else:
+        rq_flat = rq
+
     # Compute magnitudes and unit directions at knots
     mk = jnp.linalg.norm(y, axis=-1)  # (K,)
     mk_safe = jnp.where(mk > 0.0, mk, 1.0)
@@ -653,10 +661,10 @@ def interp_cartesian_vector(rq, v_knot, **kwargs):
 
     # Interpolate magnitude using interpax
     x0, x1 = rknot[0], rknot[-1]
-    m_r = interp1d(rq, rknot, mk, method=method)
+    m_r = interp1d(rq_flat, rknot, mk, method=method)
     # Constant extrapolation at boundaries
-    m_r = jnp.where(rq < x0, mk[0], m_r)
-    m_r = jnp.where(rq > x1, mk[-1], m_r)
+    m_r = jnp.where(rq_flat < x0, mk[0], m_r)
+    m_r = jnp.where(rq_flat > x1, mk[-1], m_r)
 
     # Interpolate direction using SLERP
     def dir_at_r(r):
@@ -665,14 +673,20 @@ def interp_cartesian_vector(rq, v_knot, **kwargs):
         t = jnp.where(xr > xl, (r - xl) / (xr - xl), 0.0)
         return _slerp(uk[i], uk[i + 1], t)
 
-    u_r = vmap(dir_at_r)(rq)  # (R, 3)
+    u_r = vmap(dir_at_r)(rq_flat)  # (R, 3)
     # Constant extrapolation at boundaries
-    u_r = jnp.where((rq < x0)[:, None], uk[0], u_r)
-    u_r = jnp.where((rq > x1)[:, None], uk[-1], u_r)
+    u_r = jnp.where((rq_flat < x0)[:, None], uk[0], u_r)
+    u_r = jnp.where((rq_flat > x1)[:, None], uk[-1], u_r)
 
-    # Combine magnitude and direction, transpose for compatibility
+    # Combine magnitude and direction
     result = m_r[:, None] * u_r  # (R, 3)
-    return result.T  # (3, R) to match interp_spline_radial_vector output
+
+    if is_2d:
+        # Reshape to (n_gal, n_los, 3) then transpose to (3, n_gal, n_los)
+        result = result.reshape(input_shape + (3,))
+        return jnp.moveaxis(result, -1, 0)
+    else:
+        return result.T  # (3, R) to match interp_spline_radial_vector output
 
 
 def load_priors(config_priors):
@@ -1019,11 +1033,17 @@ def compute_Vext_radial(data, r_grid, Vext, which_Vext, **kwargs_Vext):
     Promote the final output to shape `(n_field, n_gal, n_rbins)`.
     """
     if which_Vext == "radial":
-        # Shape (3, n_rbins) - use SLERP-based interpolation to prevent
-        # magnitude overshoot between knots
+        # Use SLERP-based interpolation to prevent magnitude overshoot
         Vext = interp_cartesian_vector(r_grid, Vext, **kwargs_Vext)
-        Vext_rad = jnp.sum(
-            data["rhat"][..., None] * Vext[None, ...], axis=1)[None, ...]
+        if Vext.ndim == 2:
+            # 1D case: Vext is (3, n_rbins)
+            # rhat is (n_gal, 3), result is (n_gal, n_rbins)
+            Vext_rad = jnp.sum(
+                data["rhat"][..., None] * Vext[None, ...], axis=1)[None, ...]
+        else:
+            # 2D case: Vext is (3, n_gal, n_los) from z-space iteration
+            # rhat is (n_gal, 3), result is (n_gal, n_los)
+            Vext_rad = jnp.einsum("gi,igk->gk", data["rhat"], Vext)[None, ...]
     elif which_Vext == "radial_binned":
         # Vext shape: (n_bins * 3,) representing (n_bins, 3) flattened
         n_bins = kwargs_Vext["n_bins"]

@@ -37,12 +37,12 @@ reconstructions = ["Vext", "Carrick2015", "manticore"] #"zspace", "Carrick2015",
 include_quad = False
 include_pairs = False
 include_pix = False
-include_radmag_fine = True   # Radmag with finer knot spacing (BUGFIX - 6 knots vs 4)
-include_radmag_finest = True  # Radmag with finest knot spacing (BUGFIX - 8 knots vs 4)
+include_radmag_fine = False  # Radmag with finer knot spacing (BUGFIX - 6 knots vs 4)
+include_radmag_finest = False  # Radmag with finest knot spacing (BUGFIX - 8 knots vs 4)
 include_rad = True  # Radial Vext (direction free, magnitude varies with r)
 include_rad_fine = True  # Radial Vext with finer knot spacing
 include_rad_finest = True  # Radial Vext with finest knot spacing
-include_radmag = False  # Radial magnitude Vext (BUGFIX - 5 knots vs 4 in template)
+include_radmag = True  # Radial magnitude Vext (BUGFIX - 5 knots vs 4 in template)
 # Base model flags (split from old include_base)
 include_base = False  # No flow/H0 model (both Vext and zeropoint are delta)
 include_dipH0 = False # H0_dipole varies (H0 anisotropy, affects z→r conversion)
