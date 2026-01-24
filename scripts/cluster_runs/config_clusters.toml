@@ -172,26 +172,19 @@ value = [[0, 0], [0, 0], [0, 0]]
 
 [model.priors.Vext_radial]
 dist = "vector_radial_spline_uniform"
-low = 0.0
-high = 2000
+low = 0
+high = 5000
 rknot = [0, 250, 500, 1000]
 k = 1
-endpoints="not-a-knot"
+endpoints = "not-a-knot"
 
 [model.priors.Vext_radmag]
 dist = "vector_radialmag_uniform"
-low = [0, -5000, -5000, -5000]
+low = 0
 high = 5000
 rknot = [0, 250, 500, 1000]
 method = "cubic"
-# Optional smoothness prior: penalizes differences between adjacent knots.
-# Flat within threshold, then Gaussian penalty with given scale beyond.
-# Set smoothness_scale to 0 or omit to disable.
-smoothness_threshold = 1000
-smoothness_scale = 200
-# Sample direction in galactic coordinates (ell, b) instead of ICRS
-sample_galactic = true
-# Full sky direction with mag[0] >= 0 to break sign degeneracy
+# Full sky direction with signed magnitude
 half_sky = false
 
 [model.priors.zeropoint_dipole]

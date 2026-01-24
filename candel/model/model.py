@@ -295,14 +295,21 @@ def sample_quadrupole_fixed(name, mag_min, mag_max):
 
 
 
-def sample_spline_radial_vector(name, nval, low, high):
+def sample_spline_radial_vector(name, nval, low, high, half_sky=False):
     """
     Sample a radial vector at `nval` knots: direction ~ isotropic,
     magnitude ~ Uniform(low, high). Returns an array of shape (nval, 3).
+
+    If half_sky=True, restrict cos_theta to [0, 1] (northern hemisphere)
+    to break the sign degeneracy. Use with signed magnitude to cover all
+    physical directions.
     """
     with plate(f"{name}_plate", nval):
         phi = sample(f"{name}_phi", Uniform(0.0, 2.0 * jnp.pi))
-        cos_theta = sample(f"{name}_cos_theta", Uniform(-1.0, 1.0))
+        if half_sky:
+            cos_theta = sample(f"{name}_cos_theta", Uniform(0.0, 1.0))
+        else:
+            cos_theta = sample(f"{name}_cos_theta", Uniform(-1.0, 1.0))
         sin_theta = jnp.sqrt(jnp.clip(1.0 - cos_theta**2, 0.0, 1.0))
 
         mag = sample(f"{name}_mag", Uniform(low, high))
@@ -691,8 +698,8 @@ def load_priors(config_priors):
             # Optional fixed direction override (deg) as {"ell": ..., "b": ...}
             "direction": p.get("direction"),
         },
-        "vector_radial_uniform": lambda p: {"type": "vector_radial_uniform", "nval": len(p["rknot"]), "low": p["low"], "high": p["high"]},  # noqa
-        "vector_radial_spline_uniform": lambda p: {"type": "vector_radial_uniform", "nval": len(p["rknot"]), "low": p["low"], "high": p["high"]},  # noqa (alias for vector_radial_uniform)
+        "vector_radial_uniform": lambda p: {"type": "vector_radial_uniform", "nval": len(p["rknot"]), "low": p["low"], "high": p["high"], "half_sky": p.get("half_sky", False)},  # noqa
+        "vector_radial_spline_uniform": lambda p: {"type": "vector_radial_uniform", "nval": len(p["rknot"]), "low": p["low"], "high": p["high"], "half_sky": p.get("half_sky", False)},  # noqa (alias for vector_radial_uniform)
         "vector_radial_spline_uniform_fixed_direction": lambda p: {"type": "vector_radial_spline_uniform_fixed_direction", "nval": len(p["rknot"]) if "rknot" in p else None, "low": p["low"], "high": p["high"]},  # noqa
         "vector_components_uniform": lambda p: {"type": "vector_components_uniform", "low": p["low"], "high": p["high"],},  # noqa
         "quadrupole_uniform_fixed": lambda p: {"type": "quadrupole_uniform_fixed", "low": p["low"], "high": p["high"],},  # noqa
@@ -771,11 +778,13 @@ def _rsample(name, dist):
 
     if isinstance(dist, dict) and dist.get("type") == "vector_radial_uniform":  # noqa
         return sample_spline_radial_vector(
-            name, dist["nval"], dist["low"], dist["high"], )
+            name, dist["nval"], dist["low"], dist["high"],
+            half_sky=dist.get("half_sky", False))
 
     if isinstance(dist, dict) and dist.get("type") == "vector_radial_spline_uniform":  # noqa
         return sample_spline_radial_vector(
-            name, dist["nval"], dist["low"], dist["high"], )
+            name, dist["nval"], dist["low"], dist["high"],
+            half_sky=dist.get("half_sky", False))
     
     if isinstance(dist, dict) and dist.get("type") == "vector_radial_spline_uniform_fixed_direction":  # noqa
         return sample_radial_spline_uniform_fixed_direction(

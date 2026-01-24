@@ -34,23 +34,21 @@ reconstructions = ["Vext", "Carrick2015", "manticore"] #"zspace", "Carrick2015",
 # === TEMPORARY: Only regenerate runs affected by bugs ===
 # Bug 1: quadA/quadH0 - zeropoint_quad wasn't being fixed for dipH0 variant
 # Bug 2: radmag-finest - low array had wrong size (4 instead of 8)
-include_quad = True
-include_pairs = True
-include_pix = True
-include_radmag_fine = True    # Radmag with finer knot spacing (BUGFIX - 6 knots vs 4)
+include_quad = False
+include_pairs = False
+include_pix = False
+include_radmag_fine = True   # Radmag with finer knot spacing (BUGFIX - 6 knots vs 4)
 include_radmag_finest = True  # Radmag with finest knot spacing (BUGFIX - 8 knots vs 4)
-radmag_smoothness_threshold = 4000  # Flat region (km/s), no penalty within this
-radmag_smoothness_scale = 200  # Gaussian scale (km/s) beyond threshold, 0 or None to disable
-radmag_sample_galactic = False # Sample direction in galactic coords (ell, b) instead of ICRS
-radmag_half_sky = False # Restrict ell to [0, 180°] to break sign degeneracy with magnitude
-include_rad = False  # Radial Vext (direction free, magnitude varies with r)
-include_radmag = True  # Radial magnitude Vext (BUGFIX - 5 knots vs 4 in template)
+include_rad = True  # Radial Vext (direction free, magnitude varies with r)
+include_rad_fine = True  # Radial Vext with finer knot spacing
+include_rad_finest = True  # Radial Vext with finest knot spacing
+include_radmag = False  # Radial magnitude Vext (BUGFIX - 5 knots vs 4 in template)
 # Base model flags (split from old include_base)
-include_base = True  # No flow/H0 model (both Vext and zeropoint are delta)
-include_dipH0 = True # H0_dipole varies (H0 anisotropy, affects z→r conversion)
-include_dipA = True   # zeropoint_dipole varies (calibration only, no z→r effect)
-include_dipVext = True  # Vext dipole only
-include_A = True  # Master switch for all A runs (dipA, quadA, pixA, pairs with A)
+include_base = False  # No flow/H0 model (both Vext and zeropoint are delta)
+include_dipH0 = False # H0_dipole varies (H0 anisotropy, affects z→r conversion)
+include_dipA = False   # zeropoint_dipole varies (calibration only, no z→r effect)
+include_dipVext = False  # Vext dipole only
+include_A = False  # Master switch for all A runs (dipA, quadA, pixA, pairs with A)
 include_bias = False  # Double power law bias model tests
 include_fixed_sigma = False
 # Z-space mode is auto-detected by the model based on H0 or Vext priors.
@@ -197,7 +195,9 @@ def generate_dynamic_tag(config, scenario_label):
     if which_vext == "per_pix":
         parts.append("pixVext")
     elif which_vext == "radial":
-        parts.append("radVext")
+        variant = get_nested(config, "pv_model/rad_variant", "default")
+        label = "radVext" if variant in ("", "default") else f"radVext-{variant}"
+        parts.append(label)
     elif which_vext == "radial_magnitude":
         variant = get_nested(config, "pv_model/radmag_variant", "default")
         label = "radmagVext" if variant in ("", "default") else f"radmagVext-{variant}"
@@ -427,6 +427,31 @@ if __name__ == "__main__":
 
     radialVext_combinations = expand_override_grid(radialVext_settings)
 
+    # Radial Vext with different knot spacings
+    rad_prior_template = get_nested(config, "model/priors/Vext_radial", {})
+
+    def rad_prior_with_knots(knots):
+        prior = deepcopy(rad_prior_template)
+        prior["rknot"] = knots
+        return prior
+
+    def build_rad_combinations(knots, variant_label):
+        settings = deepcopy(base)
+        settings["pv_model/which_Vext"] = ["radial"]
+        settings["model/priors/Vext_radial"] = [rad_prior_with_knots(knots)]
+        if variant_label not in ("", "default"):
+            settings["pv_model/rad_variant"] = [variant_label]
+        return expand_override_grid(settings)
+
+    rad_fine_combinations = []
+    rad_finest_combinations = []
+    if include_rad_fine:
+        rad_fine_combinations = build_rad_combinations(
+            [0, 125, 250, 500, 1000], "fine")
+    if include_rad_finest:
+        rad_finest_combinations = build_rad_combinations(
+            [0, 62.5, 125, 187.5, 250, 500, 1000], "finest")
+
     # Radial magnitude-only Vext (direction fixed, magnitude varies)
     radmag_prior_template = get_nested(
         config, "model/priors/Vext_radmag", {})
@@ -445,19 +470,10 @@ if __name__ == "__main__":
         # h0_dipole_percent is safe to keep since it scales with rknot.
         if "max_modulus" in prior and len(prior["max_modulus"]) != nknots:
             del prior["max_modulus"]
-        # Override smoothness prior from the global flags
-        if radmag_smoothness_scale:
-            prior["smoothness_scale"] = radmag_smoothness_scale
-            prior["smoothness_threshold"] = radmag_smoothness_threshold
-        else:
-            # Disable smoothness prior
-            if "smoothness_scale" in prior:
-                del prior["smoothness_scale"]
-            if "smoothness_threshold" in prior:
-                del prior["smoothness_threshold"]
-        # Override galactic sampling options from the global flags
-        prior["sample_galactic"] = radmag_sample_galactic
-        prior["half_sky"] = radmag_half_sky
+        # Remove smoothness, sample_galactic, half_sky - use config defaults
+        for key in ["smoothness_scale", "smoothness_threshold", "sample_galactic", "half_sky"]:
+            if key in prior:
+                del prior[key]
         return prior
 
     def build_radmag_combinations(knots, variant_label):
@@ -546,10 +562,12 @@ if __name__ == "__main__":
          + fixed_sigmav_combinations + fixed_sigmav_diph0_combinations),
         ("pix", (pixelA_combinations if include_A else []) + pixelH0_combinations + pixelVext_combinations if include_pix else []),
         ("quad", quadVext_combinations + quad_zeropoint_combinations if include_quad else []),
+        ("rad", radialVext_combinations if include_rad else []),
+        ("rad_fine", rad_fine_combinations),
+        ("rad_finest", rad_finest_combinations),
+        ("radmag", radialMagVext_combinations),
         ("radmag_fine", radmag_fine_combinations),
         ("radmag_finest", radmag_finest_combinations),
-        ("rad", radialVext_combinations if include_rad else []),
-        ("radmag", radialMagVext_combinations),
         ("bias", bias_combinations if include_bias else []),
     ]
 
@@ -695,10 +713,12 @@ if __name__ == "__main__":
         "pix": [],
         "quad": [],
         "pairs": [],
+        "rad": [],
+        "rad_fine": [],
+        "rad_finest": [],
+        "radmag": [],
         "radmag_fine": [],
         "radmag_finest": [],
-        "rad": [],
-        "radmag": [],
         "bias": [],
     }
     for scenario in scenarios:
@@ -978,14 +998,6 @@ if __name__ == "__main__":
                     run_config = overwrite_config(
                         run_config, "inference/num_samples", 500)
 
-                    which_vext = get_nested(
-                        run_config, "pv_model/which_Vext", "constant")
-                    if which_vext in ("radial", "radial_magnitude"):
-                        run_config = overwrite_config(
-                            run_config, "inference/num_warmup", 1000)
-                        run_config = overwrite_config(
-                            run_config, "inference/num_samples", 3000)
-
                     if kind.startswith("precomputed_los_"):
                         if "manticore" in kind_lower:
                             beta_prior = {"dist": "normal", "loc": 1.0, "scale": 0.05}
@@ -1078,11 +1090,13 @@ if __name__ == "__main__":
 
     ordered_groups = [
         "all_other_runs",
+        "rad",
+        "rad_fine",
+        "rad_finest",
         "radmag",
         "radmag_fine",
         "radmag_finest",
         "quad",
-        "rad",
         "pix",
         "pairs",
         "bias",
