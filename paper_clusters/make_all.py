@@ -10,7 +10,7 @@ import plot_dipoles
 import plot_relation_comparison
 import plot_sigma_v
 import plot_migkas_comparison
-import plot_mnr_comparison
+# import plot_mnr_comparison  # MNR results not available
 import plot_radial_mag
 import plot_reconstruction
 import tables

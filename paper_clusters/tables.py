@@ -696,15 +696,19 @@ def generate_table1_dipoles(results: list[RunResult],
                     b_str = format_angle(b, b_err)
 
                 elif model in ["dipH0", "dipA"]:
-                    # Read samples - dipH0 uses dH_over_H_dipole, dipA uses zeropoint_dipole_mag
+                    # Read samples - try new naming first, then legacy
                     if model == "dipH0":
-                        samples = read_samples_from_hdf5(r.fname, "dH_over_H_dipole")
+                        samples = read_samples_from_hdf5(r.fname, "H0_dipole_mag")
+                        if samples is None:
+                            samples = read_samples_from_hdf5(r.fname, "dH_over_H_dipole")
                     else:
                         samples = read_samples_from_hdf5(r.fname, "zeropoint_dipole_mag")
 
                     # Prior: lower bound is always 0, upper bound from TOML
                     prior_min = 0.0
                     _, prior_max = read_prior_bounds_from_toml(r.fname, "zeropoint_dipole")
+                    if prior_max is None:
+                        _, prior_max = read_prior_bounds_from_toml(r.fname, "H0_dipole")
 
                     # Format amplitude with upper limit detection (scale by 100 for %)
                     amp_str = format_amplitude_constraint(
@@ -712,9 +716,13 @@ def generate_table1_dipoles(results: list[RunResult],
                         fmt=".1f", unit=r"\%", scale=100.0
                     )
 
-                    # Direction (keep as before - no upper limit detection)
-                    ell, ell_err = r.get_param_with_err("zeropoint_dipole_ell")
-                    b, b_err = r.get_param_with_err("zeropoint_dipole_b")
+                    # Direction - try new naming first, then legacy
+                    ell, ell_err = r.get_param_with_err("H0_dipole_ell")
+                    if ell is None:
+                        ell, ell_err = r.get_param_with_err("zeropoint_dipole_ell")
+                    b, b_err = r.get_param_with_err("H0_dipole_b")
+                    if b is None:
+                        b, b_err = r.get_param_with_err("zeropoint_dipole_b")
                     ell_str = format_angle(ell, ell_err)
                     b_str = format_angle(b, b_err)
                 else:
@@ -1049,21 +1057,30 @@ def generate_appendix_pixel(results: list[RunResult],
                     dlnZ_str = r"\textemdash"
                 else:
                     pix_vals = []
+                    # For H0 pixel models, try reading entire array first (new format)
+                    h0_pix_array = read_samples_from_hdf5(r.fname, "H0_pix")
                     for i in range(12):
                         if model == "pixVext":
                             v, v_err = r.get_param_with_err(f"Vext_pix[{i}]")
                             pix_vals.append(format_val_err(v, v_err, ".0f"))
                         else:
-                            v, v_err = r.get_param_with_err(f"dH_over_H_pix[{i}]")
-                            if v is None:
-                                v, v_err = r.get_param_with_err(f"A_pix[{i}]")
-                                if v is not None:
-                                    frac = 10 ** (0.5 * v) - 1.0
-                                    if v_err is not None:
-                                        frac_err = v_err * 0.5 * np.log(10) * 10 ** (0.5 * v)
-                                    else:
-                                        frac_err = None
-                                    v, v_err = frac, frac_err
+                            # Try new array format first
+                            if h0_pix_array is not None and h0_pix_array.ndim == 2:
+                                pix_samples = h0_pix_array[:, i]
+                                v = float(np.median(pix_samples))
+                                v_err = float((np.percentile(pix_samples, 84) - np.percentile(pix_samples, 16)) / 2)
+                            else:
+                                # Legacy format: individual parameters
+                                v, v_err = r.get_param_with_err(f"dH_over_H_pix[{i}]")
+                                if v is None:
+                                    v, v_err = r.get_param_with_err(f"A_pix[{i}]")
+                                    if v is not None:
+                                        frac = 10 ** (0.5 * v) - 1.0
+                                        if v_err is not None:
+                                            frac_err = v_err * 0.5 * np.log(10) * 10 ** (0.5 * v)
+                                        else:
+                                            frac_err = None
+                                        v, v_err = frac, frac_err
                             if v is not None:
                                 v = v * 100
                                 v_err = v_err * 100 if v_err is not None else None
@@ -1209,10 +1226,15 @@ def generate_appendix_quadrupole(results: list[RunResult],
                 else:
                     # Zeropoint/H0 models have different parameter names
                     # Use upper limit detection for amplitudes (no units in table)
-                    vdip_samples = read_samples_from_hdf5(r.fname, "dH_over_H_dipole")
+                    # Try new naming first (H0_dipole_mag), then legacy (dH_over_H_dipole)
+                    vdip_samples = read_samples_from_hdf5(r.fname, "H0_dipole_mag")
+                    if vdip_samples is None:
+                        vdip_samples = read_samples_from_hdf5(r.fname, "dH_over_H_dipole")
                     if vdip_samples is None:
                         vdip_samples = read_samples_from_hdf5(r.fname, "zeropoint_dipole_mag")
-                    _, vdip_prior_max = read_prior_bounds_from_toml(r.fname, "zeropoint_dipole")
+                    _, vdip_prior_max = read_prior_bounds_from_toml(r.fname, "H0_dipole")
+                    if vdip_prior_max is None:
+                        _, vdip_prior_max = read_prior_bounds_from_toml(r.fname, "zeropoint_dipole")
                     vdip_str = format_amplitude_constraint(
                         vdip_samples, 0.0, vdip_prior_max,
                         fmt=".1f", unit="", scale=100.0
@@ -1227,8 +1249,13 @@ def generate_appendix_quadrupole(results: list[RunResult],
                         fmt=".1f", unit="", scale=100.0
                     )
 
-                    ell, ell_err = r.get_param_with_err("zeropoint_dipole_ell")
-                    b, b_err = r.get_param_with_err("zeropoint_dipole_b")
+                    # Try new naming first, then legacy
+                    ell, ell_err = r.get_param_with_err("H0_dipole_ell")
+                    if ell is None:
+                        ell, ell_err = r.get_param_with_err("zeropoint_dipole_ell")
+                    b, b_err = r.get_param_with_err("H0_dipole_b")
+                    if b is None:
+                        b, b_err = r.get_param_with_err("zeropoint_dipole_b")
                     # Get quadrupole directions in Galactic coordinates
                     l1, l1_err, b1, b1_err = get_quadrupole_galactic_direction(r.fname, "zeropoint_quad", 1)
                     l2, l2_err, b2, b2_err = get_quadrupole_galactic_direction(r.fname, "zeropoint_quad", 2)
@@ -1341,17 +1368,27 @@ def generate_appendix_mixed_dipoles(results: list[RunResult],
                     b, b_err = r.get_param_with_err("Vext_b")
 
                     # Zeropoint/H0 dipole amplitude with upper limit detection (no units)
-                    ah0_samples = read_samples_from_hdf5(r.fname, "dH_over_H_dipole")
+                    # Try new naming first (H0_dipole_mag), then legacy
+                    ah0_samples = read_samples_from_hdf5(r.fname, "H0_dipole_mag")
+                    if ah0_samples is None:
+                        ah0_samples = read_samples_from_hdf5(r.fname, "dH_over_H_dipole")
                     if ah0_samples is None:
                         ah0_samples = read_samples_from_hdf5(r.fname, "zeropoint_dipole_mag")
-                    _, ah0_prior_max = read_prior_bounds_from_toml(r.fname, "zeropoint_dipole")
+                    _, ah0_prior_max = read_prior_bounds_from_toml(r.fname, "H0_dipole")
+                    if ah0_prior_max is None:
+                        _, ah0_prior_max = read_prior_bounds_from_toml(r.fname, "zeropoint_dipole")
                     ah0_str = format_amplitude_constraint(
                         ah0_samples, 0.0, ah0_prior_max,
                         fmt=".1f", unit="", scale=100.0
                     )
 
-                    ah0_ell, ah0_ell_err = r.get_param_with_err("zeropoint_dipole_ell")
-                    ah0_b, ah0_b_err = r.get_param_with_err("zeropoint_dipole_b")
+                    # Try new naming first, then legacy
+                    ah0_ell, ah0_ell_err = r.get_param_with_err("H0_dipole_ell")
+                    if ah0_ell is None:
+                        ah0_ell, ah0_ell_err = r.get_param_with_err("zeropoint_dipole_ell")
+                    ah0_b, ah0_b_err = r.get_param_with_err("H0_dipole_b")
+                    if ah0_b is None:
+                        ah0_b, ah0_b_err = r.get_param_with_err("zeropoint_dipole_b")
 
                     ell_str = format_val_err(ell, ell_err, ".0f") if ell is not None else r"\textemdash"
                     b_str = format_val_err(b, b_err, ".0f") if b is not None else r"\textemdash"

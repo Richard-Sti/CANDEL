@@ -35,13 +35,15 @@ reconstructions = ["Vext", "Carrick2015", "manticore"] #"zspace", "Carrick2015",
 # Bug 2: radmag-finest - low array had wrong size (4 instead of 8)
 include_quad = False
 include_pairs = False
-include_pix = False
+include_pixH0 = False
+include_pixVext = True
+include_pixA = False
 include_radmag_fine = False  # Radmag with finer knot spacing (BUGFIX - 6 knots vs 4)
 include_radmag_finest = False  # Radmag with finest knot spacing (BUGFIX - 8 knots vs 4)
-include_rad = True  # Radial Vext (direction free, magnitude varies with r)
-include_rad_fine = True  # Radial Vext with finer knot spacing
-include_rad_finest = True  # Radial Vext with finest knot spacing
-include_radmag = True  # Radial magnitude Vext (BUGFIX - 5 knots vs 4 in template)
+include_rad = False # Radial Vext (direction free, magnitude varies with r)
+include_rad_fine = False  # Radial Vext with finer knot spacing
+include_rad_finest = False  # Radial Vext with finest knot spacing
+include_radmag = False  # Radial magnitude Vext (BUGFIX - 5 knots vs 4 in template)
 # Base model flags (split from old include_base)
 include_base = False  # No flow/H0 model (both Vext and zeropoint are delta)
 include_dipH0 = False # H0_dipole varies (H0 anisotropy, affects z→r conversion)
@@ -50,6 +52,9 @@ include_dipVext = False  # Vext dipole only
 include_A = False  # Master switch for all A runs (dipA, quadA, pixA, pairs with A)
 include_bias = False  # Double power law bias model tests
 include_fixed_sigma = False
+
+
+
 # Z-space mode is auto-detected by the model based on H0 or Vext priors.
 n_zspace_iterations = 2  # Iterations to refine z->r mapping for H0/Vext models
 output_root = "results/nodensity2"
@@ -559,7 +564,7 @@ if __name__ == "__main__":
     override_groups = [
         ("all_other_runs", dipole_combinations
          + fixed_sigmav_combinations + fixed_sigmav_diph0_combinations),
-        ("pix", (pixelA_combinations if include_A else []) + pixelH0_combinations + pixelVext_combinations if include_pix else []),
+        ("pix", (pixelA_combinations if include_pixA and include_A else []) + (pixelH0_combinations if include_pixH0 else []) + (pixelVext_combinations if include_pixVext else [])),
         ("quad", quadVext_combinations + quad_zeropoint_combinations if include_quad else []),
         ("rad", radialVext_combinations if include_rad else []),
         ("rad_fine", rad_fine_combinations),
@@ -690,7 +695,7 @@ if __name__ == "__main__":
             "constant": [],  # Vext/Vext_quad added conditionally if priors vary
             "radial": ["Vext_radial"],
             "radial_magnitude": ["Vext_radmag"],
-            "per_pix": ["Vext_pix"],
+            "per_pix": ["Vext_sigma", "Vext_pix_u"],
         }
         return mapping.get(which_vext, [])
 
@@ -740,24 +745,15 @@ if __name__ == "__main__":
                         local_config = overwrite_config(local_config, key, value)
 
                 # Fix pixel priors based on which_* settings (applies to ALL scenarios)
-                # Set Vext_pix prior based on which_Vext
+                # Set Vext_sigma prior for per_pix mode (Q-matrix sum-to-zero approach)
                 which_vext = get_nested(
                     local_config, "pv_model/which_Vext", "constant")
                 if which_vext == "per_pix":
-                    nside = get_nested(
-                        local_config, "pv_model/Vext_per_pix_nside", 1)
-                    npix = 12 * nside**2
+                    # Uniform prior on scale parameter; Q-matrix projects onto sum-to-zero subspace
                     local_config = overwrite_subtree(
                         local_config,
-                        "model/priors/Vext_pix",
-                        {"dist": "array_uniform", "low": -10000.0, "high": 10000.0, "nval": npix},
-                    )
-                else:
-                    # Not per_pix mode: fix Vext_pix to zero
-                    local_config = overwrite_subtree(
-                        local_config,
-                        "model/priors/Vext_pix",
-                        {"dist": "delta", "value": [0.0] * 12},
+                        "model/priors/Vext_sigma",
+                        {"dist": "uniform", "low": 0.0, "high": 5000.0},
                     )
 
                 # Set zeropoint_pix prior based on which_zeropoint

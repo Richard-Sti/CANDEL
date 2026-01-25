@@ -607,6 +607,17 @@ def postprocess_samples(samples, convert_zeropoint_to_dH=False):
     if "A_pix" in samples:
         samples["zeropoint_pix"] = samples.pop("A_pix")
 
+    # Compute Vext_pix from Vext_sigma and Vext_pix_u (Q-matrix sum-to-zero approach)
+    if "Vext_sigma" in samples and "Vext_pix_u" in samples:
+        from .model.model import sumzero_basis
+        Vext_sigma = samples.pop("Vext_sigma")
+        Vext_pix_u = samples.pop("Vext_pix_u")
+        npix = Vext_pix_u.shape[-1] + 1  # u has npix-1 components
+        Q = sumzero_basis(npix)
+        # Compute Vext_pix = sigma * (Q @ u) for each sample
+        # Vext_pix_u shape: (n_samples, npix-1), Q shape: (npix, npix-1)
+        samples["Vext_pix"] = Vext_sigma[:, None] * (Vext_pix_u @ Q.T)
+
     # Only convert zeropoint to dH_over_H for legacy dipH0/quadH0/pixH0 runs
     # (runs using stretch_los_with_zeropoint flag)
     if convert_zeropoint_to_dH:

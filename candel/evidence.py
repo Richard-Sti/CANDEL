@@ -133,6 +133,13 @@ def harmonic_evidence(samples_arr, log_density, temperature=0.8, epochs_num=20,
         raise ValueError("The log posterior must be a 2-dimensional "
                          "array of shape `(nchains, nsamples_arr)`.")
 
+    nchains = samples_arr.shape[0]
+    if nchains < 2:
+        fprint("Harmonic evidence requires at least 2 chains. Skipping.")
+        if return_flow_samples:
+            return np.nan, np.nan, None
+        return np.nan, np.nan
+
     ndim = samples_arr.shape[-1]
     chains = hm.Chains(ndim)
     chains.add_chains_3d(samples_arr, log_density)

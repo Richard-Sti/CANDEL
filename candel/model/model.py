@@ -827,9 +827,18 @@ def _rsample(name, dist):
 
 
 def rsample(name, dist, shared_params=None):
-    """Sample a parameter from `dist`, unless provided in `shared_params`."""
-    if shared_params is not None and name in shared_params:
-        return shared_params[name]
+    """Sample a parameter from `dist`, unless provided in `shared_params`.
+
+    If shared_params is provided and name is not yet in it, the sampled value
+    is stored for future calls (enabling sharing across submodels).
+    """
+    if shared_params is not None:
+        if name in shared_params:
+            return shared_params[name]
+        # Sample and store for future reuse
+        value = _rsample(name, dist)
+        shared_params[name] = value
+        return value
     return _rsample(name, dist)
 
 
@@ -1265,17 +1274,19 @@ def sample_Vext(priors, which_Vext, shared_params=None, kwargs_Vext={}):
                 Vext = rsample("Vext_rad_bin", prior, shared_params)
             # Flatten to shape (n_bins * 3,) for consistency with compute_Vext_radial
             Vext = Vext.reshape(-1)
-    # elif which_Vext == "per_pix":
-    #     Vext_sigma = rsample("Vext_sigma", priors["Vext_sigma"], shared_params)
-
-    #     with plate("Vext_pix_plate", kwargs_Vext["npix"] - 1):
-    #         u = rsample("Vext_pix_skipZ", Normal(0., 1.), shared_params)
-
-    #     Vext = rsample(
-    #         "Vext_pix",
-    #         Delta(Vext_sigma * (kwargs_Vext["Q"] @ u)), shared_params)
     elif which_Vext == "per_pix":
-        Vext = rsample("Vext_pix", priors["Vext_pix"], shared_params)  # noqa
+        # Sample scale parameter and (npix-1) standard normals, project onto
+        # sum-to-zero subspace via orthonormal basis Q
+        Vext_sigma = rsample("Vext_sigma", priors["Vext_sigma"], shared_params)
+        npix = kwargs_Vext["npix"]
+        with plate("Vext_pix_plate", npix - 1):
+            u = rsample("Vext_pix_u", Normal(0., 1.), shared_params)
+        # Compute Vext_pix inline (not as deterministic to avoid singular
+        # covariance in evidence calculation). Store in shared_params for
+        # sharing between submodels.
+        Vext = Vext_sigma * (kwargs_Vext["Q"] @ u)
+        if shared_params is not None:
+            shared_params["Vext_pix"] = Vext
     elif which_Vext == "constant":
         Vext = rsample("Vext", priors["Vext"], shared_params)
     else:
@@ -3048,12 +3059,22 @@ class JointPVModel:
     def _sample_shared_params(self, priors):
         shared = {}
         for name in self.shared_param_names:
-            shared[name] = _rsample(name, priors[name])
+            if name in priors:
+                shared[name] = _rsample(name, priors[name])
+            # Skip params not in priors - they'll be sampled on first use
+            # via rsample and added to shared dict
         return shared
 
     def __call__(self, data):
         assert len(data) == len(self.submodels)
         shared_params = self._sample_shared_params(self.submodels[0].priors)
+
+        # Sample Vext_pix_u BEFORE entering any scope to avoid prefix in name
+        if self.which_Vext == "per_pix" and "Vext_pix_u" in self.shared_param_names:
+            npix = self.kwargs_Vext["npix"]
+            with plate("Vext_pix_plate", npix - 1):
+                u = sample("Vext_pix_u", Normal(0., 1.))
+            shared_params["Vext_pix_u"] = u
 
         for i, (submodel, data_i) in enumerate(zip(self.submodels, data)):
             name = data_i.name if data_i is not None else f"dataset_{i}"
