@@ -23,7 +23,6 @@ from itertools import product
 from os import makedirs
 from os.path import exists, join, splitext
 
-import numpy as np
 import tomli_w
 
 from util_light import fprint, load_config, replace_prior_with_delta
@@ -577,18 +576,9 @@ if __name__ == "__main__":
 
     shared_logT_mean = None
     if LTYT_joint:
-        # Lazy import to avoid JAX initialization when LTYT_joint=False
-        from candel.pvdata.data import load_clusters
-
-        base_clusters_full = deepcopy(base_clusters_section)
-        root = base_clusters_full.pop("root", None)
-        if root is None:
-            raise ValueError("Base Clusters config must include `root`.")
-        base_clusters_full["finite_logY"] = False
-        base_clusters_full["remove_noY"] = False
-        base_clusters_full["only_missing_Y"] = False
-        full_data = load_clusters(root, subtract_logT_mean=False, **base_clusters_full)
-        shared_logT_mean = float(np.mean(full_data["logT"]))
+        # Pre-computed from full cluster dataset (312 clusters with zcmb_max=0.45)
+        # to avoid slow JAX initialization from importing candel
+        shared_logT_mean = 0.6325445009921037
         fprint(f"using shared logT_mean={shared_logT_mean:.6g} for joint LTYT runs.")
 
     def build_cluster_section(**updates):
