@@ -3256,7 +3256,7 @@ class ClustersAnisModel:
 
         # Reconstruct LOS profiles (optionally with H0_dipole=0 for isotropic)
         H0_dipole_recon = jnp.zeros(3) if self.reconstruction_dipole_zero else H0_dipole
-        los_density, los_velocity = compute_los_profiles_jax(
+        _, los_density, los_velocity = compute_los_profiles_jax(
             H0_dipole_recon, self.precomputed)
 
         # los_density: (n_clusters, n_r) = 1 + delta

@@ -433,7 +433,7 @@ def trilinear_interp_batch(field, positions, N, dx, RMAX):
 def compute_los_profiles_jax(
     H0_dipole: jnp.ndarray,
     p: PrecomputedData,
-) -> Tuple[jnp.ndarray, jnp.ndarray]:
+) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     """
     Compute LOS density and velocity profiles for all clusters.
 
@@ -449,8 +449,10 @@ def compute_los_profiles_jax(
 
     Returns
     -------
+    los_rho_raw : (n_clusters, n_r) array
+        LOS raw rho profiles (CIC counts, no processing)
     los_density : (n_clusters, n_r) array
-        LOS density profiles (1 + δ)
+        LOS density profiles (1 + δ) with psi correction and smoothing
     los_velocity : (n_clusters, n_r) array
         LOS velocity profiles [km/s]
     """
@@ -475,6 +477,10 @@ def compute_los_profiles_jax(
 
     # 5. CIC deposition
     rho = cic_deposit_jax(positions, w_all, p.N, p.dx, p.RMAX)
+
+    # 5b. Extract raw rho LOS profiles (before any processing)
+    los_rho_raw = trilinear_interp_batch(rho, p.los_positions,
+                                          p.N, p.dx, p.RMAX)
 
     # 6. Normalize
     rho_mean = jnp.sum(rho * p.nonmasked) / jnp.sum(p.nonmasked)
@@ -522,7 +528,7 @@ def compute_los_profiles_jax(
     # For velocity: v_smoothed = v * decay
     los_velocity = los_velocity * decay[None, :]
 
-    return los_density, los_velocity
+    return los_rho_raw, los_density, los_velocity
 
 
 # =============================================================================

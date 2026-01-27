@@ -47,7 +47,7 @@ BIAS_CONST = 0.73
 BIAS_SLOPE = 0.24
 
 # Iteration parameters
-N_ITERATIONS = 44  # beta from 0 to 0.43 in 44 steps
+N_ITERATIONS = 1  # beta from 0 to 0.43 in 44 steps
 BETA_MAX = 0.43
 N_AVG = 5  # Average last N distance estimates
 PLOT_EVERY = 10  # Save diagnostic plots every N iterations
@@ -57,8 +57,8 @@ CLONE_ZOA = True  # Enable Zone of Avoidance cloning
 
 # Anisotropic H0 Model
 # H0(n̂) = H0_bar * (1 + d · n̂) where d is the dipole vector
-ANISOTROPIC_H0 = True
-H0_DIPOLE_AMP = 0.05  # Fractional dipole amplitude (5%)
+ANISOTROPIC_H0 = False
+H0_DIPOLE_AMP = 0.000  # Fractional dipole amplitude (5%)
 H0_DIPOLE_L = 118.48  # Galactic longitude of dipole direction (degrees)
 H0_DIPOLE_B = 37.29  # Galactic latitude of dipole direction (degrees)
 ANISOTROPIC_PSI = False  # Apply anisotropic H0 to psi_3d computation
@@ -2405,6 +2405,68 @@ if ANISOTROPIC_H0:
     print("  LOS file contains direction-dependent z values")
     print("  Features appear at same z as isotropic case")
     print("  Differences are in amplitude (weights/selection/normalization)")
+
+# =============================================================================
+# Generate LOS file with: raw rho (CIC) + processed delta + processed velocity
+# =============================================================================
+print("\n" + "="*60)
+print("Generating LOS file with raw rho and processed delta/velocity...")
+print("="*60)
+
+# Load raw rho (just after CIC, no processing at all)
+rho_filename = f"rho_raw_{'aniso' if ANISOTROPIC_H0 else 'iso'}.npy"
+print(f"Loading {rho_filename}...")
+rho_raw = np.load(rho_filename)
+
+# Interpolator for raw rho (no processing at all - just CIC counts)
+interp_rho_raw = RegularGridInterpolator(
+    (coords, coords, coords), rho_raw, bounds_error=False, fill_value=0.0)
+
+# Compute raw rho LOS (just CIC counts, no normalization, no psi, no smoothing)
+print(f"Computing raw rho LOS for {n_clusters} clusters...")
+los_rho_raw = np.zeros((n_clusters, n_r_los), dtype=np.float32)
+for i_cl in range(n_clusters):
+    pos = los_r[:, None] * cluster_rhat[i_cl]
+    los_rho_raw[i_cl] = interp_rho_raw(pos)
+
+# The processed delta and velocity are already computed: los_density_final, los_velocity_final
+# These have psi correction + smoothing applied, and are in LG frame
+
+# Save to HDF5
+output_file_raw = f'data/Clusters/los_Clusters_carrick_raw_{suffix}.hdf5'
+with h5py.File(output_file_raw, 'w') as f:
+    f.create_dataset('RA', data=cluster_RA.astype(np.float32))
+    f.create_dataset('dec', data=cluster_dec.astype(np.float32))
+    f.create_dataset('r', data=los_r.astype(np.float32))
+    f.create_dataset('z', data=los_z)
+    # Raw rho: just CIC counts (no normalization, no psi, no smoothing)
+    f.create_dataset('los_rho_raw', data=los_rho_raw[np.newaxis, :, :])
+    # Processed 1+delta: with psi correction and smoothing (LG frame)
+    f.create_dataset('los_density', data=(1 + los_density_final)[np.newaxis, :, :].astype(np.float32))
+    # Processed velocity: from processed delta, stored as v/beta (LG frame)
+    f.create_dataset('los_velocity', data=(los_velocity_final / BETA_MAX)[np.newaxis, :, :].astype(np.float32))
+    f.attrs['frame'] = 'LG'  # Local Group frame, no CMB shift
+    f.attrs['los_rho_raw_description'] = 'Raw CIC counts, no processing'
+    f.attrs['los_density_description'] = '1+delta with psi correction and smoothing'
+    f.attrs['los_velocity_description'] = 'v/beta from processed delta'
+    if ANISOTROPIC_H0:
+        f.attrs['anisotropic_H0'] = True
+        f.attrs['H0_dipole_amp'] = H0_DIPOLE_AMP
+        f.attrs['H0_dipole_l'] = H0_DIPOLE_L
+        f.attrs['H0_dipole_b'] = H0_DIPOLE_B
+    else:
+        f.attrs['anisotropic_H0'] = False
+
+print(f"Saved: {output_file_raw}")
+print(f"  los_rho_raw: (1, {n_clusters}, {n_r_los}) - raw CIC counts")
+print(f"  los_density: (1, {n_clusters}, {n_r_los}) - 1+delta with psi+smoothing")
+print(f"  los_velocity: (1, {n_clusters}, {n_r_los}) - v/beta from processed delta")
+
+# Statistics
+print(f"\nStatistics:")
+print(f"  Raw rho: mean={los_rho_raw.mean():.4f}, std={los_rho_raw.std():.4f}")
+print(f"  Processed 1+delta: mean={(1 + los_density_final).mean():.3f}, std={(1 + los_density_final).std():.3f}")
+print(f"  Processed velocity: std={los_velocity_final.std():.1f} km/s")
 
 print("\n" + "="*60)
 print("All done!")
