@@ -141,8 +141,15 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
     # Check if we have mock truth values for initialization
     data = model_kwargs.get('data', None)
     mock_init_values = get_mock_init_values(data, model) if data is not None else None
-    
-    if mock_init_values is not None:
+
+    # Check for config-specified init values
+    config_init_values = kwargs.get("init_values", None)
+
+    if config_init_values is not None:
+        # Use config-specified init values
+        fprint(f"Initializing from config: {list(config_init_values.keys())}")
+        init_strategy = init_to_value(values=config_init_values)
+    elif mock_init_values is not None:
         # Initialize at mock truth values
         init_strategy = init_to_value(values=mock_init_values)
     else:

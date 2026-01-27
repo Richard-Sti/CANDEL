@@ -123,7 +123,9 @@ def load_config(config_path, replace_none=True, fill_paths=True,
 
     # Assign delta priors if not using an underlying reconstruction.
     kind = config.get("pv_model", {}).get("kind", "")
-    if replace_los_prior and not kind.startswith("precomputed_los"):
+    uses_reconstruction = (kind.startswith("precomputed_los") or
+                           kind == "aniso_reconstruction")
+    if replace_los_prior and not uses_reconstruction:
         config = replace_prior_with_delta(config, "alpha", 1.)
         config = replace_prior_with_delta(config, "beta", 0.)
         config = replace_prior_with_delta(config, "b1", 0.)

@@ -20,6 +20,7 @@ from .model import (                                                            
     SNModel,                                                                    # noqa
     PantheonPlusModel,                                                          # noqa
     ClustersModel,                                                              # noqa
+    ClustersAnisModel,                                                          # noqa
     FPModel,                                                                   # noqa
     HybridClustersModel,                                                       # noqa
     MigkasModel,                                                                # noqa
@@ -40,6 +41,7 @@ def name2model(name, shared_param=None, config=None):
         "SNModel": SNModel,
         "PantheonPlusModel": PantheonPlusModel,
         "ClustersModel": ClustersModel,
+        "ClustersAnisModel": ClustersAnisModel,
         "FPModel": FPModel,
         "CalibratedDistanceModel_DistMarg": CalibratedDistanceModel_DistMarg,
         "MigkasModel": MigkasModel,

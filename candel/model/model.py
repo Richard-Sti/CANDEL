@@ -2901,6 +2901,477 @@ class MigkasModel(BaseModel):
 
 
 ###############################################################################
+#                     Anisotropic H0 Cluster Model                            #
+###############################################################################
+
+
+class ClustersAnisModel:
+    """
+    Cluster scaling relations with anisotropic H0 via JAX reconstruction.
+
+    This model computes velocity fields on-the-fly from the density
+    reconstruction, allowing the H0 dipole direction to affect galaxy
+    distances and hence the reconstructed field.
+
+    Key differences from ClustersModel:
+    - No Vext sampling (velocities come from JAX reconstruction)
+    - No z-space mapping complexity
+    - H0 dipole directly modifies r(z) conversion
+    - Simpler, focused on H0 anisotropy inference
+    """
+
+    _VALID_RELATIONS = {"LT", "YT", "LTYT"}
+
+    def __init__(self, config_path):
+        from ..field.jax_reconstruction import (
+            precompute_reconstruction_data, lb_to_rhat
+        )
+
+        config = load_config(config_path)
+        self.config = config
+
+        # Basic settings
+        self.Om = get_nested(config, "model/Om", 0.3)
+        self.track_log_density_per_sample = get_nested(
+            config, "inference/track_log_density_per_sample", False)
+        self.save_distances = get_nested(
+            config, "inference/save_distances", False)
+
+        # Scaling relation
+        self.which_relation = get_nested(
+            config, "io/Clusters/which_relation", "LT")
+        if self.which_relation not in self._VALID_RELATIONS:
+            raise ValueError(
+                f"Invalid which_relation '{self.which_relation}'. "
+                f"Choose from {self._VALID_RELATIONS}.")
+
+        # MNR settings
+        self.use_MNR = get_nested(config, "model/use_MNR", False)
+        self.marginalize_logT = get_nested(
+            config, "model/marginalize_logT", False)
+        if self.marginalize_logT:
+            self.logT_grid_kwargs = config["model"]["logT_grid"]
+
+        # Interpolators
+        self.distance2logda = Distance2LogAngDist(Om0=self.Om, zmax_interp=1.0)
+        self.distance2logdl = Distance2LogLumDist(Om0=self.Om, zmax_interp=1.0)
+        self.distance2redshift = Distance2Redshift(Om0=self.Om)
+
+        # Load priors
+        priors = config["model"]["priors"]
+        self.priors, self.prior_dist_name = load_priors(priors)
+
+        # No Vext sampling in this model (velocities from JAX reconstruction)
+        self.which_Vext = None
+
+        # Ensure scaling relation priors
+        if self.which_relation in ["LT", "LTYT"]:
+            if "CL_C" not in self.priors:
+                self.priors["CL_C"] = Delta(jnp.asarray(0.0))
+
+        # JAX reconstruction settings (43Runs parameters)
+        recon_cfg = config.get("jax_reconstruction", {})
+        self.galaxy_catalogue_path = recon_cfg.get(
+            "galaxy_catalogue",
+            "data/Carrick_reconstruction_2015/2m++_43Runs.npy")
+        self.N_grid = recon_cfg.get("N", 128)
+        self.BOX_SIDE = recon_cfg.get("BOX_SIDE", 400.0)
+        self.SIGMA_SMOOTH = recon_cfg.get("SIGMA_SMOOTH", 4.0)
+        self.alpha_LF = recon_cfg.get("alpha", -0.83)
+        self.Mstar_LF = recon_cfg.get("Mstar", -23.28)
+        self.beta_recon = recon_cfg.get("beta", 0.43)
+        self.r0_decay_scale = recon_cfg.get("r0_decay_scale", 5.0)
+
+        # Option to use zero H0_dipole for reconstruction (isotropic velocity field)
+        self.reconstruction_dipole_zero = recon_cfg.get("reconstruction_dipole_zero", False)
+        if self.reconstruction_dipole_zero:
+            fprint("  reconstruction_dipole_zero=True (isotropic velocity field)")
+
+        # LOS file for cluster positions
+        self.cluster_los_file = get_nested(
+            config, "io/Clusters/los_file",
+            "data/Clusters/los_Clusters_Carrick2015.hdf5")
+
+        # Precompute reconstruction data
+        fprint(f"Loading galaxy catalogue: {self.galaxy_catalogue_path}")
+        self._precompute_reconstruction(recon_cfg)
+
+        fprint(f"ClustersAnisModel initialized: relation={self.which_relation}, "
+               f"N={self.N_grid}, n_gal={len(self.precomputed.gal_z_obs)}")
+
+    def _precompute_reconstruction(self, recon_cfg):
+        """Load galaxy catalogue and precompute JAX reconstruction data."""
+        from ..field.jax_reconstruction import (
+            precompute_reconstruction_data, lb_to_rhat
+        )
+
+        # Load galaxy catalogue (structured array)
+        cat = np.load(self.galaxy_catalogue_path, allow_pickle=True)
+
+        # Extract fields
+        l_deg = cat['gal_long'].astype(np.float64)
+        b_deg = cat['gal_lat'].astype(np.float64)
+        K2Mpp = cat['K2MRS'].astype(np.float64)
+        vcmb = cat['best_velcmb'].astype(np.float64)
+        gid = cat['group_id'].astype(np.int32)
+
+        # Completeness values
+        c1_all = cat['c1_all'].astype(np.float64)
+        c2_all = cat['c2_all'].astype(np.float64)
+        flag_zoa = cat['flag_zoa'].astype(np.int32)
+        lumWeight_stored = cat['lumWeight'].astype(np.float64)
+
+        # Apply completeness cut (Code_2M++ condition)
+        completeness_ok = (
+            ((K2Mpp <= 11.5) & (c1_all > 0.5)) |
+            ((c2_all > 0.5) & (K2Mpp <= 12.5) & (K2Mpp > 11.5))
+        )
+        carrick_included = lumWeight_stored > 0
+        valid = (np.isfinite(l_deg) & np.isfinite(b_deg) &
+                 np.isfinite(K2Mpp) & np.isfinite(vcmb) &
+                 (vcmb > 0) & completeness_ok & carrick_included)
+
+        l_deg = l_deg[valid]
+        b_deg = b_deg[valid]
+        K2Mpp = K2Mpp[valid]
+        vcmb = vcmb[valid]
+        gid = gid[valid]
+        flag_zoa = flag_zoa[valid]
+        c1_all = c1_all[valid]
+        c2_all = c2_all[valid]
+
+        # Remove existing ZoA clones (we'll create our own)
+        is_zoa_clone = flag_zoa == 1
+        keep = ~is_zoa_clone
+        l_deg = l_deg[keep]
+        b_deg = b_deg[keep]
+        K2Mpp = K2Mpp[keep]
+        vcmb = vcmb[keep]
+        gid = gid[keep]
+        c1_all = c1_all[keep]
+        c2_all = c2_all[keep]
+
+        # Remove galaxies in ZoA target regions
+        l_norm = np.mod(l_deg + 180, 360) - 180
+        near_gc = np.abs(l_norm) < 30
+        in_narrow_zoa = (~near_gc) & (np.abs(b_deg) < 5)
+        in_wide_zoa = near_gc & (np.abs(b_deg) < 10)
+        in_zoa = in_narrow_zoa | in_wide_zoa
+        keep = ~in_zoa
+        l_deg = l_deg[keep]
+        b_deg = b_deg[keep]
+        K2Mpp = K2Mpp[keep]
+        vcmb = vcmb[keep]
+        gid = gid[keep]
+        c1_all = c1_all[keep]
+        c2_all = c2_all[keep]
+
+        # Convert vcmb to z_obs
+        z_obs = vcmb / SPEED_OF_LIGHT
+
+        # Magnitude limits per galaxy
+        # 2MRS-only if K < 11.75, else deep survey
+        is_2mrs_only = K2Mpp < 11.75
+        m_b = np.where(is_2mrs_only, 4.0, 4.0)  # Bright limit
+        m_f = np.where(is_2mrs_only, 11.5, 12.5)  # Faint limit
+
+        # Compute ZoA clone indices and positions
+        clone_source_idx, clone_l_deg, clone_b_deg = self._compute_zoa_clones(
+            l_deg, b_deg)
+
+        fprint(f"  Galaxies: {len(l_deg)}, ZoA clones: {len(clone_source_idx)}")
+
+        # Build r_grid from Malmquist settings (must match data loading)
+        pv_cfg = self.config.get("pv_model", {})
+        r_limits = pv_cfg.get("r_limits_malmquist", [0.1, 251])
+        num_points = pv_cfg.get("num_points_malmquist", 251)
+        r_grid_malmquist = np.linspace(r_limits[0], r_limits[1], num_points)
+
+        # Precompute JAX reconstruction data
+        # Note: beta=1.0 here because the sampled beta will scale the velocity
+        # in the model's __call__ method (Vrad = beta * los_velocity)
+        self.precomputed = precompute_reconstruction_data(
+            cluster_file=self.cluster_los_file,
+            galaxy_catalogue={
+                'l_deg': l_deg,
+                'b_deg': b_deg,
+                'z_obs': z_obs,
+                'K2Mpp': K2Mpp,
+                'm_b': m_b,
+                'm_f': m_f,
+            },
+            clone_source_idx=clone_source_idx,
+            clone_l_deg=clone_l_deg,
+            clone_b_deg=clone_b_deg,
+            r_grid=r_grid_malmquist,  # Use Malmquist grid to match data
+            N=self.N_grid,
+            BOX_SIDE=self.BOX_SIDE,
+            SIGMA_SMOOTH=self.SIGMA_SMOOTH,
+            alpha=self.alpha_LF,
+            Mstar=self.Mstar_LF,
+            cf=1.0,
+            cb=1.0,
+            beta=1.0,  # Unscaled; sampled beta applied in model
+            r0_decay_scale=self.r0_decay_scale,
+        )
+
+    def _compute_zoa_clones(self, l_deg, b_deg):
+        """
+        Compute ZoA clone indices and positions.
+
+        Uses Carrick2015 method: reflect galaxies from strips adjacent to ZoA
+        into the masked region.
+        """
+        n_orig = len(l_deg)
+
+        # Normalize longitude to [-180, 180]
+        l_norm = np.mod(l_deg + 180, 360) - 180
+        near_gc = np.abs(l_norm) < 30
+
+        clone_l, clone_b, clone_src_idx = [], [], []
+
+        # NARROW ZoA (|ℓ| >= 30°): boundary at |b|=5°
+        # North sources (5° < b < 10°) → South ZoA
+        src_n = (~near_gc) & (b_deg > 5) & (b_deg < 10)
+        if np.any(src_n):
+            clone_l.append(l_deg[src_n])
+            clone_b.append(5.0 - b_deg[src_n])
+            clone_src_idx.append(np.where(src_n)[0])
+
+        # South sources (-10° < b < -5°) → North ZoA
+        src_s = (~near_gc) & (b_deg > -10) & (b_deg < -5)
+        if np.any(src_s):
+            clone_l.append(l_deg[src_s])
+            clone_b.append(-5.0 - b_deg[src_s])
+            clone_src_idx.append(np.where(src_s)[0])
+
+        # WIDE ZoA (|ℓ| < 30°): boundary at |b|=10°
+        # North sources (10° < b < 20°) → South ZoA
+        src_n_wide = near_gc & (b_deg > 10) & (b_deg < 20)
+        if np.any(src_n_wide):
+            clone_l.append(l_deg[src_n_wide])
+            clone_b.append(10.0 - b_deg[src_n_wide])
+            clone_src_idx.append(np.where(src_n_wide)[0])
+
+        # South sources (-20° < b < -10°) → North ZoA
+        src_s_wide = near_gc & (b_deg > -20) & (b_deg < -10)
+        if np.any(src_s_wide):
+            clone_l.append(l_deg[src_s_wide])
+            clone_b.append(-10.0 - b_deg[src_s_wide])
+            clone_src_idx.append(np.where(src_s_wide)[0])
+
+        if clone_l:
+            clone_source_idx = np.concatenate(clone_src_idx)
+            clone_l_deg = np.concatenate(clone_l)
+            clone_b_deg = np.concatenate(clone_b)
+        else:
+            clone_source_idx = np.array([], dtype=np.int32)
+            clone_l_deg = np.array([], dtype=np.float64)
+            clone_b_deg = np.array([], dtype=np.float64)
+
+        return clone_source_idx, clone_l_deg, clone_b_deg
+
+    def __call__(self, data, shared_params=None):
+        from ..field.jax_reconstruction import compute_los_profiles_jax
+
+        nsamples = len(data)
+        relation = self.which_relation
+
+        if self.track_log_density_per_sample:
+            log_density_per_sample = jnp.zeros(nsamples)
+
+        # Sample H0 dipole (3D Cartesian vector)
+        H0_dipole = rsample("H0_dipole", self.priors["H0_dipole"], shared_params)
+
+        # Sample scaling parameters
+        if relation in ["LT", "LTYT"]:
+            A_LT = rsample("A_LT", self.priors["A_LT"], shared_params)
+            B_LT = rsample("B_LT", self.priors["B_LT"], shared_params)
+            sigma_LT = rsample("sigma_LT", self.priors["sigma_int"], shared_params)
+        if relation in ["YT", "LTYT"]:
+            A_YT = rsample("A_YT", self.priors["A_YT"], shared_params)
+            B_YT = rsample("B_YT", self.priors["B_YT"], shared_params)
+            sigma_YT = rsample("sigma_YT", self.priors["sigma_int"], shared_params)
+
+        C = rsample("C_CL", self.priors["CL_C"], shared_params)
+
+        if relation == "LTYT":
+            rho12 = sample("rho12", Uniform(-0.99, 0.99))
+
+        # H0 dipole affects scaling relation zeropoint
+        # Convert fractional H0 dipole to magnitude offset: ΔA = 2·log10(1 + δH)
+        H0_mag = jnp.linalg.norm(H0_dipole)
+        H0_dir = H0_dipole / jnp.maximum(H0_mag, 1e-30)
+        zp_dipole_mag = _frac_to_mag(H0_mag) * H0_dir
+
+        # Compute radial projection: delta_A per cluster
+        # data["rhat"] is (n_clusters, 3) unit vectors
+        zp_dipole_radial = jnp.sum(zp_dipole_mag * data["rhat"], axis=1)
+
+        # Apply zeropoint offset to scaling relation intercepts
+        if relation in ["LT", "LTYT"]:
+            A_LT = A_LT + zp_dipole_radial
+        if relation in ["YT", "LTYT"]:
+            A_YT = A_YT + zp_dipole_radial
+
+        # h = 1 for distance marginalization
+        h = 1.0
+
+        # Sample other parameters
+        kwargs_dist = sample_distance_prior(self.priors, shared_params)
+        sigma_v = rsample("sigma_v", self.priors["sigma_v"], shared_params)
+        beta = rsample("beta", self.priors["beta"], shared_params)
+
+        # MNR hyperpriors
+        if self.use_MNR:
+            logT_prior_mean = sample(
+                "logT_prior_mean",
+                Uniform(data["min_logT"], data["max_logT"]))
+            logT_prior_std = sample(
+                "logT_prior_std",
+                Uniform(0.0, data["max_logT"] - data["min_logT"]))
+
+        # Reconstruct LOS profiles (optionally with H0_dipole=0 for isotropic)
+        H0_dipole_recon = jnp.zeros(3) if self.reconstruction_dipole_zero else H0_dipole
+        los_density, los_velocity = compute_los_profiles_jax(
+            H0_dipole_recon, self.precomputed)
+
+        # los_density: (n_clusters, n_r) = 1 + delta
+        # los_velocity: (n_clusters, n_r) in km/s
+
+        # Expand to field dimension for compatibility
+        los_density = los_density[None, ...]  # (1, n_clusters, n_r)
+        los_velocity = los_velocity[None, ...]  # (1, n_clusters, n_r)
+
+        with plate("data", nsamples):
+            if self.use_MNR:
+                if self.marginalize_logT:
+                    logT_grid = make_adaptive_grid(
+                        data["logT"], data["e_logT"],
+                        k_sigma=self.logT_grid_kwargs.get("k_sigma", 4),
+                        n_grid=self.logT_grid_kwargs.get("n_grid", 11))
+                    lp_logT = Normal(
+                        logT_prior_mean, logT_prior_std).log_prob(logT_grid)
+                    lp_logT += Normal(
+                        logT_grid, data["e_logT"][:, None]).log_prob(
+                            data["logT"][:, None])
+                    logT = None
+                else:
+                    logT = sample("logT_latent",
+                                  Normal(logT_prior_mean, logT_prior_std))
+                    sample("logT_obs", Normal(logT, data["e_logT"]),
+                           obs=data["logT"])
+            else:
+                logT = data["logT"]
+
+            logY = data["logY"]
+            logF = data["logF"]
+
+            # Grid setup
+            r_grid = data["r_grid"] / h
+            logdl_grid = self.distance2logdl(r_grid)
+            logda_grid = self.distance2logda(r_grid)
+
+            # Interpolate LOS profiles to r_grid
+            # los_r is from precomputed, need to interpolate to data's r_grid
+            # los_density shape: (1, n_clusters_all, n_r_los)
+            # We need to select clusters that match data and interpolate to r_grid
+            los_r = self.precomputed.los_r  # (n_r_los,)
+
+            # For now, assume cluster ordering matches (first n clusters)
+            # TODO: match clusters properly using RA/dec
+            n_data_clusters = nsamples
+
+            # vmap over clusters (axis 0), interpolate each cluster's profile
+            def interp_profile(profile):
+                return jnp.interp(r_grid, los_r, profile)
+
+            # Select first n_data_clusters and interpolate
+            # los_velocity[0] has shape (n_clusters_all, n_r_los)
+            los_velocity_subset = los_velocity[0, :n_data_clusters, :]
+            los_velocity_r_grid = vmap(interp_profile)(los_velocity_subset)
+
+            # Expand to field dimension
+            los_velocity_r_grid = los_velocity_r_grid[None, ...]
+
+            # Distance prior (homogeneous Malmquist)
+            lp_dist = log_prior_r_empirical(
+                r_grid, **kwargs_dist, Rmax_grid=r_grid[-1])[None, None, :]
+
+            # Scaling relation likelihood
+            if relation == "LT":
+                sigma_logF = jnp.sqrt(data["e2_logF"] + sigma_LT**2)
+                if not self.use_MNR:
+                    sigma_logF = jnp.sqrt(
+                        sigma_logF**2 + B_LT**2 * data["e2_logT"])
+
+                logF_pred = (A_LT + B_LT * logT)[:, None] - jnp.log10(
+                    4 * jnp.pi) - 2 * logdl_grid[None, :]
+
+                ll = Normal(logF_pred, sigma_logF[:, None]).log_prob(
+                    data["logF"][:, None])[None, ...]
+
+            elif relation == "YT":
+                sigma_logY = jnp.sqrt(data["e2_logY"] + sigma_YT**2)
+                if not self.use_MNR:
+                    sigma_logY = jnp.sqrt(
+                        sigma_logY**2 + B_YT**2 * data["e2_logT"])
+
+                logY_pred = (A_YT + B_YT * logT)[:, None] - 2 * logda_grid[None, :]
+
+                ll = Normal(logY_pred, sigma_logY[:, None]).log_prob(
+                    data["logY"][:, None])[None, ...]
+
+            elif relation == "LTYT":
+                A_LT_vec = A_LT
+                A_YT_vec = A_YT
+                mL = (A_LT_vec + B_LT * logT)[:, None]
+                mY = (A_YT_vec + B_YT * logT)[:, None]
+
+                mF = mL - jnp.log10(4 * jnp.pi) - 2.0 * logdl_grid[None, :]
+                my = mY - 2.0 * logda_grid[None, :]
+
+                v11 = sigma_LT**2 + data["e2_logF"]
+                v22 = sigma_YT**2 + data["e2_logY"]
+                v12 = jnp.ones_like(v11) * rho12 * sigma_LT * sigma_YT
+
+                if not self.use_MNR:
+                    v11 = v11 + B_LT**2 * data["e2_logT"]
+                    v22 = v22 + B_YT**2 * data["e2_logT"]
+                    v12 = v12 + B_LT * B_YT * data["e2_logT"]
+
+                V11, V22, V12 = v11[:, None], v22[:, None], v12[:, None]
+                xF = data["logF"][:, None]
+                xy = data["logY"][:, None]
+
+                ll_joint = logpdf_mvn2_broadcast(xF, xy, mF, my, V11, V22, V12)
+                ll = ll_joint[None, ...]
+
+            # Velocity from reconstruction
+            Vrad = beta * los_velocity_r_grid
+
+            # Add distance prior
+            ll = ll + lp_dist
+
+            # Redshift likelihood
+            czpred = predict_cz(
+                self.distance2redshift(r_grid, h=h)[None, None, :],
+                Vrad)
+            ll_cz = Normal(czpred, sigma_v).log_prob(
+                data["czcmb"][None, :, None])
+            ll = ll + ll_cz
+
+            # Marginalize over distance
+            ll = ln_simpson(ll, x=r_grid[None, None, :], axis=-1)
+            ll = logsumexp(ll, axis=0) - jnp.log(1)  # Single field
+            factor("ll_obs", ll)
+
+            if self.track_log_density_per_sample:
+                log_density_per_sample += ll
+                deterministic("log_density_per_sample", log_density_per_sample)
+
+
+###############################################################################
 #                                FP models                                    #
 ###############################################################################
 
