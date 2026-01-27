@@ -32,6 +32,7 @@ import h5py
 H0_BAR = 100.0      # km/s/Mpc (fiducial)
 C_LIGHT = 299792.458  # km/s
 Q0 = -0.55          # Deceleration parameter
+A_Q0 = (1.0 + Q0) / 2.0
 
 # Schechter LF defaults (2M++ values)
 ALPHA_DEFAULT = -1.02
@@ -47,12 +48,14 @@ class PrecomputedData:
     """
     # Separate arrays (dynamic) from scalars (static)
     _array_fields = [
-        'coords', 'psi_3d', 'nonmasked', 'kernel_fft', 'k_grid', 'k_mag_safe',
+        'coords', 'psi_3d', 'nonmasked', 'kernel_fft_pad', 'k_grid', 'k_mag_safe',
         'cluster_rhat', 'los_r', 'los_positions',
         'gal_rhat', 'gal_z_obs', 'gal_K2Mpp', 'gal_m_b', 'gal_m_f',
+        'gal_cf', 'gal_cb', 'gal_flag_2mrs_mask',  # Per-galaxy completeness arrays
         'clone_source_idx', 'clone_rhat'
     ]
-    _static_fields = ['N', 'N_pad', 'dx', 'RMAX', 'alpha', 'Mstar', 'cf', 'cb',
+    _static_fields = ['N', 'N_pad', 'dx', 'RMAX', 'alpha', 'Mstar',
+                      'z_2mrs_cutoff', 'z_rmax',
                       'r0_decay_scale']
 
     def __init__(
@@ -64,7 +67,7 @@ class PrecomputedData:
         coords: jnp.ndarray,
         psi_3d: jnp.ndarray,
         nonmasked: jnp.ndarray,
-        kernel_fft: jnp.ndarray,
+        kernel_fft_pad: jnp.ndarray,
         k_grid: jnp.ndarray,
         k_mag_safe: jnp.ndarray,
         cluster_rhat: jnp.ndarray,
@@ -75,13 +78,17 @@ class PrecomputedData:
         gal_K2Mpp: jnp.ndarray,
         gal_m_b: jnp.ndarray,
         gal_m_f: jnp.ndarray,
+        gal_cf: jnp.ndarray,
+        gal_cb: jnp.ndarray,
+        gal_flag_2mrs_mask: jnp.ndarray,
         clone_source_idx: jnp.ndarray,
         clone_rhat: jnp.ndarray,
         alpha: float,
         Mstar: float,
-        cf: float,
-        cb: float,
+        z_2mrs_cutoff: float,
+        z_rmax: float,
         r0_decay_scale: float,
+        kernel_fft: jnp.ndarray | None = None,
     ):
         # Grid
         self.N = N
@@ -93,7 +100,9 @@ class PrecomputedData:
         self.nonmasked = nonmasked
 
         # FFT data
-        self.kernel_fft = kernel_fft
+        if kernel_fft_pad is None and kernel_fft is not None:
+            kernel_fft_pad = kernel_fft
+        self.kernel_fft_pad = kernel_fft_pad
         self.k_grid = k_grid
         self.k_mag_safe = k_mag_safe
 
@@ -108,6 +117,9 @@ class PrecomputedData:
         self.gal_K2Mpp = gal_K2Mpp
         self.gal_m_b = gal_m_b
         self.gal_m_f = gal_m_f
+        self.gal_cf = gal_cf
+        self.gal_cb = gal_cb
+        self.gal_flag_2mrs_mask = gal_flag_2mrs_mask
 
         # ZoA cloning
         self.clone_source_idx = clone_source_idx
@@ -116,8 +128,8 @@ class PrecomputedData:
         # Scalars
         self.alpha = alpha
         self.Mstar = Mstar
-        self.cf = cf
-        self.cb = cb
+        self.z_2mrs_cutoff = z_2mrs_cutoff
+        self.z_rmax = z_rmax
         self.r0_decay_scale = r0_decay_scale
 
 
@@ -152,7 +164,18 @@ def gamma_upper_jax(s, x):
     return gammaincc(s, x) * gamma_func(s)
 
 
-def compute_weights_jax(r_mpc, K2Mpp, m_b, m_f, alpha, Mstar, cf, cb):
+def redshift_from_distance_quadratic(r_mpc, H0_val=H0_BAR):
+    """
+    Invert r = (c/H0) * (z - (1+Q0)/2 * z^2) for z (quadratic solution).
+
+    Uses the small-z branch to match Carrick's distance_to_redshift().
+    """
+    cfac = r_mpc * H0_val / C_LIGHT
+    disc = jnp.maximum(1.0 - 4.0 * A_Q0 * cfac, 0.0)
+    return (1.0 - jnp.sqrt(disc)) / (2.0 * A_Q0)
+
+
+def compute_weights_jax(r_mpc, K2Mpp, m_b, m_f, alpha, Mstar, cf, cb, H0_val):
     """
     Compute total weight = lumWeight × L/L* using full Schechter integral.
 
@@ -166,16 +189,19 @@ def compute_weights_jax(r_mpc, K2Mpp, m_b, m_f, alpha, Mstar, cf, cb):
         Bright and faint magnitude limits per galaxy
     alpha, Mstar : float
         Schechter LF parameters
-    cf, cb : float
-        Completeness fractions
+    cf, cb : (n_gal,) arrays
+        Per-galaxy completeness fractions at faint/bright limits
 
     Returns
     -------
     w_total : (n_gal,) array
         Total weight = lumWeight × L/L*
     """
-    # Distance modulus
-    mu = 5.0 * jnp.log10(jnp.maximum(r_mpc, 0.1)) + 25.0
+    # Compute z(r) via quadratic inversion (matching carrick_iterated)
+    z_for_mu = redshift_from_distance_quadratic(r_mpc, H0_val)
+    z_for_mu = jnp.maximum(z_for_mu, 100.0 / C_LIGHT)
+    d_L = (1.0 + z_for_mu) * r_mpc
+    mu = 5.0 * jnp.log10(jnp.maximum(d_L, 0.01) * 1e5)
 
     # Absolute magnitude and L/L*
     M_abs = K2Mpp - mu
@@ -203,6 +229,101 @@ def compute_weights_jax(r_mpc, K2Mpp, m_b, m_f, alpha, Mstar, cf, cb):
     lumWeight = 1.0 / getWeight
 
     return lumWeight * L_over_Lstar
+
+
+def compute_weights_components_jax(r_mpc, K2Mpp, m_b, m_f, alpha, Mstar, cf, cb, H0_val):
+    """
+    Compute lumWeight and L/L* separately (for catalogue output).
+
+    Same computation as compute_weights_jax but returns components separately.
+
+    Returns
+    -------
+    lumWeight : (n_gal,) array
+        Luminosity weight (1/selection function)
+    L_over_Lstar : (n_gal,) array
+        L/L* ratio
+    """
+    # Compute z(r) via quadratic inversion (matching carrick_iterated)
+    z_for_mu = redshift_from_distance_quadratic(r_mpc, H0_val)
+    z_for_mu = jnp.maximum(z_for_mu, 100.0 / C_LIGHT)
+    d_L = (1.0 + z_for_mu) * r_mpc
+    mu = 5.0 * jnp.log10(jnp.maximum(d_L, 0.01) * 1e5)
+
+    # Absolute magnitude and L/L*
+    M_abs = K2Mpp - mu
+    L_over_Lstar = 10.0 ** (-0.4 * (M_abs - Mstar))
+
+    # Magnitude limits in absolute terms
+    Mb_iter = jnp.clip(m_b - mu, -26.0, -17.0)
+    Mf_iter = jnp.clip(m_f - mu, -26.0, -17.0)
+
+    # Schechter integral: Γ(α+2, x)
+    a = alpha + 2.0
+
+    def integral_lw(M_faint, M_bright):
+        """Integral of L-weighted LF from M_bright to M_faint."""
+        x_f = 10.0 ** (0.4 * (Mstar - M_faint))
+        x_b = 10.0 ** (0.4 * (Mstar - M_bright))
+        return gamma_upper_jax(a, x_f) - gamma_upper_jax(a, x_b)
+
+    # Selection function (Carrick Eq. 8-9)
+    numer = (cf * integral_lw(Mf_iter, Mb_iter) +
+             cb * integral_lw(Mb_iter, jnp.full_like(Mb_iter, -26.0)))
+    denom = integral_lw(jnp.array(-17.0), jnp.array(-26.0))
+
+    getWeight = jnp.maximum(numer / denom, 1e-10)
+    lumWeight = 1.0 / getWeight
+
+    return lumWeight, L_over_Lstar
+
+
+def compute_galaxy_catalogue_jax(
+    H0_dipole: jnp.ndarray,
+    p: 'PrecomputedData',
+) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    """
+    Compute per-galaxy catalogue quantities for comparison with carrick_iterated.
+
+    Parameters
+    ----------
+    H0_dipole : (3,) array
+        Dipole vector d = amplitude × unit_vector
+        H0(n̂) = H0_bar × (1 + d · n̂)
+    p : PrecomputedData
+        Precomputed static data
+
+    Returns
+    -------
+    z_obs : (n_gal,) array
+        Observed redshifts
+    r_mpc : (n_gal,) array
+        Distances in Mpc/h
+    lumWeight : (n_gal,) array
+        Luminosity weight (1/selection function)
+    L_over_Lstar : (n_gal,) array
+        L/L* ratio
+    l_deg : (n_gal,) array
+        Galactic longitude in degrees
+    b_deg : (n_gal,) array
+        Galactic latitude in degrees
+    """
+    # 1. Galaxy distances from H0(n̂)
+    H0_dir = H0_BAR * (1.0 + jnp.dot(p.gal_rhat, H0_dipole))
+    r_mpc = (C_LIGHT / H0_dir) * (p.gal_z_obs - (1.0 + Q0) / 2.0 * p.gal_z_obs**2)
+
+    # 2. Compute weight components (using per-galaxy completeness)
+    lumWeight, L_over_Lstar = compute_weights_components_jax(
+        r_mpc, p.gal_K2Mpp, p.gal_m_b, p.gal_m_f,
+        p.alpha, p.Mstar, p.gal_cf, p.gal_cb, H0_dir
+    )
+
+    # 3. Convert rhat to galactic coordinates
+    b_deg = jnp.rad2deg(jnp.arcsin(p.gal_rhat[:, 2]))
+    l_deg = jnp.rad2deg(jnp.arctan2(p.gal_rhat[:, 1], p.gal_rhat[:, 0]))
+    l_deg = jnp.where(l_deg < 0, l_deg + 360.0, l_deg)
+
+    return p.gal_z_obs, r_mpc, lumWeight, L_over_Lstar, l_deg, b_deg
 
 
 def apply_zoa_cloning(r_mpc, w_total, gal_rhat, clone_source_idx, clone_rhat):
@@ -292,16 +413,18 @@ def cic_deposit_jax(positions, weights, N, dx, RMAX):
     return rho
 
 
-def gaussian_smooth_fft(delta, kernel_fft):
+def gaussian_smooth_fft(delta, kernel_fft_pad, N_pad):
     """
-    Gaussian smoothing via FFT convolution with precomputed kernel.
+    Gaussian smoothing via FFT convolution with zero-padding to N_pad.
 
     Parameters
     ----------
     delta : (N, N, N) array
         Density contrast field
-    kernel_fft : (N, N, N//2+1) complex array
-        FFT of Gaussian kernel
+    kernel_fft_pad : (N_pad, N_pad, N_pad//2+1) complex array
+        FFT of Gaussian kernel on padded grid
+    N_pad : int
+        Padded grid size
 
     Returns
     -------
@@ -309,9 +432,12 @@ def gaussian_smooth_fft(delta, kernel_fft):
         Smoothed density contrast
     """
     N = delta.shape[0]
-    delta_fft = jnp.fft.rfftn(delta)
-    smoothed_fft = delta_fft * kernel_fft
-    return jnp.fft.irfftn(smoothed_fft, s=(N, N, N))
+    delta_padded = jnp.zeros((N_pad, N_pad, N_pad), dtype=delta.dtype)
+    delta_padded = delta_padded.at[:N, :N, :N].set(delta)
+    delta_fft = jnp.fft.rfftn(delta_padded)
+    smoothed_fft = delta_fft * kernel_fft_pad
+    smoothed_padded = jnp.fft.irfftn(smoothed_fft, s=(N_pad, N_pad, N_pad))
+    return smoothed_padded[:N, :N, :N]
 
 
 def velocity_from_density_fft(delta, k_grid, k_mag_safe, N_pad):
@@ -388,8 +514,11 @@ def trilinear_interp_batch(field, positions, N, dx, RMAX):
     values : (...) array
         Interpolated values at positions
     """
-    # Convert to grid coordinates
-    gc = (positions + RMAX) / dx  # (..., 3)
+    # Convert to grid coordinates at cell centers (match Carrick grid definition)
+    gc = (positions + RMAX) / dx - 0.5  # (..., 3)
+    inside = ((gc[..., 0] >= 0.0) & (gc[..., 0] <= (N - 1)) &
+              (gc[..., 1] >= 0.0) & (gc[..., 1] <= (N - 1)) &
+              (gc[..., 2] >= 0.0) & (gc[..., 2] <= (N - 1)))
     i0 = jnp.floor(gc).astype(jnp.int32)
     f = gc - i0
 
@@ -422,7 +551,7 @@ def trilinear_interp_batch(field, positions, N, dx, RMAX):
               v110 * fx * fy * (1 - fz) +
               v111 * fx * fy * fz)
 
-    return result
+    return jnp.where(inside, result, 0.0)
 
 
 # =============================================================================
@@ -460,11 +589,19 @@ def compute_los_profiles_jax(
     H0_dir = H0_BAR * (1.0 + jnp.dot(p.gal_rhat, H0_dipole))
     r_mpc = (C_LIGHT / H0_dir) * (p.gal_z_obs - (1.0 + Q0) / 2.0 * p.gal_z_obs**2)
 
-    # 2. Weights (full Schechter lumWeight × L/L*)
+    # 2. Weights (full Schechter lumWeight × L/L*, using per-galaxy completeness)
     w_total = compute_weights_jax(
         r_mpc, p.gal_K2Mpp, p.gal_m_b, p.gal_m_f,
-        p.alpha, p.Mstar, p.cf, p.cb
+        p.alpha, p.Mstar, p.gal_cf, p.gal_cb, H0_dir
     )
+
+    # 2b. Apply 2MRS cutoff and z_rmax cut (matching carrick_iterated)
+    w_total = jnp.where(
+        (p.gal_flag_2mrs_mask == 1) & (p.gal_z_obs > p.z_2mrs_cutoff),
+        0.0,
+        w_total
+    )
+    w_total = jnp.where(p.gal_z_obs > p.z_rmax, 0.0, w_total)
 
     # 3. ZoA cloning
     r_all, w_all, rhat_all = apply_zoa_cloning(
@@ -492,7 +629,7 @@ def compute_los_profiles_jax(
     delta = jnp.where(p.nonmasked, delta, 0.0)
 
     # 8. Gaussian smooth
-    delta = gaussian_smooth_fft(delta, p.kernel_fft)
+    delta = gaussian_smooth_fft(delta, p.kernel_fft_pad, p.N_pad)
 
     # 9. Velocity field from density (with zero-padding to avoid wrap-around)
     # Note: beta is NOT applied here - it's applied externally in the model
@@ -560,6 +697,16 @@ def compute_psi_numpy(r_mpc, m_lim=11.5, alpha=ALPHA_DEFAULT, Mstar=MSTAR_DEFAUL
 
     L_mean = gamma_a3 / gamma_a2
     return BIAS_CONST + BIAS_SLOPE * L_mean
+
+
+def distance_to_redshift_numpy(r_mpc, H0_val=H0_BAR):
+    """
+    Invert r = (c/H0) * (z - (1+Q0)/2 * z^2) for z using quadratic solution.
+    """
+    r_mpc = np.asarray(r_mpc, dtype=np.float64)
+    cfac = r_mpc * H0_val / C_LIGHT
+    disc = np.clip(1.0 - 4.0 * A_Q0 * cfac, 0.0, None)
+    return (1.0 - np.sqrt(disc)) / (2.0 * A_Q0)
 
 
 def load_schechter_params(iteration: int,
@@ -722,8 +869,11 @@ def precompute_reconstruction_data(
     SIGMA_SMOOTH: float = 4.0,
     alpha: float = ALPHA_DEFAULT,
     Mstar: float = MSTAR_DEFAULT,
-    cf: float = 1.0,
-    cb: float = 1.0,
+    gal_cf: np.ndarray = None,
+    gal_cb: np.ndarray = None,
+    gal_flag_2mrs_mask: np.ndarray = None,
+    coverage_map_path: str = "coverage_aquila_filled.fits",
+    r_2mrs_cutoff: float = 125.0,
     r0_decay_scale: float = 5.0,
     r_grid: np.ndarray = None,
 ) -> PrecomputedData:
@@ -748,8 +898,12 @@ def precompute_reconstruction_data(
         Gaussian smoothing scale in Mpc/h (default 4)
     alpha, Mstar : float
         Schechter LF parameters
-    cf, cb : float
-        Completeness fractions
+    gal_cf : (n_gal,) array, optional
+        Per-galaxy completeness at faint limit (K<12.5).
+        If None, defaults to 1.0 for all galaxies.
+    gal_cb : (n_gal,) array, optional
+        Per-galaxy completeness at bright limit (K<11.5).
+        If None, defaults to 1.0 for all galaxies.
     r0_decay_scale : float
         Edge smoothing decay scale in Mpc/h (default 5.0).
         For r > RMAX, delta and velocity decay exponentially:
@@ -766,10 +920,13 @@ def precompute_reconstruction_data(
     RMAX = BOX_SIDE / 2.0
     dx = BOX_SIDE / N
 
-    # Compute padded grid size for velocity FFT (5σ padding to avoid wrap-around)
-    # This is more efficient than doubling the grid (2×N)
-    n_pad_cells = int(np.ceil(5 * SIGMA_SMOOTH / dx))
-    N_pad = N + n_pad_cells
+    # Compute padded grid size for velocity FFT (match Carrick: N_pad=288 for N=257)
+    if N == 257:
+        N_pad = 288
+    else:
+        # Fallback: 5σ padding to avoid wrap-around
+        n_pad_cells = int(np.ceil(5 * SIGMA_SMOOTH / dx))
+        N_pad = N + n_pad_cells
     # dx_pad is the same as dx since we keep same cell size, just larger box
     dx_pad = dx
 
@@ -784,12 +941,34 @@ def precompute_reconstruction_data(
     psi_3d = np.interp(rr.ravel(), r_psi, psi_table).reshape(rr.shape)
     psi_3d = np.maximum(psi_3d, 0.1)
 
-    # Nonmasked region (inside box)
-    nonmasked = rr < RMAX
+    # Nonmasked region (match carrick_iterated: 2MRS-only beyond cutoff removed)
+    try:
+        import healpy as hp
 
-    # Gaussian kernel FFT
+        coverage_map = hp.read_map(coverage_map_path, verbose=False)
+        coverage_nside = hp.get_nside(coverage_map)
+
+        rr_safe = np.maximum(rr, 1e-10)
+        gal_b_3d = np.arcsin(zz / rr_safe)
+        gal_l_3d = np.arctan2(yy, xx)
+        gal_l_3d = np.where(gal_l_3d < 0, gal_l_3d + 2*np.pi, gal_l_3d)
+
+        theta_3d = np.pi/2 - gal_b_3d
+        phi_3d = np.mod(gal_l_3d, 2*np.pi)
+        pix_3d = hp.ang2pix(coverage_nside, theta_3d.ravel(), phi_3d.ravel()).reshape(rr.shape)
+
+        is_deep_3d = (coverage_map[pix_3d] == 1)
+        is_2mrs_only_3d = ~is_deep_3d
+
+        valid_region = rr <= RMAX
+        zeroed_region = is_2mrs_only_3d & (rr > r_2mrs_cutoff)
+        nonmasked = valid_region & ~zeroed_region
+    except Exception:
+        nonmasked = rr < RMAX
+
+    # Gaussian kernel FFT on padded grid (for zero-padded smoothing)
     sigma_vox = SIGMA_SMOOTH / dx
-    kernel_fft = gaussian_kernel_3d_fft(N, sigma_vox)
+    kernel_fft_pad = gaussian_kernel_3d_fft(N_pad, sigma_vox)
 
     # k-grid for velocity FFT (padded size)
     k_grid, k_mag_safe = compute_k_grid(N_pad, dx_pad)
@@ -812,9 +991,22 @@ def precompute_reconstruction_data(
 
     # Galaxy data
     gal_rhat = lb_to_rhat(galaxy_catalogue['l_deg'], galaxy_catalogue['b_deg'])
+    n_gal = len(galaxy_catalogue['z_obs'])
+
+    # Default per-galaxy completeness to 1.0 if not provided
+    if gal_cf is None:
+        gal_cf = np.ones(n_gal, dtype=np.float32)
+    if gal_cb is None:
+        gal_cb = np.ones(n_gal, dtype=np.float32)
+    if gal_flag_2mrs_mask is None:
+        gal_flag_2mrs_mask = np.zeros(n_gal, dtype=np.int32)
 
     # Clone unit vectors
     clone_rhat = lb_to_rhat(clone_l_deg, clone_b_deg)
+
+    # z cutoffs (matching carrick_iterated)
+    z_2mrs_cutoff = distance_to_redshift_numpy(125.0)
+    z_rmax = distance_to_redshift_numpy(RMAX)
 
     return PrecomputedData(
         N=N,
@@ -824,7 +1016,7 @@ def precompute_reconstruction_data(
         coords=jnp.array(coords, dtype=jnp.float32),
         psi_3d=jnp.array(psi_3d, dtype=jnp.float32),
         nonmasked=jnp.array(nonmasked),
-        kernel_fft=jnp.array(kernel_fft),
+        kernel_fft_pad=jnp.array(kernel_fft_pad),
         k_grid=jnp.array(k_grid, dtype=jnp.float32),
         k_mag_safe=jnp.array(k_mag_safe, dtype=jnp.float32),
         cluster_rhat=jnp.array(cluster_rhat, dtype=jnp.float32),
@@ -835,11 +1027,14 @@ def precompute_reconstruction_data(
         gal_K2Mpp=jnp.array(galaxy_catalogue['K2Mpp'], dtype=jnp.float32),
         gal_m_b=jnp.array(galaxy_catalogue['m_b'], dtype=jnp.float32),
         gal_m_f=jnp.array(galaxy_catalogue['m_f'], dtype=jnp.float32),
+        gal_cf=jnp.array(gal_cf, dtype=jnp.float32),
+        gal_cb=jnp.array(gal_cb, dtype=jnp.float32),
+        gal_flag_2mrs_mask=jnp.array(gal_flag_2mrs_mask, dtype=jnp.int32),
         clone_source_idx=jnp.array(clone_source_idx, dtype=jnp.int32),
         clone_rhat=jnp.array(clone_rhat, dtype=jnp.float32),
         alpha=alpha,
         Mstar=Mstar,
-        cf=cf,
-        cb=cb,
+        z_2mrs_cutoff=float(z_2mrs_cutoff),
+        z_rmax=float(z_rmax),
         r0_decay_scale=r0_decay_scale,
     )

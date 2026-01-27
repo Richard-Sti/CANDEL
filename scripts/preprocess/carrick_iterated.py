@@ -1289,7 +1289,8 @@ for i_iter, beta in enumerate(beta_values):
               f"anti-apex={w_dep[:n_orig][antiapex_dep].sum():.0f}")
         # Save raw rho for debugging
         rho_filename = f"rho_raw_{'aniso' if ANISOTROPIC_H0 else 'iso'}.npy"
-        np.save(rho_filename, rho.astype(np.float32))
+        rho_raw_iter0 = rho.astype(np.float32)
+        np.save(rho_filename, rho_raw_iter0)
         print(f"    Saved {rho_filename}")
 
     # Normalize
@@ -1952,6 +1953,17 @@ for i_iter, beta in enumerate(beta_values):
 # Final output
 # =============================================================================
 print("Reconstruction complete.")
+
+# Save raw rho cube from iteration 0 (CIC counts before any processing)
+try:
+    rho_raw_filename = f"carrick_iterated_rho_raw_{'aniso' if ANISOTROPIC_H0 else 'iso'}.npy"
+    if 'rho_raw_iter0' in locals():
+        np.save(rho_raw_filename, rho_raw_iter0)
+        print(f"Saved {rho_raw_filename}")
+    else:
+        print("Warning: rho_raw_iter0 not found; raw rho cube not saved.")
+except Exception as e:
+    print(f"Warning: could not save raw rho cube: {e}")
 
 # Set delta=0 outside valid region
 delta[~valid_region] = 0.0

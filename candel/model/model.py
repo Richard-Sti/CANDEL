@@ -2923,10 +2923,6 @@ class ClustersAnisModel:
     _VALID_RELATIONS = {"LT", "YT", "LTYT"}
 
     def __init__(self, config_path):
-        from ..field.jax_reconstruction import (
-            precompute_reconstruction_data, lb_to_rhat
-        )
-
         config = load_config(config_path)
         self.config = config
 
@@ -3026,7 +3022,7 @@ class ClustersAnisModel:
     def _precompute_reconstruction(self, recon_cfg):
         """Load galaxy catalogue and precompute JAX reconstruction data."""
         from ..field.jax_reconstruction import (
-            precompute_reconstruction_data, lb_to_rhat
+            precompute_reconstruction_data, distance_to_redshift_numpy
         )
 
         # Load galaxy catalogue (structured array)
@@ -3036,13 +3032,14 @@ class ClustersAnisModel:
         l_deg = cat['gal_long'].astype(np.float64)
         b_deg = cat['gal_lat'].astype(np.float64)
         K2Mpp = cat['K2MRS'].astype(np.float64)
-        vcmb = cat['best_velcmb'].astype(np.float64)
+        distance_kms = cat['distance'].astype(np.float64)  # velLG in km/s
         gid = cat['group_id'].astype(np.int32)
 
         # Completeness values
         c1_all = cat['c1_all'].astype(np.float64)
         c2_all = cat['c2_all'].astype(np.float64)
         flag_zoa = cat['flag_zoa'].astype(np.int32)
+        flag_2mrs_mask = cat['flag_2mrs_mask_final'].astype(np.int32)
         lumWeight_stored = cat['lumWeight'].astype(np.float64)
 
         # Apply completeness cut (Code_2M++ condition)
@@ -3052,15 +3049,16 @@ class ClustersAnisModel:
         )
         carrick_included = lumWeight_stored > 0
         valid = (np.isfinite(l_deg) & np.isfinite(b_deg) &
-                 np.isfinite(K2Mpp) & np.isfinite(vcmb) &
-                 (vcmb > 0) & completeness_ok & carrick_included)
+                 np.isfinite(K2Mpp) & np.isfinite(distance_kms) &
+                 (distance_kms > 0) & completeness_ok & carrick_included)
 
         l_deg = l_deg[valid]
         b_deg = b_deg[valid]
         K2Mpp = K2Mpp[valid]
-        vcmb = vcmb[valid]
+        distance_kms = distance_kms[valid]
         gid = gid[valid]
         flag_zoa = flag_zoa[valid]
+        flag_2mrs_mask = flag_2mrs_mask[valid]
         c1_all = c1_all[valid]
         c2_all = c2_all[valid]
 
@@ -3070,10 +3068,11 @@ class ClustersAnisModel:
         l_deg = l_deg[keep]
         b_deg = b_deg[keep]
         K2Mpp = K2Mpp[keep]
-        vcmb = vcmb[keep]
+        distance_kms = distance_kms[keep]
         gid = gid[keep]
         c1_all = c1_all[keep]
         c2_all = c2_all[keep]
+        flag_2mrs_mask = flag_2mrs_mask[keep]
 
         # Remove galaxies in ZoA target regions
         l_norm = np.mod(l_deg + 180, 360) - 180
@@ -3085,19 +3084,19 @@ class ClustersAnisModel:
         l_deg = l_deg[keep]
         b_deg = b_deg[keep]
         K2Mpp = K2Mpp[keep]
-        vcmb = vcmb[keep]
+        distance_kms = distance_kms[keep]
         gid = gid[keep]
         c1_all = c1_all[keep]
         c2_all = c2_all[keep]
+        flag_2mrs_mask = flag_2mrs_mask[keep]
 
-        # Convert vcmb to z_obs
-        z_obs = vcmb / SPEED_OF_LIGHT
+        # Distances from catalogue (velLG), convert to Mpc/h and invert to z_obs
+        r_mpc = distance_kms / 100.0
+        z_obs = distance_to_redshift_numpy(r_mpc)
 
-        # Magnitude limits per galaxy
-        # 2MRS-only if K < 11.75, else deep survey
-        is_2mrs_only = K2Mpp < 11.75
-        m_b = np.where(is_2mrs_only, 4.0, 4.0)  # Bright limit
-        m_f = np.where(is_2mrs_only, 11.5, 12.5)  # Faint limit
+        # Magnitude limits - matching carrick_iterated (scalars for all galaxies)
+        m_b = np.full_like(K2Mpp, 11.5)  # Bright limit (K<11.5 survey limit)
+        m_f = np.full_like(K2Mpp, 12.5)  # Faint limit (K<12.5 survey limit)
 
         # Compute ZoA clone indices and positions
         clone_source_idx, clone_l_deg, clone_b_deg = self._compute_zoa_clones(
@@ -3114,6 +3113,14 @@ class ClustersAnisModel:
         # Precompute JAX reconstruction data
         # Note: velocity is computed without beta scaling; sampled beta is
         # applied in the model's __call__ method (Vrad = beta * los_velocity)
+        #
+        # Per-galaxy completeness arrays (same as carrick_iterated):
+        # - gal_cf = c2_all (completeness at faint limit K<12.5)
+        # - gal_cb = c1_all (completeness at bright limit K<11.5)
+        # Apply threshold: set completeness < 0.5 to zero
+        gal_cf = np.where(np.isfinite(c2_all) & (c2_all >= 0.5), c2_all, 0.0)
+        gal_cb = np.where(np.isfinite(c1_all) & (c1_all >= 0.5), c1_all, 0.0)
+
         self.precomputed = precompute_reconstruction_data(
             cluster_file=self.cluster_los_file,
             galaxy_catalogue={
@@ -3133,8 +3140,9 @@ class ClustersAnisModel:
             SIGMA_SMOOTH=self.SIGMA_SMOOTH,
             alpha=self.alpha_LF,
             Mstar=self.Mstar_LF,
-            cf=1.0,
-            cb=1.0,
+            gal_cf=gal_cf,
+            gal_cb=gal_cb,
+            gal_flag_2mrs_mask=flag_2mrs_mask,
             r0_decay_scale=self.r0_decay_scale,
         )
 
