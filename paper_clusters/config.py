@@ -22,12 +22,13 @@ COLS = ["#7570b3", "#d95f02", "#1b9e77", "#e7298a", "#66a61e"]
 
 # Reconstruction configuration
 # Keys are the prefixes used in filenames (e.g., "Carrick2015_LT_noMNR_dipVext.hdf5")
-RECONSTRUCTIONS = ["Vext", "Carrick2015", "manticore"]
+# Order: C15 (fiducial) first, then Manticore, then No Recon
+RECONSTRUCTIONS = ["Carrick2015", "manticore", "Vext"]
 
 # Display names for plots/tables
 RECON_LABELS = {
     "Vext": "No reconstruction",
-    "Carrick2015": "Carrick2015",
+    "Carrick2015": "Carrick2015 (fiducial model)",
     "manticore": "Manticore",
 }
 
@@ -38,11 +39,18 @@ RECON_LABELS_SHORT = {
     "manticore": "Manticore",
 }
 
+# Short labels for main tables (with fiducial marker)
+RECON_LABELS_SHORT_FIDUCIAL = {
+    "Vext": "No Recon",
+    "Carrick2015": "C15 (fiducial model)",
+    "manticore": "Manticore",
+}
+
 # Colors for each reconstruction (matched to COLS palette)
 RECON_COLORS = {
-    "Vext": COLS[2],        # green
+    "Vext": COLS[0],        # purple
     "Carrick2015": COLS[3], # pink
-    "manticore": COLS[0],   # purple
+    "manticore": COLS[2],   # green
 }
 
 # Z-order for plotting (higher = on top)

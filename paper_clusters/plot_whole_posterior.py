@@ -1,6 +1,6 @@
 """Whole posterior corner plot."""
 from config import (
-    setup_style, COLS, get_results_path, get_figure_path, INCLUDE_MANTICORE,
+    setup_style, COLS, get_results_path, get_figure_path,
 )
 
 import matplotlib.pyplot as plt
@@ -10,8 +10,8 @@ from candel import plot_corner_from_hdf5
 def main():
     setup_style()
 
-    # Use Manticore if enabled, otherwise use Carrick2015
-    recon = "manticore" if INCLUDE_MANTICORE else "Carrick2015"
+    # Always use Carrick2015 for the main posterior plot
+    recon = "Carrick2015"
 
     fnames = [
         get_results_path(f"{recon}_LTYT_noMNR_hasY.hdf5"),
@@ -21,18 +21,20 @@ def main():
     fnames = [str(f) for f in fnames]
 
     keys = [
-        'A_CL', 'B_CL', 'A2_CL', 'B2_CL', 'sigma', 'sigma2', 'rho12', 'sigma_v',
+        'A_LT', 'B_LT', 'sigma_LT',
+        'A_YT', 'B_YT', 'sigma_YT',
+        'Clusters_hasY/rho12', 'sigma_v', 'beta',
         'R_dist_emp', 'n_dist_emp', 'p_dist_emp',
         'Vext_mag', 'Vext_ell', 'Vext_b',
-        'dH_over_H_dipole', 'zeropoint_dipole_ell', 'zeropoint_dipole_b',
+        'H0_dipole_mag', 'H0_dipole_ell', 'H0_dipole_b',
     ]
 
     cols = [COLS[0], COLS[1], COLS[2]]
 
     labels = [
         "No dipole",
-        "Vext dipole",
-        "H0 dipole",
+        r"$V_{\rm ext}$ dipole",
+        r"$H_0$ dipole",
     ]
 
     points = {("Vext_ell", "Vext_b"): (264., 48.)}

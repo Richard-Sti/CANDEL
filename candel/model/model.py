@@ -969,6 +969,15 @@ class BaseModel(ABC):
                 f"k_sigma = {self.eta_grid_kwargs['k_sigma']} and "
                 f"n_grid = {self.eta_grid_kwargs['n_grid']} (if TFR).")
 
+        self.marginalize_logT = get_nested(
+            config, "model/marginalize_logT", False)
+        if self.marginalize_logT:
+            self.logT_grid_kwargs = config["model"]["logT_grid"]
+            fprint(
+                "marginalizing logT with "
+                f"k_sigma = {self.logT_grid_kwargs['k_sigma']} and "
+                f"n_grid = {self.logT_grid_kwargs['n_grid']} (if Clusters).")
+
         self.galaxy_bias = config["pv_model"]["galaxy_bias"]
         if self.galaxy_bias not in ["unity", "powerlaw", "linear",
                                     "linear_from_beta",
@@ -2041,8 +2050,8 @@ class ClustersModel(BaseModel):
         # Backward compat alias
         self.kwargs_A = self.kwargs_zeropoint
 
-        if self.use_MNR:
-            fprint("setting `compute_evidence` to False.")
+        if self.use_MNR and not self.marginalize_logT:
+            fprint("setting `compute_evidence` to False (MNR without marginalization).")
             self.config["inference"]["compute_evidence"] = False
 
     def _prior_is_varying(self, prior_name):
@@ -2335,29 +2344,53 @@ class ClustersModel(BaseModel):
 
         with plate("data", nsamples):
             if self.use_MNR:
-                if relation in ["LT", "YT", "LTYT"]:
-                    # T-only MNR for these relations
+                if self.marginalize_logT:
+                    # Marginalize over temperature instead of sampling
+                    if relation in ["LTY", "YTL"]:
+                        raise NotImplementedError(
+                            "logT marginalization not supported for bivariate MNR "
+                            f"relations ({relation}). Use LT, YT, or LTYT.")
+
+                    # Create adaptive temperature grid: (n_gal, n_T_grid)
+                    logT_grid = make_adaptive_grid(
+                        data["logT"], data["e_logT"],
+                        k_sigma=self.logT_grid_kwargs.get("k_sigma", 4),
+                        n_grid=self.logT_grid_kwargs.get("n_grid", 11))
+
+                    # Hyperprior + observation likelihood: (n_gal, n_T_grid)
+                    lp_logT = Normal(
+                        logT_prior_mean, logT_prior_std).log_prob(logT_grid)
+                    lp_logT += Normal(
+                        logT_grid, data["e_logT"][:, None]).log_prob(
+                            data["logT"][:, None])
+
+                    logT = None  # Will use logT_grid in likelihood
+                    logY = data["logY"]
+                    logF = data["logF"]
+
+                elif relation in ["LT", "YT", "LTYT"]:
+                    # T-only MNR for these relations (non-marginalized)
                     logT = sample("logT_latent", Normal(logT_prior_mean, logT_prior_std))
                     sample("logT_obs", Normal(logT, data["e_logT"]), obs=data["logT"])
                     logY = data["logY"]
                     logF = data["logF"]
-                
+
                 elif relation == "LTY":
                     # T and Y bivariate MNR
                     x_latent = sample("x_latent_TY", MultivariateNormal(mu_TY, cov_TY))
                     logT = x_latent[:, 0]
                     logY = x_latent[:, 1]
-                    
+
                     sample("logT_obs", Normal(logT, data["e_logT"]), obs=data["logT"])
                     sample("logY_obs", Normal(logY, data["e_logY"]), obs=data["logY"])
                     logF = data["logF"]
-                
+
                 elif relation == "YTL":
                     # T and L bivariate MNR
                     x_latent = sample("x_latent_TF", MultivariateNormal(mu_TF, cov_TF))
                     logT = x_latent[:, 0]
                     logF = x_latent[:, 1]
-                    
+
                     sample("logT_obs", Normal(logT, data["e_logT"]), obs=data["logT"])
                     sample("logF_obs", Normal(logF, data["e_logF"]), obs=data["logF"])
                     logY = data["logY"]
@@ -2499,73 +2532,147 @@ class ClustersModel(BaseModel):
                 logEz_raw = jnp.log10(get_Ez(data["zcmb"], Om=self.Om))
             else:
                 logEz_raw = jnp.zeros_like(data["zcmb"])
-            logEz = _broadcast_param(logEz_raw, logT)
+            # For marginalized case, use logT_grid[:, 0] for broadcasting shape
+            logEz_broadcast_ref = logT_grid[:, 0] if (self.use_MNR and self.marginalize_logT) else logT
+            logEz = _broadcast_param(logEz_raw, logEz_broadcast_ref)
             logEz_LT = logEz
             logEz_YT = -logEz
 
-            # Predict logF from the scaling relation, `(ngal, nrbin)``
+            # Predict logF from the scaling relation
             if relation in ["LT", "LTY"]:
-                A_vec = _broadcast_param(A, logT)
-                logF_pred = (
-                    (logEz_LT + A_vec + B * logT)[:, None]
-                    + C * (logY_safe[:, None] + 2 * logda_grid[None, :])
-                    - jnp.log10(4 * jnp.pi) - 2 * logdl_grid[None, :]
-                )
-                # Likelihood of logF , `(n_field, n_gal, n_rbin)`
-                ll = Normal(logF_pred, sigma_logF[:, None]).log_prob(
-                    data["logF"][:, None])[None, ...]
+                if self.use_MNR and self.marginalize_logT:
+                    # Marginalized: logT_grid has shape (n_gal, n_T_grid)
+                    # logF_pred needs shape (n_gal, n_rbin, n_T_grid)
+                    A_vec = _broadcast_param(A, logT_grid[:, 0])
+                    logF_pred = (
+                        (logEz_LT[:, None, None] + A_vec[:, None, None]
+                         + B * logT_grid[:, None, :])
+                        + C * (logY_safe[:, None, None] + 2 * logda_grid[None, :, None])
+                        - jnp.log10(4 * jnp.pi) - 2 * logdl_grid[None, :, None]
+                    )
+                    # Likelihood with MNR scatter (no T error propagation)
+                    sigma_logF_mnr = jnp.sqrt(data["e2_logF"] + sigma_LT**2)
+                    ll = Normal(logF_pred, sigma_logF_mnr[:, None, None]).log_prob(
+                        data["logF"][:, None, None])
+                    # Add T hyperprior + observation likelihood
+                    ll = ll + lp_logT[:, None, :]
+                    ll = ll[None, ...]  # (1, n_gal, n_rbin, n_T_grid)
+                else:
+                    # Non-marginalized: (n_gal, n_rbin)
+                    A_vec = _broadcast_param(A, logT)
+                    logF_pred = (
+                        (logEz_LT + A_vec + B * logT)[:, None]
+                        + C * (logY_safe[:, None] + 2 * logda_grid[None, :])
+                        - jnp.log10(4 * jnp.pi) - 2 * logdl_grid[None, :]
+                    )
+                    # Likelihood of logF, (n_field, n_gal, n_rbin)
+                    ll = Normal(logF_pred, sigma_logF[:, None]).log_prob(
+                        data["logF"][:, None])[None, ...]
+
             elif relation in ["YT", "YTL"]:
-                A_vec = _broadcast_param(A, logT)
-                logY_pred = (
-                    (logEz_YT + A_vec + B * logT)[:, None]
-                    + C * (logF[:, None] + 2 * logdl_grid[None, :]
-                           + jnp.log10(4 * jnp.pi))
-                    - 2 * logda_grid[None, :]
-                )
-                # Likelihood of logY , `(n_field, n_gal, n_rbin)`
-                ll = Normal(logY_pred, sigma_logY[:, None]).log_prob(
-                    data["logY"][:, None])[None, ...]
+                if self.use_MNR and self.marginalize_logT:
+                    # Marginalized: logT_grid has shape (n_gal, n_T_grid)
+                    # logY_pred needs shape (n_gal, n_rbin, n_T_grid)
+                    A_vec = _broadcast_param(A, logT_grid[:, 0])
+                    logY_pred = (
+                        (logEz_YT[:, None, None] + A_vec[:, None, None]
+                         + B * logT_grid[:, None, :])
+                        + C * (logF[:, None, None] + 2 * logdl_grid[None, :, None]
+                               + jnp.log10(4 * jnp.pi))
+                        - 2 * logda_grid[None, :, None]
+                    )
+                    # Likelihood with MNR scatter (no T error propagation)
+                    sigma_logY_mnr = jnp.sqrt(data["e2_logY"] + sigma_YT**2)
+                    ll = Normal(logY_pred, sigma_logY_mnr[:, None, None]).log_prob(
+                        data["logY"][:, None, None])
+                    # Add T hyperprior + observation likelihood
+                    ll = ll + lp_logT[:, None, :]
+                    ll = ll[None, ...]  # (1, n_gal, n_rbin, n_T_grid)
+                else:
+                    # Non-marginalized: (n_gal, n_rbin)
+                    A_vec = _broadcast_param(A, logT)
+                    logY_pred = (
+                        (logEz_YT + A_vec + B * logT)[:, None]
+                        + C * (logF[:, None] + 2 * logdl_grid[None, :]
+                               + jnp.log10(4 * jnp.pi))
+                        - 2 * logda_grid[None, :]
+                    )
+                    # Likelihood of logY, (n_field, n_gal, n_rbin)
+                    ll = Normal(logY_pred, sigma_logY[:, None]).log_prob(
+                        data["logY"][:, None])[None, ...]
             elif relation == "LTYT":
+                if self.use_MNR and self.marginalize_logT:
+                    # Marginalized LTYT: logT_grid has shape (n_gal, n_T_grid)
+                    A_LT_vec = _broadcast_param(A_LT, logT_grid[:, 0])
+                    A_YT_vec = _broadcast_param(A_YT, logT_grid[:, 0])
 
-                # --- Intrinsic means in log-space at fixed T ---
-                A_LT_vec = _broadcast_param(A_LT, logT)
-                A_YT_vec = _broadcast_param(A_YT, logT)
-                mL = (logEz_LT + A_LT_vec + B_LT * logT)[:, None]   # (n_gal,)
-                mY = (logEz_YT + A_YT_vec + B_YT * logT)[:, None]   # (n_gal,)
+                    # Intrinsic means over T grid: (n_gal, n_T_grid)
+                    mL_T = logEz_LT[:, None] + A_LT_vec[:, None] + B_LT * logT_grid
+                    mY_T = logEz_YT[:, None] + A_YT_vec[:, None] + B_YT * logT_grid
 
-                # --- Map to observable means over the distance grid ---
-                # logF = logL - log10(4π) - 2 log DL
-                # logy = logY - 2 log DA
-                mF = mL - jnp.log10(4 * jnp.pi) - 2.0 * logdl_grid[None, :]   # (n_gal, n_rbin)
-                my = mY - 2.0 * logda_grid[None, :]                           # (n_gal, n_rbin)
+                    # Map to observables: (n_gal, n_rbin, n_T_grid)
+                    mF = (mL_T[:, None, :] - jnp.log10(4 * jnp.pi)
+                          - 2.0 * logdl_grid[None, :, None])
+                    my = mY_T[:, None, :] - 2.0 * logda_grid[None, :, None]
 
-                # --- Intrinsic covariance (logL, logY) at fixed T ---
-                # sigma_LT: scatter in logL; sigma_YT: scatter in logY; rho12: intrinsic corr.
+                    # Covariance (MNR: no T error propagation)
+                    v11 = sigma_LT**2 + data["e2_logF"]
+                    v22 = sigma_YT**2 + data["e2_logY"]
+                    v12 = jnp.ones_like(v11) * rho12 * sigma_LT * sigma_YT
 
-                # Total covariance in observable space = intrinsic + measurement
-                # (no measurement cross-covariance)
+                    V11 = v11[:, None, None]
+                    V22 = v22[:, None, None]
+                    V12 = v12[:, None, None]
 
-                v11 = sigma_LT**2  + data["e2_logF"]          # (n_gal,)
-                v22 = sigma_YT**2 + data["e2_logY"]          # (n_gal,)
-                v12 = jnp.ones_like(v11) * rho12 * sigma_LT * sigma_YT           # scalar → broadcasts
-                if self.use_MNR == False:
-                    # Add measurement error propagation from T
-                    v11 += B_LT**2 * data["e2_logT"]
-                    v22 += B_YT**2 * data["e2_logT"]
-                    v12 += B_LT * B_YT * data["e2_logT"]
+                    xF = data["logF"][:, None, None]
+                    xy = data["logY"][:, None, None]
 
-                # Broadcast across the distance grid
-                V11 = v11[:, None]   # (n_gal, 1)
-                V22 = v22[:, None]   # (n_gal, 1)
-                V12 = v12[:, None]   # (n_gal, 1)
+                    # Bivariate log-likelihood: (n_gal, n_rbin, n_T_grid)
+                    ll_joint = logpdf_mvn2_broadcast(xF, xy, mF, my, V11, V22, V12)
+                    # Add T hyperprior + observation likelihood
+                    ll = ll_joint + lp_logT[:, None, :]
+                    ll = ll[None, ...]  # (1, n_gal, n_rbin, n_T_grid)
+                else:
+                    # Non-marginalized LTYT
+                    # --- Intrinsic means in log-space at fixed T ---
+                    A_LT_vec = _broadcast_param(A_LT, logT)
+                    A_YT_vec = _broadcast_param(A_YT, logT)
+                    mL = (logEz_LT + A_LT_vec + B_LT * logT)[:, None]   # (n_gal,)
+                    mY = (logEz_YT + A_YT_vec + B_YT * logT)[:, None]   # (n_gal,)
 
-                # Observations broadcast to (n_gal, n_rbin)
-                xF = data["logF"][:, None]
-                xy = data["logY"][:, None]
+                    # --- Map to observable means over the distance grid ---
+                    # logF = logL - log10(4π) - 2 log DL
+                    # logy = logY - 2 log DA
+                    mF = mL - jnp.log10(4 * jnp.pi) - 2.0 * logdl_grid[None, :]   # (n_gal, n_rbin)
+                    my = mY - 2.0 * logda_grid[None, :]                           # (n_gal, n_rbin)
 
-                # Joint log-likelihood per galaxy × per grid bin
-                ll_joint = logpdf_mvn2_broadcast(xF, xy, mF, my, V11, V22, V12)  # (n_gal, n_rbin)
-                ll = ll_joint[None, ...]  # (n_field=1, n_gal, n_rbin)
+                    # --- Intrinsic covariance (logL, logY) at fixed T ---
+                    # sigma_LT: scatter in logL; sigma_YT: scatter in logY; rho12: intrinsic corr.
+
+                    # Total covariance in observable space = intrinsic + measurement
+                    # (no measurement cross-covariance)
+
+                    v11 = sigma_LT**2  + data["e2_logF"]          # (n_gal,)
+                    v22 = sigma_YT**2 + data["e2_logY"]          # (n_gal,)
+                    v12 = jnp.ones_like(v11) * rho12 * sigma_LT * sigma_YT           # scalar → broadcasts
+                    if self.use_MNR == False:
+                        # Add measurement error propagation from T
+                        v11 += B_LT**2 * data["e2_logT"]
+                        v22 += B_YT**2 * data["e2_logT"]
+                        v12 += B_LT * B_YT * data["e2_logT"]
+
+                    # Broadcast across the distance grid
+                    V11 = v11[:, None]   # (n_gal, 1)
+                    V22 = v22[:, None]   # (n_gal, 1)
+                    V12 = v12[:, None]   # (n_gal, 1)
+
+                    # Observations broadcast to (n_gal, n_rbin)
+                    xF = data["logF"][:, None]
+                    xy = data["logY"][:, None]
+
+                    # Joint log-likelihood per galaxy × per grid bin
+                    ll_joint = logpdf_mvn2_broadcast(xF, xy, mF, my, V11, V22, V12)  # (n_gal, n_rbin)
+                    ll = ll_joint[None, ...]  # (n_field=1, n_gal, n_rbin)
             else:
                 raise ValueError(f"Invalid which_relation '{relation}'.")
 
@@ -2585,20 +2692,29 @@ class ClustersModel(BaseModel):
                 Vrad = 0.
 
             # Add the distance prior to the tracked likelihood
-            ll += lp_dist
+            # When marginalizing T, ll has shape (n_field, n_gal, n_rbin, n_T_grid)
+            # so we need to broadcast lp_dist and ll_cz accordingly
+            if self.use_MNR and self.marginalize_logT:
+                ll += lp_dist[..., None]  # Broadcast to include T dimension
+            else:
+                ll += lp_dist
+
             # Likelihood of the observed redshifts, `(n_field, n_gal, n_rbins)`
             Vext_rad = compute_Vext_radial(
                 data, r_grid, Vext, which_Vext=self.which_Vext,
                 **self.kwargs_Vext)
-                    
+
             if self.which_Vext == "constant":
                 Vext_quad_rad = compute_quadrupole_radial(data, Vext_quad)
                 Vext_rad += Vext_quad_rad[None, :, None]
             czpred = predict_cz(
                 self.distance2redshift(r_grid, h=h)[None, None, :],
                 Vrad + Vext_rad)
-            ll += Normal(czpred, sigma_v).log_prob(
-                data["czcmb"][None, :, None])
+            ll_cz = Normal(czpred, sigma_v).log_prob(data["czcmb"][None, :, None])
+            if self.use_MNR and self.marginalize_logT:
+                ll += ll_cz[..., None]  # Broadcast to include T dimension
+            else:
+                ll += ll_cz
 
             if self.save_distances or self.track_log_density_per_sample:
                 # Diagnostics: MAP and mean/std of r per field/galaxy
@@ -2639,6 +2755,11 @@ class ClustersModel(BaseModel):
                     deterministic("ll_cluster_skipZ", ll_cluster[None, ...])
                     deterministic("cluster_nsigma_skipZ", cluster_nsigma[None, ...])
                 # LTYT skipped (bivariate gaussian)
+
+            # Marginalise over temperature grid first (if enabled)
+            if self.use_MNR and self.marginalize_logT:
+                # ll shape: (n_field, n_gal, n_rbin, n_T_grid) -> (n_field, n_gal, n_rbin)
+                ll = ln_simpson(ll, x=logT_grid[None, None, None, :], axis=-1)
 
             # Marginalise over the radial distance, average over realisations
             # and track the log-density.

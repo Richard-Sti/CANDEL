@@ -25,8 +25,7 @@ import matplotlib.pyplot as plt
 # =============================================================================
 DATA_DIR = "data/2M++"
 N = 257
-BOX_SIDE = 400.0
-RMAX = BOX_SIDE / 2.0
+BOX_SIDE_BASE = 400.0  # Base box size (isotropic case)
 R_2MRS_CUTOFF = 125.0
 CMIN = 0.5  # Minimum completeness (as in Code_2M++)
 H0 = 100.0
@@ -76,6 +75,14 @@ def _compute_dipole_vector(amp, l_deg, b_deg):
 
 
 H0_DIPOLE = _compute_dipole_vector(H0_DIPOLE_AMP, H0_DIPOLE_L, H0_DIPOLE_B)
+
+# Grid size: extend for anisotropic case to accommodate stretched distances
+if ANISOTROPIC_H0:
+    # Extend grid to fit galaxies stretched by (1 + dipole_amp) in low-H0 direction
+    BOX_SIDE = BOX_SIDE_BASE * (1 + abs(H0_DIPOLE_AMP))
+else:
+    BOX_SIDE = BOX_SIDE_BASE
+RMAX = BOX_SIDE / 2.0
 
 # FFT padding: 4-sigma padding for smoothing (much faster than 2N)
 SIGMA_SMOOTH = 4.0  # Mpc/h
@@ -1092,8 +1099,19 @@ is_deep_3d = (coverage_map[pix_3d] == 1)
 is_2mrs_only_3d = ~is_deep_3d
 
 # Masks
-valid_region = rr <= RMAX
-zeroed_region = is_2mrs_only_3d & (rr > R_2MRS_CUTOFF)
+if ANISOTROPIC_H0:
+    # Compute z for each 3D voxel using direction-dependent H0
+    rr_safe = np.maximum(rr, 1e-10)
+    n_hat_3d = np.stack([xx / rr_safe, yy / rr_safe, zz / rr_safe], axis=-1)
+    z_3d = distance_to_redshift(rr, H0_local(n_hat_3d.reshape(-1, 3)).reshape(rr.shape))
+    # Use z-based cuts for both valid_region and 2MRS cutoff
+    z_rmax_iso = distance_to_redshift(np.array([BOX_SIDE_BASE / 2.0]))[0]
+    z_2mrs_cutoff_3d = distance_to_redshift(np.array([R_2MRS_CUTOFF]))[0]
+    valid_region = z_3d <= z_rmax_iso  # z-based, matches galaxy cut
+    zeroed_region = is_2mrs_only_3d & (z_3d > z_2mrs_cutoff_3d)
+else:
+    valid_region = rr <= RMAX
+    zeroed_region = is_2mrs_only_3d & (rr > R_2MRS_CUTOFF)
 nonmasked = valid_region & ~zeroed_region
 
 # m_lim for 3D psi computation
@@ -1180,20 +1198,25 @@ for i_iter, beta in enumerate(beta_values):
         print(f"    DEBUG L/L*: apex={L_over_Lstar[apex_gal].mean():.3f}, anti-apex={L_over_Lstar[antiapex_gal].mean():.3f}")
 
     # Zero out 2MRS beyond cutoff and outside box (matching compare_lumweight_aquila.py)
-    w_total[(flag_2mrs_mask == 1) & (r_mpc > R_2MRS_CUTOFF)] = 0.0
+    # Use z_obs cutoff (not r_mpc) since 2MRS is flux-limited at fixed apparent mag
+    z_2mrs_cutoff = distance_to_redshift(np.array([R_2MRS_CUTOFF]))[0]  # z at 125 Mpc/h
+    w_total[(flag_2mrs_mask == 1) & (z_obs > z_2mrs_cutoff)] = 0.0
 
-    # DEBUG: Check how many galaxies are beyond RMAX by direction
+    # Cut at fixed z_max for uniform sky coverage (same z range as isotropic case)
+    # z_max corresponds to 200 Mpc (BOX_SIDE_BASE/2), not the extended RMAX
+    z_rmax = distance_to_redshift(np.array([BOX_SIDE_BASE / 2.0]))[0]
+
+    # DEBUG: Check how many galaxies are beyond limits by direction
     if i_iter == 0:
-        beyond_rmax = r_mpc > RMAX
-        apex_beyond = beyond_rmax & (cos_apex_gal > 0.87)
-        antiapex_beyond = beyond_rmax & (cos_apex_gal < -0.87)
-        print(f"    DEBUG beyond RMAX: apex={apex_beyond.sum()}/{apex_gal.sum()}, "
-              f"anti-apex={antiapex_beyond.sum()}/{antiapex_gal.sum()}, "
-              f"total={beyond_rmax.sum()}/{len(r_mpc)}")
-        print(f"    DEBUG weight lost: apex={w_total[apex_beyond].sum():.0f}, "
-              f"anti-apex={w_total[antiapex_beyond].sum():.0f}")
+        beyond_zmax = z_obs > z_rmax
+        apex_beyond_z = beyond_zmax & (cos_apex_gal > 0.87)
+        antiapex_beyond_z = beyond_zmax & (cos_apex_gal < -0.87)
+        print(f"    DEBUG beyond z_max={z_rmax:.4f}: apex={apex_beyond_z.sum()}/{apex_gal.sum()}, "
+              f"anti-apex={antiapex_beyond_z.sum()}/{antiapex_gal.sum()}, "
+              f"total={beyond_zmax.sum()}/{len(r_mpc)}")
 
-    w_total[r_mpc > RMAX] = 0.0
+    # Use z-based cut for uniform coverage (grid is extended to fit all z < z_max)
+    w_total[z_obs > z_rmax] = 0.0
 
     # Clone ZoA galaxies
     if CLONE_ZOA:
@@ -1216,10 +1239,18 @@ for i_iter, beta in enumerate(beta_values):
 
         # Build r_mpc for extended array:
         # - Original galaxies: use current r_mpc (updated by iteration)
-        # - Clones: inherit r_mpc from source galaxy
+        # - Clones: adjust for different H0(n̂) in clone direction
         r_mpc_dep = np.zeros(len(l_ext))
         r_mpc_dep[:len(r_mpc)] = r_mpc  # Original galaxies
-        r_mpc_dep[is_clone] = r_mpc[source_idx[is_clone]]  # Clones inherit from source
+        if ANISOTROPIC_H0:
+            # Clone is at same redshift but different direction, so different H0(n̂)
+            # r_clone = r_source * H0(n̂_source) / H0(n̂_clone)
+            source_rhat = rhat[source_idx[is_clone]]
+            clone_rhat = rhat_ext[is_clone]
+            H0_ratio_clone = H0_local(source_rhat) / H0_local(clone_rhat)
+            r_mpc_dep[is_clone] = r_mpc[source_idx[is_clone]] * H0_ratio_clone
+        else:
+            r_mpc_dep[is_clone] = r_mpc[source_idx[is_clone]]
 
         # Compute positions
         positions = r_mpc_dep[:, None] * rhat_ext
@@ -2272,8 +2303,11 @@ los_velocity_cmb = los_velocity_cmb / BETA_MAX
 # This ensures consistent comparison between isotropic and anisotropic runs
 los_z = distance_to_redshift(los_r).astype(np.float32)  # Shape: (n_r_los,)
 
-if ANISOTROPIC_H0:
-    # For anisotropic H0, we need to interpolate density/velocity onto the global z grid
+# Option to convert anisotropic LOS to universal r grid (for inference) or keep raw r (for diagnostics)
+PUT_ON_UNIVERSAL_R = False  # If True, interpolate to global z grid; if False, keep raw r
+
+if ANISOTROPIC_H0 and PUT_ON_UNIVERSAL_R:
+    # For anisotropic H0, interpolate density/velocity onto the global z grid
     # For each cluster direction:
     #   1. Convert global z to direction-dependent r: r = r(z, H0(n̂))
     #   2. Interpolate density/velocity at those r values
@@ -2305,10 +2339,13 @@ if ANISOTROPIC_H0:
     # Clip density to physical range
     los_density_cmb = np.maximum(los_density_cmb, 0.01)
 
-    print(f"  Anisotropic: interpolated onto global z grid")
+    print(f"  Anisotropic: interpolated onto global z grid (PUT_ON_UNIVERSAL_R=True)")
     print(f"    z range: {los_z.min():.5f} - {los_z.max():.5f}")
     print(f"    Example r range at apex (H0={H0*(1+H0_DIPOLE_AMP):.1f}): {(C_LIGHT/H0/(1+H0_DIPOLE_AMP))*los_z[-1]:.1f} Mpc/h")
     print(f"    Example r range at anti-apex (H0={H0*(1-H0_DIPOLE_AMP):.1f}): {(C_LIGHT/H0/(1-H0_DIPOLE_AMP))*los_z[-1]:.1f} Mpc/h")
+elif ANISOTROPIC_H0:
+    print(f"  Anisotropic: keeping raw r grid (PUT_ON_UNIVERSAL_R=False)")
+    print(f"    r range: {los_r.min():.1f} - {los_r.max():.1f} Mpc/h")
 
 # Save to HDF5 in same format as los_Clusters_Carrick2015.hdf5
 suffix = 'aniso' if ANISOTROPIC_H0 else 'iso'

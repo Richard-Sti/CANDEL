@@ -25,7 +25,7 @@ from astropy.coordinates import SkyCoord
 import astropy.units as u
 
 from config import (
-    RESULTS_FOLDER, RESULTS_ROOT, RECON_LABELS_SHORT,
+    RESULTS_FOLDER, RESULTS_ROOT, RECON_LABELS_SHORT, RECON_LABELS_SHORT_FIDUCIAL,
     RECONSTRUCTIONS, get_active_reconstructions,
 )
 from utils import quadrature
@@ -109,6 +109,43 @@ def read_samples_from_hdf5(fname: str, param_name: str) -> Optional[np.ndarray]:
                 return None
             samples = f[f"samples/{param_name}"][...]
             return samples.flatten()  # Flatten in case of multi-chain
+    except Exception:
+        return None
+
+
+def read_samples_column_from_hdf5(fname: str, param_name: str,
+                                  column: int) -> Optional[np.ndarray]:
+    """Read a column from a 2D MCMC samples array from HDF5 file.
+
+    Parameters
+    ----------
+    fname : str
+        Path to HDF5 file.
+    param_name : str
+        Name of the parameter in the samples group (a 2D array).
+    column : int
+        Column index to extract.
+
+    Returns
+    -------
+    np.ndarray or None
+        1D array of samples for that column (flattened if multi-chain),
+        or None if not found.
+    """
+    try:
+        with h5py.File(fname, "r") as f:
+            if "samples" not in f:
+                return None
+            if param_name not in f["samples"]:
+                return None
+            samples = f[f"samples/{param_name}"][...]
+            # Samples shape is (n_samples, n_bins) or (n_chains, n_samples, n_bins)
+            if samples.ndim == 2:
+                return samples[:, column].flatten()
+            elif samples.ndim == 3:
+                return samples[:, :, column].flatten()
+            else:
+                return None
     except Exception:
         return None
 
@@ -628,7 +665,7 @@ def generate_table1_dipoles(results: list[RunResult],
     if relations is None:
         relations = ["LT", "YT", "LTYT"]
     recons = RECONSTRUCTIONS
-    recon_pretty_map = RECON_LABELS_SHORT
+    recon_pretty_map = RECON_LABELS_SHORT_FIDUCIAL  # Use fiducial labels for main table
     models = ["dipVext", "dipH0", "dipA"]  # No base row
 
     lines = []
@@ -789,10 +826,10 @@ def generate_table2_beyond_dipoles(results: list[RunResult],
     }
 
     recons = RECONSTRUCTIONS
-    recon_labels = [RECON_LABELS_SHORT[r] for r in RECONSTRUCTIONS]
+    recon_labels = [RECON_LABELS_SHORT_FIDUCIAL[r] for r in RECONSTRUCTIONS]  # Use fiducial labels
 
     lines = []
-    lines.append(r"\begin{tabular}{|l|cccc|}")
+    lines.append(r"\begin{tabular}{|l|ccc|}")
     lines.append(r"\hline\hline")
     lines.append(r"Model & " + " & ".join(recon_labels) + r" \\")
     lines.append(r"\hline\hline")
@@ -904,17 +941,23 @@ def generate_table_full_evidence(results: list[RunResult],
 
 def generate_appendix_radial(results: list[RunResult],
                               output_path: Path) -> None:
-    """Generate appendix table with radial model parameters including uncertainties."""
+    """Generate appendix table with radial model parameters including uncertainties.
+
+    This is for the fixed-direction radial model (radmagVext) where the direction
+    is shared across all radial bins.
+    """
     groups = group_results(results)
 
     relations = ["LT", "YT", "LTYT"]
     recons = RECONSTRUCTIONS
     recon_pretty_map = RECON_LABELS_SHORT
 
+    n_bins = 5  # Number of radial bins
+
     lines = []
     lines.append(r"\begin{tabular}{|ll|ccccc|cc|c|}")
     lines.append(r"\hline\hline")
-    lines.append(r"Rel. & Recon & $V_0$ [km/s] & $V_1$ [km/s] & $V_2$ [km/s] & $V_3$ [km/s] & $V_4$ [km/s] & $\ell$ [deg] & $b$ [deg] & $\Delta\ln\mathcal{Z}$ \\")
+    lines.append(r"Rel. & Recon & $V_0$ & $V_1$ & $V_2$ & $V_3$ & $V_4$ & $\ell$ & $b$ & $\Delta\ln\mathcal{Z}$ \\")
     lines.append(r"\hline\hline")
 
     for rel in relations:
@@ -923,7 +966,14 @@ def generate_appendix_radial(results: list[RunResult],
             key = (rel, recon)
             group = groups.get(key, {})
             base = group.get("base")
-            r = group.get("radVext")
+            # Use radmagVext (fixed direction) for this table - prefer 4-knot version
+            r = group.get("radmagVext")
+            if r is None:
+                r = group.get("radmagVext-fine")
+            if r is None:
+                r = group.get("radVext")  # Fallback to free-direction
+            if r is None:
+                r = group.get("radVext-fine")
 
             rel_col = rel if first_rel else ""
             first_rel = False
@@ -932,43 +982,46 @@ def generate_appendix_radial(results: list[RunResult],
 
             if r is None:
                 # No data - fill with dashes
-                mags = [r"\textemdash"] * 5
+                mags = [r"\textemdash"] * n_bins
                 ell_str = r"\textemdash"
                 b_str = r"\textemdash"
                 dlnZ_str = r"\textemdash"
             else:
-                # Get magnitude values at knots with uncertainties
+                # Get magnitude values with upper limit detection
+                # Read HDF5 samples and prior bounds for proper constraint detection
                 mags = []
-                for i in range(5):
-                    m, m_err = r.get_param_with_err(f"Vext_rad_mag[{i}]")
-                    mags.append(format_val_err(m, m_err, ".0f"))
+                # Prior key for fixed-direction radial model
+                # Try newer key first (Vext_radmag with 0-5000), then older (Vext_radial_magnitude)
+                prior_min, prior_max = read_prior_bounds_from_toml(
+                    r.fname, "Vext_radmag"
+                )
+                if prior_min is None:
+                    prior_min, prior_max = read_prior_bounds_from_toml(
+                        r.fname, "Vext_radial_magnitude"
+                    )
+                for i in range(n_bins):
+                    # Try radmag naming first (fixed direction), then radial (free direction)
+                    samples = read_samples_column_from_hdf5(
+                        r.fname, "Vext_radmag_mag", i
+                    )
+                    if samples is None:
+                        samples = read_samples_column_from_hdf5(
+                            r.fname, "Vext_radial_mag", i
+                        )
+                    mags.append(format_amplitude_constraint(
+                        samples, prior_min, prior_max, fmt=".0f"
+                    ))
 
-                # Get direction (average over knots)
-                ell_vals, ell_errs = [], []
-                b_vals, b_errs = [], []
-                for i in range(5):
-                    ell, ell_e = r.get_param_with_err(f"Vext_rad_ell[{i}]")
-                    b, b_e = r.get_param_with_err(f"Vext_rad_b[{i}]")
-                    if ell is not None:
-                        ell_vals.append(ell)
-                        if ell_e is not None:
-                            ell_errs.append(ell_e)
-                    if b is not None:
-                        b_vals.append(b)
-                        if b_e is not None:
-                            b_errs.append(b_e)
+                # Get direction - for fixed-direction model, single ell/b
+                ell, ell_err = r.get_param_with_err("Vext_radmag_ell")
+                if ell is None:
+                    ell, ell_err = r.get_param_with_err("Vext_radial_ell")
+                b, b_err = r.get_param_with_err("Vext_radmag_b")
+                if b is None:
+                    b, b_err = r.get_param_with_err("Vext_radial_b")
 
-                if ell_vals:
-                    mean_ell = np.mean(ell_vals)
-                    mean_b = np.mean(b_vals)
-                    # Use mean of errors as representative uncertainty
-                    err_ell = np.mean(ell_errs) if ell_errs else None
-                    err_b = np.mean(b_errs) if b_errs else None
-                    ell_str = format_angle(mean_ell, err_ell)
-                    b_str = format_angle(mean_b, err_b)
-                else:
-                    ell_str = r"\textemdash"
-                    b_str = r"\textemdash"
+                ell_str = format_angle(ell, ell_err) if ell is not None else r"\textemdash"
+                b_str = format_angle(b, b_err) if b is not None else r"\textemdash"
 
                 # Delta lnZ
                 if base is not None:
@@ -982,6 +1035,111 @@ def generate_appendix_radial(results: list[RunResult],
 
         if rel != relations[-1]:
             lines.append(r"\hline")
+
+    lines.append(r"\hline")
+    lines.append(r"\end{tabular}")
+
+    write_table("\n".join(lines), output_path, landscape=False)
+
+
+def generate_appendix_radial_free_dir(results: list[RunResult],
+                                       output_path: Path) -> None:
+    """Generate appendix table with radial model parameters where direction varies per bin.
+
+    This is for the free-direction radial model (radVext) where each radial bin
+    can have a different direction. Only shows LTYT (combined relation).
+    Uses two rows per reconstruction: magnitudes on first row, directions on second.
+    """
+    groups = group_results(results)
+
+    relations = ["LTYT"]
+    recons = RECONSTRUCTIONS
+    recon_pretty_map = RECON_LABELS_SHORT
+
+    n_bins = 5  # Number of radial bins
+
+    lines = []
+    # Table with magnitudes and directions on separate rows
+    lines.append(r"\begin{tabular}{|ll|ccccc|c|}")
+    lines.append(r"\hline\hline")
+    lines.append(r"Rel. & Recon & Bin 0 & Bin 1 & Bin 2 & Bin 3 & Bin 4 & $\Delta\ln\mathcal{Z}$ \\")
+    lines.append(r"\hline\hline")
+
+    for rel in relations:
+        first_rel = True
+        for recon in recons:
+            key = (rel, recon)
+            group = groups.get(key, {})
+            base = group.get("base")
+            # Free-direction radial model - prefer 4-knot version
+            r = group.get("radVext")
+            if r is None:
+                r = group.get("radVext-fine")
+
+            recon_pretty = recon_pretty_map[recon]
+
+            if r is None:
+                # No data - fill with dashes
+                mag_strs = [r"\textemdash"] * n_bins
+                dir_strs = [r"\textemdash"] * n_bins
+                dlnZ_str = r"\textemdash"
+            else:
+                mag_strs = []
+                dir_strs = []
+                # Prior bounds for free-direction radial model
+                prior_min, prior_max = read_prior_bounds_from_toml(
+                    r.fname, "Vext_radial"
+                )
+                for i in range(n_bins):
+                    # Get magnitude from HDF5 samples for upper limit detection
+                    # Try both naming conventions: Vext_radial_mag (nodensity2) and Vext_rad_mag (short)
+                    samples = read_samples_column_from_hdf5(
+                        r.fname, "Vext_radial_mag", i
+                    )
+                    if samples is None:
+                        samples = read_samples_column_from_hdf5(
+                            r.fname, "Vext_rad_mag", i
+                        )
+                    mag_strs.append(format_amplitude_constraint(
+                        samples, prior_min, prior_max, fmt=".0f"
+                    ))
+
+                    # Get direction for this bin from summary file
+                    # Try both naming conventions
+                    ell, ell_err = r.get_param_with_err(f"Vext_radial_ell[{i}]")
+                    if ell is None:
+                        ell, ell_err = r.get_param_with_err(f"Vext_rad_ell[{i}]")
+                    b, b_err = r.get_param_with_err(f"Vext_radial_b[{i}]")
+                    if b is None:
+                        b, b_err = r.get_param_with_err(f"Vext_rad_b[{i}]")
+
+                    ell_str = format_angle(ell, ell_err) if ell is not None else r"\textemdash"
+                    b_str = format_angle(b, b_err) if b is not None else r"\textemdash"
+                    dir_strs.append(f"({ell_str}, {b_str})")
+
+                # Delta lnZ
+                if base is not None:
+                    dlnZ, dlnZ_err = compute_delta_lnZ(r, base)
+                    dlnZ_str = format_val_err(dlnZ, dlnZ_err)
+                else:
+                    dlnZ_str = r"\textemdash"
+
+            # First row: relation (if first), recon, magnitudes (km/s), delta lnZ
+            rel_col = rel if first_rel else ""
+            first_rel = False
+            mag_row = " & ".join(mag_strs)
+            lines.append(f"{rel_col} & {recon_pretty} & {mag_row} & {dlnZ_str} \\\\")
+
+            # Second row: empty relation, empty recon, directions (ell, b)
+            dir_row = " & ".join(dir_strs)
+            lines.append(f" & & {dir_row} & \\\\")
+
+            # Add line between reconstructions
+            if recon != recons[-1]:
+                lines.append(r"\hline")
+
+        if rel != relations[-1]:
+            lines.append(r"\hline\hline")
 
     lines.append(r"\hline")
     lines.append(r"\end{tabular}")
@@ -1057,30 +1215,29 @@ def generate_appendix_pixel(results: list[RunResult],
                     dlnZ_str = r"\textemdash"
                 else:
                     pix_vals = []
-                    # For H0 pixel models, try reading entire array first (new format)
-                    h0_pix_array = read_samples_from_hdf5(r.fname, "H0_pix")
                     for i in range(12):
                         if model == "pixVext":
                             v, v_err = r.get_param_with_err(f"Vext_pix[{i}]")
                             pix_vals.append(format_val_err(v, v_err, ".0f"))
                         else:
-                            # Try new array format first
-                            if h0_pix_array is not None and h0_pix_array.ndim == 2:
-                                pix_samples = h0_pix_array[:, i]
-                                v = float(np.median(pix_samples))
-                                v_err = float((np.percentile(pix_samples, 84) - np.percentile(pix_samples, 16)) / 2)
-                            else:
-                                # Legacy format: individual parameters
+                            # Try different parameter naming conventions
+                            # New format: H0_pix[i] for pixH0, zeropoint_pix[i] for pixA
+                            v, v_err = r.get_param_with_err(f"H0_pix[{i}]")
+                            if v is None:
+                                v, v_err = r.get_param_with_err(f"zeropoint_pix[{i}]")
+                            # Legacy formats
+                            if v is None:
                                 v, v_err = r.get_param_with_err(f"dH_over_H_pix[{i}]")
-                                if v is None:
-                                    v, v_err = r.get_param_with_err(f"A_pix[{i}]")
-                                    if v is not None:
-                                        frac = 10 ** (0.5 * v) - 1.0
-                                        if v_err is not None:
-                                            frac_err = v_err * 0.5 * np.log(10) * 10 ** (0.5 * v)
-                                        else:
-                                            frac_err = None
-                                        v, v_err = frac, frac_err
+                            if v is None:
+                                v, v_err = r.get_param_with_err(f"A_pix[{i}]")
+                                if v is not None:
+                                    # Convert from magnitude to fractional
+                                    frac = 10 ** (0.5 * v) - 1.0
+                                    if v_err is not None:
+                                        frac_err = v_err * 0.5 * np.log(10) * 10 ** (0.5 * v)
+                                    else:
+                                        frac_err = None
+                                    v, v_err = frac, frac_err
                             if v is not None:
                                 v = v * 100
                                 v_err = v_err * 100 if v_err is not None else None
@@ -1425,6 +1582,7 @@ def generate_appendix_mixed_dipoles(results: list[RunResult],
 
 def main(results_folder: Optional[str] = None):
     """Generate all tables from results folder."""
+    # Use RESULTS_FOLDER from config.py for all tables
     if results_folder is None:
         results_folder = RESULTS_FOLDER
 
@@ -1447,8 +1605,9 @@ def main(results_folder: Optional[str] = None):
                             relations=["LT", "YT", "LTYT"])
     generate_table2_beyond_dipoles(results, TABLES_DIR / "table2_beyond_dipoles.tex")
 
-    # Generate appendix tables
+    # Generate appendix tables (all use same results folder now)
     generate_appendix_radial(results, TABLES_DIR / "appendix_radial.tex")
+    generate_appendix_radial_free_dir(results, TABLES_DIR / "appendix_radial_free_dir.tex")
     generate_appendix_pixel(results, TABLES_DIR / "appendix_pixel.tex")
     generate_appendix_quadrupole(results, TABLES_DIR / "appendix_quadrupole.tex")
     generate_appendix_mixed_dipoles(results, TABLES_DIR / "appendix_mixed_dipoles.tex")

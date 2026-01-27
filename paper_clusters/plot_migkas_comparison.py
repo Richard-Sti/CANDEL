@@ -10,16 +10,16 @@ def plot_migkas_comparison():
         str(RESULTS_ROOT / "Migkas_comparison/Migkas_Clusters_noMNR_linear_LT.hdf5"),
         str(RESULTS_ROOT / "maxgrid/Vext_LT_noMNR_dipVext_sigv100.hdf5"),
         str(RESULTS_ROOT / "rgrid1000/Vext_LT_noMNR_dipVext.hdf5"),
-        str(RESULTS_ROOT / "rgrid1000/Carrick2015_LT_noMNR_dipVext.hdf5"),
+        str(RESULTS_ROOT / "nodensity2/Carrick2015_LT_noMNR_dipVext.hdf5"),
     ]
 
     cols = [COLS[1], COLS[0], COLS[2], COLS[3]]
 
     labels = [
         "Migkas model",
-        "Fiducial w/ no reconstruction, $\\sigma_v=100$ km/s",
-        "Fiducial w/ no reconstruction",
-        "Fiducial w/ Carrick2015 reconstruction",
+        "No reconstruction, $\\sigma_v=100$ km/s",
+        "No reconstruction",
+        "Carrick2015 (fiducial model)",
     ]
 
     keys = ['Vext_mag', 'Vext_ell', 'Vext_b', 'sigma_v']
