@@ -12,6 +12,7 @@
 # Test config for ClustersAnisModel (anisotropic H0 via JAX reconstruction)
 
 root_main = "/mnt/users/yasin/code/CANDEL/"
+python_exec = "python"
 
 ###############################################################################
 #                               Inference                                     #
