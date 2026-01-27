@@ -2977,10 +2977,34 @@ class ClustersAnisModel:
         self.N_grid = recon_cfg.get("N", 128)
         self.BOX_SIDE = recon_cfg.get("BOX_SIDE", 400.0)
         self.SIGMA_SMOOTH = recon_cfg.get("SIGMA_SMOOTH", 4.0)
-        self.alpha_LF = recon_cfg.get("alpha", -0.83)
-        self.Mstar_LF = recon_cfg.get("Mstar", -23.28)
         self.beta_recon = recon_cfg.get("beta", 0.43)
         self.r0_decay_scale = recon_cfg.get("r0_decay_scale", 5.0)
+
+        # Schechter parameters: load from SchecterParams.npy if not explicitly set
+        schechter_from_file = recon_cfg.get("schechter_from_file", True)
+        if schechter_from_file and "alpha" not in recon_cfg and "Mstar" not in recon_cfg:
+            # Extract iteration number from catalogue filename (e.g., "2m++_43Runs.npy" -> 43)
+            import re
+            match = re.search(r'(\d+)Runs', self.galaxy_catalogue_path)
+            if match:
+                iteration = int(match.group(1))
+                from ..field.jax_reconstruction import load_schechter_params
+                schechter_file = recon_cfg.get(
+                    "schechter_params_file",
+                    "data/Carrick_reconstruction_2015/SchecterParams.npy")
+                self.Mstar_LF, self.alpha_LF = load_schechter_params(iteration, schechter_file)
+                fprint(f"  Schechter params from file (iteration {iteration}): "
+                       f"M*={self.Mstar_LF:.3f}, α={self.alpha_LF:.3f}")
+            else:
+                # Fallback to defaults if iteration not found
+                self.alpha_LF = recon_cfg.get("alpha", -0.83)
+                self.Mstar_LF = recon_cfg.get("Mstar", -23.28)
+                fprint(f"  Using default Schechter params: M*={self.Mstar_LF}, α={self.alpha_LF}")
+        else:
+            # Use explicit config values
+            self.alpha_LF = recon_cfg.get("alpha", -0.83)
+            self.Mstar_LF = recon_cfg.get("Mstar", -23.28)
+            fprint(f"  Schechter params from config: M*={self.Mstar_LF}, α={self.alpha_LF}")
 
         # Option to use zero H0_dipole for reconstruction (isotropic velocity field)
         self.reconstruction_dipole_zero = recon_cfg.get("reconstruction_dipole_zero", False)
@@ -3088,8 +3112,8 @@ class ClustersAnisModel:
         r_grid_malmquist = np.linspace(r_limits[0], r_limits[1], num_points)
 
         # Precompute JAX reconstruction data
-        # Note: beta=1.0 here because the sampled beta will scale the velocity
-        # in the model's __call__ method (Vrad = beta * los_velocity)
+        # Note: velocity is computed without beta scaling; sampled beta is
+        # applied in the model's __call__ method (Vrad = beta * los_velocity)
         self.precomputed = precompute_reconstruction_data(
             cluster_file=self.cluster_los_file,
             galaxy_catalogue={
@@ -3111,7 +3135,6 @@ class ClustersAnisModel:
             Mstar=self.Mstar_LF,
             cf=1.0,
             cb=1.0,
-            beta=1.0,  # Unscaled; sampled beta applied in model
             r0_decay_scale=self.r0_decay_scale,
         )
 

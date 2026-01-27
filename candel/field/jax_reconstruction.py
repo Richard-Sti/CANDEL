@@ -52,12 +52,13 @@ class PrecomputedData:
         'gal_rhat', 'gal_z_obs', 'gal_K2Mpp', 'gal_m_b', 'gal_m_f',
         'clone_source_idx', 'clone_rhat'
     ]
-    _static_fields = ['N', 'dx', 'RMAX', 'alpha', 'Mstar', 'cf', 'cb', 'beta',
+    _static_fields = ['N', 'N_pad', 'dx', 'RMAX', 'alpha', 'Mstar', 'cf', 'cb',
                       'r0_decay_scale']
 
     def __init__(
         self,
         N: int,
+        N_pad: int,
         dx: float,
         RMAX: float,
         coords: jnp.ndarray,
@@ -80,11 +81,11 @@ class PrecomputedData:
         Mstar: float,
         cf: float,
         cb: float,
-        beta: float,
         r0_decay_scale: float,
     ):
         # Grid
         self.N = N
+        self.N_pad = N_pad
         self.dx = dx
         self.RMAX = RMAX
         self.coords = coords
@@ -117,7 +118,6 @@ class PrecomputedData:
         self.Mstar = Mstar
         self.cf = cf
         self.cb = cb
-        self.beta = beta
         self.r0_decay_scale = r0_decay_scale
 
 
@@ -314,43 +314,54 @@ def gaussian_smooth_fft(delta, kernel_fft):
     return jnp.fft.irfftn(smoothed_fft, s=(N, N, N))
 
 
-def velocity_from_density_fft(delta, beta, k_grid, k_mag_safe):
+def velocity_from_density_fft(delta, k_grid, k_mag_safe, N_pad):
     """
-    Compute velocity field from density via FFT.
+    Compute velocity field from density via FFT with zero-padding.
 
-    v_k = i * beta * H0 * delta_k * k / k²
+    v_k = i * H0 * delta_k * k / k²
+
+    Note: beta is NOT applied here. The output is the raw peculiar velocity
+    field. Beta scaling should be applied externally if needed.
+
+    Zero-padding to N_pad avoids wrap-around artifacts from the long-range
+    velocity Green's function (1/k² in k-space).
 
     Parameters
     ----------
     delta : (N, N, N) array
         Smoothed density contrast
-    beta : float
-        RSD parameter (f/b ≈ 0.43)
-    k_grid : (N, N, N//2+1, 3) array
-        k-vectors
-    k_mag_safe : (N, N, N//2+1) array
+    k_grid : (N_pad, N_pad, N_pad//2+1, 3) array
+        k-vectors for padded grid
+    k_mag_safe : (N_pad, N_pad, N_pad//2+1) array
         |k| with k=0 set to safe value
+    N_pad : int
+        Padded grid size (typically N + ceil(5 * sigma / dx))
 
     Returns
     -------
     velocity : (N, N, N, 3) array
-        Velocity field in km/s
+        Velocity field in km/s (original grid size, not padded)
     """
     N = delta.shape[0]
-    delta_k = jnp.fft.rfftn(delta)
 
-    # v_k = i * beta * H0 * delta_k * k / k²
-    factor = 1j * beta * H0_BAR / k_mag_safe**2  # (N, N, N//2+1)
+    # Zero-pad to avoid wrap-around
+    delta_padded = jnp.zeros((N_pad, N_pad, N_pad), dtype=delta.dtype)
+    delta_padded = delta_padded.at[:N, :N, :N].set(delta)
+
+    delta_k = jnp.fft.rfftn(delta_padded)
+
+    # v_k = i * H0 * delta_k * k / k²  (no beta - applied externally)
+    factor = 1j * H0_BAR / k_mag_safe**2  # (N_pad, N_pad, N_pad//2+1)
 
     # Compute velocity in k-space for each component
     vx_k = factor * delta_k * k_grid[..., 0]
     vy_k = factor * delta_k * k_grid[..., 1]
     vz_k = factor * delta_k * k_grid[..., 2]
 
-    # IFFT back to real space
-    vx = jnp.fft.irfftn(vx_k, s=(N, N, N))
-    vy = jnp.fft.irfftn(vy_k, s=(N, N, N))
-    vz = jnp.fft.irfftn(vz_k, s=(N, N, N))
+    # IFFT back to real space and extract original region
+    vx = jnp.fft.irfftn(vx_k, s=(N_pad, N_pad, N_pad))[:N, :N, :N]
+    vy = jnp.fft.irfftn(vy_k, s=(N_pad, N_pad, N_pad))[:N, :N, :N]
+    vz = jnp.fft.irfftn(vz_k, s=(N_pad, N_pad, N_pad))[:N, :N, :N]
 
     return jnp.stack([vx, vy, vz], axis=-1)
 
@@ -477,8 +488,9 @@ def compute_los_profiles_jax(
     # 8. Gaussian smooth
     delta = gaussian_smooth_fft(delta, p.kernel_fft)
 
-    # 9. Velocity field from density
-    velocity = velocity_from_density_fft(delta, p.beta, p.k_grid, p.k_mag_safe)
+    # 9. Velocity field from density (with zero-padding to avoid wrap-around)
+    # Note: beta is NOT applied here - it's applied externally in the model
+    velocity = velocity_from_density_fft(delta, p.k_grid, p.k_mag_safe, p.N_pad)
 
     # 10. Extract LOS profiles via trilinear interpolation
     los_density = trilinear_interp_batch(1.0 + delta, p.los_positions,
@@ -544,6 +556,36 @@ def compute_psi_numpy(r_mpc, m_lim=11.5, alpha=ALPHA_DEFAULT, Mstar=MSTAR_DEFAUL
     return BIAS_CONST + BIAS_SLOPE * L_mean
 
 
+def load_schechter_params(iteration: int,
+                          params_file: str = "data/Carrick_reconstruction_2015/SchecterParams.npy"):
+    """
+    Load Schechter LF parameters (M*, α) for a given iteration.
+
+    The SchecterParams.npy file contains parameters evolved through the
+    iterative reconstruction process (Carrick et al. 2015).
+
+    Parameters
+    ----------
+    iteration : int
+        Iteration number (e.g., 0 for 0Runs, 43 for 43Runs catalogue)
+    params_file : str
+        Path to SchecterParams.npy file
+
+    Returns
+    -------
+    Mstar : float
+        Characteristic magnitude M*
+    alpha : float
+        Faint-end slope α
+    """
+    params = np.load(params_file)
+    if iteration >= len(params):
+        raise ValueError(f"Iteration {iteration} not found in {params_file} "
+                        f"(max iteration: {len(params)-1})")
+    Mstar, alpha = params[iteration]
+    return Mstar, alpha
+
+
 def gaussian_kernel_3d_fft(N, sigma_vox):
     """
     Compute FFT of 3D Gaussian kernel for convolution.
@@ -571,28 +613,28 @@ def gaussian_kernel_3d_fft(N, sigma_vox):
     return np.fft.rfftn(kernel)
 
 
-def compute_k_grid(N, dx):
+def compute_k_grid(N_pad, dx_pad):
     """
-    Compute k-vectors for velocity FFT.
+    Compute k-vectors for velocity FFT on padded grid.
 
     Parameters
     ----------
-    N : int
-        Grid size
-    dx : float
-        Cell size in Mpc/h
+    N_pad : int
+        Padded grid size
+    dx_pad : float
+        Cell size in Mpc/h for padded grid
 
     Returns
     -------
-    k_grid : (N, N, N//2+1, 3) array
+    k_grid : (N_pad, N_pad, N_pad//2+1, 3) array
         k-vectors
-    k_mag_safe : (N, N, N//2+1) array
+    k_mag_safe : (N_pad, N_pad, N_pad//2+1) array
         |k| with k=0 set to 1.0 to avoid division by zero
     """
     # k in units of 1/Mpc/h
-    kx = np.fft.fftfreq(N, d=dx) * 2 * np.pi
-    ky = np.fft.fftfreq(N, d=dx) * 2 * np.pi
-    kz = np.fft.rfftfreq(N, d=dx) * 2 * np.pi
+    kx = np.fft.fftfreq(N_pad, d=dx_pad) * 2 * np.pi
+    ky = np.fft.fftfreq(N_pad, d=dx_pad) * 2 * np.pi
+    kz = np.fft.rfftfreq(N_pad, d=dx_pad) * 2 * np.pi
 
     kx_3d, ky_3d, kz_3d = np.meshgrid(kx, ky, kz, indexing='ij')
     k_grid = np.stack([kx_3d, ky_3d, kz_3d], axis=-1)
@@ -676,7 +718,6 @@ def precompute_reconstruction_data(
     Mstar: float = MSTAR_DEFAULT,
     cf: float = 1.0,
     cb: float = 1.0,
-    beta: float = 0.43,
     r0_decay_scale: float = 5.0,
     r_grid: np.ndarray = None,
 ) -> PrecomputedData:
@@ -703,8 +744,6 @@ def precompute_reconstruction_data(
         Schechter LF parameters
     cf, cb : float
         Completeness fractions
-    beta : float
-        RSD parameter
     r0_decay_scale : float
         Edge smoothing decay scale in Mpc/h (default 5.0).
         For r > RMAX, delta and velocity decay exponentially:
@@ -720,6 +759,13 @@ def precompute_reconstruction_data(
     """
     RMAX = BOX_SIDE / 2.0
     dx = BOX_SIDE / N
+
+    # Compute padded grid size for velocity FFT (5σ padding to avoid wrap-around)
+    # This is more efficient than doubling the grid (2×N)
+    n_pad_cells = int(np.ceil(5 * SIGMA_SMOOTH / dx))
+    N_pad = N + n_pad_cells
+    # dx_pad is the same as dx since we keep same cell size, just larger box
+    dx_pad = dx
 
     # Grid setup
     coords = np.linspace(-RMAX + dx/2, RMAX - dx/2, N)
@@ -739,8 +785,8 @@ def precompute_reconstruction_data(
     sigma_vox = SIGMA_SMOOTH / dx
     kernel_fft = gaussian_kernel_3d_fft(N, sigma_vox)
 
-    # k-grid for velocity FFT
-    k_grid, k_mag_safe = compute_k_grid(N, dx)
+    # k-grid for velocity FFT (padded size)
+    k_grid, k_mag_safe = compute_k_grid(N_pad, dx_pad)
 
     # Load cluster data
     with h5py.File(cluster_file, 'r') as f:
@@ -766,6 +812,7 @@ def precompute_reconstruction_data(
 
     return PrecomputedData(
         N=N,
+        N_pad=N_pad,
         dx=dx,
         RMAX=RMAX,
         coords=jnp.array(coords, dtype=jnp.float32),
@@ -788,6 +835,5 @@ def precompute_reconstruction_data(
         Mstar=Mstar,
         cf=cf,
         cb=cb,
-        beta=beta,
         r0_decay_scale=r0_decay_scale,
     )
