@@ -1,0 +1,151 @@
+# Job started at: 2026-01-27 12:40:31
+# Job started at: 2026-01-27 12:35:56
+# Job started at: 2026-01-27 12:03:57
+# Job finished at: 2026-01-27 12:03:25
+# Job started at: 2026-01-27 12:02:45
+# Job finished at: 2026-01-27 11:52:17
+# Job started at: 2026-01-27 11:51:34
+# Job started at: 2026-01-27 11:50:12
+# Job finished at: 2026-01-27 11:48:23
+# Job started at: 2026-01-27 11:47:41
+# Job started at: 2026-01-27 11:46:26
+# Test config for ClustersAnisModel (anisotropic H0 via JAX reconstruction)
+
+root_main = "/mnt/users/yasin/code/CANDEL/"
+
+###############################################################################
+#                               Inference                                     #
+###############################################################################
+
+[inference]
+model = "ClustersAnisModel"
+shared_params = "none"
+
+num_warmup = 500
+num_samples = 500
+num_chains = 1
+chain_method = "sequential"
+seed = 42
+compute_log_density = true
+compute_evidence = false
+track_log_density_per_sample = false
+
+skip_if_exists = false
+
+[inference.init_values]
+H0_dipole_mag = 0.01
+H0_dipole_phi = 3.14
+H0_dipole_cos_theta = 0.0
+sigma_v = 300.0
+
+###############################################################################
+#                           Peculiar velocity model                           #
+###############################################################################
+
+[pv_model]
+kind = "aniso_reconstruction"
+
+# Malmquist bias grid settings
+# Note: JAX reconstruction has RMAX=200 Mpc, so v=0 for r > ~210 Mpc
+# Grid extends to 600 Mpc to cover z=0.2 clusters
+r_limits_malmquist = [0.1, 600]
+num_points_malmquist = 601
+
+###############################################################################
+#                         JAX Reconstruction Settings                         #
+###############################################################################
+
+[jax_reconstruction]
+galaxy_catalogue = "data/Carrick_reconstruction_2015/2m++_43Runs.npy"
+N = 128
+BOX_SIDE = 400.0
+SIGMA_SMOOTH = 4.0
+alpha = -0.83
+Mstar = -23.28
+beta = 0.43
+r0_decay_scale = 5.0
+reconstruction_dipole_zero = false
+
+###############################################################################
+#                                 Model                                       #
+###############################################################################
+
+[model]
+Om = 0.3
+use_MNR = false
+marginalize_logT = false
+
+# H0 dipole prior (3D Cartesian vector in fractional units)
+# Each component sampled independently from Uniform(-0.05, 0.05)
+[model.priors.H0_dipole]
+dist = "vector_components_uniform"
+low = -0.05
+high = 0.05
+
+[model.priors.beta]
+dist = "delta"
+value = 0.43
+
+[model.priors.sigma_int]
+dist = "jeffreys"
+low = 0.01
+high = 0.5
+
+[model.priors.sigma_v]
+dist = "jeffreys"
+low = 150
+high = 3000
+
+# Cluster scaling priors (L-T relation)
+[model.priors.A_LT]
+dist = "uniform"
+low = -10
+high = 10
+
+[model.priors.B_LT]
+dist = "uniform"
+low = -5
+high = 5
+
+[model.priors.CL_C]
+dist = "delta"
+value = 0.0
+
+# Distance prior
+[model.priors.R_dist_emp]
+dist = "uniform"
+low = 1.0
+high = 300
+
+[model.priors.p_dist_emp]
+dist = "truncated_normal"
+low = 0.0
+mean = 2.0
+scale = 0.1
+
+[model.priors.n_dist_emp]
+dist = "truncated_normal"
+low = 0.0
+mean = 1.0
+scale = 30
+
+###############################################################################
+#                                  Data                                       #
+###############################################################################
+
+[io]
+root_output = "results/clusters_anis_test"
+catalogue_name = "Clusters"
+fname_output = "results/clusters_anis_test/samples.hdf5"
+
+[io.Clusters]
+root = "data/Clusters"
+zcmb_max = 0.2
+which_relation = "LT"
+finite_logY = true
+convert_to_CMB_frame = true
+
+los_file = "data/Clusters/los_Clusters_Carrick2015.hdf5"
+
+nsamples_subsample = "none"
+seed_subsample = 42
