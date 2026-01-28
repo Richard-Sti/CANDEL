@@ -51,8 +51,8 @@ kind = "aniso_reconstruction"
 # Malmquist bias grid settings
 # Note: JAX reconstruction has RMAX=200 Mpc, so v=0 for r > ~210 Mpc
 # Grid extends to 600 Mpc to cover z=0.2 clusters
-r_limits_malmquist = [0.1, 600]
-num_points_malmquist = 601
+r_limits_malmquist = [0.1, 1400]
+num_points_malmquist = 1401
 
 ###############################################################################
 #                         JAX Reconstruction Settings                         #
@@ -131,7 +131,7 @@ scale = 0.1
 dist = "truncated_normal"
 low = 0.0
 mean = 1.0
-scale = 30
+scale = 4.0
 
 ###############################################################################
 #                                  Data                                       #
@@ -144,7 +144,7 @@ fname_output = "results/clusters_anis_test_dipH0/samples.hdf5"
 
 [io.Clusters]
 root = "data/Clusters"
-zcmb_max = 0.2
+zcmb_max = 0.5
 which_relation = "LT"
 finite_logY = false
 convert_to_CMB_frame = true
