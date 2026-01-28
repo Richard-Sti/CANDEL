@@ -1,3 +1,4 @@
+# Job started at: 2026-01-28 01:07:33
 # Job finished at: 2026-01-27 13:11:02
 # Job started at: 2026-01-27 12:40:31
 # Job started at: 2026-01-27 12:35:56
@@ -12,7 +13,7 @@
 # Job started at: 2026-01-27 11:46:26
 # Test config for ClustersAnisModel (anisotropic H0 via JAX reconstruction)
 
-root_main = "/Users/yasin/code/CANDEL/"
+root_main = "/mnt/users/yasin/code/CANDEL/"
 python_exec = "python"
 
 ###############################################################################
@@ -59,11 +60,11 @@ num_points_malmquist = 601
 
 [jax_reconstruction]
 galaxy_catalogue = "data/Carrick_reconstruction_2015/2m++_43Runs.npy"
-N = 128
+N = 257
 BOX_SIDE = 400.0
 SIGMA_SMOOTH = 4.0
-alpha = -0.83
-Mstar = -23.28
+Mstar = -23.22946058
+alpha = -0.84897081
 beta = 0.43
 r0_decay_scale = 5.0
 reconstruction_dipole_zero = false
