@@ -56,6 +56,7 @@ class PrecomputedData:
     ]
     _static_fields = ['N', 'N_pad', 'dx', 'RMAX', 'alpha', 'Mstar',
                       'z_2mrs_cutoff', 'z_rmax',
+                      'use_gaussian_splat', 'splat_sigma_mpc',
                       'r0_decay_scale']
 
     def __init__(
@@ -87,6 +88,8 @@ class PrecomputedData:
         Mstar: float,
         z_2mrs_cutoff: float,
         z_rmax: float,
+        use_gaussian_splat: bool,
+        splat_sigma_mpc: float,
         r0_decay_scale: float,
         kernel_fft: jnp.ndarray | None = None,
     ):
@@ -130,6 +133,8 @@ class PrecomputedData:
         self.Mstar = Mstar
         self.z_2mrs_cutoff = z_2mrs_cutoff
         self.z_rmax = z_rmax
+        self.use_gaussian_splat = use_gaussian_splat
+        self.splat_sigma_mpc = splat_sigma_mpc
         self.r0_decay_scale = r0_decay_scale
 
 
@@ -413,6 +418,61 @@ def cic_deposit_jax(positions, weights, N, dx, RMAX):
     return rho
 
 
+def gaussian_splat_deposit_jax(positions, weights, N, dx, RMAX, sigma_mpc, radius_factor=3.0):
+    """
+    Smooth Gaussian splat deposition (differentiable approximation to CIC).
+
+    Parameters
+    ----------
+    positions : (n_particles, 3) array
+        Cartesian positions in Mpc/h
+    weights : (n_particles,) array
+        Particle weights
+    N : int
+        Grid size
+    dx : float
+        Cell size in Mpc/h
+    RMAX : float
+        Half box size in Mpc/h
+    sigma_mpc : float
+        Gaussian kernel sigma in Mpc/h
+    radius_factor : float
+        Truncation radius in units of sigma
+    """
+    gc = (positions + RMAX) / dx - 0.5  # grid coords at cell centers
+    base = jnp.floor(gc).astype(jnp.int32)
+
+    sigma_vox = sigma_mpc / dx
+    radius_vox = int(np.ceil(radius_factor * float(sigma_vox)))
+    offsets = jnp.arange(-radius_vox, radius_vox + 1)
+    ox, oy, oz = jnp.meshgrid(offsets, offsets, offsets, indexing='ij')
+    offsets_3 = jnp.stack([ox, oy, oz], axis=-1).reshape(-1, 3)
+
+    # Compute normalization per particle over truncated kernel
+    norm = jnp.zeros(weights.shape[0], dtype=weights.dtype)
+    for o in offsets_3:
+        idx = base + o
+        idx = jnp.clip(idx, 0, N - 1)
+        dvox = gc - idx
+        dist2 = jnp.sum((dvox * dx) ** 2, axis=1)
+        k = jnp.exp(-0.5 * dist2 / (sigma_mpc ** 2))
+        norm = norm + k
+    norm = jnp.where(norm > 0, norm, 1.0)
+
+    # Deposit
+    rho = jnp.zeros((N, N, N), dtype=weights.dtype)
+    for o in offsets_3:
+        idx = base + o
+        idx = jnp.clip(idx, 0, N - 1)
+        dvox = gc - idx
+        dist2 = jnp.sum((dvox * dx) ** 2, axis=1)
+        k = jnp.exp(-0.5 * dist2 / (sigma_mpc ** 2))
+        w = weights * (k / norm)
+        rho = rho.at[idx[:, 0], idx[:, 1], idx[:, 2]].add(w)
+
+    return rho
+
+
 def gaussian_smooth_fft(delta, kernel_fft_pad, N_pad):
     """
     Gaussian smoothing via FFT convolution with zero-padding to N_pad.
@@ -612,8 +672,13 @@ def compute_los_profiles_jax(
     # 4. Positions
     positions = r_all[:, None] * rhat_all  # (n_gal+n_clone, 3)
 
-    # 5. CIC deposition
-    rho = cic_deposit_jax(positions, w_all, p.N, p.dx, p.RMAX)
+    # 5. CIC deposition (or Gaussian splat if enabled)
+    if p.use_gaussian_splat:
+        rho = gaussian_splat_deposit_jax(
+            positions, w_all, p.N, p.dx, p.RMAX, p.splat_sigma_mpc
+        )
+    else:
+        rho = cic_deposit_jax(positions, w_all, p.N, p.dx, p.RMAX)
 
     # 5b. Extract raw rho LOS profiles (before any processing)
     los_rho_raw = trilinear_interp_batch(rho, p.los_positions,
@@ -874,6 +939,8 @@ def precompute_reconstruction_data(
     gal_flag_2mrs_mask: np.ndarray = None,
     coverage_map_path: str = "coverage_aquila_filled.fits",
     r_2mrs_cutoff: float = 125.0,
+    use_gaussian_splat: bool = False,
+    splat_sigma_mpc: float = 1.0,
     r0_decay_scale: float = 5.0,
     r_grid: np.ndarray = None,
 ) -> PrecomputedData:
@@ -1036,5 +1103,7 @@ def precompute_reconstruction_data(
         Mstar=Mstar,
         z_2mrs_cutoff=float(z_2mrs_cutoff),
         z_rmax=float(z_rmax),
+        use_gaussian_splat=bool(use_gaussian_splat),
+        splat_sigma_mpc=float(splat_sigma_mpc),
         r0_decay_scale=r0_decay_scale,
     )

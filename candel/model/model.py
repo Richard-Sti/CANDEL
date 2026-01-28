@@ -2975,6 +2975,8 @@ class ClustersAnisModel:
         self.SIGMA_SMOOTH = recon_cfg.get("SIGMA_SMOOTH", 4.0)
         self.beta_recon = recon_cfg.get("beta", 0.43)
         self.r0_decay_scale = recon_cfg.get("r0_decay_scale", 5.0)
+        self.use_gaussian_splat = recon_cfg.get("use_gaussian_splat", False)
+        self.splat_sigma_mpc = recon_cfg.get("splat_sigma_mpc", 1.0)
 
         # Schechter parameters: load from SchecterParams.npy if not explicitly set
         schechter_from_file = recon_cfg.get("schechter_from_file", True)
@@ -3143,6 +3145,8 @@ class ClustersAnisModel:
             gal_cf=gal_cf,
             gal_cb=gal_cb,
             gal_flag_2mrs_mask=flag_2mrs_mask,
+            use_gaussian_splat=self.use_gaussian_splat,
+            splat_sigma_mpc=self.splat_sigma_mpc,
             r0_decay_scale=self.r0_decay_scale,
         )
 

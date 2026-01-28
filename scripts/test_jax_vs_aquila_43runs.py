@@ -29,6 +29,8 @@ model = ClustersAnisModel(config_path)
 
 print(f"  Grid: N={model.N_grid}, BOX_SIDE={model.BOX_SIDE}")
 print(f"  Schechter: M*={model.Mstar_LF}, alpha={model.alpha_LF}")
+print(f"  use_gaussian_splat: {model.precomputed.use_gaussian_splat}")
+print(f"  splat_sigma_mpc: {model.precomputed.splat_sigma_mpc}")
 print(f"  n_galaxies: {len(model.precomputed.gal_z_obs)}")
 print(f"  n_clusters: {len(model.precomputed.cluster_rhat)}")
 

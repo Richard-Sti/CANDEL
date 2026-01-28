@@ -68,6 +68,8 @@ alpha = -0.84897081
 beta = 0.43
 r0_decay_scale = 5.0
 reconstruction_dipole_zero = false
+use_gaussian_splat = false
+splat_sigma_mpc = 1.0
 
 ###############################################################################
 #                                 Model                                       #
@@ -78,12 +80,11 @@ Om = 0.3
 use_MNR = false
 marginalize_logT = false
 
-# H0 dipole prior (3D Cartesian vector in fractional units)
-# Each component sampled independently from Uniform(-0.05, 0.05)
+# H0 dipole prior (spherical: uniform magnitude, isotropic direction)
 [model.priors.H0_dipole]
-dist = "vector_components_uniform"
-low = -0.05
-high = 0.05
+dist = "vector_uniform_fixed"
+low = 0.0
+high = 0.1
 
 [model.priors.beta]
 dist = "delta"

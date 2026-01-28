@@ -65,6 +65,8 @@ schechter_from_file = true
 beta = 0.43
 r0_decay_scale = 5.0
 reconstruction_dipole_zero = false
+use_gaussian_splat = true
+splat_sigma_mpc = 1.0
 
 ###############################################################################
 #                                 Model                                       #
