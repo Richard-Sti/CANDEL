@@ -67,7 +67,7 @@ Mstar = -23.22946058
 alpha = -0.84897081
 beta = 0.43
 r0_decay_scale = 5.0
-reconstruction_dipole_zero = false
+reconstruction_dipole_zero = true
 use_gaussian_splat = false
 splat_sigma_mpc = 1.0
 
@@ -138,9 +138,9 @@ scale = 30
 ###############################################################################
 
 [io]
-root_output = "results/clusters_anis_test"
+root_output = "results/clusters_anis_test_dipH0"
 catalogue_name = "Clusters"
-fname_output = "results/clusters_anis_test/samples.hdf5"
+fname_output = "results/clusters_anis_test_dipH0/samples.hdf5"
 
 [io.Clusters]
 root = "data/Clusters"

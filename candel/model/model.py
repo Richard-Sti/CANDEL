@@ -2948,6 +2948,10 @@ class ClustersAnisModel:
         if self.marginalize_logT:
             self.logT_grid_kwargs = config["model"]["logT_grid"]
 
+        # E(z) correction for scaling relations
+        self.apply_Ez_correction = bool(
+            get_nested(config, "io/apply_Ez_correction", True))
+
         # Interpolators
         self.distance2logda = Distance2LogAngDist(Om0=self.Om, zmax_interp=1.0)
         self.distance2logdl = Distance2LogLumDist(Om0=self.Om, zmax_interp=1.0)
@@ -2965,61 +2969,72 @@ class ClustersAnisModel:
             if "CL_C" not in self.priors:
                 self.priors["CL_C"] = Delta(jnp.asarray(0.0))
 
-        # JAX reconstruction settings (43Runs parameters)
-        recon_cfg = config.get("jax_reconstruction", {})
-        self.galaxy_catalogue_path = recon_cfg.get(
-            "galaxy_catalogue",
-            "data/Carrick_reconstruction_2015/2m++_43Runs.npy")
-        self.N_grid = recon_cfg.get("N", 128)
-        self.BOX_SIDE = recon_cfg.get("BOX_SIDE", 400.0)
-        self.SIGMA_SMOOTH = recon_cfg.get("SIGMA_SMOOTH", 4.0)
-        self.beta_recon = recon_cfg.get("beta", 0.43)
-        self.r0_decay_scale = recon_cfg.get("r0_decay_scale", 5.0)
-        self.use_gaussian_splat = recon_cfg.get("use_gaussian_splat", False)
-        self.splat_sigma_mpc = recon_cfg.get("splat_sigma_mpc", 1.0)
+        # Option to use precomputed LOS files instead of JAX reconstruction
+        # When True, uses data["los_velocity_r_grid"] from the LOS file (like ClustersModel)
+        self.use_precomputed_los = bool(
+            get_nested(config, "pv_model/use_precomputed_los", False))
 
-        # Schechter parameters: load from SchecterParams.npy if not explicitly set
-        schechter_from_file = recon_cfg.get("schechter_from_file", True)
-        if schechter_from_file and "alpha" not in recon_cfg and "Mstar" not in recon_cfg:
-            # Extract iteration number from catalogue filename (e.g., "2m++_43Runs.npy" -> 43)
-            import re
-            match = re.search(r'(\d+)Runs', self.galaxy_catalogue_path)
-            if match:
-                iteration = int(match.group(1))
-                from ..field.jax_reconstruction import load_schechter_params
-                schechter_file = recon_cfg.get(
-                    "schechter_params_file",
-                    "data/Carrick_reconstruction_2015/SchecterParams.npy")
-                self.Mstar_LF, self.alpha_LF = load_schechter_params(iteration, schechter_file)
-                fprint(f"  Schechter params from file (iteration {iteration}): "
-                       f"M*={self.Mstar_LF:.3f}, α={self.alpha_LF:.3f}")
+        if self.use_precomputed_los:
+            # Using precomputed LOS - skip JAX reconstruction setup
+            fprint("  use_precomputed_los=True (using LOS file, not JAX reconstruction)")
+            self.precomputed = None
+            self.N_grid = None
+        else:
+            # JAX reconstruction settings (43Runs parameters)
+            recon_cfg = config.get("jax_reconstruction", {})
+            self.galaxy_catalogue_path = recon_cfg.get(
+                "galaxy_catalogue",
+                "data/Carrick_reconstruction_2015/2m++_43Runs.npy")
+            self.N_grid = recon_cfg.get("N", 128)
+            self.BOX_SIDE = recon_cfg.get("BOX_SIDE", 400.0)
+            self.SIGMA_SMOOTH = recon_cfg.get("SIGMA_SMOOTH", 4.0)
+            self.beta_recon = recon_cfg.get("beta", 0.43)
+            self.r0_decay_scale = recon_cfg.get("r0_decay_scale", 5.0)
+            self.use_gaussian_splat = recon_cfg.get("use_gaussian_splat", False)
+            self.splat_sigma_mpc = recon_cfg.get("splat_sigma_mpc", 1.0)
+
+            # Schechter parameters: load from SchecterParams.npy if not explicitly set
+            schechter_from_file = recon_cfg.get("schechter_from_file", True)
+            if schechter_from_file and "alpha" not in recon_cfg and "Mstar" not in recon_cfg:
+                # Extract iteration number from catalogue filename (e.g., "2m++_43Runs.npy" -> 43)
+                import re
+                match = re.search(r'(\d+)Runs', self.galaxy_catalogue_path)
+                if match:
+                    iteration = int(match.group(1))
+                    from ..field.jax_reconstruction import load_schechter_params
+                    schechter_file = recon_cfg.get(
+                        "schechter_params_file",
+                        "data/Carrick_reconstruction_2015/SchecterParams.npy")
+                    self.Mstar_LF, self.alpha_LF = load_schechter_params(iteration, schechter_file)
+                    fprint(f"  Schechter params from file (iteration {iteration}): "
+                           f"M*={self.Mstar_LF:.3f}, α={self.alpha_LF:.3f}")
+                else:
+                    # Fallback to defaults if iteration not found
+                    self.alpha_LF = recon_cfg.get("alpha", -0.83)
+                    self.Mstar_LF = recon_cfg.get("Mstar", -23.28)
+                    fprint(f"  Using default Schechter params: M*={self.Mstar_LF}, α={self.alpha_LF}")
             else:
-                # Fallback to defaults if iteration not found
+                # Use explicit config values
                 self.alpha_LF = recon_cfg.get("alpha", -0.83)
                 self.Mstar_LF = recon_cfg.get("Mstar", -23.28)
-                fprint(f"  Using default Schechter params: M*={self.Mstar_LF}, α={self.alpha_LF}")
-        else:
-            # Use explicit config values
-            self.alpha_LF = recon_cfg.get("alpha", -0.83)
-            self.Mstar_LF = recon_cfg.get("Mstar", -23.28)
-            fprint(f"  Schechter params from config: M*={self.Mstar_LF}, α={self.alpha_LF}")
+                fprint(f"  Schechter params from config: M*={self.Mstar_LF}, α={self.alpha_LF}")
 
-        # Option to use zero H0_dipole for reconstruction (isotropic velocity field)
-        self.reconstruction_dipole_zero = recon_cfg.get("reconstruction_dipole_zero", False)
-        if self.reconstruction_dipole_zero:
-            fprint("  reconstruction_dipole_zero=True (isotropic velocity field)")
+            # Option to use zero H0_dipole for reconstruction (isotropic velocity field)
+            self.reconstruction_dipole_zero = recon_cfg.get("reconstruction_dipole_zero", False)
+            if self.reconstruction_dipole_zero:
+                fprint("  reconstruction_dipole_zero=True (isotropic velocity field)")
 
-        # LOS file for cluster positions
-        self.cluster_los_file = get_nested(
-            config, "io/Clusters/los_file",
-            "data/Clusters/los_Clusters_Carrick2015.hdf5")
+            # LOS file for cluster positions
+            self.cluster_los_file = get_nested(
+                config, "io/Clusters/los_file",
+                "data/Clusters/los_Clusters_Carrick2015.hdf5")
 
-        # Precompute reconstruction data
-        fprint(f"Loading galaxy catalogue: {self.galaxy_catalogue_path}")
-        self._precompute_reconstruction(recon_cfg)
+            # Precompute reconstruction data
+            fprint(f"Loading galaxy catalogue: {self.galaxy_catalogue_path}")
+            self._precompute_reconstruction(recon_cfg)
 
-        fprint(f"ClustersAnisModel initialized: relation={self.which_relation}, "
-               f"N={self.N_grid}, n_gal={len(self.precomputed.gal_z_obs)}")
+            fprint(f"ClustersAnisModel initialized: relation={self.which_relation}, "
+                   f"N={self.N_grid}, n_gal={len(self.precomputed.gal_z_obs)}")
 
     def _precompute_reconstruction(self, recon_cfg):
         """Load galaxy catalogue and precompute JAX reconstruction data."""
@@ -3266,17 +3281,22 @@ class ClustersAnisModel:
                 "logT_prior_std",
                 Uniform(0.0, data["max_logT"] - data["min_logT"]))
 
-        # Reconstruct LOS profiles (optionally with H0_dipole=0 for isotropic)
-        H0_dipole_recon = jnp.zeros(3) if self.reconstruction_dipole_zero else H0_dipole
-        _, los_density, los_velocity = compute_los_profiles_jax(
-            H0_dipole_recon, self.precomputed)
+        # Get LOS velocity profiles
+        if self.use_precomputed_los:
+            # Use precomputed LOS from data (like ClustersModel without z-space)
+            # data["los_velocity_r_grid"] has shape (n_field, n_gal, n_r)
+            los_velocity_r_grid = data["los_velocity_r_grid"]
+        else:
+            # Reconstruct LOS profiles via JAX (optionally with H0_dipole=0 for isotropic)
+            H0_dipole_recon = jnp.zeros(3) if self.reconstruction_dipole_zero else H0_dipole
+            _, los_density, los_velocity = compute_los_profiles_jax(
+                H0_dipole_recon, self.precomputed)
 
-        # los_density: (n_clusters, n_r) = 1 + delta
-        # los_velocity: (n_clusters, n_r) in km/s
+            # los_density: (n_clusters, n_r) = 1 + delta
+            # los_velocity: (n_clusters, n_r) in km/s
 
-        # Expand to field dimension for compatibility
-        los_density = los_density[None, ...]  # (1, n_clusters, n_r)
-        los_velocity = los_velocity[None, ...]  # (1, n_clusters, n_r)
+            # Expand to field dimension for compatibility
+            los_velocity = los_velocity[None, ...]  # (1, n_clusters, n_r)
 
         with plate("data", nsamples):
             if self.use_MNR:
@@ -3307,31 +3327,40 @@ class ClustersAnisModel:
             logdl_grid = self.distance2logdl(r_grid)
             logda_grid = self.distance2logda(r_grid)
 
-            # Interpolate LOS profiles to r_grid
-            # los_r is from precomputed, need to interpolate to data's r_grid
-            # los_density shape: (1, n_clusters_all, n_r_los)
-            # We need to select clusters that match data and interpolate to r_grid
-            los_r = self.precomputed.los_r  # (n_r_los,)
+            if self.use_precomputed_los:
+                # Already have los_velocity_r_grid from data
+                pass
+            else:
+                # Interpolate LOS profiles to r_grid
+                # los_r is from precomputed, need to interpolate to data's r_grid
+                # los_velocity shape: (1, n_clusters_all, n_r_los)
+                los_r = self.precomputed.los_r  # (n_r_los,)
 
-            # For now, assume cluster ordering matches (first n clusters)
-            # TODO: match clusters properly using RA/dec
-            n_data_clusters = nsamples
+                # For now, assume cluster ordering matches (first n clusters)
+                # TODO: match clusters properly using RA/dec
+                n_data_clusters = nsamples
 
-            # vmap over clusters (axis 0), interpolate each cluster's profile
-            def interp_profile(profile):
-                return jnp.interp(r_grid, los_r, profile)
+                # vmap over clusters (axis 0), interpolate each cluster's profile
+                def interp_profile(profile):
+                    return jnp.interp(r_grid, los_r, profile)
 
-            # Select first n_data_clusters and interpolate
-            # los_velocity[0] has shape (n_clusters_all, n_r_los)
-            los_velocity_subset = los_velocity[0, :n_data_clusters, :]
-            los_velocity_r_grid = vmap(interp_profile)(los_velocity_subset)
+                # Select first n_data_clusters and interpolate
+                # los_velocity[0] has shape (n_clusters_all, n_r_los)
+                los_velocity_subset = los_velocity[0, :n_data_clusters, :]
+                los_velocity_r_grid = vmap(interp_profile)(los_velocity_subset)
 
-            # Expand to field dimension
-            los_velocity_r_grid = los_velocity_r_grid[None, ...]
+                # Expand to field dimension
+                los_velocity_r_grid = los_velocity_r_grid[None, ...]
 
             # Distance prior (homogeneous Malmquist)
             lp_dist = log_prior_r_empirical(
                 r_grid, **kwargs_dist, Rmax_grid=r_grid[-1])[None, None, :]
+
+            # E(z) correction for scaling relations
+            if self.apply_Ez_correction:
+                logEz = jnp.log10(get_Ez(data["zcmb"], Om=self.Om))
+            else:
+                logEz = jnp.zeros_like(data["zcmb"])
 
             # Scaling relation likelihood
             if relation == "LT":
@@ -3340,7 +3369,7 @@ class ClustersAnisModel:
                     sigma_logF = jnp.sqrt(
                         sigma_logF**2 + B_LT**2 * data["e2_logT"])
 
-                logF_pred = (A_LT + B_LT * logT)[:, None] - jnp.log10(
+                logF_pred = (logEz + A_LT + B_LT * logT)[:, None] - jnp.log10(
                     4 * jnp.pi) - 2 * logdl_grid[None, :]
 
                 ll = Normal(logF_pred, sigma_logF[:, None]).log_prob(
@@ -3352,7 +3381,7 @@ class ClustersAnisModel:
                     sigma_logY = jnp.sqrt(
                         sigma_logY**2 + B_YT**2 * data["e2_logT"])
 
-                logY_pred = (A_YT + B_YT * logT)[:, None] - 2 * logda_grid[None, :]
+                logY_pred = (-logEz + A_YT + B_YT * logT)[:, None] - 2 * logda_grid[None, :]
 
                 ll = Normal(logY_pred, sigma_logY[:, None]).log_prob(
                     data["logY"][:, None])[None, ...]
@@ -3360,8 +3389,8 @@ class ClustersAnisModel:
             elif relation == "LTYT":
                 A_LT_vec = A_LT
                 A_YT_vec = A_YT
-                mL = (A_LT_vec + B_LT * logT)[:, None]
-                mY = (A_YT_vec + B_YT * logT)[:, None]
+                mL = (logEz + A_LT_vec + B_LT * logT)[:, None]
+                mY = (-logEz + A_YT_vec + B_YT * logT)[:, None]
 
                 mF = mL - jnp.log10(4 * jnp.pi) - 2.0 * logdl_grid[None, :]
                 my = mY - 2.0 * logda_grid[None, :]

@@ -304,7 +304,9 @@ class PVDataFrame:
             config_pv_model.get("stretch_los_with_zeropoint", False))
 
         # Also skip if H0 anisotropy priors are varying (requires z-space mapping)
-        if not skip_los_r_grid and config_priors:
+        # BUT: if use_precomputed_los is True, we need the LOS grid regardless
+        force_los_r_grid = config_pv_model.get("use_precomputed_los", False)
+        if not skip_los_r_grid and config_priors and not force_los_r_grid:
             h0_dip_prior = config_priors.get("H0_dipole", {})
             h0_quad_prior = config_priors.get("H0_quad", {})
             h0_dip_varying = (
