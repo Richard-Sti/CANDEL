@@ -1,8 +1,4 @@
-"""Compare JAX reconstruction against vField_0Runs interpolation.
-
-Tests that JAX reconstruction on 0Runs catalogue with matching Schechter params
-produces velocities consistent with vField_0Runs interpolation.
-"""
+"""Compare JAX reconstruction against Carrick dField_43Runs and vField_45Runs."""
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.interpolate import RegularGridInterpolator
@@ -11,10 +7,8 @@ import sys
 sys.path.insert(0, '/Users/yasin/code/CANDEL')
 
 # =============================================================================
-# Parameters (matching compare_lumweight_aquila.py)
+# Parameters
 # =============================================================================
-MSTAR = -23.22  # Lavaux & Hudson 2011
-ALPHA = -0.80   # Lavaux & Hudson 2011
 BOXSIZE = 400.0  # Mpc/h
 BETA = 0.43
 
@@ -25,20 +19,12 @@ CELL_VFIELD = BOXSIZE / N_VFIELD
 # =============================================================================
 # Step 1: Load JAX reconstruction via ClustersAnisModel
 # =============================================================================
-print("Loading ClustersAnisModel with 0Runs config...")
+print("Loading ClustersAnisModel with 43Runs config...")
 from candel.model.model import ClustersAnisModel
-from candel.field.jax_reconstruction import (
-    compute_los_profiles_jax,
-    compute_weights_jax,
-    apply_zoa_cloning,
-    cic_deposit_jax,
-    H0_BAR,
-    C_LIGHT,
-    Q0,
-)
+from candel.field.jax_reconstruction import compute_los_profiles_jax
 import jax.numpy as jnp
 
-config_path = "scripts/runs/config_jax_0Runs_aquila.toml"
+config_path = "scripts/runs/config_jax_43runs_test.toml"
 model = ClustersAnisModel(config_path)
 
 print(f"  Grid: N={model.N_grid}, BOX_SIDE={model.BOX_SIDE}")
@@ -57,49 +43,12 @@ los_r = np.array(model.precomputed.los_r)
 print(f"  JAX LOS shapes: rho_raw={los_rho_raw_jax.shape}, density={los_density_jax.shape}, velocity={los_velocity_jax.shape}")
 print(f"  r range: [{los_r.min():.1f}, {los_r.max():.1f}] Mpc/h")
 
-# =============================================================================
-# Step 1b: Compare raw rho cubes (CIC counts)
-# =============================================================================
-print("\nLoading Carrick raw rho cube...")
-rho_carrick = np.load("carrick_iterated_rho_raw_iso.npy")
-print(f"  Carrick rho: shape={rho_carrick.shape}, mean={rho_carrick.mean():.4f}, std={rho_carrick.std():.4f}")
-
-print("Computing JAX raw rho cube...")
-p = model.precomputed
-H0_dir = H0_BAR * (1.0 + jnp.dot(p.gal_rhat, H0_dipole))
-r_mpc = (C_LIGHT / H0_dir) * (p.gal_z_obs - (1.0 + Q0) / 2.0 * p.gal_z_obs**2)
-w_total = compute_weights_jax(
-    r_mpc, p.gal_K2Mpp, p.gal_m_b, p.gal_m_f,
-    p.alpha, p.Mstar, p.gal_cf, p.gal_cb, H0_dir
-)
-w_total = jnp.where(
-    (p.gal_flag_2mrs_mask == 1) & (p.gal_z_obs > p.z_2mrs_cutoff),
-    0.0,
-    w_total
-)
-w_total = jnp.where(p.gal_z_obs > p.z_rmax, 0.0, w_total)
-
-r_all, w_all, rhat_all = apply_zoa_cloning(
-    r_mpc, w_total, p.gal_rhat,
-    p.clone_source_idx, p.clone_rhat
-)
-positions = r_all[:, None] * rhat_all
-rho_jax = cic_deposit_jax(positions, w_all, p.N, p.dx, p.RMAX)
-rho_jax = np.array(rho_jax)
-print(f"  JAX rho: shape={rho_jax.shape}, mean={rho_jax.mean():.4f}, std={rho_jax.std():.4f}")
-
-if rho_carrick.shape == rho_jax.shape:
-    rho_corr = np.corrcoef(rho_carrick.ravel(), rho_jax.ravel())[0, 1]
-    print(f"  Raw rho cube correlation: {rho_corr:.4f}")
-else:
-    print("  Warning: rho cube shapes differ; skipping correlation.")
-
-# =============================================================================
-# Step 2: Load vField_0Runs and interpolate along cluster LOS
-# =============================================================================
-print("\nLoading vField_0Runs...")
-vfield = np.load('data/Carrick_reconstruction_2015/vField_0Runs.npy')
-# vField_0Runs is already in velocity units (km/s), NOT beta*v
+ # =============================================================================
+# Step 2: Load vField_45Runs and interpolate along cluster LOS
+ # =============================================================================
+print("\nLoading vField_45Runs...")
+vfield = np.load('data/Carrick_reconstruction_2015/vField_45Runs.npy')
+# vField files are stored as v/beta
 print(f"  Shape: {vfield.shape}")
 
 # Build interpolators
@@ -118,7 +67,7 @@ n_clusters = len(cluster_rhat)
 # Observer at center of box
 obs = np.array([BOXSIZE/2, BOXSIZE/2, BOXSIZE/2])
 
-print(f"Interpolating vField_0Runs along {n_clusters} cluster LOS...")
+print(f"Interpolating vField_45Runs along {n_clusters} cluster LOS...")
 los_velocity_vfield = np.zeros((n_clusters, len(los_r)))
 for i in range(n_clusters):
     # Positions along LOS
@@ -133,10 +82,10 @@ for i in range(n_clusters):
                               vz * cluster_rhat[i, 2])
 
 # =============================================================================
-# Step 2b: Load dField_0Runs and interpolate along cluster LOS
+# Step 2b: Load dField_43Runs and interpolate along cluster LOS
 # =============================================================================
-print("\nLoading dField_0Runs...")
-dfield = np.load('data/Carrick_reconstruction_2015/dField_0Runs.npy')
+print("\nLoading dField_43Runs...")
+dfield = np.load('data/Carrick_reconstruction_2015/dField_43Runs.npy')
 print(f"  Shape: {dfield.shape}")
 interp_den = RegularGridInterpolator((coords_v, coords_v, coords_v), dfield,
                                      bounds_error=False, fill_value=0.0)
@@ -144,18 +93,19 @@ los_density_dfield = np.zeros((n_clusters, len(los_r)))
 for i in range(n_clusters):
     pos = obs + los_r[:, None] * cluster_rhat[i]
     los_density_dfield[i] = interp_den(pos)
+# dField is delta; convert to 1+delta for comparison with LOS density
 los_density_dfield_1p = 1.0 + los_density_dfield
 
 # =============================================================================
 # Step 3: Compare statistics
 # =============================================================================
 print("\n" + "="*60)
-print("VELOCITY STATISTICS COMPARISON")
+print("VELOCITY STATISTICS COMPARISON (vField_45Runs)")
 print("="*60)
 print(f"{'Source':<25} {'Mean (km/s)':<15} {'Std (km/s)':<15}")
 print("-"*60)
 print(f"{'JAX reconstruction':<25} {los_velocity_jax.mean():>12.1f} {los_velocity_jax.std():>12.1f}")
-print(f"{'vField_0Runs interp':<25} {los_velocity_vfield.mean():>12.1f} {los_velocity_vfield.std():>12.1f}")
+print(f"{'vField_45Runs interp':<25} {los_velocity_vfield.mean():>12.1f} {los_velocity_vfield.std():>12.1f}")
 print("-"*60)
 
 # Correlation
@@ -163,11 +113,11 @@ mask = np.isfinite(los_velocity_jax) & np.isfinite(los_velocity_vfield)
 corr = np.corrcoef(los_velocity_jax[mask].ravel(), los_velocity_vfield[mask].ravel())[0, 1]
 print(f"Correlation coefficient: {corr:.4f}")
 
-print("\nDENSITY STATISTICS COMPARISON (dField_0Runs)")
+print("\nDENSITY STATISTICS COMPARISON (dField_43Runs)")
 print(f"{'Source':<25} {'Mean':<15} {'Std':<15}")
 print("-"*60)
 print(f"{'JAX reconstruction':<25} {los_density_jax.mean():>12.3f} {los_density_jax.std():>12.3f}")
-print(f"{'dField_0Runs interp':<25} {los_density_dfield_1p.mean():>12.3f} {los_density_dfield_1p.std():>12.3f}")
+print(f"{'dField_43Runs interp':<25} {los_density_dfield_1p.mean():>12.3f} {los_density_dfield_1p.std():>12.3f}")
 mask_den = np.isfinite(los_density_jax) & np.isfinite(los_density_dfield_1p)
 corr_den_field = np.corrcoef(los_density_jax[mask_den].ravel(),
                              los_density_dfield_1p[mask_den].ravel())[0, 1]
@@ -192,39 +142,37 @@ cluster_b = np.rad2deg(np.arcsin(cluster_rhat[:, 2]))
 
 for i, idx in enumerate(sample_idx):
     ax = axes[i]
-    ax.plot(los_r, los_velocity_vfield_scaled[idx], 'b-', lw=2, label='vField_0Runs interp')
+    ax.plot(los_r, los_velocity_vfield_scaled[idx], 'b-', lw=2, label='vField_45Runs interp')
     ax.plot(los_r, los_velocity_jax_scaled[idx], 'r--', lw=2, label='JAX reconstruction')
     ax.axhline(0, color='k', ls=':', alpha=0.5)
     ax.set_xlabel('r [Mpc/h]')
     ax.set_ylabel(r'$v_{los}$ [km/s]')
     ax.set_title(f'Cl {idx}: l={cluster_l[idx]:.0f}, b={cluster_b[idx]:.0f}')
-    ax.set_xlim(0, 200)
+    ax.set_xlim(0, 250)
     ax.grid(True, alpha=0.3)
     if i == 0:
         ax.legend(fontsize=8)
 
-plt.suptitle(f'JAX vs vField_0Runs (N=257, M*={MSTAR}, alpha={ALPHA}, beta={BETA}) | corr={corr:.3f}', fontsize=12)
+plt.suptitle(f'JAX vs vField_45Runs (N=257, beta={BETA}) | corr={corr:.3f}', fontsize=12)
 plt.tight_layout()
-plt.savefig('jax_vs_vfield0_comparison.png', dpi=150)
-print(f"\nSaved: jax_vs_vfield0_comparison.png")
+plt.savefig('jax_vs_vfield45_comparison_43runs.png', dpi=150)
+print(f"\nSaved: jax_vs_vfield45_comparison_43runs.png")
 plt.close()
 
 # =============================================================================
-# Step 5: Compare against carrick_raw_iso LOS file
+# Step 5: Compare against Carrick LOS file (beta=1 convention)
 # =============================================================================
 import h5py
 from scipy.interpolate import interp1d
 
-raw_los_file = 'data/Clusters/los_Clusters_carrick_raw_iso.hdf5'
-print(f"\nLoading raw LOS file: {raw_los_file}")
+raw_los_file = 'data/Clusters/los_Clusters_Carrick2015.hdf5'
+print(f"\nLoading Carrick LOS file: {raw_los_file}")
 
 with h5py.File(raw_los_file, 'r') as f:
     los_r_raw = f['r'][:]
-    los_rho_raw_carrick = f['los_rho_raw'][0]  # Raw CIC counts
     los_density_carrick = f['los_density'][0]  # 1+delta with psi+smoothing
     los_velocity_carrick = f['los_velocity'][0]  # v/beta from processed delta
     print(f"  Keys: {list(f.keys())}")
-    print(f"  los_rho_raw: {los_rho_raw_carrick.shape}")
     print(f"  los_density: {los_density_carrick.shape}")
     print(f"  los_velocity: {los_velocity_carrick.shape}")
     print(f"  r range: [{los_r_raw.min():.1f}, {los_r_raw.max():.1f}] Mpc/h")
@@ -243,14 +191,8 @@ else:
 
 # Statistics comparison
 print("\n" + "="*60)
-print("CARRICK_RAW_ISO LOS COMPARISON")
+print("CARRICK LOS COMPARISON")
 print("="*60)
-
-print(f"\nRaw rho (CIC counts):")
-print(f"{'Source':<25} {'Mean':<15} {'Std':<15}")
-print("-"*60)
-print(f"{'JAX':<25} {los_rho_raw_jax.mean():>12.4f} {los_rho_raw_jax.std():>12.4f}")
-print(f"{'carrick':<25} {los_rho_raw_carrick.mean():>12.4f} {los_rho_raw_carrick.std():>12.4f}")
 
 print(f"\n1+delta (processed):")
 print(f"{'Source':<25} {'Mean':<15} {'Std':<15}")
@@ -270,121 +212,75 @@ print(f"{'carrick':<25} {los_velocity_carrick_scaled.mean():>12.1f} {los_velocit
 np.random.seed(42)
 sample_idx_20 = np.random.choice(n_clusters, 20, replace=False)
 
-# Helper function to interpolate JAX data to carrick r grid
-def interp_to_raw_grid(jax_data, idx):
-    if r_grids_differ:
-        f_interp = interp1d(los_r, jax_data[idx], kind='linear',
-                           bounds_error=False, fill_value='extrapolate')
-        return f_interp(los_r_raw)
-    return jax_data[idx]
+# Use native grids for plotting when they differ
+los_r_jax = los_r
+los_r_carrick = los_r_raw
 
-# --- Figure 1: Raw rho (CIC counts) ---
-print("\nPlotting raw rho comparison...")
-fig, axes = plt.subplots(4, 5, figsize=(20, 16))
-axes = axes.flatten()
-
-for i, idx in enumerate(sample_idx_20):
-    ax = axes[i]
-    jax_rho = interp_to_raw_grid(los_rho_raw_jax, idx)
-    ax.plot(los_r_plot, los_rho_raw_carrick[idx], 'g-', lw=2, label='carrick')
-    ax.plot(los_r_plot, jax_rho, 'r--', lw=2, label='JAX')
-    ax.set_xlabel('r [Mpc/h]')
-    ax.set_ylabel(r'$\rho$ (CIC)')
-    ax.set_title(f'Cl {idx}: l={cluster_l[idx]:.0f}, b={cluster_b[idx]:.0f}')
-    ax.set_xlim(0, 200)
-    ax.grid(True, alpha=0.3)
-    if i == 0:
-        ax.legend(fontsize=8)
-
-# Compute correlation for raw rho
-if r_grids_differ:
-    los_rho_raw_jax_interp = np.zeros_like(los_rho_raw_carrick)
-    for i in range(n_clusters):
-        los_rho_raw_jax_interp[i] = interp_to_raw_grid(los_rho_raw_jax, i)
-    corr_rho = np.corrcoef(los_rho_raw_jax_interp.ravel(), los_rho_raw_carrick.ravel())[0, 1]
-else:
-    corr_rho = np.corrcoef(los_rho_raw_jax.ravel(), los_rho_raw_carrick.ravel())[0, 1]
-
-plt.suptitle(f'Raw rho (CIC counts): JAX vs carrick | corr={corr_rho:.3f}', fontsize=14)
-plt.tight_layout()
-plt.savefig('los_rho_raw_comparison.png', dpi=150)
-print(f"Saved: los_rho_raw_comparison.png")
-plt.close()
-
-# --- Figure 2: 1+delta (processed) ---
+# --- Figure 1: 1+delta (processed) ---
 print("\nPlotting 1+delta comparison...")
 fig, axes = plt.subplots(4, 5, figsize=(20, 16))
 axes = axes.flatten()
 
 for i, idx in enumerate(sample_idx_20):
     ax = axes[i]
-    jax_den = interp_to_raw_grid(los_density_jax, idx)
-    dfield_den = interp_to_raw_grid(los_density_dfield_1p, idx)
-    ax.plot(los_r_plot, los_density_carrick[idx], 'g-', lw=2, label='carrick')
-    ax.plot(los_r_plot, dfield_den, 'b-', lw=2, label='dField_0Runs')
-    ax.plot(los_r_plot, jax_den, 'r--', lw=2, label='JAX')
+    ax.plot(los_r_carrick, los_density_carrick[idx], 'g-', lw=2, label='Carrick LOS')
+    ax.plot(los_r_jax, los_density_dfield_1p[idx], 'b-', lw=2, label='dField_43Runs')
+    ax.plot(los_r_jax, los_density_jax[idx], 'r--', lw=2, label='JAX')
     ax.axhline(1, color='k', ls=':', alpha=0.5)
     ax.set_xlabel('r [Mpc/h]')
     ax.set_ylabel(r'$1 + \delta$')
     ax.set_title(f'Cl {idx}: l={cluster_l[idx]:.0f}, b={cluster_b[idx]:.0f}')
-    ax.set_xlim(0, 200)
+    ax.set_xlim(0, 250)
     ax.grid(True, alpha=0.3)
     if i == 0:
         ax.legend(fontsize=8)
 
-# Compute correlation for density
-if r_grids_differ:
-    los_density_jax_interp = np.zeros_like(los_density_carrick)
-    for i in range(n_clusters):
-        los_density_jax_interp[i] = interp_to_raw_grid(los_density_jax, i)
-    corr_den = np.corrcoef(los_density_jax_interp.ravel(), los_density_carrick.ravel())[0, 1]
-else:
-    corr_den = np.corrcoef(los_density_jax.ravel(), los_density_carrick.ravel())[0, 1]
+# Compute correlation for density on overlapping r-range
+n_overlap = min(los_density_jax.shape[1], los_density_carrick.shape[1])
+corr_den = np.corrcoef(
+    los_density_jax[:, :n_overlap].ravel(),
+    los_density_carrick[:, :n_overlap].ravel()
+)[0, 1]
 
-plt.suptitle(f'1+delta: JAX vs carrick_raw_iso vs dField_0Runs | corr={corr_den:.3f}', fontsize=14)
+plt.suptitle(f'1+delta: JAX vs Carrick LOS vs dField_43Runs | corr={corr_den:.3f}', fontsize=14)
 plt.tight_layout()
-plt.savefig('los_density_comparison.png', dpi=150)
-print(f"Saved: los_density_comparison.png")
+plt.savefig('los_density_comparison_43runs.png', dpi=150)
+print(f"Saved: los_density_comparison_43runs.png")
 plt.close()
 
-# --- Figure 3: Velocity ---
+# --- Figure 2: Velocity ---
 print("\nPlotting velocity comparison...")
 fig, axes = plt.subplots(4, 5, figsize=(20, 16))
 axes = axes.flatten()
 
 for i, idx in enumerate(sample_idx_20):
     ax = axes[i]
-    jax_vel = interp_to_raw_grid(los_velocity_jax_scaled, idx)
-    vfield_vel = interp_to_raw_grid(los_velocity_vfield_scaled, idx)
-    ax.plot(los_r_plot, los_velocity_carrick_scaled[idx], 'g-', lw=2, label='carrick')
-    ax.plot(los_r_plot, vfield_vel, 'b-', lw=2, label='vField_0Runs')
-    ax.plot(los_r_plot, jax_vel, 'r--', lw=2, label='JAX')
+    ax.plot(los_r_carrick, los_velocity_carrick_scaled[idx], 'g-', lw=2, label='Carrick LOS')
+    ax.plot(los_r_jax, los_velocity_vfield_scaled[idx], 'b-', lw=2, label='vField_45Runs')
+    ax.plot(los_r_jax, los_velocity_jax_scaled[idx], 'r--', lw=2, label='JAX')
     ax.axhline(0, color='k', ls=':', alpha=0.5)
     ax.set_xlabel('r [Mpc/h]')
     ax.set_ylabel(r'$v_{los}$ [km/s]')
     ax.set_title(f'Cl {idx}: l={cluster_l[idx]:.0f}, b={cluster_b[idx]:.0f}')
-    ax.set_xlim(0, 200)
+    ax.set_xlim(0, 250)
     ax.grid(True, alpha=0.3)
     if i == 0:
         ax.legend(fontsize=8)
 
-# Compute correlation for velocity
-if r_grids_differ:
-    los_velocity_jax_interp = np.zeros_like(los_velocity_carrick_scaled)
-    for i in range(n_clusters):
-        los_velocity_jax_interp[i] = interp_to_raw_grid(los_velocity_jax_scaled, i)
-    corr_vel = np.corrcoef(los_velocity_jax_interp.ravel(), los_velocity_carrick_scaled.ravel())[0, 1]
-else:
-    corr_vel = np.corrcoef(los_velocity_jax_scaled.ravel(), los_velocity_carrick_scaled.ravel())[0, 1]
+# Compute correlation for velocity on overlapping r-range
+n_overlap_v = min(los_velocity_jax_scaled.shape[1], los_velocity_carrick_scaled.shape[1])
+corr_vel = np.corrcoef(
+    los_velocity_jax_scaled[:, :n_overlap_v].ravel(),
+    los_velocity_carrick_scaled[:, :n_overlap_v].ravel()
+)[0, 1]
 
-plt.suptitle(f'Velocity: JAX vs carrick_raw_iso vs vField_0Runs (beta={BETA}) | corr={corr_vel:.3f}', fontsize=14)
+plt.suptitle(f'Velocity: JAX vs Carrick LOS vs vField_45Runs (beta={BETA}) | corr={corr_vel:.3f}', fontsize=14)
 plt.tight_layout()
-plt.savefig('los_velocity_comparison.png', dpi=150)
-print(f"Saved: los_velocity_comparison.png")
+plt.savefig('los_velocity_comparison_43runs.png', dpi=150)
+print(f"Saved: los_velocity_comparison_43runs.png")
 plt.close()
 
 print(f"\nCorrelations:")
-print(f"  Raw rho:  {corr_rho:.4f}")
 print(f"  Density:  {corr_den:.4f}")
 print(f"  Velocity: {corr_vel:.4f}")
 
@@ -538,6 +434,6 @@ if len(r_mpc_jax) > 0:
 
     plt.suptitle('Galaxy Catalogue: JAX vs carrick_iterated', fontsize=14)
     plt.tight_layout()
-    plt.savefig('catalogue_comparison.png', dpi=150)
-    print(f"\nSaved: catalogue_comparison.png")
+    plt.savefig('catalogue_comparison_43runs.png', dpi=150)
+    print(f"\nSaved: catalogue_comparison_43runs.png")
     plt.close()

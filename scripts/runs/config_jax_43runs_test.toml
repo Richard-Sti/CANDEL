@@ -48,10 +48,9 @@ sigma_v = 300.0
 kind = "aniso_reconstruction"
 
 # Malmquist bias grid settings
-# Note: JAX reconstruction has RMAX=200 Mpc, so v=0 for r > ~210 Mpc
-# Grid extends to 600 Mpc to cover z=0.2 clusters
-r_limits_malmquist = [0.1, 600]
-num_points_malmquist = 601
+# Match inference grid
+r_limits_malmquist = [0.001, 1401.0]
+num_points_malmquist = 1401
 
 ###############################################################################
 #                         JAX Reconstruction Settings                         #
@@ -59,11 +58,10 @@ num_points_malmquist = 601
 
 [jax_reconstruction]
 galaxy_catalogue = "data/Carrick_reconstruction_2015/2m++_43Runs.npy"
-N = 128
+N = 257
 BOX_SIDE = 400.0
 SIGMA_SMOOTH = 4.0
-alpha = -0.83
-Mstar = -23.28
+schechter_from_file = true
 beta = 0.43
 r0_decay_scale = 5.0
 reconstruction_dipole_zero = false
