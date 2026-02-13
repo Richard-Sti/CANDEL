@@ -16,7 +16,7 @@ chain_method = "sequential"
 seed = 44
 compute_log_density = true
 compute_evidence = false
-track_log_density_per_sample = true  # REQUIRED for cluster removal analysis
+track_log_density_per_sample = false  # Set true for cluster removal analysis
 num_chains_harmonic = 10
 skip_if_exists = false
 
@@ -30,7 +30,7 @@ which_A = "constant"
 A_per_pix_nside = 1
 
 r_limits_malmquist = [0.1, 1401]
-num_points_malmquist = 251
+num_points_malmquist = 501
 los_decay_scale = 5.0
 
 [model]
@@ -41,6 +41,15 @@ marginalize_eta = true
 [model.eta_grid]
 k_sigma = 5
 n_grid = 31
+
+# Fix logT hyperpriors to match mock generation values
+[model.priors.logT_prior_mean]
+dist = "delta"
+value = 0.0
+
+[model.priors.logT_prior_std]
+dist = "delta"
+value = 0.2
 
 [model.priors.h]
 dist = "delta"
@@ -110,7 +119,7 @@ high = 2.0
 #dist = "delta"
 #value = 350.0
 dist = "jeffreys"
-low = 300.0
+low = 450.0
 high = 600.0
 
 # Still no bulk flow Vext
@@ -126,11 +135,10 @@ value = [
     [0, 0],
 ]
 
-# ZEROPOINT DIPOLE - allow to vary (this is the dipole anisotropy)
+# ZEROPOINT DIPOLE - disabled (use H0_dipole instead)
 [model.priors.zeropoint_dipole]
-dist = "vector_uniform_fixed"
-low = 0.0
-high = 0.1
+dist = "delta"
+value = [0, 0, 0]
 
 [model.priors.zeropoint_quad]
 dist = "delta"
@@ -140,9 +148,11 @@ value = [
     [0, 0],
 ]
 
-[model.priors.dH0]
-dist = "delta"
-value = [0, 0, 0]
+# H0 DIPOLE - fractional δH/H (new parameterization matching mock generation)
+[model.priors.H0_dipole]
+dist = "vector_uniform_fixed"
+low = 0.0
+high = 0.15
 
 [model.priors.R_dist_emp]
 dist = "uniform"

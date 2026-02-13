@@ -353,18 +353,18 @@ def name2label(name):
         "b1": r"$b_1$",
         "b2": r"$b_2$",
         "beta": r"$\beta$",
-        "Vext_mag": r"$V_\mathrm{ext}$",
+        "Vext_mag": r"$|V_\mathrm{ext}|$",
         "Vext_ell": r"$\ell_\mathrm{ext}$",
         "Vext_b": r"$b_\mathrm{ext}$",
         "h": r"$h$",
         "a": r"$a$",
         "m1": r"$m_1$",
         "m2": r"$m_2$",
-        # Zeropoint (calibration) parameters - in magnitudes
-        "zeropoint_dipole_mag": r"$|\Delta A|$",
+        # Zeropoint (calibration) parameters - in dex
+        "zeropoint_dipole_mag": r"$|\Delta_{\rm ZP}|$",
         "zeropoint_dipole_ell": r"$\ell_{\mathrm{ZP}}$",
         "zeropoint_dipole_b": r"$b_{\mathrm{ZP}}$",
-        "zeropoint_pix": r"$\Delta A_{\mathrm{pix}}$",
+        "zeropoint_pix": r"$|\Delta_{\rm ZP}|_{\mathrm{pix}}$",
         # H0 anisotropy parameters - fractional δH
         "H0_dipole_mag": r"$|\delta H_0/H_0|$",
         "H0_dipole_ell": r"$\ell_{H_0}$",
@@ -393,7 +393,7 @@ def name2label(name):
         "sigma_log_theta": r"$\sigma_{\log \theta}$",
         "R_dust": r"$R_{\rm W1}$",
         "R_dist_emp": r"$R_{\rm dist}$",
-        "n_dist_emp": r"$n_{\rm dist}$",
+        "n_dist_emp": r"$q_{\rm dist}$",
         "p_dist_emp": r"$p_{\rm dist}$",
         "Rmax_dist_emp": r"$R_{\rm max, dist}$",
         "rho_corr": r"$\rho_{\rm corr}$",
@@ -407,7 +407,7 @@ def name2label(name):
         if len(parts) >= 2:
             bin_idx = parts[-1]
             if "mag" in name:
-                return rf"$V_{{\mathrm{{ext}},{bin_idx}}}$"
+                return rf"$|V_{{\mathrm{{ext}},{bin_idx}}}|$"
             elif "ell" in name:
                 return rf"$\ell_{{\mathrm{{ext}},{bin_idx}}}$"
             elif "b" in name:
@@ -420,7 +420,7 @@ def name2label(name):
         if len(parts) >= 2:
             bin_idx = parts[-1]
             if "mag" in name:
-                return rf"$\Delta A_{{\mathrm{{dip}},{bin_idx}}}$"
+                return rf"$|\Delta_{{\rm ZP}}|_{{\mathrm{{dip}},{bin_idx}}}$"
             elif "ell" in name:
                 return rf"$\ell_{{A,{bin_idx}}}$"
             elif "b" in name:
@@ -432,7 +432,7 @@ def name2label(name):
         parts = name.split("__")
         if len(parts) >= 2:
             bin_idx = parts[-1]
-            return rf"$\Delta A_{{\mathrm{{CL}},{bin_idx}}}$"
+            return rf"$|\Delta_{{\rm ZP}}|_{{\mathrm{{CL}},{bin_idx}}}$"
     
     if "/" in name:
         prefix, base = name.split("/", 1)
@@ -471,7 +471,7 @@ def name2labelgetdist(name):
         "b1": r"b_1",
         "b2": r"b_2",
         "beta": r"\beta",
-        "Vext_mag": r"V_\mathrm{ext}~\left[\mathrm{km}\,\mathrm{s}^{-1}\right]",  # noqa
+        "Vext_mag": r"|V_\mathrm{ext}|~\left[\mathrm{km}\,\mathrm{s}^{-1}\right]",  # noqa
         "Vext_ell": r"\ell_\mathrm{ext}~\left[\mathrm{deg}\right]",
         "Vext_ell_offset": r"\ell_\mathrm{ext} - 180~\left[\mathrm{deg}\right]",  # noqa
         "Vext_b":   r"b_\mathrm{ext}~\left[\mathrm{deg}\right]",
@@ -479,11 +479,11 @@ def name2labelgetdist(name):
         "a": r"a",
         "m1": r"m_1",
         "m2": r"m_2",
-        # Zeropoint (calibration) parameters - in magnitudes
-        "zeropoint_dipole_mag": r"|\Delta A|~\left[\mathrm{mag}\right]",         # noqa
+        # Zeropoint (calibration) parameters - in dex
+        "zeropoint_dipole_mag": r"|\Delta_{\rm ZP}|~\left[\mathrm{dex}\right]",         # noqa
         "zeropoint_dipole_ell": r"\ell_{\mathrm{ZP}}~\left[\mathrm{deg}\right]",  # noqa
         "zeropoint_dipole_b": r"b_{\mathrm{ZP}}~\left[\mathrm{deg}\right]",       # noqa
-        "zeropoint_pix": r"\Delta A_{\mathrm{pix}}~\left[\mathrm{mag}\right]",
+        "zeropoint_pix": r"|\Delta_{\rm ZP}|_{\mathrm{pix}}~\left[\mathrm{dex}\right]",
         # H0 anisotropy parameters - fractional δH
         "H0_dipole_mag": r"|\delta H_0/H_0|",
         "H0_dipole_ell": r"\ell_{H_0}~\left[\mathrm{deg}\right]",
@@ -513,7 +513,7 @@ def name2labelgetdist(name):
         "H0": r"H_0~\left[\mathrm{km}\,\mathrm{s}^{-1}\,\mathrm{Mpc}^{-1}\right]",  # noqa
         "dZP": r"\Delta_{\rm ZP}",
         "R_dist_emp": r"R~\left[h^{-1}\,\mathrm{Mpc}\right]",
-        "n_dist_emp": r"n",
+        "n_dist_emp": r"q",
         "p_dist_emp": r"p",
         "rho_corr": r"\rho_{\rm corr}",
         "dH_over_H_dipole": r"\Delta H_0/H_0",
@@ -698,12 +698,12 @@ def plot_Vext_rad_corner(samples, show_fig=True, filename=None, smooth=1):
 
 def plot_corner_getdist(samples_list, labels=None, cols=None, show_fig=True,
                         filename=None, keys=None, fontsize=None,
-                        legend_fontsize=None, filled=True,
+                        legend_fontsize=None, axes_fontsize=None, filled=True,
                         apply_ell_offset=False, ell_zero=180,
                         mag_range=[0, None], ell_range=[0, 360],
                         b_range=[-90, 90], points=None,
                         ranges={}, truths=None, line_args=None,
-                        contour_args=None):
+                        contour_args=None, title=None):
     """Plot a GetDist triangle plot for one or more posterior samples."""
 
     if isinstance(samples_list, dict):
@@ -783,7 +783,7 @@ def plot_corner_getdist(samples_list, labels=None, cols=None, show_fig=True,
     if fontsize is not None:
         settings.lab_fontsize = fontsize
         settings.legend_fontsize = legend_fontsize if legend_fontsize is not None else fontsize  # noqa
-        settings.axes_fontsize = fontsize - 1
+        settings.axes_fontsize = axes_fontsize if axes_fontsize is not None else fontsize - 1
         settings.title_limit_fontsize = fontsize - 1
 
     if line_args is not None:
@@ -864,24 +864,56 @@ def plot_corner_getdist(samples_list, labels=None, cols=None, show_fig=True,
                         label=label,
                     )[0]
                     if label:
-                        legend_loc = "upper right"
-                        legend_bbox = None
+                        # Check if text label mode is requested
+                        text_label = False
                         if isinstance(point, dict):
-                            legend_loc = point.get("legend_loc", legend_loc)
-                            legend_bbox = point.get("legend_bbox", legend_bbox)
-                        if legend_bbox is not None:
-                            g.fig.legend(
-                                handles=[line],
-                                labels=[label],
-                                loc=legend_loc,
-                                bbox_to_anchor=legend_bbox,
-                            )
+                            text_label = point.get("text_label", False)
+
+                        if text_label:
+                            # Add text annotation
+                            text_fontsize = point.get("text_fontsize", 10) if isinstance(point, dict) else 10
+                            text_pos = point.get("text_pos", None) if isinstance(point, dict) else None
+                            if text_pos is not None:
+                                # Place at fixed position in axes coordinates
+                                ax.text(
+                                    text_pos[0], text_pos[1],
+                                    label,
+                                    transform=ax.transAxes,
+                                    fontsize=text_fontsize,
+                                    color=color,
+                                    ha="center",
+                                    va="top",
+                                )
+                            else:
+                                # Place next to the marker using offset
+                                text_offset = point.get("text_offset", (5, 5)) if isinstance(point, dict) else (5, 5)
+                                ax.annotate(
+                                    label,
+                                    xy=(x_val, y_val),
+                                    xytext=text_offset,
+                                    textcoords="offset points",
+                                    fontsize=text_fontsize,
+                                    color=color,
+                                )
                         else:
-                            ax.legend(
-                                handles=[line],
-                                labels=[label],
-                                loc=legend_loc,
-                            )
+                            legend_loc = "upper right"
+                            legend_bbox = None
+                            if isinstance(point, dict):
+                                legend_loc = point.get("legend_loc", legend_loc)
+                                legend_bbox = point.get("legend_bbox", legend_bbox)
+                            if legend_bbox is not None:
+                                g.fig.legend(
+                                    handles=[line],
+                                    labels=[label],
+                                    loc=legend_loc,
+                                    bbox_to_anchor=legend_bbox,
+                                )
+                            else:
+                                ax.legend(
+                                    handles=[line],
+                                    labels=[label],
+                                    loc=legend_loc,
+                                )
                     plotted_pairs.add((ix, iy))
 
         if truths is not None:
@@ -919,6 +951,9 @@ def plot_corner_getdist(samples_list, labels=None, cols=None, show_fig=True,
                                     y_val, color=color, linestyle=linestyle,
                                     lw=lw, label=label)
 
+        if title is not None:
+            g.fig.suptitle(title, fontsize=fontsize if fontsize else 14, y=1.02)
+
         if filename is not None:
             fprint(f"[INFO] Saving GetDist triangle plot to: {filename}")
             g.export(filename, dpi=450)
@@ -930,12 +965,12 @@ def plot_corner_getdist(samples_list, labels=None, cols=None, show_fig=True,
 
 
 def plot_corner_from_hdf5(fnames, keys=None, labels=None, cols=None,
-                          fontsize=None, legend_fontsize=None, filled=True,
-                          show_fig=True, filename=None, apply_ell_offset=False,
-                          ell_zero=180, mag_range=[0, None],
+                          fontsize=None, legend_fontsize=None, axes_fontsize=None,
+                          filled=True, show_fig=True, filename=None,
+                          apply_ell_offset=False, ell_zero=180, mag_range=[0, None],
                           ell_range=[0, 360], b_range=[-90, 90],
                           points=None, ranges={}, truths=None,
-                          line_args=None, contour_args=None):
+                          line_args=None, contour_args=None, title=None):
     """
     Plot a triangle plot from one or more HDF5 files containing posterior
     samples.
@@ -962,6 +997,7 @@ def plot_corner_from_hdf5(fnames, keys=None, labels=None, cols=None,
         cols=cols,
         fontsize=fontsize,
         legend_fontsize=legend_fontsize,
+        axes_fontsize=axes_fontsize,
         filled=filled,
         show_fig=show_fig,
         filename=filename,
@@ -975,6 +1011,7 @@ def plot_corner_from_hdf5(fnames, keys=None, labels=None, cols=None,
         truths=truths,
         line_args=line_args,
         contour_args=contour_args,
+        title=title,
     )
 
 
@@ -1184,15 +1221,15 @@ def plot_radial_profiles(samples, model, r_eval_size=1000, show_fig=True,
         plt.close(fig)
 
 
-def _add_equator_labels(lon_step=60, lat_step=30):
+def _add_equator_labels(lon_step=60, lat_step=30, fontsize=9):
     for lon in np.arange(0, 360, lon_step):
         hp.projtext(lon, -2.0, f"{lon:d}°", lonlat=True,
-                    fontsize=9, ha="center", va="top")
+                    fontsize=fontsize, ha="center", va="top")
     for lat in np.arange(-60, 61, lat_step):
         if lat == 0:
             continue
         hp.projtext(-178.0, lat, f"{lat:+d}°", lonlat=True,
-                    fontsize=9, ha="right", va="center")
+                    fontsize=fontsize, ha="right", va="center")
 
 
 def _upsample_map(map_lo, nside_plot, *, nest=False):
@@ -1482,12 +1519,19 @@ def plot_Vext_radmag(samples, model, r_eval_size=1000, show_fig=True,
 def plot_Vext_moll(samples_pix, fname_out, coord_in="C", coord_out="G",
                    lon_step=60, lat_step=30, eps=1e-12, nside_plot=None,
                    remove_coord_label=True, quantity_label=r"$V_{\mathrm{ext}}$",
-                   unit_label=r"$\mathrm{km\ s^{-1}}$"):
+                   unit_label=r"$\mathrm{km\ s^{-1}}$", snr_only=False,
+                   fontsize=None):
     """
-    Plot three stacked Mollweide maps from MCMC samples (Nsamples, Npix):
+    Plot Mollweide maps from MCMC samples (Nsamples, Npix).
+
+    If snr_only=False (default), plots three stacked maps:
       row 1: mean
       row 2: std
-      row 3: mean/std
+      row 3: mean/std (SNR)
+
+    If snr_only=True, plots only the SNR (significance) panel with label
+    "Significance of anisotropy [$\\sigma$]".
+
     If nside_plot > nside(map), upsample via healpy bilinear interpolation.
     """
     mean_map = np.nanmean(samples_pix, axis=0)
@@ -1497,61 +1541,82 @@ def plot_Vext_moll(samples_pix, fname_out, coord_in="C", coord_out="G",
     if nside_plot is None:
         nside_plot = 4 * hp.npix2nside(mean_map.size)
 
-    # Upsample (optional)
-    # mean_map = _upsample_map(mean_map, nside_plot)
-    # std_map = _upsample_map(std_map, nside_plot)
-    # snr_map = _upsample_map(snr_map, nside_plot)
-
     coord_arg = coord_out if coord_in == coord_out else [coord_in, coord_out]
-
-    plt.figure(figsize=(7, 10))
 
     def _format_unit(prefix):
         if unit_label:
             return f"{prefix} {quantity_label} [{unit_label}]"
         return f"{prefix} {quantity_label}"
 
-    # Mean
-    hp.mollview(mean_map, nest=False, coord=coord_arg, notext=False,
-                xsize=2000, cbar=True,
-                unit=_format_unit("Mean"),
-                title="", sub=311)
-    hp.graticule(dpar=lat_step, dmer=lon_step)
-    if remove_coord_label:
-        ax = plt.gca()
-        for t in ax.texts:
-            if "Galactic" in t.get_text() or "Equatorial" in t.get_text():
-                t.set_visible(False)
-    _add_equator_labels(lon_step, lat_step)
+    if snr_only:
+        # Single panel: SNR only
+        plt.figure(figsize=(7, 4))
+        hp.mollview(snr_map, nest=False, coord=coord_arg, notext=False,
+                    xsize=2000, cbar=True,
+                    unit=r"Significance of anisotropy [$\sigma$]",
+                    title="", format="%.1f")
+        hp.graticule(dpar=lat_step, dmer=lon_step)
+        if remove_coord_label:
+            ax = plt.gca()
+            for t in ax.texts:
+                if "Galactic" in t.get_text() or "Equatorial" in t.get_text():
+                    t.set_visible(False)
+        # Apply fontsize if specified
+        if fontsize is not None:
+            fig = plt.gcf()
+            for ax in fig.axes:
+                # Colorbar label and ticks
+                if hasattr(ax, 'images') or 'colorbar' in str(type(ax)).lower():
+                    ax.set_ylabel(ax.get_ylabel(), fontsize=fontsize)
+                    ax.tick_params(labelsize=fontsize - 2)
+            _add_equator_labels(lon_step, lat_step, fontsize=fontsize - 2)
+        else:
+            _add_equator_labels(lon_step, lat_step)
+    else:
+        # Three panels: mean, std, SNR
+        plt.figure(figsize=(7, 10))
 
-    # Std
-    hp.mollview(std_map, nest=False, coord=coord_arg, notext=False,
-                xsize=2000, cbar=True,
-                unit=_format_unit("Std"),
-                title="", sub=312)
-    hp.graticule(dpar=lat_step, dmer=lon_step)
-    if remove_coord_label:
-        ax = plt.gca()
-        for t in ax.texts:
-            if "Galactic" in t.get_text() or "Equatorial" in t.get_text():
-                t.set_visible(False)
-    _add_equator_labels(lon_step, lat_step)
+        # Mean
+        hp.mollview(mean_map, nest=False, coord=coord_arg, notext=False,
+                    xsize=2000, cbar=True,
+                    unit=_format_unit("Mean"),
+                    title="", sub=311)
+        hp.graticule(dpar=lat_step, dmer=lon_step)
+        if remove_coord_label:
+            ax = plt.gca()
+            for t in ax.texts:
+                if "Galactic" in t.get_text() or "Equatorial" in t.get_text():
+                    t.set_visible(False)
+        _add_equator_labels(lon_step, lat_step)
 
-    # Mean / Std
-    hp.mollview(snr_map, nest=False, coord=coord_arg, notext=False,
-                xsize=2000, cbar=True,
-                unit=f"SNR {quantity_label}",
-                title="", sub=313)
-    hp.graticule(dpar=lat_step, dmer=lon_step)
-    if remove_coord_label:
-        ax = plt.gca()
-        for t in ax.texts:
-            if "Galactic" in t.get_text() or "Equatorial" in t.get_text():
-                t.set_visible(False)
-    _add_equator_labels(lon_step, lat_step)
+        # Std
+        hp.mollview(std_map, nest=False, coord=coord_arg, notext=False,
+                    xsize=2000, cbar=True,
+                    unit=_format_unit("Std"),
+                    title="", sub=312)
+        hp.graticule(dpar=lat_step, dmer=lon_step)
+        if remove_coord_label:
+            ax = plt.gca()
+            for t in ax.texts:
+                if "Galactic" in t.get_text() or "Equatorial" in t.get_text():
+                    t.set_visible(False)
+        _add_equator_labels(lon_step, lat_step)
 
-    # Add padding between rows
-    plt.subplots_adjust(hspace=0.35)
+        # Mean / Std
+        hp.mollview(snr_map, nest=False, coord=coord_arg, notext=False,
+                    xsize=2000, cbar=True,
+                    unit=f"SNR {quantity_label}",
+                    title="", sub=313)
+        hp.graticule(dpar=lat_step, dmer=lon_step)
+        if remove_coord_label:
+            ax = plt.gca()
+            for t in ax.texts:
+                if "Galactic" in t.get_text() or "Equatorial" in t.get_text():
+                    t.set_visible(False)
+        _add_equator_labels(lon_step, lat_step)
+
+        # Add padding between rows
+        plt.subplots_adjust(hspace=0.35)
 
     plt.savefig(fname_out, dpi=450, bbox_inches="tight")
     fprint(f"saving a Mollweide map to {fname_out}")

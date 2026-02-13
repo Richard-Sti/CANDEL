@@ -584,6 +584,30 @@ def format_val_err(val: Optional[float], err: Optional[float],
     return f"${val:{fmt}} \\pm {err:{fmt}}$"
 
 
+def get_jeffreys_preference(delta_lnZ: Optional[float]) -> str:
+    """Convert delta lnZ to Jeffreys scale preference label.
+
+    Jeffreys scale:
+    - delta_lnZ < 0: Disfavoured
+    - 0 <= delta_lnZ < 1: Negligible
+    - 1 <= delta_lnZ < 2.5: Weak
+    - 2.5 <= delta_lnZ < 5: Moderate
+    - delta_lnZ >= 5: Strong
+    """
+    if delta_lnZ is None:
+        return r"\textemdash"
+    if delta_lnZ < 0:
+        return "Disfavoured"
+    elif delta_lnZ < 1:
+        return "Negligible"
+    elif delta_lnZ < 2.5:
+        return "Weak"
+    elif delta_lnZ < 5:
+        return "Moderate"
+    else:
+        return "Strong"
+
+
 def format_angle(val: Optional[float], err: Optional[float],
                   decimals: int = 0) -> str:
     """Format an angle (without degree symbol - put in header)."""
@@ -669,9 +693,9 @@ def generate_table1_dipoles(results: list[RunResult],
     models = ["dipVext", "dipH0", "dipA"]  # No base row
 
     lines = []
-    lines.append(r"\begin{tabular}{|c|c|l|c|c|c|c|}")
+    lines.append(r"\begin{tabular}{|c|c|l|c|c|c|c|c|}")
     lines.append(r"\hline\hline")
-    lines.append(r"Relation & Recon & Model & Amplitude & $\ell$ [$^\circ$] & $b$ [$^\circ$] & $\Delta\ln\mathcal{Z}$ \\")
+    lines.append(r"Relation & Velocity field & Model & Amplitude & $\ell$ [$^\circ$] & $b$ [$^\circ$] & $\Delta\ln\mathcal{Z}$ & Preference \\")
     lines.append(r"\hline\hline")
 
     for rel in relations:
@@ -767,27 +791,29 @@ def generate_table1_dipoles(results: list[RunResult],
                     ell_str = r"\textemdash"
                     b_str = r"\textemdash"
 
-                # Delta lnZ
+                # Delta lnZ and preference
                 if r is not None and base is not None:
                     dlnZ, dlnZ_err = compute_delta_lnZ(r, base, is_base=False)
                     dlnZ_str = format_val_err(dlnZ, dlnZ_err)
+                    pref_str = get_jeffreys_preference(dlnZ)
                 else:
                     dlnZ_str = r"\textemdash"
+                    pref_str = r"\textemdash"
 
-                lines.append(f"{rel_col} & {recon_col} & {model_col} & {amp_str} & {ell_str} & {b_str} & {dlnZ_str} \\\\")
+                lines.append(f"{rel_col} & {recon_col} & {model_col} & {amp_str} & {ell_str} & {b_str} & {dlnZ_str} & {pref_str} \\\\")
 
             # Horizontal line between reconstructions
             if recon != recons[-1]:
-                lines.append(r"\cline{2-7}")
+                lines.append(r"\cline{2-8}")
 
         # Bold double line between relations
         if rel != relations[-1]:
             lines.append(r"\hline\hline")
 
-    lines.append(r"\hline\hline")
+    lines.append(r"\hline")
     lines.append(r"\end{tabular}")
 
-    write_table("\n".join(lines), output_path, landscape=True)
+    write_table("\n".join(lines), output_path, standalone=False)
 
 
 # =============================================================================
@@ -829,7 +855,7 @@ def generate_table2_beyond_dipoles(results: list[RunResult],
     recon_labels = [RECON_LABELS_SHORT_FIDUCIAL[r] for r in RECONSTRUCTIONS]  # Use fiducial labels
 
     lines = []
-    lines.append(r"\begin{tabular}{|l|ccc|}")
+    lines.append(r"\begin{tabular}{|l|c|c|c|}")
     lines.append(r"\hline\hline")
     lines.append(r"Model & " + " & ".join(recon_labels) + r" \\")
     lines.append(r"\hline\hline")
@@ -861,7 +887,7 @@ def generate_table2_beyond_dipoles(results: list[RunResult],
     lines.append(r"\hline")
     lines.append(r"\end{tabular}")
 
-    write_table("\n".join(lines), output_path)
+    write_table("\n".join(lines), output_path, standalone=False)
 
 
 # =============================================================================
@@ -932,7 +958,7 @@ def generate_table_full_evidence(results: list[RunResult],
     lines.append(r"\hline")
     lines.append(r"\end{tabular}")
 
-    write_table("\n".join(lines), output_path, landscape=True)
+    write_table("\n".join(lines), output_path, standalone=False)
 
 
 # =============================================================================
@@ -952,12 +978,12 @@ def generate_appendix_radial(results: list[RunResult],
     recons = RECONSTRUCTIONS
     recon_pretty_map = RECON_LABELS_SHORT
 
-    n_bins = 5  # Number of radial bins
+    n_bins = 4  # Number of radial bins
 
     lines = []
-    lines.append(r"\begin{tabular}{|ll|ccccc|cc|c|}")
+    lines.append(r"\begin{tabular}{|ll|cccc|cc|c|}")
     lines.append(r"\hline\hline")
-    lines.append(r"Rel. & Recon & $V_0$ & $V_1$ & $V_2$ & $V_3$ & $V_4$ & $\ell$ & $b$ & $\Delta\ln\mathcal{Z}$ \\")
+    lines.append(r"Rel. & Recon & $V_0$ & $V_1$ & $V_2$ & $V_3$ & $\ell$ & $b$ & $\Delta\ln\mathcal{Z}$ \\")
     lines.append(r"\hline\hline")
 
     for rel in relations:
@@ -1039,7 +1065,7 @@ def generate_appendix_radial(results: list[RunResult],
     lines.append(r"\hline")
     lines.append(r"\end{tabular}")
 
-    write_table("\n".join(lines), output_path, landscape=False)
+    write_table("\n".join(lines), output_path, standalone=False)
 
 
 def generate_appendix_radial_free_dir(results: list[RunResult],
@@ -1056,13 +1082,13 @@ def generate_appendix_radial_free_dir(results: list[RunResult],
     recons = RECONSTRUCTIONS
     recon_pretty_map = RECON_LABELS_SHORT
 
-    n_bins = 5  # Number of radial bins
+    n_bins = 4  # Number of radial bins
 
     lines = []
     # Table with magnitudes and directions on separate rows
-    lines.append(r"\begin{tabular}{|ll|ccccc|c|}")
+    lines.append(r"\begin{tabular}{|ll|cccc|c|}")
     lines.append(r"\hline\hline")
-    lines.append(r"Rel. & Recon & Bin 0 & Bin 1 & Bin 2 & Bin 3 & Bin 4 & $\Delta\ln\mathcal{Z}$ \\")
+    lines.append(r"Rel. & Recon & Bin 0 & Bin 1 & Bin 2 & Bin 3 & $\Delta\ln\mathcal{Z}$ \\")
     lines.append(r"\hline\hline")
 
     for rel in relations:
@@ -1144,7 +1170,7 @@ def generate_appendix_radial_free_dir(results: list[RunResult],
     lines.append(r"\hline")
     lines.append(r"\end{tabular}")
 
-    write_table("\n".join(lines), output_path, landscape=False)
+    write_table("\n".join(lines), output_path, standalone=False)
 
 
 # =============================================================================
@@ -1263,7 +1289,7 @@ def generate_appendix_pixel(results: list[RunResult],
     lines.append(r"\hline\hline")
     lines.append(r"\end{tabular}")
 
-    write_table("\n".join(lines), output_path, landscape=False)
+    write_table("\n".join(lines), output_path, standalone=False)
 
 
 # =============================================================================
@@ -1380,40 +1406,57 @@ def generate_appendix_quadrupole(results: list[RunResult],
                         dlnZ_str = format_val_err(dlnZ, dlnZ_err)
                     else:
                         dlnZ_str = r"\textemdash"
-                else:
-                    # Zeropoint/H0 models have different parameter names
-                    # Use upper limit detection for amplitudes (no units in table)
-                    # Try new naming first (H0_dipole_mag), then legacy (dH_over_H_dipole)
+                elif model == "quadH0":
+                    # H0 quadrupole model uses H0_* naming
                     vdip_samples = read_samples_from_hdf5(r.fname, "H0_dipole_mag")
-                    if vdip_samples is None:
-                        vdip_samples = read_samples_from_hdf5(r.fname, "dH_over_H_dipole")
-                    if vdip_samples is None:
-                        vdip_samples = read_samples_from_hdf5(r.fname, "zeropoint_dipole_mag")
                     _, vdip_prior_max = read_prior_bounds_from_toml(r.fname, "H0_dipole")
-                    if vdip_prior_max is None:
-                        _, vdip_prior_max = read_prior_bounds_from_toml(r.fname, "zeropoint_dipole")
                     vdip_str = format_amplitude_constraint(
                         vdip_samples, 0.0, vdip_prior_max,
                         fmt=".1f", unit="", scale=100.0
                     )
 
-                    vquad_samples = read_samples_from_hdf5(r.fname, "dH_over_H_quad")
-                    if vquad_samples is None:
-                        vquad_samples = read_samples_from_hdf5(r.fname, "zeropoint_quad_mag")
+                    vquad_samples = read_samples_from_hdf5(r.fname, "H0_quad_mag")
+                    _, vquad_prior_max = read_prior_bounds_from_toml(r.fname, "H0_quad")
+                    vquad_str = format_amplitude_constraint(
+                        vquad_samples, 0.0, vquad_prior_max,
+                        fmt=".1f", unit="", scale=100.0
+                    )
+
+                    ell, ell_err = r.get_param_with_err("H0_dipole_ell")
+                    b, b_err = r.get_param_with_err("H0_dipole_b")
+                    l1, l1_err, b1, b1_err = get_quadrupole_galactic_direction(r.fname, "H0_quad", 1)
+                    l2, l2_err, b2, b2_err = get_quadrupole_galactic_direction(r.fname, "H0_quad", 2)
+
+                    ell_str = format_val_err(ell, ell_err, ".0f") if ell is not None else r"\textemdash"
+                    b_str = format_val_err(b, b_err, ".0f") if b is not None else r"\textemdash"
+                    l1_str = format_val_err(l1, l1_err, ".0f") if l1 is not None else r"\textemdash"
+                    b1_str = format_val_err(b1, b1_err, ".0f") if b1 is not None else r"\textemdash"
+                    l2_str = format_val_err(l2, l2_err, ".0f") if l2 is not None else r"\textemdash"
+                    b2_str = format_val_err(b2, b2_err, ".0f") if b2 is not None else r"\textemdash"
+
+                    if base is not None:
+                        dlnZ, dlnZ_err = compute_delta_lnZ(r, base)
+                        dlnZ_str = format_val_err(dlnZ, dlnZ_err)
+                    else:
+                        dlnZ_str = r"\textemdash"
+                else:
+                    # quadA model uses zeropoint_* naming
+                    vdip_samples = read_samples_from_hdf5(r.fname, "zeropoint_dipole_mag")
+                    _, vdip_prior_max = read_prior_bounds_from_toml(r.fname, "zeropoint_dipole")
+                    vdip_str = format_amplitude_constraint(
+                        vdip_samples, 0.0, vdip_prior_max,
+                        fmt=".1f", unit="", scale=100.0
+                    )
+
+                    vquad_samples = read_samples_from_hdf5(r.fname, "zeropoint_quad_mag")
                     _, vquad_prior_max = read_prior_bounds_from_toml(r.fname, "zeropoint_quad")
                     vquad_str = format_amplitude_constraint(
                         vquad_samples, 0.0, vquad_prior_max,
                         fmt=".1f", unit="", scale=100.0
                     )
 
-                    # Try new naming first, then legacy
-                    ell, ell_err = r.get_param_with_err("H0_dipole_ell")
-                    if ell is None:
-                        ell, ell_err = r.get_param_with_err("zeropoint_dipole_ell")
-                    b, b_err = r.get_param_with_err("H0_dipole_b")
-                    if b is None:
-                        b, b_err = r.get_param_with_err("zeropoint_dipole_b")
-                    # Get quadrupole directions in Galactic coordinates
+                    ell, ell_err = r.get_param_with_err("zeropoint_dipole_ell")
+                    b, b_err = r.get_param_with_err("zeropoint_dipole_b")
                     l1, l1_err, b1, b1_err = get_quadrupole_galactic_direction(r.fname, "zeropoint_quad", 1)
                     l2, l2_err, b2, b2_err = get_quadrupole_galactic_direction(r.fname, "zeropoint_quad", 2)
 
@@ -1424,7 +1467,6 @@ def generate_appendix_quadrupole(results: list[RunResult],
                     l2_str = format_val_err(l2, l2_err, ".0f") if l2 is not None else r"\textemdash"
                     b2_str = format_val_err(b2, b2_err, ".0f") if b2 is not None else r"\textemdash"
 
-                    # Delta lnZ
                     if base is not None:
                         dlnZ, dlnZ_err = compute_delta_lnZ(r, base)
                         dlnZ_str = format_val_err(dlnZ, dlnZ_err)
@@ -1444,7 +1486,7 @@ def generate_appendix_quadrupole(results: list[RunResult],
     lines.append(r"\hline\hline")
     lines.append(r"\end{tabular}")
 
-    write_table("\n".join(lines), output_path, landscape=False)
+    write_table("\n".join(lines), output_path, standalone=False)
 
 
 # =============================================================================
@@ -1573,7 +1615,7 @@ def generate_appendix_mixed_dipoles(results: list[RunResult],
     lines.append(r"\hline\hline")
     lines.append(r"\end{tabular}")
 
-    write_table("\n".join(lines), output_path, landscape=False)
+    write_table("\n".join(lines), output_path, standalone=False)
 
 
 # =============================================================================

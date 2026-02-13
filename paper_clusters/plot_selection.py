@@ -133,7 +133,7 @@ def main():
                 continue
 
         ax.set_ylabel(r"$\pi(r)$")
-        ax.set_title(config["title"], loc="right", fontsize=10)
+        ax.set_title(config["title"], loc="right", fontsize=12)
         ax.set_xlim(R_MIN, R_MAX)
         ax.set_ylim(bottom=0)
 
@@ -141,11 +141,11 @@ def main():
         ax2 = ax.twinx()
         ax2.hist(cluster_radii, bins=30, range=(R_MIN, R_MAX),
                  alpha=0.3, color='gray', edgecolor='gray', linewidth=0.5)
-        ax2.set_ylabel("Count", color='gray', fontsize=9)
-        ax2.tick_params(axis='y', labelcolor='gray', labelsize=8)
+        ax2.set_ylabel("Count", color='gray', fontsize=11)
+        ax2.tick_params(axis='y', labelcolor='gray', labelsize=10)
 
     axes[-1].set_xlabel(r"$r$ [Mpc/$h$]")
-    axes[0].legend(frameon=False, loc="upper right", fontsize=9)
+    axes[0].legend(frameon=False, loc="upper right", fontsize=11)
 
     fig.tight_layout()
     fig.savefig(str(get_figure_path("selection_function.pdf")))

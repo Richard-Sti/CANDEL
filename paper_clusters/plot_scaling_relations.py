@@ -100,7 +100,7 @@ def main():
     ax.set_xlabel(r'$\log_{10} T\ \mathrm{[keV]}$')
     ax.set_ylabel(r'$\log_{10} Y_{\mathrm{SZ}}\ \mathrm{[kpc^2]}$')
     ax.grid(False)
-    ax.legend(frameon=False)
+    # Legend removed from right panel per reviewer comment
 
     plt.tight_layout()
     plt.savefig(get_figure_path('relations.pdf'), dpi=300)

@@ -27,22 +27,22 @@ RECONSTRUCTIONS = ["Carrick2015", "manticore", "Vext"]
 
 # Display names for plots/tables
 RECON_LABELS = {
-    "Vext": "No reconstruction",
-    "Carrick2015": "Carrick2015 (fiducial model)",
+    "Vext": "No velocity field",
+    "Carrick2015": "Carrick2015",
     "manticore": "Manticore",
 }
 
 # Short labels for tables
 RECON_LABELS_SHORT = {
-    "Vext": "No Recon",
+    "Vext": "No velocity field",
     "Carrick2015": "C15",
     "manticore": "Manticore",
 }
 
 # Short labels for main tables (with fiducial marker)
 RECON_LABELS_SHORT_FIDUCIAL = {
-    "Vext": "No Recon",
-    "Carrick2015": "C15 (fiducial model)",
+    "Vext": "None",
+    "Carrick2015": "C15",
     "manticore": "Manticore",
 }
 
@@ -107,13 +107,13 @@ def setup_style():
     plt.style.use("science")
 
     plt.rcParams.update({
-        "font.size": 12,
-        "axes.titlesize": 16,
-        "axes.labelsize": 14,
-        "xtick.labelsize": 12,
-        "ytick.labelsize": 12,
-        "legend.fontsize": 12,
-        "figure.titlesize": 18,
+        "font.size": 14,
+        "axes.titlesize": 18,
+        "axes.labelsize": 16,
+        "xtick.labelsize": 14,
+        "ytick.labelsize": 14,
+        "legend.fontsize": 13,
+        "figure.titlesize": 20,
     })
 
 

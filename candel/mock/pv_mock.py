@@ -138,7 +138,7 @@ def gen_TFR_mock(nsamples, r_grid, Vext_mag, Vext_ell, Vext_b, sigma_v, beta,
         fprint(f"Rejecting {np.sum(~mask)} samples with zcmb > {zcmb_max:.2f}",
                verbose=verbose)
         for key in data:
-            if key in ["los_r"]:
+            if key in ["los_r", "los_z"]:
                 continue
 
             if key.startswith("los_"):
@@ -150,24 +150,33 @@ def gen_TFR_mock(nsamples, r_grid, Vext_mag, Vext_ell, Vext_b, sigma_v, beta,
 
 
 def gen_Clusters_mock(nsamples, r_grid, Vext_mag, Vext_ell, Vext_b, sigma_v,
-                      beta, b1, A_YT, B_YT, sigma_int, A_LT, B_LT, sigma_int_LT,
-                      zeropoint_dipole_mag, zeropoint_dipole_ell, zeropoint_dipole_b, h,
-                      e_logT, e_logY, e_logF, logT_prior_mean, logT_prior_std,
+                      beta, b1, A_YT, B_YT, sigma_YT, A_LT, B_LT, sigma_LT,
+                      h, e_logT, e_logY, e_logF, logT_prior_mean, logT_prior_std,
                       b_min, zcmb_max, R_dist_emp, p_dist_emp, n_dist_emp, field_loader, r2distmod, r2z,
-                      linear_Vext_slope=None, linear_Vext_ell=None, rescale_carrick_fields=False,
+                      H0_dipole=None,
+                      linear_Vext_slope=None, linear_Vext_ell=None,
                       linear_Vext_b=None, Om=0.3, seed=42, verbose=True,
                       los_decay_scale=5.0, apply_Ez_correction=True, **kwargs):
     """
     Generate a mock cluster survey with distances sampled from an empirical
     distribution, using Y-T and L-T scaling relations with uncorrelated scatter.
-    
+
     Additional keyword arguments in **kwargs are ignored but can be passed through
     for convenience (e.g., storing extra truth parameters).
-    
-    Parameters include:
-    - A_YT, B_YT, sigma_int: Y-T relation parameters
-    - A_LT, B_LT, sigma_int_LT: L-T relation parameters
-    - e_logF: observational error on logF (flux)
+
+    Parameters
+    ----------
+    H0_dipole : array-like of shape (3,), optional
+        H0 anisotropy dipole as a 3D Cartesian vector (ICRS frame).
+        The magnitude ||H0_dipole|| is the fractional δH/H.
+        This affects both the z→r mapping (LOS field stretching) and
+        the zeropoint offset on scaling relations.
+    A_YT, B_YT, sigma_YT : float
+        Y-T relation parameters
+    A_LT, B_LT, sigma_LT : float
+        L-T relation parameters
+    e_logF : float
+        Observational error on logF (flux)
     """
     gen = np.random.default_rng(seed)
 
@@ -201,15 +210,29 @@ def gen_Clusters_mock(nsamples, r_grid, Vext_mag, Vext_ell, Vext_b, sigma_v,
         los_density = np.ones((nsamples, len(r_grid)))
         los_velocity = np.zeros_like(los_density)
 
-    def _delta_a_to_frac(delta_a):
-        delta_a = np.asarray(delta_a)
-        return np.power(10.0, 0.5 * delta_a) - 1.0
-    
+    def _frac_to_mag(frac):
+        """Convert fractional δH to magnitude offset: ΔA = 2·log10(1 + δH)."""
+        frac = np.asarray(frac)
+        return 2.0 * np.log10(1.0 + frac)
+
+    # Process H0_dipole: extract magnitude (fractional δH) and direction
+    H0_dipole_mag = None
+    H0_dipole_dir = None
+    if H0_dipole is not None:
+        H0_dipole = np.asarray(H0_dipole)
+        H0_dipole_mag = np.linalg.norm(H0_dipole)
+        if H0_dipole_mag > 1e-30:
+            H0_dipole_dir = H0_dipole / H0_dipole_mag
+        else:
+            H0_dipole_dir = np.zeros(3)
+            H0_dipole_mag = 0.0
+
+    # Compute per-cluster H0 variation for LOS field stretching
     Hnew = None
-    if zeropoint_dipole_mag is not None and rescale_carrick_fields:
-        dH_over_H= _delta_a_to_frac(zeropoint_dipole_mag)
-        dH = dH_over_H * 100 * galactic_to_radec_cartesian(zeropoint_dipole_ell, zeropoint_dipole_b)
-        Hnew = 100 + np.sum(dH[None, :] * rhat, axis=1)
+    if H0_dipole_mag is not None and H0_dipole_mag > 0:
+        # H0(r̂) = H0_base * (1 + δH · r̂) where δH = H0_dipole_mag * H0_dipole_dir
+        cos_theta = np.sum(H0_dipole_dir[None, :] * rhat, axis=1)
+        Hnew = 100.0 * (1.0 + H0_dipole_mag * cos_theta)
 
     # if Hnew is not None:
     #     print('new Hubble constants', Hnew)
@@ -230,23 +253,10 @@ def gen_Clusters_mock(nsamples, r_grid, Vext_mag, Vext_ell, Vext_b, sigma_v,
         # Apply stretch by evaluating LOS fields at stretched coordinates
         # while sampling distances on the base grid to match inference.
         # This follows d = cz / H0: higher H0 shifts features inward.
-        if zeropoint_dipole_mag is not None and rescale_carrick_fields:
+        if Hnew is not None:
             r_stretched = r_grid * Hnew[i] / 100.0
             los_density_i = np.interp(r_stretched, r_grid, los_density[i])
             los_velocity_i = np.interp(r_stretched, r_grid, los_velocity[i])
-            # Old remap approach (kept for comparison):
-            # r_stretched = r_grid * 100.0 / Hnew[i]
-            # los_density_i = np.interp(r_grid, r_stretched, los_density[i])
-            # los_velocity_i = np.interp(r_grid, r_stretched, los_velocity[i])
-            # if los_decay_scale is not None and los_decay_scale > 0:
-            #     r_max = r_stretched[-1]
-            #     A_rho = los_density[i][-1]
-            #     A_vel = los_velocity[i][-1]
-            #     mask = r_grid > r_max
-            #     if np.any(mask):
-            #         decay = np.exp(-(r_grid[mask] - r_max) / los_decay_scale)
-            #         los_density_i[mask] = A_rho * decay
-            #         los_velocity_i[mask] = A_vel * decay
         else:
             los_density_i = los_density[i]
             los_velocity_i = los_velocity[i]
@@ -262,19 +272,20 @@ def gen_Clusters_mock(nsamples, r_grid, Vext_mag, Vext_ell, Vext_b, sigma_v,
     
     # Y-T relation: logY = A_YT + B_YT * logT + epsilon_Y
     # Note: This is the intrinsic relation before distance corrections
-    epsilon_Y = gen.normal(0, sigma_int, size=nsamples)
+    epsilon_Y = gen.normal(0, sigma_YT, size=nsamples)
     logY_intrinsic = A_YT + B_YT * logT_true + epsilon_Y
     
     # L-T relation: logL = A_LT + B_LT * logT + epsilon_L
     # Generate with UNCORRELATED scatter to Y-T relation
-    epsilon_L = gen.normal(0, sigma_int_LT, size=nsamples)
+    epsilon_L = gen.normal(0, sigma_LT, size=nsamples)
     logL_intrinsic = A_LT + B_LT * logT_true + epsilon_L
     
-    # Apply zeropoint dipole if present (same for both Y and L)
-    if zeropoint_dipole_mag is not None:
-        dZP_vec = zeropoint_dipole_mag * galactic_to_radec_cartesian(
-            zeropoint_dipole_ell, zeropoint_dipole_b)
-        dipole_term = np.sum(dZP_vec[None, :] * rhat, axis=1)
+    # Apply H0 dipole as zeropoint offset (same for both Y and L)
+    # Convert fractional δH to magnitude offset: ΔA = 2·log10(1 + δH)
+    if H0_dipole_mag is not None and H0_dipole_mag > 0:
+        zp_mag = _frac_to_mag(H0_dipole_mag)
+        zp_vec = zp_mag * H0_dipole_dir
+        dipole_term = np.sum(zp_vec[None, :] * rhat, axis=1)
         logY_intrinsic += dipole_term
         logL_intrinsic += dipole_term
     
@@ -319,6 +330,7 @@ def gen_Clusters_mock(nsamples, r_grid, Vext_mag, Vext_ell, Vext_b, sigma_v,
         "logF": logF_obs,
         "e_logF": np.ones_like(logF_obs) * e_logF,
         "los_r": r_grid,
+        "los_z": r2z(r_grid, h=h),  # z-coordinates for z-space remapping
         "los_density": los_density,
         "los_velocity": los_velocity,
         "r_true": r,
@@ -329,7 +341,7 @@ def gen_Clusters_mock(nsamples, r_grid, Vext_mag, Vext_ell, Vext_b, sigma_v,
         fprint(f"Rejecting {np.sum(~mask)} samples with zcmb > {zcmb_max:.2f}",
                verbose=verbose)
         for key in data:
-            if key in ["los_r"]:
+            if key in ["los_r", "los_z"]:
                 continue
 
             if key.startswith("los_"):

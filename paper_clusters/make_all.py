@@ -10,6 +10,7 @@ import plot_dipoles
 import plot_relation_comparison
 import plot_sigma_v
 import plot_migkas_comparison
+import plot_pixel_std
 # import plot_mnr_comparison  # MNR results not available
 import plot_radial_mag
 import plot_reconstruction
@@ -60,6 +61,7 @@ def main():
         ("scaling comparison plot", plot_relation_comparison.main),
         ("sigma_v plot", plot_sigma_v.main),
         ("Migkas comparison plot", plot_migkas_comparison.main),
+        ("pixel std Vext plot", plot_pixel_std.main),
         ("radial magnitude Vext plot", plot_radial_mag.main),
         ("reconstruction plot", plot_reconstruction.main),
         ("results tables", tables.main),

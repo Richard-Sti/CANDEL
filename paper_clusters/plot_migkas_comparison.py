@@ -16,9 +16,9 @@ def plot_migkas_comparison():
     cols = [COLS[1], COLS[0], COLS[2], COLS[3]]
 
     labels = [
-        "Migkas model",
-        "No reconstruction, $\\sigma_v=100$ km/s",
-        "No reconstruction",
+        "H25",
+        "No velocity field, $\\sigma_v=100$ km/s",
+        "No velocity field",
         "Carrick2015 (fiducial model)",
     ]
 
@@ -28,8 +28,9 @@ def plot_migkas_comparison():
             "xy": (264.0, 48.0),
             "color": "black",
             "label": "CMB dipole",
-            "legend_loc": "upper right",
-            "legend_bbox": (0.75, 0.8684),
+            "text_label": True,
+            "text_pos": (0.5, 0.92),  # top middle in axes coords
+            "text_fontsize": 14,
         }
     }
     contour_args = [
@@ -48,7 +49,8 @@ def plot_migkas_comparison():
         keys=keys,
         contour_args=contour_args,
         filename=str(get_figure_path("migkas_comparison.pdf")),
-        legend_fontsize=80,
+        fontsize=22,
+        legend_fontsize=18,
     )
     plt.close('all')
 

@@ -65,11 +65,14 @@ def plot_vext_dipole():
         points=points,
         keys=keys,
         filename=str(get_figure_path("reconstruction_vext.pdf")),
-        legend_fontsize=40,
+        fontsize=18,
+        legend_fontsize=16,
+        axes_fontsize=12,
         apply_ell_offset=True,
         ell_zero=180.0,
         contour_args=contour_args,
         line_args=line_args,
+        title=r"constant $V_{\rm ext}$",
     )
     plt.close('all')
 
@@ -90,11 +93,14 @@ def plot_h0_dipole():
         points=points,
         keys=keys,
         filename=str(get_figure_path("reconstruction_H0.pdf")),
-        legend_fontsize=40,
+        fontsize=18,
+        legend_fontsize=16,
+        axes_fontsize=12,
         ell_zero=-90.0,
         apply_ell_offset=True,
         contour_args=contour_args,
         line_args=line_args,
+        title=r"dipole $\delta H_0/H_0$",
     )
     plt.close('all')
 
@@ -113,11 +119,14 @@ def plot_zeropoint_dipole():
         filled=True,
         keys=keys,
         filename=str(get_figure_path("reconstruction_zeropoint.pdf")),
-        legend_fontsize=40,
+        fontsize=18,
+        legend_fontsize=16,
+        axes_fontsize=12,
         ell_zero=-90.0,
         apply_ell_offset=True,
         contour_args=contour_args,
         line_args=line_args,
+        title=r"dipole ZP",
     )
     plt.close('all')
 

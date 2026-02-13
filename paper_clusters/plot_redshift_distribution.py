@@ -37,25 +37,31 @@ def main():
     has_Y = Y > 0
     no_Y = Y < 0
 
-    # Left panel: Stacked histogram
+    # Left panel: Overlapping histograms
     bins = np.linspace(0, 0.45, 25)
-    counts_no_Y, bin_edges = np.histogram(zcmb[no_Y], bins=bins)
-    counts_has_Y, _ = np.histogram(zcmb[has_Y], bins=bin_edges)
-    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-    width = bin_edges[1] - bin_edges[0]
+    ax1.hist(
+        zcmb,
+        bins=bins,
+        alpha=0.45,
+        label=f'All clusters (N={len(zcmb)})',
+        color=COLS[1],
+        edgecolor='black',
+        linewidth=0.5,
+    )
+    ax1.hist(
+        zcmb[has_Y],
+        bins=bins,
+        alpha=0.7,
+        label=f'With $Y_{{SZ}}$ (N={np.sum(has_Y)})',
+        color=COLS[0],
+        edgecolor='black',
+        linewidth=0.5,
+    )
 
-    ax1.bar(bin_centers, counts_has_Y, width=width, alpha=0.7,
-            label=f'With $Y_{{SZ}}$ (N={np.sum(has_Y)})',
-            color=COLS[0], edgecolor='black', linewidth=0.5)
-    ax1.bar(bin_centers, counts_no_Y, width=width, alpha=0.7,
-            bottom=counts_has_Y,
-            label=f'Without $Y_{{SZ}}$ (N={np.sum(no_Y)})',
-            color=COLS[1], edgecolor='black', linewidth=0.5)
-
-    ax1.set_xlabel('Redshift $z_{CMB}$', fontsize=12)
-    ax1.set_ylabel('Number of clusters', fontsize=12)
+    ax1.set_xlabel(r'Redshift $z_{\rm CMB}$')
+    ax1.set_ylabel('Number of clusters')
     ax1.set_xlim(left=0.0)
-    ax1.legend(fontsize=10)
+    ax1.legend()
     ax1.grid(False)
 
     # Secondary x-axis for comoving distance
@@ -76,7 +82,7 @@ def main():
 
     ax1_top.set_xticks(z_ticks)
     ax1_top.set_xticklabels([f'{int(d)}' for d in d_ticks])
-    ax1_top.set_xlabel('Comoving distance [Mpc/h]', fontsize=12)
+    ax1_top.set_xlabel(r'Comoving distance [$h^{-1}$ Mpc]')
 
     # Right panel: Mollweide projection
     ell_centered = ((ell + 180) % 360) - 180   # degrees in [-180, 180)
@@ -88,8 +94,8 @@ def main():
     ax2.scatter(ell_plot[no_Y], b_rad[no_Y], s=20, alpha=0.7,
                 color=COLS[1], edgecolors='black', linewidths=0.3)
 
-    ax2.set_xlabel(r'$\ell$ [deg]', fontsize=12)
-    ax2.set_ylabel(r'$b$ [deg]', fontsize=12)
+    ax2.set_xlabel(r'$\ell$ [deg]')
+    ax2.set_ylabel(r'$b$ [deg]')
 
     # Ticks: positions are x (already flipped), labels should be Galactic longitude
     tick_locs_deg = np.array([-150, -120, -90, -60, -30, 0, 30, 60, 90, 120, 150])

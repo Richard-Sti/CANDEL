@@ -19,8 +19,6 @@ import numpy as np
 from h5py import File
 import copy
 import re
-from jax import numpy as jnp
-from jax import vmap
 from candel.util import radec_to_galactic
 
 try:
@@ -52,7 +50,6 @@ def sample_uniform(n=1, low=0.0, high=10.0, seed=None):
 
 def generate_mock(
     nsamples, seed, field_loader, output_dir, mock_id=0,
-    stretch_los_with_zeropoint=False,
 ):
     """
     Generate a mock cluster dataset.
@@ -88,52 +85,47 @@ def generate_mock(
     log_sigma_int = rng.uniform(np.log(0.01), np.log(0.2))
     sigma_int = np.exp(log_sigma_int)
     
-    log_sigma_v = rng.uniform(np.log(300.0), np.log(600.0))
+    log_sigma_v = rng.uniform(np.log(450.0), np.log(600.0))
     sigma_v = np.exp(log_sigma_v)
 
     # draw ALL random params from the SAME rng
     A_YT = rng.uniform(1.0, 3.0)
     B_YT = rng.uniform(2.0, 3.0)
 
-    zeropoint_dipole_mag = rng.uniform(0.0, 0.1)
+    # Sample H0_dipole directly as fractional δH (matching new H0_dipole prior)
+    H0_dipole_mag = rng.uniform(0.0, 0.15)  # fractional δH/H
 
-    # isotropic direction: phi ~ U[0,2π), cosθ ~ U[-1,1]
-    # Store in the same format that NumPyro samples (for initialization)
-    zeropoint_dipole_phi = rng.uniform(0.0, 2*np.pi)
-    zeropoint_dipole_cos_theta = rng.uniform(-1.0, 1.0)
+    # Isotropic direction: phi ~ U[0,2π), cosθ ~ U[-1,1]
+    H0_dipole_phi = rng.uniform(0.0, 2*np.pi)
+    H0_dipole_cos_theta = rng.uniform(-1.0, 1.0)
 
-    # Also compute galactic coordinates for reference (not used in inference)
-    theta = np.arccos(zeropoint_dipole_cos_theta)
-    ra = np.rad2deg(zeropoint_dipole_phi)
+    # Build 3D Cartesian vector (ICRS frame)
+    sin_theta = np.sqrt(1 - H0_dipole_cos_theta**2)
+    H0_dipole = H0_dipole_mag * np.array([
+        sin_theta * np.cos(H0_dipole_phi),
+        sin_theta * np.sin(H0_dipole_phi),
+        H0_dipole_cos_theta
+    ])
+
+    # Compute galactic coordinates for reference
+    theta = np.arccos(H0_dipole_cos_theta)
+    ra = np.rad2deg(H0_dipole_phi)
     dec = np.rad2deg(0.5*np.pi - theta)
-    zeropoint_dipole_ell, zeropoint_dipole_b = radec_to_galactic(ra, dec)
+    H0_dipole_ell, H0_dipole_b = radec_to_galactic(ra, dec)
 
     # Fixed distance model parameters
     R = rng.uniform(80.0, 130.0)
-    # # p = rng.normal(2.0, 0.1)
-    # # n = rng.normal(0.8, 1.2)
-    p= 2.0
-    n= 1.1
-    
-    fprint(f"Generating mock with {nsamples} clusters, seed={seed}, b1={b1:.3f}, sigma_int={sigma_int:.3f}, sigma_v={sigma_v:.1f}, R={R:.1f}, p={p:.2f}, n={n:.2f}")
+    p = 2.0
+    n = 1.1
 
-    # Mock generation parameters (same as make_Clusters_mocks.ipynb)
-    # Extra kwargs (e.g., phi, cos_theta) are accepted and ignored by gen_Clusters_mock
-    # but will be saved as truth parameters for MCMC initialization
-    dH_over_H_dipole = np.power(10.0, 0.5 * zeropoint_dipole_mag) - 1.0
-    H0_ratio = 1.0 + dH_over_H_dipole
-    fprint(
-        "ZP dipole: mag={:.6f}, ell={:.3f}, b={:.3f}, dH/H={:.6f}, H0/H0_base={:.6f}".format(
-            zeropoint_dipole_mag,
-            zeropoint_dipole_ell,
-            zeropoint_dipole_b,
-            dH_over_H_dipole,
-            H0_ratio,
-        )
-    )
+    fprint(f"Generating mock with {nsamples} clusters, seed={seed}")
+    fprint(f"  b1={b1:.3f}, sigma_int={sigma_int:.3f}, sigma_v={sigma_v:.1f}")
+    fprint(f"  A_YT={A_YT:.3f}, B_YT={B_YT:.3f}")
+    fprint(f"  R={R:.1f}, p={p:.2f}, n={n:.2f}")
+    fprint(f"  H0_dipole: mag={H0_dipole_mag:.4f}, ell={H0_dipole_ell:.1f}, b={H0_dipole_b:.1f}")
 
     kwargs = {
-        'r_grid': np.linspace(0.1, 1401, 1001),
+        'r_grid': np.linspace(0.1, 1401, 501),
         'Vext_mag': 0.00,
         'Vext_ell': 0.0,
         'Vext_b': 0.0,
@@ -142,17 +134,18 @@ def generate_mock(
         'b1': b1,
         'A_YT': A_YT,
         'B_YT': B_YT,
-        'sigma_int': sigma_int,
         'sigma_YT': sigma_int,
         'A_LT': 0.0,
         'B_LT': 2.5,
-        'sigma_int_LT': 0.15,
-        'zeropoint_dipole_mag': zeropoint_dipole_mag,
-        'dH_over_H_dipole': dH_over_H_dipole,
-        'zeropoint_dipole_phi': zeropoint_dipole_phi,
-        'zeropoint_dipole_cos_theta': zeropoint_dipole_cos_theta,
-        'zeropoint_dipole_ell': zeropoint_dipole_ell,  # For mock generation & reference
-        'zeropoint_dipole_b': zeropoint_dipole_b,      # For mock generation & reference
+        'sigma_LT': 0.15,
+        # H0 dipole as 3D vector (magnitude = fractional δH)
+        'H0_dipole': H0_dipole,
+        # Truth parameters for bias testing (matching inference output names)
+        'H0_dipole_mag': H0_dipole_mag,
+        'H0_dipole_phi': H0_dipole_phi,
+        'H0_dipole_cos_theta': H0_dipole_cos_theta,
+        'H0_dipole_ell': H0_dipole_ell,
+        'H0_dipole_b': H0_dipole_b,
         'h': 1.0,
         'logT_prior_mean': 0.0,
         'logT_prior_std': 0.2,
@@ -165,7 +158,6 @@ def generate_mock(
         'p_dist_emp': p,
         'n_dist_emp': n,
         'field_loader': field_loader,
-        'rescale_carrick_fields': stretch_los_with_zeropoint,
         'apply_Ez_correction': True,
         'los_decay_scale': 5.0,
         'r2distmod': candel.Distance2Distmod(),
@@ -198,10 +190,9 @@ def generate_mock(
     return mock, mock_path
 
 
-def run_inference_on_mock(config_path, mock_dir, mock_id, output_dir, 
+def run_inference_on_mock(config_path, mock_dir, mock_id, output_dir,
                           field_density, field_velocity, num_samples=None,
-                          temp_suffix="", verbose_name="", mock_name=None,
-                          stretch_los_with_zeropoint=False):
+                          temp_suffix="", verbose_name="", mock_name=None):
     """
     Run inference on mock data with a given config.
     
@@ -312,53 +303,22 @@ def run_inference_on_mock(config_path, mock_dir, mock_id, output_dir,
     fprint(f"  {verbose_name}: {len(data['RA'])} clusters")
     
     model = candel.model.ClustersModel(temp_config)
-    if stretch_los_with_zeropoint and hasattr(model, "stretch_los_with_zeropoint"):
-        model.stretch_los_with_zeropoint = True
-    if stretch_los_with_zeropoint and hasattr(data, "data"):
-        truths = data.data.get("_mock_truths", {})
-        mag = truths.get("zeropoint_dipole_mag", None)
-        ell = truths.get("zeropoint_dipole_ell", None)
-        b = truths.get("zeropoint_dipole_b", None)
-        if mag is not None and ell is not None and b is not None:
-            A_vec = mag * candel.util.galactic_to_radec_cartesian(ell, b)
-            A_norm = jnp.linalg.norm(A_vec)
-            cos_theta = jnp.sum(A_vec * data["rhat"], axis=1) / jnp.maximum(A_norm, 1e-30)
-            delta_frac = jnp.power(10.0, 0.5 * A_norm) - 1.0
-            H_new = 100.0 * (1.0 + delta_frac * cos_theta)
-            r_grid = data["r_grid"]
-            r_stretched = r_grid[None, :] * 100.0 / H_new[:, None]
-            vals = vmap(lambda r_col: data.f_los_density(r_col), in_axes=1)(r_stretched)
-            los_density_model = jnp.transpose(vals, (1, 2, 0))
-            los_density = np.array(data["los_density"])
-            r_stretched_0 = np.array(r_stretched[0])
-            r_grid_np = np.array(r_grid)
-            rho_interp = np.interp(r_stretched_0, r_grid_np, los_density[0, 0, :])
-            r_max = r_grid_np[-1]
-            decay_scale = getattr(data.f_los_density, "r0_decay_scale", None)
-            if decay_scale is not None and decay_scale > 0:
-                mask = r_stretched_0 > r_max
-                if np.any(mask):
-                    A_rho = los_density[0, 0, -1]
-                    rho_interp[mask] = A_rho * np.exp(-(r_stretched_0[mask] - r_max) / decay_scale)
-            rho_model = np.array(los_density_model[0, 0, :])
-            fprint(
-                "LOS stretch check: max|rho_model-rho_interp|={:.3e}".format(
-                    np.max(np.abs(rho_model - rho_interp))
-                )
-            )
     samples, log_density = candel.run_pv_inference(
         model, {'data': data}, save_samples=True, print_summary=False
     )
     
-    # Read log_density_per_sample from saved file
+    # Read log_density_per_sample from saved file (if available)
     config = candel.load_config(temp_config)
     output_file = config['io']['fname_output']
-    
+
     with File(output_file, 'r') as f:
-        lp = f['log_density_per_sample'][...]
-    
+        if 'log_density_per_sample' in f:
+            lp = f['log_density_per_sample'][...]
+        else:
+            lp = None
+
     os.remove(temp_config)
-    
+
     return lp, (samples, log_density), data
 
 
@@ -503,9 +463,6 @@ def main():
                         help='Only generate and save mocks (skip inference).')
     parser.add_argument('--num_samples', type=int, default=1000,
                         help='Number of samples for inference runs (default: 500)')
-    parser.add_argument('--stretch_los_with_zeropoint', action='store_true',
-                        help='Rescale LOS fields using the zeropoint dipole (dipole H0 mocks).')
-    
     args = parser.parse_args()
     
     # Create output directory
@@ -565,8 +522,7 @@ def main():
         # Generate mock with unique seed
         seed = args.seed_offset + mock_id
         mock, mock_path = generate_mock(
-            args.nclusters, seed, field_loader, mock_dir, mock_id=mock_id,
-            stretch_los_with_zeropoint=args.stretch_los_with_zeropoint)
+            args.nclusters, seed, field_loader, mock_dir, mock_id=mock_id)
     
         fprint(f"Starting cluster removal analysis...")
         fprint(f"  Initial clusters: {args.nclusters}")
@@ -590,7 +546,6 @@ def main():
                 args.field_density, args.field_velocity,
                 temp_suffix="_dipole_full", verbose_name="Dipole (full)",
                 num_samples=args.num_samples,
-                stretch_los_with_zeropoint=args.stretch_los_with_zeropoint,
             )
             
             fprint(f"\n{'='*60}")
@@ -738,7 +693,6 @@ def main():
                 verbose_name=f"Dipole (iter {iteration})",
                 mock_name=filtered_mock_name,
                 num_samples=args.num_samples,
-                stretch_los_with_zeropoint=args.stretch_los_with_zeropoint,
             )
             
             # Save summary results for this iteration

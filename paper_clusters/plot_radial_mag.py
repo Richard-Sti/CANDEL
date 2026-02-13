@@ -6,6 +6,7 @@ import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
 from h5py import File
+from interpax import interp1d
 
 from config import get_results_path, get_figure_path, setup_style, CANDEL_ROOT
 from candel.inference import postprocess_samples
@@ -41,15 +42,18 @@ def percent_h0_to_bulkflow(r, percent, *, H0=100.0, q0=-0.53):
 
 
 def load_samples(h5_path):
-    """Load the samples group from a saved HDF5 file into a dict of arrays."""
+    """Load samples and log_density from a saved HDF5 file."""
     import h5py
     samples = {}
+    log_density = None
     with File(h5_path, "r") as f:
         grp = f["samples"]
         for key in grp.keys():
             if isinstance(grp[key], h5py.Dataset):
                 samples[key] = grp[key][()]
-    return samples
+        if "log_density" in f:
+            log_density = f["log_density"][()]
+    return samples, log_density
 
 
 # -----------------------------------------------------------------------------
@@ -59,6 +63,7 @@ def load_samples(h5_path):
 def plot_Vext_radmag_comparison(
     all_samples, all_rknots, all_labels,
     data=None, h0_samples=None,
+    all_log_densities=None, all_methods=None,
     r_eval_size=1000, show_fig=True, filename=None
 ):
     """Plot radial Vext magnitude with 3 vertically stacked panels.
@@ -75,6 +80,10 @@ def plot_Vext_radmag_comparison(
         Data for redshift histogram.
     h0_samples : dict
         Samples from dipH0 run for equivalent H0 dipole overlay.
+    all_log_densities : list of array or None
+        Log density arrays for each configuration (for MAP computation).
+    all_methods : list of str or None
+        Interpolation methods for each configuration.
     """
     r2d = Redshift2Distance()
 
@@ -180,9 +189,9 @@ def plot_Vext_radmag_comparison(
                         color="#7570b3", edgecolor='black', linewidth=0.5)
             ax_hist.bar(bin_centers, counts_no_Y, width=width, alpha=0.7,
                         bottom=counts_has_Y,
-                        label=f'Without $Y_{{SZ}}$ (N={np.sum(no_Y)})',
+                        label=f'All (N={len(dist)})',
                         color="#d95f02", edgecolor='black', linewidth=0.5)
-            ax_hist.legend(fontsize=9, loc="upper right")
+            ax_hist.legend(fontsize=11, loc="upper right")
         else:
             ax_hist.hist(dist, bins=bins, color="C0", alpha=0.7, edgecolor='black')
         ax_hist.set_ylabel("N")
@@ -205,9 +214,16 @@ def plot_Vext_radmag_comparison(
     ax_top = ax_hist.secondary_xaxis('top', functions=(dist_to_z, z_to_dist))
     ax_top.set_xlabel(r"$z_\mathrm{CMB}$")
 
+    # Default to None lists if not provided
+    if all_log_densities is None:
+        all_log_densities = [None] * len(all_samples)
+    if all_methods is None:
+        all_methods = ["cubic"] * len(all_samples)
+
     # Profile panels
-    for panel_idx, (samples, rknot, label) in enumerate(
-            zip(all_samples, all_rknots, all_labels)):
+    for panel_idx, (samples, rknot, label, log_density, method) in enumerate(
+            zip(all_samples, all_rknots, all_labels, all_log_densities,
+                all_methods)):
         ax = ax_profiles[panel_idx]
         rknot = np.asarray(rknot)
 
@@ -267,10 +283,10 @@ def plot_Vext_radmag_comparison(
             std_b = float(np.std(b_samples))
             dir_label = (f"$(\\ell, b) = ({mean_ell:.0f} \\pm {std_ell:.0f}°, "
                         f"{mean_b:.0f} \\pm {std_b:.0f}°)$")
-            ax.text(0.02, 0.95, dir_label, transform=ax.transAxes, fontsize=9, va='top')
+            ax.text(0.02, 0.95, dir_label, transform=ax.transAxes, fontsize=11, va='top')
 
         if panel_idx == 0:
-            ax.legend(loc="upper right", fontsize=7)
+            ax.legend(loc="upper right", fontsize=11)
 
     # X-axis label only on bottom
     ax_profiles[-1].set_xlabel(r"$r~[h^{-1}\,\mathrm{Mpc}]$")
@@ -300,8 +316,10 @@ def plot_radmag_run(label, radmag_stem, diph0_stem, fine_stem, finest_stem):
     results_path = get_results_path(f"{radmag_stem}.hdf5")
     fprint(f"[{label}] loading base model from {config_path}")
     base_model = ClustersModel(str(config_path))
-    base_samples = postprocess_samples(load_samples(str(results_path)))
+    base_samples_raw, base_log_density = load_samples(str(results_path))
+    base_samples = postprocess_samples(base_samples_raw)
     base_rknot = base_model.kwargs_Vext["rknot"]
+    base_method = base_model.kwargs_Vext.get("method", "cubic")
 
     # Load data
     fprint(f"[{label}] loading data")
@@ -310,12 +328,15 @@ def plot_radmag_run(label, radmag_stem, diph0_stem, fine_stem, finest_stem):
     # Load dipH0 samples
     diph0_path = get_results_path(f"{diph0_stem}.hdf5")
     fprint(f"[{label}] loading dipH0 samples from {diph0_path}")
-    h0_samples = postprocess_samples(load_samples(str(diph0_path)))
+    h0_samples_raw, _ = load_samples(str(diph0_path))
+    h0_samples = postprocess_samples(h0_samples_raw)
 
     # Collect all configurations
     all_samples = [base_samples]
     all_rknots = [base_rknot]
     all_labels = ["Base"]
+    all_log_densities = [base_log_density]
+    all_methods = [base_method]
 
     # Load fine
     fine_path = get_results_path(f"{fine_stem}.hdf5")
@@ -323,10 +344,13 @@ def plot_radmag_run(label, radmag_stem, diph0_stem, fine_stem, finest_stem):
     if fine_path.exists():
         fprint(f"[{label}] loading fine samples")
         fine_model = ClustersModel(str(fine_config))
-        fine_samples = postprocess_samples(load_samples(str(fine_path)))
+        fine_samples_raw, fine_log_density = load_samples(str(fine_path))
+        fine_samples = postprocess_samples(fine_samples_raw)
         all_samples.append(fine_samples)
         all_rknots.append(fine_model.kwargs_Vext["rknot"])
         all_labels.append("Fine")
+        all_log_densities.append(fine_log_density)
+        all_methods.append(fine_model.kwargs_Vext.get("method", "cubic"))
 
     # Load finest
     finest_path = get_results_path(f"{finest_stem}.hdf5")
@@ -334,15 +358,19 @@ def plot_radmag_run(label, radmag_stem, diph0_stem, fine_stem, finest_stem):
     if finest_path.exists():
         fprint(f"[{label}] loading finest samples")
         finest_model = ClustersModel(str(finest_config))
-        finest_samples = postprocess_samples(load_samples(str(finest_path)))
+        finest_samples_raw, finest_log_density = load_samples(str(finest_path))
+        finest_samples = postprocess_samples(finest_samples_raw)
         all_samples.append(finest_samples)
         all_rknots.append(finest_model.kwargs_Vext["rknot"])
         all_labels.append("Finest")
+        all_log_densities.append(finest_log_density)
+        all_methods.append(finest_model.kwargs_Vext.get("method", "cubic"))
 
     fprint(f"[{label}] plotting to {out_path}")
     plot_Vext_radmag_comparison(
         all_samples, all_rknots, all_labels,
         data=data, h0_samples=h0_samples,
+        all_log_densities=all_log_densities, all_methods=all_methods,
         show_fig=False, filename=str(out_path)
     )
 
