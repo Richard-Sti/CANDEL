@@ -153,13 +153,13 @@ def gen_Clusters_mock(nsamples, r_grid, Vext_mag, Vext_ell, Vext_b, sigma_v,
                       beta, b1, A_YT, B_YT, sigma_YT, A_LT, B_LT, sigma_LT,
                       h, e_logT, e_logY, e_logF, logT_prior_mean, logT_prior_std,
                       b_min, zcmb_max, R_dist_emp, p_dist_emp, n_dist_emp, field_loader, r2distmod, r2z,
-                      H0_dipole=None,
+                      H0_dipole=None, rho12=0.0,
                       linear_Vext_slope=None, linear_Vext_ell=None,
                       linear_Vext_b=None, Om=0.3, seed=42, verbose=True,
                       los_decay_scale=5.0, apply_Ez_correction=True, **kwargs):
     """
     Generate a mock cluster survey with distances sampled from an empirical
-    distribution, using Y-T and L-T scaling relations with uncorrelated scatter.
+    distribution, using Y-T and L-T scaling relations.
 
     Additional keyword arguments in **kwargs are ignored but can be passed through
     for convenience (e.g., storing extra truth parameters).
@@ -171,6 +171,9 @@ def gen_Clusters_mock(nsamples, r_grid, Vext_mag, Vext_ell, Vext_b, sigma_v,
         The magnitude ||H0_dipole|| is the fractional δH/H.
         This affects both the z→r mapping (LOS field stretching) and
         the zeropoint offset on scaling relations.
+    rho12 : float, optional
+        Intrinsic correlation between LT and YT residuals.
+        Default is 0.0 (uncorrelated). Must be in (-1, 1).
     A_YT, B_YT, sigma_YT : float
         Y-T relation parameters
     A_LT, B_LT, sigma_LT : float
@@ -178,6 +181,9 @@ def gen_Clusters_mock(nsamples, r_grid, Vext_mag, Vext_ell, Vext_b, sigma_v,
     e_logF : float
         Observational error on logF (flux)
     """
+    if not (-1.0 < rho12 < 1.0):
+        raise ValueError(f"rho12 must be in (-1, 1), got {rho12}")
+
     gen = np.random.default_rng(seed)
 
 
@@ -270,14 +276,17 @@ def gen_Clusters_mock(nsamples, r_grid, Vext_mag, Vext_ell, Vext_b, sigma_v,
     # Sample logT with intrinsic scatter
     logT_true = gen.normal(logT_prior_mean, logT_prior_std, size=nsamples)
     
-    # Y-T relation: logY = A_YT + B_YT * logT + epsilon_Y
-    # Note: This is the intrinsic relation before distance corrections
-    epsilon_Y = gen.normal(0, sigma_YT, size=nsamples)
+    # Intrinsic scatter: bivariate normal with correlation rho12
+    if rho12 != 0.0:
+        cov = [[sigma_LT**2, rho12 * sigma_LT * sigma_YT],
+               [rho12 * sigma_LT * sigma_YT, sigma_YT**2]]
+        epsilons = gen.multivariate_normal([0.0, 0.0], cov, size=nsamples)
+        epsilon_L, epsilon_Y = epsilons[:, 0], epsilons[:, 1]
+    else:
+        epsilon_Y = gen.normal(0, sigma_YT, size=nsamples)
+        epsilon_L = gen.normal(0, sigma_LT, size=nsamples)
+
     logY_intrinsic = A_YT + B_YT * logT_true + epsilon_Y
-    
-    # L-T relation: logL = A_LT + B_LT * logT + epsilon_L
-    # Generate with UNCORRELATED scatter to Y-T relation
-    epsilon_L = gen.normal(0, sigma_LT, size=nsamples)
     logL_intrinsic = A_LT + B_LT * logT_true + epsilon_L
     
     # Apply H0 dipole as zeropoint offset (same for both Y and L)

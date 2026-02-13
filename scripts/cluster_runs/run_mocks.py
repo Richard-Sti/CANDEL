@@ -50,6 +50,7 @@ def sample_uniform(n=1, low=0.0, high=10.0, seed=None):
 
 def generate_mock(
     nsamples, seed, field_loader, output_dir, mock_id=0,
+    which_relation="YT",
 ):
     """
     Generate a mock cluster dataset.
@@ -81,16 +82,26 @@ def generate_mock(
     b1 = 4.0 #rng.uniform(1.0, 4.0)
     beta = 0.43 #rng.normal(0.43, 0.02)
 
-    # Sample sigma_int from Jeffreys prior between 0.005 and 0.2
-    log_sigma_int = rng.uniform(np.log(0.01), np.log(0.2))
-    sigma_int = np.exp(log_sigma_int)
-    
+    # Sample sigma_YT from Jeffreys prior between 0.01 and 0.2
+    log_sigma_YT = rng.uniform(np.log(0.01), np.log(0.2))
+    sigma_YT = np.exp(log_sigma_YT)
+
     log_sigma_v = rng.uniform(np.log(450.0), np.log(600.0))
     sigma_v = np.exp(log_sigma_v)
 
     # draw ALL random params from the SAME rng
     A_YT = rng.uniform(1.0, 3.0)
     B_YT = rng.uniform(2.0, 3.0)
+
+    # LT parameters: draw from priors for LTYT, fix for YT-only
+    if which_relation == "LTYT":
+        A_LT = rng.uniform(1.0, 3.0)
+        B_LT = rng.uniform(2.0, 3.0)
+        log_sigma_LT = rng.uniform(np.log(0.01), np.log(0.2))
+        sigma_LT = np.exp(log_sigma_LT)
+        rho12 = 0.85  # fixed for initial testing
+    else:
+        A_LT, B_LT, sigma_LT, rho12 = 0.0, 2.5, 0.15, 0.0
 
     # Sample H0_dipole directly as fractional δH (matching new H0_dipole prior)
     H0_dipole_mag = rng.uniform(0.0, 0.15)  # fractional δH/H
@@ -118,9 +129,10 @@ def generate_mock(
     p = 2.0
     n = 1.1
 
-    fprint(f"Generating mock with {nsamples} clusters, seed={seed}")
-    fprint(f"  b1={b1:.3f}, sigma_int={sigma_int:.3f}, sigma_v={sigma_v:.1f}")
+    fprint(f"Generating mock with {nsamples} clusters, seed={seed}, relation={which_relation}")
+    fprint(f"  b1={b1:.3f}, sigma_YT={sigma_YT:.4f}, sigma_v={sigma_v:.1f}")
     fprint(f"  A_YT={A_YT:.3f}, B_YT={B_YT:.3f}")
+    fprint(f"  A_LT={A_LT:.3f}, B_LT={B_LT:.3f}, sigma_LT={sigma_LT:.4f}, rho12={rho12:.3f}")
     fprint(f"  R={R:.1f}, p={p:.2f}, n={n:.2f}")
     fprint(f"  H0_dipole: mag={H0_dipole_mag:.4f}, ell={H0_dipole_ell:.1f}, b={H0_dipole_b:.1f}")
 
@@ -134,10 +146,11 @@ def generate_mock(
         'b1': b1,
         'A_YT': A_YT,
         'B_YT': B_YT,
-        'sigma_YT': sigma_int,
-        'A_LT': 0.0,
-        'B_LT': 2.5,
-        'sigma_LT': 0.15,
+        'sigma_YT': sigma_YT,
+        'A_LT': A_LT,
+        'B_LT': B_LT,
+        'sigma_LT': sigma_LT,
+        'rho12': rho12,
         # H0 dipole as 3D vector (magnitude = fractional δH)
         'H0_dipole': H0_dipole,
         # Truth parameters for bias testing (matching inference output names)
@@ -288,18 +301,19 @@ def run_inference_on_mock(config_path, mock_dir, mock_id, output_dir,
     
     # Load data and run inference
     data = candel.pvdata.load_PV_dataframes(temp_config)
-    # Remove LT truths that can fall outside priors for YT-only runs.
-    def _strip_lt_truths(d):
-        if hasattr(d, "data"):
-            truths = d.data.get("_mock_truths", None)
-            if isinstance(truths, dict):
-                truths.pop("A_LT", None)
-                truths.pop("B_LT", None)
-    if isinstance(data, list):
-        for d in data:
-            _strip_lt_truths(d)
-    else:
-        _strip_lt_truths(data)
+    # Strip LT truths for non-LTYT runs where fixed A_LT=0 is outside prior [1,3]
+    if 'which_relation = "LTYT"' not in config_text:
+        def _strip_lt_truths(d):
+            if hasattr(d, "data"):
+                truths = d.data.get("_mock_truths", None)
+                if isinstance(truths, dict):
+                    truths.pop("A_LT", None)
+                    truths.pop("B_LT", None)
+        if isinstance(data, list):
+            for d in data:
+                _strip_lt_truths(d)
+        else:
+            _strip_lt_truths(data)
     fprint(f"  {verbose_name}: {len(data['RA'])} clusters")
     
     model = candel.model.ClustersModel(temp_config)
@@ -461,6 +475,9 @@ def main():
                         help='Only run dipole inference on full mock (skip no-dipole and removal)')
     parser.add_argument('--mocks_only', action='store_true',
                         help='Only generate and save mocks (skip inference).')
+    parser.add_argument('--which_relation', type=str, default='YT',
+                        choices=['YT', 'LTYT'],
+                        help='Scaling relation for mock generation (default: YT)')
     parser.add_argument('--num_samples', type=int, default=1000,
                         help='Number of samples for inference runs (default: 500)')
     args = parser.parse_args()
@@ -522,7 +539,8 @@ def main():
         # Generate mock with unique seed
         seed = args.seed_offset + mock_id
         mock, mock_path = generate_mock(
-            args.nclusters, seed, field_loader, mock_dir, mock_id=mock_id)
+            args.nclusters, seed, field_loader, mock_dir, mock_id=mock_id,
+            which_relation=args.which_relation)
     
         fprint(f"Starting cluster removal analysis...")
         fprint(f"  Initial clusters: {args.nclusters}")
