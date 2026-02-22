@@ -14,7 +14,12 @@
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 """
 Minimal NumPyro model for CCHP TRGB distance calibrators to infer H0.
+
+WARNING: This module is under development and likely incorrect. Use with
+caution.
 """
+import warnings
+
 from abc import ABC
 from dataclasses import dataclass
 from typing import Optional
@@ -25,18 +30,25 @@ from jax.scipy.special import log_ndtr
 from numpyro import factor, handlers, plate, sample
 from numpyro.distributions import MultivariateNormal, Normal, Uniform
 
-from ..cosmography import (Distance2Distmod, Distance2Redshift,
-                           Distmod2Distance, Distmod2Redshift,
-                           LogGrad_Distmod2ComovingDistance, Redshift2Distance)
-from ..util import (fprint, get_nested, load_config, radec_to_cartesian,
-                    replace_prior_with_delta)
-from .interp import LOSInterpolator
-from .model import (load_priors, lp_galaxy_bias, predict_cz, rsample,
-                    sample_galaxy_bias)
+from ...cosmography import (Distance2Distmod, Distance2Redshift,
+                            Distmod2Distance, Distmod2Redshift,
+                            LogGrad_Distmod2ComovingDistance,
+                            Redshift2Distance)
+from ...util import (fprint, get_nested, load_config, radec_to_cartesian,
+                     replace_prior_with_delta)
+from ..interp import LOSInterpolator
+from ..model import (load_priors, lp_galaxy_bias, predict_cz, rsample,
+                     sample_galaxy_bias)
 from .model_CSP import (CSPModel, CSPSelection, compute_per_source_selection,
                         extract_csp_median_errors, log1mexp)
-from .model_SH0ES import log_prob_integrand_sel, logmeanexp
-from .simpson import ln_simpson
+from ..model_SH0ES import log_prob_integrand_sel, logmeanexp
+from ..simpson import ln_simpson
+
+warnings.warn(
+    "The CCHP SNe model is under development and likely incorrect. "
+    "Use with caution.",
+    stacklevel=2,
+)
 
 
 def logsumexp_by_group(logp, idx, n_groups=None):
@@ -1083,7 +1095,7 @@ class JointTRGBCSPModel:
                f"{n_csp} CSP SNe (disjoint)")
 
         # Wrap CSP data in PVDataFrame (drops strings, converts to JAX)
-        from ..pvdata import PVDataFrame
+        from ...pvdata import PVDataFrame
         csp_data = PVDataFrame(csp_data)
 
         # Initialize submodels

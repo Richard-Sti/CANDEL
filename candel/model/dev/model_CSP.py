@@ -16,7 +16,12 @@
 CSP (Carnegie Supernova Project)-like forward model.
 
 By default h=1.0, but h can be passed to __call__ for joint H0 inference.
+
+WARNING: This module is under development and likely incorrect. Use with
+caution.
 """
+import warnings
+
 import jax.numpy as jnp
 from jax import random
 from jax.scipy.special import log_ndtr, logsumexp, ndtr
@@ -24,12 +29,18 @@ from jax.scipy.stats import norm as jax_norm
 from numpyro import factor, plate, sample
 from numpyro.distributions import Distribution, MultivariateNormal, constraints
 
-from ..cosmography import (Distance2Distmod, Distance2Redshift,
-                           Redshift2Distance)
-from ..util import SPEED_OF_LIGHT, fprint, get_nested
-from .model import (BaseModel, predict_cz, rsample, sample_galaxy_bias,
-                    sample_Vext)
-from .simpson import ln_simpson
+from ...cosmography import (Distance2Distmod, Distance2Redshift,
+                            Redshift2Distance)
+from ...util import SPEED_OF_LIGHT, fprint, get_nested
+from ..model import (BaseModel, predict_cz, rsample, sample_galaxy_bias,
+                     sample_Vext)
+from ..simpson import ln_simpson
+
+warnings.warn(
+    "The CSP SNe model is under development and likely incorrect. "
+    "Use with caution.",
+    stacklevel=2,
+)
 
 ###############################################################################
 #                         Volume prior for distance                           #
