@@ -45,16 +45,14 @@ from .evidence import (                                                         
     )
 
 from .inference import (                                                        # noqa
+    find_initial_point,                                                         # noqa
     run_pv_inference,                                                           # noqa
-    run_SH0ES_inference,                                                        # noqa
+    run_H0_inference,                                                          # noqa
     save_mcmc_samples,                                                          # noqa
     get_log_density,                                                            # noqa
     )
 
-from .redshift2real import (                                                    # noqa
-    Redshift2Real,                                                              # noqa
-    run_batched_inference,                                                      # noqa
-    )
+from .redshift2real import Redshift2Real  # noqa
 
 from .util import (                                                             # noqa
     SPEED_OF_LIGHT,                                                             # noqa
@@ -76,6 +74,7 @@ from .util import (                                                             
     hms_to_degrees,                                                             # noqa
     dms_to_degrees,                                                             # noqa
     fprint,                                                                     # noqa
+    fsection,                                                                   # noqa
     read_gof,                                                                   # noqa
     read_samples,                                                               # noqa
     get_dlog_density_stats,                                                     # noqa

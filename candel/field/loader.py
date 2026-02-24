@@ -27,23 +27,33 @@ def smooth_clip(x, eps=1e-3):
     return 0.5 * (x + np.sqrt(x**2 + eps**2))
 
 
+def _flip_xz(field):
+    """Transpose spatial axes and swap x/z vector components (if 4D)."""
+    if field.ndim == 3:
+        return field.T
+    field = np.transpose(field, (0, 3, 2, 1))
+    field[[0, 2]] = field[[2, 0]]
+    return field
+
+
 class BaseFieldLoader(ABC):
-    """
-    Base class for loading the 3D density and velocity fields.
-    """
+    """Base class for loading the 3D density and velocity fields."""
+
+    @property
+    def observer_pos(self):
+        """Observer position; defaults to box center. Override via
+        ``self._observer_pos`` in subclass ``__init__``."""
+        try:
+            return self._observer_pos
+        except AttributeError:
+            return np.array([self.boxsize / 2] * 3, dtype=np.float32)
 
     @abstractmethod
     def load_density(self):
-        """
-        Load the 3D density field.
-        """
         pass
 
     @abstractmethod
     def load_velocity(self):
-        """
-        Load the 3D velocity field.
-        """
         pass
 
 
@@ -71,7 +81,6 @@ class Carrick2015_FieldLoader(BaseFieldLoader):
         self.boxsize = 400.0  # Mpc / h
         self.Omega_m = 0.3
         self.effective_resolution = 4
-        self.observer_pos = np.array([200., 200., 200.], dtype=np.float32)
 
     def load_density(self):
         # Carrick+2015 density field is in the form of overdensity
@@ -124,7 +133,6 @@ class Lilow2024_FieldLoader(BaseFieldLoader):
         self.boxsize = 400.0  # Mpc / h
         self.Omega_m = 0.3175
         self.effective_resolution = 4
-        self.observer_pos = np.array([200., 200., 200.], dtype=np.float32)
 
     def load_density(self):
         rho = np.load(self.path_density).astype(np.float32)
@@ -159,7 +167,6 @@ class CF4_FieldLoader(BaseFieldLoader):
         self.coordinate_frame = "supergalactic"
         self.boxsize = 1000.0  # Mpc / h
         self.Omega_m = 0.3
-        self.observer_pos = np.array([self.boxsize / 2] * 3, dtype=np.float32)
 
         fname_base = f"CF4gp_23avr24_256-z008_test_realization{1 + self.nsim}"
         self._density_path = join(self.folder, f"{fname_base}_delta.fits")
@@ -193,7 +200,6 @@ class CLONES_FieldLoader(BaseFieldLoader):
         self.coordinate_frame = "supergalactic"
         self.boxsize = 500  # Mpc / h
         self.Omega_m = 0.307115
-        self.observer_pos = np.array([self.boxsize / 2] * 3, dtype=np.float32)
 
     def load_density(self):
         with File(self.file_path, "r") as f:
@@ -260,8 +266,6 @@ class Hamlet_FieldLoader(BaseFieldLoader):
         else:
             raise ValueError(f"Unknown HAMLET version: {self.version}")
 
-        self.observer_pos = np.array(
-            [self.boxsize / 2] * 3, dtype=self.dtype)
 
     def _read_grid(self, fname):
         return np.fromfile(fname, dtype=self.dtype).reshape(
@@ -276,7 +280,6 @@ class Hamlet_FieldLoader(BaseFieldLoader):
             fname = join(self.root,
                          f"cic_pos_N{self.ngrid}_{self.stag}_snap003.dat")
             rho = self._read_grid(fname)
-            print("FLIPPING V1 HAMLET")
             rho = rho.T
         else:
             raise ValueError(f"Unknown HAMLET version: {self.version}")
@@ -298,11 +301,7 @@ class Hamlet_FieldLoader(BaseFieldLoader):
         v = np.stack(comps, axis=0).astype(self.dtype)
 
         if self.version == 1:
-            print("FLIPPING V1 HAMLET")
-            v[0, ...] = v[0, ...].T
-            v[1, ...] = v[1, ...].T
-            v[2, ...] = v[2, ...].T
-            v[[0, 2], ...] = v[[2, 0], ...]
+            v = _flip_xz(v)
 
         return v
 
@@ -350,7 +349,6 @@ class CSiBORG_FieldLoader(BaseFieldLoader):
             raise ValueError(f"Unknown CSiBORG version: {version}")
 
         self.coordinate_frame = "icrs"
-        self.observer_pos = np.array([self.boxsize / 2] * 3, dtype=np.float32)
 
     def load_density(self):
         with File(self.file_path, "r") as f:
@@ -366,7 +364,7 @@ class CSiBORG_FieldLoader(BaseFieldLoader):
         rho = rho.astype(np.float32)
 
         if self.flip_xz:
-            rho = rho.T
+            rho = _flip_xz(rho)
 
         return rho
 
@@ -380,10 +378,7 @@ class CSiBORG_FieldLoader(BaseFieldLoader):
         v = np.array([v0, v1, v2], dtype=np.float32)
 
         if self.flip_xz:
-            v[0, ...] = v[0, ...].T
-            v[1, ...] = v[1, ...].T
-            v[2, ...] = v[2, ...].T
-            v[[0, 2], ...] = v[[2, 0], ...]
+            v = _flip_xz(v)
 
         return v
 
@@ -405,10 +400,7 @@ class Manticore_FieldLoader(BaseFieldLoader):
 
         self.coordinate_frame = "icrs"
         self.boxsize = 681.1  # Mpc / h
-        self.Omega_m = 0.3111
-
-        x0 = 0.5 * self.boxsize
-        self.observer_pos = np.array([x0, x0, x0], dtype=np.float32)
+        self.Omega_m = 0.306
 
     def load_density(self):
         with File(self.fname, "r") as f:
@@ -418,7 +410,7 @@ class Manticore_FieldLoader(BaseFieldLoader):
         grid = field.shape[0]
         field /= (self.boxsize * 1e3 / grid)**3
 
-        return field
+        return field.astype(np.float32)
 
     def load_velocity(self):
         with File(self.fname, "r") as f:
@@ -426,7 +418,7 @@ class Manticore_FieldLoader(BaseFieldLoader):
             v0 = f["p0"][:] / density
             v1 = f["p1"][:] / density
             v2 = f["p2"][:] / density
-        return np.array([v0, v1, v2])
+        return np.array([v0, v1, v2], dtype=np.float32)
 
 
 ###############################################################################
@@ -434,33 +426,22 @@ class Manticore_FieldLoader(BaseFieldLoader):
 ###############################################################################
 
 
+_FIELD_LOADERS = {
+    "Carrick2015": Carrick2015_FieldLoader,
+    "Lilow2024": Lilow2024_FieldLoader,
+    "CF4": CF4_FieldLoader,
+    "CLONES": CLONES_FieldLoader,
+    "CB1": CSiBORG_FieldLoader,
+    "CB2": CSiBORG_FieldLoader,
+}
+
+
 def name2field_loader(name):
-    """
-    Convert a field name to a field loader.
-
-    Parameters
-    ----------
-    name : str
-        Name of the field loader.
-
-    Returns
-    -------
-    BaseFieldLoader
-        Field loader.
-    """
-    if name == "Carrick2015":
-        return Carrick2015_FieldLoader
-    elif name == "Lilow2024":
-        return Lilow2024_FieldLoader
-    elif name == "CF4":
-        return CF4_FieldLoader
-    elif name == "CLONES":
-        return CLONES_FieldLoader
-    elif name in ["CB1", "CB2"]:
-        return CSiBORG_FieldLoader
-    elif name.lower().startswith("manticore"):
+    """Convert a field name to a field loader class."""
+    if name in _FIELD_LOADERS:
+        return _FIELD_LOADERS[name]
+    if name.lower().startswith("manticore"):
         return Manticore_FieldLoader
-    elif name.lower().startswith("hamlet"):
+    if name.lower().startswith("hamlet"):
         return Hamlet_FieldLoader
-    else:
-        raise ValueError(f"Unknown field loader: {name}")
+    raise ValueError(f"Unknown field loader: {name}")

@@ -12,7 +12,7 @@
 # You should have received a copy of the GNU General Public License along
 # with this program; if not, write to the Free Software Foundation, Inc.,
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
-"""Simple mock generator for the CF4 TFR sample."""
+"""Mock generator for TFR surveys."""
 import numpy as np
 from scipy.integrate import cumulative_simpson
 
@@ -22,6 +22,7 @@ from ..util import (SPEED_OF_LIGHT, fprint, galactic_to_radec,
 
 
 def sample_distance(r_grid, los_density, b1, R, p, n, gen):
+    """Sample distance from p(r) ∝ (1 + b1*δ) r^p exp(-(r/R)^n)."""
     los_delta = los_density - 1
     pi_r = (1 + b1 * los_delta) * r_grid**p * np.exp(-(r_grid / R)**n)
     cdf_r = cumulative_simpson(pi_r, x=r_grid, initial=0)

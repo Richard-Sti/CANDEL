@@ -1,0 +1,194 @@
+# Copyright (C) 2025 Richard Stiskalek
+# This program is free software; you can redistribute it and/or modify it
+# under the terms of the GNU General Public License as published by the
+# Free Software Foundation; either version 3 of the License, or (at your
+# option) any later version.
+#
+# This program is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General
+# Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along
+# with this program; if not, write to the Free Software Foundation, Inc.,
+# 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+"""
+Base classes for peculiar velocity (PV) forward models.
+"""
+import jax.numpy as jnp
+from jax.scipy.special import logsumexp
+from numpyro import deterministic, factor, handlers
+from numpyro.distributions import Normal
+
+from ..util import fprint, fsection, get_nested
+from .base_model import ModelBase
+from .simpson import simpson_log_weights
+from .utils import config_hash, log_prior_r_empirical, predict_cz
+from .pv_utils import (_rsample, compute_Vext_radial, lp_galaxy_bias, rsample,
+                       sample_distance_prior, sample_galaxy_bias, sample_Vext,
+                       sumzero_basis)
+
+
+class BasePVModel(ModelBase):
+    """Base class for all PV models. """
+
+    def __init__(self, config_path):
+        super().__init__(config_path)
+        config = self.config
+        fsection("Model")
+
+        kind = get_nested(config, "pv_model/kind", "Vext")
+        kind_allowed = ["Vext", "Vext_radial"]
+        if kind not in kind_allowed and not kind.startswith("precomputed_los_"):  # noqa
+            raise ValueError(
+                f"Invalid kind '{kind}'. Must be one of {kind_allowed} or "
+                "start with 'precomputed_los_'.")
+
+        self.track_log_density_per_sample = get_nested(
+            config, "inference/track_log_density_per_sample", False)
+
+        self.which_Vext = get_nested(config, "pv_model/which_Vext", "constant")
+
+        priors = config["model"]["priors"]
+
+        if self.which_Vext in ["radial", "radial_magnitude"]:
+            d = priors[f"Vext_{self.which_Vext}"]
+            fprint(
+                f"using {self.which_Vext} with spline knots at {d['rknot']}")
+            self.kwargs_Vext = {
+                key: d[key] for key in ["rknot", "method"]}
+        elif self.which_Vext == "per_pix":
+            nside = get_nested(config, "pv_model/Vext_per_pix_nside", None)
+            if nside is None:
+                raise ValueError(
+                    "Must specify `Vext_per_pix_nside` in config when "
+                    "`which_Vext = 'per_pix'`.")
+            if not (nside > 0 and ((nside & (nside - 1)) == 0)):
+                raise ValueError(
+                    f"Invalid nside={nside} in "
+                    f"which_Vext = '{self.which_Vext}'. "
+                    "Must be a positive power of 2.")
+            fprint(f"using per-pixel `Vext` at nside={nside}.")
+            npix = 12 * nside**2
+            self.kwargs_Vext = {
+                "nside": nside, "npix": npix,
+                "Q": jnp.asarray(sumzero_basis(npix))}
+        elif self.which_Vext == "constant":
+            self.which_Vext = "constant"
+            self.kwargs_Vext = {}
+        else:
+            raise ValueError(f"Invalid which_Vext '{self.which_Vext}'.")
+
+        self._load_and_set_priors()
+        self.marginalize_eta = get_nested(
+            config, "model/marginalize_eta", True)
+        if self.marginalize_eta:
+            self.eta_grid_kwargs = get_nested(config, "model/eta_grid", None)
+
+        self.galaxy_bias = get_nested(config, "pv_model/galaxy_bias", "unity")
+        if self.galaxy_bias not in ["unity", "powerlaw", "linear",
+                                    "linear_from_beta",
+                                    "linear_from_beta_stochastic",
+                                    "double_powerlaw", "quadratic"]:
+            raise ValueError(
+                f"Invalid galaxy bias model '{self.galaxy_bias}'.")
+        self.quadratic_bias_delta0 = get_nested(
+            config, "pv_model/quadratic_bias_delta0", 0.0)
+
+        self.which_distance_prior = get_nested(
+            config, "pv_model/which_distance_prior", "empirical")
+
+        fprint(f"Om={self.Om}, Vext={self.which_Vext}, "
+               f"galaxy_bias={self.galaxy_bias}, "
+               f"distance_prior={self.which_distance_prior}")
+
+    def _sample_common_params(self, shared_params):
+        kwargs_dist = sample_distance_prior(self.priors)
+        h = 1.
+        Vext = sample_Vext(
+            self.priors, self.which_Vext, shared_params, self.kwargs_Vext)
+        sigma_v = rsample("sigma_v", self.priors["sigma_v"], shared_params)
+        beta = rsample("beta", self.priors["beta"], shared_params)
+        bias_params = sample_galaxy_bias(
+            self.priors, self.galaxy_bias, shared_params, Om=self.Om,
+            beta=beta)
+        return kwargs_dist, h, Vext, sigma_v, beta, bias_params
+
+    def _setup_lp_dist_and_Vrad(self, data, r_grid, kwargs_dist, beta,
+                                bias_params):
+        lp_dist = log_prior_r_empirical(
+            r_grid, **kwargs_dist, Rmax_grid=r_grid[-1])[None, None, :]
+
+        if data.has_precomputed_los:
+            Vrad = beta * data["los_velocity_r_grid"]
+            lp_dist += lp_galaxy_bias(
+                data["los_delta_r_grid"],
+                data["los_log_density_r_grid"],
+                bias_params, self.galaxy_bias,
+                self.quadratic_bias_delta0)
+            log_w_r = simpson_log_weights(r_grid)
+            lp_dist -= logsumexp(
+                lp_dist + log_w_r[None, None, :], axis=-1)[..., None]
+        else:
+            Vrad = 0.
+
+        return lp_dist, Vrad
+
+    def _compute_ll_cz(self, data, r_grid, h, Vext, sigma_v, Vrad):
+        Vext_rad = compute_Vext_radial(
+            data, r_grid, Vext, which_Vext=self.which_Vext,
+            **self.kwargs_Vext)
+        czpred = predict_cz(
+            self.distance2redshift(r_grid, h=h)[None, None, :],
+            Vrad + Vext_rad)
+        return Normal(czpred, sigma_v).log_prob(
+            data["czcmb"][None, :, None])
+
+    def _marginalize_over_r(self, ll, r_grid):
+        log_w_r = simpson_log_weights(r_grid)
+        return logsumexp(ll + log_w_r[None, None, :], axis=-1)
+
+    def _average_fields_and_factor(self, ll, data,
+                                   log_density_per_sample=None):
+        ll = logsumexp(ll, axis=0) - jnp.log(data.num_fields)
+        factor("ll_obs", ll)
+
+        if self.track_log_density_per_sample and log_density_per_sample is not None:  # noqa
+            log_density_per_sample += ll
+            deterministic("log_density_per_sample", log_density_per_sample)
+
+
+class JointPVModel:
+    """
+    A joint probabilistic velocity (PV) model that runs multiple submodels
+    (e.g., TFR models) on independent datasets, while sharing a subset of
+    parameters across all submodels.
+    """
+
+    def __init__(self, submodels, shared_param_names):
+        self.submodels = submodels
+        self.shared_param_names = shared_param_names
+
+        # Check that all submodels have the same config.
+        ref_hash = config_hash(submodels[0].config)
+        for i, model in enumerate(submodels[1:], start=1):
+            if config_hash(model.config) != ref_hash:
+                raise ValueError(f"Submodel {i} has a different config hash.")
+
+        self.config = submodels[0].config
+        self.which_Vext = submodels[0].which_Vext
+
+    def _sample_shared_params(self, priors):
+        shared = {}
+        for name in self.shared_param_names:
+            shared[name] = _rsample(name, priors[name])
+        return shared
+
+    def __call__(self, data):
+        assert len(data) == len(self.submodels)
+        shared_params = self._sample_shared_params(self.submodels[0].priors)
+
+        for i, (submodel, data_i) in enumerate(zip(self.submodels, data)):
+            name = data_i.name if data_i is not None else f"dataset_{i}"
+            with handlers.scope(prefix=name):
+                submodel(data_i, shared_params=shared_params)

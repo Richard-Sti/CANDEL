@@ -24,7 +24,10 @@ setup(
     long_description=open("README.md").read(),
     long_description_content_type="text/markdown",
     url="https://github.com/richard-sti/candel",
-    packages=find_packages(include=["my_package", "my_package.*"]),
+    packages=find_packages(include=["candel", "candel.*"]),
+    extras_require={
+        "docs": ["sphinx", "sphinx-rtd-theme", "numpydoc"],
+    },
     classifiers=[
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: MIT License",
