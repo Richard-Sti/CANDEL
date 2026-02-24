@@ -480,7 +480,7 @@ class CH0Model(ModelBase):
     def log_S_Cepheid_mag(self, lp_r, M_W, b_W, Z_W, H0):
         """Probability of detection term if Cepheid magnitude-truncated."""
         raise NotImplementedError(
-            "Cepheid selection is not understood well enough..")
+            "Cepheid selection is not understood well enough.")
         mu = self.distance2distmod(self.r_host_range, h=H0 / 100)
         mag = mu[None, :] + M_W + b_W * self.mean_logP + Z_W * self.mean_OH
 
@@ -490,7 +490,7 @@ class CH0Model(ModelBase):
             lp_r + log_cdf, x=self.r_host_range[None, None, :], axis=-1)
 
     def log_prior_distance(self, r, **kwargs):
-        """Log prior on the (physical distance)."""
+        """Log prior on the physical distance."""
         if self.which_distance_prior == "volume":
             return 2 * jnp.log(r) - 3 * jnp.log(self.Rmax) + jnp.log(3)
         elif self.which_distance_prior == "empirical":
@@ -559,14 +559,14 @@ class CH0Model(ModelBase):
 
         mu_host, mu_N4258, mu_LMC, mu_M31 = self.sample_host_distmod()
 
-        # Distannce moduli for Cepheids, with corrections for LMC.
+        # Distance moduli for Cepheids, with corrections for LMC.
         dZP = sample("dZP", Normal(0, self.sigma_grnd))
         mu_host_cepheid = jnp.concatenate(
             [mu_host,
              jnp.array([mu_N4258, mu_LMC + dZP, mu_M31])]
             )
 
-        # Distances moduli without any corrections.
+        # Distance moduli without any corrections.
         mu_host_all = jnp.concatenate(
             [mu_host, jnp.array([mu_N4258, mu_LMC, mu_M31])]
             )
@@ -726,7 +726,7 @@ class CH0Model(ModelBase):
                 )
         elif self.which_selection == "Cepheid_magnitude":
             raise NotImplementedError(
-                "Cepheid selection is not understood well enough..")
+                "Cepheid selection is not understood well enough.")
         else:
             log_S = jnp.zeros((1, self.num_hosts))
 

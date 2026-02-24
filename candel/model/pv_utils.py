@@ -346,7 +346,7 @@ def sample_galaxy_bias(priors, galaxy_bias, shared_params=None, **kwargs):
 def lp_galaxy_bias(delta, log_rho, bias_params, galaxy_bias,
                    quadratic_bias_delta0=0.0):
     """
-    Given the galaxy bias probabibility, given some density and a bias model.
+    Log galaxy bias probability, given some density and a bias model.
     """
     if galaxy_bias == "powerlaw":
         lp = bias_params[0] * log_rho

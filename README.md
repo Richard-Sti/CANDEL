@@ -65,7 +65,7 @@ To generate a batch of configs from a template with a parameter grid:
 python scripts/runs/generate_tasks.py
 ```
 
-## Example
+## Publications
 
 Here are some recent works that have used CANDEL:
 

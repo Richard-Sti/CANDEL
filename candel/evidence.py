@@ -90,7 +90,7 @@ def harmonic_evidence(samples_arr, log_density, temperature=0.8, epochs_num=20,
     samples_arr: 3-dimensional array
         MCMC samples of shape `(nchains, nsamples, ndim)`.
     log_density: 2-dimensional array
-        Log posterior xs of shape `(nchains, nsamples)`.
+        Log posterior values of shape `(nchains, nsamples)`.
     temperature: float, optional
         Temperature of the `harmonic` model.
     epochs_num: int, optional
@@ -122,11 +122,11 @@ def harmonic_evidence(samples_arr, log_density, temperature=0.8, epochs_num=20,
     # Do some standard checks of inputs.
     if samples_arr.ndim != 3:
         raise ValueError("The samples_arr must be a 3-dimensional array of "
-                         "shape `(nchains, nsamples_arr, ndim)`.")
+                         "shape `(nchains, nsamples, ndim)`.")
 
     if log_density.ndim != 2 or log_density.shape[:2] != samples_arr.shape[:2]:
         raise ValueError("The log posterior must be a 2-dimensional "
-                         "array of shape `(nchains, nsamples_arr)`.")
+                         "array of shape `(nchains, nsamples)`.")
 
     ndim = samples_arr.shape[-1]
     chains = hm.Chains(ndim)
@@ -162,11 +162,11 @@ def laplace_evidence(samples_array, log_density):
     samples_array: 3-dimensional array
         MCMC samples of shape `(nchains, nsamples, ndim)`.
     log_density: 2-dimensional array
-        Log posterior xs of shape `(nchains, nsamples)`.
+        Log posterior values of shape `(nchains, nsamples)`.
 
     Returns
     -------
-    mean_ln_inv_evidence, err_ln_inv_evidence: two floats
+    mean_ln_evidence, err_ln_evidence: two floats
     """
     if samples_array.ndim != 3:
         raise ValueError("The samples_array must be a 3-dimensional array of "

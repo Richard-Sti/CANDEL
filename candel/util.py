@@ -324,7 +324,7 @@ def heliocentric_to_cmb(z_helio, RA, dec, e_z_helio=None):
     theta_sun = np.pi / 2 - np.deg2rad(dec_sun)
     phi_sun = np.deg2rad(RA_sun)
 
-    # Convert to theat/phi in radians
+    # Convert to theta/phi in radians
     theta = np.pi / 2 - np.deg2rad(dec)
     phi = np.deg2rad(RA)
 
@@ -493,7 +493,7 @@ def sort_params(keys):
     order = [
         "a_TFR", "b_TFR", "c_TFR",
         "alpha", "beta",
-        "sigma_mu", "sigma_v",
+        "sigma_int", "sigma_v",
         "Vext", "Vext_mag", "Vext_ell", "Vext_b"
     ]
 

@@ -117,7 +117,7 @@ def interpolate_los_density_velocity(field_loader, r, RA, dec,
         if smooth_target < voxel_size:
             raise ValueError(
                 f"Target smoothing scale {smooth_target} is smaller than "
-                f"than the voxel size {voxel_size}. Skipping smoothing.")
+                f"the voxel size {voxel_size}.")
 
         smooth_scale = np.sqrt(smooth_target**2 - voxel_size**2)
         fprint(f"applying Gaussian smoothing with scale {smooth_scale:.1f} "

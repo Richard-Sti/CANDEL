@@ -623,7 +623,7 @@ def load_CF4_data(root, which_band, best_mag_quality=True, eta_min=-0.3,
     if calibration == "SH0ES":
         is_cal, mu, C_mu = load_SH0ES_calibration(
             join(root, "CF4_SH0ES_calibration.hdf5"), pgc)
-        fprint(f"out of {len(pgc)} galaxies, {np.sum(is_cal)} are SH0ES  "
+        fprint(f"out of {len(pgc)} galaxies, {np.sum(is_cal)} are SH0ES "
                "calibrators.")
         data.update({
             "is_calibrator": is_cal,
@@ -866,7 +866,7 @@ def load_SH0ES(root):
     """
     Load the SH0ES data which can be used to sample distances.
 
-    NOTE: Set the zero-width prior to a delta prior so it is not sampled?
+    NOTE: Set the zero-width prior to a delta prior so it is not sampled.
     """
     lstsq_results_path = join(root, 'lstsq_results.txt')
     Y_fits_path = join(root, 'ally_shoes_ceph_topantheonwt6.0_112221.fits')

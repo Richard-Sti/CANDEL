@@ -46,7 +46,7 @@ class PantheonPlusModel(BasePVModel):
         if self.which_distance_prior != "empirical":
             raise ValueError(
                 f"PantheonPlusModel only supports empirical distance prior, "
-                f"got {self.which_distance_prior}'.")
+                f"got '{self.which_distance_prior}'.")
 
         fprint("setting `compute_evidence` to False.")
         self.config["inference"]["compute_evidence"] = False
@@ -159,5 +159,5 @@ class PantheonPlusModel(BasePVModel):
             # Compute the redshift likelihood, and add the distance prior
             ll = Normal(czpred, sigma_v).log_prob(data["czcmb"][None, :])
             ll += lp_dist
-            # Average the over field realizations and track
+            # Average over field realizations and track
             factor("ll_obs", logsumexp(ll, axis=0) - jnp.log(data.num_fields))

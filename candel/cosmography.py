@@ -421,7 +421,7 @@ class Distance2Redshift_withOm:
 def redshift_to_dL_cosmography(z, H0, q0=-0.55, j0=1, s0=0.055):
     """
     Calculate the luminosity distance for a given redshift using cosmographic
-    expansion up to second order in redshift.
+    expansion up to third order in redshift.
     """
     return (SPEED_OF_LIGHT * z) / H0 * (
         1

@@ -60,7 +60,7 @@ class BaseFieldLoader(ABC):
 class Carrick2015_FieldLoader(BaseFieldLoader):
     """
     Class to load the Carrick+2015 3D density and velocity fields [1], which
-    can be obtained from `http://cosmicflows.iap.fr. The fields are in Galactic
+    can be obtained from http://cosmicflows.iap.fr. The fields are in Galactic
     coordinates.
 
     [1] https://arxiv.org/abs/1504.04627
@@ -95,7 +95,7 @@ class Carrick2015_FieldLoader(BaseFieldLoader):
         # frame in Galactic Cartesian coordinates, generated from the
         # \(\delta_g^*\) field with \(\beta^* = 0.43\) and an external
         # dipole \(V_\mathrm{ext} = [89,-131,17]\) (Carrick et al Table 3)
-        # has already been added.""
+        # has already been added."
         field[0] -= 89
         field[1] -= -131
         field[2] -= 17
@@ -188,10 +188,8 @@ class CLONES_FieldLoader(BaseFieldLoader):
 
     Parameters
     ----------
-    basedir : str
-        Directory containing the CLONES HDF5 files.
-    fname : str
-        Name of the HDF5 file to load.
+    file_path : str
+        Path to the CLONES HDF5 file.
     """
 
     def __init__(self, file_path, **kwargs):
