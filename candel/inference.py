@@ -23,20 +23,107 @@ from h5py import File
 from jax import jit
 from jax import numpy as jnp
 from jax import vmap
-from numpyro import set_platform
+from numpyro import handlers, set_platform
 from numpyro.diagnostics import print_summary as print_summary_numpyro
+from numpyro.distributions.transforms import biject_to
 from numpyro.infer import MCMC, NUTS
-from numpyro.infer.initialization import init_to_median
+from numpyro.infer.initialization import init_to_median, init_to_value
 from numpyro.infer.util import log_density
 from tqdm import trange
 
 from .evidence import (BIC_AIC, dict_samples_to_array, harmonic_evidence,
                        laplace_evidence)
-from .util import (fprint, galactic_to_radec, plot_corner,
+from .util import (fprint, fsection, galactic_to_radec, plot_corner,
                    plot_radial_profiles, plot_Vext_radmag,
                    plot_Vext_rad_corner, plot_Vext_moll,
                    radec_cartesian_to_galactic, radec_to_cartesian,
                    radec_to_galactic)
+
+
+def _setup_platform():
+    """Detect devices and set NumPyro platform."""
+    devices = jax.devices()
+    device_str = ", ".join(f"{d.device_kind}({d.platform})" for d in devices)
+    fprint(f"running inference on devices: {device_str}")
+    platform = "gpu" if any(d.platform == "gpu" for d in devices) else "cpu"
+    set_platform(platform)
+    fprint(f"using NumPyro platform: {platform.upper()}")
+
+
+def find_initial_point(model, model_kwargs, maxiter=100, seed=42):
+    """Run L-BFGS to find a reasonable MCMC starting point.
+
+    Traces the model from the prior, maps to unconstrained space, runs
+    scipy L-BFGS-B with JAX autodiff gradients, then maps back to
+    constrained space. Returns None if the optimisation fails.
+    """
+    from scipy.optimize import minimize as sp_minimize
+
+    # Trace at the prior median to get transforms and a reasonable start
+    substituted_model = handlers.substitute(
+        handlers.seed(model, rng_seed=seed),
+        substitute_fn=init_to_median(num_samples=15),
+    )
+    model_trace = handlers.trace(substituted_model).get_trace(**model_kwargs)
+
+    transforms = {}
+    init_constrained = {}
+    for k, v in model_trace.items():
+        if v["type"] == "sample" and not v.get("is_observed", False):
+            transforms[k] = biject_to(v["fn"].support)
+            init_constrained[k] = v["value"]
+
+    # Sort keys for consistent flattening
+    keys = sorted(init_constrained.keys())
+    shapes = {k: init_constrained[k].shape for k in keys}
+    sizes = {k: int(np.prod(s)) for k, s in shapes.items()}
+
+    def flatten(params_dict):
+        return np.concatenate(
+            [np.asarray(params_dict[k]).ravel() for k in keys])
+
+    def unflatten(x):
+        out, offset = {}, 0
+        for k in keys:
+            out[k] = jnp.asarray(x[offset:offset + sizes[k]]).reshape(
+                shapes[k])
+            offset += sizes[k]
+        return out
+
+    # Negative log-density in unconstrained space (include Jacobian)
+    def neg_log_density(unc_params):
+        constrained = {k: transforms[k](v) for k, v in unc_params.items()}
+        ld = log_density(model, (), model_kwargs, constrained)[0]
+        for k, t in transforms.items():
+            ld = ld + jnp.sum(t.log_abs_det_jacobian(
+                unc_params[k], constrained[k]))
+        return -ld
+
+    jit_val_grad = jit(jax.value_and_grad(
+        lambda x_flat: neg_log_density(unflatten(x_flat))))
+
+    def val_and_grad_numpy(x):
+        v, g = jit_val_grad(jnp.asarray(x))
+        return float(v), np.asarray(g, dtype=np.float64)
+
+    unc0 = {k: transforms[k].inv(v) for k, v in init_constrained.items()}
+    x0 = flatten(unc0)
+    loss0 = float(jit(neg_log_density)(unc0))
+
+    fprint(f"finding initial point (L-BFGS, maxiter={maxiter}) ...")
+    result = sp_minimize(
+        val_and_grad_numpy, x0, method="L-BFGS-B", jac=True,
+        options={"maxiter": maxiter, "disp": False})
+
+    fprint(f"  -log p: {loss0:.2f} -> {result.fun:.2f} "
+           f"({result.nit} iters, {result.message})")
+
+    if not np.isfinite(result.fun):
+        fprint("  optimisation diverged, falling back to prior sample.")
+        return None
+
+    unc_opt = unflatten(result.x)
+    return {k: transforms[k](v) for k, v in unc_opt.items()}
 
 
 def print_evidence(bic, aic, lnZ_laplace, err_lnZ_laplace,
@@ -48,22 +135,18 @@ def print_evidence(bic, aic, lnZ_laplace, err_lnZ_laplace,
 
 
 def run_pv_inference(model, model_kwargs, print_summary=True,
-                     save_samples=True, return_original_samples=False):
+                     save_samples=True, return_original_samples=False,
+                     init_maxiter=None):
     """
     Run MCMC inference on the given PV model, post-process the samples,
     optionally compute the BIC, AIC, evidence and save the samples to an
     HDF5 file.
-    """
-    devices = jax.devices()
-    device_str = ", ".join(f"{d.device_kind}({d.platform})" for d in devices)
-    fprint(f"running inference on devices: {device_str}")
 
-    if any(d.platform == "gpu" for d in devices):
-        set_platform("gpu")
-        fprint("using NumPyro platform: GPU")
-    else:
-        set_platform("cpu")
-        fprint("using NumPyro platform: CPU")
+    If `init_maxiter` > 0, runs L-BFGS to find a good starting point
+    before launching NUTS.
+    """
+    fsection("Inference")
+    _setup_platform()
 
     kwargs = model.config["inference"]
 
@@ -76,7 +159,35 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
     elif hasattr(model, "validate_data"):
         model.validate_data(model_kwargs["data"])
 
-    kernel = NUTS(model, init_strategy=init_to_median(num_samples=5000))
+    if init_maxiter is None:
+        init_maxiter = kwargs.get("init_maxiter", 1000)
+
+    if init_maxiter > 0:
+        init_params = find_initial_point(
+            model, model_kwargs, maxiter=init_maxiter,
+            seed=kwargs["seed"])
+        if init_params is not None:
+            fprint("initialising NUTS from L-BFGS solution.")
+            init_strategy = init_to_value(values=init_params)
+        else:
+            fprint("L-BFGS failed, initialising NUTS from prior median.")
+            init_strategy = init_to_median(num_samples=5000)
+    else:
+        init_params = None
+        fprint("initialising NUTS from prior median.")
+        init_strategy = init_to_median(num_samples=5000)
+
+    dense_mass = kwargs.get("dense_mass", True)
+    if init_params is not None:
+        ndim = sum(int(np.prod(v.shape)) for v in init_params.values())
+        fprint(f"using {'dense' if dense_mass else 'diagonal'} mass matrix "
+               f"({ndim} parameters).")
+        if dense_mass and ndim > 100:
+            fprint(f"WARNING: dense_mass=True with {ndim} parameters. "
+                   f"Consider setting dense_mass=False in the config.")
+    else:
+        fprint(f"using {'dense' if dense_mass else 'diagonal'} mass matrix.")
+    kernel = NUTS(model, init_strategy=init_strategy, dense_mass=dense_mass)
     mcmc = MCMC(
         kernel, num_warmup=kwargs["num_warmup"],
         num_samples=kwargs["num_samples"], num_chains=kwargs["num_chains"],
@@ -185,22 +296,17 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
     return samples, log_density
 
 
-def run_H0_inference(model, model_kwargs={}, print_summary=True,
+def run_H0_inference(model, model_kwargs=None, print_summary=True,
                      save_samples=True):
     """
     Run MCMC inference on an H0 model, post-process the samples, plot the
     corner plot and optionally save the samples to an HDF5 file.
     """
-    devices = jax.devices()
-    device_str = ", ".join(f"{d.device_kind}({d.platform})" for d in devices)
-    fprint(f"running inference on devices: {device_str}")
+    if model_kwargs is None:
+        model_kwargs = {}
 
-    if any(d.platform == "gpu" for d in devices):
-        set_platform("gpu")
-        fprint("using NumPyro platform: GPU")
-    else:
-        set_platform("cpu")
-        fprint("using NumPyro platform: CPU")
+    fsection("Inference")
+    _setup_platform()
 
     kwargs = model.config["inference"]
 
@@ -245,21 +351,17 @@ def get_log_density(samples, model, model_kwargs, batch_size=5):
     def f(sample):
         return log_density(model, (), model_kwargs, sample)[0]
 
-    f_vmap = vmap(f)
-    f_vmap = jit(f_vmap)
+    f_vmap = jit(vmap(f))
 
     samples = {k: jnp.array(v) for k, v in samples.items()}
     num_samples = len(samples[next(iter(samples))])
-    log_densities = jnp.zeros((num_samples,))
 
+    chunks = []
     for i in trange(0, num_samples, batch_size, desc="Batched log densities"):
         batch = {k: v[i:i + batch_size] for k, v in samples.items()}
-        batch_log_densities = f_vmap(batch)
+        chunks.append(f_vmap(batch))
 
-        log_densities = log_densities.at[i:i+batch_size].set(
-            batch_log_densities)
-
-    return log_densities
+    return jnp.concatenate(chunks)
 
 
 def extract_auxiliary(samples, keys):
@@ -287,25 +389,25 @@ def drop_deterministic(samples, check_all_equals=True):
     for key in list(samples.keys()):
         # Remove unused, latent variables used for deterministic sampling
         if "skipZ" in key:
-            samples.pop(key,)
+            samples.pop(key)
             continue
 
         if key == "obs":
-            samples.pop(key,)
+            samples.pop(key)
             continue
 
         # Remove samples fixed to a single value (delta prior)
         x = samples[key]
         if check_all_equals and np.all(x.flatten()[0] == x):
-            samples.pop(key,)
+            samples.pop(key)
             continue
 
     keys = list(samples.keys())
     # Remove the a_TFR_h samples if a_TFR is present or rename it to a_TFR
     if "a_TFR" in keys and "a_TFR_h" in keys:
-        samples.pop("a_TFR_h",)
+        samples.pop("a_TFR_h")
     elif "a_TFR_h" in keys and "a_TFR" not in keys:
-        samples["a_TRF"] = samples.pop("a_TFR_h",)
+        samples["a_TFR"] = samples.pop("a_TFR_h")
 
     return samples
 
@@ -379,26 +481,14 @@ def save_mcmc_samples(samples, log_density, log_density_per_sample, gof,
                 "Vpec_host", data=auxiliary["Vpec_host"],
                 dtype=np.float32)
 
-        try:
-            ndim = samples["Vext_ell"].ndim
-            if ndim > 1:
-                Vext_ell = samples["Vext_ell"].reshape(-1)
-                Vext_b = samples["Vext_b"].reshape(-1)
-                Vext_mag = samples["Vext_mag"].reshape(-1,)
-                original_shape = samples["Vext_ell"].shape
-            else:
-                Vext_ell = samples["Vext_ell"]
-                Vext_b = samples["Vext_b"]
-                Vext_mag = samples["Vext_mag"]
-
-            ra, dec = galactic_to_radec(Vext_ell, Vext_b)
-            Vext = Vext_mag[:, None] * radec_to_cartesian(ra, dec)
-
-            if ndim > 1:
-                Vext = Vext.reshape(*original_shape, 3)
-            grp.create_dataset("Vext", data=Vext)
-        except KeyError:
-            pass
+        if "Vext_ell" in samples:
+            original_shape = samples["Vext_ell"].shape
+            ra, dec = galactic_to_radec(
+                samples["Vext_ell"].ravel(), samples["Vext_b"].ravel())
+            Vext = (samples["Vext_mag"].ravel()[:, None]
+                    * radec_to_cartesian(ra, dec))
+            grp.create_dataset(
+                "Vext", data=Vext.reshape(*original_shape, 3))
 
         if log_density is not None:
             f.create_dataset("log_density", data=log_density)

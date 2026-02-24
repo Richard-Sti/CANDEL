@@ -42,11 +42,16 @@ from matplotlib.ticker import FuncFormatter
 SPEED_OF_LIGHT = 299_792.458  # km / s
 
 
+def fsection(title, width=60):
+    """Print a section header."""
+    rule = "─" * (width - len(title) - 3)
+    print(f"── {title} {rule}")
+
+
 def fprint(*args, verbose=True, **kwargs):
-    """Prints a message with a timestamp prepended."""
+    """Print an indented status message."""
     if verbose:
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S%f")[:-6]
-        print(f"{timestamp}", *args, **kwargs)
+        print("  ", *args, **kwargs)
 
 
 def convert_none_strings(d):
@@ -315,7 +320,6 @@ def heliocentric_to_cmb(z_helio, RA, dec, e_z_helio=None):
     vsun_mag = 369  # km/s
     RA_sun = 167.942
     dec_sun = -6.944
-    SPEED_OF_LIGHT = 299792.458  # km / s
 
     theta_sun = np.pi / 2 - np.deg2rad(dec_sun)
     phi_sun = np.deg2rad(RA_sun)
@@ -587,10 +591,19 @@ def plot_Vext_rad_corner(samples, show_fig=True, filename=None, smooth=1):
 def plot_corner_getdist(samples_list, labels=None, cols=None, show_fig=True,
                         filename=None, keys=None, fontsize=None,
                         legend_fontsize=None, filled=True,
-                        apply_ell_offset=False, mag_range=[0, None],
-                        ell_range=[0, 360], b_range=[-90, 90], points=None,
-                        ranges={}, truths=None):
+                        apply_ell_offset=False, mag_range=None,
+                        ell_range=None, b_range=None, points=None,
+                        ranges=None, truths=None):
     """Plot a GetDist triangle plot for one or more posterior samples."""
+    if mag_range is None:
+        mag_range = [0, None]
+    if ell_range is None:
+        ell_range = [0, 360]
+    if b_range is None:
+        b_range = [-90, 90]
+    if ranges is None:
+        ranges = {}
+
     try:
         import scienceplots  # noqa
         use_scienceplots = True
@@ -713,37 +726,32 @@ def plot_corner_getdist(samples_list, labels=None, cols=None, show_fig=True,
         if truths is not None:
             lw = 1.5 * plt.rcParams["lines.linewidth"]
             for truth_set in truths:
-                truths = truth_set["dict"]
+                truth_vals = truth_set["dict"]
                 color = truth_set.get("color", "red")
                 linestyle = truth_set.get("linestyle", "--")
+                truth_label = truth_set.get("label", None)
 
                 # 1D panels: vertical lines
                 for i, param in enumerate(param_names):
-                    if param in truths:
-                        val = truths[param]
+                    if param in truth_vals:
                         ax = g.subplots[i, i]
                         ax.axvline(
-                            val, color=color, linestyle=linestyle,
-                            lw=lw, label=label)
+                            truth_vals[param], color=color,
+                            linestyle=linestyle, lw=lw, label=truth_label)
 
-                # 2D panels: vertical/horizontal lines and crosses
+                # 2D panels: vertical/horizontal lines
                 for i, x_param in enumerate(param_names):
                     for j, y_param in enumerate(param_names):
                         if j > i:
                             ax = g.subplots[j, i]
-                            x_in = x_param in truths
-                            y_in = y_param in truths
-
-                            if x_in:
-                                x_val = truths[x_param]
+                            if x_param in truth_vals:
                                 ax.axvline(
-                                    x_val, color=color, linestyle=linestyle,
-                                    lw=lw, label=label)
-                            if y_in:
-                                y_val = truths[y_param]
+                                    truth_vals[x_param], color=color,
+                                    linestyle=linestyle, lw=lw)
+                            if y_param in truth_vals:
                                 ax.axhline(
-                                    y_val, color=color, linestyle=linestyle,
-                                    lw=lw, label=label)
+                                    truth_vals[y_param], color=color,
+                                    linestyle=linestyle, lw=lw)
 
         if filename is not None:
             fprint(f"[INFO] Saving GetDist triangle plot to: {filename}")
@@ -758,8 +766,8 @@ def plot_corner_getdist(samples_list, labels=None, cols=None, show_fig=True,
 def plot_corner_from_hdf5(fnames, keys=None, labels=None, cols=None,
                           fontsize=None, legend_fontsize=None, filled=True,
                           show_fig=True, filename=None, apply_ell_offset=False,
-                          mag_range=[0, None], ell_range=[0, 360],
-                          b_range=[-90, 90], points=None, ranges={},
+                          mag_range=None, ell_range=None,
+                          b_range=None, points=None, ranges=None,
                           truths=None):
     """
     Plot a triangle plot from one or more HDF5 files containing posterior
@@ -801,6 +809,19 @@ def plot_corner_from_hdf5(fnames, keys=None, labels=None, cols=None,
 ###############################################################################
 #                     Radial dependence of Vext                               #
 ###############################################################################
+
+
+def _plot_knot_lines(ax, rknot, xmin, xmax):
+    """Draw dashed vertical lines at knot positions."""
+    dx = 0.01 * (xmax - xmin)
+    kwargs = dict(color="black", linestyle="--", zorder=-1, alpha=0.5)
+    for rk in rknot:
+        if jnp.isclose(rk, xmin):
+            ax.axvline(xmin + dx, **kwargs)
+        elif jnp.isclose(rk, xmax):
+            ax.axvline(xmax - dx, **kwargs)
+        else:
+            ax.axvline(rk, **kwargs)
 
 
 def _interp1d_const(r, rbins, y, method="cubic"):
@@ -970,27 +991,16 @@ def plot_radial_profiles(samples, model, r_eval_size=1000, show_fig=True,
         (b025, b16, b50, b84, b975, r"$b_{\rm dipole}~[\mathrm{deg}]$"),
     ]
 
-    knot_line_kwargs = dict(
-        color="black", linestyle="--", zorder=-1, alpha=0.5)
+    xmin, xmax = r[0], r[-1]
     for i, (lo2, lo1, med, hi1, hi2, ylabel) in enumerate(components):
         ax = axes[i]
-        xmin, xmax = r[0], r[-1]
         ax.fill_between(r, lo2, hi2, alpha=0.2, color=c)
         ax.fill_between(r, lo1, hi1, alpha=0.4, color=c)
         ax.plot(r, med, c=c)
         ax.set_xlim(xmin, xmax)
         ax.set_xlabel(r"$r~[\mathrm{Mpc}/h]$")
         ax.set_ylabel(ylabel)
-
-        dx = 0.01 * (xmax - xmin)  # shift by 1% of the span
-        for rk in rknot:
-
-            if jnp.isclose(rk, xmin):
-                ax.axvline(xmin + dx, **knot_line_kwargs)
-            elif jnp.isclose(rk, xmax):
-                ax.axvline(xmax - dx, **knot_line_kwargs)
-            else:
-                ax.axvline(rk, **knot_line_kwargs)
+        _plot_knot_lines(ax, rknot, xmin, xmax)
 
     axes[0].set_ylim(0, None)
     axes[1].yaxis.set_major_formatter(FuncFormatter(deg_wrap_360))
@@ -1035,10 +1045,6 @@ def plot_Vext_radmag(samples, model, r_eval_size=1000, show_fig=True,
     method = model.kwargs_Vext["method"]
 
     r = jnp.linspace(0.0, np.max(rknot), r_eval_size)
-    # print(Vmag.shape)
-    # interp1d is from interpax
-    # all arrays are 1D except Vmag is shape (Nsamples, Nknots)
-    # how to get V to be shape (Nsamples, r_eval_size)?
     V = vmap(lambda y: interp1d(r, rknot, y, method=method))(Vmag)
     V = jnp.clip(V, 0, None)
     Vlow, Vmed, Vhigh = np.percentile(V, [16, 50, 84], axis=0)
@@ -1049,22 +1055,9 @@ def plot_Vext_radmag(samples, model, r_eval_size=1000, show_fig=True,
     ax.plot(r, Vmed, color="C0")
     ax.set_xlabel(r"$r~[h^{-1}\,\mathrm{Mpc}]$")
     ax.set_ylabel(r"$V_{\mathrm{ext}}~[\mathrm{km/s}]$")
-
     ax.set_xlim(r[0], r[-1])
     ax.set_ylim(0, None)
-
-    xmin, xmax = r[0], r[-1]
-
-    dx = 0.01 * (xmax - xmin)  # shift by 1% of the span
-    knot_line_kwargs = dict(
-        color="black", linestyle="--", zorder=-1, alpha=0.5)
-    for rk in rknot:
-        if jnp.isclose(rk, xmin):
-            ax.axvline(xmin + dx, **knot_line_kwargs)
-        elif jnp.isclose(rk, xmax):
-            ax.axvline(xmax - dx, **knot_line_kwargs)
-        else:
-            ax.axvline(rk, **knot_line_kwargs)
+    _plot_knot_lines(ax, rknot, r[0], r[-1])
 
     fig.tight_layout()
 
@@ -1102,48 +1095,24 @@ def plot_Vext_moll(samples_pix, fname_out, coord_in="C", coord_out="G",
 
     coord_arg = coord_out if coord_in == coord_out else [coord_in, coord_out]
 
+    def _mollpanel(map_data, unit_label, sub):
+        hp.mollview(map_data, nest=False, coord=coord_arg, notext=False,
+                    xsize=2000, cbar=True, unit=unit_label, title="", sub=sub)
+        hp.graticule(dpar=lat_step, dmer=lon_step)
+        if remove_coord_label:
+            ax = plt.gca()
+            for t in ax.texts:
+                if "Galactic" in t.get_text() or "Equatorial" in t.get_text():
+                    t.set_visible(False)
+        _add_equator_labels(lon_step, lat_step)
+
     plt.figure(figsize=(7, 10))
-
-    # Mean
-    hp.mollview(mean_map, nest=False, coord=coord_arg, notext=False,
-                xsize=2000, cbar=True,
-                unit=r"Mean $V_{\mathrm{ext}}$ [$\mathrm{km\ s^{-1}}$]",
-                title="", sub=311)
-    hp.graticule(dpar=lat_step, dmer=lon_step)
-    if remove_coord_label:
-        ax = plt.gca()
-        for t in ax.texts:
-            if "Galactic" in t.get_text() or "Equatorial" in t.get_text():
-                t.set_visible(False)
-    _add_equator_labels(lon_step, lat_step)
-
-    # Std
-    hp.mollview(std_map, nest=False, coord=coord_arg, notext=False,
-                xsize=2000, cbar=True,
-                unit=r"Std($V_{\mathrm{ext}}$) [$\mathrm{km\ s^{-1}}$]",
-                title="", sub=312)
-    hp.graticule(dpar=lat_step, dmer=lon_step)
-    if remove_coord_label:
-        ax = plt.gca()
-        for t in ax.texts:
-            if "Galactic" in t.get_text() or "Equatorial" in t.get_text():
-                t.set_visible(False)
-    _add_equator_labels(lon_step, lat_step)
-
-    # Mean / Std
-    hp.mollview(snr_map, nest=False, coord=coord_arg, notext=False,
-                xsize=2000, cbar=True,
-                unit=r"$V_{\mathrm{ext}}$/Std($V_{\mathrm{ext}}$)",
-                title="", sub=313)
-    hp.graticule(dpar=lat_step, dmer=lon_step)
-    if remove_coord_label:
-        ax = plt.gca()
-        for t in ax.texts:
-            if "Galactic" in t.get_text() or "Equatorial" in t.get_text():
-                t.set_visible(False)
-    _add_equator_labels(lon_step, lat_step)
-
-    # Add padding between rows
+    _mollpanel(mean_map,
+               r"Mean $V_{\mathrm{ext}}$ [$\mathrm{km\ s^{-1}}$]", 311)
+    _mollpanel(std_map,
+               r"Std($V_{\mathrm{ext}}$) [$\mathrm{km\ s^{-1}}$]", 312)
+    _mollpanel(snr_map,
+               r"$V_{\mathrm{ext}}$/Std($V_{\mathrm{ext}}$)", 313)
     plt.subplots_adjust(hspace=0.35)
 
     plt.savefig(fname_out, dpi=450, bbox_inches="tight")

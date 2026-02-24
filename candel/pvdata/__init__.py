@@ -24,7 +24,6 @@ from .data import (                                                             
     load_CCHP_from_config,                                                      # noqa
     load_SH0ES_separated,                                                       # noqa
     load_SH0ES_from_config,                                                     # noqa
-    load_clusters,                                                              # noqa
     load_SDSS_FP,                                                               # noqa
     load_6dF_FP,                                                                # noqa
     load_PantheonPlus,                                                          # noqa
