@@ -72,7 +72,7 @@ class LOSInterpolator:
         assert f.ndim == 3
         assert f.shape[-1] == len(los_r)
 
-        self.f = f
+        self.f = jnp.asarray(f)
         # Store grid params in the same dtype as los_r
         self.r_min = los_r[0]
         self.r_max = los_r[-1]

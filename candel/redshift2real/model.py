@@ -17,14 +17,21 @@ Module for mapping observed redshift to cosmological redshift given some
 calibrated density and velocity field.
 """
 from abc import ABC, abstractmethod
+from functools import partial
 
+import jax
 import numpy as np
+from jax import numpy as jnp
+from jax.scipy.stats import norm as jax_norm
 from scipy.integrate import cumulative_trapezoid, simpson
 from scipy.special import logsumexp as logsumexp_np
 from tqdm import trange
 
 from ..cosmography import Distance2Redshift
 from ..model import LOSInterpolator
+from ..model.pv_utils import lp_galaxy_bias
+from ..model.simpson import ln_simpson
+from ..model.utils import logmeanexp
 from ..util import SPEED_OF_LIGHT, fprint, radec_to_cartesian
 
 
@@ -194,7 +201,7 @@ class Redshift2Real(BaseRedshift2Real):
 
     Instead of MCMC sampling, this class evaluates the log-posterior on a grid
     of `z_cosmo` values and normalizes numerically using Simpson integration.
-    Uses pure NumPy for computation (no JAX JIT overhead).
+    Core computation is JIT-compiled with JAX.
     """
 
     def _compute_bias_normalization(self, los_grid_r, batch_size=10):
@@ -204,13 +211,14 @@ class Redshift2Real(BaseRedshift2Real):
 
         fprint(f"Computing `{self.which_bias}` bias normalization...",
                verbose=self.verbose)
-        los_grid_r = np.asarray(los_grid_r)
+        los_grid_r = jnp.asarray(los_grid_r)
 
-        field_all = np.asarray(
+        field_all = jnp.asarray(
             self._bias_interp.interp_many(los_grid_r))
         nfield, ngal, _ = field_all.shape
 
-        bias_params_bc = [p[None, None, :, None] for p in self._bias_params]
+        bias_params_bc = [jnp.asarray(p)[None, None, :, None]
+                          for p in self._bias_params]
 
         lp_norm = np.zeros((nfield, ngal, self.num_cal))
         n_batches = (ngal + batch_size - 1) // batch_size
@@ -221,19 +229,62 @@ class Redshift2Real(BaseRedshift2Real):
             end = min((i + 1) * batch_size, ngal)
             field = field_all[:, start:end, :]
 
-            intg = self._eval_bias(field[:, :, None, :], bias_params_bc)
-            lp_norm[:, start:end, :] = ln_simpson_np(
-                intg, los_grid_r, axis=-1)
+            lp_norm[:, start:end, :] = np.asarray(
+                self._bias_norm_jit(
+                    self.which_bias, field[:, :, None, :],
+                    bias_params_bc, los_grid_r))
 
         return lp_norm
 
-    def _eval_bias(self, field, bias_params):
-        """Evaluate log galaxy bias contribution."""
-        if self.which_bias == "linear":
-            return lp_galaxy_bias_np(field, None, bias_params, "linear")
+    @staticmethod
+    @partial(jax.jit, static_argnums=(0,))
+    def _bias_norm_jit(which_bias, field, bias_params, los_grid_r):
+        """JIT-compiled bias normalization for a batch."""
+        if which_bias == "linear":
+            intg = lp_galaxy_bias(field, None, bias_params, "linear")
         else:
-            return lp_galaxy_bias_np(
-                None, field, bias_params, "double_powerlaw")
+            intg = lp_galaxy_bias(None, field, bias_params,
+                                  "double_powerlaw")
+        # Pad x to match intg's ndim for ln_simpson
+        x = los_grid_r[(None,) * (intg.ndim - 1)]
+        return ln_simpson(intg, x, axis=-1)
+
+    @staticmethod
+    @partial(jax.jit, static_argnums=(0,))
+    def _process_batch_jit(which_bias, lp_r, z_grid, log_jacobian, Vpec,
+                           Vext_radial, cz_cmb, beta, sigma_v,
+                           bias_field, lp_norm, bias_params):
+        """JIT-compiled core of _process_batch."""
+        if which_bias is not None:
+            if which_bias == "linear":
+                lp_bias = lp_galaxy_bias(
+                    bias_field[:, :, None, :], None, bias_params, "linear")
+            else:
+                lp_bias = lp_galaxy_bias(
+                    None, bias_field[:, :, None, :], bias_params,
+                    "double_powerlaw")
+            lp_r_full = (lp_r[None, None, None, :]
+                         + lp_bias - lp_norm[..., None])
+        else:
+            lp_r_full = lp_r[None, None, None, :]
+
+        zpec = (beta[None, None, :, None] * Vpec[:, :, None, :]
+                + Vext_radial[None, :, :, None]) / SPEED_OF_LIGHT
+
+        cz_pred = SPEED_OF_LIGHT * (
+            (1 + z_grid)[None, None, None, :] * (1 + zpec) - 1)
+
+        ll = jax_norm.logpdf(cz_cmb[None, :, None, None], cz_pred,
+                             sigma_v[None, None, :, None])
+        ll += lp_r_full
+
+        ll = logmeanexp(ll, axis=2)
+        log_posterior_unnorm = logmeanexp(ll, axis=0)
+
+        log_posterior_unnorm += log_jacobian[None, :]
+
+        log_norm = ln_simpson(log_posterior_unnorm, z_grid[None, :], axis=-1)
+        return log_posterior_unnorm - log_norm[:, None]
 
     def __call__(self, batch_size=10):
         """
@@ -298,50 +349,28 @@ class Redshift2Real(BaseRedshift2Real):
 
     def _process_batch(self, start, end, lp_r, z_grid, log_jacobian,
                        Vpec_all, bias_field_all):
-        """Process a batch of galaxies using pure NumPy."""
-        Vpec = Vpec_all[:, start:end, :]
-        Vext_radial = self.Vext_radial[start:end, :]
-        cz_cmb = self.cz_cmb[start:end]
+        """Process a batch of galaxies (thin wrapper around JIT core)."""
+        Vpec = jnp.asarray(Vpec_all[:, start:end, :])
+        Vext_radial = jnp.asarray(self.Vext_radial[start:end, :])
+        cz_cmb = jnp.asarray(self.cz_cmb[start:end])
 
-        # Galaxy bias contribution
         if self.which_bias is not None:
-            bias_field = bias_field_all[:, start:end, :]
-            lp_norm = self.lp_norm[:, start:end, :]
-
-            bias_params_bc = [p[None, None, :, None]
-                              for p in self._bias_params]
-            lp_bias = self._eval_bias(
-                bias_field[:, :, None, :], bias_params_bc)
-            lp_r_full = (lp_r[None, None, None, :]
-                         + lp_bias - lp_norm[..., None])
+            bias_field = jnp.asarray(bias_field_all[:, start:end, :])
+            lp_norm = jnp.asarray(self.lp_norm[:, start:end, :])
+            bias_params = [jnp.asarray(p)[None, None, :, None]
+                           for p in self._bias_params]
         else:
-            lp_r_full = lp_r[None, None, None, :]
+            bias_field = None
+            lp_norm = None
+            bias_params = []
 
-        # Peculiar velocity redshift (nfield, batch, ncal, nrad)
-        zpec = (
-            self.beta[None, None, :, None] * Vpec[:, :, None, :]
-            + Vext_radial[None, :, :, None]) / SPEED_OF_LIGHT
-
-        # Predicted cz (nfield, batch, ncal, nrad)
-        cz_pred = SPEED_OF_LIGHT * (
-            (1 + z_grid)[None, None, None, :] * (1 + zpec) - 1)
-
-        # Log-likelihood (nfield, batch, ncal, nrad)
-        ll = normal_logpdf_np(cz_cmb[None, :, None, None], cz_pred,
-                              self.sigma_v[None, None, :, None])
-        ll += lp_r_full
-
-        # Average over calibration samples, shape (nfield, batch, nrad)
-        ll = log_mean_exp_np(ll, axis=2)
-        # Average over velocity field realizations, shape (batch, nrad)
-        log_posterior_unnorm = log_mean_exp_np(ll, axis=0)
-
-        # Apply Jacobian for p(z) = p(r) * |dr/dz|
-        log_posterior_unnorm += log_jacobian[None, :]
-
-        # Normalize using Simpson integration in z-space
-        log_norm = ln_simpson_np(log_posterior_unnorm, z_grid, axis=-1)
-        return log_posterior_unnorm - log_norm[:, None]
+        return np.asarray(self._process_batch_jit(
+            self.which_bias,
+            jnp.asarray(lp_r), jnp.asarray(z_grid),
+            jnp.asarray(log_jacobian),
+            Vpec, Vext_radial, cz_cmb,
+            jnp.asarray(self.beta), jnp.asarray(self.sigma_v),
+            bias_field, lp_norm, bias_params))
 
     @staticmethod
     def posterior_summary(z_grid, log_posterior, ci=0.68):
