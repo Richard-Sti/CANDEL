@@ -1,0 +1,305 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>candel.evidence &mdash; candel  documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../../_static/css/theme.css?v=9edc463e" />
+
+  
+      <script src="../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../_static/documentation_options.js?v=5929fcd5"></script>
+      <script src="../../_static/doctools.js?v=fd6eb6e6"></script>
+      <script src="../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../index.html" class="icon icon-home">
+            candel
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Contents</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../installation.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../models.html">Supported models</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../api/index.html">API Reference</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../index.html">candel</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="../index.html">Module code</a></li>
+      <li class="breadcrumb-item active">candel.evidence</li>
+      <li class="wy-breadcrumbs-aside">
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <h1>Source code for candel.evidence</h1><div class="highlight"><pre>
+<span></span><span class="c1"># Copyright (C) 2025 Richard Stiskalek</span>
+<span class="c1"># This program is free software; you can redistribute it and/or modify it</span>
+<span class="c1"># under the terms of the GNU General Public License as published by the</span>
+<span class="c1"># Free Software Foundation; either version 3 of the License, or (at your</span>
+<span class="c1"># option) any later version.</span>
+<span class="c1">#</span>
+<span class="c1"># This program is distributed in the hope that it will be useful, but</span>
+<span class="c1"># WITHOUT ANY WARRANTY; without even the implied warranty of</span>
+<span class="c1"># MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General</span>
+<span class="c1"># Public License for more details.</span>
+<span class="c1">#</span>
+<span class="c1"># You should have received a copy of the GNU General Public License along</span>
+<span class="c1"># with this program; if not, write to the Free Software Foundation, Inc.,</span>
+<span class="c1"># 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.</span>
+<span class="sd">&quot;&quot;&quot;Evidence and BIC/AIC calculation for MCMC samples.&quot;&quot;&quot;</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">.util</span><span class="w"> </span><span class="kn">import</span> <span class="n">fprint</span>
+
+
+<div class="viewcode-block" id="BIC_AIC">
+<a class="viewcode-back" href="../../api/candel.html#candel.evidence.BIC_AIC">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">BIC_AIC</span><span class="p">(</span><span class="n">samples</span><span class="p">,</span> <span class="n">log_density</span><span class="p">,</span> <span class="n">ndata</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Get the BIC/AIC of HMC samples from a Numpyro model.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    samples: dict</span>
+<span class="sd">        Dictionary of samples from the Numpyro MCMC object.</span>
+<span class="sd">    log_density: numpy array</span>
+<span class="sd">        Log density of the samples.</span>
+<span class="sd">    ndata: int</span>
+<span class="sd">        Number of data points.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    BIC, AIC: floats</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">kmax</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">argmax</span><span class="p">(</span><span class="n">log_density</span><span class="p">)</span>
+
+    <span class="c1"># How many parameters?</span>
+    <span class="n">nparam</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">samples</span><span class="o">.</span><span class="n">values</span><span class="p">():</span>
+        <span class="k">if</span> <span class="n">x</span><span class="o">.</span><span class="n">ndim</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
+            <span class="n">nparam</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="c1"># The first dimension is the number of steps.</span>
+            <span class="n">nparam</span> <span class="o">+=</span> <span class="n">np</span><span class="o">.</span><span class="n">prod</span><span class="p">(</span><span class="n">x</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">:])</span>
+
+    <span class="n">fprint</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;BIC &amp; AIC calculation found </span><span class="si">{</span><span class="n">nparam</span><span class="si">}</span><span class="s2"> parameters and </span><span class="si">{</span><span class="n">ndata</span><span class="si">}</span><span class="s2"> &quot;</span>
+           <span class="s2">&quot;data points.&quot;</span><span class="p">)</span>
+
+    <span class="n">BIC</span> <span class="o">=</span> <span class="n">nparam</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">ndata</span><span class="p">)</span> <span class="o">-</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">log_density</span><span class="p">[</span><span class="n">kmax</span><span class="p">]</span>
+    <span class="n">AIC</span> <span class="o">=</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">nparam</span> <span class="o">-</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">log_density</span><span class="p">[</span><span class="n">kmax</span><span class="p">]</span>
+
+    <span class="k">return</span> <span class="nb">float</span><span class="p">(</span><span class="n">BIC</span><span class="p">),</span> <span class="nb">float</span><span class="p">(</span><span class="n">AIC</span><span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="dict_samples_to_array">
+<a class="viewcode-back" href="../../api/candel.html#candel.evidence.dict_samples_to_array">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">dict_samples_to_array</span><span class="p">(</span><span class="n">samples</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Convert a dictionary of samples to a 2-dimensional array.&quot;&quot;&quot;</span>
+    <span class="n">data</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">names</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="k">for</span> <span class="n">key</span><span class="p">,</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">samples</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+        <span class="k">if</span> <span class="n">x</span><span class="o">.</span><span class="n">ndim</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
+            <span class="n">data</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+            <span class="n">names</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">key</span><span class="p">)</span>
+        <span class="k">elif</span> <span class="n">x</span><span class="o">.</span><span class="n">ndim</span> <span class="o">==</span> <span class="mi">2</span><span class="p">:</span>
+            <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">x</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]):</span>
+                <span class="n">data</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">x</span><span class="p">[:,</span> <span class="n">i</span><span class="p">])</span>
+                <span class="n">names</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">key</span><span class="si">}</span><span class="s2">_</span><span class="si">{</span><span class="n">i</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="k">elif</span> <span class="n">x</span><span class="o">.</span><span class="n">ndim</span> <span class="o">==</span> <span class="mi">3</span><span class="p">:</span>
+            <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">x</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]):</span>
+                <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">x</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">2</span><span class="p">]):</span>
+                    <span class="n">data</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">x</span><span class="p">[:,</span> <span class="n">j</span><span class="p">,</span> <span class="n">i</span><span class="p">])</span>
+                    <span class="n">names</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">key</span><span class="si">}</span><span class="s2">_</span><span class="si">{</span><span class="n">j</span><span class="si">}</span><span class="s2">_</span><span class="si">{</span><span class="n">i</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;Invalid dimensionality of samples to stack.&quot;</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">vstack</span><span class="p">(</span><span class="n">data</span><span class="p">)</span><span class="o">.</span><span class="n">T</span><span class="p">,</span> <span class="n">names</span></div>
+
+
+
+<div class="viewcode-block" id="harmonic_evidence">
+<a class="viewcode-back" href="../../api/candel.html#candel.evidence.harmonic_evidence">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">harmonic_evidence</span><span class="p">(</span><span class="n">samples_arr</span><span class="p">,</span> <span class="n">log_density</span><span class="p">,</span> <span class="n">temperature</span><span class="o">=</span><span class="mf">0.8</span><span class="p">,</span> <span class="n">epochs_num</span><span class="o">=</span><span class="mi">20</span><span class="p">,</span>
+                      <span class="n">return_flow_samples</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">verbose</span><span class="o">=</span><span class="kc">True</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Calculate the evidence using the `harmonic` package. The model has a few</span>
+<span class="sd">    more hyperparameters that are set to defaults now.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    samples_arr: 3-dimensional array</span>
+<span class="sd">        MCMC samples of shape `(nchains, nsamples, ndim)`.</span>
+<span class="sd">    log_density: 2-dimensional array</span>
+<span class="sd">        Log posterior xs of shape `(nchains, nsamples)`.</span>
+<span class="sd">    temperature: float, optional</span>
+<span class="sd">        Temperature of the `harmonic` model.</span>
+<span class="sd">    epochs_num: int, optional</span>
+<span class="sd">        Number of epochs for training the model.</span>
+<span class="sd">    return_flow_samples: bool, optional</span>
+<span class="sd">        Whether to return the flow samples.</span>
+<span class="sd">    verbose: bool, optional</span>
+<span class="sd">        Whether to print progress.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    ln_evidence, err_ln_inv_evidence: float and tuple of floats</span>
+<span class="sd">        The log evidence and its error.</span>
+<span class="sd">    flow_samples: 2-dimensional array, optional</span>
+<span class="sd">        Flow samples of shape `(nsamples, ndim)`. To check their agreement</span>
+<span class="sd">        with the input samples.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="kn">import</span><span class="w"> </span><span class="nn">harmonic</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">hm</span>
+    <span class="k">except</span> <span class="ne">ImportError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">return_flow_samples</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ImportError</span><span class="p">(</span><span class="s2">&quot;The `harmonic` package is required to &quot;</span>
+                              <span class="s2">&quot;calculate the evidence.&quot;</span><span class="p">)</span> <span class="kn">from</span><span class="w"> </span><span class="nn">e</span>
+        <span class="n">fprint</span><span class="p">(</span><span class="s2">&quot;The `harmonic` package is required to calculate the evidence. &quot;</span>
+               <span class="s2">&quot;Skipping. Install it with `pip install harmonic` to enable &quot;</span>
+               <span class="s2">&quot;evidence computation.&quot;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">nan</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">nan</span>
+
+    <span class="c1"># Do some standard checks of inputs.</span>
+    <span class="k">if</span> <span class="n">samples_arr</span><span class="o">.</span><span class="n">ndim</span> <span class="o">!=</span> <span class="mi">3</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;The samples_arr must be a 3-dimensional array of &quot;</span>
+                         <span class="s2">&quot;shape `(nchains, nsamples_arr, ndim)`.&quot;</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">log_density</span><span class="o">.</span><span class="n">ndim</span> <span class="o">!=</span> <span class="mi">2</span> <span class="ow">or</span> <span class="n">log_density</span><span class="o">.</span><span class="n">shape</span><span class="p">[:</span><span class="mi">2</span><span class="p">]</span> <span class="o">!=</span> <span class="n">samples_arr</span><span class="o">.</span><span class="n">shape</span><span class="p">[:</span><span class="mi">2</span><span class="p">]:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;The log posterior must be a 2-dimensional &quot;</span>
+                         <span class="s2">&quot;array of shape `(nchains, nsamples_arr)`.&quot;</span><span class="p">)</span>
+
+    <span class="n">ndim</span> <span class="o">=</span> <span class="n">samples_arr</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+    <span class="n">chains</span> <span class="o">=</span> <span class="n">hm</span><span class="o">.</span><span class="n">Chains</span><span class="p">(</span><span class="n">ndim</span><span class="p">)</span>
+    <span class="n">chains</span><span class="o">.</span><span class="n">add_chains_3d</span><span class="p">(</span><span class="n">samples_arr</span><span class="p">,</span> <span class="n">log_density</span><span class="p">)</span>
+    <span class="n">chains_train</span><span class="p">,</span> <span class="n">chains_infer</span> <span class="o">=</span> <span class="n">hm</span><span class="o">.</span><span class="n">utils</span><span class="o">.</span><span class="n">split_data</span><span class="p">(</span>
+        <span class="n">chains</span><span class="p">,</span> <span class="n">training_proportion</span><span class="o">=</span><span class="mf">0.5</span><span class="p">)</span>
+
+    <span class="c1"># This has a few more hyperparameters that are set to defaults now.</span>
+    <span class="n">model</span> <span class="o">=</span> <span class="n">hm</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">RQSplineModel</span><span class="p">(</span>
+        <span class="n">ndim</span><span class="p">,</span> <span class="n">standardize</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">temperature</span><span class="o">=</span><span class="n">temperature</span><span class="p">)</span>
+    <span class="n">model</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">chains_train</span><span class="o">.</span><span class="n">samples</span><span class="p">,</span> <span class="n">epochs</span><span class="o">=</span><span class="n">epochs_num</span><span class="p">,</span> <span class="n">verbose</span><span class="o">=</span><span class="n">verbose</span><span class="p">)</span>
+
+    <span class="n">ev</span> <span class="o">=</span> <span class="n">hm</span><span class="o">.</span><span class="n">Evidence</span><span class="p">(</span><span class="n">chains_infer</span><span class="o">.</span><span class="n">nchains</span><span class="p">,</span> <span class="n">model</span><span class="p">)</span>
+    <span class="n">ev</span><span class="o">.</span><span class="n">add_chains</span><span class="p">(</span><span class="n">chains_infer</span><span class="p">)</span>
+    <span class="n">ln_evidence</span> <span class="o">=</span> <span class="o">-</span><span class="n">ev</span><span class="o">.</span><span class="n">ln_evidence_inv</span>
+    <span class="n">err_ln_inv_evidence</span> <span class="o">=</span> <span class="n">ev</span><span class="o">.</span><span class="n">compute_ln_inv_evidence_errors</span><span class="p">()</span>
+
+    <span class="k">if</span> <span class="n">return_flow_samples</span><span class="p">:</span>
+        <span class="n">flow_samples</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">sample</span><span class="p">(</span><span class="n">samples_arr</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+
+        <span class="k">return</span> <span class="n">ln_evidence</span><span class="p">,</span> <span class="n">err_ln_inv_evidence</span><span class="p">,</span> <span class="n">flow_samples</span>
+
+    <span class="k">return</span> <span class="n">ln_evidence</span><span class="p">,</span> <span class="n">err_ln_inv_evidence</span></div>
+
+
+
+<div class="viewcode-block" id="laplace_evidence">
+<a class="viewcode-back" href="../../api/candel.html#candel.evidence.laplace_evidence">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">laplace_evidence</span><span class="p">(</span><span class="n">samples_array</span><span class="p">,</span> <span class="n">log_density</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Calculate the evidence using the Laplace approximation. Calculates</span>
+<span class="sd">    the mean and error of the log evidence estimated from the chains.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    samples_array: 3-dimensional array</span>
+<span class="sd">        MCMC samples of shape `(nchains, nsamples, ndim)`.</span>
+<span class="sd">    log_density: 2-dimensional array</span>
+<span class="sd">        Log posterior xs of shape `(nchains, nsamples)`.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    mean_ln_inv_evidence, err_ln_inv_evidence: two floats</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">samples_array</span><span class="o">.</span><span class="n">ndim</span> <span class="o">!=</span> <span class="mi">3</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;The samples_array must be a 3-dimensional array of &quot;</span>
+                         <span class="s2">&quot;shape `(nchains, nsamples, ndim)`.&quot;</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">log_density</span><span class="o">.</span><span class="n">ndim</span> <span class="o">!=</span> <span class="mi">2</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;The log_density must be a 2-dimensional array of &quot;</span>
+                         <span class="s2">&quot;shape `(nchains, nsamples)`.&quot;</span><span class="p">)</span>
+
+    <span class="n">nchains</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">samples_array</span><span class="p">)</span>
+    <span class="n">ndim</span> <span class="o">=</span> <span class="n">samples_array</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+    <span class="n">logZ</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">full</span><span class="p">(</span><span class="n">nchains</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">nan</span><span class="p">)</span>
+
+    <span class="k">for</span> <span class="n">n</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">nchains</span><span class="p">):</span>
+        <span class="n">C</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">cov</span><span class="p">(</span><span class="n">samples_array</span><span class="p">[</span><span class="n">n</span><span class="p">],</span> <span class="n">rowvar</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="n">lp_max</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="n">log_density</span><span class="p">[</span><span class="n">n</span><span class="p">])</span>
+
+        <span class="n">logZ</span><span class="p">[</span><span class="n">n</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="n">lp_max</span> <span class="o">+</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">eigvalsh</span><span class="p">(</span><span class="n">C</span><span class="p">)))</span>
+                                   <span class="o">+</span> <span class="n">ndim</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="mi">2</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">pi</span><span class="p">)))</span>
+
+    <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="n">logZ</span><span class="p">),</span> <span class="n">np</span><span class="o">.</span><span class="n">std</span><span class="p">(</span><span class="n">logZ</span><span class="p">)</span></div>
+
+</pre></div>
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2025, Richard Stiskalek.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

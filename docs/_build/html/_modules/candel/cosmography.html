@@ -1,0 +1,573 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>candel.cosmography &mdash; candel  documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../../_static/css/theme.css?v=9edc463e" />
+
+  
+      <script src="../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../_static/documentation_options.js?v=5929fcd5"></script>
+      <script src="../../_static/doctools.js?v=fd6eb6e6"></script>
+      <script src="../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../index.html" class="icon icon-home">
+            candel
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Contents</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../installation.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../models.html">Supported models</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../api/index.html">API Reference</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../index.html">candel</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="../index.html">Module code</a></li>
+      <li class="breadcrumb-item active">candel.cosmography</li>
+      <li class="wy-breadcrumbs-aside">
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <h1>Source code for candel.cosmography</h1><div class="highlight"><pre>
+<span></span><span class="c1"># Copyright (C) 2024 Richard Stiskalek</span>
+<span class="c1"># This program is free software; you can redistribute it and/or modify it</span>
+<span class="c1"># under the terms of the GNU General Public License as published by the</span>
+<span class="c1"># Free Software Foundation; either version 3 of the License, or (at your</span>
+<span class="c1"># option) any later version.</span>
+<span class="c1">#</span>
+<span class="c1"># This program is distributed in the hope that it will be useful, but</span>
+<span class="c1"># WITHOUT ANY WARRANTY; without even the implied warranty of</span>
+<span class="c1"># MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General</span>
+<span class="c1"># Public License for more details.</span>
+<span class="c1">#</span>
+<span class="c1"># You should have received a copy of the GNU General Public License along</span>
+<span class="c1"># with this program; if not, write to the Free Software Foundation, Inc.,</span>
+<span class="c1"># 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.</span>
+<span class="sd">&quot;&quot;&quot;Various cosmography functions for converting between distance indicators.&quot;&quot;&quot;</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">astropy.cosmology</span><span class="w"> </span><span class="kn">import</span> <span class="n">FlatLambdaCDM</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">interpax</span><span class="w"> </span><span class="kn">import</span> <span class="n">Interpolator1D</span><span class="p">,</span> <span class="n">Interpolator2D</span><span class="p">,</span> <span class="n">interp1d</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">jax</span><span class="w"> </span><span class="kn">import</span> <span class="n">numpy</span> <span class="k">as</span> <span class="n">jnp</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">jax</span><span class="w"> </span><span class="kn">import</span> <span class="n">vmap</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">scipy.interpolate</span><span class="w"> </span><span class="kn">import</span> <span class="n">CubicSpline</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">.util</span><span class="w"> </span><span class="kn">import</span> <span class="n">SPEED_OF_LIGHT</span>
+
+
+<span class="c1">###############################################################################</span>
+<span class="c1">#                              Helpers                                        #</span>
+<span class="c1">###############################################################################</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_make_cosmo_grids</span><span class="p">(</span><span class="n">Om0</span><span class="p">,</span> <span class="n">zmin</span><span class="p">,</span> <span class="n">zmax</span><span class="p">,</span> <span class="n">npoints</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Build cosmology and log-spaced redshift/distance grids.&quot;&quot;&quot;</span>
+    <span class="n">cosmo</span> <span class="o">=</span> <span class="n">FlatLambdaCDM</span><span class="p">(</span><span class="n">H0</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span> <span class="n">Om0</span><span class="o">=</span><span class="n">Om0</span><span class="p">)</span>
+    <span class="n">z_grid</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">logspace</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">log10</span><span class="p">(</span><span class="n">zmin</span><span class="p">),</span> <span class="n">np</span><span class="o">.</span><span class="n">log10</span><span class="p">(</span><span class="n">zmax</span><span class="p">),</span> <span class="n">npoints</span><span class="p">)</span>
+    <span class="n">r_grid</span> <span class="o">=</span> <span class="n">cosmo</span><span class="o">.</span><span class="n">comoving_distance</span><span class="p">(</span><span class="n">z_grid</span><span class="p">)</span><span class="o">.</span><span class="n">value</span>
+    <span class="k">return</span> <span class="n">cosmo</span><span class="p">,</span> <span class="n">z_grid</span><span class="p">,</span> <span class="n">r_grid</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_build_interpolator</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">is_scalar</span><span class="o">=</span><span class="kc">False</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Build an Interpolator1D, optionally vmapped.&quot;&quot;&quot;</span>
+    <span class="n">f</span> <span class="o">=</span> <span class="n">Interpolator1D</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">extrap</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">is_scalar</span><span class="p">:</span>
+        <span class="n">f</span> <span class="o">=</span> <span class="n">vmap</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">f</span>
+
+
+<span class="c1">###############################################################################</span>
+<span class="c1">#                        1D interpolator classes                              #</span>
+<span class="c1">###############################################################################</span>
+
+
+<div class="viewcode-block" id="Distmod2Distance">
+<a class="viewcode-back" href="../../api/candel.html#candel.cosmography.Distmod2Distance">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">Distmod2Distance</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Interpolator to convert distance modulus to comoving distance in `Mpc`.</span>
+<span class="sd">    Choice of `h` is determined when calling the `__call__` method.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    Om0 : float</span>
+<span class="sd">        Matter density parameter.</span>
+<span class="sd">    zmin_interp, zmax_interp : float</span>
+<span class="sd">        Minimum and maximum redshift for the interpolation grid.</span>
+<span class="sd">    npoints_interp : int</span>
+<span class="sd">        Number of points in the interpolation grid.</span>
+<span class="sd">    is_scalar : bool</span>
+<span class="sd">        If `True`, the interpolator is not vectorized. This is useful for</span>
+<span class="sd">        debugging, but should be set to `False` for performance.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">Om0</span><span class="o">=</span><span class="mf">0.3</span><span class="p">,</span> <span class="n">zmin_interp</span><span class="o">=</span><span class="mf">1e-8</span><span class="p">,</span> <span class="n">zmax_interp</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span>
+                 <span class="n">npoints_interp</span><span class="o">=</span><span class="mi">1000</span><span class="p">,</span> <span class="n">is_scalar</span><span class="o">=</span><span class="kc">False</span><span class="p">):</span>
+        <span class="n">cosmo</span><span class="p">,</span> <span class="n">z_grid</span><span class="p">,</span> <span class="n">r_grid</span> <span class="o">=</span> <span class="n">_make_cosmo_grids</span><span class="p">(</span>
+            <span class="n">Om0</span><span class="p">,</span> <span class="n">zmin_interp</span><span class="p">,</span> <span class="n">zmax_interp</span><span class="p">,</span> <span class="n">npoints_interp</span><span class="p">)</span>
+        <span class="n">mu_grid</span> <span class="o">=</span> <span class="n">cosmo</span><span class="o">.</span><span class="n">distmod</span><span class="p">(</span><span class="n">z_grid</span><span class="p">)</span><span class="o">.</span><span class="n">value</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_f</span> <span class="o">=</span> <span class="n">_build_interpolator</span><span class="p">(</span>
+            <span class="n">mu_grid</span><span class="p">,</span> <span class="n">jnp</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">r_grid</span><span class="p">),</span> <span class="n">is_scalar</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__call__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">mu</span><span class="p">,</span> <span class="n">h</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">return_log</span><span class="o">=</span><span class="kc">False</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">return_log</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_f</span><span class="p">(</span><span class="n">mu</span> <span class="o">+</span> <span class="mi">5</span> <span class="o">*</span> <span class="n">jnp</span><span class="o">.</span><span class="n">log10</span><span class="p">(</span><span class="n">h</span><span class="p">))</span> <span class="o">-</span> <span class="n">jnp</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">h</span><span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">jnp</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_f</span><span class="p">(</span><span class="n">mu</span> <span class="o">+</span> <span class="mi">5</span> <span class="o">*</span> <span class="n">jnp</span><span class="o">.</span><span class="n">log10</span><span class="p">(</span><span class="n">h</span><span class="p">)))</span> <span class="o">/</span> <span class="n">h</span></div>
+
+
+
+<div class="viewcode-block" id="Distance2Distmod">
+<a class="viewcode-back" href="../../api/candel.html#candel.cosmography.Distance2Distmod">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">Distance2Distmod</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Interpolator to convert distance in `Mpc` to distance modulus.</span>
+<span class="sd">    Choice of `h` is determined when calling the `__call__` method.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    Om0 : float</span>
+<span class="sd">        Matter density parameter.</span>
+<span class="sd">    zmin_interp, zmax_interp : float</span>
+<span class="sd">        Minimum and maximum redshift for the interpolation grid.</span>
+<span class="sd">    npoints_interp : int</span>
+<span class="sd">        Number of points in the interpolation grid.</span>
+<span class="sd">    is_scalar : bool</span>
+<span class="sd">        If `True`, the interpolator is not vectorized. This is useful for</span>
+<span class="sd">        debugging, but should be set to `False` for performance.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">Om0</span><span class="o">=</span><span class="mf">0.3</span><span class="p">,</span> <span class="n">zmin_interp</span><span class="o">=</span><span class="mf">1e-8</span><span class="p">,</span> <span class="n">zmax_interp</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span>
+                 <span class="n">npoints_interp</span><span class="o">=</span><span class="mi">1000</span><span class="p">,</span> <span class="n">is_scalar</span><span class="o">=</span><span class="kc">False</span><span class="p">):</span>
+        <span class="n">cosmo</span><span class="p">,</span> <span class="n">z_grid</span><span class="p">,</span> <span class="n">r_grid</span> <span class="o">=</span> <span class="n">_make_cosmo_grids</span><span class="p">(</span>
+            <span class="n">Om0</span><span class="p">,</span> <span class="n">zmin_interp</span><span class="p">,</span> <span class="n">zmax_interp</span><span class="p">,</span> <span class="n">npoints_interp</span><span class="p">)</span>
+        <span class="n">mu_grid</span> <span class="o">=</span> <span class="n">cosmo</span><span class="o">.</span><span class="n">distmod</span><span class="p">(</span><span class="n">z_grid</span><span class="p">)</span><span class="o">.</span><span class="n">value</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_f</span> <span class="o">=</span> <span class="n">_build_interpolator</span><span class="p">(</span>
+            <span class="n">jnp</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">r_grid</span><span class="p">),</span> <span class="n">mu_grid</span><span class="p">,</span> <span class="n">is_scalar</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__call__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">r</span><span class="p">,</span> <span class="n">h</span><span class="o">=</span><span class="mi">1</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_f</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">r</span> <span class="o">*</span> <span class="n">h</span><span class="p">))</span> <span class="o">-</span> <span class="mi">5</span> <span class="o">*</span> <span class="n">jnp</span><span class="o">.</span><span class="n">log10</span><span class="p">(</span><span class="n">h</span><span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="Distance2LogAngDist">
+<a class="viewcode-back" href="../../api/candel.html#candel.cosmography.Distance2LogAngDist">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">Distance2LogAngDist</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Interpolator to convert distance in `Mpc` to log angular diameter</span>
+<span class="sd">    distance. `h` is assumed to be one.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    Om0 : float</span>
+<span class="sd">        Matter density parameter.</span>
+<span class="sd">    zmin_interp, zmax_interp : float</span>
+<span class="sd">        Minimum and maximum redshift for the interpolation grid.</span>
+<span class="sd">    npoints_interp : int</span>
+<span class="sd">        Number of points in the interpolation grid.</span>
+<span class="sd">    is_scalar : bool</span>
+<span class="sd">        If `True`, the interpolator is not vectorized. This is useful for</span>
+<span class="sd">        debugging, but should be set to `False` for performance.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">Om0</span><span class="o">=</span><span class="mf">0.3</span><span class="p">,</span> <span class="n">zmin_interp</span><span class="o">=</span><span class="mf">1e-8</span><span class="p">,</span> <span class="n">zmax_interp</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span>
+                 <span class="n">npoints_interp</span><span class="o">=</span><span class="mi">1000</span><span class="p">,</span> <span class="n">is_scalar</span><span class="o">=</span><span class="kc">False</span><span class="p">):</span>
+        <span class="n">cosmo</span><span class="p">,</span> <span class="n">z_grid</span><span class="p">,</span> <span class="n">r_grid</span> <span class="o">=</span> <span class="n">_make_cosmo_grids</span><span class="p">(</span>
+            <span class="n">Om0</span><span class="p">,</span> <span class="n">zmin_interp</span><span class="p">,</span> <span class="n">zmax_interp</span><span class="p">,</span> <span class="n">npoints_interp</span><span class="p">)</span>
+        <span class="n">log_da_grid</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">log10</span><span class="p">(</span>
+            <span class="n">cosmo</span><span class="o">.</span><span class="n">angular_diameter_distance</span><span class="p">(</span><span class="n">z_grid</span><span class="p">)</span><span class="o">.</span><span class="n">value</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_f</span> <span class="o">=</span> <span class="n">_build_interpolator</span><span class="p">(</span>
+            <span class="n">jnp</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">r_grid</span><span class="p">),</span> <span class="n">log_da_grid</span><span class="p">,</span> <span class="n">is_scalar</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__call__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">r</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_f</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">r</span><span class="p">))</span></div>
+
+
+
+<div class="viewcode-block" id="Distance2LogLumDist">
+<a class="viewcode-back" href="../../api/candel.html#candel.cosmography.Distance2LogLumDist">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">Distance2LogLumDist</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Interpolator to convert distance in `Mpc` to log luminosity distance.</span>
+<span class="sd">    `h` is assumed to be one.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    Om0 : float</span>
+<span class="sd">        Matter density parameter.</span>
+<span class="sd">    zmin_interp, zmax_interp : float</span>
+<span class="sd">        Minimum and maximum redshift for the interpolation grid.</span>
+<span class="sd">    npoints_interp : int</span>
+<span class="sd">        Number of points in the interpolation grid.</span>
+<span class="sd">    is_scalar : bool</span>
+<span class="sd">        If `True`, the interpolator is not vectorized. This is useful for</span>
+<span class="sd">        debugging, but should be set to `False` for performance.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">Om0</span><span class="o">=</span><span class="mf">0.3</span><span class="p">,</span> <span class="n">zmin_interp</span><span class="o">=</span><span class="mf">1e-8</span><span class="p">,</span> <span class="n">zmax_interp</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span>
+                 <span class="n">npoints_interp</span><span class="o">=</span><span class="mi">1000</span><span class="p">,</span> <span class="n">is_scalar</span><span class="o">=</span><span class="kc">False</span><span class="p">):</span>
+        <span class="n">cosmo</span><span class="p">,</span> <span class="n">z_grid</span><span class="p">,</span> <span class="n">r_grid</span> <span class="o">=</span> <span class="n">_make_cosmo_grids</span><span class="p">(</span>
+            <span class="n">Om0</span><span class="p">,</span> <span class="n">zmin_interp</span><span class="p">,</span> <span class="n">zmax_interp</span><span class="p">,</span> <span class="n">npoints_interp</span><span class="p">)</span>
+        <span class="n">log_dl_grid</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">log10</span><span class="p">(</span><span class="n">cosmo</span><span class="o">.</span><span class="n">luminosity_distance</span><span class="p">(</span><span class="n">z_grid</span><span class="p">)</span><span class="o">.</span><span class="n">value</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_f</span> <span class="o">=</span> <span class="n">_build_interpolator</span><span class="p">(</span>
+            <span class="n">jnp</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">r_grid</span><span class="p">),</span> <span class="n">log_dl_grid</span><span class="p">,</span> <span class="n">is_scalar</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__call__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">r</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_f</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">r</span><span class="p">))</span></div>
+
+
+
+<div class="viewcode-block" id="LogAngularDiameterDistance2Distmod">
+<a class="viewcode-back" href="../../api/candel.html#candel.cosmography.LogAngularDiameterDistance2Distmod">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">LogAngularDiameterDistance2Distmod</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Interpolator to convert log angular diameter distance in `Mpc` to</span>
+<span class="sd">    distance modulus. Choice of `h` is determined when calling the</span>
+<span class="sd">    `__call__` method.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    Om0 : float</span>
+<span class="sd">        Matter density parameter.</span>
+<span class="sd">    zmin_interp, zmax_interp : float</span>
+<span class="sd">        Minimum and maximum redshift for the interpolation grid.</span>
+<span class="sd">    npoints_interp : int</span>
+<span class="sd">        Number of points in the interpolation grid.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">Om0</span><span class="o">=</span><span class="mf">0.3</span><span class="p">,</span> <span class="n">zmin_interp</span><span class="o">=</span><span class="mf">1e-8</span><span class="p">,</span> <span class="n">zmax_interp</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span>
+                 <span class="n">npoints_interp</span><span class="o">=</span><span class="mi">1000</span><span class="p">):</span>
+        <span class="n">cosmo</span><span class="p">,</span> <span class="n">z_grid</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">_make_cosmo_grids</span><span class="p">(</span>
+            <span class="n">Om0</span><span class="p">,</span> <span class="n">zmin_interp</span><span class="p">,</span> <span class="n">zmax_interp</span><span class="p">,</span> <span class="n">npoints_interp</span><span class="p">)</span>
+        <span class="n">da_grid</span> <span class="o">=</span> <span class="n">cosmo</span><span class="o">.</span><span class="n">angular_diameter_distance</span><span class="p">(</span><span class="n">z_grid</span><span class="p">)</span><span class="o">.</span><span class="n">value</span>
+        <span class="n">mu_grid</span> <span class="o">=</span> <span class="n">cosmo</span><span class="o">.</span><span class="n">distmod</span><span class="p">(</span><span class="n">z_grid</span><span class="p">)</span><span class="o">.</span><span class="n">value</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_f</span> <span class="o">=</span> <span class="n">_build_interpolator</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">log10</span><span class="p">(</span><span class="n">da_grid</span><span class="p">),</span> <span class="n">mu_grid</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__call__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">logdA</span><span class="p">,</span> <span class="n">h</span><span class="o">=</span><span class="mi">1</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_f</span><span class="p">(</span><span class="n">logdA</span> <span class="o">+</span> <span class="n">jnp</span><span class="o">.</span><span class="n">log10</span><span class="p">(</span><span class="n">h</span><span class="p">))</span> <span class="o">-</span> <span class="mi">5</span> <span class="o">*</span> <span class="n">jnp</span><span class="o">.</span><span class="n">log10</span><span class="p">(</span><span class="n">h</span><span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="Distmod2Redshift">
+<a class="viewcode-back" href="../../api/candel.html#candel.cosmography.Distmod2Redshift">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">Distmod2Redshift</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Interpolator to convert distance modulus to redshift.</span>
+<span class="sd">    Choice of `h` is determined when calling the `__call__` method.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    Om0 : float</span>
+<span class="sd">        Matter density parameter.</span>
+<span class="sd">    zmin_interp, zmax_interp : float</span>
+<span class="sd">        Minimum and maximum redshift for the interpolation grid.</span>
+<span class="sd">    npoints_interp : int</span>
+<span class="sd">        Number of points in the interpolation grid.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">Om0</span><span class="o">=</span><span class="mf">0.3</span><span class="p">,</span> <span class="n">zmin_interp</span><span class="o">=</span><span class="mf">1e-8</span><span class="p">,</span> <span class="n">zmax_interp</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span>
+                 <span class="n">npoints_interp</span><span class="o">=</span><span class="mi">1000</span><span class="p">):</span>
+        <span class="n">cosmo</span><span class="p">,</span> <span class="n">z_grid</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">_make_cosmo_grids</span><span class="p">(</span>
+            <span class="n">Om0</span><span class="p">,</span> <span class="n">zmin_interp</span><span class="p">,</span> <span class="n">zmax_interp</span><span class="p">,</span> <span class="n">npoints_interp</span><span class="p">)</span>
+        <span class="n">mu_grid</span> <span class="o">=</span> <span class="n">cosmo</span><span class="o">.</span><span class="n">distmod</span><span class="p">(</span><span class="n">z_grid</span><span class="p">)</span><span class="o">.</span><span class="n">value</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_f</span> <span class="o">=</span> <span class="n">_build_interpolator</span><span class="p">(</span><span class="n">mu_grid</span><span class="p">,</span> <span class="n">jnp</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">z_grid</span><span class="p">))</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__call__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">mu</span><span class="p">,</span> <span class="n">h</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">return_log</span><span class="o">=</span><span class="kc">False</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">return_log</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_f</span><span class="p">(</span><span class="n">mu</span> <span class="o">+</span> <span class="mi">5</span> <span class="o">*</span> <span class="n">jnp</span><span class="o">.</span><span class="n">log10</span><span class="p">(</span><span class="n">h</span><span class="p">))</span>
+
+        <span class="k">return</span> <span class="n">jnp</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_f</span><span class="p">(</span><span class="n">mu</span> <span class="o">+</span> <span class="mi">5</span> <span class="o">*</span> <span class="n">jnp</span><span class="o">.</span><span class="n">log10</span><span class="p">(</span><span class="n">h</span><span class="p">)))</span></div>
+
+
+
+<div class="viewcode-block" id="Redshift2Distance">
+<a class="viewcode-back" href="../../api/candel.html#candel.cosmography.Redshift2Distance">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">Redshift2Distance</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Interpolator to convert redshift to comoving distance in `Mpc`.</span>
+<span class="sd">    Choice of `h` is determined when calling the `__call__` method.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    Om0 : float</span>
+<span class="sd">        Matter density parameter.</span>
+<span class="sd">    zmin_interp, zmax_interp : float</span>
+<span class="sd">        Minimum and maximum redshift for the interpolation grid.</span>
+<span class="sd">    npoints_interp : int</span>
+<span class="sd">        Number of points in the interpolation grid.</span>
+<span class="sd">    is_scalar : bool</span>
+<span class="sd">        If `True`, the interpolator is not vectorized. This is useful for</span>
+<span class="sd">        debugging, but should be set to `False` for performance.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">Om0</span><span class="o">=</span><span class="mf">0.3</span><span class="p">,</span> <span class="n">zmin_interp</span><span class="o">=</span><span class="mf">1e-8</span><span class="p">,</span> <span class="n">zmax_interp</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span>
+                 <span class="n">npoints_interp</span><span class="o">=</span><span class="mi">1000</span><span class="p">,</span> <span class="n">is_scalar</span><span class="o">=</span><span class="kc">False</span><span class="p">):</span>
+        <span class="n">_</span><span class="p">,</span> <span class="n">z_grid</span><span class="p">,</span> <span class="n">r_grid</span> <span class="o">=</span> <span class="n">_make_cosmo_grids</span><span class="p">(</span>
+            <span class="n">Om0</span><span class="p">,</span> <span class="n">zmin_interp</span><span class="p">,</span> <span class="n">zmax_interp</span><span class="p">,</span> <span class="n">npoints_interp</span><span class="p">)</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">_f</span> <span class="o">=</span> <span class="n">_build_interpolator</span><span class="p">(</span><span class="n">z_grid</span><span class="p">,</span> <span class="n">r_grid</span><span class="p">,</span> <span class="n">is_scalar</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_f_cz</span> <span class="o">=</span> <span class="n">_build_interpolator</span><span class="p">(</span>
+            <span class="n">z_grid</span> <span class="o">*</span> <span class="n">SPEED_OF_LIGHT</span><span class="p">,</span> <span class="n">r_grid</span><span class="p">,</span> <span class="n">is_scalar</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__call__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">z</span><span class="p">,</span> <span class="n">h</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">is_velocity</span><span class="o">=</span><span class="kc">False</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">is_velocity</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_f_cz</span><span class="p">(</span><span class="n">z</span><span class="p">)</span> <span class="o">/</span> <span class="n">h</span>
+
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_f</span><span class="p">(</span><span class="n">z</span><span class="p">)</span> <span class="o">/</span> <span class="n">h</span></div>
+
+
+
+<div class="viewcode-block" id="Redshift2Distmod">
+<a class="viewcode-back" href="../../api/candel.html#candel.cosmography.Redshift2Distmod">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">Redshift2Distmod</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Interpolator to convert redshift to distance modulus.</span>
+<span class="sd">    Choice of `h` is determined when calling the `__call__` method.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    Om0 : float</span>
+<span class="sd">        Matter density parameter.</span>
+<span class="sd">    zmin_interp, zmax_interp : float</span>
+<span class="sd">        Minimum and maximum redshift for the interpolation grid.</span>
+<span class="sd">    npoints_interp : int</span>
+<span class="sd">        Number of points in the interpolation grid.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">Om0</span><span class="o">=</span><span class="mf">0.3</span><span class="p">,</span> <span class="n">zmin_interp</span><span class="o">=</span><span class="mf">1e-8</span><span class="p">,</span> <span class="n">zmax_interp</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span>
+                 <span class="n">npoints_interp</span><span class="o">=</span><span class="mi">1000</span><span class="p">):</span>
+        <span class="n">cosmo</span><span class="p">,</span> <span class="n">z_grid</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">_make_cosmo_grids</span><span class="p">(</span>
+            <span class="n">Om0</span><span class="p">,</span> <span class="n">zmin_interp</span><span class="p">,</span> <span class="n">zmax_interp</span><span class="p">,</span> <span class="n">npoints_interp</span><span class="p">)</span>
+        <span class="n">mu_grid</span> <span class="o">=</span> <span class="n">cosmo</span><span class="o">.</span><span class="n">distmod</span><span class="p">(</span><span class="n">z_grid</span><span class="p">)</span><span class="o">.</span><span class="n">value</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_f</span> <span class="o">=</span> <span class="n">_build_interpolator</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">z_grid</span><span class="p">),</span> <span class="n">mu_grid</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__call__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">z</span><span class="p">,</span> <span class="n">h</span><span class="o">=</span><span class="mi">1</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_f</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">z</span><span class="p">))</span> <span class="o">-</span> <span class="mi">5</span> <span class="o">*</span> <span class="n">jnp</span><span class="o">.</span><span class="n">log10</span><span class="p">(</span><span class="n">h</span><span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="Distance2Redshift">
+<a class="viewcode-back" href="../../api/candel.html#candel.cosmography.Distance2Redshift">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">Distance2Redshift</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Interpolator to convert comoving distance in `Mpc` to redshift.</span>
+<span class="sd">    Choice of `h` is determined when calling the `__call__` method.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    Om0 : float</span>
+<span class="sd">        Matter density parameter.</span>
+<span class="sd">    zmin_interp, zmax_interp : float</span>
+<span class="sd">        Minimum and maximum redshift for the interpolation grid.</span>
+<span class="sd">    npoints_interp : int</span>
+<span class="sd">        Number of points in the interpolation grid.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">Om0</span><span class="o">=</span><span class="mf">0.3</span><span class="p">,</span> <span class="n">zmin_interp</span><span class="o">=</span><span class="mf">1e-8</span><span class="p">,</span> <span class="n">zmax_interp</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span>
+                 <span class="n">npoints_interp</span><span class="o">=</span><span class="mi">1000</span><span class="p">):</span>
+        <span class="n">_</span><span class="p">,</span> <span class="n">z_grid</span><span class="p">,</span> <span class="n">r_grid</span> <span class="o">=</span> <span class="n">_make_cosmo_grids</span><span class="p">(</span>
+            <span class="n">Om0</span><span class="p">,</span> <span class="n">zmin_interp</span><span class="p">,</span> <span class="n">zmax_interp</span><span class="p">,</span> <span class="n">npoints_interp</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_f</span> <span class="o">=</span> <span class="n">_build_interpolator</span><span class="p">(</span><span class="n">r_grid</span><span class="p">,</span> <span class="n">z_grid</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__call__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">r</span><span class="p">,</span> <span class="n">h</span><span class="o">=</span><span class="mi">1</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_f</span><span class="p">(</span><span class="n">r</span> <span class="o">*</span> <span class="n">h</span><span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="LogGrad_Distmod2ComovingDistance">
+<a class="viewcode-back" href="../../api/candel.html#candel.cosmography.LogGrad_Distmod2ComovingDistance">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">LogGrad_Distmod2ComovingDistance</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Interpolator to compute the log gradient of the comoving distance in</span>
+<span class="sd">    `Mpc / h` with respect to distance modulus. Choice of `h` is determined</span>
+<span class="sd">    when calling the `__call__` method.</span>
+
+<span class="sd">    The function is: `log (dr / dmu) | mu`.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    Om0 : float</span>
+<span class="sd">        Matter density parameter.</span>
+<span class="sd">    zmin_interp, zmax_interp : float</span>
+<span class="sd">        Minimum and maximum redshift for the interpolation grid.</span>
+<span class="sd">    npoints_interp : int</span>
+<span class="sd">        Number of points in the interpolation grid.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">Om0</span><span class="o">=</span><span class="mf">0.3</span><span class="p">,</span> <span class="n">zmin_interp</span><span class="o">=</span><span class="mf">1e-8</span><span class="p">,</span> <span class="n">zmax_interp</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span>
+                 <span class="n">npoints_interp</span><span class="o">=</span><span class="mi">1000</span><span class="p">):</span>
+        <span class="n">cosmo</span><span class="p">,</span> <span class="n">z_grid</span><span class="p">,</span> <span class="n">r_grid</span> <span class="o">=</span> <span class="n">_make_cosmo_grids</span><span class="p">(</span>
+            <span class="n">Om0</span><span class="p">,</span> <span class="n">zmin_interp</span><span class="p">,</span> <span class="n">zmax_interp</span><span class="p">,</span> <span class="n">npoints_interp</span><span class="p">)</span>
+        <span class="n">mu_grid</span> <span class="o">=</span> <span class="n">cosmo</span><span class="o">.</span><span class="n">distmod</span><span class="p">(</span><span class="n">z_grid</span><span class="p">)</span><span class="o">.</span><span class="n">value</span>
+
+        <span class="n">spline</span> <span class="o">=</span> <span class="n">CubicSpline</span><span class="p">(</span><span class="n">mu_grid</span><span class="p">,</span> <span class="n">r_grid</span><span class="p">,</span> <span class="n">extrapolate</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="n">drdmu</span> <span class="o">=</span> <span class="n">spline</span><span class="o">.</span><span class="n">derivative</span><span class="p">()(</span><span class="n">mu_grid</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_f</span> <span class="o">=</span> <span class="n">_build_interpolator</span><span class="p">(</span><span class="n">mu_grid</span><span class="p">,</span> <span class="n">jnp</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">drdmu</span><span class="p">))</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__call__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">mu</span><span class="p">,</span> <span class="n">h</span><span class="o">=</span><span class="mi">1</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_f</span><span class="p">(</span><span class="n">mu</span> <span class="o">+</span> <span class="mi">5</span> <span class="o">*</span> <span class="n">jnp</span><span class="o">.</span><span class="n">log10</span><span class="p">(</span><span class="n">h</span><span class="p">))</span> <span class="o">-</span> <span class="n">jnp</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">h</span><span class="p">)</span></div>
+
+
+
+<span class="c1">###############################################################################</span>
+<span class="c1">#                   Interpolators sampling Om as well                         #</span>
+<span class="c1">###############################################################################</span>
+
+<div class="viewcode-block" id="Distance2Distmod_withOm">
+<a class="viewcode-back" href="../../api/candel.html#candel.cosmography.Distance2Distmod_withOm">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">Distance2Distmod_withOm</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Interpolator to convert distance in `Mpc` to distance modulus, as a</span>
+<span class="sd">    function of `h` and `Om`, which are specified on the fly.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">rmin</span><span class="o">=</span><span class="mf">1e-3</span><span class="p">,</span> <span class="n">rmax</span><span class="o">=</span><span class="mi">500</span><span class="p">,</span> <span class="n">nr</span><span class="o">=</span><span class="mi">500</span><span class="p">,</span>
+                 <span class="n">Om_min</span><span class="o">=</span><span class="mf">0.01</span><span class="p">,</span> <span class="n">Om_max</span><span class="o">=</span><span class="mf">0.99</span><span class="p">,</span> <span class="n">nOm</span><span class="o">=</span><span class="mi">500</span><span class="p">,</span>
+                 <span class="n">zmin_outer</span><span class="o">=</span><span class="mf">1e-9</span><span class="p">,</span> <span class="n">zmax_outer</span><span class="o">=</span><span class="mf">0.3</span><span class="p">,</span> <span class="n">method</span><span class="o">=</span><span class="s1">&#39;cubic&#39;</span><span class="p">):</span>
+        <span class="n">r_grid</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">logspace</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">log10</span><span class="p">(</span><span class="n">rmin</span><span class="p">),</span> <span class="n">np</span><span class="o">.</span><span class="n">log10</span><span class="p">(</span><span class="n">rmax</span><span class="p">),</span> <span class="n">nr</span><span class="p">)</span>
+        <span class="n">Om_grid</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">linspace</span><span class="p">(</span><span class="n">Om_min</span><span class="p">,</span> <span class="n">Om_max</span><span class="p">,</span> <span class="n">nOm</span><span class="p">)</span>
+        <span class="n">z_grid</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">logspace</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">log10</span><span class="p">(</span><span class="n">zmin_outer</span><span class="p">),</span> <span class="n">np</span><span class="o">.</span><span class="n">log10</span><span class="p">(</span><span class="n">zmax_outer</span><span class="p">),</span> <span class="n">nr</span><span class="p">)</span>
+
+        <span class="n">mu_grid</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">empty</span><span class="p">((</span><span class="n">nr</span><span class="p">,</span> <span class="n">nOm</span><span class="p">))</span>
+        <span class="k">for</span> <span class="n">j</span><span class="p">,</span> <span class="n">Om</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">Om_grid</span><span class="p">):</span>
+            <span class="n">cosmo</span> <span class="o">=</span> <span class="n">FlatLambdaCDM</span><span class="p">(</span><span class="n">H0</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span> <span class="n">Om0</span><span class="o">=</span><span class="n">Om</span><span class="p">)</span>
+            <span class="n">r</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">cosmo</span><span class="o">.</span><span class="n">comoving_distance</span><span class="p">(</span><span class="n">z_grid</span><span class="p">)</span><span class="o">.</span><span class="n">value</span><span class="p">)</span>
+            <span class="n">mu</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">cosmo</span><span class="o">.</span><span class="n">distmod</span><span class="p">(</span><span class="n">z_grid</span><span class="p">)</span><span class="o">.</span><span class="n">value</span><span class="p">)</span>
+
+            <span class="n">mu_grid</span><span class="p">[:,</span> <span class="n">j</span><span class="p">]</span> <span class="o">=</span> <span class="n">interp1d</span><span class="p">(</span><span class="n">r_grid</span><span class="p">,</span> <span class="n">r</span><span class="p">,</span> <span class="n">mu</span><span class="p">,</span> <span class="n">method</span><span class="o">=</span><span class="n">method</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">np</span><span class="o">.</span><span class="n">any</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">isnan</span><span class="p">(</span><span class="n">mu_grid</span><span class="p">[:,</span> <span class="n">j</span><span class="p">])):</span>
+                <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                    <span class="s2">&quot;The distance grid is not fully covered for &quot;</span>
+                    <span class="sa">f</span><span class="s2">&quot;Om = </span><span class="si">{</span><span class="n">Om</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">. Try increasing `redshift ranges`.&quot;</span><span class="p">)</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">_interp</span> <span class="o">=</span> <span class="n">Interpolator2D</span><span class="p">(</span>
+            <span class="n">x</span><span class="o">=</span><span class="n">r_grid</span><span class="p">,</span>
+            <span class="n">y</span><span class="o">=</span><span class="n">Om_grid</span><span class="p">,</span>
+            <span class="n">f</span><span class="o">=</span><span class="n">jnp</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">mu_grid</span><span class="p">),</span>
+            <span class="n">method</span><span class="o">=</span><span class="n">method</span><span class="p">,</span>
+            <span class="n">extrap</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+        <span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__call__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">r</span><span class="p">,</span> <span class="n">Om</span><span class="p">,</span> <span class="n">h</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_interp</span><span class="p">(</span><span class="n">r</span> <span class="o">*</span> <span class="n">h</span><span class="p">,</span> <span class="n">Om</span><span class="p">)</span> <span class="o">-</span> <span class="mi">5</span> <span class="o">*</span> <span class="n">jnp</span><span class="o">.</span><span class="n">log10</span><span class="p">(</span><span class="n">h</span><span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="Distance2Redshift_withOm">
+<a class="viewcode-back" href="../../api/candel.html#candel.cosmography.Distance2Redshift_withOm">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">Distance2Redshift_withOm</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Interpolator to convert distance in `Mpc` to redshift, as a</span>
+<span class="sd">    function of `h` and `Om`, which are specified on the fly.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">rmin</span><span class="o">=</span><span class="mf">1e-3</span><span class="p">,</span> <span class="n">rmax</span><span class="o">=</span><span class="mi">500</span><span class="p">,</span> <span class="n">nr</span><span class="o">=</span><span class="mi">500</span><span class="p">,</span>
+                 <span class="n">Om_min</span><span class="o">=</span><span class="mf">0.01</span><span class="p">,</span> <span class="n">Om_max</span><span class="o">=</span><span class="mf">0.99</span><span class="p">,</span> <span class="n">nOm</span><span class="o">=</span><span class="mi">500</span><span class="p">,</span>
+                 <span class="n">zmin_outer</span><span class="o">=</span><span class="mf">1e-9</span><span class="p">,</span> <span class="n">zmax_outer</span><span class="o">=</span><span class="mf">0.3</span><span class="p">,</span> <span class="n">method</span><span class="o">=</span><span class="s1">&#39;cubic&#39;</span><span class="p">):</span>
+        <span class="n">r_grid</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">logspace</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">log10</span><span class="p">(</span><span class="n">rmin</span><span class="p">),</span> <span class="n">np</span><span class="o">.</span><span class="n">log10</span><span class="p">(</span><span class="n">rmax</span><span class="p">),</span> <span class="n">nr</span><span class="p">)</span>
+        <span class="n">Om_grid</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">linspace</span><span class="p">(</span><span class="n">Om_min</span><span class="p">,</span> <span class="n">Om_max</span><span class="p">,</span> <span class="n">nOm</span><span class="p">)</span>
+        <span class="n">z_grid_fixed</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">logspace</span><span class="p">(</span>
+            <span class="n">np</span><span class="o">.</span><span class="n">log10</span><span class="p">(</span><span class="n">zmin_outer</span><span class="p">),</span> <span class="n">np</span><span class="o">.</span><span class="n">log10</span><span class="p">(</span><span class="n">zmax_outer</span><span class="p">),</span> <span class="n">nr</span><span class="p">)</span>
+
+        <span class="n">z_grid</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">empty</span><span class="p">((</span><span class="n">nr</span><span class="p">,</span> <span class="n">nOm</span><span class="p">))</span>
+        <span class="k">for</span> <span class="n">j</span><span class="p">,</span> <span class="n">Om</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">Om_grid</span><span class="p">):</span>
+            <span class="n">cosmo</span> <span class="o">=</span> <span class="n">FlatLambdaCDM</span><span class="p">(</span><span class="n">H0</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span> <span class="n">Om0</span><span class="o">=</span><span class="n">Om</span><span class="p">)</span>
+
+            <span class="n">r</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">cosmo</span><span class="o">.</span><span class="n">comoving_distance</span><span class="p">(</span><span class="n">z_grid_fixed</span><span class="p">)</span><span class="o">.</span><span class="n">value</span><span class="p">)</span>
+            <span class="n">z_grid</span><span class="p">[:,</span> <span class="n">j</span><span class="p">]</span> <span class="o">=</span> <span class="n">interp1d</span><span class="p">(</span><span class="n">r_grid</span><span class="p">,</span> <span class="n">r</span><span class="p">,</span> <span class="n">z_grid_fixed</span><span class="p">,</span> <span class="n">method</span><span class="o">=</span><span class="n">method</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">np</span><span class="o">.</span><span class="n">any</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">isnan</span><span class="p">(</span><span class="n">z_grid</span><span class="p">[:,</span> <span class="n">j</span><span class="p">])):</span>
+                <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                    <span class="s2">&quot;The distance grid is not fully covered for &quot;</span>
+                    <span class="sa">f</span><span class="s2">&quot;Om = </span><span class="si">{</span><span class="n">Om</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">. Try increasing `redshift ranges`.&quot;</span><span class="p">)</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">_interp</span> <span class="o">=</span> <span class="n">Interpolator2D</span><span class="p">(</span>
+            <span class="n">x</span><span class="o">=</span><span class="n">r_grid</span><span class="p">,</span>
+            <span class="n">y</span><span class="o">=</span><span class="n">Om_grid</span><span class="p">,</span>
+            <span class="n">f</span><span class="o">=</span><span class="n">jnp</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">z_grid</span><span class="p">),</span>
+            <span class="n">method</span><span class="o">=</span><span class="n">method</span><span class="p">,</span>
+            <span class="n">extrap</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+        <span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__call__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">r</span><span class="p">,</span> <span class="n">Om</span><span class="p">,</span> <span class="n">h</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_interp</span><span class="p">(</span><span class="n">r</span> <span class="o">*</span> <span class="n">h</span><span class="p">,</span> <span class="n">Om</span><span class="p">)</span></div>
+
+
+
+<span class="c1">###############################################################################</span>
+<span class="c1">#                           Cosmographic expansion                            #</span>
+<span class="c1">###############################################################################</span>
+
+
+<div class="viewcode-block" id="redshift_to_dL_cosmography">
+<a class="viewcode-back" href="../../api/candel.html#candel.cosmography.redshift_to_dL_cosmography">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">redshift_to_dL_cosmography</span><span class="p">(</span><span class="n">z</span><span class="p">,</span> <span class="n">H0</span><span class="p">,</span> <span class="n">q0</span><span class="o">=-</span><span class="mf">0.55</span><span class="p">,</span> <span class="n">j0</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">s0</span><span class="o">=</span><span class="mf">0.055</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Calculate the luminosity distance for a given redshift using cosmographic</span>
+<span class="sd">    expansion up to second order in redshift.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="p">(</span><span class="n">SPEED_OF_LIGHT</span> <span class="o">*</span> <span class="n">z</span><span class="p">)</span> <span class="o">/</span> <span class="n">H0</span> <span class="o">*</span> <span class="p">(</span>
+        <span class="mi">1</span>
+        <span class="o">+</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">q0</span><span class="p">)</span> <span class="o">*</span> <span class="n">z</span>
+        <span class="o">-</span> <span class="p">(</span><span class="mi">1</span> <span class="o">/</span> <span class="mi">6</span><span class="p">)</span> <span class="o">*</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">q0</span> <span class="o">-</span> <span class="mi">3</span> <span class="o">*</span> <span class="n">q0</span><span class="o">**</span><span class="mi">2</span> <span class="o">+</span> <span class="n">j0</span><span class="p">)</span> <span class="o">*</span> <span class="n">z</span><span class="o">**</span><span class="mi">2</span>
+        <span class="o">+</span> <span class="p">(</span><span class="mi">1</span> <span class="o">/</span> <span class="mi">24</span><span class="p">)</span> <span class="o">*</span> <span class="p">(</span><span class="mi">2</span> <span class="o">-</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">q0</span> <span class="o">-</span> <span class="mi">15</span> <span class="o">*</span> <span class="n">q0</span><span class="o">**</span><span class="mi">2</span> <span class="o">-</span> <span class="mi">15</span> <span class="o">*</span> <span class="n">q0</span><span class="o">**</span><span class="mi">3</span> <span class="o">+</span> <span class="mi">5</span> <span class="o">*</span> <span class="n">j0</span> <span class="o">+</span> <span class="mi">10</span> <span class="o">*</span> <span class="n">q0</span> <span class="o">*</span>  <span class="n">j0</span> <span class="o">+</span> <span class="n">s0</span><span class="p">)</span> <span class="o">*</span> <span class="n">z</span><span class="o">**</span><span class="mi">3</span>  <span class="c1"># noqa</span>
+        <span class="p">)</span></div>
+
+</pre></div>
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2025, Richard Stiskalek.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

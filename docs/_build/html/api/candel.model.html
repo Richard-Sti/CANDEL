@@ -1,0 +1,701 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>candel.model &mdash; candel  documentation</title>
+      <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../_static/css/theme.css?v=9edc463e" />
+
+  
+      <script src="../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../_static/documentation_options.js?v=5929fcd5"></script>
+      <script src="../_static/doctools.js?v=fd6eb6e6"></script>
+      <script src="../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="candel.pvdata" href="candel.pvdata.html" />
+    <link rel="prev" title="candel" href="candel.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../index.html" class="icon icon-home">
+            candel
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Contents</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../installation.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../models.html">Supported models</a></li>
+<li class="toctree-l1 current"><a class="reference internal" href="index.html">API Reference</a><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="candel.html">candel</a></li>
+<li class="toctree-l2 current"><a class="current reference internal" href="#">candel.model</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#module-candel.model.base_pv">Base classes</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#candel.model.base_pv.BasePVModel"><code class="docutils literal notranslate"><span class="pre">BasePVModel</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#candel.model.base_pv.JointPVModel"><code class="docutils literal notranslate"><span class="pre">JointPVModel</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="#module-candel.model.model_PV_TFR">PV models</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#candel.model.model_PV_TFR.TFRModel"><code class="docutils literal notranslate"><span class="pre">TFRModel</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#candel.model.model_PV_SN.SNModel"><code class="docutils literal notranslate"><span class="pre">SNModel</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#candel.model.model_PV_PantheonPlus.PantheonPlusModel"><code class="docutils literal notranslate"><span class="pre">PantheonPlusModel</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#candel.model.model_PV_FP.FPModel"><code class="docutils literal notranslate"><span class="pre">FPModel</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="#module-candel.model.model_H0_CH0">H0 models</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#candel.model.model_H0_CH0.CH0Model"><code class="docutils literal notranslate"><span class="pre">CH0Model</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="#module-candel.model.interp">LOS interpolation</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#candel.model.interp.LOSInterpolator"><code class="docutils literal notranslate"><span class="pre">LOSInterpolator</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="#module-candel.model.simpson">Simpson integration</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#candel.model.simpson.tupleset"><code class="docutils literal notranslate"><span class="pre">tupleset()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#candel.model.simpson.simpson_log_weights"><code class="docutils literal notranslate"><span class="pre">simpson_log_weights()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#candel.model.simpson.ln_simpson"><code class="docutils literal notranslate"><span class="pre">ln_simpson()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="#module-candel.model.utils">Utilities</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#candel.model.utils.make_json_safe"><code class="docutils literal notranslate"><span class="pre">make_json_safe()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#candel.model.utils.config_hash"><code class="docutils literal notranslate"><span class="pre">config_hash()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#candel.model.utils.predict_cz"><code class="docutils literal notranslate"><span class="pre">predict_cz()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#candel.model.utils.mvn_logpdf_cholesky"><code class="docutils literal notranslate"><span class="pre">mvn_logpdf_cholesky()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#candel.model.utils.smoothclip_nr"><code class="docutils literal notranslate"><span class="pre">smoothclip_nr()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#candel.model.utils.log_prior_r_empirical"><code class="docutils literal notranslate"><span class="pre">log_prior_r_empirical()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#candel.model.utils.JeffreysPrior"><code class="docutils literal notranslate"><span class="pre">JeffreysPrior</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#candel.model.utils.Maxwell"><code class="docutils literal notranslate"><span class="pre">Maxwell</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#candel.model.utils.load_priors"><code class="docutils literal notranslate"><span class="pre">load_priors()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#candel.model.utils.log_integral_gauss_pdf_times_cdf"><code class="docutils literal notranslate"><span class="pre">log_integral_gauss_pdf_times_cdf()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#candel.model.utils.log_prob_integrand_sel"><code class="docutils literal notranslate"><span class="pre">log_prob_integrand_sel()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#candel.model.utils.logmeanexp"><code class="docutils literal notranslate"><span class="pre">logmeanexp()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#candel.model.pv_utils.sample_vector_components_uniform"><code class="docutils literal notranslate"><span class="pre">sample_vector_components_uniform()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#candel.model.pv_utils.sample_vector_fixed"><code class="docutils literal notranslate"><span class="pre">sample_vector_fixed()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#candel.model.pv_utils.sample_radialmag_vector"><code class="docutils literal notranslate"><span class="pre">sample_radialmag_vector()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#candel.model.pv_utils.sample_radial_vector"><code class="docutils literal notranslate"><span class="pre">sample_radial_vector()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#candel.model.pv_utils.interp_cartesian_vector"><code class="docutils literal notranslate"><span class="pre">interp_cartesian_vector()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#candel.model.pv_utils.rsample"><code class="docutils literal notranslate"><span class="pre">rsample()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#candel.model.pv_utils.marginalise_2d_latent"><code class="docutils literal notranslate"><span class="pre">marginalise_2d_latent()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#candel.model.pv_utils.get_absmag_TFR"><code class="docutils literal notranslate"><span class="pre">get_absmag_TFR()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#candel.model.pv_utils.gauss_hermite_log_weights"><code class="docutils literal notranslate"><span class="pre">gauss_hermite_log_weights()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#candel.model.pv_utils.sample_galaxy_bias"><code class="docutils literal notranslate"><span class="pre">sample_galaxy_bias()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#candel.model.pv_utils.lp_galaxy_bias"><code class="docutils literal notranslate"><span class="pre">lp_galaxy_bias()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#candel.model.pv_utils.compute_Vext_radial"><code class="docutils literal notranslate"><span class="pre">compute_Vext_radial()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#candel.model.pv_utils.sample_distance_prior"><code class="docutils literal notranslate"><span class="pre">sample_distance_prior()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#candel.model.pv_utils.sumzero_basis"><code class="docutils literal notranslate"><span class="pre">sumzero_basis()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#candel.model.pv_utils.sample_Vext"><code class="docutils literal notranslate"><span class="pre">sample_Vext()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#candel.model.pv_utils.log_p_S_TFR_eta"><code class="docutils literal notranslate"><span class="pre">log_p_S_TFR_eta()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#candel.model.pv_utils.add_sigma_mag_to_lane_cov"><code class="docutils literal notranslate"><span class="pre">add_sigma_mag_to_lane_cov()</span></code></a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="candel.pvdata.html">candel.pvdata</a></li>
+<li class="toctree-l2"><a class="reference internal" href="candel.cosmo.html">candel.cosmo</a></li>
+<li class="toctree-l2"><a class="reference internal" href="candel.field.html">candel.field</a></li>
+<li class="toctree-l2"><a class="reference internal" href="candel.redshift2real.html">candel.redshift2real</a></li>
+<li class="toctree-l2"><a class="reference internal" href="candel.mock.html">candel.mock</a></li>
+</ul>
+</li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../index.html">candel</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="index.html">API Reference</a></li>
+      <li class="breadcrumb-item active">candel.model</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="../_sources/api/candel.model.rst.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="candel-model">
+<h1>candel.model<a class="headerlink" href="#candel-model" title="Link to this heading"></a></h1>
+<section id="module-candel.model.base_pv">
+<span id="base-classes"></span><h2>Base classes<a class="headerlink" href="#module-candel.model.base_pv" title="Link to this heading"></a></h2>
+<p>Base classes for peculiar velocity (PV) forward models.</p>
+<dl class="py class">
+<dt class="sig sig-object py" id="candel.model.base_pv.BasePVModel">
+<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">candel.model.base_pv.</span></span><span class="sig-name descname"><span class="pre">BasePVModel</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">config_path</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/model/base_pv.html#BasePVModel"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.model.base_pv.BasePVModel" title="Link to this definition"></a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">ModelBase</span></code></p>
+<p>Base class for all PV models.</p>
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="candel.model.base_pv.JointPVModel">
+<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">candel.model.base_pv.</span></span><span class="sig-name descname"><span class="pre">JointPVModel</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">submodels</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">shared_param_names</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/model/base_pv.html#JointPVModel"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.model.base_pv.JointPVModel" title="Link to this definition"></a></dt>
+<dd><p>Bases: <a class="reference external" href="https://docs.python.org/3/library/functions.html#object" title="(in Python v3.14)"><code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></a></p>
+<p>A joint probabilistic velocity (PV) model that runs multiple submodels
+(e.g., TFR models) on independent datasets, while sharing a subset of
+parameters across all submodels.</p>
+</dd></dl>
+
+</section>
+<section id="module-candel.model.model_PV_TFR">
+<span id="pv-models"></span><h2>PV models<a class="headerlink" href="#module-candel.model.model_PV_TFR" title="Link to this heading"></a></h2>
+<p>TFR (Tully-Fisher relation) forward model.</p>
+<dl class="py class">
+<dt class="sig sig-object py" id="candel.model.model_PV_TFR.TFRModel">
+<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">candel.model.model_PV_TFR.</span></span><span class="sig-name descname"><span class="pre">TFRModel</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">config_path</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/model/model_PV_TFR.html#TFRModel"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.model.model_PV_TFR.TFRModel" title="Link to this definition"></a></dt>
+<dd><p>Bases: <a class="reference internal" href="#candel.model.base_pv.BasePVModel" title="candel.model.base_pv.BasePVModel"><code class="xref py py-class docutils literal notranslate"><span class="pre">BasePVModel</span></code></a></p>
+<p>A TFR forward model, distance is numerically marginalized out at each MCMC
+step instead of being sampled as a latent variable.</p>
+</dd></dl>
+
+<p id="module-candel.model.model_PV_SN">Supernova forward model.</p>
+<dl class="py class">
+<dt class="sig sig-object py" id="candel.model.model_PV_SN.SNModel">
+<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">candel.model.model_PV_SN.</span></span><span class="sig-name descname"><span class="pre">SNModel</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">config_path</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/model/model_PV_SN.html#SNModel"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.model.model_PV_SN.SNModel" title="Link to this definition"></a></dt>
+<dd><p>Bases: <a class="reference internal" href="#candel.model.base_pv.BasePVModel" title="candel.model.base_pv.BasePVModel"><code class="xref py py-class docutils literal notranslate"><span class="pre">BasePVModel</span></code></a></p>
+<p>A SNe forward model: the distance is numerically marginalized at each MCMC
+step. The Tripp coefficients are sampled. The true (x1, c) are
+analytically marginalised out using the Gaussian conjugacy of the
+Tripp relation.</p>
+</dd></dl>
+
+<p id="module-candel.model.model_PV_PantheonPlus">Pantheon+ forward model.</p>
+<dl class="py class">
+<dt class="sig sig-object py" id="candel.model.model_PV_PantheonPlus.PantheonPlusModel">
+<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">candel.model.model_PV_PantheonPlus.</span></span><span class="sig-name descname"><span class="pre">PantheonPlusModel</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">config_path</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/model/model_PV_PantheonPlus.html#PantheonPlusModel"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.model.model_PV_PantheonPlus.PantheonPlusModel" title="Link to this definition"></a></dt>
+<dd><p>Bases: <a class="reference internal" href="#candel.model.base_pv.BasePVModel" title="candel.model.base_pv.BasePVModel"><code class="xref py py-class docutils literal notranslate"><span class="pre">BasePVModel</span></code></a></p>
+<p>Pantheon+ forward model, the distance is numerically marginalized out at
+each MCMC step instead of being sampled as a latent variable.</p>
+</dd></dl>
+
+<p id="module-candel.model.model_PV_FP">Fundamental Plane (FP) forward model.</p>
+<dl class="py class">
+<dt class="sig sig-object py" id="candel.model.model_PV_FP.FPModel">
+<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">candel.model.model_PV_FP.</span></span><span class="sig-name descname"><span class="pre">FPModel</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">config_path</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/model/model_PV_FP.html#FPModel"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.model.model_PV_FP.FPModel" title="Link to this definition"></a></dt>
+<dd><p>Bases: <a class="reference internal" href="#candel.model.base_pv.BasePVModel" title="candel.model.base_pv.BasePVModel"><code class="xref py py-class docutils literal notranslate"><span class="pre">BasePVModel</span></code></a></p>
+<p>A FP model where the distance modulus μ is integrated out using a grid,
+instead of being sampled as a latent variable. The true (log σ, log I)
+are analytically marginalised out using the Gaussian conjugacy of the
+FP relation.</p>
+</dd></dl>
+
+</section>
+<section id="module-candel.model.model_H0_CH0">
+<span id="h0-models"></span><h2>H0 models<a class="headerlink" href="#module-candel.model.model_H0_CH0" title="Link to this heading"></a></h2>
+<p>Cepheid-calibrated H0 (CH0) forward model in JAX.</p>
+<dl class="py class">
+<dt class="sig sig-object py" id="candel.model.model_H0_CH0.CH0Model">
+<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">candel.model.model_H0_CH0.</span></span><span class="sig-name descname"><span class="pre">CH0Model</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">config_path</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">data</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/model/model_H0_CH0.html#CH0Model"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.model.model_H0_CH0.CH0Model" title="Link to this definition"></a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">ModelBase</span></code></p>
+<p>Base class for Cepheid-calibrated H0 models, handling configuration,
+data loading, and numerical grid setup.</p>
+<dl class="py method">
+<dt class="sig sig-object py" id="candel.model.model_H0_CH0.CH0Model.sample_host_distmod">
+<span class="sig-name descname"><span class="pre">sample_host_distmod</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/model/model_H0_CH0.html#CH0Model.sample_host_distmod"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.model.model_H0_CH0.CH0Model.sample_host_distmod" title="Link to this definition"></a></dt>
+<dd><p>Sample distance moduli for host galaxies, with a uniform prior in the
+distance modulus. Includes geometric anchor information for NGC 4258,
+the LMC, and M31.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="candel.model.model_H0_CH0.CH0Model.log_S_cz">
+<span class="sig-name descname"><span class="pre">log_S_cz</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">lp_r</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">Vpec</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">H0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sigma_v</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/model/model_H0_CH0.html#CH0Model.log_S_cz"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.model.model_H0_CH0.CH0Model.log_S_cz" title="Link to this definition"></a></dt>
+<dd><p>Probability of detection term if redshift-truncated.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="candel.model.model_H0_CH0.CH0Model.log_S_SN_mag">
+<span class="sig-name descname"><span class="pre">log_S_SN_mag</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">lp_r</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">M_SN</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">H0</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/model/model_H0_CH0.html#CH0Model.log_S_SN_mag"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.model.model_H0_CH0.CH0Model.log_S_SN_mag" title="Link to this definition"></a></dt>
+<dd><p>Probability of detection term if supernova magnitude-truncated.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="candel.model.model_H0_CH0.CH0Model.log_S_SN_mag_cz">
+<span class="sig-name descname"><span class="pre">log_S_SN_mag_cz</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">lp_r</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">Vpec</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">M_SN</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">H0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sigma_v</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/model/model_H0_CH0.html#CH0Model.log_S_SN_mag_cz"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.model.model_H0_CH0.CH0Model.log_S_SN_mag_cz" title="Link to this definition"></a></dt>
+<dd><p>Probability of detection term if supernova magnitude and
+redshift-truncated.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="candel.model.model_H0_CH0.CH0Model.log_S_Cepheid_mag">
+<span class="sig-name descname"><span class="pre">log_S_Cepheid_mag</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">lp_r</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">M_W</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">b_W</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">Z_W</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">H0</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/model/model_H0_CH0.html#CH0Model.log_S_Cepheid_mag"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.model.model_H0_CH0.CH0Model.log_S_Cepheid_mag" title="Link to this definition"></a></dt>
+<dd><p>Probability of detection term if Cepheid magnitude-truncated.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="candel.model.model_H0_CH0.CH0Model.log_prior_distance">
+<span class="sig-name descname"><span class="pre">log_prior_distance</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">r</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/model/model_H0_CH0.html#CH0Model.log_prior_distance"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.model.model_H0_CH0.CH0Model.log_prior_distance" title="Link to this definition"></a></dt>
+<dd><p>Log prior on the (physical distance).</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="candel.model.model_H0_CH0.CH0Model.sigma_v_from_density">
+<span class="sig-name descname"><span class="pre">sigma_v_from_density</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">delta</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sigma_v_low</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sigma_v_high</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">log_rho_t</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">k</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/model/model_H0_CH0.html#CH0Model.sigma_v_from_density"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.model.model_H0_CH0.CH0Model.sigma_v_from_density" title="Link to this definition"></a></dt>
+<dd><p>Map overdensity to sigma_v through a sigmoid in log density.</p>
+</dd></dl>
+
+</dd></dl>
+
+</section>
+<section id="module-candel.model.interp">
+<span id="los-interpolation"></span><h2>LOS interpolation<a class="headerlink" href="#module-candel.model.interp" title="Link to this heading"></a></h2>
+<p>Linear interpolator for line-of-sight (LOS) data on a uniform radial grid.</p>
+<dl class="py class">
+<dt class="sig sig-object py" id="candel.model.interp.LOSInterpolator">
+<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">candel.model.interp.</span></span><span class="sig-name descname"><span class="pre">LOSInterpolator</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">los_r</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">f</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">r0_decay_scale</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">5</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">extrap_constant</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/model/interp.html#LOSInterpolator"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.model.interp.LOSInterpolator" title="Link to this definition"></a></dt>
+<dd><p>Bases: <a class="reference external" href="https://docs.python.org/3/library/functions.html#object" title="(in Python v3.14)"><code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></a></p>
+<p>Vectorized 1D interpolator for line-of-sight (LOS) data on a uniform grid.</p>
+<dl>
+<dt>The expected shapes are:</dt><dd><ul class="simple">
+<li><p><cite>los_r</cite>: array of shape <cite>(n_steps,)</cite> — must be uniform</p></li>
+<li><p><cite>f</cite>: array of shape <cite>(n_fields, n_galaxies, n_steps)</cite></p></li>
+</ul>
+</dd>
+<dt>The interpolator can be queried with:</dt><dd><ul class="simple">
+<li><p><cite>__call__(r)</cite> where <cite>r</cite> has shape <cite>(n_galaxies,)</cite>, returning
+<cite>(n_fields, n_galaxies)</cite>.</p></li>
+<li><p><cite>interp_many(r_eval)</cite> where <cite>r_eval</cite> has shape <cite>(n_eval,)</cite>,
+returning <cite>(n_fields, n_galaxies, n_eval)</cite>.</p></li>
+</ul>
+</dd>
+<dt>Extrapolation:</dt><dd><dl class="simple">
+<dt>For <cite>r &gt; r_max</cite>, values follow an exponential decay:</dt><dd><p>f(r) = C + (A - C) * exp(-(r - r_max) / r0)</p>
+</dd>
+</dl>
+<p>where A is the last tabulated value, C = <cite>extrap_constant</cite>,
+and r0 = <cite>r0_decay_scale</cite>.</p>
+</dd>
+</dl>
+<dl class="py method">
+<dt class="sig sig-object py" id="candel.model.interp.LOSInterpolator.interp_many">
+<span class="sig-name descname"><span class="pre">interp_many</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">r_eval</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/model/interp.html#LOSInterpolator.interp_many"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.model.interp.LOSInterpolator.interp_many" title="Link to this definition"></a></dt>
+<dd><p>Interpolate at shared radii r_eval of shape (n_eval,).</p>
+<p>Returns shape (n_field, n_gal, n_eval).</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="candel.model.interp.LOSInterpolator.interp_many_steps_per_galaxy">
+<span class="sig-name descname"><span class="pre">interp_many_steps_per_galaxy</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">r_eval</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#candel.model.interp.LOSInterpolator.interp_many_steps_per_galaxy" title="Link to this definition"></a></dt>
+<dd><p>Interpolate at shared radii r_eval of shape (n_eval,).</p>
+<p>Returns shape (n_field, n_gal, n_eval).</p>
+</dd></dl>
+
+</dd></dl>
+
+</section>
+<section id="module-candel.model.simpson">
+<span id="simpson-integration"></span><h2>Simpson integration<a class="headerlink" href="#module-candel.model.simpson" title="Link to this heading"></a></h2>
+<dl class="simple">
+<dt>Routines copied from:</dt><dd><p><cite>https://github.com/adrn/jax-ext/blob/main/jax_ext/integrate/simpson.py</cite></p>
+</dd>
+</dl>
+<p>Only minor changes were made to the original code.</p>
+<dl class="py function">
+<dt class="sig sig-object py" id="candel.model.simpson.tupleset">
+<span class="sig-prename descclassname"><span class="pre">candel.model.simpson.</span></span><span class="sig-name descname"><span class="pre">tupleset</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">t</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">i</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">value</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/model/simpson.html#tupleset"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.model.simpson.tupleset" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="candel.model.simpson.simpson_log_weights">
+<span class="sig-prename descclassname"><span class="pre">candel.model.simpson.</span></span><span class="sig-name descname"><span class="pre">simpson_log_weights</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">x</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/model/simpson.html#simpson_log_weights"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.model.simpson.simpson_log_weights" title="Link to this definition"></a></dt>
+<dd><p>Log of composite Simpson’s 1/3 weights for a 1D grid.</p>
+<dl class="simple">
+<dt>For N points (N odd, &gt;= 3), the composite Simpson rule is</dt><dd><p>∫ f dx ≈ Σ_i w_i f(x_i)</p>
+</dd>
+</dl>
+<p>This returns log(w_i). Requires all weights positive (true when
+adjacent spacing ratios stay below 2).</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="candel.model.simpson.ln_simpson">
+<span class="sig-prename descclassname"><span class="pre">candel.model.simpson.</span></span><span class="sig-name descname"><span class="pre">ln_simpson</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ln_y</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">x</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">axis</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">-1</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/model/simpson.html#ln_simpson"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.model.simpson.ln_simpson" title="Link to this definition"></a></dt>
+<dd><p>Integrate y(x) using log values of the function <cite>ln_y</cite> evaluated at the
+locations <cite>x</cite>, and return the log of the integral</p>
+<p>Note: <cite>x</cite> values must be increasing and <cite>x</cite> and <cite>ln_y</cite> must have the
+same length.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>ln_y</strong> (<em>array_like</em>) – Array of log function values to be integrated.</p></li>
+<li><p><strong>x</strong> (<em>array_like</em>) – The points at which <cite>ln_y</cite> is evaluated.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>The estimated log integral computed with the composite Simpson’s rule.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)">float</a></p>
+</dd>
+</dl>
+</dd></dl>
+
+</section>
+<section id="module-candel.model.utils">
+<span id="utilities"></span><h2>Utilities<a class="headerlink" href="#module-candel.model.utils" title="Link to this heading"></a></h2>
+<p>General utility functions for PV and H0 forward models: configuration,
+physics, priors, and SH0ES helpers.</p>
+<dl class="py function">
+<dt class="sig sig-object py" id="candel.model.utils.make_json_safe">
+<span class="sig-prename descclassname"><span class="pre">candel.model.utils.</span></span><span class="sig-name descname"><span class="pre">make_json_safe</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">obj</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/model/utils.html#make_json_safe"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.model.utils.make_json_safe" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="candel.model.utils.config_hash">
+<span class="sig-prename descclassname"><span class="pre">candel.model.utils.</span></span><span class="sig-name descname"><span class="pre">config_hash</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">cfg</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/model/utils.html#config_hash"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.model.utils.config_hash" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="candel.model.utils.predict_cz">
+<span class="sig-prename descclassname"><span class="pre">candel.model.utils.</span></span><span class="sig-name descname"><span class="pre">predict_cz</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">zcosmo</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">Vrad</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/model/utils.html#predict_cz"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.model.utils.predict_cz" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="candel.model.utils.mvn_logpdf_cholesky">
+<span class="sig-prename descclassname"><span class="pre">candel.model.utils.</span></span><span class="sig-name descname"><span class="pre">mvn_logpdf_cholesky</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">y</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mu</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">L</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/model/utils.html#mvn_logpdf_cholesky"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.model.utils.mvn_logpdf_cholesky" title="Link to this definition"></a></dt>
+<dd><p>Log-pdf of a multivariate normal using Cholesky factor L (lower
+triangular).</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="candel.model.utils.smoothclip_nr">
+<span class="sig-prename descclassname"><span class="pre">candel.model.utils.</span></span><span class="sig-name descname"><span class="pre">smoothclip_nr</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">nr</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">tau</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/model/utils.html#smoothclip_nr"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.model.utils.smoothclip_nr" title="Link to this definition"></a></dt>
+<dd><p>Smooth zero-clipping for the number density.</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="candel.model.utils.log_prior_r_empirical">
+<span class="sig-prename descclassname"><span class="pre">candel.model.utils.</span></span><span class="sig-name descname"><span class="pre">log_prior_r_empirical</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">r</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">R</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">p</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">n</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">Rmax_grid</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">Rmax_truncate</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/model/utils.html#log_prior_r_empirical"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.model.utils.log_prior_r_empirical" title="Link to this definition"></a></dt>
+<dd><dl class="simple">
+<dt>Log of the (empirical) truncated prior:</dt><dd><p>π(r) ∝ r^p * exp(-(r/R)^n),   0 &lt; r ≤ Rmax</p>
+</dd>
+</dl>
+<p>Normalized by Z = [R^(1+p) * γ(a, x)] / n with a = (1+p)/n, x = (Rmax/R)^n</p>
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="candel.model.utils.JeffreysPrior">
+<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">candel.model.utils.</span></span><span class="sig-name descname"><span class="pre">JeffreysPrior</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">low</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">high</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1.0</span></span></em>, <em class="sig-param"><span class="keyword-only-separator o"><abbr title="Keyword-only parameters separator (PEP 3102)"><span class="pre">*</span></abbr></span></em>, <em class="sig-param"><span class="n"><span class="pre">validate_args</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/model/utils.html#JeffreysPrior"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.model.utils.JeffreysPrior" title="Link to this definition"></a></dt>
+<dd><p>Bases: <a class="reference external" href="https://num.pyro.ai/en/stable/distributions.html#numpyro.distributions.continuous.Uniform" title="(in NumPyro)"><code class="xref py py-class docutils literal notranslate"><span class="pre">Uniform</span></code></a></p>
+<p>Wrapper around Uniform that keeps Uniform sampling but overrides
+log_prob to behave like a Jeffreys prior.</p>
+<p>Sometimes this is also called a reference prior, or a scale-invariant
+prior.</p>
+<dl class="py method">
+<dt class="sig sig-object py" id="candel.model.utils.JeffreysPrior.log_prob">
+<span class="sig-name descname"><span class="pre">log_prob</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">value</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/model/utils.html#JeffreysPrior.log_prob"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.model.utils.JeffreysPrior.log_prob" title="Link to this definition"></a></dt>
+<dd><p>Evaluates the log probability density for a batch of samples given by
+<cite>value</cite>.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>value</strong> – A batch of samples from the distribution.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>an array with shape <cite>value.shape[:-self.event_shape]</cite></p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html#numpy.ndarray" title="(in NumPy v2.4)">numpy.ndarray</a></p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="candel.model.utils.Maxwell">
+<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">candel.model.utils.</span></span><span class="sig-name descname"><span class="pre">Maxwell</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">scale</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">validate_args</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/model/utils.html#Maxwell"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.model.utils.Maxwell" title="Link to this definition"></a></dt>
+<dd><p>Bases: <a class="reference external" href="https://num.pyro.ai/en/stable/distributions.html#numpyro.distributions.distribution.Distribution" title="(in NumPyro)"><code class="xref py py-class docutils literal notranslate"><span class="pre">Distribution</span></code></a></p>
+<p>Maxwell–Boltzmann (speed) distribution in 3D.</p>
+<dl class="simple">
+<dt>PDF:</dt><dd><p>f(x; a) = sqrt(2/pi) * x^2 * exp(-x^2 / (2 a^2)) / a^3,  x &gt;= 0,  a &gt; 0</p>
+</dd>
+</dl>
+<p>where <cite>a = sqrt(kT/m)</cite> is the scale parameter.</p>
+<dl class="simple">
+<dt>Args:</dt><dd><p>scale (float or array): positive scale parameter <cite>a</cite>.</p>
+</dd>
+<dt>Notes:</dt><dd><p>This is the chi distribution with k=3 degrees of freedom and scale <cite>a</cite>.</p>
+</dd>
+</dl>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="candel.model.utils.Maxwell.arg_constraints">
+<span class="sig-name descname"><span class="pre">arg_constraints</span></span><span class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">{'scale':</span> <span class="pre">Positive(lower_bound=0.0)}</span></span><a class="headerlink" href="#candel.model.utils.Maxwell.arg_constraints" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="candel.model.utils.Maxwell.support">
+<span class="sig-name descname"><span class="pre">support</span></span><span class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">Nonnegative(lower_bound=0.0)</span></span><a class="headerlink" href="#candel.model.utils.Maxwell.support" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="candel.model.utils.Maxwell.reparametrized_params">
+<span class="sig-name descname"><span class="pre">reparametrized_params</span></span><span class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">['scale']</span></span><a class="headerlink" href="#candel.model.utils.Maxwell.reparametrized_params" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="candel.model.utils.Maxwell.sample">
+<span class="sig-name descname"><span class="pre">sample</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">key</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sample_shape</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">()</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/model/utils.html#Maxwell.sample"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.model.utils.Maxwell.sample" title="Link to this definition"></a></dt>
+<dd><p>Returns a sample from the distribution having shape given by
+<cite>sample_shape + batch_shape + event_shape</cite>. Note that when <cite>sample_shape</cite> is non-empty,
+leading dimensions (of size <cite>sample_shape</cite>) of the returned sample will
+be filled with iid draws from the distribution instance.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>key</strong> (<em>jax.random.PRNGKey</em>) – the rng_key key to be used for the distribution.</p></li>
+<li><p><strong>sample_shape</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)"><em>tuple</em></a>) – the sample shape for the distribution.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>an array of shape <cite>sample_shape + batch_shape + event_shape</cite></p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html#numpy.ndarray" title="(in NumPy v2.4)">numpy.ndarray</a></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="candel.model.utils.Maxwell.log_prob">
+<span class="sig-name descname"><span class="pre">log_prob</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">value</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/model/utils.html#Maxwell.log_prob"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.model.utils.Maxwell.log_prob" title="Link to this definition"></a></dt>
+<dd><p>Evaluates the log probability density for a batch of samples given by
+<cite>value</cite>.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>value</strong> – A batch of samples from the distribution.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>an array with shape <cite>value.shape[:-self.event_shape]</cite></p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html#numpy.ndarray" title="(in NumPy v2.4)">numpy.ndarray</a></p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="candel.model.utils.load_priors">
+<span class="sig-prename descclassname"><span class="pre">candel.model.utils.</span></span><span class="sig-name descname"><span class="pre">load_priors</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">config_priors</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/model/utils.html#load_priors"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.model.utils.load_priors" title="Link to this definition"></a></dt>
+<dd><p>Load a dictionary of NumPyro distributions from a TOML file.</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="candel.model.utils.log_integral_gauss_pdf_times_cdf">
+<span class="sig-prename descclassname"><span class="pre">candel.model.utils.</span></span><span class="sig-name descname"><span class="pre">log_integral_gauss_pdf_times_cdf</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">mu</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sigma</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">t</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">w</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/model/utils.html#log_integral_gauss_pdf_times_cdf"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.model.utils.log_integral_gauss_pdf_times_cdf" title="Link to this definition"></a></dt>
+<dd><p>Log of ∫ N(x|mu, sigma^2) Φ((t - x)/w) dx.
+Closed form: Φ((mu - t)/sqrt(sigma^2 + w^2))</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="candel.model.utils.log_prob_integrand_sel">
+<span class="sig-prename descclassname"><span class="pre">candel.model.utils.</span></span><span class="sig-name descname"><span class="pre">log_prob_integrand_sel</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">x</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">e_x</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">lim</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">lim_width</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/model/utils.html#log_prob_integrand_sel"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.model.utils.log_prob_integrand_sel" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="candel.model.utils.logmeanexp">
+<span class="sig-prename descclassname"><span class="pre">candel.model.utils.</span></span><span class="sig-name descname"><span class="pre">logmeanexp</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">x</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">axis</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">denom</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/model/utils.html#logmeanexp"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.model.utils.logmeanexp" title="Link to this definition"></a></dt>
+<dd><p>Stable log(mean(exp(x))) with optional explicit denominator.</p>
+</dd></dl>
+
+<p id="module-candel.model.pv_utils">PV-specific sampling utilities: vector sampling, galaxy bias, external
+velocity, distance priors, and TFR/SN helpers.</p>
+<dl class="py function">
+<dt class="sig sig-object py" id="candel.model.pv_utils.sample_vector_components_uniform">
+<span class="sig-prename descclassname"><span class="pre">candel.model.pv_utils.</span></span><span class="sig-name descname"><span class="pre">sample_vector_components_uniform</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">name</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">low</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">high</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/model/pv_utils.html#sample_vector_components_uniform"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.model.pv_utils.sample_vector_components_uniform" title="Link to this definition"></a></dt>
+<dd><p>Sample a 3D vector by drawing each Cartesian component independently
+from a uniform distribution over [xmin, xmax].</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="candel.model.pv_utils.sample_vector_fixed">
+<span class="sig-prename descclassname"><span class="pre">candel.model.pv_utils.</span></span><span class="sig-name descname"><span class="pre">sample_vector_fixed</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">name</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mag_min</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mag_max</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/model/pv_utils.html#sample_vector_fixed"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.model.pv_utils.sample_vector_fixed" title="Link to this definition"></a></dt>
+<dd><p>Sample a 3D vector with direction ~ isotropic, magnitude ~ Uniform.</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="candel.model.pv_utils.sample_radialmag_vector">
+<span class="sig-prename descclassname"><span class="pre">candel.model.pv_utils.</span></span><span class="sig-name descname"><span class="pre">sample_radialmag_vector</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">name</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">nval</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">low</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">high</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/model/pv_utils.html#sample_radialmag_vector"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.model.pv_utils.sample_radialmag_vector" title="Link to this definition"></a></dt>
+<dd><p>Sample a vector whose magnitude varies at <cite>nval</cite> knots but a direction
+is shared by all knots and sampled isotropically on the sky. The magnitude
+is sampled ~ Uniform(low, high).</p>
+<p>Returns the tuple (mag, rhat), where <cite>mag</cite> has shape (nval,) and <cite>rhat</cite>
+has shape (3,).</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="candel.model.pv_utils.sample_radial_vector">
+<span class="sig-prename descclassname"><span class="pre">candel.model.pv_utils.</span></span><span class="sig-name descname"><span class="pre">sample_radial_vector</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">name</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">nval</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">low</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">high</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/model/pv_utils.html#sample_radial_vector"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.model.pv_utils.sample_radial_vector" title="Link to this definition"></a></dt>
+<dd><p>Sample a radial vector at <cite>nval</cite> knots: direction ~ isotropic,
+magnitude ~ Uniform(low, high). Returns an array of shape (nval, 3).</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="candel.model.pv_utils.interp_cartesian_vector">
+<span class="sig-prename descclassname"><span class="pre">candel.model.pv_utils.</span></span><span class="sig-name descname"><span class="pre">interp_cartesian_vector</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">rq</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">rknot</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">v_knot</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">method</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'cubic'</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/model/pv_utils.html#interp_cartesian_vector"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.model.pv_utils.interp_cartesian_vector" title="Link to this definition"></a></dt>
+<dd><p>Magnitude via interpax; direction via SLERP; constant extrapolation.</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="candel.model.pv_utils.rsample">
+<span class="sig-prename descclassname"><span class="pre">candel.model.pv_utils.</span></span><span class="sig-name descname"><span class="pre">rsample</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">name</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dist</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">shared_params</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/model/pv_utils.html#rsample"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.model.pv_utils.rsample" title="Link to this definition"></a></dt>
+<dd><p>Retrieve a parameter value: use <cite>shared_params[name]</cite> when provided (for
+sharing/conditioning across submodels), otherwise draw from <cite>dist</cite>.</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="candel.model.pv_utils.marginalise_2d_latent">
+<span class="sig-prename descclassname"><span class="pre">candel.model.pv_utils.</span></span><span class="sig-name descname"><span class="pre">marginalise_2d_latent</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">prior_std1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">prior_std2</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">rho</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">prior_mean1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">prior_mean2</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">e2_obs1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">e2_obs2</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">obs1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">obs2</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">f1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">f2</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/model/pv_utils.html#marginalise_2d_latent"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.model.pv_utils.marginalise_2d_latent" title="Link to this definition"></a></dt>
+<dd><p>Analytically marginalise 2D Gaussian latent variables.</p>
+<p>Given a bivariate Gaussian hyperprior on latent x = (x1, x2) with mean
+(prior_mean1, prior_mean2) and covariance parameterised by (prior_std1,
+prior_std2, rho), independent Gaussian observations obs1, obs2 with
+variances e2_obs1, e2_obs2, and a linear projection f = (f1, f2),
+returns:</p>
+<blockquote>
+<div><p>f_dot_mu1 : fᵀ μ₁  (posterior mean projected onto f)
+fSf       : fᵀ Σ₁ f (posterior variance projected onto f)
+log_ev_obs: ln N(d_obs | μ_h, Σ_h + Σ_o)</p>
+</div></blockquote>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="candel.model.pv_utils.get_absmag_TFR">
+<span class="sig-prename descclassname"><span class="pre">candel.model.pv_utils.</span></span><span class="sig-name descname"><span class="pre">get_absmag_TFR</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">eta</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">a_TFR</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">b_TFR</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">c_TFR</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/model/pv_utils.html#get_absmag_TFR"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.model.pv_utils.get_absmag_TFR" title="Link to this definition"></a></dt>
+<dd><p>Tully–Fisher absolute magnitude with optional curvature:</p>
+<blockquote>
+<div><dl class="simple">
+<dt>M(eta) = a + b * eta + c * eta^2 for eta &gt; 0,</dt><dd><p>a + b * eta           otherwise.</p>
+</dd>
+</dl>
+</div></blockquote>
+<p>The quadratic term only applies on the high-width (eta &gt; 0) side to
+capture potential curvature while keeping the low-width branch linear.</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="candel.model.pv_utils.gauss_hermite_log_weights">
+<span class="sig-prename descclassname"><span class="pre">candel.model.pv_utils.</span></span><span class="sig-name descname"><span class="pre">gauss_hermite_log_weights</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">n</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/model/pv_utils.html#gauss_hermite_log_weights"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.model.pv_utils.gauss_hermite_log_weights" title="Link to this definition"></a></dt>
+<dd><p>Gauss-Hermite nodes and log-weights for Gaussian-weighted integration.</p>
+<dl class="simple">
+<dt>Returns (nodes, log_weights) such that:</dt><dd><p>∫ f(x) N(x; mu, sigma) dx ≈ Σ_i exp(log_w_i) * f(mu + sqrt(2)*sigma*x_i)</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="candel.model.pv_utils.sample_galaxy_bias">
+<span class="sig-prename descclassname"><span class="pre">candel.model.pv_utils.</span></span><span class="sig-name descname"><span class="pre">sample_galaxy_bias</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">priors</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">galaxy_bias</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">shared_params</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/model/pv_utils.html#sample_galaxy_bias"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.model.pv_utils.sample_galaxy_bias" title="Link to this definition"></a></dt>
+<dd><p>Sample a vector of galaxy bias parameters based on the specified model.</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="candel.model.pv_utils.lp_galaxy_bias">
+<span class="sig-prename descclassname"><span class="pre">candel.model.pv_utils.</span></span><span class="sig-name descname"><span class="pre">lp_galaxy_bias</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">delta</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">log_rho</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">bias_params</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">galaxy_bias</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">quadratic_bias_delta0</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/model/pv_utils.html#lp_galaxy_bias"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.model.pv_utils.lp_galaxy_bias" title="Link to this definition"></a></dt>
+<dd><p>Given the galaxy bias probabibility, given some density and a bias model.</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="candel.model.pv_utils.compute_Vext_radial">
+<span class="sig-prename descclassname"><span class="pre">candel.model.pv_utils.</span></span><span class="sig-name descname"><span class="pre">compute_Vext_radial</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">data</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">r_grid</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">Vext</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">which_Vext</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs_Vext</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/model/pv_utils.html#compute_Vext_radial"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.model.pv_utils.compute_Vext_radial" title="Link to this definition"></a></dt>
+<dd><p>Compute the line-of-sight projection of the external velocity.</p>
+<p>Promote the final output to shape <cite>(n_field, n_gal, n_rbins)</cite>.</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="candel.model.pv_utils.sample_distance_prior">
+<span class="sig-prename descclassname"><span class="pre">candel.model.pv_utils.</span></span><span class="sig-name descname"><span class="pre">sample_distance_prior</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">priors</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/model/pv_utils.html#sample_distance_prior"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.model.pv_utils.sample_distance_prior" title="Link to this definition"></a></dt>
+<dd><p>Sample hyperparameters describing the empirical distance prior.</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="candel.model.pv_utils.sumzero_basis">
+<span class="sig-prename descclassname"><span class="pre">candel.model.pv_utils.</span></span><span class="sig-name descname"><span class="pre">sumzero_basis</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">npix</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/model/pv_utils.html#sumzero_basis"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.model.pv_utils.sumzero_basis" title="Link to this definition"></a></dt>
+<dd><p>Return an orthonormal basis <cite>(npix x (npix - 1))</cite> for the subspace of
+vectors with zero sum.</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="candel.model.pv_utils.sample_Vext">
+<span class="sig-prename descclassname"><span class="pre">candel.model.pv_utils.</span></span><span class="sig-name descname"><span class="pre">sample_Vext</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">priors</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">which_Vext</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">shared_params</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">kwargs_Vext</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">{}</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/model/pv_utils.html#sample_Vext"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.model.pv_utils.sample_Vext" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="candel.model.pv_utils.log_p_S_TFR_eta">
+<span class="sig-prename descclassname"><span class="pre">candel.model.pv_utils.</span></span><span class="sig-name descname"><span class="pre">log_p_S_TFR_eta</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">eta_mean</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">w_eta</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">e_eta</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">eta_min</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">eta_max</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/model/pv_utils.html#log_p_S_TFR_eta"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.model.pv_utils.log_p_S_TFR_eta" title="Link to this definition"></a></dt>
+<dd><p>Compute the fraction of samples given a truncation in linewidth
+distribution, whose hyperprior is assumed to be Gaussian.</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="candel.model.pv_utils.add_sigma_mag_to_lane_cov">
+<span class="sig-prename descclassname"><span class="pre">candel.model.pv_utils.</span></span><span class="sig-name descname"><span class="pre">add_sigma_mag_to_lane_cov</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">sigma_mag</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">Sigma_d</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/model/pv_utils.html#add_sigma_mag_to_lane_cov"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.model.pv_utils.add_sigma_mag_to_lane_cov" title="Link to this definition"></a></dt>
+<dd><p>Add the intrinsic magnitude scatter to the Lane covariance matrix. It is
+added along the diagonal and the indices corresponding to the magnitude
+residuals.</p>
+</dd></dl>
+
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="candel.html" class="btn btn-neutral float-left" title="candel" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="candel.pvdata.html" class="btn btn-neutral float-right" title="candel.pvdata" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2025, Richard Stiskalek.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

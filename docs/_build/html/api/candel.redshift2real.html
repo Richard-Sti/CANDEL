@@ -1,0 +1,219 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>candel.redshift2real &mdash; candel  documentation</title>
+      <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../_static/css/theme.css?v=9edc463e" />
+
+  
+      <script src="../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../_static/documentation_options.js?v=5929fcd5"></script>
+      <script src="../_static/doctools.js?v=fd6eb6e6"></script>
+      <script src="../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="candel.mock" href="candel.mock.html" />
+    <link rel="prev" title="candel.field" href="candel.field.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../index.html" class="icon icon-home">
+            candel
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Contents</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../installation.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../models.html">Supported models</a></li>
+<li class="toctree-l1 current"><a class="reference internal" href="index.html">API Reference</a><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="candel.html">candel</a></li>
+<li class="toctree-l2"><a class="reference internal" href="candel.model.html">candel.model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="candel.pvdata.html">candel.pvdata</a></li>
+<li class="toctree-l2"><a class="reference internal" href="candel.cosmo.html">candel.cosmo</a></li>
+<li class="toctree-l2"><a class="reference internal" href="candel.field.html">candel.field</a></li>
+<li class="toctree-l2 current"><a class="current reference internal" href="#">candel.redshift2real</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#candel.redshift2real.model.log_mean_exp_np"><code class="docutils literal notranslate"><span class="pre">log_mean_exp_np()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#candel.redshift2real.model.ln_simpson_np"><code class="docutils literal notranslate"><span class="pre">ln_simpson_np()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#candel.redshift2real.model.normal_logpdf_np"><code class="docutils literal notranslate"><span class="pre">normal_logpdf_np()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#candel.redshift2real.model.smoothclip_nr_np"><code class="docutils literal notranslate"><span class="pre">smoothclip_nr_np()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#candel.redshift2real.model.lp_galaxy_bias_np"><code class="docutils literal notranslate"><span class="pre">lp_galaxy_bias_np()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#candel.redshift2real.model.BaseRedshift2Real"><code class="docutils literal notranslate"><span class="pre">BaseRedshift2Real</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#candel.redshift2real.model.BaseRedshift2Real.print_sample_stats"><code class="docutils literal notranslate"><span class="pre">BaseRedshift2Real.print_sample_stats()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="#candel.redshift2real.model.Redshift2Real"><code class="docutils literal notranslate"><span class="pre">Redshift2Real</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#candel.redshift2real.model.Redshift2Real.posterior_summary"><code class="docutils literal notranslate"><span class="pre">Redshift2Real.posterior_summary()</span></code></a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="candel.mock.html">candel.mock</a></li>
+</ul>
+</li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../index.html">candel</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="index.html">API Reference</a></li>
+      <li class="breadcrumb-item active">candel.redshift2real</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="../_sources/api/candel.redshift2real.rst.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="module-candel.redshift2real.model">
+<span id="candel-redshift2real"></span><h1>candel.redshift2real<a class="headerlink" href="#module-candel.redshift2real.model" title="Link to this heading"></a></h1>
+<p>Module for mapping observed redshift to cosmological redshift given some
+calibrated density and velocity field.</p>
+<dl class="py function">
+<dt class="sig sig-object py" id="candel.redshift2real.model.log_mean_exp_np">
+<span class="sig-prename descclassname"><span class="pre">candel.redshift2real.model.</span></span><span class="sig-name descname"><span class="pre">log_mean_exp_np</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">logp</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">axis</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">-1</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/redshift2real/model.html#log_mean_exp_np"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.redshift2real.model.log_mean_exp_np" title="Link to this definition"></a></dt>
+<dd><p>NumPy version of log_mean_exp.</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="candel.redshift2real.model.ln_simpson_np">
+<span class="sig-prename descclassname"><span class="pre">candel.redshift2real.model.</span></span><span class="sig-name descname"><span class="pre">ln_simpson_np</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ln_y</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">x</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">axis</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">-1</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/redshift2real/model.html#ln_simpson_np"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.redshift2real.model.ln_simpson_np" title="Link to this definition"></a></dt>
+<dd><p>Numerically stable log-Simpson integration using scipy.</p>
+<p>Computes log(integral(exp(ln_y), x)) by shifting to avoid overflow.</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="candel.redshift2real.model.normal_logpdf_np">
+<span class="sig-prename descclassname"><span class="pre">candel.redshift2real.model.</span></span><span class="sig-name descname"><span class="pre">normal_logpdf_np</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">x</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">loc</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">scale</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/redshift2real/model.html#normal_logpdf_np"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.redshift2real.model.normal_logpdf_np" title="Link to this definition"></a></dt>
+<dd><p>NumPy implementation of Normal log-pdf.</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="candel.redshift2real.model.smoothclip_nr_np">
+<span class="sig-prename descclassname"><span class="pre">candel.redshift2real.model.</span></span><span class="sig-name descname"><span class="pre">smoothclip_nr_np</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">nr</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">tau</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/redshift2real/model.html#smoothclip_nr_np"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.redshift2real.model.smoothclip_nr_np" title="Link to this definition"></a></dt>
+<dd><p>Smooth zero-clipping for the number density (NumPy version).</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="candel.redshift2real.model.lp_galaxy_bias_np">
+<span class="sig-prename descclassname"><span class="pre">candel.redshift2real.model.</span></span><span class="sig-name descname"><span class="pre">lp_galaxy_bias_np</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">delta</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">log_rho</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">bias_params</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">galaxy_bias</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/redshift2real/model.html#lp_galaxy_bias_np"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.redshift2real.model.lp_galaxy_bias_np" title="Link to this definition"></a></dt>
+<dd><p>NumPy version of lp_galaxy_bias.</p>
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="candel.redshift2real.model.BaseRedshift2Real">
+<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">candel.redshift2real.model.</span></span><span class="sig-name descname"><span class="pre">BaseRedshift2Real</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">RA</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dec</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">zcmb</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">los_r</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">los_density</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">los_velocity</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">which_bias</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">calibration_samples</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">Rmin</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1e-07</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">Rmax</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">500</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num_rgrid</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">101</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">r0_decay_scale</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">5</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">Om0</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.3</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">verbose</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">r_init</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/redshift2real/model.html#BaseRedshift2Real"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.redshift2real.model.BaseRedshift2Real" title="Link to this definition"></a></dt>
+<dd><p>Bases: <a class="reference external" href="https://docs.python.org/3/library/abc.html#abc.ABC" title="(in Python v3.14)"><code class="xref py py-class docutils literal notranslate"><span class="pre">ABC</span></code></a></p>
+<p>Base class for all models.</p>
+<dl class="py method">
+<dt class="sig sig-object py" id="candel.redshift2real.model.BaseRedshift2Real.print_sample_stats">
+<span class="sig-name descname"><span class="pre">print_sample_stats</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/redshift2real/model.html#BaseRedshift2Real.print_sample_stats"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.redshift2real.model.BaseRedshift2Real.print_sample_stats" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="candel.redshift2real.model.Redshift2Real">
+<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">candel.redshift2real.model.</span></span><span class="sig-name descname"><span class="pre">Redshift2Real</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">RA</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dec</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">zcmb</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">los_r</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">los_density</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">los_velocity</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">which_bias</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">calibration_samples</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">Rmin</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1e-07</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">Rmax</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">500</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num_rgrid</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">101</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">r0_decay_scale</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">5</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">Om0</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.3</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">verbose</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">r_init</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/redshift2real/model.html#Redshift2Real"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.redshift2real.model.Redshift2Real" title="Link to this definition"></a></dt>
+<dd><p>Bases: <a class="reference internal" href="#candel.redshift2real.model.BaseRedshift2Real" title="candel.redshift2real.model.BaseRedshift2Real"><code class="xref py py-class docutils literal notranslate"><span class="pre">BaseRedshift2Real</span></code></a></p>
+<p>Numerical evaluation of the posterior <cite>p(z_cosmo | z_obs, calibration)</cite>.</p>
+<p>Instead of MCMC sampling, this class evaluates the log-posterior on a grid
+of <cite>z_cosmo</cite> values and normalizes numerically using Simpson integration.
+Core computation is JIT-compiled with JAX.</p>
+<dl class="py method">
+<dt class="sig sig-object py" id="candel.redshift2real.model.Redshift2Real.posterior_summary">
+<span class="property"><span class="k"><span class="pre">static</span></span><span class="w"> </span></span><span class="sig-name descname"><span class="pre">posterior_summary</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">z_grid</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">log_posterior</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ci</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.68</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/redshift2real/model.html#Redshift2Real.posterior_summary"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.redshift2real.model.Redshift2Real.posterior_summary" title="Link to this definition"></a></dt>
+<dd><p>Compute summary statistics from the posterior.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>z_grid</strong> (<em>array</em><em>, </em><em>shape</em><em> (</em><em>nz</em><em>,</em><em>)</em>)</p></li>
+<li><p><strong>log_posterior</strong> (<em>array</em><em>, </em><em>shape</em><em> (</em><em>ngal</em><em>, </em><em>nz</em><em>)</em>)</p></li>
+<li><p><strong>ci</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a>) – Credible interval (default 0.68 for 1-sigma).</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><ul class="simple">
+<li><p>‘mean’: posterior mean</p></li>
+<li><p>’median’: posterior median</p></li>
+<li><p>’std’: posterior standard deviation</p></li>
+<li><p>’map’: maximum a posteriori estimate</p></li>
+<li><p>’ci_low’, ‘ci_high’: credible interval bounds</p></li>
+</ul>
+</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>dict with keys</p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="candel.field.html" class="btn btn-neutral float-left" title="candel.field" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="candel.mock.html" class="btn btn-neutral float-right" title="candel.mock" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2025, Richard Stiskalek.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

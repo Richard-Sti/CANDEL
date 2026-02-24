@@ -1,0 +1,153 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="./">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Supported models &mdash; candel  documentation</title>
+      <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="_static/css/theme.css?v=9edc463e" />
+
+  
+      <script src="_static/jquery.js?v=5d32c60e"></script>
+      <script src="_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="_static/documentation_options.js?v=5929fcd5"></script>
+      <script src="_static/doctools.js?v=fd6eb6e6"></script>
+      <script src="_static/sphinx_highlight.js?v=6ffebe34"></script>
+      <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@4/tex-mml-chtml.js"></script>
+    <script src="_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="API Reference" href="api/index.html" />
+    <link rel="prev" title="Installation" href="installation.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="index.html" class="icon icon-home">
+            candel
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Contents</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="installation.html">Installation</a></li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Supported models</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#peculiar-velocity-models">Peculiar-velocity models</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#h-0-inference"><span class="math notranslate nohighlight">\(H_0\)</span> inference</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#package-structure">Package structure</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="api/index.html">API Reference</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="index.html">candel</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="index.html" class="icon icon-home" aria-label="Home"></a></li>
+      <li class="breadcrumb-item active">Supported models</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="_sources/models.rst.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="supported-models">
+<h1>Supported models<a class="headerlink" href="#supported-models" title="Link to this heading"></a></h1>
+<section id="peculiar-velocity-models">
+<h2>Peculiar-velocity models<a class="headerlink" href="#peculiar-velocity-models" title="Link to this heading"></a></h2>
+<p>These models work in units of <span class="math notranslate nohighlight">\(h^{-1}\,\mathrm{Mpc}\)</span> and can be analysed
+jointly via <a class="reference internal" href="api/candel.model.html#candel.model.base_pv.JointPVModel" title="candel.model.base_pv.JointPVModel"><code class="xref py py-class docutils literal notranslate"><span class="pre">JointPVModel</span></code></a> with user-specified
+shared parameters.</p>
+<ul class="simple">
+<li><p><strong>Tully–Fisher relation</strong> (<a class="reference internal" href="api/candel.model.html#candel.model.model_PV_TFR.TFRModel" title="candel.model.model_PV_TFR.TFRModel"><code class="xref py py-class docutils literal notranslate"><span class="pre">TFRModel</span></code></a>):
+2MTF, SFI++, CF4-TFR</p></li>
+<li><p><strong>Type Ia supernovae</strong> (<a class="reference internal" href="api/candel.model.html#candel.model.model_PV_SN.SNModel" title="candel.model.model_PV_SN.SNModel"><code class="xref py py-class docutils literal notranslate"><span class="pre">SNModel</span></code></a>):
+LOSS, Foundation</p></li>
+<li><p><strong>Pantheon+</strong> (<a class="reference internal" href="api/candel.model.html#candel.model.model_PV_PantheonPlus.PantheonPlusModel" title="candel.model.model_PV_PantheonPlus.PantheonPlusModel"><code class="xref py py-class docutils literal notranslate"><span class="pre">PantheonPlusModel</span></code></a>):
+Pantheon+ with full covariance matrix</p></li>
+<li><p><strong>Fundamental Plane</strong> (<a class="reference internal" href="api/candel.model.html#candel.model.model_PV_FP.FPModel" title="candel.model.model_PV_FP.FPModel"><code class="xref py py-class docutils literal notranslate"><span class="pre">FPModel</span></code></a>):
+6dFGS-FP, SDSS-FP</p></li>
+</ul>
+</section>
+<section id="h-0-inference">
+<h2><span class="math notranslate nohighlight">\(H_0\)</span> inference<a class="headerlink" href="#h-0-inference" title="Link to this heading"></a></h2>
+<ul class="simple">
+<li><p><strong>Cepheid-calibrated</strong> <span class="math notranslate nohighlight">\(H_0\)</span>
+(<a class="reference internal" href="api/candel.model.html#candel.model.model_H0_CH0.CH0Model" title="candel.model.model_H0_CH0.CH0Model"><code class="xref py py-class docutils literal notranslate"><span class="pre">CH0Model</span></code></a>):
+35 Cepheid host galaxies from SH0ES</p></li>
+</ul>
+</section>
+<section id="package-structure">
+<h2>Package structure<a class="headerlink" href="#package-structure" title="Link to this heading"></a></h2>
+<ul class="simple">
+<li><p><a class="reference internal" href="api/candel.html"><span class="doc">candel</span></a> – cosmography, inference, evidence, utilities</p></li>
+<li><p><a class="reference internal" href="api/candel.model.html"><span class="doc">candel.model</span></a> – forward models for each distance indicator</p></li>
+<li><p><a class="reference internal" href="api/candel.pvdata.html"><span class="doc">candel.pvdata</span></a> – data loaders for all supported catalogues</p></li>
+<li><p><a class="reference internal" href="api/candel.cosmo.html"><span class="doc">candel.cosmo</span></a> – growth rate, PV covariance matrices</p></li>
+<li><p><a class="reference internal" href="api/candel.field.html"><span class="doc">candel.field</span></a> – 3D density/velocity field loading and LOS interpolation</p></li>
+<li><p><a class="reference internal" href="api/candel.redshift2real.html"><span class="doc">candel.redshift2real</span></a> – observed to cosmological redshift mapping</p></li>
+<li><p><a class="reference internal" href="api/candel.mock.html"><span class="doc">candel.mock</span></a> – synthetic catalogue generation</p></li>
+</ul>
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="installation.html" class="btn btn-neutral float-left" title="Installation" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="api/index.html" class="btn btn-neutral float-right" title="API Reference" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2025, Richard Stiskalek.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

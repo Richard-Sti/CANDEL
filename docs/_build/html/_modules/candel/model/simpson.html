@@ -1,0 +1,230 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../../">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>candel.model.simpson &mdash; candel  documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../../../_static/css/theme.css?v=9edc463e" />
+
+  
+      <script src="../../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../../_static/documentation_options.js?v=5929fcd5"></script>
+      <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
+      <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../../index.html" class="icon icon-home">
+            candel
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Contents</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../installation.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../models.html">Supported models</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../api/index.html">API Reference</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../../index.html">candel</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="../../index.html">Module code</a></li>
+      <li class="breadcrumb-item active">candel.model.simpson</li>
+      <li class="wy-breadcrumbs-aside">
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <h1>Source code for candel.model.simpson</h1><div class="highlight"><pre>
+<span></span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">Routines copied from:</span>
+<span class="sd">    `https://github.com/adrn/jax-ext/blob/main/jax_ext/integrate/simpson.py`</span>
+
+<span class="sd">Only minor changes were made to the original code.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">functools</span><span class="w"> </span><span class="kn">import</span> <span class="n">partial</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">jax</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">jax.numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">jnp</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">jax.scipy.special</span><span class="w"> </span><span class="kn">import</span> <span class="n">logsumexp</span>
+
+
+<div class="viewcode-block" id="tupleset">
+<a class="viewcode-back" href="../../../api/candel.model.html#candel.model.simpson.tupleset">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">tupleset</span><span class="p">(</span><span class="n">t</span><span class="p">,</span> <span class="n">i</span><span class="p">,</span> <span class="n">value</span><span class="p">):</span>
+    <span class="n">_l</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">t</span><span class="p">)</span>
+    <span class="n">_l</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">=</span> <span class="n">value</span>
+    <span class="k">return</span> <span class="nb">tuple</span><span class="p">(</span><span class="n">_l</span><span class="p">)</span></div>
+
+
+
+<span class="nd">@partial</span><span class="p">(</span><span class="n">jax</span><span class="o">.</span><span class="n">jit</span><span class="p">,</span> <span class="n">static_argnums</span><span class="o">=</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">))</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_basic_ln_simpson</span><span class="p">(</span><span class="n">ln_y</span><span class="p">,</span> <span class="n">stop</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">axis</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Note: Interface comes from scipy.integrate.simpson implementation</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">nd</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">ln_y</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span>  <span class="c1"># number of dimensions</span>
+    <span class="n">step</span> <span class="o">=</span> <span class="mi">2</span>
+
+    <span class="n">slice_all</span> <span class="o">=</span> <span class="p">(</span><span class="nb">slice</span><span class="p">(</span><span class="kc">None</span><span class="p">),)</span> <span class="o">*</span> <span class="n">nd</span>
+    <span class="n">slice0</span> <span class="o">=</span> <span class="n">tupleset</span><span class="p">(</span><span class="n">slice_all</span><span class="p">,</span> <span class="n">axis</span><span class="p">,</span> <span class="nb">slice</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">stop</span><span class="p">,</span> <span class="n">step</span><span class="p">))</span>
+    <span class="n">slice1</span> <span class="o">=</span> <span class="n">tupleset</span><span class="p">(</span><span class="n">slice_all</span><span class="p">,</span> <span class="n">axis</span><span class="p">,</span> <span class="nb">slice</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">stop</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">step</span><span class="p">))</span>
+    <span class="n">slice2</span> <span class="o">=</span> <span class="n">tupleset</span><span class="p">(</span><span class="n">slice_all</span><span class="p">,</span> <span class="n">axis</span><span class="p">,</span> <span class="nb">slice</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="n">stop</span> <span class="o">+</span> <span class="mi">2</span><span class="p">,</span> <span class="n">step</span><span class="p">))</span>
+
+    <span class="c1"># Account for possibly different spacings.</span>
+    <span class="n">h</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">diff</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="n">axis</span><span class="p">)</span>
+    <span class="n">h0</span> <span class="o">=</span> <span class="n">h</span><span class="p">[</span><span class="n">slice0</span><span class="p">]</span>
+    <span class="n">h1</span> <span class="o">=</span> <span class="n">h</span><span class="p">[</span><span class="n">slice1</span><span class="p">]</span>
+    <span class="n">hsum</span> <span class="o">=</span> <span class="n">h0</span> <span class="o">+</span> <span class="n">h1</span>
+    <span class="n">hprod</span> <span class="o">=</span> <span class="n">h0</span> <span class="o">*</span> <span class="n">h1</span>
+    <span class="n">h0divh1</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="n">h1</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">,</span> <span class="n">h0</span> <span class="o">/</span> <span class="n">h1</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">)</span>
+
+    <span class="n">term</span> <span class="o">=</span> <span class="n">logsumexp</span><span class="p">(</span>
+        <span class="n">jnp</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="n">ln_y</span><span class="p">[</span><span class="n">slice0</span><span class="p">],</span> <span class="n">ln_y</span><span class="p">[</span><span class="n">slice1</span><span class="p">],</span> <span class="n">ln_y</span><span class="p">[</span><span class="n">slice2</span><span class="p">]]),</span>
+        <span class="n">b</span><span class="o">=</span><span class="n">jnp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span>
+            <span class="p">[</span>
+                <span class="p">(</span><span class="mf">2.0</span> <span class="o">-</span> <span class="n">jnp</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="n">h0divh1</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span> <span class="o">/</span> <span class="n">h0divh1</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">)),</span>
+                <span class="p">(</span><span class="n">hsum</span> <span class="o">*</span> <span class="n">jnp</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="n">hprod</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">,</span> <span class="n">hsum</span> <span class="o">/</span> <span class="n">hprod</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">)),</span>
+                <span class="p">(</span><span class="mf">2.0</span> <span class="o">-</span> <span class="n">h0divh1</span><span class="p">),</span>
+            <span class="p">]</span>
+        <span class="p">),</span>
+        <span class="n">axis</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">tmp</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">hsum</span> <span class="o">/</span> <span class="mf">6.0</span><span class="p">)</span> <span class="o">+</span> <span class="n">term</span>
+    <span class="k">return</span> <span class="n">logsumexp</span><span class="p">(</span><span class="n">tmp</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="n">axis</span><span class="p">)</span>
+
+
+<div class="viewcode-block" id="simpson_log_weights">
+<a class="viewcode-back" href="../../../api/candel.model.html#candel.model.simpson.simpson_log_weights">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">simpson_log_weights</span><span class="p">(</span><span class="n">x</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Log of composite Simpson&#39;s 1/3 weights for a 1D grid.</span>
+
+<span class="sd">    For N points (N odd, &gt;= 3), the composite Simpson rule is</span>
+<span class="sd">        ∫ f dx ≈ Σ_i w_i f(x_i)</span>
+<span class="sd">    This returns log(w_i). Requires all weights positive (true when</span>
+<span class="sd">    adjacent spacing ratios stay below 2).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">x</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+    <span class="n">h</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">diff</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+    <span class="n">h0</span><span class="p">,</span> <span class="n">h1</span> <span class="o">=</span> <span class="n">h</span><span class="p">[</span><span class="mi">0</span><span class="p">::</span><span class="mi">2</span><span class="p">],</span> <span class="n">h</span><span class="p">[</span><span class="mi">1</span><span class="p">::</span><span class="mi">2</span><span class="p">]</span>
+    <span class="n">hsum</span> <span class="o">=</span> <span class="n">h0</span> <span class="o">+</span> <span class="n">h1</span>
+
+    <span class="n">c_left</span> <span class="o">=</span> <span class="n">hsum</span> <span class="o">/</span> <span class="mi">6</span> <span class="o">*</span> <span class="p">(</span><span class="mi">2</span> <span class="o">-</span> <span class="n">h1</span> <span class="o">/</span> <span class="n">h0</span><span class="p">)</span>
+    <span class="n">c_mid</span> <span class="o">=</span> <span class="n">hsum</span><span class="o">**</span><span class="mi">3</span> <span class="o">/</span> <span class="p">(</span><span class="mi">6</span> <span class="o">*</span> <span class="n">h0</span> <span class="o">*</span> <span class="n">h1</span><span class="p">)</span>
+    <span class="n">c_right</span> <span class="o">=</span> <span class="n">hsum</span> <span class="o">/</span> <span class="mi">6</span> <span class="o">*</span> <span class="p">(</span><span class="mi">2</span> <span class="o">-</span> <span class="n">h0</span> <span class="o">/</span> <span class="n">h1</span><span class="p">)</span>
+
+    <span class="n">N</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="n">n_panels</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">h0</span><span class="p">)</span>
+    <span class="n">idx</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">n_panels</span><span class="p">)</span> <span class="o">*</span> <span class="mi">2</span>
+    <span class="n">w</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">N</span><span class="p">)</span>
+    <span class="n">w</span> <span class="o">=</span> <span class="n">w</span><span class="o">.</span><span class="n">at</span><span class="p">[</span><span class="n">idx</span><span class="p">]</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">c_left</span><span class="p">)</span>
+    <span class="n">w</span> <span class="o">=</span> <span class="n">w</span><span class="o">.</span><span class="n">at</span><span class="p">[</span><span class="n">idx</span> <span class="o">+</span> <span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">c_mid</span><span class="p">)</span>
+    <span class="n">w</span> <span class="o">=</span> <span class="n">w</span><span class="o">.</span><span class="n">at</span><span class="p">[</span><span class="n">idx</span> <span class="o">+</span> <span class="mi">2</span><span class="p">]</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">c_right</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">jnp</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">w</span><span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="ln_simpson">
+<a class="viewcode-back" href="../../../api/candel.model.html#candel.model.simpson.ln_simpson">[docs]</a>
+<span class="nd">@partial</span><span class="p">(</span><span class="n">jax</span><span class="o">.</span><span class="n">jit</span><span class="p">,</span> <span class="n">static_argnums</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">ln_simpson</span><span class="p">(</span><span class="n">ln_y</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">axis</span><span class="o">=-</span><span class="mi">1</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Integrate y(x) using log values of the function `ln_y` evaluated at the</span>
+<span class="sd">    locations `x`, and return the log of the integral</span>
+
+<span class="sd">    Note: `x` values must be increasing and `x` and `ln_y` must have the</span>
+<span class="sd">    same length.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    ln_y : array_like</span>
+<span class="sd">        Array of log function values to be integrated.</span>
+<span class="sd">    x : array_like</span>
+<span class="sd">        The points at which `ln_y` is evaluated.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    float</span>
+<span class="sd">        The estimated log integral computed with the composite Simpson&#39;s rule.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">ln_y</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">ln_y</span><span class="p">)</span>
+    <span class="n">x</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+    <span class="n">N</span> <span class="o">=</span> <span class="n">ln_y</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="n">axis</span><span class="p">]</span>
+
+    <span class="k">if</span> <span class="n">N</span> <span class="o">%</span> <span class="mi">2</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;Even number of integration points is not supported.&quot;</span><span class="p">)</span>
+
+    <span class="c1"># Clip relative to the maximum value and shift all log values</span>
+    <span class="n">max_ln_y</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="n">ln_y</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="n">axis</span><span class="p">,</span> <span class="n">keepdims</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">ln_y</span> <span class="o">=</span> <span class="n">ln_y</span> <span class="o">-</span> <span class="n">max_ln_y</span>
+    <span class="n">result</span> <span class="o">=</span> <span class="n">_basic_ln_simpson</span><span class="p">(</span><span class="n">ln_y</span><span class="p">,</span> <span class="n">N</span> <span class="o">-</span> <span class="mi">2</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="n">axis</span><span class="p">)</span>
+
+    <span class="c1"># Summing over axis drops that dimension, so we need to squeeze shift</span>
+    <span class="k">return</span> <span class="n">result</span> <span class="o">+</span> <span class="n">jnp</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="n">max_ln_y</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="n">axis</span><span class="p">)</span></div>
+
+</pre></div>
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2025, Richard Stiskalek.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

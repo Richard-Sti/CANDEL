@@ -1,0 +1,638 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>candel.inference &mdash; candel  documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../../_static/css/theme.css?v=9edc463e" />
+
+  
+      <script src="../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../_static/documentation_options.js?v=5929fcd5"></script>
+      <script src="../../_static/doctools.js?v=fd6eb6e6"></script>
+      <script src="../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../index.html" class="icon icon-home">
+            candel
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Contents</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../installation.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../models.html">Supported models</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../api/index.html">API Reference</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../index.html">candel</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="../index.html">Module code</a></li>
+      <li class="breadcrumb-item active">candel.inference</li>
+      <li class="wy-breadcrumbs-aside">
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <h1>Source code for candel.inference</h1><div class="highlight"><pre>
+<span></span><span class="c1"># Copyright (C) 2025 Richard Stiskalek</span>
+<span class="c1"># This program is free software; you can redistribute it and/or modify it</span>
+<span class="c1"># under the terms of the GNU General Public License as published by the</span>
+<span class="c1"># Free Software Foundation; either version 3 of the License, or (at your</span>
+<span class="c1"># option) any later version.</span>
+<span class="c1">#</span>
+<span class="c1"># This program is distributed in the hope that it will be useful, but</span>
+<span class="c1"># WITHOUT ANY WARRANTY; without even the implied warranty of</span>
+<span class="c1"># MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General</span>
+<span class="c1"># Public License for more details.</span>
+<span class="c1">#</span>
+<span class="c1"># You should have received a copy of the GNU General Public License along</span>
+<span class="c1"># with this program; if not, write to the Free Software Foundation, Inc.,</span>
+<span class="c1"># 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.</span>
+<span class="sd">&quot;&quot;&quot;Running the MCMC inference for the model and some postprocessing.&quot;&quot;&quot;</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">contextlib</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">copy</span><span class="w"> </span><span class="kn">import</span> <span class="n">deepcopy</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">os.path</span><span class="w"> </span><span class="kn">import</span> <span class="n">dirname</span><span class="p">,</span> <span class="n">splitext</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">jax</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">h5py</span><span class="w"> </span><span class="kn">import</span> <span class="n">File</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">jax</span><span class="w"> </span><span class="kn">import</span> <span class="n">jit</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">jax</span><span class="w"> </span><span class="kn">import</span> <span class="n">numpy</span> <span class="k">as</span> <span class="n">jnp</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">jax</span><span class="w"> </span><span class="kn">import</span> <span class="n">vmap</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">numpyro</span><span class="w"> </span><span class="kn">import</span> <span class="n">handlers</span><span class="p">,</span> <span class="n">set_platform</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">numpyro.diagnostics</span><span class="w"> </span><span class="kn">import</span> <span class="n">print_summary</span> <span class="k">as</span> <span class="n">print_summary_numpyro</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">numpyro.distributions.transforms</span><span class="w"> </span><span class="kn">import</span> <span class="n">biject_to</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">numpyro.infer</span><span class="w"> </span><span class="kn">import</span> <span class="n">MCMC</span><span class="p">,</span> <span class="n">NUTS</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">numpyro.infer.initialization</span><span class="w"> </span><span class="kn">import</span> <span class="n">init_to_median</span><span class="p">,</span> <span class="n">init_to_value</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">numpyro.infer.util</span><span class="w"> </span><span class="kn">import</span> <span class="n">log_density</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">tqdm</span><span class="w"> </span><span class="kn">import</span> <span class="n">trange</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">.evidence</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span><span class="n">BIC_AIC</span><span class="p">,</span> <span class="n">dict_samples_to_array</span><span class="p">,</span> <span class="n">harmonic_evidence</span><span class="p">,</span>
+                       <span class="n">laplace_evidence</span><span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">.util</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span><span class="n">fprint</span><span class="p">,</span> <span class="n">fsection</span><span class="p">,</span> <span class="n">galactic_to_radec</span><span class="p">,</span> <span class="n">plot_corner</span><span class="p">,</span>
+                   <span class="n">plot_radial_profiles</span><span class="p">,</span> <span class="n">plot_Vext_radmag</span><span class="p">,</span>
+                   <span class="n">plot_Vext_rad_corner</span><span class="p">,</span> <span class="n">plot_Vext_moll</span><span class="p">,</span>
+                   <span class="n">radec_cartesian_to_galactic</span><span class="p">,</span> <span class="n">radec_to_cartesian</span><span class="p">,</span>
+                   <span class="n">radec_to_galactic</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_setup_platform</span><span class="p">():</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Detect devices and set NumPyro platform.&quot;&quot;&quot;</span>
+    <span class="n">devices</span> <span class="o">=</span> <span class="n">jax</span><span class="o">.</span><span class="n">devices</span><span class="p">()</span>
+    <span class="n">device_str</span> <span class="o">=</span> <span class="s2">&quot;, &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">d</span><span class="o">.</span><span class="n">device_kind</span><span class="si">}</span><span class="s2">(</span><span class="si">{</span><span class="n">d</span><span class="o">.</span><span class="n">platform</span><span class="si">}</span><span class="s2">)&quot;</span> <span class="k">for</span> <span class="n">d</span> <span class="ow">in</span> <span class="n">devices</span><span class="p">)</span>
+    <span class="n">fprint</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;running inference on devices: </span><span class="si">{</span><span class="n">device_str</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="n">platform</span> <span class="o">=</span> <span class="s2">&quot;gpu&quot;</span> <span class="k">if</span> <span class="nb">any</span><span class="p">(</span><span class="n">d</span><span class="o">.</span><span class="n">platform</span> <span class="o">==</span> <span class="s2">&quot;gpu&quot;</span> <span class="k">for</span> <span class="n">d</span> <span class="ow">in</span> <span class="n">devices</span><span class="p">)</span> <span class="k">else</span> <span class="s2">&quot;cpu&quot;</span>
+    <span class="n">set_platform</span><span class="p">(</span><span class="n">platform</span><span class="p">)</span>
+    <span class="n">fprint</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;using NumPyro platform: </span><span class="si">{</span><span class="n">platform</span><span class="o">.</span><span class="n">upper</span><span class="p">()</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+
+<div class="viewcode-block" id="find_initial_point">
+<a class="viewcode-back" href="../../api/candel.html#candel.inference.find_initial_point">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">find_initial_point</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">model_kwargs</span><span class="p">,</span> <span class="n">maxiter</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span> <span class="n">seed</span><span class="o">=</span><span class="mi">42</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Run L-BFGS to find a reasonable MCMC starting point.</span>
+
+<span class="sd">    Traces the model from the prior, maps to unconstrained space, runs</span>
+<span class="sd">    scipy L-BFGS-B with JAX autodiff gradients, then maps back to</span>
+<span class="sd">    constrained space. Returns None if the optimisation fails.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">scipy.optimize</span><span class="w"> </span><span class="kn">import</span> <span class="n">minimize</span> <span class="k">as</span> <span class="n">sp_minimize</span>
+
+    <span class="c1"># Trace at the prior median to get transforms and a reasonable start</span>
+    <span class="n">substituted_model</span> <span class="o">=</span> <span class="n">handlers</span><span class="o">.</span><span class="n">substitute</span><span class="p">(</span>
+        <span class="n">handlers</span><span class="o">.</span><span class="n">seed</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">rng_seed</span><span class="o">=</span><span class="n">seed</span><span class="p">),</span>
+        <span class="n">substitute_fn</span><span class="o">=</span><span class="n">init_to_median</span><span class="p">(</span><span class="n">num_samples</span><span class="o">=</span><span class="mi">15</span><span class="p">),</span>
+    <span class="p">)</span>
+    <span class="n">model_trace</span> <span class="o">=</span> <span class="n">handlers</span><span class="o">.</span><span class="n">trace</span><span class="p">(</span><span class="n">substituted_model</span><span class="p">)</span><span class="o">.</span><span class="n">get_trace</span><span class="p">(</span><span class="o">**</span><span class="n">model_kwargs</span><span class="p">)</span>
+
+    <span class="n">transforms</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="n">init_constrained</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">model_trace</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+        <span class="k">if</span> <span class="n">v</span><span class="p">[</span><span class="s2">&quot;type&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;sample&quot;</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">v</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;is_observed&quot;</span><span class="p">,</span> <span class="kc">False</span><span class="p">):</span>
+            <span class="n">transforms</span><span class="p">[</span><span class="n">k</span><span class="p">]</span> <span class="o">=</span> <span class="n">biject_to</span><span class="p">(</span><span class="n">v</span><span class="p">[</span><span class="s2">&quot;fn&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">support</span><span class="p">)</span>
+            <span class="n">init_constrained</span><span class="p">[</span><span class="n">k</span><span class="p">]</span> <span class="o">=</span> <span class="n">v</span><span class="p">[</span><span class="s2">&quot;value&quot;</span><span class="p">]</span>
+
+    <span class="c1"># Sort keys for consistent flattening</span>
+    <span class="n">keys</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">init_constrained</span><span class="o">.</span><span class="n">keys</span><span class="p">())</span>
+    <span class="n">shapes</span> <span class="o">=</span> <span class="p">{</span><span class="n">k</span><span class="p">:</span> <span class="n">init_constrained</span><span class="p">[</span><span class="n">k</span><span class="p">]</span><span class="o">.</span><span class="n">shape</span> <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="n">keys</span><span class="p">}</span>
+    <span class="n">sizes</span> <span class="o">=</span> <span class="p">{</span><span class="n">k</span><span class="p">:</span> <span class="nb">int</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">prod</span><span class="p">(</span><span class="n">s</span><span class="p">))</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">s</span> <span class="ow">in</span> <span class="n">shapes</span><span class="o">.</span><span class="n">items</span><span class="p">()}</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">flatten</span><span class="p">(</span><span class="n">params_dict</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">concatenate</span><span class="p">(</span>
+            <span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">params_dict</span><span class="p">[</span><span class="n">k</span><span class="p">])</span><span class="o">.</span><span class="n">ravel</span><span class="p">()</span> <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="n">keys</span><span class="p">])</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">unflatten</span><span class="p">(</span><span class="n">x</span><span class="p">):</span>
+        <span class="n">out</span><span class="p">,</span> <span class="n">offset</span> <span class="o">=</span> <span class="p">{},</span> <span class="mi">0</span>
+        <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="n">keys</span><span class="p">:</span>
+            <span class="n">out</span><span class="p">[</span><span class="n">k</span><span class="p">]</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">x</span><span class="p">[</span><span class="n">offset</span><span class="p">:</span><span class="n">offset</span> <span class="o">+</span> <span class="n">sizes</span><span class="p">[</span><span class="n">k</span><span class="p">]])</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span>
+                <span class="n">shapes</span><span class="p">[</span><span class="n">k</span><span class="p">])</span>
+            <span class="n">offset</span> <span class="o">+=</span> <span class="n">sizes</span><span class="p">[</span><span class="n">k</span><span class="p">]</span>
+        <span class="k">return</span> <span class="n">out</span>
+
+    <span class="c1"># Negative log-density in unconstrained space (include Jacobian)</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">neg_log_density</span><span class="p">(</span><span class="n">unc_params</span><span class="p">):</span>
+        <span class="n">constrained</span> <span class="o">=</span> <span class="p">{</span><span class="n">k</span><span class="p">:</span> <span class="n">transforms</span><span class="p">[</span><span class="n">k</span><span class="p">](</span><span class="n">v</span><span class="p">)</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">unc_params</span><span class="o">.</span><span class="n">items</span><span class="p">()}</span>
+        <span class="n">ld</span> <span class="o">=</span> <span class="n">log_density</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="p">(),</span> <span class="n">model_kwargs</span><span class="p">,</span> <span class="n">constrained</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">transforms</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+            <span class="n">ld</span> <span class="o">=</span> <span class="n">ld</span> <span class="o">+</span> <span class="n">jnp</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">t</span><span class="o">.</span><span class="n">log_abs_det_jacobian</span><span class="p">(</span>
+                <span class="n">unc_params</span><span class="p">[</span><span class="n">k</span><span class="p">],</span> <span class="n">constrained</span><span class="p">[</span><span class="n">k</span><span class="p">]))</span>
+        <span class="k">return</span> <span class="o">-</span><span class="n">ld</span>
+
+    <span class="n">jit_val_grad</span> <span class="o">=</span> <span class="n">jit</span><span class="p">(</span><span class="n">jax</span><span class="o">.</span><span class="n">value_and_grad</span><span class="p">(</span>
+        <span class="k">lambda</span> <span class="n">x_flat</span><span class="p">:</span> <span class="n">neg_log_density</span><span class="p">(</span><span class="n">unflatten</span><span class="p">(</span><span class="n">x_flat</span><span class="p">))))</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">val_and_grad_numpy</span><span class="p">(</span><span class="n">x</span><span class="p">):</span>
+        <span class="n">v</span><span class="p">,</span> <span class="n">g</span> <span class="o">=</span> <span class="n">jit_val_grad</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">x</span><span class="p">))</span>
+        <span class="k">return</span> <span class="nb">float</span><span class="p">(</span><span class="n">v</span><span class="p">),</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">g</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+
+    <span class="n">unc0</span> <span class="o">=</span> <span class="p">{</span><span class="n">k</span><span class="p">:</span> <span class="n">transforms</span><span class="p">[</span><span class="n">k</span><span class="p">]</span><span class="o">.</span><span class="n">inv</span><span class="p">(</span><span class="n">v</span><span class="p">)</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">init_constrained</span><span class="o">.</span><span class="n">items</span><span class="p">()}</span>
+    <span class="n">x0</span> <span class="o">=</span> <span class="n">flatten</span><span class="p">(</span><span class="n">unc0</span><span class="p">)</span>
+    <span class="n">loss0</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">jit</span><span class="p">(</span><span class="n">neg_log_density</span><span class="p">)(</span><span class="n">unc0</span><span class="p">))</span>
+
+    <span class="n">fprint</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;finding initial point (L-BFGS, maxiter=</span><span class="si">{</span><span class="n">maxiter</span><span class="si">}</span><span class="s2">) ...&quot;</span><span class="p">)</span>
+    <span class="n">result</span> <span class="o">=</span> <span class="n">sp_minimize</span><span class="p">(</span>
+        <span class="n">val_and_grad_numpy</span><span class="p">,</span> <span class="n">x0</span><span class="p">,</span> <span class="n">method</span><span class="o">=</span><span class="s2">&quot;L-BFGS-B&quot;</span><span class="p">,</span> <span class="n">jac</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+        <span class="n">options</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;maxiter&quot;</span><span class="p">:</span> <span class="n">maxiter</span><span class="p">,</span> <span class="s2">&quot;disp&quot;</span><span class="p">:</span> <span class="kc">False</span><span class="p">})</span>
+
+    <span class="n">fprint</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  -log p: </span><span class="si">{</span><span class="n">loss0</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> -&gt; </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">fun</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> &quot;</span>
+           <span class="sa">f</span><span class="s2">&quot;(</span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">nit</span><span class="si">}</span><span class="s2"> iters, </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">message</span><span class="si">}</span><span class="s2">)&quot;</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">np</span><span class="o">.</span><span class="n">isfinite</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">fun</span><span class="p">):</span>
+        <span class="n">fprint</span><span class="p">(</span><span class="s2">&quot;  optimisation diverged, falling back to prior sample.&quot;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="kc">None</span>
+
+    <span class="n">unc_opt</span> <span class="o">=</span> <span class="n">unflatten</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">x</span><span class="p">)</span>
+    <span class="k">return</span> <span class="p">{</span><span class="n">k</span><span class="p">:</span> <span class="n">transforms</span><span class="p">[</span><span class="n">k</span><span class="p">](</span><span class="n">v</span><span class="p">)</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">unc_opt</span><span class="o">.</span><span class="n">items</span><span class="p">()}</span></div>
+
+
+
+<div class="viewcode-block" id="print_evidence">
+<a class="viewcode-back" href="../../api/candel.html#candel.inference.print_evidence">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">print_evidence</span><span class="p">(</span><span class="n">bic</span><span class="p">,</span> <span class="n">aic</span><span class="p">,</span> <span class="n">lnZ_laplace</span><span class="p">,</span> <span class="n">err_lnZ_laplace</span><span class="p">,</span>
+                   <span class="n">lnZ_harmonic</span><span class="p">,</span> <span class="n">err_lnZ_harmonic</span><span class="p">):</span>
+    <span class="n">fprint</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;BIC:          </span><span class="si">{</span><span class="n">bic</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="n">fprint</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;AIC:          </span><span class="si">{</span><span class="n">aic</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="n">fprint</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Laplace lnZ:  </span><span class="si">{</span><span class="n">lnZ_laplace</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> +- </span><span class="si">{</span><span class="n">err_lnZ_laplace</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="n">fprint</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Harmonic lnZ: </span><span class="si">{</span><span class="n">lnZ_harmonic</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> +- </span><span class="si">{</span><span class="n">err_lnZ_harmonic</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="run_pv_inference">
+<a class="viewcode-back" href="../../api/candel.html#candel.inference.run_pv_inference">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">run_pv_inference</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">model_kwargs</span><span class="p">,</span> <span class="n">print_summary</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+                     <span class="n">save_samples</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">return_original_samples</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+                     <span class="n">init_maxiter</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Run MCMC inference on the given PV model, post-process the samples,</span>
+<span class="sd">    optionally compute the BIC, AIC, evidence and save the samples to an</span>
+<span class="sd">    HDF5 file.</span>
+
+<span class="sd">    If `init_maxiter` &gt; 0, runs L-BFGS to find a good starting point</span>
+<span class="sd">    before launching NUTS.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">fsection</span><span class="p">(</span><span class="s2">&quot;Inference&quot;</span><span class="p">)</span>
+    <span class="n">_setup_platform</span><span class="p">()</span>
+
+    <span class="n">kwargs</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s2">&quot;inference&quot;</span><span class="p">]</span>
+
+    <span class="c1"># Validate data if model supports it (e.g. CSPModel)</span>
+    <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="s2">&quot;submodels&quot;</span><span class="p">):</span>
+        <span class="c1"># JointPVModel: validate each submodel with its corresponding data</span>
+        <span class="k">for</span> <span class="n">submodel</span><span class="p">,</span> <span class="n">data_i</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">submodels</span><span class="p">,</span> <span class="n">model_kwargs</span><span class="p">[</span><span class="s2">&quot;data&quot;</span><span class="p">]):</span>
+            <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">submodel</span><span class="p">,</span> <span class="s2">&quot;validate_data&quot;</span><span class="p">):</span>
+                <span class="n">submodel</span><span class="o">.</span><span class="n">validate_data</span><span class="p">(</span><span class="n">data_i</span><span class="p">)</span>
+    <span class="k">elif</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="s2">&quot;validate_data&quot;</span><span class="p">):</span>
+        <span class="n">model</span><span class="o">.</span><span class="n">validate_data</span><span class="p">(</span><span class="n">model_kwargs</span><span class="p">[</span><span class="s2">&quot;data&quot;</span><span class="p">])</span>
+
+    <span class="k">if</span> <span class="n">init_maxiter</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">init_maxiter</span> <span class="o">=</span> <span class="n">kwargs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;init_maxiter&quot;</span><span class="p">,</span> <span class="mi">1000</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">init_maxiter</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="n">init_params</span> <span class="o">=</span> <span class="n">find_initial_point</span><span class="p">(</span>
+            <span class="n">model</span><span class="p">,</span> <span class="n">model_kwargs</span><span class="p">,</span> <span class="n">maxiter</span><span class="o">=</span><span class="n">init_maxiter</span><span class="p">,</span>
+            <span class="n">seed</span><span class="o">=</span><span class="n">kwargs</span><span class="p">[</span><span class="s2">&quot;seed&quot;</span><span class="p">])</span>
+        <span class="k">if</span> <span class="n">init_params</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">fprint</span><span class="p">(</span><span class="s2">&quot;initialising NUTS from L-BFGS solution.&quot;</span><span class="p">)</span>
+            <span class="n">init_strategy</span> <span class="o">=</span> <span class="n">init_to_value</span><span class="p">(</span><span class="n">values</span><span class="o">=</span><span class="n">init_params</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">fprint</span><span class="p">(</span><span class="s2">&quot;L-BFGS failed, initialising NUTS from prior median.&quot;</span><span class="p">)</span>
+            <span class="n">init_strategy</span> <span class="o">=</span> <span class="n">init_to_median</span><span class="p">(</span><span class="n">num_samples</span><span class="o">=</span><span class="mi">5000</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">init_params</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="n">fprint</span><span class="p">(</span><span class="s2">&quot;initialising NUTS from prior median.&quot;</span><span class="p">)</span>
+        <span class="n">init_strategy</span> <span class="o">=</span> <span class="n">init_to_median</span><span class="p">(</span><span class="n">num_samples</span><span class="o">=</span><span class="mi">5000</span><span class="p">)</span>
+
+    <span class="n">dense_mass</span> <span class="o">=</span> <span class="n">kwargs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;dense_mass&quot;</span><span class="p">,</span> <span class="kc">True</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">init_params</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">ndim</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="nb">int</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">prod</span><span class="p">(</span><span class="n">v</span><span class="o">.</span><span class="n">shape</span><span class="p">))</span> <span class="k">for</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">init_params</span><span class="o">.</span><span class="n">values</span><span class="p">())</span>
+        <span class="n">fprint</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;using </span><span class="si">{</span><span class="s1">&#39;dense&#39;</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="n">dense_mass</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="s1">&#39;diagonal&#39;</span><span class="si">}</span><span class="s2"> mass matrix &quot;</span>
+               <span class="sa">f</span><span class="s2">&quot;(</span><span class="si">{</span><span class="n">ndim</span><span class="si">}</span><span class="s2"> parameters).&quot;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">dense_mass</span> <span class="ow">and</span> <span class="n">ndim</span> <span class="o">&gt;</span> <span class="mi">100</span><span class="p">:</span>
+            <span class="n">fprint</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;WARNING: dense_mass=True with </span><span class="si">{</span><span class="n">ndim</span><span class="si">}</span><span class="s2"> parameters. &quot;</span>
+                   <span class="sa">f</span><span class="s2">&quot;Consider setting dense_mass=False in the config.&quot;</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">fprint</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;using </span><span class="si">{</span><span class="s1">&#39;dense&#39;</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="n">dense_mass</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="s1">&#39;diagonal&#39;</span><span class="si">}</span><span class="s2"> mass matrix.&quot;</span><span class="p">)</span>
+    <span class="n">kernel</span> <span class="o">=</span> <span class="n">NUTS</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">init_strategy</span><span class="o">=</span><span class="n">init_strategy</span><span class="p">,</span> <span class="n">dense_mass</span><span class="o">=</span><span class="n">dense_mass</span><span class="p">)</span>
+    <span class="n">mcmc</span> <span class="o">=</span> <span class="n">MCMC</span><span class="p">(</span>
+        <span class="n">kernel</span><span class="p">,</span> <span class="n">num_warmup</span><span class="o">=</span><span class="n">kwargs</span><span class="p">[</span><span class="s2">&quot;num_warmup&quot;</span><span class="p">],</span>
+        <span class="n">num_samples</span><span class="o">=</span><span class="n">kwargs</span><span class="p">[</span><span class="s2">&quot;num_samples&quot;</span><span class="p">],</span> <span class="n">num_chains</span><span class="o">=</span><span class="n">kwargs</span><span class="p">[</span><span class="s2">&quot;num_chains&quot;</span><span class="p">],</span>
+        <span class="n">chain_method</span><span class="o">=</span><span class="n">kwargs</span><span class="p">[</span><span class="s2">&quot;chain_method&quot;</span><span class="p">])</span>
+    <span class="n">mcmc</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">jax</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">key</span><span class="p">(</span><span class="n">kwargs</span><span class="p">[</span><span class="s2">&quot;seed&quot;</span><span class="p">]),</span> <span class="o">**</span><span class="n">model_kwargs</span><span class="p">)</span>
+
+    <span class="n">samples</span> <span class="o">=</span> <span class="n">mcmc</span><span class="o">.</span><span class="n">get_samples</span><span class="p">()</span>
+    <span class="n">auxiliary</span> <span class="o">=</span> <span class="n">extract_auxiliary</span><span class="p">(</span><span class="n">samples</span><span class="p">,</span> <span class="p">[</span><span class="s2">&quot;Vpec_host_skipZ&quot;</span><span class="p">])</span>
+    <span class="n">log_density_per_sample</span> <span class="o">=</span> <span class="n">samples</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;log_density_per_sample&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">kwargs</span><span class="p">[</span><span class="s2">&quot;compute_log_density&quot;</span><span class="p">]:</span>
+        <span class="n">log_density</span> <span class="o">=</span> <span class="n">get_log_density</span><span class="p">(</span><span class="n">samples</span><span class="p">,</span> <span class="n">model</span><span class="p">,</span> <span class="n">model_kwargs</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">log_density</span> <span class="o">=</span> <span class="kc">None</span>
+
+    <span class="k">if</span> <span class="n">return_original_samples</span><span class="p">:</span>
+        <span class="n">original_samples</span> <span class="o">=</span> <span class="n">deepcopy</span><span class="p">(</span><span class="n">samples</span><span class="p">)</span>
+
+    <span class="n">samples</span> <span class="o">=</span> <span class="n">drop_deterministic</span><span class="p">(</span><span class="n">samples</span><span class="p">)</span>
+
+    <span class="n">compute_evidence</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s2">&quot;inference&quot;</span><span class="p">][</span><span class="s2">&quot;compute_evidence&quot;</span><span class="p">]</span>
+    <span class="k">if</span> <span class="n">compute_evidence</span><span class="p">:</span>
+        <span class="n">ndata</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">model_kwargs</span><span class="p">[</span><span class="s2">&quot;data&quot;</span><span class="p">])</span>
+        <span class="n">bic</span><span class="p">,</span> <span class="n">aic</span> <span class="o">=</span> <span class="n">BIC_AIC</span><span class="p">(</span><span class="n">samples</span><span class="p">,</span> <span class="n">log_density</span><span class="p">,</span> <span class="n">ndata</span><span class="p">)</span>
+
+        <span class="n">samples_arr</span><span class="p">,</span> <span class="n">names</span> <span class="o">=</span> <span class="n">dict_samples_to_array</span><span class="p">(</span><span class="n">samples</span><span class="p">)</span>
+        <span class="n">fprint</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;computing harmonic evidence from </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">names</span><span class="p">)</span><span class="si">}</span><span class="s2"> &quot;</span>
+               <span class="sa">f</span><span class="s2">&quot;parameters: </span><span class="si">{</span><span class="n">names</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+        <span class="n">samples_arr</span> <span class="o">=</span> <span class="n">samples_arr</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span>
+            <span class="n">kwargs</span><span class="p">[</span><span class="s2">&quot;num_chains_harmonic&quot;</span><span class="p">],</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">names</span><span class="p">))</span>
+        <span class="n">log_density_arr</span> <span class="o">=</span> <span class="n">log_density</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span>
+            <span class="n">kwargs</span><span class="p">[</span><span class="s2">&quot;num_chains_harmonic&quot;</span><span class="p">],</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+        <span class="n">lnZ_laplace</span><span class="p">,</span> <span class="n">err_lnZ_laplace</span> <span class="o">=</span> <span class="n">laplace_evidence</span><span class="p">(</span>
+            <span class="n">samples_arr</span><span class="p">,</span> <span class="n">log_density_arr</span><span class="p">)</span>
+        <span class="n">lnZ_harmonic</span><span class="p">,</span> <span class="n">err_lnZ_harmonic</span> <span class="o">=</span> <span class="n">harmonic_evidence</span><span class="p">(</span>
+            <span class="n">samples_arr</span><span class="p">,</span> <span class="n">log_density_arr</span><span class="p">,</span> <span class="n">epochs_num</span><span class="o">=</span><span class="mi">50</span><span class="p">,</span>
+            <span class="n">return_flow_samples</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="n">err_lnZ_harmonic</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">err_lnZ_harmonic</span><span class="p">))</span>
+
+        <span class="n">print_evidence</span><span class="p">(</span><span class="n">bic</span><span class="p">,</span> <span class="n">aic</span><span class="p">,</span> <span class="n">lnZ_laplace</span><span class="p">,</span> <span class="n">err_lnZ_laplace</span><span class="p">,</span>
+                       <span class="n">lnZ_harmonic</span><span class="p">,</span> <span class="n">err_lnZ_harmonic</span><span class="p">)</span>
+
+        <span class="n">gof</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;BIC&quot;</span><span class="p">:</span> <span class="n">bic</span><span class="p">,</span> <span class="s2">&quot;AIC&quot;</span><span class="p">:</span> <span class="n">aic</span><span class="p">,</span>
+               <span class="s2">&quot;lnZ_laplace&quot;</span><span class="p">:</span> <span class="n">lnZ_laplace</span><span class="p">,</span>
+               <span class="s2">&quot;err_lnZ_laplace&quot;</span><span class="p">:</span> <span class="n">err_lnZ_laplace</span><span class="p">,</span>
+               <span class="s2">&quot;lnZ_harmonic&quot;</span><span class="p">:</span> <span class="n">lnZ_harmonic</span><span class="p">,</span>
+               <span class="s2">&quot;err_lnZ_harmonic&quot;</span><span class="p">:</span> <span class="n">err_lnZ_harmonic</span><span class="p">}</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">gof</span> <span class="o">=</span> <span class="kc">None</span>
+
+    <span class="n">samples</span> <span class="o">=</span> <span class="n">postprocess_samples</span><span class="p">(</span><span class="n">samples</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">print_summary</span><span class="p">:</span>
+        <span class="n">print_clean_summary</span><span class="p">(</span><span class="n">samples</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">save_samples</span><span class="p">:</span>
+        <span class="n">fname_out</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s2">&quot;io&quot;</span><span class="p">][</span><span class="s2">&quot;fname_output&quot;</span><span class="p">]</span>
+        <span class="n">fprint</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;output directory is </span><span class="si">{</span><span class="n">dirname</span><span class="p">(</span><span class="n">fname_out</span><span class="p">)</span><span class="si">}</span><span class="s2">.&quot;</span><span class="p">)</span>
+        <span class="n">save_mcmc_samples</span><span class="p">(</span>
+            <span class="n">samples</span><span class="p">,</span> <span class="n">log_density</span><span class="p">,</span> <span class="n">log_density_per_sample</span><span class="p">,</span> <span class="n">gof</span><span class="p">,</span> <span class="n">fname_out</span><span class="p">,</span>
+            <span class="n">auxiliary</span><span class="o">=</span><span class="n">auxiliary</span><span class="p">)</span>
+
+        <span class="n">fname_plot</span> <span class="o">=</span> <span class="n">splitext</span><span class="p">(</span><span class="n">fname_out</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span> <span class="o">+</span> <span class="s2">&quot;.png&quot;</span>
+        <span class="n">plot_corner</span><span class="p">(</span><span class="n">samples</span><span class="p">,</span> <span class="n">show_fig</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">filename</span><span class="o">=</span><span class="n">fname_plot</span><span class="p">,)</span>
+
+        <span class="n">fname_summary</span> <span class="o">=</span> <span class="n">splitext</span><span class="p">(</span><span class="n">fname_out</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span> <span class="o">+</span> <span class="s2">&quot;_summary.txt&quot;</span>
+        <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">fname_summary</span><span class="p">,</span> <span class="s2">&quot;w&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+            <span class="k">with</span> <span class="n">contextlib</span><span class="o">.</span><span class="n">redirect_stdout</span><span class="p">(</span><span class="n">f</span><span class="p">):</span>
+                <span class="n">print_clean_summary</span><span class="p">(</span><span class="n">samples</span><span class="p">)</span>
+                <span class="k">if</span> <span class="n">compute_evidence</span><span class="p">:</span>
+                    <span class="n">print_evidence</span><span class="p">(</span>
+                        <span class="n">bic</span><span class="p">,</span> <span class="n">aic</span><span class="p">,</span> <span class="n">lnZ_laplace</span><span class="p">,</span> <span class="n">err_lnZ_laplace</span><span class="p">,</span>
+                        <span class="n">lnZ_harmonic</span><span class="p">,</span> <span class="n">err_lnZ_harmonic</span><span class="p">)</span>
+        <span class="n">fprint</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;saved summary to </span><span class="si">{</span><span class="n">fname_summary</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">model</span><span class="o">.</span><span class="n">which_Vext</span> <span class="o">==</span> <span class="s2">&quot;radial&quot;</span><span class="p">:</span>
+            <span class="n">fname_plot</span> <span class="o">=</span> <span class="n">splitext</span><span class="p">(</span><span class="n">fname_out</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span> <span class="o">+</span> <span class="s2">&quot;_corner_Vext_rad.png&quot;</span>
+            <span class="n">plot_Vext_rad_corner</span><span class="p">(</span><span class="n">samples</span><span class="p">,</span> <span class="n">show_fig</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">filename</span><span class="o">=</span><span class="n">fname_plot</span><span class="p">)</span>
+
+            <span class="n">fname_plot</span> <span class="o">=</span> <span class="n">splitext</span><span class="p">(</span><span class="n">fname_out</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span> <span class="o">+</span> <span class="s2">&quot;_profile_Vext_rad.png&quot;</span>
+            <span class="n">plot_radial_profiles</span><span class="p">(</span><span class="n">samples</span><span class="p">,</span> <span class="n">model</span><span class="p">,</span> <span class="n">show_fig</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+                                 <span class="n">filename</span><span class="o">=</span><span class="n">fname_plot</span><span class="p">)</span>
+        <span class="k">elif</span> <span class="n">model</span><span class="o">.</span><span class="n">which_Vext</span> <span class="o">==</span> <span class="s2">&quot;radial_magnitude&quot;</span><span class="p">:</span>
+            <span class="n">fname_plot</span> <span class="o">=</span> <span class="n">splitext</span><span class="p">(</span><span class="n">fname_out</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span> <span class="o">+</span> <span class="s2">&quot;_profile_Vext_radmag.png&quot;</span>
+            <span class="n">plot_Vext_radmag</span><span class="p">(</span>
+                <span class="n">samples</span><span class="p">,</span> <span class="n">model</span><span class="p">,</span> <span class="n">show_fig</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">filename</span><span class="o">=</span><span class="n">fname_plot</span><span class="p">,)</span>
+
+        <span class="k">if</span> <span class="n">model</span><span class="o">.</span><span class="n">which_Vext</span> <span class="o">==</span> <span class="s2">&quot;per_pix&quot;</span><span class="p">:</span>
+            <span class="n">npix</span> <span class="o">=</span> <span class="n">samples</span><span class="p">[</span><span class="s2">&quot;Vext_pix&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
+            <span class="k">if</span> <span class="n">npix</span> <span class="o">&gt;</span> <span class="mi">50</span><span class="p">:</span>
+                <span class="n">fprint</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Skipping corner plot of Vext_pix with </span><span class="si">{</span><span class="n">npix</span><span class="si">}</span><span class="s2"> pixels.&quot;</span><span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">fname_plot</span> <span class="o">=</span> <span class="n">splitext</span><span class="p">(</span><span class="n">fname_out</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span> <span class="o">+</span> <span class="s2">&quot;_corner_Vext_pix.png&quot;</span>
+                <span class="n">samples_Vext</span> <span class="o">=</span> <span class="p">{</span>
+                    <span class="sa">f</span><span class="s2">&quot;Vext_pix_</span><span class="si">{</span><span class="n">i</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">:</span> <span class="n">samples</span><span class="p">[</span><span class="s2">&quot;Vext_pix&quot;</span><span class="p">][:,</span> <span class="n">i</span><span class="p">]</span>
+                    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">npix</span><span class="p">)}</span>
+                <span class="n">plot_corner</span><span class="p">(</span><span class="n">samples_Vext</span><span class="p">,</span> <span class="n">show_fig</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">filename</span><span class="o">=</span><span class="n">fname_plot</span><span class="p">,)</span>
+
+            <span class="n">fname_plot</span> <span class="o">=</span> <span class="n">splitext</span><span class="p">(</span><span class="n">fname_out</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span> <span class="o">+</span> <span class="s2">&quot;_moll_Vext_pix.png&quot;</span>
+            <span class="n">plot_Vext_moll</span><span class="p">(</span><span class="n">samples</span><span class="p">[</span><span class="s2">&quot;Vext_pix&quot;</span><span class="p">],</span> <span class="n">fname_plot</span><span class="p">,)</span>
+
+    <span class="k">if</span> <span class="n">return_original_samples</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">samples</span><span class="p">,</span> <span class="n">log_density</span><span class="p">,</span> <span class="n">original_samples</span>
+
+    <span class="k">return</span> <span class="n">samples</span><span class="p">,</span> <span class="n">log_density</span></div>
+
+
+
+<div class="viewcode-block" id="run_H0_inference">
+<a class="viewcode-back" href="../../api/candel.html#candel.inference.run_H0_inference">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">run_H0_inference</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">model_kwargs</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">print_summary</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+                     <span class="n">save_samples</span><span class="o">=</span><span class="kc">True</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Run MCMC inference on an H0 model, post-process the samples, plot the</span>
+<span class="sd">    corner plot and optionally save the samples to an HDF5 file.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">model_kwargs</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">model_kwargs</span> <span class="o">=</span> <span class="p">{}</span>
+
+    <span class="n">fsection</span><span class="p">(</span><span class="s2">&quot;Inference&quot;</span><span class="p">)</span>
+    <span class="n">_setup_platform</span><span class="p">()</span>
+
+    <span class="n">kwargs</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s2">&quot;inference&quot;</span><span class="p">]</span>
+
+    <span class="n">kernel</span> <span class="o">=</span> <span class="n">NUTS</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">init_strategy</span><span class="o">=</span><span class="n">init_to_median</span><span class="p">(</span><span class="n">num_samples</span><span class="o">=</span><span class="mi">5000</span><span class="p">))</span>
+    <span class="n">mcmc</span> <span class="o">=</span> <span class="n">MCMC</span><span class="p">(</span>
+        <span class="n">kernel</span><span class="p">,</span> <span class="n">num_warmup</span><span class="o">=</span><span class="n">kwargs</span><span class="p">[</span><span class="s2">&quot;num_warmup&quot;</span><span class="p">],</span>
+        <span class="n">num_samples</span><span class="o">=</span><span class="n">kwargs</span><span class="p">[</span><span class="s2">&quot;num_samples&quot;</span><span class="p">],</span> <span class="n">num_chains</span><span class="o">=</span><span class="n">kwargs</span><span class="p">[</span><span class="s2">&quot;num_chains&quot;</span><span class="p">],</span>
+        <span class="n">chain_method</span><span class="o">=</span><span class="n">kwargs</span><span class="p">[</span><span class="s2">&quot;chain_method&quot;</span><span class="p">])</span>
+    <span class="n">mcmc</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">jax</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">key</span><span class="p">(</span><span class="n">kwargs</span><span class="p">[</span><span class="s2">&quot;seed&quot;</span><span class="p">]),</span> <span class="o">**</span><span class="n">model_kwargs</span><span class="p">)</span>
+
+    <span class="n">samples</span> <span class="o">=</span> <span class="n">mcmc</span><span class="o">.</span><span class="n">get_samples</span><span class="p">()</span>
+    <span class="n">auxiliary</span> <span class="o">=</span> <span class="n">extract_auxiliary</span><span class="p">(</span><span class="n">samples</span><span class="p">,</span> <span class="p">[</span><span class="s2">&quot;Vpec_host_skipZ&quot;</span><span class="p">])</span>
+    <span class="n">samples</span> <span class="o">=</span> <span class="n">drop_deterministic</span><span class="p">(</span><span class="n">samples</span><span class="p">)</span>
+    <span class="n">samples</span> <span class="o">=</span> <span class="n">postprocess_samples</span><span class="p">(</span><span class="n">samples</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">print_summary</span><span class="p">:</span>
+        <span class="n">print_clean_summary</span><span class="p">(</span><span class="n">samples</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">save_samples</span><span class="p">:</span>
+        <span class="n">fname_out</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s2">&quot;io&quot;</span><span class="p">][</span><span class="s2">&quot;fname_output&quot;</span><span class="p">]</span>
+        <span class="n">fprint</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;output directory is </span><span class="si">{</span><span class="n">dirname</span><span class="p">(</span><span class="n">fname_out</span><span class="p">)</span><span class="si">}</span><span class="s2">.&quot;</span><span class="p">)</span>
+        <span class="n">save_mcmc_samples</span><span class="p">(</span><span class="n">samples</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="n">fname_out</span><span class="p">,</span>
+                          <span class="n">auxiliary</span><span class="o">=</span><span class="n">auxiliary</span><span class="p">)</span>
+
+        <span class="n">fname_plot</span> <span class="o">=</span> <span class="n">splitext</span><span class="p">(</span><span class="n">fname_out</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span> <span class="o">+</span> <span class="s2">&quot;.png&quot;</span>
+        <span class="n">plot_corner</span><span class="p">(</span><span class="n">samples</span><span class="p">,</span> <span class="n">show_fig</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">filename</span><span class="o">=</span><span class="n">fname_plot</span><span class="p">,)</span>
+
+        <span class="n">fname_summary</span> <span class="o">=</span> <span class="n">splitext</span><span class="p">(</span><span class="n">fname_out</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span> <span class="o">+</span> <span class="s2">&quot;_summary.txt&quot;</span>
+        <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">fname_summary</span><span class="p">,</span> <span class="s2">&quot;w&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+            <span class="k">with</span> <span class="n">contextlib</span><span class="o">.</span><span class="n">redirect_stdout</span><span class="p">(</span><span class="n">f</span><span class="p">):</span>
+                <span class="n">print_clean_summary</span><span class="p">(</span><span class="n">samples</span><span class="p">)</span>
+        <span class="n">fprint</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;saved summary to </span><span class="si">{</span><span class="n">fname_summary</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">samples</span></div>
+
+
+
+<div class="viewcode-block" id="get_log_density">
+<a class="viewcode-back" href="../../api/candel.html#candel.inference.get_log_density">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">get_log_density</span><span class="p">(</span><span class="n">samples</span><span class="p">,</span> <span class="n">model</span><span class="p">,</span> <span class="n">model_kwargs</span><span class="p">,</span> <span class="n">batch_size</span><span class="o">=</span><span class="mi">5</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Compute the log density of NumPyro model. The batch size cannot be much</span>
+<span class="sd">    larger to prevent exhausting the memory.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">f</span><span class="p">(</span><span class="n">sample</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">log_density</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="p">(),</span> <span class="n">model_kwargs</span><span class="p">,</span> <span class="n">sample</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span>
+
+    <span class="n">f_vmap</span> <span class="o">=</span> <span class="n">jit</span><span class="p">(</span><span class="n">vmap</span><span class="p">(</span><span class="n">f</span><span class="p">))</span>
+
+    <span class="n">samples</span> <span class="o">=</span> <span class="p">{</span><span class="n">k</span><span class="p">:</span> <span class="n">jnp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">v</span><span class="p">)</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">samples</span><span class="o">.</span><span class="n">items</span><span class="p">()}</span>
+    <span class="n">num_samples</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">samples</span><span class="p">[</span><span class="nb">next</span><span class="p">(</span><span class="nb">iter</span><span class="p">(</span><span class="n">samples</span><span class="p">))])</span>
+
+    <span class="n">chunks</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">trange</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">num_samples</span><span class="p">,</span> <span class="n">batch_size</span><span class="p">,</span> <span class="n">desc</span><span class="o">=</span><span class="s2">&quot;Batched log densities&quot;</span><span class="p">):</span>
+        <span class="n">batch</span> <span class="o">=</span> <span class="p">{</span><span class="n">k</span><span class="p">:</span> <span class="n">v</span><span class="p">[</span><span class="n">i</span><span class="p">:</span><span class="n">i</span> <span class="o">+</span> <span class="n">batch_size</span><span class="p">]</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">samples</span><span class="o">.</span><span class="n">items</span><span class="p">()}</span>
+        <span class="n">chunks</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">f_vmap</span><span class="p">(</span><span class="n">batch</span><span class="p">))</span>
+
+    <span class="k">return</span> <span class="n">jnp</span><span class="o">.</span><span class="n">concatenate</span><span class="p">(</span><span class="n">chunks</span><span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="extract_auxiliary">
+<a class="viewcode-back" href="../../api/candel.html#candel.inference.extract_auxiliary">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">extract_auxiliary</span><span class="p">(</span><span class="n">samples</span><span class="p">,</span> <span class="n">keys</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Extract and remove auxiliary deterministic samples.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    samples : dict</span>
+<span class="sd">        Dictionary returned by `mcmc.get_samples()`.</span>
+<span class="sd">    keys : sequence of str</span>
+<span class="sd">        Names to extract. If a key ends with `_skipZ`, the suffix is dropped</span>
+<span class="sd">        in the returned dictionary.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">aux</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="k">for</span> <span class="n">key</span> <span class="ow">in</span> <span class="n">keys</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">key</span> <span class="ow">in</span> <span class="n">samples</span><span class="p">:</span>
+            <span class="n">new_key</span> <span class="o">=</span> <span class="n">key</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s2">&quot;_skipZ&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span>
+            <span class="n">aux</span><span class="p">[</span><span class="n">new_key</span><span class="p">]</span> <span class="o">=</span> <span class="n">samples</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="n">key</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">aux</span></div>
+
+
+
+<div class="viewcode-block" id="drop_deterministic">
+<a class="viewcode-back" href="../../api/candel.html#candel.inference.drop_deterministic">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">drop_deterministic</span><span class="p">(</span><span class="n">samples</span><span class="p">,</span> <span class="n">check_all_equals</span><span class="o">=</span><span class="kc">True</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Drop deterministic and latent variable samples.&quot;&quot;&quot;</span>
+    <span class="k">for</span> <span class="n">key</span> <span class="ow">in</span> <span class="nb">list</span><span class="p">(</span><span class="n">samples</span><span class="o">.</span><span class="n">keys</span><span class="p">()):</span>
+        <span class="c1"># Remove unused, latent variables used for deterministic sampling</span>
+        <span class="k">if</span> <span class="s2">&quot;skipZ&quot;</span> <span class="ow">in</span> <span class="n">key</span><span class="p">:</span>
+            <span class="n">samples</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="n">key</span><span class="p">)</span>
+            <span class="k">continue</span>
+
+        <span class="k">if</span> <span class="n">key</span> <span class="o">==</span> <span class="s2">&quot;obs&quot;</span><span class="p">:</span>
+            <span class="n">samples</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="n">key</span><span class="p">)</span>
+            <span class="k">continue</span>
+
+        <span class="c1"># Remove samples fixed to a single value (delta prior)</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="n">samples</span><span class="p">[</span><span class="n">key</span><span class="p">]</span>
+        <span class="k">if</span> <span class="n">check_all_equals</span> <span class="ow">and</span> <span class="n">np</span><span class="o">.</span><span class="n">all</span><span class="p">(</span><span class="n">x</span><span class="o">.</span><span class="n">flatten</span><span class="p">()[</span><span class="mi">0</span><span class="p">]</span> <span class="o">==</span> <span class="n">x</span><span class="p">):</span>
+            <span class="n">samples</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="n">key</span><span class="p">)</span>
+            <span class="k">continue</span>
+
+    <span class="n">keys</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">samples</span><span class="o">.</span><span class="n">keys</span><span class="p">())</span>
+    <span class="c1"># Remove the a_TFR_h samples if a_TFR is present or rename it to a_TFR</span>
+    <span class="k">if</span> <span class="s2">&quot;a_TFR&quot;</span> <span class="ow">in</span> <span class="n">keys</span> <span class="ow">and</span> <span class="s2">&quot;a_TFR_h&quot;</span> <span class="ow">in</span> <span class="n">keys</span><span class="p">:</span>
+        <span class="n">samples</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;a_TFR_h&quot;</span><span class="p">)</span>
+    <span class="k">elif</span> <span class="s2">&quot;a_TFR_h&quot;</span> <span class="ow">in</span> <span class="n">keys</span> <span class="ow">and</span> <span class="s2">&quot;a_TFR&quot;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">keys</span><span class="p">:</span>
+        <span class="n">samples</span><span class="p">[</span><span class="s2">&quot;a_TFR&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">samples</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;a_TFR_h&quot;</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">samples</span></div>
+
+
+
+<div class="viewcode-block" id="postprocess_samples">
+<a class="viewcode-back" href="../../api/candel.html#candel.inference.postprocess_samples">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">postprocess_samples</span><span class="p">(</span><span class="n">samples</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Postprocess MCMC samples.&quot;&quot;&quot;</span>
+    <span class="c1"># Collect all unique model prefixes (e.g., &quot;Foundation/&quot;, &quot;LOSS/&quot;)</span>
+    <span class="n">model_prefixes</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
+    <span class="k">for</span> <span class="n">key</span> <span class="ow">in</span> <span class="n">samples</span><span class="o">.</span><span class="n">keys</span><span class="p">():</span>
+        <span class="k">if</span> <span class="s2">&quot;/&quot;</span> <span class="ow">in</span> <span class="n">key</span><span class="p">:</span>
+            <span class="n">model_prefixes</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">key</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s2">&quot;/&quot;</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span> <span class="o">+</span> <span class="s2">&quot;/&quot;</span><span class="p">)</span>
+    <span class="n">model_prefixes</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="s2">&quot;&quot;</span><span class="p">)</span>  <span class="c1"># Also handle unprefixed keys</span>
+
+    <span class="k">for</span> <span class="n">model_prefix</span> <span class="ow">in</span> <span class="n">model_prefixes</span><span class="p">:</span>
+        <span class="k">for</span> <span class="n">prefix</span> <span class="ow">in</span> <span class="p">[</span><span class="s2">&quot;Vext_rad&quot;</span><span class="p">,</span> <span class="s2">&quot;Vext_radmag&quot;</span><span class="p">,</span> <span class="s2">&quot;Vext&quot;</span><span class="p">,</span> <span class="s2">&quot;zeropoint_dipole&quot;</span><span class="p">]:</span>
+            <span class="n">full_prefix</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">model_prefix</span><span class="si">}{</span><span class="n">prefix</span><span class="si">}</span><span class="s2">&quot;</span>
+            <span class="c1"># Spherical form: phi + cos_theta (+ mag optional)</span>
+            <span class="n">phi_key</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">full_prefix</span><span class="si">}</span><span class="s2">_phi&quot;</span>
+            <span class="n">cos_theta_key</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">full_prefix</span><span class="si">}</span><span class="s2">_cos_theta&quot;</span>
+            <span class="k">if</span> <span class="n">phi_key</span> <span class="ow">in</span> <span class="n">samples</span> <span class="ow">and</span> <span class="n">cos_theta_key</span> <span class="ow">in</span> <span class="n">samples</span><span class="p">:</span>
+                <span class="n">phi</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">rad2deg</span><span class="p">(</span><span class="n">samples</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="n">phi_key</span><span class="p">))</span>
+                <span class="n">theta</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">arccos</span><span class="p">(</span><span class="n">samples</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="n">cos_theta_key</span><span class="p">))</span>
+                <span class="n">dec</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">rad2deg</span><span class="p">(</span><span class="mf">0.5</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">pi</span> <span class="o">-</span> <span class="n">theta</span><span class="p">)</span>
+
+                <span class="n">ell</span><span class="p">,</span> <span class="n">b</span> <span class="o">=</span> <span class="n">radec_to_galactic</span><span class="p">(</span><span class="n">phi</span><span class="p">,</span> <span class="n">dec</span><span class="p">)</span>
+                <span class="n">samples</span><span class="p">[</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">full_prefix</span><span class="si">}</span><span class="s2">_ell&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">ell</span>
+                <span class="n">samples</span><span class="p">[</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">full_prefix</span><span class="si">}</span><span class="s2">_b&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">b</span>
+
+                <span class="n">mag_key</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">full_prefix</span><span class="si">}</span><span class="s2">_mag&quot;</span>
+                <span class="k">if</span> <span class="n">mag_key</span> <span class="ow">in</span> <span class="n">samples</span><span class="p">:</span>
+                    <span class="n">samples</span><span class="p">[</span><span class="n">mag_key</span><span class="p">]</span> <span class="o">=</span> <span class="n">samples</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="n">mag_key</span><span class="p">)</span>
+                <span class="k">continue</span>
+
+            <span class="c1"># Cartesian form: x, y, z</span>
+            <span class="k">if</span> <span class="nb">all</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">full_prefix</span><span class="si">}</span><span class="s2">_</span><span class="si">{</span><span class="n">c</span><span class="si">}</span><span class="s2">&quot;</span> <span class="ow">in</span> <span class="n">samples</span> <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="s2">&quot;xyz&quot;</span><span class="p">):</span>
+                <span class="n">x</span> <span class="o">=</span> <span class="n">samples</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">full_prefix</span><span class="si">}</span><span class="s2">_x&quot;</span><span class="p">)</span>
+                <span class="n">y</span> <span class="o">=</span> <span class="n">samples</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">full_prefix</span><span class="si">}</span><span class="s2">_y&quot;</span><span class="p">)</span>
+                <span class="n">z</span> <span class="o">=</span> <span class="n">samples</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">full_prefix</span><span class="si">}</span><span class="s2">_z&quot;</span><span class="p">)</span>
+
+                <span class="n">r</span><span class="p">,</span> <span class="n">ell</span><span class="p">,</span> <span class="n">b</span> <span class="o">=</span> <span class="n">radec_cartesian_to_galactic</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">z</span><span class="p">)</span>
+                <span class="n">samples</span><span class="p">[</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">full_prefix</span><span class="si">}</span><span class="s2">_mag&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">r</span>
+                <span class="n">samples</span><span class="p">[</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">full_prefix</span><span class="si">}</span><span class="s2">_ell&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">ell</span>
+                <span class="n">samples</span><span class="p">[</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">full_prefix</span><span class="si">}</span><span class="s2">_b&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">b</span>
+
+    <span class="k">return</span> <span class="n">samples</span></div>
+
+
+
+<div class="viewcode-block" id="print_clean_summary">
+<a class="viewcode-back" href="../../api/candel.html#candel.inference.print_clean_summary">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">print_clean_summary</span><span class="p">(</span><span class="n">samples</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Wrapper around numpyro&#39;s `print_summary`.&quot;&quot;&quot;</span>
+    <span class="n">samples_print</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="k">for</span> <span class="n">key</span><span class="p">,</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">samples</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+        <span class="k">if</span> <span class="s2">&quot;_latent&quot;</span> <span class="ow">in</span> <span class="n">key</span><span class="p">:</span>
+            <span class="k">continue</span>
+
+        <span class="n">samples_print</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="n">x</span><span class="p">[</span><span class="kc">None</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span>
+
+    <span class="n">print_summary_numpyro</span><span class="p">(</span><span class="n">samples_print</span><span class="p">,)</span></div>
+
+
+
+<div class="viewcode-block" id="save_mcmc_samples">
+<a class="viewcode-back" href="../../api/candel.html#candel.inference.save_mcmc_samples">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">save_mcmc_samples</span><span class="p">(</span><span class="n">samples</span><span class="p">,</span> <span class="n">log_density</span><span class="p">,</span> <span class="n">log_density_per_sample</span><span class="p">,</span> <span class="n">gof</span><span class="p">,</span>
+                      <span class="n">filename</span><span class="p">,</span> <span class="n">auxiliary</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Save the MCMC samples to an HDF5 file.&quot;&quot;&quot;</span>
+    <span class="k">with</span> <span class="n">File</span><span class="p">(</span><span class="n">filename</span><span class="p">,</span> <span class="s1">&#39;w&#39;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+        <span class="n">grp</span> <span class="o">=</span> <span class="n">f</span><span class="o">.</span><span class="n">create_group</span><span class="p">(</span><span class="s2">&quot;samples&quot;</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">key</span><span class="p">,</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">samples</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+            <span class="n">grp</span><span class="o">.</span><span class="n">create_dataset</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="n">data</span><span class="o">=</span><span class="n">x</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">auxiliary</span> <span class="ow">and</span> <span class="s2">&quot;Vpec_host&quot;</span> <span class="ow">in</span> <span class="n">auxiliary</span><span class="p">:</span>
+            <span class="n">grp_aux</span> <span class="o">=</span> <span class="n">f</span><span class="o">.</span><span class="n">create_group</span><span class="p">(</span><span class="s2">&quot;auxiliary&quot;</span><span class="p">)</span>
+            <span class="n">grp_aux</span><span class="o">.</span><span class="n">create_dataset</span><span class="p">(</span>
+                <span class="s2">&quot;Vpec_host&quot;</span><span class="p">,</span> <span class="n">data</span><span class="o">=</span><span class="n">auxiliary</span><span class="p">[</span><span class="s2">&quot;Vpec_host&quot;</span><span class="p">],</span>
+                <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="s2">&quot;Vext_ell&quot;</span> <span class="ow">in</span> <span class="n">samples</span><span class="p">:</span>
+            <span class="n">original_shape</span> <span class="o">=</span> <span class="n">samples</span><span class="p">[</span><span class="s2">&quot;Vext_ell&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">shape</span>
+            <span class="n">ra</span><span class="p">,</span> <span class="n">dec</span> <span class="o">=</span> <span class="n">galactic_to_radec</span><span class="p">(</span>
+                <span class="n">samples</span><span class="p">[</span><span class="s2">&quot;Vext_ell&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">ravel</span><span class="p">(),</span> <span class="n">samples</span><span class="p">[</span><span class="s2">&quot;Vext_b&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">ravel</span><span class="p">())</span>
+            <span class="n">Vext</span> <span class="o">=</span> <span class="p">(</span><span class="n">samples</span><span class="p">[</span><span class="s2">&quot;Vext_mag&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">ravel</span><span class="p">()[:,</span> <span class="kc">None</span><span class="p">]</span>
+                    <span class="o">*</span> <span class="n">radec_to_cartesian</span><span class="p">(</span><span class="n">ra</span><span class="p">,</span> <span class="n">dec</span><span class="p">))</span>
+            <span class="n">grp</span><span class="o">.</span><span class="n">create_dataset</span><span class="p">(</span>
+                <span class="s2">&quot;Vext&quot;</span><span class="p">,</span> <span class="n">data</span><span class="o">=</span><span class="n">Vext</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">*</span><span class="n">original_shape</span><span class="p">,</span> <span class="mi">3</span><span class="p">))</span>
+
+        <span class="k">if</span> <span class="n">log_density</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">f</span><span class="o">.</span><span class="n">create_dataset</span><span class="p">(</span><span class="s2">&quot;log_density&quot;</span><span class="p">,</span> <span class="n">data</span><span class="o">=</span><span class="n">log_density</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">log_density_per_sample</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">f</span><span class="o">.</span><span class="n">create_dataset</span><span class="p">(</span>
+                <span class="s2">&quot;log_density_per_sample&quot;</span><span class="p">,</span> <span class="n">data</span><span class="o">=</span><span class="n">log_density_per_sample</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">gof</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">grp</span> <span class="o">=</span> <span class="n">f</span><span class="o">.</span><span class="n">create_group</span><span class="p">(</span><span class="s2">&quot;gof&quot;</span><span class="p">)</span>
+            <span class="k">for</span> <span class="n">key</span><span class="p">,</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">gof</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+                <span class="n">grp</span><span class="o">.</span><span class="n">create_dataset</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="n">data</span><span class="o">=</span><span class="n">x</span><span class="p">)</span>
+
+    <span class="n">fprint</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;saved samples to </span><span class="si">{</span><span class="n">filename</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span></div>
+
+</pre></div>
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2025, Richard Stiskalek.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

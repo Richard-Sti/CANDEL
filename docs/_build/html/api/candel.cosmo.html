@@ -1,0 +1,210 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>candel.cosmo &mdash; candel  documentation</title>
+      <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../_static/css/theme.css?v=9edc463e" />
+
+  
+      <script src="../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../_static/documentation_options.js?v=5929fcd5"></script>
+      <script src="../_static/doctools.js?v=fd6eb6e6"></script>
+      <script src="../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="candel.field" href="candel.field.html" />
+    <link rel="prev" title="candel.pvdata" href="candel.pvdata.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../index.html" class="icon icon-home">
+            candel
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Contents</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../installation.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../models.html">Supported models</a></li>
+<li class="toctree-l1 current"><a class="reference internal" href="index.html">API Reference</a><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="candel.html">candel</a></li>
+<li class="toctree-l2"><a class="reference internal" href="candel.model.html">candel.model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="candel.pvdata.html">candel.pvdata</a></li>
+<li class="toctree-l2 current"><a class="current reference internal" href="#">candel.cosmo</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#module-candel.cosmo.growth_rate">Growth rate</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#candel.cosmo.growth_rate.Beta2Cosmology"><code class="docutils literal notranslate"><span class="pre">Beta2Cosmology</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="#module-candel.cosmo.pv_covariance">PV covariance</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#candel.cosmo.pv_covariance.get_Pk_CAMB"><code class="docutils literal notranslate"><span class="pre">get_Pk_CAMB()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#candel.cosmo.pv_covariance.compute_dD_dtau"><code class="docutils literal notranslate"><span class="pre">compute_dD_dtau()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#candel.cosmo.pv_covariance.compute_Fuv"><code class="docutils literal notranslate"><span class="pre">compute_Fuv()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#candel.cosmo.pv_covariance.compute_covariance_matrix"><code class="docutils literal notranslate"><span class="pre">compute_covariance_matrix()</span></code></a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="candel.field.html">candel.field</a></li>
+<li class="toctree-l2"><a class="reference internal" href="candel.redshift2real.html">candel.redshift2real</a></li>
+<li class="toctree-l2"><a class="reference internal" href="candel.mock.html">candel.mock</a></li>
+</ul>
+</li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../index.html">candel</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="index.html">API Reference</a></li>
+      <li class="breadcrumb-item active">candel.cosmo</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="../_sources/api/candel.cosmo.rst.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="candel-cosmo">
+<h1>candel.cosmo<a class="headerlink" href="#candel-cosmo" title="Link to this heading"></a></h1>
+<section id="module-candel.cosmo.growth_rate">
+<span id="growth-rate"></span><h2>Growth rate<a class="headerlink" href="#module-candel.cosmo.growth_rate" title="Link to this heading"></a></h2>
+<p>Conversion of the <cite>beta</cite> factor from linear theory to either <cite>fsigma8</cite> or <cite>S8</cite></p>
+<dl class="py class">
+<dt class="sig sig-object py" id="candel.cosmo.growth_rate.Beta2Cosmology">
+<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">candel.cosmo.growth_rate.</span></span><span class="sig-name descname"><span class="pre">Beta2Cosmology</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">Om0</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.3111</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">h</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.6766</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">Ob</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ns</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.9665</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mnu</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">w0</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">-1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">wa</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">gamma</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.5454545454545454</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sigma8g_prior</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'carrick'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">method</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'sr'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">beta_jusz</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.216</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/cosmo/growth_rate.html#Beta2Cosmology"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.cosmo.growth_rate.Beta2Cosmology" title="Link to this definition"></a></dt>
+<dd><p>Bases: <a class="reference external" href="https://docs.python.org/3/library/functions.html#object" title="(in Python v3.14)"><code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></a></p>
+<p>Converter for mapping samples of <cite>beta</cite>, which scales the velocities
+of linear theory reconstructions into either <cite>fsigma8</cite> or <cite>S8</cite>.</p>
+<p>Supports symbolic regression (SR) or Juszkiewicz-based mappings from
+non-linear to linear sigma8</p>
+<dl class="py method">
+<dt class="sig sig-object py" id="candel.cosmo.growth_rate.Beta2Cosmology.compute_sigma8_nonlinear_from_pk">
+<span class="sig-name descname"><span class="pre">compute_sigma8_nonlinear_from_pk</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">As</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/cosmo/growth_rate.html#Beta2Cosmology.compute_sigma8_nonlinear_from_pk"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.cosmo.growth_rate.Beta2Cosmology.compute_sigma8_nonlinear_from_pk" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="candel.cosmo.growth_rate.Beta2Cosmology.compute_sigma8_nonlinear_from_beta">
+<span class="sig-name descname"><span class="pre">compute_sigma8_nonlinear_from_beta</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">beta</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/cosmo/growth_rate.html#Beta2Cosmology.compute_sigma8_nonlinear_from_beta"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.cosmo.growth_rate.Beta2Cosmology.compute_sigma8_nonlinear_from_beta" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="candel.cosmo.growth_rate.Beta2Cosmology.sigma8_nl_to_lin">
+<span class="sig-name descname"><span class="pre">sigma8_nl_to_lin</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">sigma8_nl</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/cosmo/growth_rate.html#Beta2Cosmology.sigma8_nl_to_lin"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.cosmo.growth_rate.Beta2Cosmology.sigma8_nl_to_lin" title="Link to this definition"></a></dt>
+<dd><p>Converts a non-linear sigma8 to a linear sigma8.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="candel.cosmo.growth_rate.Beta2Cosmology.compute_fsigma8_linear">
+<span class="sig-name descname"><span class="pre">compute_fsigma8_linear</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">beta</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/cosmo/growth_rate.html#Beta2Cosmology.compute_fsigma8_linear"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.cosmo.growth_rate.Beta2Cosmology.compute_fsigma8_linear" title="Link to this definition"></a></dt>
+<dd><p>Compute <cite>fsigma8_linear</cite> from samples of <cite>beta</cite>.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="candel.cosmo.growth_rate.Beta2Cosmology.compute_S8">
+<span class="sig-name descname"><span class="pre">compute_S8</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">beta</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/cosmo/growth_rate.html#Beta2Cosmology.compute_S8"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.cosmo.growth_rate.Beta2Cosmology.compute_S8" title="Link to this definition"></a></dt>
+<dd><p>Compute <cite>S8</cite> from samples of <cite>beta</cite>.</p>
+</dd></dl>
+
+</dd></dl>
+
+</section>
+<section id="module-candel.cosmo.pv_covariance">
+<span id="pv-covariance"></span><h2>PV covariance<a class="headerlink" href="#module-candel.cosmo.pv_covariance" title="Link to this heading"></a></h2>
+<p>Covariance matrix of peculiar velocities in LCDM cosmology.</p>
+<dl class="py function">
+<dt class="sig sig-object py" id="candel.cosmo.pv_covariance.get_Pk_CAMB">
+<span class="sig-prename descclassname"><span class="pre">candel.cosmo.pv_covariance.</span></span><span class="sig-name descname"><span class="pre">get_Pk_CAMB</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">H0</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">67.4</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">Om0</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.3153</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">Ombh2</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0224</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">As</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">2.100549e-09</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ns</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.965</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">kmax</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">20.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">nonlinear</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/cosmo/pv_covariance.html#get_Pk_CAMB"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.cosmo.pv_covariance.get_Pk_CAMB" title="Link to this definition"></a></dt>
+<dd><p>Get (non-linear) matter power spectrum from CAMB in <cite>Mpc / h</cite> units.</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="candel.cosmo.pv_covariance.compute_dD_dtau">
+<span class="sig-prename descclassname"><span class="pre">candel.cosmo.pv_covariance.</span></span><span class="sig-name descname"><span class="pre">compute_dD_dtau</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">a</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">Omega_m</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.315</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">Omega_L</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.685</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">H0</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">67.4</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/cosmo/pv_covariance.html#compute_dD_dtau"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.cosmo.pv_covariance.compute_dD_dtau" title="Link to this definition"></a></dt>
+<dd><p>Compute the derivative of the linear growth factor D with respect to
+conformal time τ.</p>
+<p>This function solves the linear growth ODE for a flat ΛCDM cosmology,
+normalizes D(a) such that D(a=1) = 1, and returns dD/dτ evaluated at the
+supplied scale factor <cite>a</cite>.</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="candel.cosmo.pv_covariance.compute_Fuv">
+<span class="sig-prename descclassname"><span class="pre">candel.cosmo.pv_covariance.</span></span><span class="sig-name descname"><span class="pre">compute_Fuv</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">u</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">v</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ells</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">Pells</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/cosmo/pv_covariance.html#compute_Fuv"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.cosmo.pv_covariance.compute_Fuv" title="Link to this definition"></a></dt>
+<dd><p>Compute:
+F(u, v, cosθ) = Σ_{l=ell_min}^{ell_max} (2l + 1) j_l’(u) j_l’(v) P_l(cosθ)</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="candel.cosmo.pv_covariance.compute_covariance_matrix">
+<span class="sig-prename descclassname"><span class="pre">candel.cosmo.pv_covariance.</span></span><span class="sig-name descname"><span class="pre">compute_covariance_matrix</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">r</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">RA</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dec</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">k</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">Pk</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dDdtau</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ell_min</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ell_max</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">2000</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">n_jobs</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/candel/cosmo/pv_covariance.html#compute_covariance_matrix"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#candel.cosmo.pv_covariance.compute_covariance_matrix" title="Link to this definition"></a></dt>
+<dd><p>Compute the velocity covariance matrix for objects at positions
+(r, RA, dec).</p>
+</dd></dl>
+
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="candel.pvdata.html" class="btn btn-neutral float-left" title="candel.pvdata" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="candel.field.html" class="btn btn-neutral float-right" title="candel.field" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2025, Richard Stiskalek.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

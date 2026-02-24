@@ -1,0 +1,232 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../../">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>candel.mock.TFR_mock &mdash; candel  documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../../../_static/css/theme.css?v=9edc463e" />
+
+  
+      <script src="../../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../../_static/documentation_options.js?v=5929fcd5"></script>
+      <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
+      <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../../index.html" class="icon icon-home">
+            candel
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Contents</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../installation.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../models.html">Supported models</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../api/index.html">API Reference</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../../index.html">candel</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="../../index.html">Module code</a></li>
+      <li class="breadcrumb-item active">candel.mock.TFR_mock</li>
+      <li class="wy-breadcrumbs-aside">
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <h1>Source code for candel.mock.TFR_mock</h1><div class="highlight"><pre>
+<span></span><span class="c1"># Copyright (C) 2025 Richard Stiskalek</span>
+<span class="c1"># This program is free software; you can redistribute it and/or modify it</span>
+<span class="c1"># under the terms of the GNU General Public License as published by the</span>
+<span class="c1"># Free Software Foundation; either version 3 of the License, or (at your</span>
+<span class="c1"># option) any later version.</span>
+<span class="c1">#</span>
+<span class="c1"># This program is distributed in the hope that it will be useful, but</span>
+<span class="c1"># WITHOUT ANY WARRANTY; without even the implied warranty of</span>
+<span class="c1"># MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General</span>
+<span class="c1"># Public License for more details.</span>
+<span class="c1">#</span>
+<span class="c1"># You should have received a copy of the GNU General Public License along</span>
+<span class="c1"># with this program; if not, write to the Free Software Foundation, Inc.,</span>
+<span class="c1"># 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.</span>
+<span class="sd">&quot;&quot;&quot;Mock generator for TFR surveys.&quot;&quot;&quot;</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">scipy.integrate</span><span class="w"> </span><span class="kn">import</span> <span class="n">cumulative_simpson</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">..field</span><span class="w"> </span><span class="kn">import</span> <span class="n">interpolate_los_density_velocity</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">..util</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span><span class="n">SPEED_OF_LIGHT</span><span class="p">,</span> <span class="n">fprint</span><span class="p">,</span> <span class="n">galactic_to_radec</span><span class="p">,</span>
+                    <span class="n">galactic_to_radec_cartesian</span><span class="p">,</span> <span class="n">radec_to_cartesian</span><span class="p">)</span>
+
+
+<div class="viewcode-block" id="sample_distance">
+<a class="viewcode-back" href="../../../api/candel.mock.html#candel.mock.TFR_mock.sample_distance">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">sample_distance</span><span class="p">(</span><span class="n">r_grid</span><span class="p">,</span> <span class="n">los_density</span><span class="p">,</span> <span class="n">b1</span><span class="p">,</span> <span class="n">R</span><span class="p">,</span> <span class="n">p</span><span class="p">,</span> <span class="n">n</span><span class="p">,</span> <span class="n">gen</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Sample distance from p(r) ∝ (1 + b1*δ) r^p exp(-(r/R)^n).&quot;&quot;&quot;</span>
+    <span class="n">los_delta</span> <span class="o">=</span> <span class="n">los_density</span> <span class="o">-</span> <span class="mi">1</span>
+    <span class="n">pi_r</span> <span class="o">=</span> <span class="p">(</span><span class="mi">1</span> <span class="o">+</span> <span class="n">b1</span> <span class="o">*</span> <span class="n">los_delta</span><span class="p">)</span> <span class="o">*</span> <span class="n">r_grid</span><span class="o">**</span><span class="n">p</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="o">-</span><span class="p">(</span><span class="n">r_grid</span> <span class="o">/</span> <span class="n">R</span><span class="p">)</span><span class="o">**</span><span class="n">n</span><span class="p">)</span>
+    <span class="n">cdf_r</span> <span class="o">=</span> <span class="n">cumulative_simpson</span><span class="p">(</span><span class="n">pi_r</span><span class="p">,</span> <span class="n">x</span><span class="o">=</span><span class="n">r_grid</span><span class="p">,</span> <span class="n">initial</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+    <span class="n">cdf_r</span> <span class="o">/=</span> <span class="n">cdf_r</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+    <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">interp</span><span class="p">(</span><span class="n">gen</span><span class="o">.</span><span class="n">uniform</span><span class="p">(),</span> <span class="n">cdf_r</span><span class="p">,</span> <span class="n">r_grid</span><span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="gen_TFR_mock">
+<a class="viewcode-back" href="../../../api/candel.mock.html#candel.mock.TFR_mock.gen_TFR_mock">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">gen_TFR_mock</span><span class="p">(</span><span class="n">nsamples</span><span class="p">,</span> <span class="n">r_grid</span><span class="p">,</span> <span class="n">Vext_mag</span><span class="p">,</span> <span class="n">Vext_ell</span><span class="p">,</span> <span class="n">Vext_b</span><span class="p">,</span> <span class="n">sigma_v</span><span class="p">,</span> <span class="n">beta</span><span class="p">,</span>
+                 <span class="n">a_TFR</span><span class="p">,</span> <span class="n">b_TFR</span><span class="p">,</span> <span class="n">c_TFR</span><span class="p">,</span> <span class="n">sigma_int</span><span class="p">,</span> <span class="n">zeropoint_dipole_mag</span><span class="p">,</span>
+                 <span class="n">zeropoint_dipole_ell</span><span class="p">,</span> <span class="n">zeropoint_dipole_b</span><span class="p">,</span> <span class="n">h</span><span class="p">,</span> <span class="n">e_mag</span><span class="p">,</span>
+                 <span class="n">eta_prior_mean</span><span class="p">,</span> <span class="n">eta_prior_std</span><span class="p">,</span> <span class="n">e_eta</span><span class="p">,</span> <span class="n">b_min</span><span class="p">,</span> <span class="n">zcmb_max</span><span class="p">,</span>
+                 <span class="n">R</span><span class="p">,</span> <span class="n">p</span><span class="p">,</span> <span class="n">n</span><span class="p">,</span> <span class="n">field_loader</span><span class="p">,</span> <span class="n">r2distmod</span><span class="p">,</span> <span class="n">r2z</span><span class="p">,</span> <span class="n">Om</span><span class="o">=</span><span class="mf">0.3</span><span class="p">,</span> <span class="n">seed</span><span class="o">=</span><span class="mi">42</span><span class="p">,</span>
+                 <span class="n">verbose</span><span class="o">=</span><span class="kc">True</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Generate a mock TFR survey with distances sampled from an empirical</span>
+<span class="sd">    distribution, without any further selection effects.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">gen</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">default_rng</span><span class="p">(</span><span class="n">seed</span><span class="p">)</span>
+
+    <span class="c1"># Sample the sky-coordinates of the sample.</span>
+    <span class="n">ell</span> <span class="o">=</span> <span class="n">gen</span><span class="o">.</span><span class="n">uniform</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">360</span><span class="p">,</span> <span class="n">size</span><span class="o">=</span><span class="n">nsamples</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">b_min</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">b</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">arcsin</span><span class="p">(</span><span class="n">gen</span><span class="o">.</span><span class="n">uniform</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">size</span><span class="o">=</span><span class="n">nsamples</span><span class="p">))</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">b</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">arcsin</span><span class="p">(</span><span class="n">gen</span><span class="o">.</span><span class="n">uniform</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">deg2rad</span><span class="p">(</span><span class="n">b_min</span><span class="p">)),</span> <span class="mi">1</span><span class="p">,</span> <span class="n">size</span><span class="o">=</span><span class="n">nsamples</span><span class="p">))</span>
+        <span class="n">b</span><span class="p">[</span><span class="n">gen</span><span class="o">.</span><span class="n">random</span><span class="p">(</span><span class="n">nsamples</span><span class="p">)</span> <span class="o">&lt;</span> <span class="mf">0.5</span><span class="p">]</span> <span class="o">*=</span> <span class="o">-</span><span class="mi">1</span>
+
+    <span class="n">b</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">rad2deg</span><span class="p">(</span><span class="n">b</span><span class="p">)</span>
+    <span class="n">RA</span><span class="p">,</span> <span class="n">dec</span> <span class="o">=</span> <span class="n">galactic_to_radec</span><span class="p">(</span><span class="n">ell</span><span class="p">,</span> <span class="n">b</span><span class="p">)</span>
+    <span class="n">rhat</span> <span class="o">=</span> <span class="n">radec_to_cartesian</span><span class="p">(</span><span class="n">RA</span><span class="p">,</span> <span class="n">dec</span><span class="p">)</span>
+
+    <span class="n">Vext</span> <span class="o">=</span> <span class="n">Vext_mag</span> <span class="o">*</span> <span class="n">galactic_to_radec_cartesian</span><span class="p">(</span><span class="n">Vext_ell</span><span class="p">,</span> <span class="n">Vext_b</span><span class="p">)</span>
+    <span class="n">Vext_rad</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">Vext</span><span class="p">[</span><span class="kc">None</span><span class="p">,</span> <span class="p">:]</span> <span class="o">*</span> <span class="n">rhat</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">field_loader</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">los_density</span><span class="p">,</span> <span class="n">los_velocity</span> <span class="o">=</span> <span class="n">interpolate_los_density_velocity</span><span class="p">(</span>
+            <span class="n">field_loader</span><span class="p">,</span> <span class="n">r_grid</span><span class="p">,</span> <span class="n">RA</span><span class="p">,</span> <span class="n">dec</span><span class="p">,</span> <span class="n">verbose</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">los_density</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">ones</span><span class="p">((</span><span class="n">nsamples</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">r_grid</span><span class="p">)))</span>
+        <span class="n">los_velocity</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">los_density</span><span class="p">)</span>
+
+    <span class="n">r</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">full</span><span class="p">(</span><span class="n">nsamples</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">nan</span><span class="p">)</span>
+    <span class="n">Vpec</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">full</span><span class="p">(</span><span class="n">nsamples</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">nan</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">beta</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="n">b1</span> <span class="o">=</span> <span class="mf">0.</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">b1</span> <span class="o">=</span> <span class="n">Om</span><span class="o">**</span><span class="mf">0.5</span> <span class="o">/</span> <span class="n">beta</span>
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">nsamples</span><span class="p">):</span>
+        <span class="n">Vpec</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">=</span> <span class="n">Vext_rad</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
+        <span class="n">r</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">=</span> <span class="n">sample_distance</span><span class="p">(</span><span class="n">r_grid</span><span class="p">,</span> <span class="n">los_density</span><span class="p">[</span><span class="n">i</span><span class="p">],</span> <span class="n">b1</span><span class="p">,</span> <span class="n">R</span><span class="p">,</span> <span class="n">p</span><span class="p">,</span> <span class="n">n</span><span class="p">,</span> <span class="n">gen</span><span class="p">)</span>
+        <span class="n">Vpec</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">+=</span> <span class="n">beta</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">interp</span><span class="p">(</span><span class="n">r</span><span class="p">[</span><span class="n">i</span><span class="p">],</span> <span class="n">r_grid</span><span class="p">,</span> <span class="n">los_velocity</span><span class="p">[</span><span class="n">i</span><span class="p">])</span>
+
+    <span class="n">eta</span> <span class="o">=</span> <span class="n">gen</span><span class="o">.</span><span class="n">normal</span><span class="p">(</span><span class="n">eta_prior_mean</span><span class="p">,</span> <span class="n">eta_prior_std</span><span class="p">,</span> <span class="n">size</span><span class="o">=</span><span class="n">nsamples</span><span class="p">)</span>
+    <span class="n">eta_obs</span> <span class="o">=</span> <span class="n">gen</span><span class="o">.</span><span class="n">normal</span><span class="p">(</span><span class="n">eta</span><span class="p">,</span> <span class="n">e_eta</span><span class="p">,</span> <span class="n">size</span><span class="o">=</span><span class="n">nsamples</span><span class="p">)</span>
+
+    <span class="n">M</span> <span class="o">=</span> <span class="n">a_TFR</span> <span class="o">+</span> <span class="n">b_TFR</span> <span class="o">*</span> <span class="n">eta</span> <span class="o">+</span> <span class="n">np</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="n">eta</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">,</span> <span class="n">c_TFR</span> <span class="o">*</span> <span class="n">eta</span><span class="o">**</span><span class="mi">2</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">zeropoint_dipole_mag</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">dM</span> <span class="o">=</span> <span class="n">zeropoint_dipole_mag</span> <span class="o">*</span> <span class="n">galactic_to_radec_cartesian</span><span class="p">(</span>
+            <span class="n">zeropoint_dipole_ell</span><span class="p">,</span> <span class="n">zeropoint_dipole_b</span><span class="p">)</span>
+        <span class="n">M</span> <span class="o">+=</span> <span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">dM</span><span class="p">[</span><span class="kc">None</span><span class="p">,</span> <span class="p">:]</span> <span class="o">*</span> <span class="n">rhat</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+
+    <span class="n">mag_obs</span> <span class="o">=</span> <span class="n">gen</span><span class="o">.</span><span class="n">normal</span><span class="p">(</span>
+        <span class="n">M</span> <span class="o">+</span> <span class="n">r2distmod</span><span class="p">(</span><span class="n">r</span><span class="p">,</span> <span class="n">h</span><span class="o">=</span><span class="n">h</span><span class="p">),</span> <span class="n">np</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">sigma_int</span><span class="o">**</span><span class="mi">2</span> <span class="o">+</span> <span class="n">e_mag</span><span class="o">**</span><span class="mi">2</span><span class="p">))</span>
+    <span class="n">zobs</span> <span class="o">=</span> <span class="n">gen</span><span class="o">.</span><span class="n">normal</span><span class="p">(</span>
+        <span class="p">(</span><span class="mi">1</span> <span class="o">+</span> <span class="n">r2z</span><span class="p">(</span><span class="n">r</span><span class="p">,</span> <span class="n">h</span><span class="o">=</span><span class="n">h</span><span class="p">))</span> <span class="o">*</span> <span class="p">(</span><span class="mi">1</span> <span class="o">+</span> <span class="n">Vpec</span> <span class="o">/</span> <span class="n">SPEED_OF_LIGHT</span><span class="p">)</span> <span class="o">-</span> <span class="mi">1</span><span class="p">,</span>
+        <span class="n">sigma_v</span> <span class="o">/</span> <span class="n">SPEED_OF_LIGHT</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">los_density</span><span class="o">.</span><span class="n">ndim</span> <span class="o">==</span> <span class="mi">2</span><span class="p">:</span>
+        <span class="n">los_density</span> <span class="o">=</span> <span class="n">los_density</span><span class="p">[</span><span class="kc">None</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span>
+        <span class="n">los_velocity</span> <span class="o">=</span> <span class="n">los_velocity</span><span class="p">[</span><span class="kc">None</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span>
+
+    <span class="n">data</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="s2">&quot;RA&quot;</span><span class="p">:</span> <span class="n">RA</span><span class="p">,</span>
+        <span class="s2">&quot;dec&quot;</span><span class="p">:</span> <span class="n">dec</span><span class="p">,</span>
+        <span class="s2">&quot;zcmb&quot;</span><span class="p">:</span> <span class="n">zobs</span><span class="p">,</span>
+        <span class="s2">&quot;mag&quot;</span><span class="p">:</span> <span class="n">mag_obs</span><span class="p">,</span>
+        <span class="s2">&quot;e_mag&quot;</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ones_like</span><span class="p">(</span><span class="n">mag_obs</span><span class="p">)</span> <span class="o">*</span> <span class="n">e_mag</span><span class="p">,</span>
+        <span class="s2">&quot;eta&quot;</span><span class="p">:</span> <span class="n">eta_obs</span><span class="p">,</span>
+        <span class="s2">&quot;e_eta&quot;</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ones_like</span><span class="p">(</span><span class="n">eta_obs</span><span class="p">)</span> <span class="o">*</span> <span class="n">e_eta</span><span class="p">,</span>
+        <span class="s2">&quot;los_r&quot;</span><span class="p">:</span> <span class="n">r_grid</span><span class="p">,</span>
+        <span class="s2">&quot;los_density&quot;</span><span class="p">:</span> <span class="n">los_density</span><span class="p">,</span>
+        <span class="s2">&quot;los_velocity&quot;</span><span class="p">:</span> <span class="n">los_velocity</span><span class="p">,</span>
+        <span class="p">}</span>
+
+    <span class="k">if</span> <span class="n">zcmb_max</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">mask</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="s2">&quot;zcmb&quot;</span><span class="p">]</span> <span class="o">&lt;</span> <span class="n">zcmb_max</span>
+        <span class="n">fprint</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Rejecting </span><span class="si">{</span><span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="o">~</span><span class="n">mask</span><span class="p">)</span><span class="si">}</span><span class="s2"> samples with zcmb &gt; </span><span class="si">{</span><span class="n">zcmb_max</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
+               <span class="n">verbose</span><span class="o">=</span><span class="n">verbose</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">key</span> <span class="ow">in</span> <span class="n">data</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">key</span> <span class="ow">in</span> <span class="p">[</span><span class="s2">&quot;los_r&quot;</span><span class="p">]:</span>
+                <span class="k">continue</span>
+
+            <span class="k">if</span> <span class="n">key</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s2">&quot;los_&quot;</span><span class="p">):</span>
+                <span class="n">data</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="n">key</span><span class="p">][:,</span> <span class="n">mask</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">data</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="n">key</span><span class="p">][</span><span class="n">mask</span><span class="p">]</span>
+
+    <span class="k">return</span> <span class="n">data</span></div>
+
+</pre></div>
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2025, Richard Stiskalek.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>
