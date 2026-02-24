@@ -346,17 +346,17 @@ high = 5.0
 [model.priors.FP_a]
 dist = "normal"
 loc = 1.0
-scale = 1.0
+scale = 5.0
 
 [model.priors.FP_b]
 dist = "normal"
 loc = -1.0
-scale = 1.0
+scale = 5.0
 
 [model.priors.FP_c]
 dist = "normal"
 loc = -1
-scale = 1.0
+scale = 5.0
 
 # Velocity priors
 [model.priors.sigma_v]
