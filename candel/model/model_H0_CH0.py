@@ -18,7 +18,7 @@ import numpy as np
 from jax.debug import print as jprint  # noqa
 from jax.scipy.stats import norm as norm_jax
 from numpyro import deterministic, factor, plate, sample
-from numpyro.distributions import HalfNormal, MultivariateNormal, Normal, Uniform
+from numpyro.distributions import MultivariateNormal, Normal, Uniform
 
 from ..cosmography import (Distance2Distmod, Distmod2Distance,
                            Distmod2Redshift,
@@ -40,7 +40,7 @@ from .pv_utils import (lp_galaxy_bias, rsample,
 ###############################################################################
 
 
-class BaseCH0Model(ModelBase):
+class CH0Model(ModelBase):
     """
     Base class for Cepheid-calibrated H0 models, handling configuration,
     data loading, and numerical grid setup.
@@ -137,8 +137,6 @@ class BaseCH0Model(ModelBase):
 
     def _load_model_flags(self):
         config = self.config
-        self.use_MNR = get_nested(config, "model/use_MNR", False)
-        fprint(f"use_MNR set to {self.use_MNR}")
         self.which_distance_prior = get_nested(
             config, "model/which_distance_prior", "volume")
         fprint(f"which_distance_prior set to {self.which_distance_prior}")
@@ -750,46 +748,8 @@ class BaseCH0Model(ModelBase):
         # Now assign these host distances to each Cepheid.
         mu_cepheid = self.L_Cepheid_host_dist @ mu_host_cepheid
 
-        if self.use_MNR:
-            mean_logP_all = sample(
-                "mean_logP_all", Uniform(self.logP_min, self.logP_max))
-            std_logP_all = sample(
-                "std_logP_all", Uniform(1e-5, self.logP_max - self.logP_min))
-            mean_std_logP = sample(
-                "mean_std_logP", Uniform(1e-5, self.logP_max - self.logP_min))
-
-            mean_OH_all = sample(
-                "mean_OH_all", Uniform(self.OH_min, self.OH_max))
-            std_OH_all = sample(
-                "std_OH_all", Uniform(1e-5, self.OH_max - self.OH_min))
-            mean_std_OH = sample(
-                "mean_std_OH", Uniform(1e-5, self.OH_max - self.OH_min))
-
-            with plate("MNR_Cepheid", len(mu_host_all)):
-                mean_logP_per_host = sample(
-                    "mean_logP_per_host", Normal(mean_logP_all, std_logP_all))
-                std_logP_per_host = sample(
-                    "std_logP_per_host", HalfNormal(mean_std_logP))
-
-                mean_OH_per_host = sample(
-                    "mean_OH_per_host", Normal(mean_OH_all, std_OH_all))
-                std_OH_per_host = sample(
-                    "std_OH_per_host", HalfNormal(mean_std_OH))
-
-            mean_logP = self.L_Cepheid_host_dist @ mean_logP_per_host
-            std_logP = self.L_Cepheid_host_dist @ std_logP_per_host
-
-            mean_OH = self.L_Cepheid_host_dist @ mean_OH_per_host
-            std_OH = self.L_Cepheid_host_dist @ std_OH_per_host
-
-            with plate("Cepheid_true_params", self.num_cepheids):
-                logP = sample(
-                    "logP", Normal(mean_logP, std_logP), obs=self.logP)
-                OH = sample(
-                    "OH", Normal(mean_OH, std_OH), obs=self.OH)
-        else:
-            logP = self.logP
-            OH = self.OH
+        logP = self.logP
+        OH = self.OH
 
         # Predict the Cepheid magnitudes and compute their likelihood.
         mag_cepheid = mu_cepheid + M_W + b_W * logP + Z_W * OH
@@ -832,7 +792,3 @@ class BaseCH0Model(ModelBase):
                 with plate("Cepheid_anchors_redshift", self.num_hosts):
                     sample("cz_pred", Normal(cz_pred, e_cz),
                            obs=self.czcmb_cepheid_host)
-
-
-# Backwards-compatible alias.
-SH0ESModel = BaseCH0Model

@@ -27,7 +27,7 @@ from .model_PV_TFR import TFRModel                                             #
 from .model_PV_SN import SNModel                                               # noqa
 from .model_PV_PantheonPlus import PantheonPlusModel                            # noqa
 from .model_PV_FP import FPModel                                               # noqa
-from .model_H0_CH0 import SH0ESModel                                           # noqa
+from .model_H0_CH0 import CH0Model                                             # noqa
 from .interp import LOSInterpolator                                            # noqa
 from .simpson import ln_simpson, simpson_log_weights                            # noqa
 

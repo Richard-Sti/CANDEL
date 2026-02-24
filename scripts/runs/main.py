@@ -79,7 +79,7 @@ if __name__ == "__main__":
     if which_run == "CH0":
         fprint("selected `CH0` model.")
         data = candel.pvdata.load_SH0ES_from_config(args.config, )
-        model = candel.model.SH0ESModel(args.config, data)
+        model = candel.model.CH0Model(args.config, data)
         candel.run_H0_inference(model, )
     elif which_run == "CCHP":
         fprint("selected `CCHP` model.")

@@ -87,19 +87,6 @@ def simname2color(simname, gen=None):
     return gen.choice(defaults)
 
 
-def switch_paths_SN_to_no_MNR(files):
-    new_files = []
-    for name, paths in files:
-        new_paths = []
-        for p in paths:
-            if "LOSS" in p and "Foundation" in p:
-                new_paths.append(p)
-            elif "LOSS" in p or "Foundation" in p:
-                new_paths.append(p.replace("MNR", "noMNR"))
-            else:
-                new_paths.append(p)
-        new_files.append((name, new_paths))
-    return new_files
 
 
 def load_and_check_posteriors(files, samples, key):

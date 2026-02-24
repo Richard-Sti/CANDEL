@@ -32,7 +32,6 @@ num_chains_harmonic = 10
 which_run = "CH0"
 
 Om = 0.3
-use_MNR = false
 # Make "empirical" selection tag
 which_selection = "redshift"
 use_uniform_mu_host_priors = false

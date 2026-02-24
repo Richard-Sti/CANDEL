@@ -137,11 +137,6 @@ def generate_dynamic_tag(config, base_tag="default"):
             else:
                 parts.append(str(catalogue))
 
-        # Skip MNR tag for CSPModel
-        if model_name != "CSPModel":
-            use_mnr = get_nested(config, "model/use_MNR", False)
-            parts.append("MNR" if use_mnr else "noMNR")
-
     if get_nested(config, "pv_model/kind", "").startswith("precomputed_los"):
         parts.append(get_nested(config, "pv_model/galaxy_bias", ""))
 
@@ -150,8 +145,7 @@ def generate_dynamic_tag(config, base_tag="default"):
         parts.append(f"smooth{smooth_target}")
 
     if model_name and "TFR" in model_name:
-        use_mnr = get_nested(config, "model/use_MNR", False)
-        if use_mnr and not get_nested(config, "model/marginalize_eta", True):
+        if not get_nested(config, "model/marginalize_eta", True):
             parts.append("eta_sampled")
 
     # Zeropoint dipole if it's not a delta distribution
@@ -337,7 +331,6 @@ if __name__ == "__main__":
         "pv_model/r_limits_malmquist": "auto",
         "pv_model/dr_malmquist": 1.0,
         # Model
-        "model/use_MNR": True,
         "model/marginalize_eta": True,
         "model/priors/beta": {"dist": "normal", "loc": 0.43, "scale": 0.1},
         # IO

@@ -81,7 +81,6 @@ nOm = 1000
 
 [model]
 Om = 0.3
-use_MNR = true
 marginalize_eta = true
 
 # CSP selection integral grid settings (CSPModel)

@@ -80,7 +80,6 @@ class BasePVModel(ModelBase):
             raise ValueError(f"Invalid which_Vext '{self.which_Vext}'.")
 
         self._load_and_set_priors()
-        self.use_MNR = get_nested(config, "model/use_MNR", False)
         self.marginalize_eta = get_nested(
             config, "model/marginalize_eta", True)
         if self.marginalize_eta:
@@ -101,8 +100,7 @@ class BasePVModel(ModelBase):
 
         fprint(f"Om={self.Om}, Vext={self.which_Vext}, "
                f"galaxy_bias={self.galaxy_bias}, "
-               f"distance_prior={self.which_distance_prior}, "
-               f"MNR={self.use_MNR}")
+               f"distance_prior={self.which_distance_prior}")
 
     def _sample_common_params(self, shared_params):
         kwargs_dist = sample_distance_prior(self.priors)

@@ -34,11 +34,6 @@ class PantheonPlusModel(BasePVModel):
     def __init__(self, config_path):
         super().__init__(config_path)
 
-        if not self.use_MNR:
-            raise ValueError(
-                "The PantheonPlus model requires the MNR model to be used. "
-                "Please set `use_MNR` to True in the config file.")
-
         if self.which_Vext != "constant":
             raise NotImplementedError("Only constant Vext is implemented for "
                                       "the `PantheonPlusModel`.")
