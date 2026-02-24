@@ -32,8 +32,9 @@ from numpyro.distributions import Distribution, MultivariateNormal, constraints
 from ...cosmography import (Distance2Distmod, Distance2Redshift,
                             Redshift2Distance)
 from ...util import SPEED_OF_LIGHT, fprint, get_nested
-from ..model import (BaseModel, predict_cz, rsample, sample_galaxy_bias,
-                     sample_Vext)
+from ..base_pv import BasePVModel
+from ..utils import predict_cz
+from ..pv_utils import rsample, sample_galaxy_bias, sample_Vext
 from ..simpson import ln_simpson
 
 warnings.warn(
@@ -382,7 +383,7 @@ def simulate_csp(key, n_samples, r_min, r_max,
 ###############################################################################
 
 
-class CSPModel(BaseModel):
+class CSPModel(BasePVModel):
     """
     CSP SNe Ia flow model with UNITY-style selection.
 

@@ -53,6 +53,34 @@ def _basic_ln_simpson(ln_y, stop, x, axis):
     return logsumexp(tmp, axis=axis)
 
 
+def simpson_log_weights(x):
+    """Log of composite Simpson's 1/3 weights for a 1D grid.
+
+    For N points (N odd, >= 3), the composite Simpson rule is
+        ∫ f dx ≈ Σ_i w_i f(x_i)
+    This returns log(w_i). Requires all weights positive (true when
+    adjacent spacing ratios stay below 2).
+    """
+    x = jnp.asarray(x)
+    h = jnp.diff(x)
+    h0, h1 = h[0::2], h[1::2]
+    hsum = h0 + h1
+
+    c_left = hsum / 6 * (2 - h1 / h0)
+    c_mid = hsum**3 / (6 * h0 * h1)
+    c_right = hsum / 6 * (2 - h0 / h1)
+
+    N = x.shape[0]
+    n_panels = len(h0)
+    idx = jnp.arange(n_panels) * 2
+    w = jnp.zeros(N)
+    w = w.at[idx].add(c_left)
+    w = w.at[idx + 1].add(c_mid)
+    w = w.at[idx + 2].add(c_right)
+
+    return jnp.log(w)
+
+
 @partial(jax.jit, static_argnums=2)
 def ln_simpson(ln_y, x, axis=-1):
     """

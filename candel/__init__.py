@@ -45,6 +45,7 @@ from .evidence import (                                                         
     )
 
 from .inference import (                                                        # noqa
+    find_initial_point,                                                         # noqa
     run_pv_inference,                                                           # noqa
     run_H0_inference,                                                          # noqa
     save_mcmc_samples,                                                          # noqa
@@ -73,6 +74,7 @@ from .util import (                                                             
     hms_to_degrees,                                                             # noqa
     dms_to_degrees,                                                             # noqa
     fprint,                                                                     # noqa
+    fsection,                                                                   # noqa
     read_gof,                                                                   # noqa
     read_samples,                                                               # noqa
     get_dlog_density_stats,                                                     # noqa

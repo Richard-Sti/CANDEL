@@ -37,11 +37,11 @@ from ...cosmography import (Distance2Distmod, Distance2Redshift,
 from ...util import (fprint, get_nested, load_config, radec_to_cartesian,
                      replace_prior_with_delta)
 from ..interp import LOSInterpolator
-from ..model import (load_priors, lp_galaxy_bias, predict_cz, rsample,
-                     sample_galaxy_bias)
+from ..utils import (load_priors, log_prob_integrand_sel, logmeanexp,
+                     predict_cz)
+from ..pv_utils import lp_galaxy_bias, rsample, sample_galaxy_bias
 from .model_CSP import (CSPModel, CSPSelection, compute_per_source_selection,
                         extract_csp_median_errors, log1mexp)
-from ..model_SH0ES import log_prob_integrand_sel, logmeanexp
 from ..simpson import ln_simpson
 
 warnings.warn(
