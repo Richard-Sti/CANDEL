@@ -13,6 +13,5 @@
 # with this program; if not, write to the Free Software Foundation, Inc.,
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
-from .pv_mock import (                                                          # noqa
-    gen_TFR_mock,                                                           # noqa
-    )
+from .TFR_mock import gen_TFR_mock                                              # noqa
+from .simple_mock import gen_simple_catalog                                     # noqa

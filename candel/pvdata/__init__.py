@@ -21,14 +21,17 @@ from .data import (                                                             
     load_LOSS,                                                                  # noqa
     load_Foundation,                                                            # noqa
     load_SH0ES,                                                                 # noqa
+    load_CCHP_from_config,                                                      # noqa
     load_SH0ES_separated,                                                       # noqa
     load_SH0ES_from_config,                                                     # noqa
-    load_clusters,                                                              # noqa
     load_SDSS_FP,                                                               # noqa
     load_6dF_FP,                                                                # noqa
     load_PantheonPlus,                                                          # noqa
     load_PantheonPlus_Lane,                                                     # noqa
     load_generic,                                                               # noqa
+    load_CSP,                                                                   # noqa
+    load_CSP_from_config,                                                       # noqa
+    match_cchp_to_csp,                                                          # noqa
     PVDataFrame,                                                                # noqa
     load_PV_dataframes,                                                         # noqa
     )

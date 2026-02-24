@@ -12,8 +12,13 @@
 # You should have received a copy of the GNU General Public License along
 # with this program; if not, write to the Free Software Foundation, Inc.,
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+"""
+Data loading and preprocessing utilities for peculiar-velocity catalogues.
 
-from os.path import join
+Provides dataframe-like containers, LOS interpolation helpers, covariance
+assembly, and catalogue I/O wired to the project config files.
+"""
+from os.path import isabs, join
 
 import healpy as hp
 import numpy as np
@@ -27,10 +32,85 @@ from jax.nn import one_hot
 from scipy.linalg import cholesky
 
 from ..model.interp import LOSInterpolator
-from ..util import (SPEED_OF_LIGHT, fprint, galactic_to_radec,
-                    heliocentric_to_cmb, load_config, radec_to_cartesian,
-                    radec_to_galactic)
+from ..util import (SPEED_OF_LIGHT, fprint, fsection, get_nested, load_config,
+                    radec_to_cartesian, radec_to_galactic)
 from .dust import read_dustmap
+
+
+###############################################################################
+#                            Helper functions                                 #
+###############################################################################
+
+
+def _zcmb_blat_mask(zcmb, RA, dec, zcmb_min=None, zcmb_max=None, b_min=None):
+    """Build a boolean mask for standard redshift and galactic latitude cuts."""
+    mask = np.ones(len(zcmb), dtype=bool)
+    if zcmb_min is not None:
+        mask &= zcmb > zcmb_min
+    if zcmb_max is not None:
+        mask &= zcmb < zcmb_max
+    if b_min is not None:
+        b = radec_to_galactic(RA, dec)[1]
+        mask &= np.abs(b) > b_min
+    return mask
+
+
+def _filter_data(data, mask, los_data_path=None):
+    """Apply boolean mask to data arrays, report counts, and load LOS."""
+    n_total = len(mask)
+    n_kept = int(np.sum(mask))
+    fprint(f"removed {n_total - n_kept} objects, thus {n_kept} remain.")
+    for k in data:
+        if isinstance(data[k], np.ndarray):
+            data[k] = data[k][mask]
+    if los_data_path:
+        data = load_los(los_data_path, data, mask=mask)
+    return data
+
+
+def _compute_r_grid(r_limits, dr, data, Om=0.3):
+    """Compute the radial grid for Malmquist bias integration."""
+    if isinstance(r_limits, str) and r_limits.startswith("auto"):
+        if "_" in r_limits:
+            h_auto = float(r_limits.split("_")[1])
+        else:
+            h_auto = 1.0
+
+        from ..cosmography import Redshift2Distance
+
+        if "czcmb" in data:
+            cz_obs = data["czcmb"]
+        elif "zcmb" in data:
+            cz_obs = data["zcmb"] * SPEED_OF_LIGHT
+        else:
+            raise KeyError("Data must contain 'czcmb' or 'zcmb'.")
+
+        cz_obs_lim = [float(np.min(cz_obs)), float(np.max(cz_obs))]
+        cz_obs_lim[0] = max(cz_obs_lim[0], 50.0)
+        redshift2distance = Redshift2Distance(Om0=Om)
+        r_from_cz = redshift2distance(
+            np.array(cz_obs_lim), h=h_auto, is_velocity=True)
+        r_min_raw = float(r_from_cz[0])
+        r_max_raw = float(r_from_cz[1])
+        buffer_low = max(r_min_raw * 0.25, 15.0)
+        buffer_high = max(r_max_raw * 0.25, 15.0)
+        rmin = max(r_min_raw - buffer_low, 0.01)
+        rmax = r_max_raw + buffer_high
+        fprint(f"auto r_limits_malmquist (h={h_auto}): [{rmin:.1f}, "
+               f"{rmax:.1f}] Mpc "
+               f"(buffer: -{buffer_low:.1f}, +{buffer_high:.1f} Mpc)")
+    else:
+        rmin, rmax = r_limits
+        fprint(f"setting the LOS radial grid from {rmin} to {rmax} Mpc.")
+
+    num_points = int(round((rmax - rmin) / dr)) + 1
+    # Simpson's rule requires an odd number of points.
+    if num_points % 2 == 0:
+        num_points += 1
+    dr_eff = (rmax - rmin) / (num_points - 1) if num_points > 1 else 0.0
+    fprint(f"r-grid: n_r={num_points}, dr={dr_eff:.2f} Mpc")
+
+    return np.linspace(rmin, rmax, num_points)
 
 
 def effective_rank_entropy(C):
@@ -90,6 +170,7 @@ def load_PV_dataframes(config_path):
         names = [names]
 
     dfs = []
+    fsection("Data")
     fprint(f"loading {len(names)} PV dataframes: {names}")
     for name in names:
         is_mock = name.startswith("CF4_mock")
@@ -121,7 +202,12 @@ class PVDataFrame:
     add_eta_truncation = False
 
     def __init__(self, data, los_radial_decay_scale=5):
-        self.data = {k: jnp.asarray(v) for k, v in data.items()}
+        # Convert numeric arrays to JAX, skip string arrays
+        self.data = {}
+        for k, v in data.items():
+            if isinstance(v, np.ndarray) and np.issubdtype(v.dtype, np.str_):
+                continue
+            self.data[k] = jnp.asarray(v)
         self.name = None
 
         if "los_velocity" in self.data:
@@ -163,8 +249,6 @@ class PVDataFrame:
         if "CF4_mock" in name:
             index = name.split("_")[-1]
             data = load_CF4_mock(root, index)
-        elif name == "CF4_calibrated":
-            data = load_CF4_calibrated(root, **config)
         elif "CF4_" in name:
             data = load_CF4_data(root, **config)
 
@@ -172,24 +256,8 @@ class PVDataFrame:
             if dust_model is not None:
                 fprint(f"using `{dust_model}` for the dust model.")
                 sample_dust = True
-        elif name == "2MTF":
-            data = load_2MTF(root, **config)
-        elif name == "SFI":
-            data = load_SFI(root, **config)
-        elif name == "SDSS_FP":
-            data = load_SDSS_FP(root, **config)
-        elif name == "6dF_FP":
-            data = load_6dF_FP(root, **config)
-        elif name == "LOSS":
-            data = load_LOSS(root, **config)
-        elif name == "Foundation":
-            data = load_Foundation(root, **config)
-        elif name == "PantheonPlus":
-            data = load_PantheonPlus(root, **config)
-        elif name == "PantheonPlusLane":
-            data = load_PantheonPlus_Lane(root, **config)
-        elif name == "Clusters":
-            data = load_clusters(root, **config)
+        elif name in _CATALOGUE_LOADERS:
+            data = _CATALOGUE_LOADERS[name](root, **config)
         else:
             raise ValueError(f"Unknown catalogue name: {name}")
 
@@ -199,11 +267,10 @@ class PVDataFrame:
                     fprint(f"removing `{key}` from data.")
                     data.pop(key, None)
 
-        rmin, rmax = config_pv_model["r_limits_malmquist"]
-        num_points = config_pv_model["num_points_malmquist"]
-        fprint(f"setting the LOS radial grid from {rmin} to {rmax} with "
-               f"{num_points} points.")
-        data["r_grid"] = np.linspace(rmin, rmax, num_points)
+        r_limits = config_pv_model["r_limits_malmquist"]
+        dr = config_pv_model["dr_malmquist"]
+        Om = config.get("model", {}).get("Om", 0.3)
+        data["r_grid"] = _compute_r_grid(r_limits, dr, data, Om)
 
         los_decay_scale = config_pv_model.get("los_decay_scale", 5.0)
         fprint(f"setting los_decay_scale to {los_decay_scale}")
@@ -308,7 +375,10 @@ class PVDataFrame:
                 else:
                     subsampled[key] = self.data[key]
 
-        return PVDataFrame(subsampled, los_radial_decay_scale)
+        out = PVDataFrame(subsampled, los_radial_decay_scale)
+        out.sample_dust = getattr(self, "sample_dust", False)
+        out.name = self.name
+        return out
 
     def __getitem__(self, key):
         if key in self._cache:
@@ -388,7 +458,7 @@ class PVDataFrame:
 ###############################################################################
 
 
-def load_los(los_data_path, data, mask=None):
+def load_los(los_data_path, data, mask=None, verbose=True):
     with File(los_data_path, 'r') as f:
         if mask is None:
             data["los_density"] = f['los_density'][...]
@@ -407,24 +477,30 @@ def load_los(los_data_path, data, mask=None):
         assert np.all(np.isfinite(data["los_velocity"]))
 
         if "manticore" in los_data_path.lower():
-            fprint("normalizing the Manticore LOS density (Om = 0.3111)")
-            data["los_density"] /= 0.3111 * 275.4  # Manticore normalization
+            fprint("normalizing the Manticore LOS density (Om = 0.306)",
+                   verbose=verbose)
+            data["los_density"] /= 0.306 * 275.4  # Manticore normalization
         elif "_CB1" in los_data_path:
             data["los_density"] /= 0.307 * 275.4
-            fprint("normalizing the CB1 LOS density (Om = 0.307)")
+            fprint("normalizing the CB1 LOS density (Om = 0.307)",
+                   verbose=verbose)
 
             if len(data["los_density"]) == 100:
-                fprint("downsampling the CB1 LOS density from 100 to 20")
+                fprint("downsampling the CB1 LOS density from 100 to 20",
+                       verbose=verbose)
                 data["los_density"] = data["los_density"][::5]
                 data["los_velocity"] = data["los_velocity"][::5]
         elif "_CB2" in los_data_path:
-            fprint("normalizing the CB2 LOS density (Om = 0.3111)")
+            fprint("normalizing the CB2 LOS density (Om = 0.3111)",
+                   verbose=verbose)
             data["los_density"] /= 0.3111 * 275.4
         elif "HAMLET_V1" in los_data_path:
-            fprint("normalizing the HAMLET_V1 LOS density (Om = 0.3)")
+            fprint("normalizing the HAMLET_V1 LOS density (Om = 0.3)",
+                   verbose=verbose)
             data["los_density"] /= 0.3 * 275.4
         elif "_CF4.hdf5" in los_data_path and len(data["los_density"]) == 100:
-            fprint("downsampling the CF4 LOS density from 100 to 20")
+            fprint("downsampling the CF4 LOS density from 100 to 20",
+                   verbose=verbose)
             data["los_density"] = data["los_density"][::5]
             data["los_velocity"] = data["los_velocity"][::5]
 
@@ -495,7 +571,7 @@ def load_CF4_data(root, which_band, best_mag_quality=True, eta_min=-0.3,
             else:
                 ebv = read_dustmap(RA, DEC, dust_model)
 
-            if not np.all(np.isfinite(ebv[0])):
+            if not np.all(np.isfinite(ebv)):
                 raise ValueError(
                     f"Non-finite E(B-V) values for dust map `{dust_model}`.")
         else:
@@ -523,10 +599,8 @@ def load_CF4_data(root, which_band, best_mag_quality=True, eta_min=-0.3,
     else:
         mask &= mag > 5
 
-    if zcmb_min is not None:
-        mask &= zcmb > zcmb_min
-    if zcmb_max is not None:
-        mask &= zcmb < zcmb_max
+    mask &= _zcmb_blat_mask(zcmb, RA, DEC, zcmb_min, zcmb_max, b_min)
+
     if remove_outliers:
         outliers = np.concatenate([
             np.genfromtxt(join(root, f"CF4_{b}_outliers.csv"),
@@ -534,9 +608,6 @@ def load_CF4_data(root, which_band, best_mag_quality=True, eta_min=-0.3,
             for b in ("W1", "i")
         ])
         mask &= ~np.isin(pgc, outliers["PGC"])
-    if b_min is not None:
-        b = radec_to_galactic(RA, DEC)[1]
-        mask &= np.abs(b) > b_min
 
     if which_band == "i" and exclude_W1:
         with File(join(root, "CF4_TFR.hdf5"), 'r') as f:
@@ -546,15 +617,8 @@ def load_CF4_data(root, which_band, best_mag_quality=True, eta_min=-0.3,
         exclude = (w1_quality == 5) | (w1_mag > 5)
         mask &= ~exclude
 
-    fprint(f"removed {len(pgc) - np.sum(mask)} galaxies, thus "
-           f"{np.sum(mask)} remain.")
-
-    for k in data:
-        data[k] = data[k][mask]
+    _filter_data(data, mask, los_data_path)
     pgc = pgc[mask]
-
-    if los_data_path:
-        data = load_los(los_data_path, data, mask=mask)
 
     if calibration == "SH0ES":
         is_cal, mu, C_mu = load_SH0ES_calibration(
@@ -614,24 +678,8 @@ def load_2MTF(root, eta_min=-0.1, eta_max=0.2, zcmb_min=None, zcmb_max=None,
         return data
 
     mask = (eta > eta_min) & (eta < eta_max)
-    if zcmb_min is not None:
-        mask &= zcmb > zcmb_min
-    if zcmb_max is not None:
-        mask &= zcmb < zcmb_max
-    if b_min is not None:
-        b = radec_to_galactic(RA, DEC)[1]
-        mask &= np.abs(b) > b_min
-
-    fprint(f"removed {len(zcmb) - np.sum(mask)} galaxies, thus "
-           f"{np.sum(mask)} remain.")
-
-    for k in data:
-        data[k] = data[k][mask]
-
-    if los_data_path:
-        data = load_los(los_data_path, data, mask=mask)
-
-    return data
+    mask &= _zcmb_blat_mask(zcmb, RA, DEC, zcmb_min, zcmb_max, b_min)
+    return _filter_data(data, mask, los_data_path)
 
 
 def load_SFI(root, eta_min=-0.1, zcmb_min=None, zcmb_max=None,
@@ -667,24 +715,8 @@ def load_SFI(root, eta_min=-0.1, zcmb_min=None, zcmb_max=None,
         return data
 
     mask = eta > eta_min
-    if zcmb_min is not None:
-        mask &= zcmb > zcmb_min
-    if zcmb_max is not None:
-        mask &= zcmb < zcmb_max
-    if b_min is not None:
-        b = radec_to_galactic(RA, DEC)[1]
-        mask &= np.abs(b) > b_min
-
-    fprint(f"removed {len(zcmb) - np.sum(mask)} galaxies, thus "
-           f"{np.sum(mask)} remain.")
-
-    for k in data:
-        data[k] = data[k][mask]
-
-    if los_data_path:
-        data = load_los(los_data_path, data, mask=mask)
-
-    return data
+    mask &= _zcmb_blat_mask(zcmb, RA, DEC, zcmb_min, zcmb_max, b_min)
+    return _filter_data(data, mask, los_data_path)
 
 
 def _load_LOSS_Foundation(which, root, zcmb_min=None, zcmb_max=None,
@@ -724,25 +756,8 @@ def _load_LOSS_Foundation(which, root, zcmb_min=None, zcmb_max=None,
     if return_all:
         return data
 
-    mask = np.ones(len(zcmb), dtype=bool)
-    if zcmb_min is not None:
-        mask &= zcmb > zcmb_min
-    if zcmb_max is not None:
-        mask &= zcmb < zcmb_max
-    if b_min is not None:
-        b = radec_to_galactic(RA, DEC)[1]
-        mask &= np.abs(b) > b_min
-
-    fprint(f"removed {len(zcmb) - np.sum(mask)} galaxies, thus "
-           f"{np.sum(mask)} remain.")
-
-    for k in data:
-        data[k] = data[k][mask]
-
-    if los_data_path:
-        data = load_los(los_data_path, data, mask=mask)
-
-    return data
+    mask = _zcmb_blat_mask(zcmb, RA, DEC, zcmb_min, zcmb_max, b_min)
+    return _filter_data(data, mask, los_data_path)
 
 
 def load_LOSS(root, zcmb_min=None, zcmb_max=None, b_min=7.5,
@@ -786,26 +801,12 @@ def load_PantheonPlus_Lane(root, zcmb_min=None, zcmb_max=None, b_min=7.5,
 
     C = np.loadtxt(join(root, "PP_cov_new_LOWZ.txt"))
 
-    mask = np.ones(len(data["zcmb"]), dtype=bool)
-    if zcmb_min is not None:
-        mask &= data["zcmb"] > zcmb_min
-
-    if zcmb_max is not None:
-        mask &= data["zcmb"] < zcmb_max
-
-    if b_min is not None:
-        b = radec_to_galactic(data["RA"], data["dec"])[1]
-        mask &= np.abs(b) > b_min
-
-    fprint(f"removed {len(mask) - np.sum(mask)} galaxies, thus "
-           f"{len(x[mask])} remain.")
-
-    for key in data:
-        data[key] = data[key][mask]
+    mask = _zcmb_blat_mask(
+        data["zcmb"], data["RA"], data["dec"], zcmb_min, zcmb_max, b_min)
+    _filter_data(data, mask)
 
     C_idx = (3 * np.where(mask)[0][:, None] + np.arange(3)).ravel()
-    C = C[C_idx][:, C_idx]
-    data["mag_covmat"] = C
+    data["mag_covmat"] = C[C_idx][:, C_idx]
 
     if los_data_path is not None:
         data = load_los(los_data_path, data, mask=mask)
@@ -847,23 +848,9 @@ def load_PantheonPlus(root, zcmb_min=None, zcmb_max=None, b_min=7.5,
     size = int(covmat[0])
     C = np.reshape(covmat[1:], (size, size))
 
-    mask = np.ones(len(data["zcmb"]), dtype=bool)
-
-    if zcmb_min is not None:
-        mask &= data["zcmb"] > zcmb_min
-
-    if zcmb_max is not None:
-        mask &= data["zcmb"] < zcmb_max
-
-    if b_min is not None:
-        b = radec_to_galactic(data["RA"], data["dec"])[1]
-        mask &= np.abs(b) > b_min
-
-    fprint(f"removed {len(mask) - np.sum(mask)} galaxies, thus "
-           f"{len(arr[mask])} remain.")
-
-    for key in data:
-        data[key] = data[key][mask]
+    mask = _zcmb_blat_mask(
+        data["zcmb"], data["RA"], data["dec"], zcmb_min, zcmb_max, b_min)
+    _filter_data(data, mask)
 
     C = C[mask][:, mask]
     data["mag_covmat"] = C
@@ -934,8 +921,7 @@ def load_SH0ES(root):
 
 
 def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
-                         replace_SN_HF_from_PP=False, los_data_path=None,
-                         rand_los_data_path=None):
+                         los_data_path=None, rand_los_data_path=None):
     """
     Load the separated SH0ES data, separating the Cepheid and supernovae and
     covariance matrices.
@@ -946,9 +932,6 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
     - Index 2150: Start of NGC 4258 Cepheid hosts.
     - Index 2593: Start of M31 Cepheid hosts.
     - Index 2648: Start of LMC Cepheid hosts.
-    - Index 3130: Beginning of supernovae in Cepheid host galaxies.
-
-    - Indices 3130–3206: Rung two supernovae (in Cepheid hosts).
 
     - Index 3207: Uncertainty on HST zeropoint (sigma_HST).
     - Index 3208: Uncertainty on Gaia zeropoint (sigma_Gaia).
@@ -958,11 +941,7 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
     - Index 3212: Prior on P–L relation slope b_W.
     - Index 3213: Constraint on NGC 4258 anchor offset (delta_mu_N4258).
     - Index 3214: Constraint on LMC anchor offset (delta_mu_LMC).
-
-    - Indices ≥ 3215: Hubble flow supernovae (rung three).
     """
-    if replace_SN_HF_from_PP:
-        fprint("replacing SH0ES SN Hubble flow data with Pantheon+ data.")
 
     # Unpack the SH0ES data.
     data = load_SH0ES(root)
@@ -996,15 +975,6 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
     mag_cepheid[2150:2593] += mu_N4258_anchor
     mag_cepheid[2648:] += mu_LMC_anchor
 
-    # SN data and covariance matrix.
-    C_SN = C[3130:, 3130:]
-    # Indices of the external constraints which we want to mask out.
-    m_SN = ~np.isin(
-        np.arange(len(C)),
-        [3207, 3208, 3209, 3210, 3211, 3212, 3213, 3214])[3130:]
-    C_SN = C_SN[m_SN, :][:, m_SN]
-    Y_SN = Y[3130:][m_SN]
-
     C_SN_Cepheid = C[3130:3207, 3130:3207]
     Y_SN_Cepheid = Y[3130:3207]
 
@@ -1032,10 +1002,11 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
 
     L_SN_Cepheid_dist = L_dist[3130:3207]
 
-    Y_SN_HF = Y[3215:]
-
     num_hosts = L_Cepheid_host_dist.shape[1] - 3
     num_cepheids = len(mag_cepheid)
+    host_names = q_names[np.char.startswith(
+        q_names.astype(str), "mu_")]
+    host_names = host_names[:num_hosts]
 
     # Cepheid host redshifts and the PV covariance matrix.
     data_cepheid_host_redshift = np.load(
@@ -1045,61 +1016,17 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
         join(root, "processed", "PV_covmat_cepheid_hosts_fiducial.npy"),
         allow_pickle=True)
 
-    if los_data_path is not None:
-        data_host_los = {}
-        data_host_los = load_los(
-            los_data_path, data_host_los)
-        host_los_density = data_host_los["los_density"]
-        host_los_velocity = data_host_los["los_velocity"]
-        host_los_r = data_host_los["los_r"]
-    else:
-        host_los_density = None
-        host_los_velocity = None
-        host_los_r = None
+    def _load_los_or_none(path, keys):
+        if path is None:
+            return {k: None for k in keys}
+        d = load_los(path, {})
+        return {k: d[k] for k in keys}
 
-    if rand_los_data_path is not None:
-        data_rand_los = {}
-        data_rand_los = load_los(
-            rand_los_data_path, data_rand_los)
-        rand_los_density = data_rand_los["los_density"]
-        rand_los_velocity = data_rand_los["los_velocity"]
-        rand_los_r = data_rand_los["los_r"]
-        rand_los_RA = data_rand_los["los_RA"]
-        rand_los_dec = data_rand_los["los_dec"]
-        has_rand_los = True
-    else:
-        rand_los_density = None
-        rand_los_velocity = None
-        rand_los_r = None
-        rand_los_RA = None
-        rand_los_dec = None
-        has_rand_los = False
+    host_los_keys = ["los_density", "los_velocity", "los_r"]
+    host_los = _load_los_or_none(los_data_path, host_los_keys)
 
-    # SH0ES-Antonio's approach for predicting H0 from Cepheid host redshifts,
-    # the error propagation is biased when z -> 0.
-    # zHD = data_cepheid_host_redshift["zHD"]
-    # q0 = -0.55
-    # c = SPEED_OF_LIGHT
-    # Y_Cepheid_new = 5 * np.log10((c * zHD) * (
-    #     1 +  0.5 * (1 - q0) * zHD)) + 25
-    # v_pec = 250
-    # Y_Cepheid_new_err = (5 / np.log(10)
-    #                      * (1 + (1 - q0) * zHD) / (1 + 0.5 * (1 - q0) * zHD)
-    #                      * v_pec / (c * zHD))
-
-    if replace_SN_HF_from_PP:
-        f = np.load("/Users/rstiskalek/Projects/CANDEL/data/SH0ES/processed/PP_SN_matched_to_SH0ES.npz")  # noqa
-        pp = f["pp_matched"]
-        m_HF = pp["USED_IN_SH0ES_HF"] == 1
-        C_SN = f["cov"]
-        Y_SN = pp["m_b_corr"]
-        czcmb_SN_HF = pp["zCMB"][m_HF] * SPEED_OF_LIGHT
-        e_czcmb_SN_HF = pp["zCMBERR"][m_HF] * SPEED_OF_LIGHT
-        RA_SN_HF = pp["RA"][m_HF]
-        dec_SN_HF = pp["DEC"][m_HF]
-    else:
-        czcmb_SN_HF, e_czcmb_SN_HF = None, None
-        RA_SN_HF, dec_SN_HF = None, None
+    rand_los_keys = host_los_keys + ["los_RA", "los_dec"]
+    rand_los = _load_los_or_none(rand_los_data_path, rand_los_keys)
 
     # Keep the brightest (lowest magnitude) SN per Cepheid host galaxy
     n_hosts = L_SN_Cepheid_dist.shape[1]
@@ -1131,11 +1058,6 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
         "Cepheids_only": False,
         "num_cepheids": num_cepheids,
         "num_hosts": num_hosts,
-        # SNe in Cepheid host galaxies, covariance matrix and host association.
-        "Y_SN_Cepheid": Y_SN_Cepheid,
-        "C_SN_Cepheid": C_SN_Cepheid,
-        "L_SN_Cepheid": cholesky(C_SN_Cepheid, lower=True),
-        "L_SN_Cepheid_dist": L_SN_Cepheid_dist,
         # Unique SNe in Cepheid host galaxies.
         "mag_SN_unique_Cepheid_host": mag_SN_unique_Cepheid_host,
         "C_SN_unique_Cepheid_host": C_SN_unique_Cepheid_host,
@@ -1143,17 +1065,6 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
         "L_SN_unique_Cepheid_host": cholesky(C_SN_unique_Cepheid_host,
                                              lower=True),
         "L_SN_unique_Cepheid_host_dist": L_SN_unique_Cepheid_host_dist,
-        # SNe in the Hubble flow and covariance matrix.
-        "Y_SN_HF": Y_SN_HF,
-        "num_flow_SN": len(Y_SN_HF),
-        "czcmb_SN_HF": czcmb_SN_HF,
-        "e_czcmb_SN_HF": e_czcmb_SN_HF,
-        "RA_SN_HF": RA_SN_HF,
-        "dec_SN_HF": dec_SN_HF,
-        # All SNe together.
-        "Y_SN": Y_SN,
-        "C_SN": C_SN,
-        "L_SN": cholesky(C_SN, lower=True),
         # External constraints/priors.
         "mu_N4258_anchor": mu_N4258_anchor,
         "e_mu_N4258_anchor": e_mu_N4258_anchor,
@@ -1166,26 +1077,23 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
         "sigma_grnd": sigma_grnd,
         # Cepheid host galaxy information.
         "q_names": q_names,
+        "host_names": host_names,
         "czcmb_cepheid_host": data_cepheid_host_redshift["zCMB"] * SPEED_OF_LIGHT,  # noqa
         "e_czcmb_cepheid_host": data_cepheid_host_redshift["zCMBERR"],
         "RA_host": data_cepheid_host_redshift["RA"],
         "dec_host": data_cepheid_host_redshift["DEC"],
         "PV_covmat_cepheid_host": PV_covmat_cepheid_host,
-        "host_los_density": host_los_density,
-        "host_los_velocity": host_los_velocity,
-        "host_los_r": host_los_r,
-        # # SH0ES-Antonio's approach for predicting H0 from Cepheid host zs
-        # "Y_Cepheid_new": Y_Cepheid_new,
-        # "Y_Cepheid_new_err": Y_Cepheid_new_err
-        "q_names": q_names,
+        "host_los_density": host_los["los_density"],
+        "host_los_velocity": host_los["los_velocity"],
+        "host_los_r": host_los["los_r"],
         # Random LOS for modelling selection
-        "has_rand_los": has_rand_los,
-        "num_rand_los": rand_los_density.shape[1] if rand_los_density is not None else 1,  # noqa
-        "rand_los_density": rand_los_density,
-        "rand_los_velocity": rand_los_velocity,
-        "rand_los_r": rand_los_r,
-        "rand_los_RA": rand_los_RA,
-        "rand_los_dec": rand_los_dec
+        "has_rand_los": rand_los_data_path is not None,
+        "num_rand_los": rand_los["los_density"].shape[1] if rand_los["los_density"] is not None else 1,  # noqa
+        "rand_los_density": rand_los["los_density"],
+        "rand_los_velocity": rand_los["los_velocity"],
+        "rand_los_r": rand_los["los_r"],
+        "rand_los_RA": rand_los["los_RA"],
+        "rand_los_dec": rand_los["los_dec"]
         }
 
     if cepheid_host_cz_cmb_max is not None:
@@ -1233,12 +1141,9 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
 
         data["num_hosts"] = np.sum(mask_host)
         data["num_cepheids"] = np.sum(mask_cepheid)
+        data["host_names"] = data["host_names"][mask_host]
 
         data["mask_host"] = mask_host
-
-        for key, val in data.items():
-            if "SN" in key and "SN_unique" not in key and isinstance(val, np.ndarray):  # noqa
-                data[key] = np.full_like(val, np.nan, dtype=val.dtype)
 
     data["Neff_C_SN_unique_Cepheid_host"] = effective_rank_entropy(data["C_SN_unique_Cepheid_host"]) # noqa
     data["Neff_PV_covmat_cepheid_host"] = effective_rank_entropy(data["PV_covmat_cepheid_host"])     # noqa
@@ -1252,8 +1157,6 @@ def load_SH0ES_from_config(config_path):
     d = config["io"]["SH0ES"]
     root = d["root"]
     cepheid_host_cz_cmb_max = d.get("cepheid_host_cz_cmb_max", None)
-    replace_SN_HF_from_PP = d.get("replace_SN_HF_from_PP", False)
-
     which_host_los = d.get("which_host_los", None)
     if which_host_los is not None:
         if config["io"]["load_host_los"]:
@@ -1273,104 +1176,252 @@ def load_SH0ES_from_config(config_path):
         rand_los_data_path = None
 
     return load_SH0ES_separated(
-        root, cepheid_host_cz_cmb_max, replace_SN_HF_from_PP,
+        root, cepheid_host_cz_cmb_max,
         los_data_path=los_data_path, rand_los_data_path=rand_los_data_path)
 
 
-def load_clusters(root, zcmb_min=None, zcmb_max=None, los_data_path=None,
-                  finite_logY=True, convert_to_CMB_frame=True,
-                  return_all=False, **kwargs):
+def load_CCHP_from_config(config_path, ra_dec_only=False):
     """
-    Load the cluster scaling relation data from the given root directory.
+    Load the processed CCHP TRGB catalogue from a TSV file.
 
-    Y is currently not being loaded.
+    Expects the TSV to contain at least the columns:
+    SN, Galaxy, cz_cmb, e_czcmb, mu_TRGB_CCHP, sigma_TRGB_CCHP,
+    m_Bprime_CSP, sigma_Bprime_CSP.
+
+    Set io.CSP.load_CSP_matches = true in config to load matched CSP data
+    (st, BV, obs_vec, cov, RA, dec, stellar masses) with CSP_ prefix.
     """
-    fname = join(root, "ClustersData.txt")
+    config = load_config(config_path, replace_los_prior=False)
+    load_csp_match = get_nested(config, "io/CSP/load_CSP_matches", False)
+    path = config["io"]["CCHP"]["path"]
+    redshift_source = get_nested(
+        config, "io/CCHP_redshift_source/kind", "cz_cmb")
+    if not isabs(path):
+        path = join(config["root_main"], path)
 
-    dtype = [
-        ('Cluster', 'U32'), ('z', 'f8'), ('Glon', 'f8'), ('Glat', 'f8'),
-        ('Offset', 'f8'), ('T', 'f8'), ('Tmax', 'f8'), ('Tmin', 'f8'),
-        ('Lx', 'f8'), ('eL', 'f8'), ('NHtot', 'f8'), ('Metal', 'f8'),
-        ('Met_max', 'f8'), ('Met_min', 'f8'), ('Y_arcmin2', 'f8'),
-        ('e_Y', 'f8'), ('Y5r500', 'f8'), ('e_Y2', 'f8'), ('Y_nr_no_ksz', 'f8'),
-        ('e_Y3', 'f8'), ('Y_nr_mmf', 'f8'), ('e_Y4', 'f8'), ('Y_nr_mf', 'f8'),
-        ('e_Y5', 'f8'), ('Abs2MASS', 'f8'), ('BCG_Offset', 'f8'),
-        ('Catalog', 'U32'), ('Analysed_by', 'U32')
-    ]
+    data_tbl = np.genfromtxt(
+        path,
+        delimiter="\t",
+        names=True,
+        dtype=None,
+        encoding="utf-8",
+        missing_values=["-1", "nan", "NaN"],
+        filling_values=np.nan,
+    )
 
-    data = np.genfromtxt(fname, dtype=dtype, skip_header=1)
-    # data = data[(data['Y_nr_no_ksz'] != -1.0)]
-    fprint(f"initially loaded {len(data)} clusters.")
+    # Check here about the wavelength!
+    mag_trgb = data_tbl["mu_TRGB_CCHP"] - 4.049
 
-    RA, dec = galactic_to_radec(data['Glon'], data['Glat'])
+    # Fixed anchor values (LMC and NGC 4258) for convenience.
+    # LMC (Pietrzynski et al. 2019): https://arxiv.org/abs/1903.08096
+    mu_LMC_anchor = 18.477
+    e_mu_LMC_anchor = 0.026
+    # Hoyt+2021 TRGB calibration: https://arxiv.org/abs/2106.13337
+    mag_LMC_TRGB = 14.456
+    e_mag_LMC_TRGB = 0.018
 
-    z = data['z']
-    if convert_to_CMB_frame:
-        fprint("converting clusters' redshifts to the CMB frame.")
-        z = heliocentric_to_cmb(data['z'], RA, dec)
+    # NGC 4258 distance (Reid et al. 2019)
+    mu_N4258_anchor = 29.398
+    e_mu_N4258_anchor = 0.032
+    # Jang & Lee 2020 TRGB calibration: https://arxiv.org/abs/2008.04181
+    # This is at F814W
+    mag_N4258_TRGB = 25.347
+    e_mag_N4258_TRGB = 0.0443
 
-    T = data['T']
-    Lx = data['Lx']
-    eL = data['eL']
-    Tmax = data['Tmax']
-    Tmin = data['Tmin']
-    Y_arcmin2 = data['Y_arcmin2']
-    e_Y = data['e_Y']
+    ra = data_tbl["ra_deg"]
+    dec = data_tbl["dec_deg"]
 
-    # The file assumes a cosmology with H0 = 70 km/s/Mpc and Omega_m = 0.3
-    cosmo = FlatLambdaCDM(H0=70, Om0=0.3)
-    DL = cosmo.luminosity_distance(z).value
+    source = redshift_source.lower()
+    fprint(f"Using CCHP redshift source: {source}", verbose=True)
+    if source == "cz_cmb":
+        cz_cmb = data_tbl["cz_cmb"]
+    elif source == "cz_cmb_ned":
+        cz_cmb = data_tbl["cz_cmb_NED"]
+    else:
+        raise ValueError(
+            "Unknown `io/CCHP_redshift_source/kind`: "
+            f"{redshift_source}. Use 'cz_cmb' or 'cz_cmb_NED'.")
 
-    logT = np.log10(T)
-    logF = np.log10(Lx / (4 * np.pi * DL**2))
-    logY = np.log10(Y_arcmin2)
+    e_czcmb = data_tbl["e_czcmb"]
 
-    e_logT = np.log10(np.e) * (Tmax - Tmin) / (2 * T)
-    e_logF = np.log10(np.e) * (Lx * eL / 100) / Lx
-    e_logY = np.log10(np.e) * e_Y / Y_arcmin2
+    if ra_dec_only:
+        return {
+            "RA": ra,
+            "DEC": dec,
+            "cz_cmb": cz_cmb,
+            "e_czcmb": e_czcmb,
+        }
 
     data = {
-        "zcmb": z,
-        "RA": RA,
-        "dec": dec,
-        "logT": logT,
-        "e_logT": e_logT,
-        "logF": logF,
-        "e_logF": e_logF,
-        "logY": logY,
-        "e_logY": e_logY,
-        "Y": Y_arcmin2,
+        "SN": data_tbl["SN"],
+        "Galaxy": data_tbl["Galaxy"],
+        "cz_cmb": cz_cmb,
+        "e_czcmb": e_czcmb,
+        "mag_TRGB": mag_trgb,
+        "e_mag_TRGB": data_tbl["sigma_TRGB_CCHP"],
+        "m_Bprime": data_tbl["m_Bprime_CSP"],
+        "sigma_Bprime": data_tbl["sigma_Bprime_CSP"],
+        "RA": ra,
+        "DEC": dec,
+        "mu_LMC_anchor": mu_LMC_anchor,
+        "e_mu_LMC_anchor": e_mu_LMC_anchor,
+        "mag_LMC_TRGB": mag_LMC_TRGB,
+        "e_mag_LMC_TRGB": e_mag_LMC_TRGB,
+        "mu_N4258_anchor": mu_N4258_anchor,
+        "e_mu_N4258_anchor": e_mu_N4258_anchor,
+        "mag_N4258_TRGB": mag_N4258_TRGB,
+        "e_mag_N4258_TRGB": e_mag_N4258_TRGB,
     }
 
-    if return_all:
-        return data
+    # Optionally load LOS data (host and/or random) if requested in config.
+    los_data_path = None
+    rand_los_data_path = None
 
-    mask = np.ones(len(z), dtype=bool)
+    which_host_los = get_nested(config, "io/which_host_los", None)
+    if get_nested(config, "io/load_host_los", False):
+        los_file = get_nested(config, "io/los_file", None)
+        if los_file is not None and which_host_los is not None:
+            los_data_path = los_file.replace("<X>", which_host_los)
+        else:
+            los_data_path = los_file
 
-    if finite_logY:
-        mask &= np.isfinite(logY)
-
-    if zcmb_min is not None:
-        mask &= z > zcmb_min
-
-    if zcmb_max is not None:
-        mask &= z < zcmb_max
-
-    fprint(f"removed {len(mask) - np.sum(mask)} clusters, thus "
-           f"{len(data['RA'][mask])} remain.")
-
-    for key in data:
-        data[key] = data[key][mask]
-
-    fprint("subtracting the mean logT from the data.")
-    data["logT"] -= np.mean(data["logT"])
-
-    fprint("subtracting the mean logY from the data.")
-    data["logY"] -= np.mean(data["logY"])
+    if get_nested(config, "io/load_rand_los", False):
+        rand_file = get_nested(config, "io/los_file_random", None)
+        if rand_file is not None and which_host_los is not None:
+            rand_los_data_path = rand_file.replace("<X>", which_host_los)
+        else:
+            rand_los_data_path = rand_file
 
     if los_data_path is not None:
-        data = load_los(los_data_path, data, mask=mask)
+        host_los = load_los(los_data_path, {}, mask=None)
+        data["host_los_density"] = host_los["los_density"]
+        data["host_los_velocity"] = host_los["los_velocity"]
+        data["host_los_r"] = host_los["los_r"]
 
+    if rand_los_data_path is not None:
+        rand_los = load_los(rand_los_data_path, {}, mask=None, verbose=False)
+        data["rand_los_density"] = rand_los["los_density"]
+        data["rand_los_velocity"] = rand_los["los_velocity"]
+        data["rand_los_r"] = rand_los["los_r"]
+        data["rand_los_RA"] = rand_los.get("los_RA", None)
+        data["rand_los_dec"] = rand_los.get("los_dec", None)
+        data["has_rand_los"] = True
+        data["num_rand_los"] = data["rand_los_density"].shape[1]
+    else:
+        data["has_rand_los"] = False
+
+    # Optionally load matched CSP data
+    if load_csp_match:
+        csp_root = get_nested(config, "io/CSP/root", None)
+        if csp_root is None:
+            raise ValueError("CSP root not specified in config [io.CSP.root]")
+        if not isabs(csp_root):
+            csp_root = join(config["root_main"], csp_root)
+
+        csp_data = load_CSP(csp_root, return_all=True)
+        cchp_idx, csp_idx = match_cchp_to_csp(data, csp_data)
+
+        # Store matching indices
+        data["CSP_match_cchp_idx"] = cchp_idx
+        data["CSP_match_csp_idx"] = csp_idx
+
+        # Add matched CSP fields with prefix
+        n_cchp = len(data["SN"])
+        csp_fields = ["st", "BV", "obs_vec", "cov", "RA", "dec",
+                      "log_stellar_mass", "log_stellar_mass_lower",
+                      "log_stellar_mass_upper"]
+        for field in csp_fields:
+            arr = csp_data[field]
+            # Create array of NaN with CCHP shape, fill matched entries
+            if arr.ndim == 1:
+                out = np.full(n_cchp, np.nan)
+            elif arr.ndim == 2:
+                out = np.full((n_cchp, arr.shape[1]), np.nan)
+            else:
+                out = np.full((n_cchp,) + arr.shape[1:], np.nan)
+            out[cchp_idx] = arr[csp_idx]
+            data[f"CSP_{field}"] = out
+
+    return data
+
+
+def match_cchp_to_csp(cchp_data, csp_data):
+    """
+    Match CCHP TRGB hosts to CSP SNe by SN name.
+
+    Handles naming convention differences: CCHP uses '2011fe' while CSP uses
+    'SN2011fe'.
+
+    Returns
+    -------
+    cchp_idx : ndarray
+        Indices into cchp_data for matched SNe.
+    csp_idx : ndarray
+        Indices into csp_data for matched SNe.
+    """
+    cchp_names = cchp_data["SN"]
+    csp_names = csp_data["sn"]
+
+    # CSP names have "SN" prefix, strip it for matching
+    csp_name_to_idx = {}
+    for i, name in enumerate(csp_names):
+        key = name[2:] if name.startswith("SN") else name
+        csp_name_to_idx[key] = i
+
+    cchp_idx, csp_idx = [], []
+    for i, name in enumerate(cchp_names):
+        if name in csp_name_to_idx:
+            cchp_idx.append(i)
+            csp_idx.append(csp_name_to_idx[name])
+
+    cchp_idx = np.array(cchp_idx, dtype=int)
+    csp_idx = np.array(csp_idx, dtype=int)
+
+    fprint(f"matched {len(cchp_idx)}/{len(cchp_names)} CCHP SNe to CSP.")
+
+    # Print unmatched CCHP SNe
+    matched_set = set(cchp_idx)
+    unmatched = [cchp_names[i] for i in range(len(cchp_names))
+                 if i not in matched_set]
+    if unmatched:
+        fprint(f"unmatched CCHP SNe: {unmatched}")
+
+    return cchp_idx, csp_idx
+
+
+def load_CSP_from_config(config_path):
+    """
+    Load CSP SNe data from config, wrapped in PVDataFrame for inference.
+
+    Uses config keys:
+    - io.CSP.root: path to CSP data directory
+    - io.CSP.which_sample: sample to select ("CSPI", "CSPII", or "LSQ")
+    - model.r_limits_malmquist: radial grid limits for Malmquist bias
+    - model.num_points_malmquist: number of grid points
+    """
+    config = load_config(config_path, replace_los_prior=False)
+
+    csp_root = get_nested(config, "io/CSP/root", None)
+    if csp_root is None:
+        raise ValueError("CSP root not specified in config [io.CSP.root]")
+    if not isabs(csp_root):
+        csp_root = join(config["root_main"], csp_root)
+
+    # Get optional CSP loading parameters
+    which_sample = get_nested(config, "io/CSP/which_sample", None)
+    sample_str = which_sample if which_sample else "all"
+    fprint(f"loading CSP sample: {sample_str}")
+
+    data = load_CSP(csp_root, which_sample=which_sample)
+
+    # Add radial grid for selection integral
+    r_limits = config["model"]["r_limits_malmquist"]
+    num_points = config["model"]["num_points_malmquist"]
+    Om = get_nested(config, "model/Om", 0.3)
+    data["r_grid"] = _compute_r_grid(r_limits, num_points, data, Om)
+
+    fprint(f"loaded {len(data['sn'])} CSP SNe (sample: {sample_str}).")
+    # Return raw dict; JointTRGBCSPModel wraps in PVDataFrame after matching
     return data
 
 
@@ -1416,28 +1467,9 @@ def load_SDSS_FP(root, zcmb_min=None, zcmb_max=None, b_min=7.5,
     if return_all:
         return data
 
-    mask = np.ones(len(data["zcmb"]), dtype=bool)
-
-    if zcmb_min is not None:
-        mask &= data["zcmb"] > zcmb_min
-
-    if zcmb_max is not None:
-        mask &= data["zcmb"] < zcmb_max
-
-    if b_min is not None:
-        b = radec_to_galactic(data["RA"], data["dec"])[1]
-        mask &= np.abs(b) > b_min
-
-    fprint(f"removed {len(mask) - np.sum(mask)} galaxies, thus "
-           f"{len(data['RA'][mask])} remain.")
-
-    for key in data:
-        data[key] = data[key][mask]
-
-    if los_data_path is not None:
-        data = load_los(los_data_path, data, mask=mask)
-
-    return data
+    mask = _zcmb_blat_mask(
+        data["zcmb"], data["RA"], data["dec"], zcmb_min, zcmb_max, b_min)
+    return _filter_data(data, mask, los_data_path)
 
 
 def load_6dF_FP(root, which_band=None, zcmb_min=None, zcmb_max=None, b_min=7.5,
@@ -1501,67 +1533,9 @@ def load_6dF_FP(root, which_band=None, zcmb_min=None, zcmb_max=None, b_min=7.5,
         "e_log_theta_eff": e_log_theta_eff,
     })
 
-    mask = np.ones(len(data["zcmb"]), dtype=bool)
-    if zcmb_min is not None:
-        mask &= data["zcmb"] > zcmb_min
-    if zcmb_max is not None:
-        mask &= data["zcmb"] < zcmb_max
-    if b_min is not None:
-        b = radec_to_galactic(data["RA"], data["dec"])[1]
-        mask &= np.abs(b) > b_min
-
-    fprint(f"removed {len(mask) - np.sum(mask)} galaxies, thus "
-           f"{len(data['RA'][mask])} remain.")
-
-    for key in data:
-        data[key] = data[key][mask]
-
-    if los_data_path is not None:
-        data = load_los(los_data_path, data, mask=mask)
-
-    return data
-
-
-def load_CF4_calibrated(root, zcmb_min=None, zcmb_max=None, bmin=None,
-                        los_data_path=None, return_all=False, **kwargs):
-    """Load the CF4 calibrated data."""
-    d_input = np.load(join(root, "CF4_TF_subset_noselection.npy"))
-
-    ndata = len(d_input)
-    data = {
-        "zcmb": d_input[:, 0] / SPEED_OF_LIGHT,
-        "mu": d_input[:, 1],
-        "e_mu": d_input[:, 2],
-        # Dummy values for sky position.
-        "RA": np.zeros(ndata),
-        "dec": np.zeros(ndata),
-    }
-
-    if return_all:
-        return data
-
-    mask = np.ones(len(data["zcmb"]), dtype=bool)
-
-    if zcmb_min is not None:
-        mask &= data["zcmb"] > zcmb_min
-
-    if zcmb_max is not None:
-        mask &= data["zcmb"] < zcmb_max
-
-    if bmin is not None:
-        raise ValueError("bmin is not supported.")
-
-    fprint(f"removed {len(mask) - np.sum(mask)} galaxies, thus "
-           f"{len(data['RA'][mask])} remain.")
-
-    for key in data:
-        data[key] = data[key][mask]
-
-    if los_data_path is not None:
-        raise ValueError("LOS for CF4 calibrated data is not supported.")
-        # data = load_los(los_data_path, data, mask=mask)
-
-    return data
+    mask = _zcmb_blat_mask(
+        data["zcmb"], data["RA"], data["dec"], zcmb_min, zcmb_max, b_min)
+    return _filter_data(data, mask, los_data_path)
 
 
 def load_generic(filepath, los_data_path=None, **kwargs):
@@ -1584,3 +1558,191 @@ def load_generic(filepath, los_data_path=None, **kwargs):
         data = load_los(los_data_path, data,)
 
     return data
+
+
+def load_CSP(root, zcmb_min=None, zcmb_max=None, b_min=None, quality_min=None,
+             st_min=None, st_max=None, t0_min=None, t0_max=None,
+             phys_only=False, exclude_phys=True, which_sample=None,
+             los_data_path=None, return_all=False, remove_duplicates=True,
+             **kwargs):
+    """
+    Load CSP (Carnegie Supernova Project) SNe Ia data.
+
+    Merges photometry from B_all_noj21.csv with coordinates from
+    cspallcal_sncoords.csv, csp_sncoords.csv, and missing_coords_simbad.csv.
+
+    Parameters
+    ----------
+    which_sample : str, optional
+        Sample to select: "CSPI", "CSPII", or "LSQ".
+    exclude_phys : bool
+        If True, exclude physics sample (phys=0 only).
+    """
+    # Load main photometry file
+    fname = join(root, "B_all_noj21.csv")
+    d = np.genfromtxt(fname, names=True, dtype=None, encoding="utf-8")
+    fprint(f"initially loaded {len(d)} SNe from CSP data.")
+
+    # Remove duplicate SNe (same name, different calibration type)
+    if remove_duplicates and not return_all:
+        _, unique_idx = np.unique(d["sn"], return_index=True)
+        unique_idx = np.sort(unique_idx)
+        n_duplicates = len(d) - len(unique_idx)
+        fprint(f"removed {n_duplicates} duplicate SNe (keeping first).")
+        d = d[unique_idx]
+
+    # Load coordinates from multiple sources
+    coords_dict = {}
+    coord_files = [
+        "cspallcal_sncoords.csv",
+        "csp_sncoords.csv",
+        "missing_coords_simbad.csv",
+    ]
+    for fname in coord_files:
+        fpath = join(root, fname)
+        try:
+            coords = np.genfromtxt(fpath, names=True, delimiter=",",
+                                   dtype=None, encoding="utf-8")
+            for row in coords:
+                sn = row["sn"]
+                if sn not in coords_dict:
+                    ra, dec = row["snra"], row["sndec"]
+                    if np.isfinite(ra) and np.isfinite(dec):
+                        coords_dict[sn] = (ra, dec)
+        except FileNotFoundError:
+            pass
+
+    # Match coordinates to main catalog
+    RA = np.full(len(d), np.nan)
+    dec_ = np.full(len(d), np.nan)
+
+    for i, sn in enumerate(d["sn"]):
+        if sn in coords_dict:
+            RA[i], dec_[i] = coords_dict[sn]
+
+    n_with_coords = np.sum(np.isfinite(RA))
+    fprint(f"matched {n_with_coords}/{len(d)} SNe with coordinates.")
+
+    # Build 3x3 covariance matrix for (peak_mag_B, st, BV)
+    n = len(d)
+    cov = np.zeros((n, 3, 3))
+    cov[:, 0, 0] = d["eMmax"]**2       # var(peak_mag_B)
+    cov[:, 1, 1] = d["est"]**2         # var(st)
+    cov[:, 2, 2] = d["eBV"]**2         # var(BV)
+    cov[:, 0, 1] = cov[:, 1, 0] = d["covMs"]      # cov(peak_mag_B, st)
+    cov[:, 0, 2] = cov[:, 2, 0] = d["covBV_M"]    # cov(peak_mag_B, BV)
+    # cov(st, BV) = 0 by assumption
+
+    # Fix non-positive definite matrices by adding minimal diagonal
+    for i in range(n):
+        min_eig = np.linalg.eigvalsh(cov[i]).min()
+        if min_eig <= 0:
+            cov[i] += np.eye(3) * (abs(min_eig) + 1e-10)
+            fprint(f"regularized non-PD covariance for {d['sn'][i]} "
+                   f"(zcmb={d['zcmb'][i]:.4f}).")
+
+    # Observation vector: (n_sn, 3) for (peak_mag_B, st, BV)
+    obs_vec = np.stack([d["Mmax"], d["st"], d["BV"]], axis=-1)
+
+    # Compute median measurement errors and correlations for selection integral
+    sigma_m = np.sqrt(cov[:, 0, 0])
+    sigma_s = np.sqrt(cov[:, 1, 1])
+    sigma_BV = np.sqrt(cov[:, 2, 2])
+
+    # Correlations from covariance
+    rho_ms = cov[:, 0, 1] / (sigma_m * sigma_s)
+    rho_mBV = cov[:, 0, 2] / (sigma_m * sigma_BV)
+    rho_sBV = cov[:, 1, 2] / (sigma_s * sigma_BV)
+
+    # Convert quality from string to float, empty strings become NaN
+    quality = np.array([
+        float(q) if q not in ('', '""') else np.nan for q in d["quality"]])
+
+    # Redshift in km/s and default error (100 km/s)
+    czcmb = d["zcmb"] * SPEED_OF_LIGHT
+    e_czcmb = np.full(len(d), 100.0)
+
+    data = {
+        "sn": d["sn"],
+        "zcmb": d["zcmb"],
+        "czcmb": czcmb,
+        "e_czcmb": e_czcmb,
+        "zhel": d["zhel"],
+        "peak_mag_B": d["Mmax"],
+        "st": d["st"],
+        "BV": d["BV"],
+        "obs_vec": obs_vec,
+        "cov": cov,
+        "t0": d["t0"],
+        "quality": quality,
+        "phys": d["phys"],
+        "sample": d["sample"],
+        "RA": RA,
+        "dec": dec_,
+        "log_stellar_mass": d["m"],
+        "log_stellar_mass_lower": d["ml"],
+        "log_stellar_mass_upper": d["mu"],
+        # Median values for selection integral
+        "median_sigma_m": np.median(sigma_m),
+        "median_sigma_s": np.median(sigma_s),
+        "median_sigma_BV": np.median(sigma_BV),
+        "median_rho_ms": np.median(rho_ms),
+        "median_rho_mBV": np.median(rho_mBV),
+        "median_rho_sBV": np.median(rho_sBV),
+    }
+
+    if return_all:
+        return data
+
+    # Filter out SNe without valid coordinates
+    has_coords = np.isfinite(RA) & np.isfinite(dec_)
+    n_no_coords = np.sum(~has_coords)
+    if n_no_coords > 0:
+        fprint(f"removing {n_no_coords} SNe without valid coordinates.")
+
+    mask = has_coords
+    mask &= _zcmb_blat_mask(
+        data["zcmb"], data["RA"], data["dec"], zcmb_min, zcmb_max, b_min)
+
+    if quality_min is not None:
+        mask &= data["quality"] >= quality_min
+    if phys_only:
+        mask &= data["phys"] == "1"
+    if exclude_phys:
+        mask &= data["phys"] == "0"
+    if st_min is not None:
+        mask &= data["st"] >= st_min
+    if st_max is not None:
+        mask &= data["st"] <= st_max
+    if t0_min is not None:
+        mask &= data["t0"] >= t0_min
+    if t0_max is not None:
+        mask &= data["t0"] <= t0_max
+    if which_sample is not None:
+        fprint(f"selecting CSP sample: {which_sample}")
+        if which_sample == "LSQ":
+            mask &= np.char.startswith(data["sn"], "LSQ")
+        elif which_sample in ("CSPI", "CSPII"):
+            mask &= data["sample"] == which_sample
+        else:
+            raise ValueError(f"Unknown sample: {which_sample}. "
+                             "Must be 'CSPI', 'CSPII', or 'LSQ'.")
+
+    return _filter_data(data, mask, los_data_path)
+
+
+###############################################################################
+#                          Catalogue registry                                 #
+###############################################################################
+
+_CATALOGUE_LOADERS = {
+    "2MTF": load_2MTF,
+    "SFI": load_SFI,
+    "SDSS_FP": load_SDSS_FP,
+    "6dF_FP": load_6dF_FP,
+    "LOSS": load_LOSS,
+    "Foundation": load_Foundation,
+    "PantheonPlus": load_PantheonPlus,
+    "PantheonPlusLane": load_PantheonPlus_Lane,
+    "CSP": load_CSP,
+}

@@ -13,24 +13,23 @@
 # with this program; if not, write to the Free Software Foundation, Inc.,
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
-from .model import (                                                            # noqa
+from .utils import (                                                            # noqa
     load_priors,                                                                # noqa
     log_prior_r_empirical,                                                      # noqa
-    TFRModel,                                                                   # noqa
-    SNModel,                                                                    # noqa
-    PantheonPlusModel,                                                          # noqa
-    ClustersModel,                                                              # noqa
-    FPModel,                                                                    # noqa
-    CalibratedDistanceModel,                                                    # noqa
-    JointPVModel,                                                               # noqa
-    interp_cartesian_vector,                                                    # noqa
-    H0_with_transition_r,                                                       # noqa
-    lp_galaxy_bias,                                                             # noqa
     smoothclip_nr,                                                              # noqa
     )
-from .model_SH0ES import SH0ESModel                                             # noqa
-from .interp import LOSInterpolator                                             # noqa
-from .simpson import ln_simpson                                                 # noqa
+from .pv_utils import (                                                         # noqa
+    interp_cartesian_vector,                                                    # noqa
+    lp_galaxy_bias,                                                             # noqa
+    )
+from .base_pv import BasePVModel, JointPVModel                                 # noqa
+from .model_PV_TFR import TFRModel                                             # noqa
+from .model_PV_SN import SNModel                                               # noqa
+from .model_PV_PantheonPlus import PantheonPlusModel                            # noqa
+from .model_PV_FP import FPModel                                               # noqa
+from .model_H0_CH0 import CH0Model                                             # noqa
+from .interp import LOSInterpolator                                            # noqa
+from .simpson import ln_simpson, simpson_log_weights                            # noqa
 
 from ..util import fprint
 
@@ -40,9 +39,7 @@ def name2model(name, shared_param=None, config=None):
         "TFRModel": TFRModel,
         "SNModel": SNModel,
         "PantheonPlusModel": PantheonPlusModel,
-        "ClustersModel": ClustersModel,
         "FPModel": FPModel,
-        "CalibratedDistanceModel": CalibratedDistanceModel,
         }
 
     if isinstance(name, str):

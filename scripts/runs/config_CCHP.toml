@@ -1,0 +1,248 @@
+# Paths and execution
+root_main = "/Users/rstiskalek/Projects/CANDEL/"
+python_exec = "/Users/rstiskalek/Projects/CANDEL/venv_candel/bin/python"
+machine = "local"
+
+# Inference settings
+[inference]
+num_warmup = 1000
+num_samples = 1000
+num_chains = 1
+chain_method = "parallel"
+seed = 44
+
+# PV model settings (for CSPModel in joint inference)
+[pv_model]
+kind = "Vext"
+quadratic_bias_delta0 = 0.0  # Expansion point for quadratic bias
+
+# Model hyperparameters
+[model]
+Om = 0.3
+distmod_limits = [20.0, 40.0]
+use_reconstruction = true
+which_bias = "powerlaw"
+which_selection = "none"  # Options: "none", "redshift", "SN_magnitude", "CSP"
+which_run = "CCHP"
+use_cz_likelihood = false  # Disable TRGB cz likelihood for joint model
+
+# Optional custom limits for anchors (distance modulus)
+distmod_limits_LMC = [18.0, 19.0]
+distmod_limits_N4258 = [29.0, 29.8]
+
+r_limits_malmquist = "auto_0.67"
+dr_malmquist = 0.5
+
+cz_lim_selection = 2000.0
+cz_lim_selection_width = 300.0
+
+mag_lim_SN = 13.0
+mag_lim_SN_width = 0.3
+
+# Selection inference (set infer_sel = true to infer transition and width)
+infer_sel = false
+cz_lim_selection_min = 500.0
+cz_lim_selection_max = 10000.0
+cz_lim_selection_width_min = 50.0
+cz_lim_selection_width_max = 2000.0
+mag_lim_SN_min = 10.0
+mag_lim_SN_max = 18.0
+mag_lim_SN_width_min = 0.05
+mag_lim_SN_width_max = 2.0
+
+# CSP model settings (for joint model and CSP selection)
+r_limits_selection = "auto_0.67"
+n_r_selection = 101
+s_limits_selection = "auto"
+n_s_selection = 19
+BV_limits_selection = "auto"
+n_BV_selection = 19
+auto_limits_nsigma = 5.0
+zcmb_limits_selection = "auto"
+use_stretch_gmm = false
+
+[model.priors.H0]
+# dist = "uniformn"
+# low = 10.0
+# high = 100.0
+dist = "normal"
+loc = 70.0
+scale = 5.0
+
+[model.priors.sigma_int]
+dist = "delta"
+value = 0.0
+
+[model.priors.M_TRGB]
+dist = "normal"
+loc = -4.05
+scale = 0.2
+
+[model.priors.sigma_v]
+dist = "maxwell"
+scale = 200
+# dist = "delta"
+# value = 350.0
+
+[model.priors.Vext]
+dist = "vector_uniform_fixed"
+low = 0
+high = 3000.0
+
+[model.priors.b1]
+dist = "normal"
+loc = 1.2
+scale = 0.1
+
+[model.priors.b2]
+dist = "normal"
+loc = 0
+scale = 1.0
+
+[model.priors.beta]
+# dist = "normal"
+# loc = 0.47
+# scale = 0.02
+dist = "delta"
+value = 1.0
+
+[model.priors.alpha]
+dist = "truncated_normal"
+low = 0.0
+mean = 1.0
+scale = 1.0
+
+[model.priors.alpha_low]
+dist = "truncated_normal"
+low = 0.0
+mean = 1.0
+scale = 1.0
+
+[model.priors.alpha_high]
+dist = "truncated_normal"
+low = 0.0
+mean = 0.0
+scale = 1.0
+
+[model.priors.log_rho_t]
+dist = "normal"
+loc = 1.0
+scale = 1.0
+
+# CSP model priors (for joint model)
+# Tripp standardization: m_true = M_B + mu(r) - alpha_tripp*(s-1) + beta_tripp*BV
+[model.priors.M_B]
+dist = "normal"
+loc = -18.5
+scale = 1.0
+
+[model.priors.alpha_tripp]
+dist = "truncated_normal"
+low = 0.0
+mean = 0.8
+scale = 0.25
+
+[model.priors.beta_tripp]
+dist = "truncated_normal"
+low = 0.0
+mean = 3
+scale = 0.5
+
+[model.priors.sigma_int_SN]
+dist = "truncated_normal"
+low = 0.0
+mean = 0.1
+scale = 0.1
+
+# CSP population priors (used for CSP selection and joint model)
+[model.priors.mu_s]
+dist = "normal"
+loc = 1.0
+scale = 0.2
+
+[model.priors.sigma_s]
+dist = "truncated_normal"
+low = 0.01
+mean = 0.1
+scale = 0.1
+
+[model.priors.mu_BV]
+dist = "normal"
+loc = 0.0
+scale = 0.2
+
+[model.priors.sigma_BV]
+dist = "truncated_normal"
+low = 0.01
+mean = 0.1
+scale = 0.1
+
+[model.priors.rho_pop]
+dist = "uniform"
+low = -0.999
+high = 0.999
+
+# CSP selection priors (used for CSP selection and joint model)
+[model.priors.m_lim]
+dist = "uniform"
+low = 10.0
+high = 22.0
+
+[model.priors.alpha_sel]
+dist = "normal"
+loc = 0.0
+scale = 1.0
+# dist = "delta"
+# value = 0.0
+
+[model.priors.beta_sel]
+dist = "normal"
+loc = 0.0
+scale = 1.0
+# dist = "delta"
+# value = 0.0
+
+[model.priors.sigma_sel]
+dist = "truncated_normal"
+low = 0.001
+mean = 0.5
+scale = 0.5
+
+# IO settings
+[io]
+fname_output = "results/CCHP/test.hdf5"
+load_host_los = true
+load_rand_los = true
+
+# Templates for LOS files; <X> will be replaced by `which_host_los` if set.
+los_file = "data/CCHP/los_<X>.hdf5"
+los_file_random = "data/los_random_<X>.hdf5"
+# which_host_los = "Carrick2015"
+which_host_los = "manticore_2MPP_MULTIBIN_N256_DES_V2"
+los_r0_decay_scale = 5
+
+[io.CCHP]
+# Path to the processed TSV produced in notebooks/paper_CCHP/process_data.ipynb
+path = "data/CCHP/cchp_processed_data.tsv"
+los_file = "data/CCHP/los_<X>.hdf5"
+
+[io.CSP]
+root = "data/CSP"
+load_CSP_matches = true
+which_sample = "CSPII"  # Options: "CSPI", "CSPII", "LSQ", or omit for all
+
+[io.CCHP_redshift_source]
+# Use cz_cmb (table default) or cz_cmb_NED (already in the TSV); no online queries.
+kind = "cz_cmb"
+
+[io.reconstruction_main]
+rmin = 0.1
+rmax = 100
+num_steps = 201
+
+[io.reconstruction_main.Carrick2015]
+path_density = "data/fields/carrick2015_twompp_density.npy"
+path_velocity = "data/fields/carrick2015_twompp_velocity.npy"
+
+[io.reconstruction_main.manticore_2MPP_MULTIBIN_N256_DES_V2]
+fpath_root = "/mnt/extraspace/rstiskalek/MANTICORE/2MPP_MULTIBIN_N256_DES_V2/sph_fields_new_feb/sph_fields"

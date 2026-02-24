@@ -1,0 +1,218 @@
+# Copyright (C) 2025 Richard Stiskalek
+# This program is free software; you can redistribute it and/or modify it
+# under the terms of the GNU General Public License as published by the
+# Free Software Foundation; either version 3 of the License, or (at your
+# option) any later version.
+#
+# This program is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General
+# Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along
+# with this program; if not, write to the Free Software Foundation, Inc.,
+# 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+"""
+General utility functions for PV and H0 forward models: configuration,
+physics, priors, and SH0ES helpers.
+"""
+import hashlib
+import json
+
+import jax.numpy as jnp
+import numpy as np
+from jax import random
+from jax.scipy.linalg import solve_triangular
+from jax.scipy.special import gammainc, gammaln, logsumexp
+from jax.scipy.stats import norm as norm_jax
+from numpyro.distributions import (Delta, Distribution, Normal,
+                                   TruncatedNormal, Uniform, constraints)
+
+from ..util import SPEED_OF_LIGHT
+
+###############################################################################
+#                         Configuration file checks                           #
+###############################################################################
+
+
+def make_json_safe(obj):
+    if isinstance(obj, dict):
+        return {k: make_json_safe(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return [make_json_safe(x) for x in obj]
+    elif isinstance(obj, (jnp.ndarray, np.ndarray)):
+        return obj.tolist()
+    elif hasattr(obj, 'item') and isinstance(obj.item(), (int, float, bool, str)):  # noqa
+        return obj.item()
+    else:
+        return obj
+
+
+def config_hash(cfg):
+    safe_cfg = make_json_safe(cfg)
+    json_str = json.dumps(safe_cfg, sort_keys=True)
+    return hashlib.sha256(json_str.encode()).hexdigest()
+
+###############################################################################
+#                            Useful functions                                 #
+###############################################################################
+
+
+def predict_cz(zcosmo, Vrad):
+    return SPEED_OF_LIGHT * ((1 + zcosmo) * (1 + Vrad / SPEED_OF_LIGHT) - 1)
+
+
+def mvn_logpdf_cholesky(y, mu, L):
+    """
+    Log-pdf of a multivariate normal using Cholesky factor L (lower
+    triangular).
+    """
+    z = solve_triangular(L, y - mu, lower=True)
+    log_det = jnp.sum(jnp.log(jnp.diag(L)))
+    return -0.5 * (len(y) * jnp.log(2 * jnp.pi) + 2 * log_det + jnp.dot(z, z))
+
+
+###############################################################################
+#                                Priors                                       #
+###############################################################################
+
+
+def smoothclip_nr(nr, tau):
+    """Smooth zero-clipping for the number density."""
+    return 0.5 * (nr + jnp.sqrt(nr**2 + tau**2))
+
+
+def log_prior_r_empirical(r, R, p, n, Rmax_grid, Rmax_truncate=None):
+    """
+    Log of the (empirical) truncated prior:
+        π(r) ∝ r^p * exp(-(r/R)^n),   0 < r ≤ Rmax
+    Normalized by Z = [R^(1+p) * γ(a, x)] / n with a = (1+p)/n, x = (Rmax/R)^n
+    """
+    if Rmax_truncate is None:
+        Rmax = Rmax_grid
+    else:
+        Rmax = jnp.minimum(Rmax_grid, Rmax_truncate)
+
+    a = (1.0 + p) / n
+    x = (Rmax / R) ** n
+
+    # log γ(a, x) = log Γ(a) + log P(a, x), P = regularized lower γ
+    log_gamma_lower = (
+        gammaln(a) + jnp.log(jnp.clip(gammainc(a, x), 1e-300, 1.0)))
+    log_norm = (1.0 + p) * jnp.log(R) - jnp.log(n) + log_gamma_lower
+
+    logpdf = p * jnp.log(r) - (r / R)**n - log_norm
+    valid = (r > 0) & (r <= Rmax)
+    return jnp.where(valid, logpdf, -jnp.inf)
+
+
+class JeffreysPrior(Uniform):
+    """
+    Wrapper around Uniform that keeps Uniform sampling but overrides
+    log_prob to behave like a Jeffreys prior.
+
+    Sometimes this is also called a reference prior, or a scale-invariant
+    prior.
+    """
+
+    def log_prob(self, value):
+        in_bounds = (value >= self.low) & (value <= self.high)
+        return jnp.where(in_bounds, -jnp.log(value), -jnp.inf)
+
+
+class Maxwell(Distribution):
+    r"""
+    Maxwell–Boltzmann (speed) distribution in 3D.
+
+    PDF:
+        f(x; a) = sqrt(2/pi) * x^2 * exp(-x^2 / (2 a^2)) / a^3,  x >= 0,  a > 0
+    where `a = sqrt(kT/m)` is the scale parameter.
+
+    Args:
+        scale (float or array): positive scale parameter `a`.
+
+    Notes:
+        This is the chi distribution with k=3 degrees of freedom and scale `a`.
+    """
+    arg_constraints = {"scale": constraints.positive}
+    support = constraints.nonnegative
+    reparametrized_params = ["scale"]
+
+    def __init__(self, scale=1.0, validate_args=None):
+        self.scale = jnp.asarray(scale)
+        batch_shape = jnp.shape(self.scale)
+        super().__init__(batch_shape=batch_shape, validate_args=validate_args)
+
+    def sample(self, key, sample_shape=()):
+        shape = sample_shape + self.batch_shape
+        z = random.normal(key, shape + (3,)) * self.scale[..., None]
+        return jnp.linalg.norm(z, axis=-1)
+
+    def log_prob(self, value):
+        a = self.scale
+        x = jnp.asarray(value)
+
+        in_support = (x >= 0)
+        # log(sqrt(2/pi)) = 0.5*(log 2 - log pi)
+        log_c = 0.5 * (jnp.log(2.0) - jnp.log(jnp.pi))
+        lp = (log_c + 2.0 * jnp.log(x)
+              - (x * x) / (2.0 * a * a) - 3.0 * jnp.log(a))
+        return jnp.where(in_support, lp, -jnp.inf)
+
+
+def load_priors(config_priors):
+    """Load a dictionary of NumPyro distributions from a TOML file."""
+    _DIST_MAP = {
+        "normal": lambda p: Normal(p["loc"], p["scale"]),
+        "truncated_normal": lambda p: TruncatedNormal(p["mean"], p["scale"], low=p.get("low", None), high= p.get("high", None)),  # noqa
+        "uniform": lambda p: Uniform(p["low"], p["high"]),
+        "delta": lambda p: Delta(p["value"]),
+        "jeffreys": lambda p: JeffreysPrior(p["low"], p["high"]),
+        "maxwell": lambda p: Maxwell(p["scale"]),
+        "vector_uniform": lambda p: {"type": "vector_uniform", "low": p["low"], "high": p["high"]},  # noqa
+        "vector_uniform_fixed": lambda p: {"type": "vector_uniform_fixed", "low": p["low"], "high": p["high"],},  # noqa
+        "vector_radial_uniform": lambda p: {"type": "vector_radial_uniform", "nval": len(p["rknot"]), "low": p["low"], "high": p["high"]},  # noqa
+        "vector_components_uniform": lambda p: {"type": "vector_components_uniform", "low": p["low"], "high": p["high"],},  # noqa
+        "vector_radialmag_uniform": lambda p: {"type": "vector_radialmag_uniform", "nval": len(p["rknot"]), "low": p["low"], "high": p["high"]},  # noqa
+    }
+    priors = {}
+    prior_dist_name = {}
+    for name, spec in config_priors.items():
+        dist_name = spec.pop("dist", None)
+        if dist_name not in _DIST_MAP:
+            raise ValueError(
+                f"Unsupported distribution '{dist_name}' for '{name}'")
+
+        if dist_name == "delta":
+            spec["value"] = jnp.asarray(spec["value"])
+
+        priors[name] = _DIST_MAP[dist_name](spec)
+        prior_dist_name[name] = dist_name
+
+    return priors, prior_dist_name
+
+
+###############################################################################
+#                         SH0ES utility functions                             #
+###############################################################################
+
+
+def log_integral_gauss_pdf_times_cdf(mu, sigma, t, w):
+    """
+    Log of ∫ N(x|mu, sigma^2) Φ((t - x)/w) dx.
+    Closed form: Φ((mu - t)/sqrt(sigma^2 + w^2))
+    """
+    return norm_jax.logcdf((t - mu) / jnp.sqrt(sigma**2 + w**2))
+
+
+def log_prob_integrand_sel(x, e_x, lim, lim_width):
+    if lim_width is None:
+        return norm_jax.logcdf((lim - x) / e_x)
+    else:
+        return log_integral_gauss_pdf_times_cdf(x, e_x, lim, lim_width)
+
+
+def logmeanexp(x, axis=None, denom=None):
+    """Stable log(mean(exp(x))) with optional explicit denominator."""
+    denom = x.shape[axis] if denom is None else denom
+    return logsumexp(x, axis=axis) - jnp.log(denom)

@@ -1,6 +1,6 @@
-root_main = "/Users/rstiskalek/Projects/CANDEL/"
-python_exec = "/Users/rstiskalek/Projects/CANDEL/venv_candel/bin/python"
-machine = "local"
+# root_main = "/Users/rstiskalek/Projects/CANDEL/"
+# python_exec = "/Users/rstiskalek/Projects/CANDEL/venv_candel/bin/python"
+# machine = "local"
 
 # root_main = "/mnt/users/rstiskalek/CANDEL/"
 # python_exec = "/mnt/users/rstiskalek/CANDEL/venv_candel/bin/python"
@@ -11,10 +11,10 @@ machine = "local"
 # python_exec="/mnt/home/rstiskalek/CANDEL/venv_gpu_candel/bin/python"
 # machine="rusty"
 
-# root_main = "/home/phys1997/CANDEL/"
-# root_data = "/data/phys-galsim/phys1997/CANDEL/"
-# python_exec = "/home/phys1997/CANDEL/venv_candel/bin/python"
-# machine = "arc"
+root_main = "/home/phys1997/CANDEL/"
+root_data = "/data/phys-galsim/phys1997/CANDEL/"
+python_exec = "/home/phys1997/CANDEL/venv_candel/bin/python"
+machine = "arc"
 
 
 ###############################################################################
@@ -47,22 +47,17 @@ kind = "precomputed_los_Carrick2015"
 # kind = "Vext"
 galaxy_bias = "linear_from_beta"  # Ignored unless having an underlying density field
 # galaxy_bias = "linear"  # Ignored unless having an underlying density field
+quadratic_bias_delta0 = 0.0  # Expansion point for quadratic bias
 which_Vext = "constant"
 
 # (Inhomogeneus Malmquist bias settings and extrapolation), in units of Mpc / h.
-# However, for `CalibratedDistanceModel` this is interpreted in Mpc because of
-# the inferred H0.
-r_limits_malmquist = [0.1, 251]
-num_points_malmquist = 251
+r_limits_malmquist = "auto"
+dr_malmquist = 0.5
 
 los_decay_scale = 10.0
 
 Vext_per_pix_nside = "none"
 which_distance_prior = "empirical"
-
-with_H0_transition = false
-H0_for_transition = 73.04
-H0_transition_rmax = 300  # Mpc
 
 ###############################################################################
 #                      Optional interpolator settings                         #
@@ -86,12 +81,23 @@ nOm = 1000
 
 [model]
 Om = 0.3
-use_MNR = true
 marginalize_eta = true
 
+# CSP selection integral grid settings (CSPModel)
+# LSQ data ranges: st=[0.50, 1.22], BV=[-0.05, 0.47], zcmb=[0.021, 0.126]
+r_limits_selection = "auto"
+n_r_selection = 51
+s_limits_selection = "auto"
+n_s_selection = 15
+BV_limits_selection = "auto"
+n_BV_selection = 15
+auto_limits_nsigma = 5.0  # padding for auto limits: data range ± n*sigma
+zcmb_limits_selection = "auto"
+# Use 2-component GMM for stretch distribution (CSPModel)
+use_stretch_gmm = false
+
 [model.eta_grid]
-k_sigma = 5
-n_grid = 31
+n_grid = 5
 
 [model.priors.h]
 # Currently sampled only for the CF4 calibrated data.
@@ -137,6 +143,11 @@ dist = "normal"
 loc = 1
 scale = 1.0
 
+[model.priors.b2]
+dist = "normal"
+loc = 0
+scale = 1.0
+
 [model.priors.delta_b1]
 dist = "normal"
 loc = 0.0
@@ -151,6 +162,11 @@ loc = 0.43
 scale = 0.1
 
 [model.priors.sigma_int]
+dist = "jeffreys"
+low = 0.005
+high = 1.0
+
+[model.priors.sigma_int_SN]
 dist = "jeffreys"
 low = 0.005
 high = 1.0
@@ -183,7 +199,7 @@ value = [0.0, 0.0, 0.0]
 # low = 0.0
 # high = 0.3
 
-# SN priors
+# SN priors (Pantheon+, Foundation, LOSS)
 [model.priors.SN_absmag]
 dist = "normal"
 loc = -18.5
@@ -198,6 +214,111 @@ scale = 1.0
 dist = "normal"
 loc = 3.0
 scale = 1.0
+
+###############################################################################
+#                       CSP Model Priors (CSPModel)                           #
+###############################################################################
+
+# Tripp standardization: m_true = M_B + mu(r) - alpha_tripp*(s-1) + beta_tripp*BV
+[model.priors.M_B]
+dist = "normal"
+loc = -18.5
+scale = 1.0
+
+[model.priors.alpha_tripp]
+dist = "truncated_normal"
+low = 0.0
+mean = 0.7
+scale = 0.5
+
+[model.priors.beta_tripp]
+dist = "truncated_normal"
+low = 0.0
+mean = 2.5
+scale = 1.0
+
+# Population hyperparameters for latent (s, BV)
+[model.priors.mu_s]
+dist = "normal"
+loc = 1.0
+scale = 0.2
+
+[model.priors.sigma_s]
+dist = "truncated_normal"
+low = 0.01
+mean = 0.1
+scale = 0.1
+
+[model.priors.mu_BV]
+dist = "normal"
+loc = 0.0
+scale = 0.2
+
+[model.priors.sigma_BV]
+dist = "truncated_normal"
+low = 0.01
+mean = 0.1
+scale = 0.1
+
+[model.priors.rho_pop]
+dist = "uniform"
+low = -0.999
+high = 0.999
+
+# GMM hyperparameters for stretch (when use_stretch_gmm = true)
+# mu_s2 = mu_s + delta_mu_s, so delta_mu_s > 0 ensures mu_s2 > mu_s
+[model.priors.delta_mu_s]
+dist = "truncated_normal"
+low = 0.0
+mean = 0.2
+scale = 0.2
+
+[model.priors.sigma_s2]
+dist = "truncated_normal"
+low = 0.01
+mean = 0.1
+scale = 0.1
+
+[model.priors.rho_pop2]
+dist = "uniform"
+low = -0.999
+high = 0.999
+
+[model.priors.w_s]
+dist = "uniform"
+low = 0.0
+high = 1.0
+
+# Selection parameters: m_sel = m_obs + alpha_sel*(s-1) - beta_sel*BV
+# p(S=1|obs) = Phi((m_lim - m_sel) / sigma_sel)
+[model.priors.m_lim]
+# dist = "delta"
+# value = 19.0
+dist = "uniform"
+low = 10.0
+high = 22.0
+
+[model.priors.alpha_sel]
+# dist = "delta"
+# value = 0.0
+dist = "normal"
+loc = 0.0
+scale = 1.0
+
+[model.priors.beta_sel]
+# dist = "delta"
+# value = 0.0
+dist = "normal"
+loc = 0
+scale = 1.0
+
+[model.priors.sigma_sel]
+# dist = "delta"
+# value = 0.5
+dist = "truncated_normal"
+low = 0.001
+mean = 0.5
+scale = 0.5
 
 
 ## Cluster scaling relation priors
@@ -446,6 +567,20 @@ seed_subsample = 42
 
 los_file = "data/Pantheon+_Lane/los_CF4_PantheonPlusLane_<X>.hdf5"
 
+[io.CSP]
+root = "data/CSP"
+zcmb_min = "none"
+zcmb_max = "none"
+b_min = "none"
+quality_min = 0.9
+# exclude_phys = true  # default: exclude physics sample
+which_sample = "LSQ"  # "CSPI", "CSPII", or "LSQ"
+
+nsamples_subsample = "none"
+seed_subsample = 42
+
+los_file = "none"
+
 [io.Clusters]
 root = "data/Clusters"
 zcmb_max = 0.2
@@ -560,6 +695,10 @@ root = "data/6dF_FP"
 return_all = true
 los_file = "data/6dF_FP/los_6dF_FP_<X>.hdf5"
 
+[io.PV_main.CSP]
+root = "data/CSP"
+return_all = true
+
 [io.PV_main.CF4_HQ]
 root = "data/CF4_HQ"
 los_file = "data/CF4_HQ/los_CF4_HQ_<X>.hdf5"
@@ -567,7 +706,7 @@ los_file = "data/CF4_HQ/los_CF4_HQ_<X>.hdf5"
 [io.reconstruction_main]
 # Distance over which to interpolate the 3D grids along the source LOS.
 rmin = 0.001
-rmax = 201
+rmax = 251
 num_steps = 251
 
 [io.reconstruction_main.manticore_2MPP_MULTIBIN_N256_DES_V2]

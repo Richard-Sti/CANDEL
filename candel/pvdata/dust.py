@@ -17,35 +17,26 @@ import numpy as np
 from astropy.coordinates import SkyCoord
 
 
+_DUST_MODELS = {
+    "SFD": ("dustmaps.sfd", "SFDQuery"),
+    "CSFD": ("dustmaps.csfd", "CSFDQuery"),
+    "Planck2013": ("dustmaps.planck", "PlanckQuery"),
+    "Planck2016": ("dustmaps.planck", "PlanckGNILCQuery"),
+}
+
+
 def read_dustmap(RA, dec, model):
     """Read off `E(B-V)` at `RA` and `dec` for a given `model`."""
-    coords = SkyCoord(RA, dec, unit="deg", frame="icrs")
-
-    if model == "SFD":
-        try:
-            from dustmaps.sfd import SFDQuery
-        except ImportError:
-            raise ImportError("Cannot import `dustmaps`. Please install it.")
-        query = SFDQuery()
-    elif model == "CSFD":
-        try:
-            from dustmaps.csfd import CSFDQuery
-        except ImportError:
-            raise ImportError("Cannot import `dustmaps`. Please install it.")
-        query = CSFDQuery()
-    elif model == "Planck2013":
-        try:
-            from dustmaps.planck import PlanckQuery
-        except ImportError:
-            raise ImportError("Cannot import `dustmaps`. Please install it.")
-        query = PlanckQuery()
-    elif model == "Planck2016":
-        try:
-            from dustmaps.planck import PlanckGNILCQuery
-        except ImportError:
-            raise ImportError("Cannot import `dustmaps`. Please install it.")
-        query = PlanckGNILCQuery()
-    else:
+    if model not in _DUST_MODELS:
         raise ValueError(f"Unsupported model: `{model}`.")
 
-    return np.asarray(query(coords), dtype=np.float32)
+    module_name, class_name = _DUST_MODELS[model]
+    try:
+        import importlib
+        mod = importlib.import_module(module_name)
+        QueryClass = getattr(mod, class_name)
+    except ImportError:
+        raise ImportError("Cannot import `dustmaps`. Please install it.")
+
+    coords = SkyCoord(RA, dec, unit="deg", frame="icrs")
+    return np.asarray(QueryClass()(coords), dtype=np.float32)
