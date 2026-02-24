@@ -72,11 +72,6 @@ def load_los(catalogue, config, filepath=None, config_path=None):
         los_file = d.pop("los_file")
         data = candel.pvdata.load_LOSS(**d)
         RA, dec = data["RA"], data["dec"]
-    elif catalogue == "Clusters":
-        d = config["io"]["PV_main"][catalogue].copy()
-        los_file = d.pop("los_file")
-        data = candel.pvdata.load_clusters(**d)
-        RA, dec = data["RA"], data["dec"]
     elif catalogue == "SDSS_FP":
         d = config["io"]["PV_main"][catalogue].copy()
         los_file = d.pop("los_file")

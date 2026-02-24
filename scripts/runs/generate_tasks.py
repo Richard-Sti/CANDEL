@@ -149,9 +149,6 @@ def generate_dynamic_tag(config, base_tag="default"):
     if _is_active(smooth_target):
         parts.append(f"smooth{smooth_target}")
 
-    if get_nested(config, "inference/model", None) == "ClustersModel":
-        parts.append(get_nested(config, "io/Clusters/which_relation", None))
-
     if model_name and "TFR" in model_name:
         use_mnr = get_nested(config, "model/use_MNR", False)
         if use_mnr and not get_nested(config, "model/marginalize_eta", True):
@@ -313,71 +310,39 @@ if __name__ == "__main__":
 
     config_path = "./config.toml"
     config = load_config(
-        config_path, replace_none=False, replace_los_prior=False)
+        config_path, replace_none=False, replace_los_prior=False,
+        fill_paths=False)
 
     tag = "default"
     tasks_index = args.tasks_index
 
     # Multiple override options → this creates a job per combination
     manual_overrides = {
-        # ###### - INFERENCE - ######
-        "inference/num_warmup": 500,
-        "inference/num_samples": 500,
+        # --- Short test run: 2MTF + Carrick2015 ---
+        "root_main": "/Users/rstiskalek/Projects/CANDEL/",
+        "root_data": "/Users/rstiskalek/Projects/CANDEL/",
+        "python_exec": "/Users/rstiskalek/Projects/CANDEL/venv_candel/bin/python",
+        "machine": "local",
+        # Inference
+        "inference/num_warmup": 50,
+        "inference/num_samples": 50,
         "inference/num_chains": 1,
         "inference/compute_log_density": False,
         "inference/compute_evidence": False,
         "inference/track_log_density_per_sample": False,
         "inference/model": "TFRModel",
-        # "inference/shared_params": "beta,sigma_v,Vext",
-        # ###### -- MODEL -- ######
-        # ###### -- PV MODEL -- ######
+        # PV model
         "pv_model/kind": "precomputed_los_Carrick2015",
-        # "pv_model/kind": "precomputed_los_manticore_2MPP_MULTIBIN_N256_DES_V2",  # noqa
-        # "pv_model/kind": "Vext",
-        # "pv_model/smooth_target": "none",
-        "pv_model/galaxy_bias": "quadratic",
-        # "pv_model/kind": "Vext",  # noqa
-        # "pv_model/which_Vext": "radial_magnitude",
-        "pv_model/r_limits_malmquist": ["auto"],
-        # "pv_model/r_limits_malmquist": [[0.1, 251.0]],
-        "pv_model/num_points_malmquist": 301,
-        # "pv_model/which_distance_prior": "empirical",
-        # "pv_model/which_distance_prior": "volume_redshift_selected",
-        # ##### - PRIORS -- ######
-        # "model/priors/Vext_radial_magnitude": {
-        #     "dist": "vector_radialmag_uniform",
-        #     "low": 0.0,
-        #     "high": 10_000,
-        #     "rknot": [0, 50, 100, 150, 200, 250, 300, 350, 400, 450],
-        #     "method": "linear"
-        # },
-        # "model/use_stretch_gmm": False,
+        "pv_model/galaxy_bias": "linear_from_beta",
+        "pv_model/r_limits_malmquist": "auto",
+        "pv_model/dr_malmquist": 1.0,
+        # Model
         "model/use_MNR": True,
-        "model/marginalize_eta": False,
-        "model/priors/beta": [
-            {"dist": "uniform", "low": -1, "high": 2.0},
-            # {"dist": "normal", "loc": 0.43, "scale": 0.25},
-            # {"dist": "normal", "loc": 0.43, "scale": 0.25},
-            # {"dist": "delta", "value": 1.0},
-        ],
-        # "model/priors/b1": [{"dist": "delta", "value": x}
-        #                     for x in [round(0.1 * n, 1) for n in range(16)]],  # noqa
-        # "model/priors/zeropoint_dipole": [
-        #     {"dist": "delta", "value": [0.0, 0.0, 0.0]},
-        #     {"dist": "vector_uniform_fixed", "low": 0.0, "high": 0.3},
-        #     # {"dist": "vector_components_uniform", "low": -0.3, "high": 0.3},  # noqa
-        # ],
-        # "model/priors/Vext": [
-            # {"dist": "delta", "value": [0.0, 0.0, 0.0]},
-        #     # {"dist": "vector_components_uniform", "low": -0.3, "high": 0.3},  # noqa
-        # ],
-        # "model/priors/Om": {"dist": "delta", "value": 0.3},
-        # ###### - IO - ######
-        "io/catalogue_name": ["CF4_i", "CF4_W1"],
-        "io/CF4_i/exclude_W1": True,
-        # "io/CSP/which_sample": "CSPII",
-        # "io/CSP/zcmb_max": 0.05,
-        "io/root_output": "results_S8_V2/",
+        "model/marginalize_eta": True,
+        "model/priors/beta": {"dist": "normal", "loc": 0.43, "scale": 0.1},
+        # IO
+        "io/catalogue_name": "2MTF",
+        "io/root_output": "results_test/",
     }
     # # --- CCHP overrides ---
     # manual_overrides = {
@@ -502,7 +467,7 @@ if __name__ == "__main__":
         "pv_model/kind": "Vext",  # noqa
         # "pv_model/which_Vext": "radial_magnitude",
         "pv_model/r_limits_malmquist": [[0.1, 501]],
-        "pv_model/num_points_malmquist": 101,
+        "pv_model/dr_malmquist": 1.0,
         # "pv_model/which_distance_prior": "empirical",
         # "pv_model/which_distance_prior": "volume_redshift_selected",
         # ##### - PRIORS -- ######

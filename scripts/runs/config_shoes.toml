@@ -63,7 +63,7 @@ e_mag_Cepheid = 0.1
 
 # Homogeneous and inghomogeneous Malmquist bias gridding
 r_limits_malmquist = [0.01, 150]
-num_points_malmquist = 251
+dr_malmquist = 0.5
 distmod_limits = [15, 43]
 galaxy_bias_min_clip = 1e-5
 

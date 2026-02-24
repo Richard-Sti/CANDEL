@@ -51,10 +51,8 @@ quadratic_bias_delta0 = 0.0  # Expansion point for quadratic bias
 which_Vext = "constant"
 
 # (Inhomogeneus Malmquist bias settings and extrapolation), in units of Mpc / h.
-# However, for `CalibratedDistanceModel` this is interpreted in Mpc because of
-# the inferred H0.
 r_limits_malmquist = "auto"
-num_points_malmquist = 251
+dr_malmquist = 0.5
 
 los_decay_scale = 10.0
 
@@ -100,8 +98,7 @@ zcmb_limits_selection = "auto"
 use_stretch_gmm = false
 
 [model.eta_grid]
-k_sigma = 5
-n_grid = 31
+n_grid = 5
 
 [model.priors.h]
 # Currently sampled only for the CF4 calibrated data.

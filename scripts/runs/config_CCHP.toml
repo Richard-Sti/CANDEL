@@ -31,7 +31,7 @@ distmod_limits_LMC = [18.0, 19.0]
 distmod_limits_N4258 = [29.0, 29.8]
 
 r_limits_malmquist = "auto_0.67"
-num_points_malmquist = 301
+dr_malmquist = 0.5
 
 cz_lim_selection = 2000.0
 cz_lim_selection_width = 300.0
