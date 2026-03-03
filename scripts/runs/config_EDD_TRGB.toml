@@ -1,0 +1,84 @@
+root_main = "/Users/rstiskalek/Projects/CANDEL/"
+python_exec = "/Users/rstiskalek/Projects/CANDEL/venv_candel/bin/python"
+machine = "local"
+
+
+###############################################################################
+#                               Inference                                     #
+###############################################################################
+
+[inference]
+num_warmup = 1000
+num_samples = 5000
+num_chains = 4
+chain_method = "parallel"
+seed = 44
+
+###############################################################################
+#                                 Model                                       #
+###############################################################################
+
+[model]
+Om = 0.3
+which_distance_prior = "volume"
+
+use_reconstruction = true
+which_bias = "linear"
+
+r_limits_malmquist = [0.01, 150]
+dr_malmquist = 0.5
+
+[model.priors.H0]
+dist = "uniform"
+low = 10
+high = 100
+
+[model.priors.sigma_v]
+dist = "jeffreys"
+low = 25
+high = 2500
+
+[model.priors.beta]
+dist = "normal"
+loc = 0.43
+scale = 0.02
+
+[model.priors.Vext]
+dist = "vector_uniform_fixed"
+low = 0.0
+high = 2500
+
+
+###############################################################################
+#                                  Data                                       #
+###############################################################################
+
+[io]
+root_output = "results/EDD_TRGB"
+fname_output = "results/EDD_TRGB/test.hdf5"
+
+load_host_los = true
+load_rand_los = true
+
+los_file_random = "data/los_random_<X>.hdf5"
+los_r0_decay_scale = 5
+
+
+[io.PV_main]
+
+[io.PV_main.EDD_TRGB]
+root = "data/EDD_TRGB"
+los_file = "data/EDD_TRGB/los_EDD_TRGB_<X>.hdf5"
+
+
+[io.reconstruction_main]
+rmin = 0.1
+rmax = 100
+num_steps = 201
+
+[io.reconstruction_main.Carrick2015]
+path_density = "data/fields/carrick2015_twompp_density.npy"
+path_velocity = "data/fields/carrick2015_twompp_velocity.npy"
+
+[io.reconstruction_main.manticore_2MPP_MULTIBIN_N256_DES_V2]
+fpath_root = "/mnt/extraspace/rstiskalek/MANTICORE/2MPP_MULTIBIN_N256_DES_V2/sph_fields_new_feb/sph_fields"

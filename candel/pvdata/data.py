@@ -1731,23 +1731,18 @@ def load_CSP(root, zcmb_min=None, zcmb_max=None, b_min=None, quality_min=None,
     return _filter_data(data, mask, los_data_path)
 
 
-###############################################################################
-#                          Catalogue registry                                 #
-###############################################################################
-
 def load_EDD_TRGB(root, zcmb_min=None, zcmb_max=None, b_min=None,
                   los_data_path=None, return_all=False, **kwargs):
     """Load EDD TRGB data from the pre-parsed CSV."""
-    import pandas as pd
+    x = np.genfromtxt(join(root, "EDD_TRGB.csv"), delimiter=",",
+                      names=True, dtype=None, encoding=None)
+    fprint(f"initially loaded {len(x)} galaxies from EDD TRGB data.")
 
-    df = pd.read_csv(join(root, "EDD_TRGB.csv"))
-    fprint(f"initially loaded {len(df)} galaxies from EDD TRGB data.")
+    RA = x["RA"].astype(np.float64)
+    dec = x["dec"].astype(np.float64)
 
-    RA = df["RA"].values
-    dec = df["dec"].values
-
-    z_helio = df["v"].values / SPEED_OF_LIGHT
-    e_z_helio = df["e_v"].values / SPEED_OF_LIGHT
+    z_helio = x["v"].astype(np.float64) / SPEED_OF_LIGHT
+    e_z_helio = x["e_v"].astype(np.float64) / SPEED_OF_LIGHT
     zcmb, e_zcmb = heliocentric_to_cmb(z_helio, RA, dec, e_z_helio)
 
     data = dict(
@@ -1755,9 +1750,9 @@ def load_EDD_TRGB(root, zcmb_min=None, zcmb_max=None, b_min=None,
         dec=dec,
         zcmb=zcmb,
         e_zcmb=e_zcmb,
-        DM=df["DM_tip"].values,
-        e_DM_lo=df["DM_tip"].values - df["eDM_lo"].values,
-        e_DM_hi=df["eDM_hi"].values - df["DM_tip"].values,
+        mag=x["T814"].astype(np.float64),
+        e_mag=(x["T8_hi"].astype(np.float64)
+               - x["T8_lo"].astype(np.float64)) / 2,
     )
 
     if return_all:
@@ -1766,6 +1761,10 @@ def load_EDD_TRGB(root, zcmb_min=None, zcmb_max=None, b_min=None,
     mask = _zcmb_blat_mask(zcmb, RA, dec, zcmb_min, zcmb_max, b_min)
     return _filter_data(data, mask, los_data_path)
 
+
+###############################################################################
+#                          Catalogue registry                                 #
+###############################################################################
 
 _CATALOGUE_LOADERS = {
     "2MTF": load_2MTF,
