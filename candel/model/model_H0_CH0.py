@@ -21,19 +21,16 @@ from numpyro import deterministic, factor, plate, sample
 from numpyro.distributions import MultivariateNormal, Normal, Uniform
 
 from ..cosmography import (Distance2Distmod, Distmod2Distance,
-                           Distmod2Redshift,
-                           LogGrad_Distmod2ComovingDistance)
+                           Distmod2Redshift, LogGrad_Distmod2ComovingDistance)
 from ..util import (fprint, fsection, get_nested, radec_to_cartesian,
                     replace_prior_with_delta)
 from .base_model import ModelBase
 from .interp import LOSInterpolator
+from .pv_utils import (lp_galaxy_bias, rsample, sample_distance_prior,
+                       sample_galaxy_bias)
 from .simpson import ln_simpson
-from .utils import (log_prior_r_empirical,
-                    log_prob_integrand_sel, logmeanexp,
+from .utils import (log_prior_r_empirical, log_prob_integrand_sel, logmeanexp,
                     mvn_logpdf_cholesky, predict_cz)
-from .pv_utils import (lp_galaxy_bias, rsample,
-                       sample_distance_prior, sample_galaxy_bias)
-
 
 ###############################################################################
 #                          Base CH0 model                                     #
@@ -305,9 +302,11 @@ class CH0Model(ModelBase):
         self.r_host_range = jnp.linspace(
             r_limits_malmquist[0], r_limits_malmquist[1],
             self._num_points_malmquist)
-        fprint(f"setting radial range from {r_limits_malmquist[0]} to "
-               f"{r_limits_malmquist[1]} Mpc with {self._num_points_malmquist} "
-               f"points for the Cepheid host galaxies.")
+        fprint(
+            f"setting radial range from {r_limits_malmquist[0]}"
+            f" to {r_limits_malmquist[1]} Mpc with "
+            f"{self._num_points_malmquist} points for the "
+            f"Cepheid host galaxies.")
         self.Rmax = jnp.max(self.r_host_range)
 
     def _setup_random_los_grid(self):
@@ -398,7 +397,6 @@ class CH0Model(ModelBase):
                 raise ValueError(
                     "`num_hosts_selection_mag` must be between 0 and "
                     "`num_hosts`.")
-
 
     # ------------------------------------------------------------------
     #  Sampling helpers

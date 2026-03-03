@@ -264,7 +264,6 @@ class Hamlet_FieldLoader(BaseFieldLoader):
         else:
             raise ValueError(f"Unknown HAMLET version: {self.version}")
 
-
     def _read_grid(self, fname):
         return np.fromfile(fname, dtype=self.dtype).reshape(
             (self.ngrid,) * 3)

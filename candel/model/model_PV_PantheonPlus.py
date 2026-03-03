@@ -20,10 +20,10 @@ from numpyro.distributions import MultivariateNormal, Normal, Uniform
 
 from ..util import fprint
 from .base_pv import BasePVModel
-from .simpson import ln_simpson
-from .utils import log_prior_r_empirical, predict_cz
 from .pv_utils import (add_sigma_mag_to_lane_cov, lp_galaxy_bias, rsample,
                        sample_distance_prior, sample_galaxy_bias)
+from .simpson import ln_simpson
+from .utils import log_prior_r_empirical, predict_cz
 
 
 class PantheonPlusModel(BasePVModel):

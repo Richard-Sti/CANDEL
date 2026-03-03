@@ -21,7 +21,6 @@ except ModuleNotFoundError:
     # Backport for <=3.10
     import tomli as tomllib
 
-from datetime import datetime
 from os.path import abspath, basename, exists, isabs, join
 from pathlib import Path
 from warnings import warn

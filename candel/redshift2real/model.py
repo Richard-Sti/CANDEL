@@ -34,7 +34,6 @@ from ..model.simpson import ln_simpson
 from ..model.utils import logmeanexp
 from ..util import SPEED_OF_LIGHT, fprint, radec_to_cartesian
 
-
 ###############################################################################
 #                          Utility functions                                  #
 ###############################################################################

@@ -145,7 +145,8 @@ def gen_simple_catalog(n=1000, rmin=5.0, rmax=80.0, rmax_sel=None,
             return (v_obs_i,)
 
         if czmax_sel_width is None:
-            accept = lambda v: v < czmax_sel
+            def accept(v):
+                return v < czmax_sel
         else:
             def accept(v):
                 p_sel = norm.cdf((czmax_sel - v) / czmax_sel_width)

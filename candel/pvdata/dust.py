@@ -16,7 +16,6 @@
 import numpy as np
 from astropy.coordinates import SkyCoord
 
-
 _DUST_MODELS = {
     "SFD": ("dustmaps.sfd", "SFDQuery"),
     "CSFD": ("dustmaps.csfd", "CSFDQuery"),

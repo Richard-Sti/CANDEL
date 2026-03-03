@@ -32,10 +32,10 @@ from jax.nn import one_hot
 from scipy.linalg import cholesky
 
 from ..model.interp import LOSInterpolator
-from ..util import (SPEED_OF_LIGHT, fprint, fsection, get_nested, load_config,
-                    radec_to_cartesian, radec_to_galactic)
+from ..util import (SPEED_OF_LIGHT, fprint, fsection, get_nested,
+                    heliocentric_to_cmb, load_config, radec_to_cartesian,
+                    radec_to_galactic)
 from .dust import read_dustmap
-
 
 ###############################################################################
 #                            Helper functions                                 #
@@ -43,7 +43,7 @@ from .dust import read_dustmap
 
 
 def _zcmb_blat_mask(zcmb, RA, dec, zcmb_min=None, zcmb_max=None, b_min=None):
-    """Build a boolean mask for standard redshift and galactic latitude cuts."""
+    """Build a boolean mask for redshift and galactic latitude cuts."""
     mask = np.ones(len(zcmb), dtype=bool)
     if zcmb_min is not None:
         mask &= zcmb > zcmb_min
@@ -1735,6 +1735,38 @@ def load_CSP(root, zcmb_min=None, zcmb_max=None, b_min=None, quality_min=None,
 #                          Catalogue registry                                 #
 ###############################################################################
 
+def load_EDD_TRGB(root, zcmb_min=None, zcmb_max=None, b_min=None,
+                  los_data_path=None, return_all=False, **kwargs):
+    """Load EDD TRGB data from the pre-parsed CSV."""
+    import pandas as pd
+
+    df = pd.read_csv(join(root, "EDD_TRGB.csv"))
+    fprint(f"initially loaded {len(df)} galaxies from EDD TRGB data.")
+
+    RA = df["RA"].values
+    dec = df["dec"].values
+
+    z_helio = df["v"].values / SPEED_OF_LIGHT
+    e_z_helio = df["e_v"].values / SPEED_OF_LIGHT
+    zcmb, e_zcmb = heliocentric_to_cmb(z_helio, RA, dec, e_z_helio)
+
+    data = dict(
+        RA=RA,
+        dec=dec,
+        zcmb=zcmb,
+        e_zcmb=e_zcmb,
+        DM=df["DM_tip"].values,
+        e_DM_lo=df["DM_tip"].values - df["eDM_lo"].values,
+        e_DM_hi=df["eDM_hi"].values - df["DM_tip"].values,
+    )
+
+    if return_all:
+        return data
+
+    mask = _zcmb_blat_mask(zcmb, RA, dec, zcmb_min, zcmb_max, b_min)
+    return _filter_data(data, mask, los_data_path)
+
+
 _CATALOGUE_LOADERS = {
     "2MTF": load_2MTF,
     "SFI": load_SFI,
@@ -1745,4 +1777,5 @@ _CATALOGUE_LOADERS = {
     "PantheonPlus": load_PantheonPlus,
     "PantheonPlusLane": load_PantheonPlus_Lane,
     "CSP": load_CSP,
+    "EDD_TRGB": load_EDD_TRGB,
 }

@@ -33,9 +33,9 @@ from ...cosmography import (Distance2Distmod, Distance2Redshift,
                             Redshift2Distance)
 from ...util import SPEED_OF_LIGHT, fprint, get_nested
 from ..base_pv import BasePVModel
-from ..utils import predict_cz
 from ..pv_utils import rsample, sample_galaxy_bias, sample_Vext
 from ..simpson import ln_simpson
+from ..utils import predict_cz
 
 warnings.warn(
     "The CSP SNe model is under development and likely incorrect. "

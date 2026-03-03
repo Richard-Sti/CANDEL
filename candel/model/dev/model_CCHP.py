@@ -19,7 +19,6 @@ WARNING: This module is under development and likely incorrect. Use with
 caution.
 """
 import warnings
-
 from abc import ABC
 from dataclasses import dataclass
 from typing import Optional
@@ -37,12 +36,11 @@ from ...cosmography import (Distance2Distmod, Distance2Redshift,
 from ...util import (fprint, get_nested, load_config, radec_to_cartesian,
                      replace_prior_with_delta)
 from ..interp import LOSInterpolator
-from ..utils import (load_priors, log_prob_integrand_sel, logmeanexp,
-                     predict_cz)
 from ..pv_utils import lp_galaxy_bias, rsample, sample_galaxy_bias
+from ..simpson import ln_simpson
+from ..utils import load_priors, log_prob_integrand_sel, logmeanexp, predict_cz
 from .model_CSP import (CSPModel, CSPSelection, compute_per_source_selection,
                         extract_csp_median_errors, log1mexp)
-from ..simpson import ln_simpson
 
 warnings.warn(
     "The CCHP SNe model is under development and likely incorrect. "

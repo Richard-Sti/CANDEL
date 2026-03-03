@@ -42,7 +42,8 @@ class TFRModel(BasePVModel):
                 f"'{self.which_distance_prior}'.")
 
         if self.marginalize_eta:
-            n_gh = self.eta_grid_kwargs["n_grid"] if self.eta_grid_kwargs else 5
+            n_gh = (self.eta_grid_kwargs["n_grid"]
+                    if self.eta_grid_kwargs else 5)
             self._gh_nodes, self._gh_log_w = gauss_hermite_log_weights(n_gh)
             fprint(f"using Gauss-Hermite quadrature with {n_gh} nodes "
                    f"and Laplace centering for eta marginalization.")
@@ -174,4 +175,5 @@ class TFRModel(BasePVModel):
 
             self._average_fields_and_factor(
                 ll, data,
-                log_density_per_sample if self.track_log_density_per_sample else None)
+                log_density_per_sample
+                if self.track_log_density_per_sample else None)
