@@ -22,7 +22,7 @@ get_toml_key() {
 }
 
 # ---- defaults ----
-config="../runs/config.toml"
+config="../runs/config_EDD_TRGB.toml"
 reconstruction="Carrick2015"
 queue="cmb"
 ncpu=1
