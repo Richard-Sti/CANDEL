@@ -4,7 +4,7 @@
 reconstruction="Carrick2015"
 # reconstruction="manticore_2MPP_MULTIBIN_N256_DES_V2"
 # reconstruction="CF4"
-config="../runs/config.toml"
+config="../runs/config_EDD_TRGB.toml"
 queue="cmb"
 ncpu=1
 memory=32
