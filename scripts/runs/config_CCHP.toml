@@ -1,8 +1,3 @@
-# Paths and execution
-root_main = "/Users/rstiskalek/Projects/CANDEL/"
-python_exec = "/Users/rstiskalek/Projects/CANDEL/venv_candel/bin/python"
-machine = "local"
-
 # Inference settings
 [inference]
 num_warmup = 1000

@@ -72,10 +72,26 @@ from copy import deepcopy
 from itertools import product
 from os import makedirs
 from os.path import exists, join, splitext
+from pathlib import Path
+
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib
 
 import tomli_w
 from candel import (SPEED_OF_LIGHT, fprint, get_nested, load_config,  # noqa
                     replace_prior_with_delta)
+
+
+def load_local_config():
+    """Load machine-specific settings from local_config.toml at project root."""
+    project_root = Path(__file__).resolve().parent.parent.parent
+    local_config_path = project_root / "local_config.toml"
+    if local_config_path.exists():
+        with open(local_config_path, 'rb') as f:
+            return tomllib.load(f)
+    return {}
 
 
 def overwrite_config(config, key, value):
@@ -310,13 +326,13 @@ if __name__ == "__main__":
     tag = "default"
     tasks_index = args.tasks_index
 
+    # Load machine-specific settings from local_config.toml
+    _local_cfg = load_local_config()
+
     # Multiple override options → this creates a job per combination
     manual_overrides = {
         # --- Short test run: 2MTF + Carrick2015 ---
-        "root_main": "/Users/rstiskalek/Projects/CANDEL/",
-        "root_data": "/Users/rstiskalek/Projects/CANDEL/",
-        "python_exec": "/Users/rstiskalek/Projects/CANDEL/venv_candel/bin/python",
-        "machine": "local",
+        **{k: v for k, v in _local_cfg.items()},
         # Inference
         "inference/num_warmup": 50,
         "inference/num_samples": 50,

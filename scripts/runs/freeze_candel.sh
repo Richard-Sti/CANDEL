@@ -1,6 +1,20 @@
 #!/bin/bash
 set -e
 
+# Extract a TOML key from a config file, with fallback to local_config.toml
+get_toml_key() {
+    local key="$1"
+    local config="$2"
+    local val
+    val=$(grep -E "^${key} *= *" "$config" 2>/dev/null | sed -E "s/^${key} *= *\"([^\"]+)\"$/\1/")
+    if [[ -z "$val" ]]; then
+        local local_config
+        local_config="$(cd "$(dirname "$0")/../.." && pwd)/local_config.toml"
+        val=$(grep -E "^${key} *= *" "$local_config" 2>/dev/null | sed -E "s/^${key} *= *\"([^\"]+)\"$/\1/")
+    fi
+    echo "$val"
+}
+
 # --- Parse machine from config.toml ---
 config_path="./config.toml"
 if [[ ! -f "$config_path" ]]; then
@@ -8,9 +22,9 @@ if [[ ! -f "$config_path" ]]; then
     exit 1
 fi
 
-machine=$(grep -E '^machine *= *' "$config_path" | sed -E 's/^machine *= *"([^"]+)"/\1/')
+machine=$(get_toml_key "machine" "$config_path")
 if [[ -z "$machine" ]]; then
-    echo "[ERROR] Could not determine machine from config.toml"
+    echo "[ERROR] Could not determine machine from config.toml or local_config.toml"
     exit 2
 fi
 

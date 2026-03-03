@@ -121,6 +121,16 @@ def load_config(config_path, replace_none=True, fill_paths=True,
     with open(config_path, 'rb') as f:
         config = tomllib.load(f)
 
+    # Inject defaults from local_config.toml (config values take precedence)
+    project_root = Path(__file__).resolve().parent.parent
+    local_config_path = project_root / "local_config.toml"
+    if local_config_path.exists():
+        with open(local_config_path, 'rb') as f:
+            local_cfg = tomllib.load(f)
+        for k, v in local_cfg.items():
+            if k not in config:
+                config[k] = v
+
     # Convert "none" strings to None
     if replace_none:
         config = convert_none_strings(config)

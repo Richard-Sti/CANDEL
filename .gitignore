@@ -25,3 +25,4 @@ modules_arc.sh
 CLAUDE.md
 GEMINI.md
 AGENTS.md
+local_config.toml

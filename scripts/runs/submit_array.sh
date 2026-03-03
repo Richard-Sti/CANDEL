@@ -15,6 +15,20 @@
 
 set -e
 
+# Extract a TOML key from a config file, with fallback to local_config.toml
+get_toml_key() {
+    local key="$1"
+    local config="$2"
+    local val
+    val=$(grep -E "^${key} *= *" "$config" 2>/dev/null | sed -E "s/^${key} *= *\"([^\"]+)\"$/\1/")
+    if [[ -z "$val" ]]; then
+        local local_config
+        local_config="$(cd "$(dirname "$0")/../.." && pwd)/local_config.toml"
+        val=$(grep -E "^${key} *= *" "$local_config" 2>/dev/null | sed -E "s/^${key} *= *\"([^\"]+)\"$/\1/")
+    fi
+    echo "$val"
+}
+
 # --- Read argument for task index ---
 if [[ -z "$1" ]]; then
     echo "Usage: sbatch $0 <task_index> (e.g., 0 for tasks_0.txt)"
@@ -32,7 +46,7 @@ task_line=$(sed -n "$((SLURM_ARRAY_TASK_ID + 1))p" "$task_file")
 config_path=$(echo "$task_line" | cut -d' ' -f2)
 
 # --- Determine machine from config file ---
-machine=$(grep -E '^machine *= *' "$config_path" | sed -E 's/^machine *= *"([^"]+)"/\1/')
+machine=$(get_toml_key "machine" "$config_path")
 if [[ -z "$machine" ]]; then
     echo "[ERROR] Could not determine machine from config: $config_path"
     exit 1
@@ -64,7 +78,7 @@ if [[ -z "$config_path" ]]; then
 fi
 
 # --- Extract python_exec from TOML config ---
-python_exec=$(grep -E '^python_exec *= *' "$config_path" | sed -E 's/^python_exec *= *"([^"]+)"$/\1/')
+python_exec=$(get_toml_key "python_exec" "$config_path")
 if [[ -z "$python_exec" ]]; then
     echo "[ERROR] 'python_exec' not found in config file: $config_path"
     exit 2
