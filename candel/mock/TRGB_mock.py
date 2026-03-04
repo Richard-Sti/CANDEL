@@ -19,7 +19,9 @@ from scipy.stats import norm
 
 from ..cosmography import Distance2Distmod, Distance2Redshift
 from ..field import interpolate_los_density_velocity
-from ..util import (SPEED_OF_LIGHT, galactic_to_radec_cartesian,
+from ..field.field_interp import build_regular_interpolator
+from ..util import (SPEED_OF_LIGHT, cartesian_to_radec,
+                    galactic_to_radec, galactic_to_radec_cartesian,
                     radec_to_cartesian)
 
 
@@ -116,74 +118,177 @@ def _gen_homogeneous_path(nsamples, h, rmin, rmax, e_mag, e_czcmb,
     return collected
 
 
+def _field_xyz_to_radec(pos_rel, r, coordinate_frame):
+    """Convert field-frame Cartesian offsets to ICRS (RA, dec) in degrees."""
+    x, y, z = pos_rel[:, 0], pos_rel[:, 1], pos_rel[:, 2]
+    if coordinate_frame == "icrs":
+        return cartesian_to_radec(x, y, z)
+    elif coordinate_frame == "galactic":
+        l = np.rad2deg(np.arctan2(y, x))
+        b = np.rad2deg(np.arcsin(z / r))
+        return galactic_to_radec(l, b)
+    elif coordinate_frame == "supergalactic":
+        from astropy.coordinates import SkyCoord
+        from astropy import units as u
+        sgl = np.rad2deg(np.arctan2(y, x))
+        sgb = np.rad2deg(np.arcsin(z / r))
+        c = SkyCoord(sgl=sgl * u.deg, sgb=sgb * u.deg,
+                     frame='supergalactic')
+        return c.icrs.ra.deg, c.icrs.dec.deg
+    else:
+        raise ValueError(
+            f"Unknown coordinate frame: {coordinate_frame}")
+
+
 def _gen_field_path(nsamples, h, b1, beta, rmin, rmax, e_mag, e_czcmb,
                     M_TRGB, sigma_int, sigma_v, Vext,
                     mag_lim, mag_lim_width, cz_lim, cz_lim_width,
                     field_loader, num_rand_los, r2mu, r2z, gen, verbose):
-    """Field-based (inhomogeneous Malmquist) distance sampling path."""
-    # LOS grid extends to rmax Mpc/h so the LOSInterpolator covers the
-    # model's evaluation range for all sampled H0 (h <= 1).
-    # CDF for distance sampling uses the sub-grid up to rmax * h_true.
+    """Field-based (inhomogeneous Malmquist) distance sampling path.
+
+    Galaxies are sampled from the 3D density field using accept/reject,
+    ensuring both angular and radial positions follow the biased tracer
+    distribution p(r, Ω) ∝ smoothclip(1 + b1*δ(r,Ω)) * r².
+    """
+    # LOS grid for the model covers the full rmax range (in Mpc/h)
     r_grid = np.linspace(0.1, rmax, 301)
-    cdf_end = np.searchsorted(r_grid, rmax * h, side='right')
-    r_cdf = r_grid[:cdf_end]
 
-    n_draw = max(int(nsamples / 0.01), 5000)
-    RA_all = gen.uniform(0, 360, n_draw)
-    dec_all = np.rad2deg(np.arcsin(gen.uniform(-1, 1, n_draw)))
+    # Sampling sphere: set from selection threshold, not the full rmax
+    r_sample_Mpc = rmax
+    if mag_lim is not None:
+        mu_max = mag_lim - M_TRGB
+        sigma_tot = np.sqrt(sigma_int**2 + e_mag**2 + mag_lim_width**2)
+        mu_cutoff = mu_max + 5 * sigma_tot
+        r_sample_Mpc = min(10**((mu_cutoff - 25) / 5), rmax)
+    elif cz_lim is not None:
+        r_sample_Mpc = min(cz_lim / (h * 100) * 1.2, rmax)
+    r_sphere = r_sample_Mpc * h  # Mpc/h
 
     if verbose:
-        print(f"Field mock: interpolating {n_draw} LOS "
-              f"(r_grid: {r_grid[0]:.1f}–{r_grid[-1]:.1f} Mpc/h, "
-              f"{len(r_grid)} points, "
-              f"CDF up to {r_cdf[-1]:.1f} Mpc/h)...")
+        print(f"Field mock: 3D sampling "
+              f"(r_sphere: {r_sphere:.1f} Mpc/h = "
+              f"{r_sample_Mpc:.1f} Mpc, "
+              f"r_grid: {r_grid[0]:.1f}–{r_grid[-1]:.1f} Mpc/h, "
+              f"{len(r_grid)} points)...")
 
-    los_density, los_velocity = interpolate_los_density_velocity(
-        field_loader, r_grid, RA_all, dec_all, verbose=verbose)
+    # --- Load fields and build 3D interpolators ---
+    eps = 1e-4
+    density_raw = field_loader.load_density()
+    density_log = np.log(density_raw + eps).astype(np.float32)
+    f_density_3d = build_regular_interpolator(
+        density_log, field_loader.boxsize,
+        fill_value=np.float32(np.log(1 + eps)))
 
-    rhat_all = radec_to_cartesian(RA_all, dec_all)
-    Vext_rad_all = rhat_all @ Vext
+    delta_max = float(density_raw.max()) - 1
+    max_weight = _smoothclip(1 + b1 * delta_max)
+    del density_raw, density_log
 
-    # Sample distances from field-biased prior (CDF on sub-grid)
-    r_all = np.empty(n_draw)
-    Vpec_field = np.empty(n_draw)
-    for i in range(n_draw):
-        r_all[i] = _sample_distance_volume(
-            r_cdf, los_density[i, :cdf_end], b1, gen)
-        Vpec_field[i] = np.interp(r_all[i], r_grid, los_velocity[i])
+    velocity_3d = field_loader.load_velocity()
+    f_vel_3d = []
+    for i in range(3):
+        f_vel_3d.append(build_regular_interpolator(
+            velocity_3d[i], field_loader.boxsize,
+            fill_value=np.float32(0)))
+    del velocity_3d
 
-    # Vectorized observables (r_all is in Mpc/h, cosmography expects Mpc)
-    Vpec_all = Vext_rad_all + beta * Vpec_field
-    r_Mpc = r_all / h
-    mu_all = np.asarray(r2mu(r_Mpc, h=h))
-    z_cosmo_all = np.asarray(r2z(r_Mpc, h=h))
+    if verbose:
+        print(f"  max delta = {delta_max:.1f}, "
+              f"max weight = {max_weight:.1f}, "
+              f"est. accept rate = {1 / max_weight:.4f}")
 
+    obs = field_loader.observer_pos
+    rmin_h = 0.1
+    coord_frame = field_loader.coordinate_frame
     sigma_mag_tot = np.sqrt(sigma_int**2 + e_mag**2)
-    mag_obs_all = gen.normal(M_TRGB + mu_all, sigma_mag_tot)
-    cz_true_all = SPEED_OF_LIGHT * (
-        (1 + z_cosmo_all) * (1 + Vpec_all / SPEED_OF_LIGHT) - 1)
-    cz_obs_all = gen.normal(cz_true_all,
-                            np.sqrt(e_czcmb**2 + sigma_v**2))
+    sigma_cz_tot = np.sqrt(e_czcmb**2 + sigma_v**2)
 
-    # Apply selection
-    mask = _apply_selection(mag_obs_all, cz_obs_all,
-                            mag_lim, mag_lim_width,
-                            cz_lim, cz_lim_width, gen)
-    idx_sel = np.where(mask)[0]
-    if len(idx_sel) < nsamples:
-        raise RuntimeError(
-            f"Only {len(idx_sel)} galaxies passed selection out of "
-            f"{n_draw} drawn; need {nsamples}. Increase rmax or relax "
-            f"selection.")
-    idx = idx_sel[:nsamples]
+    # --- Loop: sample, compute observables, select ---
+    collected = {k: [] for k in [
+        "RA", "dec", "r_h", "mag_obs", "cz_obs"]}
+    n_total_proposed = 0
+    n_total_density_accepted = 0
+    batch_size = 200000
 
+    while sum(len(v) for v in collected["RA"]) < nsamples:
+        n_total_proposed += batch_size
+
+        # Uniform in cube, cut to sphere
+        xyz = gen.uniform(-r_sphere, r_sphere,
+                          (batch_size, 3)).astype(np.float32)
+        r_sq = np.sum(xyz**2, axis=1)
+        in_shell = (r_sq < r_sphere**2) & (r_sq > rmin_h**2)
+        xyz = xyz[in_shell]
+
+        # Density accept/reject
+        rho_log = f_density_3d(xyz + obs[None, :])
+        rho = np.exp(rho_log) - eps
+        np.clip(rho, eps, None, out=rho)
+        weight = _smoothclip(1 + b1 * (rho - 1))
+        accept = gen.random(len(weight)) < (weight / max_weight)
+        xyz = xyz[accept]
+        n_total_density_accepted += len(xyz)
+
+        if len(xyz) == 0:
+            continue
+
+        r_h = np.linalg.norm(xyz, axis=1)
+
+        # Convert to RA/dec
+        RA, dec = _field_xyz_to_radec(xyz, r_h, coord_frame)
+
+        # Radial velocity at 3D positions
+        pos_box = (xyz + obs[None, :]).astype(np.float32)
+        rhat = xyz / r_h[:, None]
+        Vpec_field = np.zeros(len(xyz), dtype=np.float32)
+        for i in range(3):
+            Vpec_field += f_vel_3d[i](pos_box) * rhat[:, i]
+
+        # Compute observables
+        rhat_icrs = radec_to_cartesian(RA, dec)
+        Vext_rad = rhat_icrs @ Vext
+        Vpec = Vext_rad + beta * Vpec_field
+
+        r_Mpc = r_h / h
+        mu = np.asarray(r2mu(r_Mpc, h=h))
+        z_cosmo = np.asarray(r2z(r_Mpc, h=h))
+
+        mag_obs = gen.normal(M_TRGB + mu, sigma_mag_tot)
+        cz_true = SPEED_OF_LIGHT * (
+            (1 + z_cosmo) * (1 + Vpec / SPEED_OF_LIGHT) - 1)
+        cz_obs = gen.normal(cz_true, sigma_cz_tot)
+
+        # Apply selection
+        sel = _apply_selection(mag_obs, cz_obs,
+                               mag_lim, mag_lim_width,
+                               cz_lim, cz_lim_width, gen)
+
+        collected["RA"].append(RA[sel])
+        collected["dec"].append(dec[sel])
+        collected["r_h"].append(r_h[sel])
+        collected["mag_obs"].append(mag_obs[sel])
+        collected["cz_obs"].append(cz_obs[sel])
+
+    del f_density_3d, f_vel_3d
+
+    # Trim to nsamples
+    for k in collected:
+        collected[k] = np.concatenate(collected[k])[:nsamples]
+
+    n_selected = nsamples
     if verbose:
-        sel_frac = len(idx_sel) / n_draw
-        print(f"Generated {nsamples} TRGB hosts "
-              f"(acceptance {sel_frac:.2f}, {n_draw} drawn).")
+        print(f"  {n_total_proposed} proposed, "
+              f"{n_total_density_accepted} density-accepted, "
+              f"{n_selected} after selection")
         print(f"  max true distance retained: "
-              f"{r_all[idx].max() / h:.2f} Mpc "
+              f"{collected['r_h'].max() / h:.2f} Mpc "
               f"(allowed: {rmax:.2f} Mpc)")
+
+    # --- Interpolate full LOS for selected hosts ---
+    if verbose:
+        print(f"  interpolating LOS for {nsamples} hosts...")
+    los_density, los_velocity = interpolate_los_density_velocity(
+        field_loader, r_grid, collected["RA"], collected["dec"],
+        verbose=verbose)
 
     # Random LOS for selection normalization
     RA_rand = gen.uniform(0, 360, num_rand_los)
@@ -191,16 +296,16 @@ def _gen_field_path(nsamples, h, b1, beta, rmin, rmax, e_mag, e_czcmb,
     rand_density, rand_velocity = interpolate_los_density_velocity(
         field_loader, r_grid, RA_rand, dec_rand, verbose=False)
 
-    collected = {
-        "RA": RA_all[idx],
-        "dec": dec_all[idx],
-        "r": r_all[idx],
-        "mag_obs": mag_obs_all[idx],
-        "cz_obs": cz_obs_all[idx],
-        "n_parent": n_draw,
+    result = {
+        "RA": collected["RA"],
+        "dec": collected["dec"],
+        "r": collected["r_h"],
+        "mag_obs": collected["mag_obs"],
+        "cz_obs": collected["cz_obs"],
+        "n_parent": n_total_density_accepted,
         # Host LOS data: (1, nsamples, n_r)
-        "host_los_density": los_density[idx][None, ...],
-        "host_los_velocity": los_velocity[idx][None, ...],
+        "host_los_density": los_density[None, ...],
+        "host_los_velocity": los_velocity[None, ...],
         "host_los_r": r_grid,
         # Random LOS data: (1, num_rand_los, n_r)
         "rand_los_density": rand_density[None, ...],
@@ -209,7 +314,7 @@ def _gen_field_path(nsamples, h, b1, beta, rmin, rmax, e_mag, e_czcmb,
         "rand_los_RA": RA_rand,
         "rand_los_dec": dec_rand,
     }
-    return collected
+    return result
 
 
 def _smoothclip(x, tau=0.1):

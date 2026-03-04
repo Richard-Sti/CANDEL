@@ -23,7 +23,7 @@ from .pv_utils import lp_galaxy_bias, rsample, sample_galaxy_bias
 from .simpson import ln_simpson
 from jax.scipy.stats import norm as norm_jax
 
-from .utils import logmeanexp, predict_cz
+from .utils import log_prob_integrand_sel, logmeanexp, predict_cz
 
 
 class TRGBModel(H0ModelBase):
@@ -224,6 +224,7 @@ class TRGBModel(H0ModelBase):
         else:
             rand_los_Vpec_grid = 0.
 
+        log_p_sel = None
         if self.which_selection == "TRGB_magnitude":
             mag_lim = self._resolve_threshold("mag_lim_TRGB")
             mag_width = self._resolve_threshold("mag_lim_TRGB_width")
@@ -234,6 +235,12 @@ class TRGBModel(H0ModelBase):
             log_S = self.log_S_TRGB_mag(
                 lp_rand_dist_grid, M_TRGB, H0, sigma_int,
                 mag_lim, mag_width)
+
+            # Per-distance selection probability for per-host S_i
+            e_eff = jnp.sqrt(self.e2_mag_median + sigma_int**2)
+            mag_grid_sel = self.distance2distmod(r_grid, h=h) + M_TRGB
+            log_p_sel = log_prob_integrand_sel(
+                mag_grid_sel[None, None, :], e_eff, mag_lim, mag_width)
         elif self.which_selection == "redshift":
             cz_lim = self._resolve_threshold("cz_lim_selection")
             cz_width = self._resolve_threshold("cz_lim_selection_width")
@@ -257,11 +264,12 @@ class TRGBModel(H0ModelBase):
         if self.marginalize_distance:
             self._call_marginalized(
                 h, M_TRGB, sigma_int, sigma_v, beta, bias_params,
-                Vext_rad_host, r_grid, lp_r, e_cz, log_S)
+                Vext_rad_host, r_grid, lp_r, e_cz, log_S, log_p_sel)
         else:
             self._call_sampled(
                 mu_host, h, M_TRGB, sigma_int, sigma_v, beta,
-                bias_params, Vext_rad_host, r_grid, lp_r, e_cz, log_S)
+                bias_params, Vext_rad_host, r_grid, lp_r, e_cz,
+                log_S, log_p_sel)
 
     # ------------------------------------------------------------------
     #  Distance marginalization path
@@ -269,7 +277,7 @@ class TRGBModel(H0ModelBase):
 
     def _call_marginalized(self, h, M_TRGB, sigma_int, sigma_v, beta,
                            bias_params, Vext_rad_host, r_grid, lp_r,
-                           e_cz, log_S):
+                           e_cz, log_S, log_p_sel=None):
         mu_grid = self.distance2distmod(r_grid, h=h)
         z_grid = self.distance2redshift(r_grid, h=h)
 
@@ -306,8 +314,14 @@ class TRGBModel(H0ModelBase):
             ll_host = ln_simpson(
                 integrand, x=r_grid[None, None, :], axis=-1)
 
-            # Selection + field averaging
-            ll_host -= log_S[:, None]
+            # Selection: per-host S_i when available, else S_avg
+            if log_p_sel is not None:
+                log_S_host = ln_simpson(
+                    lp_dist + log_p_sel,
+                    x=r_grid[None, None, :], axis=-1)
+                ll_host -= log_S_host
+            else:
+                ll_host -= log_S[:, None]
             ll_host = logmeanexp(ll_host, axis=0)
         else:
             # Normalized distance prior (volume only)
@@ -337,7 +351,7 @@ class TRGBModel(H0ModelBase):
 
     def _call_sampled(self, mu_host, h, M_TRGB, sigma_int, sigma_v, beta,
                       bias_params, Vext_rad_host, r_grid, lp_r, e_cz,
-                      log_S):
+                      log_S, log_p_sel=None):
         # Magnitude likelihood at sampled mu_host
         sigma_mag = jnp.sqrt(self.e2_mag_obs + sigma_int**2)
         factor("ll_mag", jnp.sum(
@@ -352,12 +366,19 @@ class TRGBModel(H0ModelBase):
         lp_host_dist_grid = lp_r[None, None, :]
 
         if self.use_reconstruction:
-            ll_reconstruction, _, _, rh_host = \
+            ll_reconstruction, lp_host_dist_grid_norm, _, rh_host = \
                 self._apply_host_reconstruction(
                     lp_host_dist, lp_host_dist_grid, r_host, h,
                     bias_params)
 
-            ll_reconstruction -= log_S[:, None]
+            # Selection: per-host S_i when available, else S_avg
+            if log_p_sel is not None:
+                log_S_host = ln_simpson(
+                    lp_host_dist_grid_norm + log_p_sel,
+                    x=self.r_host_range[None, None, :], axis=-1)
+                ll_reconstruction -= log_S_host
+            else:
+                ll_reconstruction -= log_S[:, None]
 
             z_cosmo = self.distmod2redshift(mu_host, h=h)
             Vpec = beta * self.f_host_los_velocity(rh_host)
