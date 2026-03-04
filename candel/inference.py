@@ -49,6 +49,45 @@ def _setup_platform():
     fprint(f"using NumPyro platform: {platform.upper()}")
 
 
+def _parse_dense_mass(kwargs, site_names=None):
+    """Parse the dense mass matrix config.
+
+    Supports:
+      - ``dense_mass = true/false`` (boolean, applies to all parameters)
+      - ``dense_mass_params = ["H0", "M_TRGB", ...]`` (list of site names
+        that share a dense mass matrix; remaining sites get diagonal)
+
+    If `site_names` is provided, any names in ``dense_mass_params`` that
+    are not actual sample sites are silently dropped.
+    """
+    dense_mass_params = kwargs.get("dense_mass_params", None)
+    if dense_mass_params is not None:
+        if site_names is not None:
+            dropped = [p for p in dense_mass_params if p not in site_names]
+            dense_mass_params = [p for p in dense_mass_params
+                                 if p in site_names]
+            if dropped:
+                fprint(f"dropped {len(dropped)} non-sampled sites from "
+                       f"dense_mass_params: {dropped}")
+
+        fprint(f"using dense mass matrix for {len(dense_mass_params)} "
+               f"parameters: {dense_mass_params}")
+        return [tuple(dense_mass_params)]
+
+    return kwargs.get("dense_mass", True)
+
+
+def _get_sample_site_names(model, model_kwargs, seed=42):
+    """Trace the model and return the set of non-observed sample site names."""
+    substituted_model = handlers.substitute(
+        handlers.seed(model, rng_seed=seed),
+        substitute_fn=init_to_median(num_samples=15),
+    )
+    model_trace = handlers.trace(substituted_model).get_trace(**model_kwargs)
+    return {k for k, v in model_trace.items()
+            if v["type"] == "sample" and not v.get("is_observed", False)}
+
+
 def find_initial_point(model, model_kwargs, maxiter=100, seed=42):
     """Run L-BFGS to find a reasonable MCMC starting point.
 
@@ -176,16 +215,22 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
         fprint("initialising NUTS from prior median.")
         init_strategy = init_to_median(num_samples=5000)
 
-    dense_mass = kwargs.get("dense_mass", True)
+    if init_params is not None:
+        site_names = set(init_params.keys())
+    elif kwargs.get("dense_mass_params") is not None:
+        site_names = _get_sample_site_names(model, model_kwargs)
+    else:
+        site_names = None
+    dense_mass = _parse_dense_mass(kwargs, site_names=site_names)
     if init_params is not None:
         ndim = sum(int(np.prod(v.shape)) for v in init_params.values())
-        fprint(f"using {'dense' if dense_mass else 'diagonal'} mass matrix "
-               f"({ndim} parameters).")
-        if dense_mass and ndim > 100:
-            fprint(f"WARNING: dense_mass=True with {ndim} parameters. "
-                   f"Consider setting dense_mass=False in the config.")
-    else:
-        fprint(f"using {'dense' if dense_mass else 'diagonal'} mass matrix.")
+        if isinstance(dense_mass, bool):
+            fprint(f"using {'dense' if dense_mass else 'diagonal'} mass "
+                   f"matrix ({ndim} parameters).")
+            if dense_mass and ndim > 100:
+                fprint(
+                    f"WARNING: dense_mass=True with {ndim} parameters. "
+                    f"Consider using dense_mass_params in the config.")
     kernel = NUTS(model, init_strategy=init_strategy, dense_mass=dense_mass)
     mcmc = MCMC(
         kernel, num_warmup=kwargs["num_warmup"],
@@ -296,7 +341,7 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
 
 
 def run_H0_inference(model, model_kwargs=None, print_summary=True,
-                     save_samples=True):
+                     save_samples=True, init_maxiter=None):
     """
     Run MCMC inference on an H0 model, post-process the samples, plot the
     corner plot and optionally save the samples to an HDF5 file.
@@ -309,7 +354,33 @@ def run_H0_inference(model, model_kwargs=None, print_summary=True,
 
     kwargs = model.config["inference"]
 
-    kernel = NUTS(model, init_strategy=init_to_median(num_samples=5000))
+    if init_maxiter is None:
+        init_maxiter = kwargs.get("init_maxiter", 1000)
+
+    if init_maxiter > 0:
+        init_params = find_initial_point(
+            model, model_kwargs, maxiter=init_maxiter,
+            seed=kwargs["seed"])
+        if init_params is not None:
+            fprint("initialising NUTS from L-BFGS solution.")
+            init_strategy = init_to_value(values=init_params)
+        else:
+            init_params = None
+            fprint("L-BFGS failed, initialising NUTS from prior median.")
+            init_strategy = init_to_median(num_samples=5000)
+    else:
+        init_params = None
+        fprint("initialising NUTS from prior median.")
+        init_strategy = init_to_median(num_samples=5000)
+
+    if init_params is not None:
+        site_names = set(init_params.keys())
+    elif kwargs.get("dense_mass_params") is not None:
+        site_names = _get_sample_site_names(model, model_kwargs)
+    else:
+        site_names = None
+    dense_mass = _parse_dense_mass(kwargs, site_names=site_names)
+    kernel = NUTS(model, init_strategy=init_strategy, dense_mass=dense_mass)
     mcmc = MCMC(
         kernel, num_warmup=kwargs["num_warmup"],
         num_samples=kwargs["num_samples"], num_chains=kwargs["num_chains"],

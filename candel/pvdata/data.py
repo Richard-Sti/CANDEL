@@ -1732,7 +1732,8 @@ def load_CSP(root, zcmb_min=None, zcmb_max=None, b_min=None, quality_min=None,
 
 
 def load_EDD_TRGB(root, zcmb_min=None, zcmb_max=None, b_min=None,
-                  los_data_path=None, return_all=False, **kwargs):
+                  los_data_path=None, return_all=False,
+                  return_mask=False, **kwargs):
     """Load EDD TRGB data from the pre-parsed CSV."""
     x = np.genfromtxt(join(root, "EDD_TRGB.csv"), delimiter=",",
                       names=True, dtype=None, encoding=None)
@@ -1758,8 +1759,121 @@ def load_EDD_TRGB(root, zcmb_min=None, zcmb_max=None, b_min=None,
     if return_all:
         return data
 
-    mask = _zcmb_blat_mask(zcmb, RA, dec, zcmb_min, zcmb_max, b_min)
-    return _filter_data(data, mask, los_data_path)
+    # Build a combined mask over the original catalogue indices.
+    n_orig = len(x)
+    keep = np.ones(n_orig, dtype=bool)
+
+    # Drop anchor and satellite galaxies (treated separately in the model).
+    names = np.array([n.strip() for n in x["name"]])
+    drop = np.isin(names, ["LMC", "SMC", "NGC4258", "NGC4258-DF6"])
+    if np.any(drop):
+        fprint(f"dropping {np.sum(drop)} anchor/satellite galaxies: "
+               f"{', '.join(names[drop])}")
+    keep &= ~drop
+
+    # Drop galaxies with missing TRGB magnitudes.
+    valid_mag = np.isfinite(data["mag"])
+    n_bad = np.sum(keep & ~valid_mag)
+    if n_bad > 0:
+        fprint(f"dropping {n_bad} galaxies with missing TRGB magnitudes.")
+    keep &= valid_mag
+
+    # Apply zcmb / galactic latitude cuts on the kept subset.
+    sub_mask = _zcmb_blat_mask(
+        zcmb[keep], RA[keep], dec[keep], zcmb_min, zcmb_max, b_min)
+    # Expand sub_mask back to the full catalogue.
+    idx_kept = np.where(keep)[0]
+    keep[idx_kept[~sub_mask]] = False
+
+    # Filter data arrays.
+    for k in data:
+        if isinstance(data[k], np.ndarray):
+            data[k] = data[k][keep]
+    n_kept = int(np.sum(keep))
+    fprint(f"removed {n_orig - n_kept} objects, thus {n_kept} remain.")
+
+    if los_data_path:
+        data = load_los(los_data_path, data, mask=keep)
+
+    if return_mask:
+        return data, keep
+    return data
+
+
+def load_EDD_TRGB_from_config(config_path):
+    """Load EDD TRGB data with LOS and anchor calibration from config."""
+    config = load_config(config_path, replace_los_prior=False)
+    d = config["io"]["PV_main"]["EDD_TRGB"]
+    root = d["root"]
+
+    zcmb_min = get_nested(config, "io/PV_main/EDD_TRGB/zcmb_min", None)
+    zcmb_max = get_nested(config, "io/PV_main/EDD_TRGB/zcmb_max", None)
+    b_min = get_nested(config, "io/PV_main/EDD_TRGB/b_min", None)
+
+    data, mask = load_EDD_TRGB(root, zcmb_min=zcmb_min, zcmb_max=zcmb_max,
+                                b_min=b_min, return_mask=True)
+
+    # Rename to match model expectations
+    data["RA_host"] = data.pop("RA")
+    data["dec_host"] = data.pop("dec")
+    data["mag_obs"] = data.pop("mag")
+    data["e_mag_obs"] = data.pop("e_mag")
+    data["czcmb"] = data.pop("zcmb") * SPEED_OF_LIGHT
+    data["e_czcmb"] = data.pop("e_zcmb") * SPEED_OF_LIGHT
+
+    # Median mag error for selection function smoothing
+    data["e_mag_median"] = float(np.median(data["e_mag_obs"]))
+
+    # LOS data
+    which_host_los = get_nested(config, "io/PV_main/EDD_TRGB/which_host_los",
+                                None)
+    los_data_path = None
+    rand_los_data_path = None
+
+    if get_nested(config, "io/load_host_los", False):
+        los_file = d.get("los_file", None)
+        if los_file is not None and which_host_los is not None:
+            los_data_path = los_file.replace("<X>", which_host_los)
+        else:
+            los_data_path = los_file
+
+    if get_nested(config, "io/load_rand_los", False):
+        rand_file = get_nested(config, "io/los_file_random", None)
+        if rand_file is not None and which_host_los is not None:
+            rand_los_data_path = rand_file.replace("<X>", which_host_los)
+        else:
+            rand_los_data_path = rand_file
+
+    if los_data_path is not None:
+        host_los = load_los(los_data_path, {}, mask=mask)
+        data["host_los_density"] = host_los["los_density"]
+        data["host_los_velocity"] = host_los["los_velocity"]
+        data["host_los_r"] = host_los["los_r"]
+
+    if rand_los_data_path is not None:
+        rand_los = load_los(rand_los_data_path, {}, mask=None, verbose=False)
+        data["rand_los_density"] = rand_los["los_density"]
+        data["rand_los_velocity"] = rand_los["los_velocity"]
+        data["rand_los_r"] = rand_los["los_r"]
+        data["rand_los_RA"] = rand_los.get("los_RA", None)
+        data["rand_los_dec"] = rand_los.get("los_dec", None)
+        data["has_rand_los"] = True
+        data["num_rand_los"] = data["rand_los_density"].shape[1]
+    else:
+        data["has_rand_los"] = False
+
+    # Anchor calibration from config
+    anchors = get_nested(config, "model/anchors", {})
+    data["mu_LMC_anchor"] = anchors.get("mu_LMC", 18.477)
+    data["e_mu_LMC_anchor"] = anchors.get("e_mu_LMC", 0.026)
+    data["mag_LMC_TRGB"] = anchors.get("mag_LMC_TRGB", 14.456)
+    data["e_mag_LMC_TRGB"] = anchors.get("e_mag_LMC_TRGB", 0.018)
+    data["mu_N4258_anchor"] = anchors.get("mu_N4258", 29.398)
+    data["e_mu_N4258_anchor"] = anchors.get("e_mu_N4258", 0.032)
+    data["mag_N4258_TRGB"] = anchors.get("mag_N4258_TRGB", 25.347)
+    data["e_mag_N4258_TRGB"] = anchors.get("e_mag_N4258_TRGB", 0.0443)
+
+    return data
 
 
 ###############################################################################

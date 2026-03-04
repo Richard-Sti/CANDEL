@@ -14,4 +14,5 @@
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 from .TFR_mock import gen_TFR_mock                                              # noqa
+from .TRGB_mock import gen_TRGB_mock                                            # noqa
 from .simple_mock import gen_simple_catalog                                     # noqa

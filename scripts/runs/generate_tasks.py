@@ -140,7 +140,7 @@ def generate_dynamic_tag(config, base_tag="default"):
     parts = []
     which_run = get_nested(config, "model/which_run", None)
 
-    if which_run in ("CH0", "CCHP", "CCHP_CSP"):
+    if which_run in ("CH0", "CCHP", "CCHP_CSP", "EDD_TRGB"):
         model_name = which_run
         catalogue = which_run
         parts.append(which_run)
@@ -249,6 +249,14 @@ def generate_dynamic_tag(config, base_tag="default"):
         if redshift_kind != "cz_cmb":
             parts.append(redshift_kind)
 
+    elif which_run == "EDD_TRGB":
+        which_sel = get_nested(config, "model/which_selection", None)
+        if _is_active(which_sel):
+            parts.append(f"sel-{which_sel}")
+        if get_nested(config, "model/use_reconstruction", False):
+            parts.append(get_nested(
+                config, "io/PV_main/EDD_TRGB/which_host_los", None))
+
     if base_tag != "default":
         parts.append(base_tag)
 
@@ -318,7 +326,7 @@ if __name__ == "__main__":
         help="Arbitrary tag/index for this task list.")
     args = parser.parse_args()
 
-    config_path = "./config.toml"
+    config_path = "./config_EDD_TRGB.toml"
     config = load_config(
         config_path, replace_none=False, replace_los_prior=False,
         fill_paths=False)
@@ -329,29 +337,11 @@ if __name__ == "__main__":
     # Load machine-specific settings from local_config.toml
     _local_cfg = load_local_config()
 
-    # Multiple override options → this creates a job per combination
+    # --- EDD TRGB: Carrick2015 reconstruction ---
     manual_overrides = {
-        # --- Short test run: 2MTF + Carrick2015 ---
         **{k: v for k, v in _local_cfg.items()},
-        # Inference
-        "inference/num_warmup": 50,
-        "inference/num_samples": 50,
-        "inference/num_chains": 1,
-        "inference/compute_log_density": False,
-        "inference/compute_evidence": False,
-        "inference/track_log_density_per_sample": False,
-        "inference/model": "TFRModel",
-        # PV model
-        "pv_model/kind": "precomputed_los_Carrick2015",
-        "pv_model/galaxy_bias": "linear_from_beta",
-        "pv_model/r_limits_malmquist": "auto",
-        "pv_model/dr_malmquist": 1.0,
-        # Model
-        "model/marginalize_eta": True,
-        "model/priors/beta": {"dist": "normal", "loc": 0.43, "scale": 0.1},
-        # IO
-        "io/catalogue_name": "2MTF",
-        "io/root_output": "results_test/",
+        "model/use_reconstruction": True,
+        "io/PV_main/EDD_TRGB/which_host_los": "Carrick2015",
     }
     # # --- CCHP overrides ---
     # manual_overrides = {
@@ -410,10 +400,11 @@ if __name__ == "__main__":
 
             # Validate which_run
             which_run = get_nested(local_config, "model/which_run", None)
-            if which_run is not None and which_run not in ("CCHP", "CCHP_CSP"):
+            valid_runs = (None, "CH0", "CCHP", "CCHP_CSP", "EDD_TRGB")
+            if which_run not in valid_runs:
                 raise ValueError(
                     f"Invalid which_run='{which_run}'. "
-                    "Must be 'CCHP' or 'CCHP_CSP'.")
+                    f"Must be one of {valid_runs}.")
 
             # Check that the output directory exists
             fdir_out = join(

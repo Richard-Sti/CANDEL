@@ -155,6 +155,11 @@ low = 0.0
 mean = 1.0
 scale = 3
 
+[model.priors.b1]
+dist = "uniform"
+low = 0.0
+high = 10.0
+
 [model.priors.alpha_low]
 dist = "truncated_normal"
 low = 0.0
