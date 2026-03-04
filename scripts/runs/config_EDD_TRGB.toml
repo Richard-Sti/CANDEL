@@ -72,9 +72,11 @@ loc = 0.43
 scale = 0.02
 
 [model.priors.b1]
-dist = "uniform"
+dist = "truncated_normal"
+mean = 1.2
+scale = 0.1
 low = 0.0
-high = 10.0
+high = 5.0
 
 # Selection thresholds
 [model.priors.mag_lim_TRGB]
