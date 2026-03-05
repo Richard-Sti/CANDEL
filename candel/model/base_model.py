@@ -28,7 +28,7 @@ from ..util import (fprint, fsection, get_nested, load_config,
                     radec_to_cartesian, replace_prior_with_delta)
 from .interp import LOSInterpolator
 from .pv_utils import lp_galaxy_bias
-from .simpson import ln_simpson
+from .simpson import ln_simpson, ln_simpson_precomputed, simpson_log_weights
 from .utils import load_priors, log_prob_integrand_sel, predict_cz
 
 
@@ -198,6 +198,7 @@ class ModelBase(ABC):
             f" to {r_limits_malmquist[1]} Mpc with "
             f"{self._num_points_malmquist} points.")
         self.Rmax = jnp.max(self.r_host_range)
+        self._simpson_log_w = simpson_log_weights(self.r_host_range)
 
     def _setup_random_los_grid(self):
         """Set up dummy random LOS when no reconstruction is used."""
@@ -262,20 +263,20 @@ class ModelBase(ABC):
         sigma_v = jnp.broadcast_to(sigma_v, cz_r.shape)
         log_prob = log_prob_integrand_sel(
             cz_r, sigma_v, cz_lim, cz_width)
-        return ln_simpson(
-            lp_r + log_prob,
-            x=self.r_host_range[None, None, :], axis=-1)
+        return ln_simpson_precomputed(
+            lp_r + log_prob, self._simpson_log_w, axis=-1)
 
     def log_S_mag(self, lp_r, M_abs, H0, e_mag,
-                  mag_lim, mag_width):
+                  mag_lim, mag_width, mu_grid=None):
         """Selection correction for a magnitude-limited sample."""
-        mag = (self.distance2distmod(
-            self.r_host_range, h=H0 / 100) + M_abs)
+        if mu_grid is None:
+            mu_grid = self.distance2distmod(
+                self.r_host_range, h=H0 / 100)
+        mag = mu_grid + M_abs
         log_prob = log_prob_integrand_sel(
             mag[None, None, :], e_mag, mag_lim, mag_width)
-        return ln_simpson(
-            lp_r + log_prob,
-            x=self.r_host_range[None, None, :], axis=-1)
+        return ln_simpson_precomputed(
+            lp_r + log_prob, self._simpson_log_w, axis=-1)
 
     @abstractmethod
     def __call__(self, *args, **kwargs):
@@ -342,7 +343,7 @@ class H0ModelBase(ModelBase):
     def _prepare_selection_grid(self, lp_host_dist_grid, Vext):
         """Prepare random-LOS distance prior grid and Vext projection."""
         if self.apply_sel:
-            lp_rand_dist_grid = jnp.copy(lp_host_dist_grid)
+            lp_rand_dist_grid = lp_host_dist_grid
             Vext_rad_rand = jnp.sum(
                 Vext[None, :] * self.rhat_rand_los, axis=1)
         else:
@@ -357,20 +358,24 @@ class H0ModelBase(ModelBase):
         lp_host_dist = lp_host_dist[None, :]
         los_delta_host = self.f_host_los_delta(rh_host)
 
+        _needs_log_rho = "linear" not in self.which_bias
+        log_rho_host = (jnp.log(1 + los_delta_host)
+                        if _needs_log_rho else None)
         lp_host_dist += lp_galaxy_bias(
-            los_delta_host, jnp.log(1 + los_delta_host), bias_params,
+            los_delta_host, log_rho_host, bias_params,
             self.which_bias)
 
         los_delta_grid = \
             self.f_host_los_delta.interp_many_steps_per_galaxy(
                 self.r_host_range * h)
+        log_rho_grid = (jnp.log(1 + los_delta_grid)
+                        if _needs_log_rho else None)
         lp_host_dist_grid += lp_galaxy_bias(
-            los_delta_grid, jnp.log(1 + los_delta_grid), bias_params,
+            los_delta_grid, log_rho_grid, bias_params,
             self.which_bias)
 
-        lp_host_dist_norm = ln_simpson(
-            lp_host_dist_grid,
-            x=self.r_host_range[None, None, ...], axis=-1)
+        lp_host_dist_norm = ln_simpson_precomputed(
+            lp_host_dist_grid, self._simpson_log_w, axis=-1)
 
         ll_reconstruction = lp_host_dist - lp_host_dist_norm
         lp_host_dist_grid -= lp_host_dist_norm[:, :, None]
@@ -383,19 +388,21 @@ class H0ModelBase(ModelBase):
             self.f_rand_los_delta.interp_many_steps_per_galaxy(
                 self.r_host_range * h)
 
+        log_rho = (jnp.log(1 + rand_los_delta_grid)
+                   if "linear" not in self.which_bias else None)
         lp_rand_dist_grid += lp_galaxy_bias(
-            rand_los_delta_grid, jnp.log(1 + rand_los_delta_grid),
+            rand_los_delta_grid, log_rho,
             bias_params, self.which_bias)
-        lp_rand_dist_grid -= ln_simpson(
-            lp_rand_dist_grid,
-            x=self.r_host_range[None, None, ...],
-            axis=-1)[..., None]
+        log_Z = ln_simpson_precomputed(
+            lp_rand_dist_grid, self._simpson_log_w, axis=-1)
+        lp_rand_dist_grid -= log_Z[..., None]
 
         rand_los_Vpec_grid = \
             self.f_rand_los_velocity.interp_many_steps_per_galaxy(
                 self.r_host_range * h)
 
-        return lp_rand_dist_grid, rand_los_delta_grid, rand_los_Vpec_grid
+        return lp_rand_dist_grid, rand_los_delta_grid, rand_los_Vpec_grid, \
+            log_Z
 
     def _no_reconstruction_fallback(self, lp_host_dist, lp_host_dist_grid):
         """Handle the no-reconstruction branch."""

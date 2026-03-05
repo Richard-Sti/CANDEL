@@ -16,3 +16,4 @@
 from .TFR_mock import gen_TFR_mock                                              # noqa
 from .TRGB_mock import gen_TRGB_mock                                            # noqa
 from .simple_mock import gen_simple_catalog                                     # noqa
+from .EDD_2MTF_mock import gen_EDD_2MTF_mock                                   # noqa

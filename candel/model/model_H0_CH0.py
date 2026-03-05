@@ -428,7 +428,7 @@ class CH0Model(H0ModelBase):
             sigma_v_host = map_sigma_v(los_delta_host)
             if self.apply_sel:
                 lp_rand_dist_grid, rand_los_delta_grid, \
-                    rand_los_Vpec_grid = \
+                    rand_los_Vpec_grid, _ = \
                     self._apply_rand_reconstruction(
                         lp_rand_dist_grid, h, bias_params)
                 sigma_v_selection = map_sigma_v(rand_los_delta_grid)

@@ -82,6 +82,25 @@ def simpson_log_weights(x):
 
 
 @partial(jax.jit, static_argnums=2)
+def ln_simpson_precomputed(ln_y, log_w, axis=-1):
+    """Log-space Simpson integration using pre-computed log weights.
+
+    Equivalent to ``ln_simpson`` but avoids recomputing weights each call.
+    Use ``simpson_log_weights(x)`` once to obtain ``log_w``.
+
+    Parameters
+    ----------
+    ln_y : array_like
+        Log function values. The integration axis must match `log_w`.
+    log_w : array_like
+        Pre-computed log Simpson weights from ``simpson_log_weights``.
+    axis : int
+        Axis along which to integrate.
+    """
+    return logsumexp(ln_y + log_w, axis=axis)
+
+
+@partial(jax.jit, static_argnums=2)
 def ln_simpson(ln_y, x, axis=-1):
     """
     Integrate y(x) using log values of the function `ln_y` evaluated at the

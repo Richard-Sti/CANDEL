@@ -1877,6 +1877,147 @@ def load_EDD_TRGB_from_config(config_path):
 
 
 ###############################################################################
+#                            EDD 2MTF (K-band TFR)                            #
+###############################################################################
+
+
+def load_EDD_2MTF(root, zcmb_min=None, zcmb_max=None, b_min=7.5,
+                  eta_min=None, eta_max=None,
+                  los_data_path=None, return_all=False,
+                  return_mask=False, **kwargs):
+    """Load 2MTF data from the EDD text file.
+
+    The file format is pipe-delimited with 5 header lines.
+    Returns K-band apparent magnitudes (Ktc) and linewidths
+    (eta = log10(Wc) - 2.5).
+    """
+    fpath = join(root, "EDD_2MTF.txt")
+    lines = open(fpath).readlines()
+    header = lines[1].strip().split("|")
+    rows = []
+    for line in lines[5:]:
+        rows.append(line.strip().split("|"))
+
+    def col(name):
+        return np.array([float(r[header.index(name)]) for r in rows])
+
+    RA = col("RA")
+    dec = col("Dec")
+    Ktc = col("Ktc")
+    eKtc = col("eKtc")
+    Wc = col("Wc")
+    eWc = col("eWc")
+    czcmb = col("czcmb")
+
+    eta = np.log10(Wc) - 2.5
+    e_eta = eWc / (Wc * np.log(10))
+    zcmb = czcmb / SPEED_OF_LIGHT
+
+    fprint(f"initially loaded {len(RA)} galaxies from EDD 2MTF data.")
+
+    data = dict(
+        RA=RA,
+        dec=dec,
+        zcmb=zcmb,
+        mag=Ktc,
+        e_mag=eKtc,
+        eta=eta,
+        e_eta=e_eta,
+    )
+
+    if return_all:
+        return data
+
+    mask = np.ones(len(RA), dtype=bool)
+    mask &= _zcmb_blat_mask(zcmb, RA, dec, zcmb_min, zcmb_max, b_min)
+    if eta_min is not None:
+        mask &= eta > eta_min
+    if eta_max is not None:
+        mask &= eta < eta_max
+
+    for k in data:
+        if isinstance(data[k], np.ndarray):
+            data[k] = data[k][mask]
+
+    n_kept = int(np.sum(mask))
+    fprint(f"removed {len(RA) - n_kept} objects, thus {n_kept} remain.")
+
+    if los_data_path:
+        data = load_los(los_data_path, data, mask=mask)
+
+    if return_mask:
+        return data, mask
+    return data
+
+
+def load_EDD_2MTF_from_config(config_path):
+    """Load EDD 2MTF data with LOS from config."""
+    config = load_config(config_path, replace_los_prior=False)
+    d = config["io"]["PV_main"]["EDD_2MTF"]
+    root = d["root"]
+
+    zcmb_min = d.get("zcmb_min", None)
+    zcmb_max = d.get("zcmb_max", None)
+    b_min = d.get("b_min", 7.5)
+    eta_min = d.get("eta_min", None)
+    eta_max = d.get("eta_max", None)
+
+    data, mask = load_EDD_2MTF(
+        root, zcmb_min=zcmb_min, zcmb_max=zcmb_max, b_min=b_min,
+        eta_min=eta_min, eta_max=eta_max,
+        return_mask=True)
+
+    # Rename to match model expectations
+    data["RA_host"] = data.pop("RA")
+    data["dec_host"] = data.pop("dec")
+    data["czcmb"] = data.pop("zcmb") * SPEED_OF_LIGHT
+    data["e_czcmb"] = np.full(len(data["czcmb"]), 10.0)  # ~10 km/s
+
+    # Median errors for selection function
+    data["e_mag_median"] = float(np.median(data["e_mag"]))
+    data["e_eta_median"] = float(np.median(data["e_eta"]))
+
+    # LOS data
+    which_host_los = d.get("which_host_los", None)
+    los_data_path = None
+    rand_los_data_path = None
+
+    if get_nested(config, "io/load_host_los", False):
+        los_file = d.get("los_file", None)
+        if los_file is not None and which_host_los is not None:
+            los_data_path = los_file.replace("<X>", which_host_los)
+        else:
+            los_data_path = los_file
+
+    if get_nested(config, "io/load_rand_los", False):
+        rand_file = get_nested(config, "io/los_file_random", None)
+        if rand_file is not None and which_host_los is not None:
+            rand_los_data_path = rand_file.replace("<X>", which_host_los)
+        else:
+            rand_los_data_path = rand_file
+
+    if los_data_path is not None:
+        host_los = load_los(los_data_path, {}, mask=mask)
+        data["host_los_density"] = host_los["los_density"]
+        data["host_los_velocity"] = host_los["los_velocity"]
+        data["host_los_r"] = host_los["los_r"]
+
+    if rand_los_data_path is not None:
+        rand_los = load_los(rand_los_data_path, {}, mask=None, verbose=False)
+        data["rand_los_density"] = rand_los["los_density"]
+        data["rand_los_velocity"] = rand_los["los_velocity"]
+        data["rand_los_r"] = rand_los["los_r"]
+        data["rand_los_RA"] = rand_los.get("los_RA", None)
+        data["rand_los_dec"] = rand_los.get("los_dec", None)
+        data["has_rand_los"] = True
+        data["num_rand_los"] = data["rand_los_density"].shape[1]
+    else:
+        data["has_rand_los"] = False
+
+    return data
+
+
+###############################################################################
 #                          Catalogue registry                                 #
 ###############################################################################
 
@@ -1891,4 +2032,5 @@ _CATALOGUE_LOADERS = {
     "PantheonPlusLane": load_PantheonPlus_Lane,
     "CSP": load_CSP,
     "EDD_TRGB": load_EDD_TRGB,
+    "EDD_2MTF": load_EDD_2MTF,
 }
