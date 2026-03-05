@@ -1751,7 +1751,7 @@ def load_EDD_TRGB(root, zcmb_min=None, zcmb_max=None, b_min=None,
         dec=dec,
         zcmb=zcmb,
         e_zcmb=e_zcmb,
-        mag=x["T814"].astype(np.float64),
+        mag=x["T814"].astype(np.float64) - x["A_814"].astype(np.float64),
         e_mag=(x["T8_hi"].astype(np.float64)
                - x["T8_lo"].astype(np.float64)) / 2,
     )

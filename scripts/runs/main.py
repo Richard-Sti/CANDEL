@@ -91,6 +91,17 @@ if __name__ == "__main__":
         data = candel.pvdata.load_EDD_TRGB_from_config(args.config)
         model = candel.model.TRGBModel(args.config, data)
         candel.run_H0_inference(model, )
+
+        # Posterior predictive check
+        if get_nested(config, "model/run_ppc", True):
+            from candel.ppc_trgb import generate_trgb_ppc, plot_trgb_ppc
+
+            fprint("running posterior predictive check...")
+            samples = candel.read_samples(
+                "", fname_out)
+            ppc = generate_trgb_ppc(samples, data, args.config)
+            ppc_fname = fname_out.rsplit(".", 1)[0] + "_ppc.png"
+            plot_trgb_ppc(ppc, ppc_fname)
     elif which_run == "CCHP_CSP":
         fprint("selected `CCHP_CSP` joint TRGB-CSP model.")
         trgb_data = candel.pvdata.load_CCHP_from_config(args.config)
