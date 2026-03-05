@@ -226,25 +226,24 @@ class TRGBModel(H0ModelBase):
             # Global S using JOINT prior π(r,û) ∝ r²(1+b₁δ):
             # p(S=1|Λ) = ∫∫ Φ(r) r²(1+b₁δ) dΩ dr / Z_total
             # MC: (1/N) Σ_j ∫ Φ(r) r²(1+b₁δ_j) dr
-            # Note: _apply_rand_reconstruction normalizes per-LOS,
-            # so we add log_Z back to get the unnormalized integral.
+            # Pass unnormalized prior directly to log_S_mag, avoiding
+            # the normalize-then-unnormalize round-trip and skipping
+            # the unnecessary velocity interpolation.
             e_eff = jnp.sqrt(self.e2_mag_median + sigma_int**2)
-            lp_sel_grid = lp_r[None, None, :]
-            lp_rand_dist_grid, _ = \
-                self._prepare_selection_grid(lp_sel_grid, Vext)
+            lp_rand_dist_grid = lp_r[None, None, :]
             if self.use_reconstruction:
-                lp_rand_dist_grid, _, _, log_Z_rand = \
-                    self._apply_rand_reconstruction(
-                        lp_rand_dist_grid, h, bias_params)
-            else:
-                log_Z_rand = 0.
+                rand_delta = \
+                    self.f_rand_los_delta.interp_many_steps_per_galaxy(
+                        self.r_host_range * h)
+                log_rho = (jnp.log(1 + rand_delta)
+                           if "linear" not in self.which_bias else None)
+                lp_rand_dist_grid = lp_rand_dist_grid + lp_galaxy_bias(
+                    rand_delta, log_rho, bias_params, self.which_bias)
 
-            # log ∫ Φ π_norm dr (per random LOS)
-            log_S_norm = self.log_S_mag(
+            # log ∫ Φ(r) r²(1+b₁δ_j) dr  (unnormalized)
+            log_S = logmeanexp(self.log_S_mag(
                 lp_rand_dist_grid, M_TRGB, H0, e_eff,
-                mag_lim, mag_width, mu_grid=mu_grid)
-            # Unnormalize: log ∫ Φ r²(1+b₁δ_j) dr = log_S_norm + log_Z
-            log_S = logmeanexp(log_S_norm + log_Z_rand, axis=-1)
+                mag_lim, mag_width, mu_grid=mu_grid), axis=-1)
 
         elif self.which_selection == "redshift":
             cz_lim = self._resolve_threshold("cz_lim_selection")
