@@ -30,7 +30,19 @@ from .utils import config_hash, log_prior_r_empirical, predict_cz
 
 
 class BasePVModel(ModelBase):
-    """Base class for all PV models. """
+    """
+    Base class for Peculiar Velocity (PV) forward models.
+
+    This class provides common infrastructure for models that involve
+    distance-indicator observables and peculiar velocities derived from
+    reconstructed density/velocity fields or external dipoles.
+
+    It handles:
+    - Loading PV-specific configuration (Vext models, galaxy bias).
+    - Sampling of shared velocity-field parameters (beta, Vext, sigma_v).
+    - Rejection sampling of the distance prior weighted by density.
+    - Integration over the line-of-sight distance.
+    """
 
     def __init__(self, config_path):
         super().__init__(config_path)
@@ -160,9 +172,19 @@ class BasePVModel(ModelBase):
 
 class JointPVModel:
     """
-    A joint probabilistic velocity (PV) model that runs multiple submodels
-    (e.g., TFR models) on independent datasets, while sharing a subset of
-    parameters across all submodels.
+    Joint likelihood model for multiple independent PV datasets.
+
+    Enables joint inference where certain parameters (e.g., :math:`\beta`,
+    :math:`\sigma_v`, :math:`V_{\rm ext}`) are shared across different
+    distance-indicator catalogues while others (e.g., TFR zero-points) remain
+    catalogue-specific.
+
+    Parameters
+    ----------
+    submodels : list of BasePVModel
+        The individual models to be combined.
+    shared_param_names : list of str
+        Names of parameters from the ``[model.priors]`` section to be shared.
     """
 
     def __init__(self, submodels, shared_param_names):

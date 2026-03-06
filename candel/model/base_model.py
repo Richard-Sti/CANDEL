@@ -78,7 +78,23 @@ def make_adaptive_grid(r_min, r_max, delta_mu, dr_max):
 
 
 class ModelBase(ABC):
-    """Common ancestor for PV and H0 model hierarchies."""
+    """
+    Common abstract base class for all forward models (PV and H0).
+
+    Subclasses are expected to implement:
+    - ``model()``: The main NumPyro model function that defines the parameters
+      and likelihood.
+    - Data loading and preprocessing in ``__init__``.
+
+    Attributes
+    ----------
+    config : dict
+        Loaded TOML configuration.
+    Om : float
+        Matter density parameter :math:`\Omega_m`.
+    distance2distmod, distance2redshift, redshift2distance, distmod2distance : callable
+        JAX-JITted cosmography interpolators.
+    """
 
     def __init__(self, config_path):
         config = load_config(config_path, replace_los_prior=False)
