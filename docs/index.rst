@@ -16,5 +16,18 @@ differentiation and JIT compilation throughout.
    :caption: Contents
 
    installation
+   quickstart
+   configuration
    models
    api/index
+
+Tutorials
+---------
+
+For practical examples, please refer to the Jupyter notebooks in the
+`notebooks/ <https://github.com/Richard-Sti/CANDEL/tree/main/notebooks>`_
+directory. These notebooks demonstrate specific workflows, such as:
+
+- **example.ipynb**: A general overview of the package.
+- **paper_SH0ES**: Replicating the results from `Stiskalek et al. (2025) <https://arxiv.org/abs/2509.09665>`_.
+- **paper_CCHP**: Analysis of the CCHP TRGB calibration.

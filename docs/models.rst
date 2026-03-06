@@ -1,6 +1,29 @@
 Supported models
 ================
 
+Forward-modelling approach
+--------------------------
+
+CANDEL implements a forward-modelling approach for each distance indicator.
+Given a comoving distance :math:`r` and the cosmological parameter :math:`h = H_0/100`, the
+distance modulus is computed as:
+
+.. math::
+
+   \mu(r, h) = 5 \log_{10}\left[\frac{(1+z_{\rm cosmo})r}{10\,\mathrm{pc}}\right]
+
+where :math:`z_{\rm cosmo}` is the cosmological redshift. The observed
+observable :math:`y` (e.g., apparent magnitude, line width) is then modelled
+as:
+
+.. math::
+
+   y \sim \mathcal{N}(M + \mu(r, h), \sigma^2)
+
+where :math:`M` is the intrinsic absolute magnitude (or a function of latent
+observables) and :math:`\sigma` accounts for both measurement error and
+intrinsic scatter.
+
 Peculiar-velocity models
 ------------------------
 
