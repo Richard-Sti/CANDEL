@@ -1820,7 +1820,7 @@ def load_EDD_TRGB_from_config(config_path):
     b_min = get_nested(config, "io/PV_main/EDD_TRGB/b_min", None)
 
     data, mask = load_EDD_TRGB(root, zcmb_min=zcmb_min, zcmb_max=zcmb_max,
-                                b_min=b_min, return_mask=True)
+                               b_min=b_min, return_mask=True)
 
     # Rename to match model expectations
     data["RA_host"] = data.pop("RA")

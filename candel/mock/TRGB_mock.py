@@ -19,10 +19,8 @@ from scipy.stats import norm
 from ..cosmography import Distance2Distmod, Distance2Redshift
 from ..field import interpolate_los_density_velocity
 from ..field.field_interp import build_regular_interpolator
-from ..util import (SPEED_OF_LIGHT, cartesian_to_radec,
-                    galactic_to_radec, galactic_to_radec_cartesian,
-                    radec_to_cartesian)
-
+from ..util import (SPEED_OF_LIGHT, cartesian_to_radec, galactic_to_radec,
+                    galactic_to_radec_cartesian, radec_to_cartesian)
 
 DEFAULT_TRUE_PARAMS = {
     "H0": 73.0,
@@ -67,6 +65,20 @@ def _gen_homogeneous_path(nsamples, h, rmin, rmax, e_mag, e_czcmb,
                           mag_lim, mag_lim_width, cz_lim, cz_lim_width,
                           r2mu, r2z, gen, verbose):
     """Homogeneous (no field) distance sampling path."""
+    # Tighten sampling sphere based on selection
+    r_sample = rmax
+    if mag_lim is not None:
+        mu_max = mag_lim - M_TRGB
+        sigma_tot = np.sqrt(sigma_int**2 + e_mag**2 + mag_lim_width**2)
+        mu_cutoff = mu_max + 5 * sigma_tot
+        r_sample = min(10**((mu_cutoff - 25) / 5), rmax)
+    elif cz_lim is not None:
+        r_sample = min(cz_lim / (h * 100) * 1.5, rmax)
+
+    if verbose and r_sample < rmax:
+        print(f"Homogeneous mock: tightened r_max from {rmax:.1f} to "
+              f"{r_sample:.1f} Mpc based on selection")
+
     collected = {k: [] for k in ["RA", "dec", "r", "mag_obs", "cz_obs"]}
     n_accepted = 0
     n_parent = 0
@@ -78,7 +90,7 @@ def _gen_homogeneous_path(nsamples, h, rmin, rmax, e_mag, e_czcmb,
         rhat = radec_to_cartesian(RA, dec)
 
         u = gen.random(batch)
-        r = (rmin**3 + u * (rmax**3 - rmin**3))**(1 / 3)
+        r = (rmin**3 + u * (r_sample**3 - rmin**3))**(1 / 3)
 
         mu = np.asarray(r2mu(r, h=h))
         z_cosmo = np.asarray(r2z(r, h=h))
@@ -123,12 +135,12 @@ def _field_xyz_to_radec(pos_rel, r, coordinate_frame):
     if coordinate_frame == "icrs":
         return cartesian_to_radec(x, y, z)
     elif coordinate_frame == "galactic":
-        l = np.rad2deg(np.arctan2(y, x))
+        ell = np.rad2deg(np.arctan2(y, x))
         b = np.rad2deg(np.arcsin(z / r))
-        return galactic_to_radec(l, b)
+        return galactic_to_radec(ell, b)
     elif coordinate_frame == "supergalactic":
-        from astropy.coordinates import SkyCoord
         from astropy import units as u
+        from astropy.coordinates import SkyCoord
         sgl = np.rad2deg(np.arctan2(y, x))
         sgb = np.rad2deg(np.arcsin(z / r))
         c = SkyCoord(sgl=sgl * u.deg, sgb=sgb * u.deg,
@@ -319,7 +331,6 @@ def _gen_field_path(nsamples, h, b1, beta, rmin, rmax, e_mag, e_czcmb,
 def _smoothclip(x, tau=0.1):
     """Smooth zero-clipping matching the model's smoothclip_nr."""
     return 0.5 * (x + np.sqrt(x**2 + tau**2))
-
 
 
 def gen_TRGB_mock(nsamples=480, Om=0.3, e_mag=0.05, e_czcmb=10.0,

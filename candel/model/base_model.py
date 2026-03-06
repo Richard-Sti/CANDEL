@@ -28,7 +28,7 @@ from ..util import (fprint, fsection, get_nested, load_config,
                     radec_to_cartesian, replace_prior_with_delta)
 from .interp import LOSInterpolator
 from .pv_utils import lp_galaxy_bias
-from .simpson import ln_simpson, ln_simpson_precomputed, simpson_log_weights
+from .simpson import ln_simpson_precomputed, simpson_log_weights
 from .utils import load_priors, log_prob_integrand_sel, predict_cz
 
 
@@ -78,7 +78,7 @@ def make_adaptive_grid(r_min, r_max, delta_mu, dr_max):
 
 
 class ModelBase(ABC):
-    """
+    r"""
     Common abstract base class for all forward models (PV and H0).
 
     Subclasses are expected to implement:
@@ -101,10 +101,10 @@ class ModelBase(ABC):
         # SH0ES configs use "Om0", PV configs use "Om".
         self.Om = get_nested(config, "model/Om",
                              get_nested(config, "model/Om0", 0.3))
-        self.distance2distmod = Distance2Distmod(Om0=self.Om)
-        self.distance2redshift = Distance2Redshift(Om0=self.Om)
-        self.redshift2distance = Redshift2Distance(Om0=self.Om)
-        self.distmod2distance = Distmod2Distance(Om0=self.Om)
+        self.distance2distmod, self.distance2redshift = \
+            Distance2Distmod(Om0=self.Om), Distance2Redshift(Om0=self.Om)
+        self.redshift2distance, self.distmod2distance = \
+            Redshift2Distance(Om0=self.Om), Distmod2Distance(Om0=self.Om)
         self.config = config
 
     def _load_and_set_priors(self):

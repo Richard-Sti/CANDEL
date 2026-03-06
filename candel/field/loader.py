@@ -37,7 +37,7 @@ def _flip_xz(field):
 
 
 class BaseFieldLoader(ABC):
-    """
+    r"""
     Base class for loading 3D density and velocity fields.
 
     Subclasses must implement:

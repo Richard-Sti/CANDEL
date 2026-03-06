@@ -49,7 +49,7 @@ def _build_interpolator(x, y, is_scalar=False):
 
 
 class Distmod2Distance:
-    """
+    r"""
     Interpolator to convert distance modulus to comoving distance in `Mpc`.
     Choice of `h` is determined when calling the `__call__` method.
 
@@ -86,7 +86,7 @@ class Distmod2Distance:
 
 
 class Distance2Distmod:
-    """
+    r"""
     Interpolator to convert distance in `Mpc` to distance modulus.
     Choice of `h` is determined when calling the `__call__` method.
 
@@ -120,7 +120,7 @@ class Distance2Distmod:
 
 
 class Distance2LogAngDist:
-    """
+    r"""
     Interpolator to convert distance in `Mpc` to log angular diameter
     distance. `h` is assumed to be one.
 
@@ -155,7 +155,7 @@ class Distance2LogAngDist:
 
 
 class Distance2LogLumDist:
-    """
+    r"""
     Interpolator to convert distance in `Mpc` to log luminosity distance.
     `h` is assumed to be one.
 
@@ -189,7 +189,7 @@ class Distance2LogLumDist:
 
 
 class LogAngularDiameterDistance2Distmod:
-    """
+    r"""
     Interpolator to convert log angular diameter distance in `Mpc` to
     distance modulus. Choice of `h` is determined when calling the
     `__call__` method.
@@ -221,7 +221,7 @@ class LogAngularDiameterDistance2Distmod:
 
 
 class Distmod2Redshift:
-    """
+    r"""
     Interpolator to convert distance modulus to redshift.
     Choice of `h` is determined when calling the `__call__` method.
 
@@ -254,7 +254,7 @@ class Distmod2Redshift:
 
 
 class Redshift2Distance:
-    """
+    r"""
     Interpolator to convert redshift to comoving distance in `Mpc`.
     Choice of `h` is determined when calling the `__call__` method.
 
@@ -292,7 +292,7 @@ class Redshift2Distance:
 
 
 class Redshift2Distmod:
-    """
+    r"""
     Interpolator to convert redshift to distance modulus.
     Choice of `h` is determined when calling the `__call__` method.
 
@@ -322,7 +322,7 @@ class Redshift2Distmod:
 
 
 class Distance2Redshift:
-    """
+    r"""
     Interpolator to convert comoving distance in `Mpc` to redshift.
     Choice of `h` is determined when calling the `__call__` method.
 
@@ -351,7 +351,7 @@ class Distance2Redshift:
 
 
 class LogGrad_Distmod2ComovingDistance:
-    """
+    r"""
     Interpolator to compute the log gradient of the comoving distance in
     `Mpc / h` with respect to distance modulus. Choice of `h` is determined
     when calling the `__call__` method.
@@ -391,7 +391,7 @@ class LogGrad_Distmod2ComovingDistance:
 ###############################################################################
 
 class Distance2Distmod_withOm:
-    """
+    r"""
     Interpolator to convert distance in `Mpc` to distance modulus, as a
     function of `h` and `Om`, which are specified on the fly.
 
@@ -432,7 +432,7 @@ class Distance2Distmod_withOm:
 
 
 class Distance2Redshift_withOm:
-    """
+    r"""
     Interpolator to convert distance in `Mpc` to redshift, as a
     function of `h` and `Om`, which are specified on the fly.
 

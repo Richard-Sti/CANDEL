@@ -171,7 +171,7 @@ class BasePVModel(ModelBase):
 
 
 class JointPVModel:
-    """
+    r"""
     Joint likelihood model for multiple independent PV datasets.
 
     Enables joint inference where certain parameters (e.g., :math:`\beta`,
