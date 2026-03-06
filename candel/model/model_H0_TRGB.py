@@ -148,14 +148,6 @@ class TRGBModel(H0ModelBase):
             return rsample(name, self.priors[name])
         return getattr(self, name)
 
-    def log_S_TRGB_mag(self, lp_r, M_TRGB, H0, sigma_int,
-                       mag_lim, mag_width, mu_grid=None):
-        """Selection correction for TRGB magnitude limit."""
-        e_eff = jnp.sqrt(self.e2_mag_median + sigma_int**2)
-        return self.log_S_mag(
-            lp_r, M_TRGB, H0, e_eff,
-            mag_lim, mag_width, mu_grid=mu_grid)
-
     # ------------------------------------------------------------------
     #  Forward model
     # ------------------------------------------------------------------
@@ -252,22 +244,31 @@ class TRGBModel(H0ModelBase):
             factor("ll_sel_per_object", jnp.sum(
                 norm_jax.logcdf((cz_lim - self.czcmb) / cz_width)))
 
-            lp_sel_grid = lp_r[None, None, :]
-            lp_rand_dist_grid, Vext_rad_rand = \
-                self._prepare_selection_grid(lp_sel_grid, Vext)
+            # Global S using unnormalized joint prior, inlined to
+            # skip the normalize-then-unnormalize round-trip.
+            lp_rand_dist_grid = lp_r[None, None, :]
+            Vext_rad_rand = jnp.sum(
+                Vext[None, :] * self.rhat_rand_los, axis=1)
             if self.use_reconstruction:
-                lp_rand_dist_grid, _, rand_los_Vpec_grid, _ = \
-                    self._apply_rand_reconstruction(
-                        lp_rand_dist_grid, h, bias_params)
+                rand_delta = \
+                    self.f_rand_los_delta.interp_many_steps_per_galaxy(
+                        r_grid * h)
+                log_rho = (jnp.log(1 + rand_delta)
+                           if "linear" not in self.which_bias
+                           else None)
+                lp_rand_dist_grid = lp_rand_dist_grid + lp_galaxy_bias(
+                    rand_delta, log_rho, bias_params, self.which_bias)
+                rand_los_Vpec_grid = \
+                    self.f_rand_los_velocity.interp_many_steps_per_galaxy(
+                        r_grid * h)
             else:
                 rand_los_Vpec_grid = 0.
 
-            log_S = self.log_S_cz(
+            log_S = logmeanexp(self.log_S_cz(
                 lp_rand_dist_grid,
                 Vext_rad_rand[None, :, None]
                 + beta * rand_los_Vpec_grid,
-                H0, sigma_v, cz_lim, cz_width)
-            log_S = logmeanexp(log_S, axis=-1)
+                H0, sigma_v, cz_lim, cz_width), axis=-1)
 
         # --- Per-host distance handling ---
         e_cz = jnp.sqrt(self.e2_czcmb + sigma_v**2)

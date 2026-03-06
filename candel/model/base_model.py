@@ -190,6 +190,10 @@ class ModelBase(ABC):
             config, "model/r_limits_malmquist", [0.01, 150])
         self._num_points_malmquist = get_nested(
             config, "model/num_points_malmquist", 251)
+        if self._num_points_malmquist % 2 == 0:
+            raise ValueError(
+                f"num_points_malmquist must be odd for Simpson's rule, "
+                f"got {self._num_points_malmquist}")
         self.r_host_range = jnp.linspace(
             r_limits_malmquist[0], r_limits_malmquist[1],
             self._num_points_malmquist)

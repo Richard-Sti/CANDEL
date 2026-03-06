@@ -151,7 +151,7 @@ def _gen_field_path(nsamples, h, b1, beta, rmin, rmax, e_mag, e_czcmb,
     distribution p(r, Ω) ∝ smoothclip(1 + b1*δ(r,Ω)) * r².
     """
     # LOS grid for the model covers the full rmax range (in Mpc/h)
-    r_grid = np.linspace(0.1, rmax, 301)
+    r_grid = np.linspace(0.1, rmax * h, 301)
 
     # Sampling sphere: set from selection threshold, not the full rmax
     r_sample_Mpc = rmax
