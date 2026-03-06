@@ -64,6 +64,11 @@ class Distmod2Distance:
     is_scalar : bool
         If `True`, the interpolator is not vectorized. This is useful for
         debugging, but should be set to `False` for performance.
+
+    Notes
+    -----
+    The parameter `h` is defined as :math:`h = H_0 / 100\,\mathrm{km/s/Mpc}`.
+    The resulting comoving distance is in units of `Mpc`.
     """
     def __init__(self, Om0=0.3, zmin_interp=1e-8, zmax_interp=0.5,
                  npoints_interp=1000, is_scalar=False):
@@ -96,6 +101,11 @@ class Distance2Distmod:
     is_scalar : bool
         If `True`, the interpolator is not vectorized. This is useful for
         debugging, but should be set to `False` for performance.
+
+    Notes
+    -----
+    The parameter `h` is defined as :math:`h = H_0 / 100\,\mathrm{km/s/Mpc}`.
+    Distances are in units of `Mpc`.
     """
     def __init__(self, Om0=0.3, zmin_interp=1e-8, zmax_interp=0.5,
                  npoints_interp=1000, is_scalar=False):
@@ -125,6 +135,11 @@ class Distance2LogAngDist:
     is_scalar : bool
         If `True`, the interpolator is not vectorized. This is useful for
         debugging, but should be set to `False` for performance.
+
+    Notes
+    -----
+    The parameter `h` is defined as :math:`h = H_0 / 100\,\mathrm{km/s/Mpc}`.
+    Distances are in units of `Mpc`.
     """
     def __init__(self, Om0=0.3, zmin_interp=1e-8, zmax_interp=0.5,
                  npoints_interp=1000, is_scalar=False):
@@ -155,6 +170,11 @@ class Distance2LogLumDist:
     is_scalar : bool
         If `True`, the interpolator is not vectorized. This is useful for
         debugging, but should be set to `False` for performance.
+
+    Notes
+    -----
+    The parameter `h` is defined as :math:`h = H_0 / 100\,\mathrm{km/s/Mpc}`.
+    Distances are in units of `Mpc`.
     """
     def __init__(self, Om0=0.3, zmin_interp=1e-8, zmax_interp=0.5,
                  npoints_interp=1000, is_scalar=False):
@@ -182,6 +202,11 @@ class LogAngularDiameterDistance2Distmod:
         Minimum and maximum redshift for the interpolation grid.
     npoints_interp : int
         Number of points in the interpolation grid.
+
+    Notes
+    -----
+    The parameter `h` is defined as :math:`h = H_0 / 100\,\mathrm{km/s/Mpc}`.
+    Distances are in units of `Mpc`.
     """
     def __init__(self, Om0=0.3, zmin_interp=1e-8, zmax_interp=0.5,
                  npoints_interp=1000):
@@ -208,6 +233,11 @@ class Distmod2Redshift:
         Minimum and maximum redshift for the interpolation grid.
     npoints_interp : int
         Number of points in the interpolation grid.
+
+    Notes
+    -----
+    The parameter `h` is defined as :math:`h = H_0 / 100\,\mathrm{km/s/Mpc}`.
+    Distances are in units of `Mpc`.
     """
     def __init__(self, Om0=0.3, zmin_interp=1e-8, zmax_interp=0.5,
                  npoints_interp=1000):
@@ -239,6 +269,11 @@ class Redshift2Distance:
     is_scalar : bool
         If `True`, the interpolator is not vectorized. This is useful for
         debugging, but should be set to `False` for performance.
+
+    Notes
+    -----
+    The parameter `h` is defined as :math:`h = H_0 / 100\,\mathrm{km/s/Mpc}`.
+    Distances are in units of `Mpc`.
     """
     def __init__(self, Om0=0.3, zmin_interp=1e-8, zmax_interp=0.5,
                  npoints_interp=1000, is_scalar=False):
@@ -269,6 +304,11 @@ class Redshift2Distmod:
         Minimum and maximum redshift for the interpolation grid.
     npoints_interp : int
         Number of points in the interpolation grid.
+
+    Notes
+    -----
+    The parameter `h` is defined as :math:`h = H_0 / 100\,\mathrm{km/s/Mpc}`.
+    Distances are in units of `Mpc`.
     """
     def __init__(self, Om0=0.3, zmin_interp=1e-8, zmax_interp=0.5,
                  npoints_interp=1000):
@@ -294,6 +334,11 @@ class Distance2Redshift:
         Minimum and maximum redshift for the interpolation grid.
     npoints_interp : int
         Number of points in the interpolation grid.
+
+    Notes
+    -----
+    The parameter `h` is defined as :math:`h = H_0 / 100\,\mathrm{km/s/Mpc}`.
+    Distances are in units of `Mpc`.
     """
     def __init__(self, Om0=0.3, zmin_interp=1e-8, zmax_interp=0.5,
                  npoints_interp=1000):
@@ -321,6 +366,11 @@ class LogGrad_Distmod2ComovingDistance:
         Minimum and maximum redshift for the interpolation grid.
     npoints_interp : int
         Number of points in the interpolation grid.
+
+    Notes
+    -----
+    The parameter `h` is defined as :math:`h = H_0 / 100\,\mathrm{km/s/Mpc}`.
+    Distances are in units of `Mpc`.
     """
     def __init__(self, Om0=0.3, zmin_interp=1e-8, zmax_interp=0.5,
                  npoints_interp=1000):
@@ -344,6 +394,11 @@ class Distance2Distmod_withOm:
     """
     Interpolator to convert distance in `Mpc` to distance modulus, as a
     function of `h` and `Om`, which are specified on the fly.
+
+    Notes
+    -----
+    The parameter `h` is defined as :math:`h = H_0 / 100\,\mathrm{km/s/Mpc}`.
+    Distances are in units of `Mpc`.
     """
     def __init__(self, rmin=1e-3, rmax=500, nr=500,
                  Om_min=0.01, Om_max=0.99, nOm=500,
@@ -380,6 +435,11 @@ class Distance2Redshift_withOm:
     """
     Interpolator to convert distance in `Mpc` to redshift, as a
     function of `h` and `Om`, which are specified on the fly.
+
+    Notes
+    -----
+    The parameter `h` is defined as :math:`h = H_0 / 100\,\mathrm{km/s/Mpc}`.
+    Distances are in units of `Mpc`.
     """
     def __init__(self, rmin=1e-3, rmax=500, nr=500,
                  Om_min=0.01, Om_max=0.99, nOm=500,

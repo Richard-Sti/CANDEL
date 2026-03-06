@@ -176,12 +176,38 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
                      save_samples=True, return_original_samples=False,
                      init_maxiter=None, progress_bar=True):
     """
-    Run MCMC inference on the given PV model, post-process the samples,
-    optionally compute the BIC, AIC, evidence and save the samples to an
-    HDF5 file.
+    Run MCMC inference on the given PV model.
 
-    If `init_maxiter` > 0, runs L-BFGS to find a good starting point
-    before launching NUTS.
+    This function sets up the NumPyro NUTS kernel, optionally finds a
+    starting point via L-BFGS, runs the chains, and performs
+    post-processing (including evidence calculation and plotting).
+
+    Parameters
+    ----------
+    model : BasePVModel or JointPVModel
+        The forward model to run.
+    model_kwargs : dict
+        Keyword arguments passed to the model (e.g., ``data``).
+    print_summary : bool, optional
+        Whether to print a summary of the posterior samples.
+    save_samples : bool, optional
+        Whether to save samples, summary, and plots to disk.
+    return_original_samples : bool, optional
+        Whether to return the raw samples (including deterministic sites).
+    init_maxiter : int or None, optional
+        Maximum L-BFGS iterations for finding a starting point. If `None`,
+        read from config.
+    progress_bar : bool, optional
+        Whether to show a progress bar during sampling.
+
+    Returns
+    -------
+    samples : dict
+        Post-processed posterior samples.
+    log_density : jnp.ndarray or None
+        Log-density of the samples.
+    original_samples : dict, optional
+        Raw samples, only returned if `return_original_samples` is True.
     """
     fsection("Inference")
     _setup_platform()
@@ -345,8 +371,32 @@ def run_H0_inference(model, model_kwargs=None, print_summary=True,
                      save_samples=True, init_maxiter=None,
                      progress_bar=True):
     """
-    Run MCMC inference on an H0 model, post-process the samples, plot the
-    corner plot and optionally save the samples to an HDF5 file.
+    Run MCMC inference on an H0 model.
+
+    This function sets up the NumPyro NUTS kernel, optionally finds a
+    starting point via L-BFGS, runs the chains, and performs
+    post-processing (including plotting and saving).
+
+    Parameters
+    ----------
+    model : ModelBase
+        The H0 model instance.
+    model_kwargs : dict, optional
+        Keyword arguments passed to the model (e.g., ``data``).
+    print_summary : bool, optional
+        Whether to print a summary of the posterior samples.
+    save_samples : bool, optional
+        Whether to save samples, summary, and plots to disk.
+    init_maxiter : int or None, optional
+        Maximum L-BFGS iterations for finding a starting point. If `None`,
+        read from config.
+    progress_bar : bool, optional
+        Whether to show a progress bar during sampling.
+
+    Returns
+    -------
+    samples : dict
+        Post-processed posterior samples.
     """
     if model_kwargs is None:
         model_kwargs = {}
