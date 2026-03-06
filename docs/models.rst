@@ -48,7 +48,7 @@ shared parameters.
   35 Cepheid host galaxies from SH0ES
 - **TRGB-calibrated** :math:`H_0`
   (:class:`~candel.model.model_H0_TRGB.TRGBModel`):
-  Tip of the Red Giant Branch (TRGB) distances from CCHP, EDD, and SH0ES
+  Tip of the Red Giant Branch (TRGB) distances from CCHP and EDD
 - **2MTF-calibrated** :math:`H_0`
   (:class:`~candel.model.model_H0_2MTF.EDD2MTFModel`):
   Tully--Fisher distances from the EDD-2MTF sample
