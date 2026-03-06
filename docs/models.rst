@@ -10,7 +10,7 @@ shared parameters.
 
 - **Tully--Fisher relation** (:class:`~candel.model.model_PV_TFR.TFRModel`):
   2MTF, SFI++, CF4-TFR
-- **Type Ia supernovae** (:class:`~candel.model.model_PV_SN.SNModel`):
+- **Type Ia supernovae (SALT2)** (:class:`~candel.model.model_PV_SN.SNModel`):
   LOSS, Foundation
 - **Pantheon+** (:class:`~candel.model.model_PV_PantheonPlus.PantheonPlusModel`):
   Pantheon+ with full covariance matrix
@@ -23,6 +23,12 @@ shared parameters.
 - **Cepheid-calibrated** :math:`H_0`
   (:class:`~candel.model.model_H0_CH0.CH0Model`):
   35 Cepheid host galaxies from SH0ES
+- **TRGB-calibrated** :math:`H_0`
+  (:class:`~candel.model.model_H0_TRGB.TRGBModel`):
+  Tip of the Red Giant Branch (TRGB) distances from CCHP, EDD, and SH0ES
+- **2MTF-calibrated** :math:`H_0`
+  (:class:`~candel.model.model_H0_2MTF.MTFModel`):
+  Tully--Fisher distances from the 2MTF survey
 
 Package structure
 -----------------
