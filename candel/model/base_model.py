@@ -288,7 +288,7 @@ class ModelBase(ABC):
 
 
 class H0ModelBase(ModelBase):
-    """Intermediate base for H0 models (CH0, TRGB)."""
+    """Intermediate base for H0 models."""
 
     def __init__(self, config_path, data):
         super().__init__(config_path)

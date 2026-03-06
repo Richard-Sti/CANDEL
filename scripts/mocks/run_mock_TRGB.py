@@ -85,7 +85,7 @@ def make_mock_config(base_config_path, seed, num_warmup=500,
 
     # When not using field, fix beta prior to delta(0)
     if not use_field:
-        config["priors"]["beta"] = {"dist": "delta", "loc": 0.0}
+        config["model"]["priors"]["beta"] = {"dist": "delta", "value": 0.0}
 
     config["inference"]["seed"] = seed
     config["inference"]["num_warmup"] = num_warmup
