@@ -33,7 +33,8 @@ REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
 TRACKED_PARAMS = ["H0", "M_TRGB", "sigma_int", "sigma_v",
                   "Vext_mag", "Vext_ell", "Vext_b",
-                  "beta", "b1", "mu_LMC", "mu_N4258"]
+                  "beta", "b1", "mu_LMC", "mu_N4258",
+                  "mag_lim_TRGB", "mag_lim_TRGB_width"]
 
 TAG_WORK = 1
 TAG_RESULT = 2
@@ -60,6 +61,7 @@ def make_mock_config(base_config_path, seed, num_warmup=500,
     # Match integration range to mock's distance range to avoid
     # extrapolation artefacts in the LOSInterpolator.
     config["model"]["r_limits_malmquist"] = [0.01, rmax]
+    config["model"]["num_points_malmquist"] = 1001
 
     if which_selection == "TRGB_magnitude":
         if infer_selection:
@@ -105,6 +107,10 @@ def run_one_mock(seed, base_config_path, true_params, mock_kwargs,
         seed=seed, true_params=true_params, verbose=not quiet, **mock_kwargs)
     tp["mu_LMC"] = DEFAULT_ANCHORS["mu_LMC"]
     tp["mu_N4258"] = DEFAULT_ANCHORS["mu_N4258"]
+    if mock_kwargs.get("mag_lim") is not None:
+        tp["mag_lim_TRGB"] = mock_kwargs["mag_lim"]
+    if mock_kwargs.get("mag_lim_width") is not None:
+        tp["mag_lim_TRGB_width"] = mock_kwargs["mag_lim_width"]
     n_hosts = len(data["mag_obs"])
 
     config = make_mock_config(
@@ -159,7 +165,9 @@ def master(comm, n_workers, config_info):
     results = []
     n_sent = 0
     n_done = 0
+    n_ok = 0
     n_skipped = 0
+    running_biases = {p: [] for p in TRACKED_PARAMS}
     status = MPI.Status()
 
     for rank in range(1, n_workers + 1):
@@ -186,8 +194,19 @@ def master(comm, n_workers, config_info):
                   f"rank {source} ({elapsed:.0f}s)", flush=True)
         else:
             results.append(result)
-            print(f"[INFO {now}] {n_done}/{n_mocks} done ({elapsed:.0f}s)",
+            n_ok += 1
+            b, _, _, dt = result
+            for p in TRACKED_PARAMS:
+                if p in b:
+                    running_biases[p].append(b[p])
+            print(f"[INFO {now}] {n_done}/{n_mocks} done "
+                  f"({dt:.0f}s worker, {elapsed:.0f}s total)",
                   flush=True)
+            if n_ok % PROGRESS_INTERVAL == 0:
+                _print_bias_table(
+                    running_biases,
+                    header=f"Running bias after {n_ok} mocks",
+                    show_ks=True)
 
         if n_sent < n_mocks:
             comm.send(seeds[n_sent], dest=source, tag=TAG_WORK)
@@ -202,7 +221,7 @@ def master(comm, n_workers, config_info):
     # Collect biases
     biases = {p: [] for p in TRACKED_PARAMS}
     n_hosts_list = []
-    for b, n_hosts, n_parent in results:
+    for b, n_hosts, n_parent, _ in results:
         n_hosts_list.append(n_hosts)
         for p in TRACKED_PARAMS:
             if p in b:
@@ -258,6 +277,7 @@ def worker(comm, config_info):
 
         if timeout > 0:
             signal.alarm(timeout)
+        t_start = time.time()
         try:
             result = run_one_mock(
                 seed, base_config, true_params, mock_kwargs,
@@ -265,6 +285,7 @@ def worker(comm, config_info):
                 which_selection=which_selection,
                 infer_selection=infer_selection,
                 use_field=use_field, quiet=True)
+            result = (*result, time.time() - t_start)
         except TimeoutError:
             result = None
         except Exception:
@@ -279,20 +300,40 @@ def worker(comm, config_info):
     signal.signal(signal.SIGALRM, old_handler)
 
 
+PROGRESS_INTERVAL = 15
+
+
+def _print_bias_table(biases, header=None, show_ks=False):
+    """Print a table of mean bias +/- std for accumulated biases."""
+    w = 50 if not show_ks else 60
+    if header:
+        print(f"\n{'=' * w}")
+        print(header)
+        print("=" * w)
+    if show_ks:
+        print(f"{'param':<15s}  {'mean +/- std':>20s}  {'KS p-value':>10s}")
+    else:
+        print(f"{'param':<15s}  {'mean +/- std':>20s}")
+    print("-" * w)
+    for p in TRACKED_PARAMS:
+        if p in biases and len(biases[p]) >= 2:
+            b = np.array(biases[p])
+            line = (f"{p:<15s}  "
+                    f"{f'{b.mean():+.3f} +/- {b.std():.3f}':>20s}")
+            if show_ks:
+                pval = kstest(b, "norm").pvalue
+                line += f"  {pval:>10.3f}"
+            print(line)
+
+
 def _print_summary(save_dict, n_skipped, n_mocks):
     """Print summary table of standardised biases."""
-    print(f"\n{'='*60}")
-    print("Summary: mean standardised bias +/- std")
-    print("=" * 60)
-    print(f"{'param':<15s}  {'bias':>20s}  {'KS p-value':>10s}")
-    print("-" * 50)
-    for p in TRACKED_PARAMS:
-        if p in save_dict and isinstance(save_dict[p], np.ndarray):
-            b = save_dict[p]
-            pval = kstest(b, "norm").pvalue
-            print(f"{p:<15s}  "
-                  f"{f'{b.mean():+.3f} +/- {b.std():.3f}':>20s}  "
-                  f"{pval:>10.3f}")
+    biases = {p: list(save_dict[p])
+              for p in TRACKED_PARAMS
+              if p in save_dict and isinstance(save_dict[p], np.ndarray)}
+    _print_bias_table(biases,
+                      header="Summary: mean standardised bias +/- std",
+                      show_ks=True)
     if n_skipped:
         print(f"\n[WARN] {n_skipped}/{n_mocks} mocks timed out")
 
@@ -312,9 +353,12 @@ def run_sequential(config_info):
     print(f"[INFO] use_field = {config_info.get('use_field', False)}")
     t0 = time.time()
     results = []
+    n_ok = 0
     n_skipped = 0
+    running_biases = {p: [] for p in TRACKED_PARAMS}
 
     for i in range(n_mocks):
+        t_start = time.time()
         try:
             result = run_one_mock(
                 i, config_info["base_config"],
@@ -325,14 +369,28 @@ def run_sequential(config_info):
                 infer_selection=config_info["infer_selection"],
                 use_field=config_info.get("use_field", False),
                 quiet=True)
+            dt = time.time() - t_start
+            result = (*result, dt)
             results.append(result)
+            n_ok += 1
+            b, _, _, _ = result
+            for p in TRACKED_PARAMS:
+                if p in b:
+                    running_biases[p].append(b[p])
         except Exception:
             n_skipped += 1
+            dt = time.time() - t_start
 
         elapsed = time.time() - t0
         now = datetime.now().strftime("%H:%M:%S")
-        print(f"[INFO {now}] {i + 1}/{n_mocks} done ({elapsed:.0f}s)",
+        print(f"[INFO {now}] {i + 1}/{n_mocks} done "
+              f"({dt:.0f}s this mock, {elapsed:.0f}s total)",
               flush=True)
+        if n_ok > 0 and n_ok % PROGRESS_INTERVAL == 0:
+            _print_bias_table(
+                running_biases,
+                header=f"Running bias after {n_ok} mocks",
+                show_ks=True)
 
     elapsed = time.time() - t0
     print(f"\n[INFO] Done in {elapsed:.0f}s "
@@ -341,7 +399,7 @@ def run_sequential(config_info):
     # Collect and save (reuse master's logic)
     biases = {p: [] for p in TRACKED_PARAMS}
     n_hosts_list = []
-    for b, n_hosts, n_parent in results:
+    for b, n_hosts, n_parent, _ in results:
         n_hosts_list.append(n_hosts)
         for p in TRACKED_PARAMS:
             if p in b:

@@ -328,7 +328,7 @@ def gen_TRGB_mock(nsamples=480, Om=0.3, e_mag=0.05, e_czcmb=10.0,
                   cz_lim=None, cz_lim_width=None,
                   true_params=None, anchors=None,
                   noisy_anchors=True, field_loader=None,
-                  num_rand_los=100, seed=42, verbose=True):
+                  num_rand_los=1000, seed=42, verbose=True):
     """Generate a mock TRGB survey compatible with TRGBModel.
 
     When ``field_loader`` is None (default), distances are drawn from
