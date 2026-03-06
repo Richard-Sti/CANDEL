@@ -207,8 +207,16 @@ class ModelBase(ABC):
     def _setup_random_los_grid(self):
         """Set up dummy random LOS when no reconstruction is used."""
         if not self.use_reconstruction and self.apply_sel:
+            # Magnitude selection is direction-independent (no Vext
+            # projection), so 1 LOS suffices. Redshift selection
+            # averages over Vext · r_hat and needs many directions.
+            if self.which_selection is not None \
+                    and "redshift" in self.which_selection:
+                default_num = 100
+            else:
+                default_num = 1
             num_rand = get_nested(
-                self.config, "model/num_rand_los_no_recon", 100)
+                self.config, "model/num_rand_los_no_recon", default_num)
             fprint(f"setting {num_rand} isotropic random LOS "
                    "(no reconstruction).")
             self.num_rand_los = num_rand

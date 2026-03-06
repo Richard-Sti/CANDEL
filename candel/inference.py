@@ -174,7 +174,7 @@ def print_evidence(bic, aic, lnZ_laplace, err_lnZ_laplace,
 
 def run_pv_inference(model, model_kwargs, print_summary=True,
                      save_samples=True, return_original_samples=False,
-                     init_maxiter=None):
+                     init_maxiter=None, progress_bar=True):
     """
     Run MCMC inference on the given PV model, post-process the samples,
     optionally compute the BIC, AIC, evidence and save the samples to an
@@ -235,7 +235,8 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
     mcmc = MCMC(
         kernel, num_warmup=kwargs["num_warmup"],
         num_samples=kwargs["num_samples"], num_chains=kwargs["num_chains"],
-        chain_method=kwargs["chain_method"])
+        chain_method=kwargs["chain_method"],
+        progress_bar=progress_bar)
     mcmc.run(jax.random.key(kwargs["seed"]), **model_kwargs)
 
     samples = mcmc.get_samples()
@@ -341,7 +342,8 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
 
 
 def run_H0_inference(model, model_kwargs=None, print_summary=True,
-                     save_samples=True, init_maxiter=None):
+                     save_samples=True, init_maxiter=None,
+                     progress_bar=True):
     """
     Run MCMC inference on an H0 model, post-process the samples, plot the
     corner plot and optionally save the samples to an HDF5 file.
@@ -384,7 +386,8 @@ def run_H0_inference(model, model_kwargs=None, print_summary=True,
     mcmc = MCMC(
         kernel, num_warmup=kwargs["num_warmup"],
         num_samples=kwargs["num_samples"], num_chains=kwargs["num_chains"],
-        chain_method=kwargs["chain_method"])
+        chain_method=kwargs["chain_method"],
+        progress_bar=progress_bar)
     mcmc.run(jax.random.key(kwargs["seed"]), **model_kwargs)
 
     samples = mcmc.get_samples()

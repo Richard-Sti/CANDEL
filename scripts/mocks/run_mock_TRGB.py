@@ -121,9 +121,17 @@ def run_one_mock(seed, base_config_path, true_params, mock_kwargs,
     tmp = _write_tmp_config(config)
 
     try:
-        model = candel.model.TRGBModel(tmp, data)
-        samples = candel.run_H0_inference(
-            model, save_samples=False, print_summary=not quiet)
+        if quiet:
+            with open(os.devnull, "w") as _devnull, \
+                    redirect_stdout(_devnull):
+                model = candel.model.TRGBModel(tmp, data)
+                samples = candel.run_H0_inference(
+                    model, save_samples=False, print_summary=False,
+                    progress_bar=False)
+        else:
+            model = candel.model.TRGBModel(tmp, data)
+            samples = candel.run_H0_inference(
+                model, save_samples=False, print_summary=True)
 
         biases = {}
         for param in TRACKED_PARAMS:
@@ -160,6 +168,9 @@ def master(comm, n_workers, config_info):
             n_sent += 1
         else:
             comm.send(None, dest=rank, tag=TAG_DONE)
+
+    print(f"[INFO] Dispatched {n_sent} initial jobs to {n_workers} workers.",
+          flush=True)
 
     while n_done < n_mocks:
         result = comm.recv(source=MPI.ANY_SOURCE, tag=TAG_RESULT,
@@ -254,7 +265,11 @@ def worker(comm, config_info):
                 which_selection=which_selection,
                 infer_selection=infer_selection,
                 use_field=use_field, quiet=True)
+        except TimeoutError:
+            result = None
         except Exception:
+            import traceback
+            traceback.print_exc()
             result = None
         finally:
             signal.alarm(0)
@@ -513,7 +528,7 @@ def main():
     parser.add_argument("--outdir",
                         default=os.path.join(REPO_ROOT, "results/mocks_TRGB"),
                         help="Output directory")
-    parser.add_argument("--timeout", type=int, default=900,
+    parser.add_argument("--timeout", type=int, default=3600,
                         help="Per-mock timeout in seconds (0=none)")
     parser.add_argument("--num-warmup", type=int, default=500,
                         help="NUTS warmup steps")
@@ -653,9 +668,11 @@ def main():
                   f"nsamples = {args.nsamples}")
             print(f"[INFO] timeout = {args.timeout}s"
                   if args.timeout > 0 else "[INFO] timeout = none")
+            skip_params = {"beta", "b1"} if not args.use_field else set()
             print(f"[INFO] Injected true parameters:")
             for p, v in true_params.items():
-                print(f"         {p:<15s} = {v}")
+                if p not in skip_params:
+                    print(f"         {p:<15s} = {v}")
             print(f"[INFO] use_field = {args.use_field}")
             os.makedirs(args.outdir, exist_ok=True)
 
