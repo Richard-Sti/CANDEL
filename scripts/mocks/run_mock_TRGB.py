@@ -56,7 +56,6 @@ def make_mock_config(base_config_path, seed, num_warmup=500,
     config = candel.load_config(base_config_path, replace_los_prior=False)
 
     config["model"]["use_reconstruction"] = use_field
-    config["model"]["marginalize_distance"] = True
     config["model"]["which_selection"] = which_selection
     # Match integration range to mock's distance range to avoid
     # extrapolation artefacts in the LOSInterpolator.

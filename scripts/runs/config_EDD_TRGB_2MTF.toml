@@ -6,15 +6,17 @@
 num_warmup = 1000
 num_samples = 1000
 num_chains = 1
-chain_method = "parallel"
-seed = 44
+chain_method = "sequential"
+seed = 42
 dense_mass_params = [
-    "H0", "M_TRGB", "sigma_int", "sigma_v",
+    "H0", "M_TRGB", "sigma_int_TRGB",
+    "a_TFR", "b_TFR", "sigma_int_TFR",
+    "sigma_v",
     "Vext_phi", "Vext_cos_theta", "Vext_mag",
     "beta", "b1",
     "mu_LMC", "mu_N4258",
+    "eta_mean", "eta_std",
     "mag_lim_TRGB", "mag_lim_TRGB_width",
-    "cz_lim_selection", "cz_lim_selection_width",
 ]
 
 ###############################################################################
@@ -23,7 +25,7 @@ dense_mass_params = [
 
 [model]
 Om = 0.3
-which_run = "EDD_TRGB"
+which_run = "EDD_TRGB_2MTF"
 
 use_reconstruction = true
 which_bias = "linear"
@@ -33,26 +35,50 @@ distmod_limits = [10, 38]
 r_limits_malmquist = [0.01, 41]
 num_points_malmquist = 301
 
+n_gauss_hermite = 5
+
 mag_lim_TRGB = "infer"
 mag_lim_TRGB_width = "infer"
-cz_lim_selection = "infer"
-cz_lim_selection_width = "infer"
 
-# Cosmology
+# H0
 [model.priors.H0]
 dist = "uniform"
 low = 10
 high = 100
 
-# TRGB absolute magnitude and intrinsic scatter
+# TRGB absolute magnitude
 [model.priors.M_TRGB]
 dist = "normal"
 loc = -4.05
 scale = 0.5
 
-[model.priors.sigma_int]
+# TRGB intrinsic scatter
+[model.priors.sigma_int_TRGB]
 dist = "maxwell"
 scale = 0.0627
+
+# TFR zero-point
+[model.priors.a_TFR]
+dist = "uniform"
+low = -25.0
+high = -15.0
+
+# TFR slope
+[model.priors.b_TFR]
+dist = "uniform"
+low = -15.0
+high = 0.0
+
+# TFR curvature (fixed)
+[model.priors.c_TFR]
+dist = "delta"
+value = 0.0
+
+# TFR intrinsic scatter
+[model.priors.sigma_int_TFR]
+dist = "uniform"
+low = 0.01
+high = 2.0
 
 # Peculiar velocities
 [model.priors.sigma_v]
@@ -62,7 +88,7 @@ scale = 157
 [model.priors.Vext]
 dist = "vector_uniform_fixed"
 low = 0.0
-high = 1000 
+high = 1000
 
 # Reconstruction
 [model.priors.beta]
@@ -88,32 +114,9 @@ dist = "uniform"
 low = 0.05
 high = 1.5
 
-[model.priors.cz_lim_selection]
-dist = "uniform"
-low = 100.0
-high = 3500.0
-
-[model.priors.cz_lim_selection_width]
-dist = "uniform"
-low = 50.0
-high = 500.0
-
 ###############################################################################
 #                             TRGB Calibration                                #
 ###############################################################################
-# All TRGB magnitudes are in the F814W band.
-#
-# LMC geometric distance (Pietrzynski et al. 2019, arXiv:1903.08096):
-#   mu_LMC = 18.477 +/- 0.026
-#
-# LMC TRGB magnitude (Hoyt et al. 2021, arXiv:2106.13337):
-#   mag_LMC_TRGB = 14.456 +/- 0.018
-#
-# NGC 4258 geometric distance (Reid et al. 2019):
-#   mu_N4258 = 29.398 +/- 0.032
-#
-# NGC 4258 TRGB magnitude (Jang & Lee 2020, arXiv:2008.04181):
-#   mag_N4258_TRGB = 25.347 +/- 0.0443
 
 [model.anchors]
 mu_LMC = 18.477
@@ -130,8 +133,8 @@ e_mag_N4258_TRGB = 0.0443
 ###############################################################################
 
 [io]
-root_output = "results/EDD_TRGB"
-fname_output = "results/EDD_TRGB/test.hdf5"
+root_output = "results/EDD_TRGB_2MTF"
+fname_output = "results/EDD_TRGB_2MTF/test.hdf5"
 
 load_host_los = true
 load_rand_los = true
@@ -156,6 +159,3 @@ num_steps = 301
 [io.reconstruction_main.Carrick2015]
 path_density = "data/fields/carrick2015_twompp_density.npy"
 path_velocity = "data/fields/carrick2015_twompp_velocity.npy"
-
-[io.reconstruction_main.manticore_2MPP_MULTIBIN_N256_DES_V2]
-fpath_root = "/mnt/extraspace/rstiskalek/MANTICORE/2MPP_MULTIBIN_N256_DES_V2/sph_fields_new_feb/sph_fields"

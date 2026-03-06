@@ -103,6 +103,10 @@ class EDD2MTFModel(H0ModelBase):
         if self.use_reconstruction and not self.has_host_los:
             raise ValueError(
                 "`use_reconstruction` requires host LOS interpolators.")
+        if self.use_reconstruction and not self.has_rand_los:
+            raise ValueError(
+                "`use_reconstruction` requires random LOS interpolators "
+                "for the global selection function.")
 
     # ------------------------------------------------------------------
     #  Selection function (depends only on model params, not data)
@@ -276,11 +280,20 @@ class EDD2MTFModel(H0ModelBase):
 
             lp_dist = lp_r[None, None, :] + lp_bias
 
-            # Per-host selection: use biased prior so selection
-            # normalization is consistent with the distance prior.
-            log_S = self._log_S_selection(
-                lp_dist, a_TFR, b_TFR, c_TFR,
-                eta_mean, eta_std, sigma_int, H0, mu_grid=mu_grid)
+            # Global selection from random LOS (unnormalized prior).
+            lp_rand_dist_grid = lp_r[None, None, :]
+            rand_delta = \
+                self.f_rand_los_delta.interp_many_steps_per_galaxy(
+                    r_grid * h)
+            log_rho_rand = (jnp.log(1 + rand_delta)
+                            if "linear" not in self.which_bias else None)
+            lp_rand_dist_grid = lp_rand_dist_grid + lp_galaxy_bias(
+                rand_delta, log_rho_rand, bias_params, self.which_bias)
+
+            log_S = logmeanexp(self._log_S_selection(
+                lp_rand_dist_grid, a_TFR, b_TFR, c_TFR,
+                eta_mean, eta_std, sigma_int, H0, mu_grid=mu_grid),
+                axis=-1)
 
             Vpec_grid = beta * self.f_host_los_velocity.interp_many(rh_grid)
             Vpec_grid += Vext_rad_host[None, :, None]
@@ -289,11 +302,9 @@ class EDD2MTFModel(H0ModelBase):
                 cz_pred, sigma_v).log_prob(self.czcmb[None, :, None])
 
             lp_dist_w = lp_dist + log_w
-            # Numerator and denominator both use unnormalized π_i,
-            # so log_norm cancels.
             ll_host = logsumexp(
                 lp_dist_w + ll_eta[None, :, :] + ll_cz,
-                axis=-1) - log_S
+                axis=-1) - log_S[:, None]
             ll_host = logmeanexp(ll_host, axis=0)
         else:
             # Homogeneous selection (same for all hosts)

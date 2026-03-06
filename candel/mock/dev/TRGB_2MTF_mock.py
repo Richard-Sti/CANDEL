@@ -12,28 +12,38 @@
 # You should have received a copy of the GNU General Public License along
 # with this program; if not, write to the Free Software Foundation, Inc.,
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
-"""Mock generator for TRGB surveys."""
+"""Mock generator for combined TRGB + 2MTF surveys.
+
+Each host galaxy has both TRGB and TFR observables. Selection is applied
+using TRGB magnitude only (TRGB has a much smaller volume than K-band TFR).
+"""
 import numpy as np
 from scipy.stats import norm
 
 from ..cosmography import Distance2Distmod, Distance2Redshift
-from ..field import interpolate_los_density_velocity
-from ..field.field_interp import build_regular_interpolator
-from ..util import (SPEED_OF_LIGHT, cartesian_to_radec,
-                    galactic_to_radec, galactic_to_radec_cartesian,
+from ..util import (SPEED_OF_LIGHT, galactic_to_radec_cartesian,
                     radec_to_cartesian)
 
 
 DEFAULT_TRUE_PARAMS = {
+    # Shared
     "H0": 73.0,
-    "M_TRGB": -4.05,
-    "sigma_int": 0.1,
     "sigma_v": 300.0,
     "Vext_mag": 150.0,
     "Vext_ell": 270.0,
     "Vext_b": 30.0,
     "beta": 0.43,
     "b1": 1.2,
+    # TRGB
+    "M_TRGB": -4.05,
+    "sigma_int_TRGB": 0.1,
+    # TFR
+    "a_TFR": -21.0,
+    "b_TFR": -8.0,
+    "c_TFR": 0.0,
+    "sigma_int_TFR": 0.4,
+    "eta_mean": 0.0,
+    "eta_std": 0.08,
 }
 
 DEFAULT_ANCHORS = {
@@ -46,79 +56,25 @@ DEFAULT_ANCHORS = {
 }
 
 
-def _apply_selection(mag_obs, cz_obs, mag_lim, mag_lim_width,
-                     cz_lim, cz_lim_width, gen):
-    """Return boolean selection mask."""
-    n = len(mag_obs)
+def _get_absmag_TFR(eta, a, b, c=0.0):
+    return a + b * eta + np.where(eta > 0, c * eta**2, 0.0)
+
+
+def _apply_TRGB_selection(mag_obs_TRGB, mag_lim, mag_lim_width, gen):
+    """TRGB magnitude selection only."""
+    n = len(mag_obs_TRGB)
     if mag_lim is not None:
-        p_sel = norm.cdf((mag_lim - mag_obs) / mag_lim_width)
+        p_sel = norm.cdf((mag_lim - mag_obs_TRGB) / mag_lim_width)
         return gen.random(n) < p_sel
-    elif cz_lim is not None:
-        if cz_lim_width:
-            p_sel = norm.cdf((cz_lim - cz_obs) / cz_lim_width)
-            return gen.random(n) < p_sel
-        else:
-            return cz_obs < cz_lim
     return np.ones(n, dtype=bool)
 
 
-def _gen_homogeneous_path(nsamples, h, rmin, rmax, e_mag, e_czcmb,
-                          M_TRGB, sigma_int, sigma_v, Vext,
-                          mag_lim, mag_lim_width, cz_lim, cz_lim_width,
-                          r2mu, r2z, gen, verbose):
-    """Homogeneous (no field) distance sampling path."""
-    collected = {k: [] for k in ["RA", "dec", "r", "mag_obs", "cz_obs"]}
-    n_accepted = 0
-    n_parent = 0
-    batch = max(int(1.5 * nsamples), 100)
-
-    while n_accepted < nsamples:
-        RA = gen.uniform(0, 360, batch)
-        dec = np.rad2deg(np.arcsin(gen.uniform(-1, 1, batch)))
-        rhat = radec_to_cartesian(RA, dec)
-
-        u = gen.random(batch)
-        r = (rmin**3 + u * (rmax**3 - rmin**3))**(1 / 3)
-
-        mu = np.asarray(r2mu(r, h=h))
-        z_cosmo = np.asarray(r2z(r, h=h))
-        Vext_rad = rhat @ Vext
-
-        sigma_mag_tot = np.sqrt(sigma_int**2 + e_mag**2)
-        mag_obs = gen.normal(M_TRGB + mu, sigma_mag_tot)
-
-        cz_true = SPEED_OF_LIGHT * (
-            (1 + z_cosmo) * (1 + Vext_rad / SPEED_OF_LIGHT) - 1)
-        cz_obs = gen.normal(cz_true, np.sqrt(e_czcmb**2 + sigma_v**2))
-
-        mask = _apply_selection(mag_obs, cz_obs, mag_lim, mag_lim_width,
-                                cz_lim, cz_lim_width, gen)
-
-        n_parent += batch
-        n_accepted += mask.sum()
-
-        for k, v in zip(
-                ["RA", "dec", "r", "mag_obs", "cz_obs"],
-                [RA, dec, r, mag_obs, cz_obs]):
-            collected[k].append(v[mask])
-
-    for k in collected:
-        collected[k] = np.concatenate(collected[k])[:nsamples]
-
-    if verbose:
-        sel_frac = n_accepted / n_parent
-        print(f"Generated {nsamples} TRGB hosts "
-              f"(acceptance {sel_frac:.2f}, {n_parent} drawn).")
-        print(f"  max true distance retained: "
-              f"{collected['r'].max():.2f} Mpc "
-              f"(allowed: {rmax:.2f} Mpc)")
-
-    collected["n_parent"] = n_parent
-    return collected
+def _smoothclip(x, tau=0.1):
+    return 0.5 * (x + np.sqrt(x**2 + tau**2))
 
 
 def _field_xyz_to_radec(pos_rel, r, coordinate_frame):
-    """Convert field-frame Cartesian offsets to ICRS (RA, dec) in degrees."""
+    from ..util import cartesian_to_radec, galactic_to_radec
     x, y, z = pos_rel[:, 0], pos_rel[:, 1], pos_rel[:, 2]
     if coordinate_frame == "icrs":
         return cartesian_to_radec(x, y, z)
@@ -135,33 +91,97 @@ def _field_xyz_to_radec(pos_rel, r, coordinate_frame):
                      frame='supergalactic')
         return c.icrs.ra.deg, c.icrs.dec.deg
     else:
-        raise ValueError(
-            f"Unknown coordinate frame: {coordinate_frame}")
+        raise ValueError(f"Unknown coordinate frame: {coordinate_frame}")
 
 
-def _gen_field_path(nsamples, h, b1, beta, rmin, rmax, e_mag, e_czcmb,
-                    M_TRGB, sigma_int, sigma_v, Vext,
-                    mag_lim, mag_lim_width, cz_lim, cz_lim_width,
+def _gen_homogeneous_path(nsamples, h, rmin, rmax,
+                          e_mag_TRGB, e_mag_TFR, e_eta, e_czcmb,
+                          M_TRGB, sigma_int_TRGB,
+                          a_TFR, b_TFR, c_TFR, sigma_int_TFR,
+                          eta_mean, eta_std, sigma_v, Vext,
+                          mag_lim, mag_lim_width,
+                          r2mu, r2z, gen, verbose):
+    collected = {k: [] for k in [
+        "RA", "dec", "r", "mag_obs_TRGB", "mag_obs_TFR",
+        "eta", "cz_obs"]}
+    n_accepted = 0
+    n_parent = 0
+    batch = max(int(1.5 * nsamples), 100)
+
+    while n_accepted < nsamples:
+        RA = gen.uniform(0, 360, batch)
+        dec = np.rad2deg(np.arcsin(gen.uniform(-1, 1, batch)))
+        rhat = radec_to_cartesian(RA, dec)
+
+        u = gen.random(batch)
+        r = (rmin**3 + u * (rmax**3 - rmin**3))**(1 / 3)
+
+        mu = np.asarray(r2mu(r, h=h))
+        z_cosmo = np.asarray(r2z(r, h=h))
+        Vext_rad = rhat @ Vext
+
+        # TRGB observable
+        sigma_TRGB_tot = np.sqrt(sigma_int_TRGB**2 + e_mag_TRGB**2)
+        mag_obs_TRGB = gen.normal(M_TRGB + mu, sigma_TRGB_tot)
+
+        # TFR observables
+        eta_true = gen.normal(eta_mean, eta_std, batch)
+        M_true_TFR = _get_absmag_TFR(eta_true, a_TFR, b_TFR, c_TFR)
+        sigma_TFR_tot = np.sqrt(sigma_int_TFR**2 + e_mag_TFR**2)
+        mag_obs_TFR = gen.normal(M_true_TFR + mu, sigma_TFR_tot)
+        eta_obs = gen.normal(eta_true, e_eta)
+
+        # cz observable
+        cz_true = SPEED_OF_LIGHT * (
+            (1 + z_cosmo) * (1 + Vext_rad / SPEED_OF_LIGHT) - 1)
+        cz_obs = gen.normal(cz_true, np.sqrt(e_czcmb**2 + sigma_v**2))
+
+        # TRGB selection only
+        mask = _apply_TRGB_selection(
+            mag_obs_TRGB, mag_lim, mag_lim_width, gen)
+
+        n_parent += batch
+        n_accepted += mask.sum()
+
+        for k, v in zip(
+                ["RA", "dec", "r", "mag_obs_TRGB", "mag_obs_TFR",
+                 "eta", "cz_obs"],
+                [RA, dec, r, mag_obs_TRGB, mag_obs_TFR, eta_obs, cz_obs]):
+            collected[k].append(v[mask])
+
+    for k in collected:
+        collected[k] = np.concatenate(collected[k])[:nsamples]
+
+    if verbose:
+        sel_frac = n_accepted / n_parent
+        print(f"Generated {nsamples} TRGB+2MTF hosts "
+              f"(acceptance {sel_frac:.2f}, {n_parent} drawn).")
+
+    collected["n_parent"] = n_parent
+    return collected
+
+
+def _gen_field_path(nsamples, h, b1, beta, rmin, rmax,
+                    e_mag_TRGB, e_mag_TFR, e_eta, e_czcmb,
+                    M_TRGB, sigma_int_TRGB,
+                    a_TFR, b_TFR, c_TFR, sigma_int_TFR,
+                    eta_mean, eta_std, sigma_v, Vext,
+                    mag_lim, mag_lim_width,
                     field_loader, num_rand_los, r2mu, r2z, gen, verbose):
-    """Field-based (inhomogeneous Malmquist) distance sampling path.
+    from ..field import interpolate_los_density_velocity
+    from ..field.field_interp import build_regular_interpolator
 
-    Galaxies are sampled from the 3D density field using accept/reject,
-    ensuring both angular and radial positions follow the biased tracer
-    distribution p(r, Ω) ∝ smoothclip(1 + b1*δ(r,Ω)) * r².
-    """
-    # LOS grid for the model covers the full rmax range (in Mpc/h)
-    r_grid = np.linspace(0.1, rmax * h, 301)
+    r_grid = np.linspace(0.1, rmax, 301)
 
-    # Sampling sphere: set from selection threshold, not the full rmax
+    # Sampling sphere from TRGB selection threshold
     r_sample_Mpc = rmax
     if mag_lim is not None:
         mu_max = mag_lim - M_TRGB
-        sigma_tot = np.sqrt(sigma_int**2 + e_mag**2 + mag_lim_width**2)
+        sigma_tot = np.sqrt(
+            sigma_int_TRGB**2 + e_mag_TRGB**2 + mag_lim_width**2)
         mu_cutoff = mu_max + 5 * sigma_tot
         r_sample_Mpc = min(10**((mu_cutoff - 25) / 5), rmax)
-    elif cz_lim is not None:
-        r_sample_Mpc = min(cz_lim / (h * 100) * 1.2, rmax)
-    r_sphere = r_sample_Mpc * h  # Mpc/h
+    r_sphere = r_sample_Mpc * h
 
     if verbose:
         print(f"Field mock: 3D sampling "
@@ -170,7 +190,7 @@ def _gen_field_path(nsamples, h, b1, beta, rmin, rmax, e_mag, e_czcmb,
               f"r_grid: {r_grid[0]:.1f}–{r_grid[-1]:.1f} Mpc/h, "
               f"{len(r_grid)} points)...")
 
-    # --- Load fields and build 3D interpolators ---
+    # Load fields and build 3D interpolators
     eps = 1e-4
     density_raw = field_loader.load_density()
     density_log = np.log(density_raw + eps).astype(np.float32)
@@ -198,12 +218,13 @@ def _gen_field_path(nsamples, h, b1, beta, rmin, rmax, e_mag, e_czcmb,
     obs = field_loader.observer_pos
     rmin_h = 0.1
     coord_frame = field_loader.coordinate_frame
-    sigma_mag_tot = np.sqrt(sigma_int**2 + e_mag**2)
+    sigma_TRGB_tot = np.sqrt(sigma_int_TRGB**2 + e_mag_TRGB**2)
+    sigma_TFR_tot = np.sqrt(sigma_int_TFR**2 + e_mag_TFR**2)
     sigma_cz_tot = np.sqrt(e_czcmb**2 + sigma_v**2)
 
-    # --- Loop: sample, compute observables, select ---
     collected = {k: [] for k in [
-        "RA", "dec", "r_h", "mag_obs", "cz_obs"]}
+        "RA", "dec", "r_h", "mag_obs_TRGB", "mag_obs_TFR",
+        "eta", "cz_obs"]}
     n_total_proposed = 0
     n_total_density_accepted = 0
     batch_size = 200000
@@ -211,7 +232,6 @@ def _gen_field_path(nsamples, h, b1, beta, rmin, rmax, e_mag, e_czcmb,
     while sum(len(v) for v in collected["RA"]) < nsamples:
         n_total_proposed += batch_size
 
-        # Uniform in cube, cut to sphere
         xyz = gen.uniform(-r_sphere, r_sphere,
                           (batch_size, 3)).astype(np.float32)
         r_sq = np.sum(xyz**2, axis=1)
@@ -231,18 +251,15 @@ def _gen_field_path(nsamples, h, b1, beta, rmin, rmax, e_mag, e_czcmb,
             continue
 
         r_h = np.linalg.norm(xyz, axis=1)
-
-        # Convert to RA/dec
         RA, dec = _field_xyz_to_radec(xyz, r_h, coord_frame)
 
         # Radial velocity at 3D positions
         pos_box = (xyz + obs[None, :]).astype(np.float32)
-        rhat = xyz / r_h[:, None]
+        rhat_field = xyz / r_h[:, None]
         Vpec_field = np.zeros(len(xyz), dtype=np.float32)
         for i in range(3):
-            Vpec_field += f_vel_3d[i](pos_box) * rhat[:, i]
+            Vpec_field += f_vel_3d[i](pos_box) * rhat_field[:, i]
 
-        # Compute observables
         rhat_icrs = radec_to_cartesian(RA, dec)
         Vext_rad = rhat_icrs @ Vext
         Vpec = Vext_rad + beta * Vpec_field
@@ -251,25 +268,36 @@ def _gen_field_path(nsamples, h, b1, beta, rmin, rmax, e_mag, e_czcmb,
         mu = np.asarray(r2mu(r_Mpc, h=h))
         z_cosmo = np.asarray(r2z(r_Mpc, h=h))
 
-        mag_obs = gen.normal(M_TRGB + mu, sigma_mag_tot)
+        n_gal = len(xyz)
+
+        # TRGB observable
+        mag_obs_TRGB = gen.normal(M_TRGB + mu, sigma_TRGB_tot)
+
+        # TFR observables
+        eta_true = gen.normal(eta_mean, eta_std, n_gal)
+        M_true_TFR = _get_absmag_TFR(eta_true, a_TFR, b_TFR, c_TFR)
+        mag_obs_TFR = gen.normal(M_true_TFR + mu, sigma_TFR_tot)
+        eta_obs = gen.normal(eta_true, e_eta)
+
+        # cz observable
         cz_true = SPEED_OF_LIGHT * (
             (1 + z_cosmo) * (1 + Vpec / SPEED_OF_LIGHT) - 1)
         cz_obs = gen.normal(cz_true, sigma_cz_tot)
 
-        # Apply selection
-        sel = _apply_selection(mag_obs, cz_obs,
-                               mag_lim, mag_lim_width,
-                               cz_lim, cz_lim_width, gen)
+        # TRGB selection only
+        sel = _apply_TRGB_selection(
+            mag_obs_TRGB, mag_lim, mag_lim_width, gen)
 
         collected["RA"].append(RA[sel])
         collected["dec"].append(dec[sel])
         collected["r_h"].append(r_h[sel])
-        collected["mag_obs"].append(mag_obs[sel])
+        collected["mag_obs_TRGB"].append(mag_obs_TRGB[sel])
+        collected["mag_obs_TFR"].append(mag_obs_TFR[sel])
+        collected["eta"].append(eta_obs[sel])
         collected["cz_obs"].append(cz_obs[sel])
 
     del f_density_3d, f_vel_3d
 
-    # Trim to nsamples
     for k in collected:
         collected[k] = np.concatenate(collected[k])[:nsamples]
 
@@ -278,11 +306,8 @@ def _gen_field_path(nsamples, h, b1, beta, rmin, rmax, e_mag, e_czcmb,
         print(f"  {n_total_proposed} proposed, "
               f"{n_total_density_accepted} density-accepted, "
               f"{n_selected} after selection")
-        print(f"  max true distance retained: "
-              f"{collected['r_h'].max() / h:.2f} Mpc "
-              f"(allowed: {rmax:.2f} Mpc)")
 
-    # --- Interpolate full LOS for selected hosts ---
+    # Interpolate full LOS for selected hosts
     if verbose:
         print(f"  interpolating LOS for {nsamples} hosts...")
     los_density, los_velocity = interpolate_los_density_velocity(
@@ -299,14 +324,14 @@ def _gen_field_path(nsamples, h, b1, beta, rmin, rmax, e_mag, e_czcmb,
         "RA": collected["RA"],
         "dec": collected["dec"],
         "r": collected["r_h"],
-        "mag_obs": collected["mag_obs"],
+        "mag_obs_TRGB": collected["mag_obs_TRGB"],
+        "mag_obs_TFR": collected["mag_obs_TFR"],
+        "eta": collected["eta"],
         "cz_obs": collected["cz_obs"],
         "n_parent": n_total_density_accepted,
-        # Host LOS data: (1, nsamples, n_r)
         "host_los_density": los_density[None, ...],
         "host_los_velocity": los_velocity[None, ...],
         "host_los_r": r_grid,
-        # Random LOS data: (1, num_rand_los, n_r)
         "rand_los_density": rand_density[None, ...],
         "rand_los_velocity": rand_velocity[None, ...],
         "rand_los_r": r_grid,
@@ -316,35 +341,23 @@ def _gen_field_path(nsamples, h, b1, beta, rmin, rmax, e_mag, e_czcmb,
     return result
 
 
-def _smoothclip(x, tau=0.1):
-    """Smooth zero-clipping matching the model's smoothclip_nr."""
-    return 0.5 * (x + np.sqrt(x**2 + tau**2))
+def gen_TRGB_2MTF_mock(nsamples=300, Om=0.3,
+                       e_mag_TRGB=0.05, e_mag_TFR=0.04,
+                       e_eta=0.01, e_czcmb=10.0,
+                       rmin=0.5, rmax=40.0,
+                       mag_lim=25.0, mag_lim_width=0.75,
+                       true_params=None, anchors=None,
+                       noisy_anchors=True, field_loader=None,
+                       num_rand_los=100, seed=42, verbose=True):
+    """Generate a mock combined TRGB + 2MTF survey.
 
-
-
-def gen_TRGB_mock(nsamples=480, Om=0.3, e_mag=0.05, e_czcmb=10.0,
-                  rmin=0.5, rmax=40.0,
-                  mag_lim=25.0, mag_lim_width=0.75,
-                  cz_lim=None, cz_lim_width=None,
-                  true_params=None, anchors=None,
-                  noisy_anchors=True, field_loader=None,
-                  num_rand_los=100, seed=42, verbose=True):
-    """Generate a mock TRGB survey compatible with TRGBModel.
-
-    When ``field_loader`` is None (default), distances are drawn from
-    p(r) ~ r^2 on [rmin, rmax] (homogeneous).  When a field loader is
-    provided, distances are drawn from p(r) ~ (1 + b1*delta(r)) * r^2
-    using the density field, and the field's radial peculiar velocity
-    is included in the observed cz.
-
-    Selection (optional):
-      - mag_lim  : sigmoid cut p(sel) = Phi((mag_lim - m) / mag_lim_width)
-      - cz_lim   : hard (cz_lim_width=None) or sigmoid cz cut
+    Each host has both TRGB and TFR observables. Selection uses
+    TRGB magnitude only.
 
     Returns
     -------
     data : dict
-        Data dict matching TRGBModel expectations.
+        Data dict matching TRGB2MTFModel expectations.
     true_params : dict
         True parameter values used.
     n_parent : int
@@ -356,7 +369,13 @@ def gen_TRGB_mock(nsamples=480, Om=0.3, e_mag=0.05, e_czcmb=10.0,
 
     H0 = tp["H0"]
     M_TRGB = tp["M_TRGB"]
-    sigma_int = tp["sigma_int"]
+    sigma_int_TRGB = tp["sigma_int_TRGB"]
+    a_TFR = tp["a_TFR"]
+    b_TFR = tp["b_TFR"]
+    c_TFR = tp["c_TFR"]
+    sigma_int_TFR = tp["sigma_int_TFR"]
+    eta_mean = tp["eta_mean"]
+    eta_std = tp["eta_std"]
     sigma_v = tp["sigma_v"]
 
     h = H0 / 100
@@ -368,19 +387,25 @@ def gen_TRGB_mock(nsamples=480, Om=0.3, e_mag=0.05, e_czcmb=10.0,
 
     if field_loader is not None:
         collected = _gen_field_path(
-            nsamples, h, tp["b1"], beta, rmin, rmax, e_mag, e_czcmb,
-            M_TRGB, sigma_int, sigma_v, Vext,
-            mag_lim, mag_lim_width, cz_lim, cz_lim_width,
+            nsamples, h, tp["b1"], beta, rmin, rmax,
+            e_mag_TRGB, e_mag_TFR, e_eta, e_czcmb,
+            M_TRGB, sigma_int_TRGB,
+            a_TFR, b_TFR, c_TFR, sigma_int_TFR,
+            eta_mean, eta_std, sigma_v, Vext,
+            mag_lim, mag_lim_width,
             field_loader, num_rand_los, r2mu, r2z, gen, verbose)
     else:
         collected = _gen_homogeneous_path(
-            nsamples, h, rmin, rmax, e_mag, e_czcmb,
-            M_TRGB, sigma_int, sigma_v, Vext,
-            mag_lim, mag_lim_width, cz_lim, cz_lim_width,
+            nsamples, h, rmin, rmax,
+            e_mag_TRGB, e_mag_TFR, e_eta, e_czcmb,
+            M_TRGB, sigma_int_TRGB,
+            a_TFR, b_TFR, c_TFR, sigma_int_TFR,
+            eta_mean, eta_std, sigma_v, Vext,
+            mag_lim, mag_lim_width,
             r2mu, r2z, gen, verbose)
     n_parent = collected.pop("n_parent")
 
-    # --- Anchor observations ---
+    # Anchor observations
     mu_LMC_true = anch["mu_LMC"]
     mu_N4258_true = anch["mu_N4258"]
     mag_LMC_true = M_TRGB + mu_LMC_true
@@ -398,16 +423,22 @@ def gen_TRGB_mock(nsamples=480, Om=0.3, e_mag=0.05, e_czcmb=10.0,
         mag_LMC_obs = mag_LMC_true
         mag_N4258_obs = mag_N4258_true
 
-    # --- Build data dict ---
     n_kept = len(collected["RA"])
     data = {
         "RA_host": collected["RA"],
         "dec_host": collected["dec"],
-        "mag_obs": collected["mag_obs"],
-        "e_mag_obs": np.full(n_kept, e_mag),
+        # TRGB observables
+        "mag_obs": collected["mag_obs_TRGB"],
+        "e_mag_obs": np.full(n_kept, e_mag_TRGB),
+        "e_mag_obs_median": float(e_mag_TRGB),
+        # TFR observables
+        "mag_TFR": collected["mag_obs_TFR"],
+        "e_mag_TFR": np.full(n_kept, e_mag_TFR),
+        "eta": collected["eta"],
+        "e_eta": np.full(n_kept, e_eta),
+        # Redshift
         "czcmb": collected["cz_obs"],
         "e_czcmb": np.full(n_kept, e_czcmb),
-        "e_mag_median": float(e_mag),
         # Anchors
         "mu_LMC_anchor": mu_LMC_obs,
         "e_mu_LMC_anchor": anch["e_mu_LMC"],

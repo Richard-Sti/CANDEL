@@ -427,11 +427,29 @@ class CH0Model(H0ModelBase):
                     bias_params)
             sigma_v_host = map_sigma_v(los_delta_host)
             if self.apply_sel:
-                lp_rand_dist_grid, rand_los_delta_grid, \
-                    rand_los_Vpec_grid, _ = \
-                    self._apply_rand_reconstruction(
-                        lp_rand_dist_grid, h, bias_params)
+                # Inline reconstruction for selection: skip
+                # normalization (unnormalized joint prior) and skip
+                # velocity interpolation when not needed.
+                rand_los_delta_grid = \
+                    self.f_rand_los_delta.interp_many_steps_per_galaxy(
+                        self.r_host_range * h)
+                log_rho = (jnp.log(1 + rand_los_delta_grid)
+                           if "linear" not in self.which_bias
+                           else None)
+                lp_rand_dist_grid += lp_galaxy_bias(
+                    rand_los_delta_grid, log_rho,
+                    bias_params, self.which_bias)
                 sigma_v_selection = map_sigma_v(rand_los_delta_grid)
+                _needs_vel = self.which_selection in [
+                    "redshift", "SN_magnitude_redshift",
+                    "SN_magnitude_or_redshift_Nmag"]
+                if _needs_vel:
+                    rand_los_Vpec_grid = \
+                        self.f_rand_los_velocity\
+                        .interp_many_steps_per_galaxy(
+                            self.r_host_range * h)
+                else:
+                    rand_los_Vpec_grid = 0.
             else:
                 rand_los_Vpec_grid = 0.
                 sigma_v_selection = map_sigma_v(
@@ -446,7 +464,7 @@ class CH0Model(H0ModelBase):
             sigma_v_selection = map_sigma_v(
                 jnp.zeros((1, self.num_rand_los, self.r_host_range.size)))
 
-        # Selection function
+        # Selection function (unnormalized prior — no log_Z correction)
         if self.which_selection == "redshift":
             log_S = self.log_S_cz(
                 lp_rand_dist_grid,
