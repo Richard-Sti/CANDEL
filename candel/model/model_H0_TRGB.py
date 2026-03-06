@@ -188,14 +188,16 @@ class TRGBModel(H0ModelBase):
             mu_anchors, h=h)
         factor("lp_anchor_dist", lp_anchor_dist)
 
-        # --- Selection function ---
+        # --- Per-host cosmographic grids (fine grid) ---
         r_grid = self.r_host_range
         lp_r = self.log_prior_distance(r_grid)
         Vext_rad_host = jnp.sum(Vext[None, :] * self.rhat_host, axis=1)
-
-        # Pre-compute cosmographic grids once
         mu_grid = self.distance2distmod(r_grid, h=h)
         z_grid = self.distance2redshift(r_grid, h=h)
+
+        # --- Selection function (coarse grid) ---
+        r_sel = self.r_sel_range
+        lp_r_sel = self.log_prior_distance(r_sel)
 
         log_S = None
         if self.which_selection == "TRGB_magnitude":
@@ -205,27 +207,21 @@ class TRGBModel(H0ModelBase):
             factor("ll_sel_per_object", jnp.sum(
                 norm_jax.logcdf((mag_lim - self.mag_obs) / mag_width)))
 
-            # Global S using JOINT prior π(r,û) ∝ r²(1+b₁δ):
-            # p(S=1|Λ) = ∫∫ Φ(r) r²(1+b₁δ) dΩ dr / Z_total
-            # MC: (1/N) Σ_j ∫ Φ(r) r²(1+b₁δ_j) dr
-            # Pass unnormalized prior directly to log_S_mag, avoiding
-            # the normalize-then-unnormalize round-trip and skipping
-            # the unnecessary velocity interpolation.
             e_eff = jnp.sqrt(self.e2_mag_median + sigma_int**2)
-            lp_rand_dist_grid = lp_r[None, None, :]
+            lp_rand_dist_sel = lp_r_sel[None, None, :]
             if self.use_reconstruction:
                 rand_delta = \
                     self.f_rand_los_delta.interp_many_steps_per_galaxy(
-                        self.r_host_range * h)
+                        r_sel * h)
                 log_rho = (jnp.log(1 + rand_delta)
                            if "linear" not in self.which_bias else None)
-                lp_rand_dist_grid = lp_rand_dist_grid + lp_galaxy_bias(
+                lp_rand_dist_sel = lp_rand_dist_sel + lp_galaxy_bias(
                     rand_delta, log_rho, bias_params, self.which_bias)
 
-            # log ∫ Φ(r) r²(1+b₁δ_j) dr  (unnormalized)
+            mu_grid_sel = self.distance2distmod(r_sel, h=h)
             log_S = logmeanexp(self.log_S_mag(
-                lp_rand_dist_grid, M_TRGB, H0, e_eff,
-                mag_lim, mag_width, mu_grid=mu_grid), axis=-1)
+                lp_rand_dist_sel, M_TRGB, H0, e_eff,
+                mag_lim, mag_width, mu_grid=mu_grid_sel), axis=-1)
 
         elif self.which_selection == "redshift":
             cz_lim = self._resolve_threshold("cz_lim_selection")
@@ -234,30 +230,28 @@ class TRGBModel(H0ModelBase):
             factor("ll_sel_per_object", jnp.sum(
                 norm_jax.logcdf((cz_lim - self.czcmb) / cz_width)))
 
-            # Global S using unnormalized joint prior, inlined to
-            # skip the normalize-then-unnormalize round-trip.
-            lp_rand_dist_grid = lp_r[None, None, :]
+            lp_rand_dist_sel = lp_r_sel[None, None, :]
             Vext_rad_rand = jnp.sum(
                 Vext[None, :] * self.rhat_rand_los, axis=1)
             if self.use_reconstruction:
                 rand_delta = \
                     self.f_rand_los_delta.interp_many_steps_per_galaxy(
-                        r_grid * h)
+                        r_sel * h)
                 log_rho = (jnp.log(1 + rand_delta)
                            if "linear" not in self.which_bias
                            else None)
-                lp_rand_dist_grid = lp_rand_dist_grid + lp_galaxy_bias(
+                lp_rand_dist_sel = lp_rand_dist_sel + lp_galaxy_bias(
                     rand_delta, log_rho, bias_params, self.which_bias)
-                rand_los_Vpec_grid = \
+                rand_los_Vpec_sel = \
                     self.f_rand_los_velocity.interp_many_steps_per_galaxy(
-                        r_grid * h)
+                        r_sel * h)
             else:
-                rand_los_Vpec_grid = 0.
+                rand_los_Vpec_sel = 0.
 
             log_S = logmeanexp(self.log_S_cz(
-                lp_rand_dist_grid,
+                lp_rand_dist_sel,
                 Vext_rad_rand[None, :, None]
-                + beta * rand_los_Vpec_grid,
+                + beta * rand_los_Vpec_sel,
                 H0, sigma_v, cz_lim, cz_width), axis=-1)
 
         # --- Per-host distance handling ---

@@ -140,10 +140,13 @@ def generate_trgb_ppc(samples, data, config, n_ppc=None, seed=42):
     M_TRGB = _flat(samples["M_TRGB"])
     sigma_int = _flat(samples["sigma_int"])
     sigma_v = _flat(samples["sigma_v"])
-    Vext = _flat(samples["Vext"])   # (n_post, 3)
-    beta = _flat(samples["beta"])
-    b1 = _flat(samples["b1"])
     n_post = len(H0)
+    if "Vext" in samples:
+        Vext = _flat(samples["Vext"])   # (n_post, 3)
+    else:
+        Vext = np.zeros((n_post, 3))
+    beta = _flat(samples.get("beta", np.zeros(n_post)))
+    b1 = _flat(samples.get("b1", np.ones(n_post)))
 
     # Selection parameters
     which_sel = get_nested(config, "model/which_selection", None)

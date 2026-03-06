@@ -29,16 +29,27 @@ which_run = "EDD_TRGB_2MTF"
 
 use_reconstruction = true
 which_bias = "linear"
-which_selection = "TRGB_magnitude"
+
+# TRGB group selection
+which_selection_trgb = "TRGB_magnitude"
+# TFR-only group selection
+which_selection_tfr = "magnitude"
 
 distmod_limits = [10, 38]
-r_limits_malmquist = [0.01, 41]
-num_points_malmquist = 301
+r_limits_malmquist = [0.01, 200]
+delta_mu = 0.03
+dr_max = 0.25
 
 n_gauss_hermite = 5
 
+# TRGB selection thresholds
 mag_lim_TRGB = "infer"
 mag_lim_TRGB_width = "infer"
+
+# TFR selection thresholds
+mag_lim_TFR = 11.25
+eta_min_sel = -0.1
+eta_max_sel = 0.2
 
 # H0
 [model.priors.H0]
@@ -103,7 +114,7 @@ scale = 0.1
 low = 0.0
 high = 5.0
 
-# Selection thresholds
+# TRGB selection thresholds (inferred)
 [model.priors.mag_lim_TRGB]
 dist = "uniform"
 low = 20.0
@@ -150,10 +161,17 @@ root = "data/EDD_TRGB"
 los_file = "data/EDD_TRGB/los_EDD_TRGB_<X>.hdf5"
 which_host_los = "Carrick2015"
 
+[io.PV_main.EDD_2MTF]
+root = "data/EDD_2MTF"
+los_file = "data/EDD_2MTF/los_EDD_2MTF_<X>.hdf5"
+which_host_los = "Carrick2015"
+eta_min = -0.1
+eta_max = 0.2
+
 
 [io.reconstruction_main]
 rmin = 0.1
-rmax = 51
+rmax = 200
 num_steps = 301
 
 [io.reconstruction_main.Carrick2015]

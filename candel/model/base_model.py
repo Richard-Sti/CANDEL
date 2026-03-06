@@ -32,6 +32,51 @@ from .simpson import ln_simpson, ln_simpson_precomputed, simpson_log_weights
 from .utils import load_priors, log_prob_integrand_sel, predict_cz
 
 
+def make_adaptive_grid(r_min, r_max, delta_mu, dr_max):
+    """Adaptive radial grid: log-like spacing at small r (constant step in
+    distance modulus), transitioning to uniform spacing in r when the
+    distance-modulus step would exceed `dr_max`.
+
+    Parameters
+    ----------
+    r_min, r_max : float
+        Radial range in Mpc/h.
+    delta_mu : float
+        Step size in distance modulus (mag).
+    dr_max : float
+        Maximum step size in comoving distance (Mpc/h).
+
+    Returns
+    -------
+    r : 1-D numpy array
+        Grid points (odd number for Simpson's rule).
+    """
+    ln10_over_5 = np.log(10) / 5
+    r = [r_min]
+    while r[-1] < r_max:
+        dr = min(delta_mu * r[-1] * ln10_over_5, dr_max)
+        r.append(r[-1] + dr)
+    r = np.array(r)
+
+    # Snap last point to r_max, then iteratively drop interior points
+    # whose gap to r_max is too small relative to the preceding step
+    # (Simpson weights require adjacent spacing ratios < 2).
+    r[-1] = r_max
+    while len(r) >= 3:
+        last_step = r[-1] - r[-2]
+        prev_step = r[-2] - r[-3]
+        if last_step < 0.5 * prev_step:
+            r = np.delete(r, -2)
+        else:
+            break
+
+    # Ensure odd number of points for Simpson's rule
+    if len(r) % 2 == 0:
+        r = np.insert(r, -1, 0.5 * (r[-2] + r[-1]))
+
+    return r
+
+
 class ModelBase(ABC):
     """Common ancestor for PV and H0 model hierarchies."""
 
@@ -123,13 +168,34 @@ class ModelBase(ABC):
         los_velocity = data[f"{which}_los_velocity"]
         los_r = data[f"{which}_los_r"]
 
-        fprint(f"loaded {which} galaxy LOS interpolators "
-               f"for {los_delta.shape[1]} galaxies.")
-
         if which == "host" and "mask_host" in data:
             m = data["mask_host"]
             los_delta = los_delta[:, m, ...]
             los_velocity = los_velocity[:, m, ...]
+
+        # Optionally subsample random LOS
+        if which == "rand":
+            n_avail = los_delta.shape[1]
+            max_rand = get_nested(
+                self.config, "model/max_rand_los", None)
+            if max_rand is not None and max_rand > n_avail:
+                raise ValueError(
+                    f"max_rand_los={max_rand} exceeds available "
+                    f"random LOS ({n_avail}).")
+            if max_rand is not None and max_rand < n_avail:
+                gen = np.random.default_rng(42)
+                idx = gen.choice(n_avail, max_rand, replace=False)
+                idx.sort()
+                los_delta = los_delta[:, idx, ...]
+                los_velocity = los_velocity[:, idx, ...]
+                # Also subsample RA/dec in the data dict
+                for k in ("rand_los_RA", "rand_los_dec"):
+                    if k in data and data[k] is not None:
+                        data[k] = data[k][idx]
+                fprint(f"subsampled random LOS: {n_avail} -> {max_rand}.")
+
+        fprint(f"loaded {which} galaxy LOS interpolators "
+               f"for {los_delta.shape[1]} galaxies.")
 
         kwargs = {"r0_decay_scale": r0_decay_scale}
 
@@ -162,11 +228,13 @@ class ModelBase(ABC):
 
         r0_decay_scale = get_nested(
             self.config, "io/los_r0_decay_scale", 5)
-        if get_nested(self.config, "io/load_host_los"):
+        use_recon = get_nested(
+            self.config, "model/use_reconstruction", False)
+        if use_recon and get_nested(self.config, "io/load_host_los"):
             self._load_los_interpolator(
                 data, which="host",
                 r0_decay_scale=r0_decay_scale)
-        if get_nested(self.config, "io/load_rand_los"):
+        if use_recon and get_nested(self.config, "io/load_rand_los"):
             self._load_los_interpolator(
                 data, which="rand",
                 r0_decay_scale=r0_decay_scale)
@@ -186,46 +254,86 @@ class ModelBase(ABC):
     def _setup_malmquist_grid(self):
         """Set up the radial grid for Malmquist bias integration."""
         config = self.config
-        r_limits_malmquist = get_nested(
+        r_limits = get_nested(
             config, "model/r_limits_malmquist", [0.01, 150])
-        self._num_points_malmquist = get_nested(
-            config, "model/num_points_malmquist", 251)
-        if self._num_points_malmquist % 2 == 0:
-            raise ValueError(
-                f"num_points_malmquist must be odd for Simpson's rule, "
-                f"got {self._num_points_malmquist}")
-        self.r_host_range = jnp.linspace(
-            r_limits_malmquist[0], r_limits_malmquist[1],
-            self._num_points_malmquist)
-        fprint(
-            f"setting radial range from {r_limits_malmquist[0]}"
-            f" to {r_limits_malmquist[1]} Mpc with "
-            f"{self._num_points_malmquist} points.")
+        r_min, r_max = r_limits
+
+        delta_mu = get_nested(config, "model/delta_mu", None)
+        dr_max = get_nested(config, "model/dr_max", None)
+
+        if delta_mu is not None and dr_max is not None:
+            r = make_adaptive_grid(r_min, r_max, delta_mu, dr_max)
+            self.r_host_range = jnp.asarray(r)
+            self._num_points_malmquist = len(r)
+
+            r_cross = dr_max / (delta_mu * np.log(10) / 5)
+            dr = np.diff(r)
+            n_mu = int(np.sum(r[:-1] < r_cross))
+            n_r = len(r) - n_mu
+            fprint(
+                f"adaptive radial grid: {len(r)} points over "
+                f"[{r_min}, {r_max}] Mpc.")
+            fprint(
+                f"  delta_mu = {delta_mu}, dr_max = {dr_max} Mpc, "
+                f"crossover at r = {r_cross:.1f} Mpc.")
+            fprint(
+                f"  mu-regime: {n_mu} pts "
+                f"(dr = {dr[0]:.4f} .. {dr[min(n_mu, len(dr)-1)]:.4f}), "
+                f"r-regime: {n_r} pts (dr = {dr_max}).")
+        else:
+            num_pts = get_nested(
+                config, "model/num_points_malmquist", 251)
+            if num_pts % 2 == 0:
+                raise ValueError(
+                    f"num_points_malmquist must be odd for Simpson's "
+                    f"rule, got {num_pts}")
+            self.r_host_range = jnp.linspace(r_min, r_max, num_pts)
+            self._num_points_malmquist = num_pts
+            fprint(
+                f"uniform radial grid: {num_pts} points over "
+                f"[{r_min}, {r_max}] Mpc.")
+
         self.Rmax = jnp.max(self.r_host_range)
         self._simpson_log_w = simpson_log_weights(self.r_host_range)
+
+        # Separate coarser grid for selection integrals (Malmquist).
+        # The selection function is much smoother than the per-host
+        # integrand, so a coarser grid suffices.
+        delta_mu_sel = get_nested(config, "model/delta_mu_sel", None)
+        dr_max_sel = get_nested(config, "model/dr_max_sel", None)
+        if delta_mu_sel is not None and dr_max_sel is not None:
+            r_sel = make_adaptive_grid(r_min, r_max, delta_mu_sel, dr_max_sel)
+            self.r_sel_range = jnp.asarray(r_sel)
+            self._simpson_log_w_sel = simpson_log_weights(self.r_sel_range)
+            fprint(f"selection grid: {len(r_sel)} points "
+                   f"(delta_mu_sel={delta_mu_sel}, dr_max_sel={dr_max_sel}).")
+        else:
+            self.r_sel_range = self.r_host_range
+            self._simpson_log_w_sel = self._simpson_log_w
 
     def _setup_random_los_grid(self):
         """Set up dummy random LOS when no reconstruction is used."""
         if not self.use_reconstruction and self.apply_sel:
-            # Magnitude selection is direction-independent (no Vext
-            # projection), so 1 LOS suffices. Redshift selection
-            # averages over Vext · r_hat and needs many directions.
-            if self.which_selection is not None \
-                    and "redshift" in self.which_selection:
-                default_num = 100
+            which_sel = get_nested(
+                self.config, "model/which_selection", None)
+
+            if which_sel == "redshift":
+                # Redshift selection needs many directions to average
+                # over the Vext projection.
+                num_rand = get_nested(
+                    self.config, "model/num_rand_los_no_recon", 1000)
+                fprint(f"setting {num_rand} isotropic random LOS "
+                       "(no reconstruction, redshift selection).")
             else:
-                default_num = 1
-            num_rand = get_nested(
-                self.config, "model/num_rand_los_no_recon", default_num)
-            fprint(f"setting {num_rand} isotropic random LOS "
-                   "(no reconstruction).")
+                # Magnitude selection is isotropic: 1 LOS suffices.
+                num_rand = 1
+                fprint("setting 1 random LOS "
+                       "(no reconstruction, isotropic selection).")
             self.num_rand_los = num_rand
             self.rand_los_density = jnp.ones(
-                (1, self.num_rand_los,
-                 self._num_points_malmquist))
+                (1, num_rand, self._num_points_malmquist))
             self.rand_los_velocity = jnp.zeros_like(
                 self.rand_los_density)
-            # Isotropic unit vectors for proper Vext averaging
             gen = np.random.default_rng(42)
             phi = gen.uniform(0, 2 * np.pi, num_rand)
             cos_theta = gen.uniform(-1, 1, num_rand)
@@ -267,7 +375,7 @@ class ModelBase(ABC):
                  cz_lim, cz_width):
         """Selection correction for a redshift-truncated sample."""
         zcosmo = self.distance2redshift(
-            self.r_host_range, h=H0 / 100)
+            self.r_sel_range, h=H0 / 100)
         cz_r = predict_cz(zcosmo[None, None, :], Vpec)
         sigma_v = jnp.asarray(sigma_v)
         while sigma_v.ndim < cz_r.ndim:
@@ -276,19 +384,19 @@ class ModelBase(ABC):
         log_prob = log_prob_integrand_sel(
             cz_r, sigma_v, cz_lim, cz_width)
         return ln_simpson_precomputed(
-            lp_r + log_prob, self._simpson_log_w, axis=-1)
+            lp_r + log_prob, self._simpson_log_w_sel, axis=-1)
 
     def log_S_mag(self, lp_r, M_abs, H0, e_mag,
                   mag_lim, mag_width, mu_grid=None):
         """Selection correction for a magnitude-limited sample."""
         if mu_grid is None:
             mu_grid = self.distance2distmod(
-                self.r_host_range, h=H0 / 100)
+                self.r_sel_range, h=H0 / 100)
         mag = mu_grid + M_abs
         log_prob = log_prob_integrand_sel(
             mag[None, None, :], e_mag, mag_lim, mag_width)
         return ln_simpson_precomputed(
-            lp_r + log_prob, self._simpson_log_w, axis=-1)
+            lp_r + log_prob, self._simpson_log_w_sel, axis=-1)
 
     @abstractmethod
     def __call__(self, *args, **kwargs):

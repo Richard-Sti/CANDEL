@@ -29,9 +29,17 @@ use_reconstruction = true
 which_bias = "linear"
 which_selection = "TRGB_magnitude"
 
+run_ppc = false
+num_rand_los_no_recon = 1000
+max_rand_los = 1000
 distmod_limits = [10, 38]
-r_limits_malmquist = [0.01, 41]
-num_points_malmquist = 301
+r_limits_malmquist = [0.01, 35]
+
+delta_mu = 0.03
+dr_max = 0.5
+
+delta_mu_sel = 0.35
+dr_max_sel = 1.5
 
 mag_lim_TRGB = "infer"
 mag_lim_TRGB_width = "infer"
