@@ -30,6 +30,7 @@ which_bias = "linear"
 which_selection = "TRGB_magnitude"
 
 run_ppc = false
+ppc_factor = 10
 num_rand_los_no_recon = 1000
 max_rand_los = 1000
 distmod_limits = [10, 38]

@@ -173,7 +173,8 @@ def generate_trgb_ppc(samples, data, config, n_ppc=None, seed=42):
     n_hosts = len(mag_obs)
 
     if n_ppc is None:
-        n_ppc = n_post * n_hosts
+        ppc_factor = get_nested(config, "model/ppc_factor", 10)
+        n_ppc = ppc_factor * n_hosts
 
     # ---- Random LOS data ----
     use_reconstruction = get_nested(config, "model/use_reconstruction", False)
