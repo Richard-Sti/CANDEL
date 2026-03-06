@@ -1154,6 +1154,9 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
 
 def load_SH0ES_from_config(config_path):
     config = load_config(config_path, replace_los_prior=False)
+    if not get_nested(config, "model/use_reconstruction", False):
+        config["io"]["load_host_los"] = False
+        config["io"]["load_rand_los"] = False
     d = config["io"]["SH0ES"]
     root = d["root"]
     cepheid_host_cz_cmb_max = d.get("cepheid_host_cz_cmb_max", None)
@@ -1192,6 +1195,9 @@ def load_CCHP_from_config(config_path, ra_dec_only=False):
     (st, BV, obs_vec, cov, RA, dec, stellar masses) with CSP_ prefix.
     """
     config = load_config(config_path, replace_los_prior=False)
+    if not get_nested(config, "model/use_reconstruction", False):
+        config["io"]["load_host_los"] = False
+        config["io"]["load_rand_los"] = False
     load_csp_match = get_nested(config, "io/CSP/load_CSP_matches", False)
     path = config["io"]["CCHP"]["path"]
     redshift_source = get_nested(
@@ -1803,6 +1809,9 @@ def load_EDD_TRGB(root, zcmb_min=None, zcmb_max=None, b_min=None,
 def load_EDD_TRGB_from_config(config_path):
     """Load EDD TRGB data with LOS and anchor calibration from config."""
     config = load_config(config_path, replace_los_prior=False)
+    if not get_nested(config, "model/use_reconstruction", False):
+        config["io"]["load_host_los"] = False
+        config["io"]["load_rand_los"] = False
     d = config["io"]["PV_main"]["EDD_TRGB"]
     root = d["root"]
 
@@ -1953,6 +1962,9 @@ def load_EDD_2MTF(root, zcmb_min=None, zcmb_max=None, b_min=7.5,
 def load_EDD_2MTF_from_config(config_path):
     """Load EDD 2MTF data with LOS from config."""
     config = load_config(config_path, replace_los_prior=False)
+    if not get_nested(config, "model/use_reconstruction", False):
+        config["io"]["load_host_los"] = False
+        config["io"]["load_rand_los"] = False
     d = config["io"]["PV_main"]["EDD_2MTF"]
     root = d["root"]
 

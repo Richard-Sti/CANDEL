@@ -337,11 +337,11 @@ if __name__ == "__main__":
     # Load machine-specific settings from local_config.toml
     _local_cfg = load_local_config()
 
-    # --- EDD TRGB: Carrick2015 reconstruction ---
+    # --- EDD TRGB: magnitude selection, no reconstruction ---
     manual_overrides = {
         **{k: v for k, v in _local_cfg.items()},
-        "model/use_reconstruction": True,
-        "io/PV_main/EDD_TRGB/which_host_los": "Carrick2015",
+        "model/which_selection": "TRGB_magnitude",
+        "model/use_reconstruction": False,
     }
     # # --- CCHP overrides ---
     # manual_overrides = {
