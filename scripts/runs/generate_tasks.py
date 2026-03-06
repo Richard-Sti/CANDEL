@@ -341,7 +341,8 @@ if __name__ == "__main__":
     manual_overrides = {
         **{k: v for k, v in _local_cfg.items()},
         "model/which_selection": "TRGB_magnitude",
-        "model/use_reconstruction": False,
+        "model/use_reconstruction": True,
+        "io/PV_main/EDD_TRGB/which_host_los": "Carrick2015",
     }
     # # --- CCHP overrides ---
     # manual_overrides = {

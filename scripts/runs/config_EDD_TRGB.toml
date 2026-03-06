@@ -66,9 +66,10 @@ high = 1000
 
 # Reconstruction
 [model.priors.beta]
-dist = "normal"
-loc = 0.43
-scale = 0.02
+dist = "truncated_normal"
+mean = 0.43
+scale = 0.1
+low = 0.0
 
 [model.priors.b1]
 dist = "truncated_normal"
