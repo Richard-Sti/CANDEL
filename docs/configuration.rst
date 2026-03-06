@@ -62,9 +62,54 @@ Model settings
 The ``[model]`` section contains settings specific to the distance indicator
 and the physical model:
 
+- ``name``: The name of the PV model class (e.g., ``"TFR"``, ``"SN"``, ``"PantheonPlus"``, ``"FP"``).
+- ``which_run``: For H0 models, specifies the pipeline to run (``"CH0"``, ``"CCHP"``, ``"EDD_TRGB"``, ``"CCHP_CSP"``).
 - ``Om``: Matter density parameter :math:`\Omega_m`.
 - ``use_reconstruction``: Boolean, whether to use a reconstructed density/velocity field.
 - ``which_selection``: Type of selection function to apply (e.g., ``"TRGB_magnitude"``, ``"redshift"``, or ``"none"``).
+
+Model and Catalogue Names
+-------------------------
+
+When running PV models, the ``[inference]`` and ``[io]`` sections must specify
+the model and catalogue:
+
+.. code-block:: toml
+
+   [inference]
+   model = "TFRModel"
+
+   [io]
+   catalogue_name = "CF4_W1"
+
+For joint inferences, these can be lists:
+
+.. code-block:: toml
+
+   [inference]
+   model = ["TFRModel", "SNModel"]
+
+   [io]
+   catalogue_name = ["CF4_W1", "Foundation"]
+
+Batch Generation
+----------------
+
+For large experiments (e.g., parameter sweeps), CANDEL includes a template-based
+configuration generator:
+
+.. code-block:: bash
+
+   python scripts/runs/generate_tasks.py [index]
+
+This script reads a template TOML and applies a grid of overrides defined in the
+``manual_overrides`` dictionary within the script. It generates:
+
+1. A directory of ``.toml`` files, one for each combination of parameters.
+2. A ``tasks_[index].txt`` file containing the paths to all generated configs.
+
+The task list can be used to launch parallel jobs on a cluster, for example
+using a SLURM array.
 
 Inference settings
 ------------------

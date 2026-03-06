@@ -35,7 +35,7 @@ These models work in units of $h^{-1}\,\mathrm{Mpc}$ (i.e. assume $h = 1$). Mult
 
 - **Cepheid-calibrated $H_0$:** 35 Cepheid host galaxies from SH0ES
 - **TRGB-calibrated $H_0$:** Tip of the Red Giant Branch distances from CCHP, EDD, and SH0ES
-- **2MTF-calibrated $H_0$:** Tully--Fisher distances from the 2MTF survey
+- **2MTF-calibrated $H_0$:** Tully--Fisher distances from the EDD-2MTF sample
 
 ## Package structure
 

@@ -31,3 +31,13 @@ directory. These notebooks demonstrate specific workflows, such as:
 - **example.ipynb**: A general overview of the package.
 - **paper_SH0ES**: Replicating the results from `Stiskalek et al. (2025) <https://arxiv.org/abs/2509.09665>`_.
 - **paper_CCHP**: Analysis of the CCHP TRGB calibration.
+
+HPC and Batch Processing
+------------------------
+
+CANDEL is designed for high-performance computing (HPC) environments. It
+supports GPU acceleration via JAX and includes tools for generating large
+batches of configuration files for parameter sweeps.
+
+See the :doc:`configuration` guide for more information on the
+``generate_tasks.py`` script and its template-based override system.
