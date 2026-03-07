@@ -41,7 +41,8 @@ class BaseFieldLoader(ABC):
     Base class for loading 3D density and velocity fields.
 
     Subclasses must implement:
-    - ``load_density()``: Return a 3D ``np.ndarray`` (N, N, N) of mass densities
+    - ``load_density()``: Return a 3D ``np.ndarray`` (N, N, N) of
+      mass densities
       in units of :math:`h^2 M_\odot / \mathrm{kpc}^3`.
     - ``load_velocity()``: Return a 4D ``np.ndarray`` (3, N, N, N) of Cartesian
       velocity components in :math:`\mathrm{km/s}`.

@@ -92,7 +92,8 @@ class ModelBase(ABC):
         Loaded TOML configuration.
     Om : float
         Matter density parameter :math:`\Omega_m`.
-    distance2distmod, distance2redshift, redshift2distance, distmod2distance : callable
+    distance2distmod, distance2redshift, redshift2distance,
+    distmod2distance : callable
         JAX-JITted cosmography interpolators.
     """
 
