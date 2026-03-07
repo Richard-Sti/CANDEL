@@ -28,7 +28,7 @@ from ..util import (fprint, fsection, get_nested, load_config,
                     radec_to_cartesian, replace_prior_with_delta)
 from .interp import LOSInterpolator
 from .pv_utils import lp_galaxy_bias
-from .simpson import ln_simpson, ln_simpson_precomputed, simpson_log_weights
+from .simpson import ln_simpson_precomputed, simpson_log_weights
 from .utils import load_priors, log_prob_integrand_sel, predict_cz
 
 
@@ -78,17 +78,34 @@ def make_adaptive_grid(r_min, r_max, delta_mu, dr_max):
 
 
 class ModelBase(ABC):
-    """Common ancestor for PV and H0 model hierarchies."""
+    r"""
+    Common abstract base class for all forward models (PV and H0).
+
+    Subclasses are expected to implement:
+    - ``model()``: The main NumPyro model function that defines the parameters
+      and likelihood.
+    - Data loading and preprocessing in ``__init__``.
+
+    Attributes
+    ----------
+    config : dict
+        Loaded TOML configuration.
+    Om : float
+        Matter density parameter :math:`\Omega_m`.
+    distance2distmod, distance2redshift, redshift2distance,
+    distmod2distance : callable
+        JAX-JITted cosmography interpolators.
+    """
 
     def __init__(self, config_path):
         config = load_config(config_path, replace_los_prior=False)
         # SH0ES configs use "Om0", PV configs use "Om".
         self.Om = get_nested(config, "model/Om",
                              get_nested(config, "model/Om0", 0.3))
-        self.distance2distmod = Distance2Distmod(Om0=self.Om)
-        self.distance2redshift = Distance2Redshift(Om0=self.Om)
-        self.redshift2distance = Redshift2Distance(Om0=self.Om)
-        self.distmod2distance = Distmod2Distance(Om0=self.Om)
+        self.distance2distmod, self.distance2redshift = \
+            Distance2Distmod(Om0=self.Om), Distance2Redshift(Om0=self.Om)
+        self.redshift2distance, self.distmod2distance = \
+            Redshift2Distance(Om0=self.Om), Distmod2Distance(Om0=self.Om)
         self.config = config
 
     def _load_and_set_priors(self):

@@ -340,12 +340,13 @@ if __name__ == "__main__":
     # --- EDD TRGB: magnitude selection, no reconstruction ---
     manual_overrides = {
         **{k: v for k, v in _local_cfg.items()},
+        "model/run_ppc": True,
         "model/which_selection": "TRGB_magnitude",
-        "model/use_reconstruction": True,
+        "model/use_reconstruction": False,
         "io/PV_main/EDD_TRGB/which_host_los": "Carrick2015",
-        # "model/priors/Vext": [
-        #     {"dist": "delta", "value": [0., 0., 0.]},
-        # ],
+        "model/priors/Vext": [
+            {"dist": "delta", "value": [0., 0., 0.]},
+        ],
     }
     # # --- CCHP overrides ---
     # manual_overrides = {

@@ -14,16 +14,15 @@
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 """TRGB-calibrated H0 forward model for EDD TRGB distance indicators."""
 import jax.numpy as jnp
-from numpyro import factor, plate, sample
+from jax.scipy.special import logsumexp
+from jax.scipy.stats import norm as norm_jax
+from numpyro import factor, sample
 from numpyro.distributions import Normal, Uniform
 
 from ..util import fprint, get_nested, replace_prior_with_delta
 from .base_model import H0ModelBase
 from .pv_utils import lp_galaxy_bias, rsample, sample_galaxy_bias
 from .simpson import ln_simpson_precomputed
-from jax.scipy.special import logsumexp
-from jax.scipy.stats import norm as norm_jax
-
 from .utils import logmeanexp, predict_cz
 
 
@@ -338,4 +337,3 @@ class TRGBModel(H0ModelBase):
                 ll_host -= log_S[0]
 
         factor("ll_host", jnp.sum(ll_host))
-

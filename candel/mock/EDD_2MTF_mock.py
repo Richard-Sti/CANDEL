@@ -19,7 +19,6 @@ from scipy.stats import norm
 from ..cosmography import Distance2Distmod, Distance2Redshift
 from ..util import SPEED_OF_LIGHT, radec_to_cartesian
 
-
 DEFAULT_TRUE_PARAMS = {
     "H0": 73.0,
     "a_TFR": -21.0,
@@ -72,12 +71,12 @@ def _field_xyz_to_radec(pos_rel, r, coordinate_frame):
     if coordinate_frame == "icrs":
         return cartesian_to_radec(x, y, z)
     elif coordinate_frame == "galactic":
-        l = np.rad2deg(np.arctan2(y, x))
+        ell = np.rad2deg(np.arctan2(y, x))
         b = np.rad2deg(np.arcsin(z / r))
-        return galactic_to_radec(l, b)
+        return galactic_to_radec(ell, b)
     elif coordinate_frame == "supergalactic":
-        from astropy.coordinates import SkyCoord
         from astropy import units as u
+        from astropy.coordinates import SkyCoord
         sgl = np.rad2deg(np.arctan2(y, x))
         sgb = np.rad2deg(np.arcsin(z / r))
         c = SkyCoord(sgl=sgl * u.deg, sgb=sgb * u.deg,
@@ -96,7 +95,7 @@ def _gen_homogeneous_path(nsamples, h, rmin, rmax, e_mag, e_eta,
                           r2mu, r2z, gen, verbose):
     """Homogeneous (no field) distance sampling path."""
     collected = {k: [] for k in ["RA", "dec", "r", "mag", "eta",
-                                  "e_mag", "e_eta", "czcmb"]}
+                                 "e_mag", "e_eta", "czcmb"]}
     n_accepted = 0
     n_parent = 0
     batch = max(int(3 * nsamples), 500)

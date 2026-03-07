@@ -21,7 +21,8 @@ from numpyro.distributions import MultivariateNormal, Normal, Uniform
 
 from ..util import fprint, get_nested, replace_prior_with_delta
 from .base_model import H0ModelBase
-from .pv_utils import rsample, sample_distance_prior, sample_galaxy_bias
+from .pv_utils import (lp_galaxy_bias, rsample, sample_distance_prior,
+                       sample_galaxy_bias)
 from .simpson import ln_simpson
 from .utils import (log_prior_r_empirical, log_prob_integrand_sel, logmeanexp,
                     mvn_logpdf_cholesky, predict_cz)

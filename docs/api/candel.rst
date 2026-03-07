@@ -25,6 +25,14 @@ Evidence
    :undoc-members:
    :show-inheritance:
 
+Posterior predictive checks
+---------------------------
+
+.. automodule:: candel.ppc_trgb
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 Utilities
 ---------
 
