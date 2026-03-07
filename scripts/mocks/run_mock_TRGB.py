@@ -32,11 +32,11 @@ from candel.mock.TRGB_mock import DEFAULT_ANCHORS, DEFAULT_TRUE_PARAMS
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
 TRACKED_PARAMS = ["H0", "M_TRGB", "sigma_int", "sigma_v",
-                  "Vext_mag", "Vext_ell", "Vext_b",
+                  "Vext_mag", "Vext_phi", "Vext_cos_theta",
                   "beta", "b1", "mu_LMC", "mu_N4258",
                   "mag_lim_TRGB", "mag_lim_TRGB_width"]
 
-PERIODIC_PARAMS = {"Vext_ell": 360.0}
+PERIODIC_PARAMS = {"Vext_phi": 2 * np.pi}
 
 TAG_WORK = 1
 TAG_RESULT = 2
@@ -151,6 +151,14 @@ def run_one_mock(seed, base_config_path, true_params, mock_kwargs,
             model = candel.model.TRGBModel(tmp, data)
             samples = candel.run_H0_inference(
                 model, save_samples=False, print_summary=True)
+
+        # Reconstruct raw Vext params from postprocessed ell/b
+        if "Vext_ell" in samples and "Vext_b" in samples:
+            ra, dec = candel.galactic_to_radec(
+                np.asarray(samples["Vext_ell"]),
+                np.asarray(samples["Vext_b"]))
+            samples["Vext_phi"] = np.deg2rad(ra)
+            samples["Vext_cos_theta"] = np.sin(np.deg2rad(dec))
 
         biases = {}
         for param in TRACKED_PARAMS:
