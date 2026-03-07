@@ -179,11 +179,13 @@ def master(comm, n_workers, config_info):
     from mpi4py import MPI
 
     n_mocks = config_info["n_mocks"]
+    master_seed = config_info["master_seed"]
     true_params = config_info["true_params"]
     outdir = config_info["outdir"]
 
     t0 = time.time()
-    seeds = list(range(n_mocks))
+    rng = np.random.default_rng(master_seed)
+    seeds = rng.integers(0, 2**31, size=n_mocks).tolist()
     results = []
     n_sent = 0
     n_done = 0
@@ -379,11 +381,15 @@ def run_sequential(config_info):
     n_skipped = 0
     running_biases = {p: [] for p in TRACKED_PARAMS}
 
-    for i in range(n_mocks):
+    master_seed = config_info.get("master_seed", 0)
+    rng = np.random.default_rng(master_seed)
+    seeds = rng.integers(0, 2**31, size=n_mocks).tolist()
+
+    for i, seed in enumerate(seeds):
         t_start = time.time()
         try:
             result = run_one_mock(
-                i, config_info["base_config"],
+                seed, config_info["base_config"],
                 config_info["true_params"], config_info["mock_kwargs"],
                 num_warmup=config_info["num_warmup"],
                 num_samples=config_info["num_samples"],
@@ -600,6 +606,8 @@ def main():
                         "mock and plot")
     parser.add_argument("--seed", type=int, default=42,
                         help="Random seed")
+    parser.add_argument("--master-seed", type=int, default=0,
+                        help="Master seed for reproducible mock seed sequence")
     parser.add_argument("--n-mocks", type=int, default=50,
                         help="Number of mock catalogs")
     parser.add_argument("--nsamples", type=int, default=480,
@@ -726,6 +734,7 @@ def main():
         "true_params": true_params,
         "mock_kwargs": mock_kwargs,
         "n_mocks": args.n_mocks,
+        "master_seed": args.master_seed,
         "outdir": args.outdir,
         "timeout": args.timeout,
         "num_warmup": args.num_warmup,

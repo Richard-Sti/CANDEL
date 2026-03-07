@@ -22,6 +22,7 @@ queue="cmb"
 ncpu=28
 memory=7
 n_mocks=100
+master_seed=0
 num_warmup=500
 num_samples=1000
 config="$repo_root/scripts/runs/config_EDD_TRGB.toml"
@@ -31,8 +32,9 @@ extra_args=""
 usage() {
     cat <<EOF
 usage: $(basename "$0") [-h] [-q QUEUE] [-n NCPU] [-m MEMORY] [--n-mocks N]
-                        [--num-warmup N] [--num-samples N] [--config PATH]
-                        [--outdir PATH] [--fix-selection] [--local]
+                        [--master-seed S] [--num-warmup N] [--num-samples N]
+                        [--config PATH] [--outdir PATH] [--fix-selection]
+                        [--local]
 
 Submit TRGB mock closure test batch jobs to Glamdring.
 
@@ -42,6 +44,8 @@ options:
   -n, --ncpu NCPU         Number of CPUs/MPI ranks (default: $ncpu)
   -m, --memory MEMORY     Memory per job in GB (default: $memory)
   --n-mocks N             Number of mock catalogs (default: $n_mocks)
+  --master-seed S         Master seed for reproducible mock seed sequence
+                          (default: $master_seed)
   --num-warmup N          NUTS warmup steps (default: $num_warmup)
   --num-samples N         NUTS posterior samples (default: $num_samples)
   --config PATH           Base config for inference settings (default:
@@ -73,6 +77,7 @@ while [[ $# -gt 0 ]]; do
         -n|--ncpu)           ncpu="$2"; shift 2 ;;
         -m|--memory)         memory="$2"; shift 2 ;;
         --n-mocks)           n_mocks="$2"; shift 2 ;;
+        --master-seed)       master_seed="$2"; shift 2 ;;
         --num-warmup)        num_warmup="$2"; shift 2 ;;
         --num-samples)       num_samples="$2"; shift 2 ;;
         --config)            config="$2"; shift 2 ;;
@@ -100,6 +105,7 @@ else
 fi
 echo "  CPUs:        $ncpu"
 echo "  N_mocks:     $n_mocks"
+echo "  Master seed: $master_seed"
 echo "  Warmup:      $num_warmup"
 echo "  Samples:     $num_samples"
 echo "  Config:      $config"
@@ -120,6 +126,7 @@ mkdir -p "$outdir"
 
 pythoncmd="$python_exec -u $script_dir/run_mock_TRGB.py \
     --n-mocks $n_mocks \
+    --master-seed $master_seed \
     --num-warmup $num_warmup \
     --num-samples $num_samples \
     --config $config \
