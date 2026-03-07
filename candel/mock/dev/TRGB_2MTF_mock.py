@@ -26,7 +26,6 @@ from ...cosmography import Distance2Distmod, Distance2Redshift
 from ...util import (SPEED_OF_LIGHT, galactic_to_radec_cartesian,
                      radec_to_cartesian)
 
-
 DEFAULT_TRUE_PARAMS = {
     # Shared
     "H0": 73.0,
