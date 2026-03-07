@@ -48,7 +48,7 @@ TRACKED_PARAMS = ["H0", "a_TFR", "b_TFR", "sigma_int", "sigma_v",
                    "eta_mean", "eta_std",
                    "beta", "b1"]
 
-BASE_CONFIG = os.path.join(REPO_ROOT, "scripts/runs/config_EDD_2MTF.toml")
+BASE_CONFIG = os.path.join(REPO_ROOT, "scripts/runs/dev/config_EDD_2MTF.toml")
 
 
 def _write_tmp_config(config):

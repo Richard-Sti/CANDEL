@@ -47,7 +47,7 @@ TRACKED_PARAMS = [
     "mu_LMC", "mu_N4258",
 ]
 
-BASE_CONFIG = os.path.join(REPO_ROOT, "scripts/runs/config_EDD_TRGB_2MTF.toml")
+BASE_CONFIG = os.path.join(REPO_ROOT, "scripts/runs/dev/config_EDD_TRGB_2MTF.toml")
 
 
 def _write_tmp_config(config):

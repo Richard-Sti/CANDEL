@@ -407,6 +407,22 @@ if __name__ == "__main__":
                 else:
                     local_config = overwrite_config(local_config, key, value)
 
+            # Force PPC off for Manticore (too expensive with many fields)
+            _los_keys = [
+                "io/PV_main/EDD_TRGB/which_host_los",
+                "io/PV_main/EDD_2MTF/which_host_los",
+                "io/SH0ES/which_host_los",
+                "io/which_host_los",
+            ]
+            for _k in _los_keys:
+                _los = get_nested(local_config, _k, None)
+                if isinstance(_los, str) and "manticore" in _los.lower():
+                    if get_nested(local_config, "model/run_ppc", False):
+                        fprint("forcing run_ppc=False for Manticore field.")
+                        local_config = overwrite_config(
+                            local_config, "model/run_ppc", False)
+                    break
+
             # Validate which_run
             which_run = get_nested(local_config, "model/which_run", None)
             valid_runs = (None, "CH0", "CCHP", "CCHP_CSP", "EDD_TRGB")
