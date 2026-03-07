@@ -32,11 +32,11 @@ from candel.mock.TRGB_mock import DEFAULT_ANCHORS, DEFAULT_TRUE_PARAMS
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
 TRACKED_PARAMS = ["H0", "M_TRGB", "sigma_int", "sigma_v",
-                  "Vext_mag", "Vext_phi", "Vext_cos_theta",
+                  "Vext_mag", "Vext_ell", "Vext_b",
                   "beta", "b1", "mu_LMC", "mu_N4258",
                   "mag_lim_TRGB", "mag_lim_TRGB_width"]
 
-PERIODIC_PARAMS = {"Vext_phi": 2 * np.pi}
+PERIODIC_PARAMS = {"Vext_ell": 360.0}
 
 TAG_WORK = 1
 TAG_RESULT = 2
