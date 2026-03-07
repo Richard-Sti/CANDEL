@@ -32,13 +32,24 @@ from candel.mock.TRGB_mock import DEFAULT_ANCHORS, DEFAULT_TRUE_PARAMS
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
 TRACKED_PARAMS = ["H0", "M_TRGB", "sigma_int", "sigma_v",
-                  "Vext_mag", "Vext_ell", "Vext_b",
+                  "Vext_mag", "Vext_phi", "Vext_cos_theta",
                   "beta", "b1", "mu_LMC", "mu_N4258",
                   "mag_lim_TRGB", "mag_lim_TRGB_width"]
+
+PERIODIC_PARAMS = {"Vext_phi": 2 * np.pi}
 
 TAG_WORK = 1
 TAG_RESULT = 2
 TAG_DONE = 3
+
+
+def _standardised_bias(samples, true_val, param):
+    """Standardised bias, handling periodic parameters."""
+    if param in PERIODIC_PARAMS:
+        period = PERIODIC_PARAMS[param]
+        delta = (samples - true_val + period / 2) % period - period / 2
+        return delta.mean() / delta.std()
+    return (samples.mean() - true_val) / samples.std()
 
 
 def _write_tmp_config(config):
@@ -107,6 +118,8 @@ def run_one_mock(seed, base_config_path, true_params, mock_kwargs,
         seed=seed, true_params=true_params, verbose=not quiet, **mock_kwargs)
     tp["mu_LMC"] = DEFAULT_ANCHORS["mu_LMC"]
     tp["mu_N4258"] = DEFAULT_ANCHORS["mu_N4258"]
+    tp["Vext_phi"] = np.deg2rad(tp["Vext_ell"])
+    tp["Vext_cos_theta"] = np.sin(np.deg2rad(tp["Vext_b"]))
     if mock_kwargs.get("mag_lim") is not None:
         tp["mag_lim_TRGB"] = mock_kwargs["mag_lim"]
     if mock_kwargs.get("mag_lim_width") is not None:
@@ -143,7 +156,7 @@ def run_one_mock(seed, base_config_path, true_params, mock_kwargs,
         for param in TRACKED_PARAMS:
             if param in samples:
                 s = np.asarray(samples[param])
-                biases[param] = (s.mean() - tp[param]) / s.std()
+                biases[param] = _standardised_bias(s, tp[param], param)
     finally:
         os.unlink(tmp)
 
@@ -460,6 +473,8 @@ def run_single(seed, true_params, mock_kwargs, config_path,
         seed=seed, true_params=true_params, verbose=True, **mock_kwargs)
     tp["mu_LMC"] = DEFAULT_ANCHORS["mu_LMC"]
     tp["mu_N4258"] = DEFAULT_ANCHORS["mu_N4258"]
+    tp["Vext_phi"] = np.deg2rad(tp["Vext_ell"])
+    tp["Vext_cos_theta"] = np.sin(np.deg2rad(tp["Vext_b"]))
     n = len(data["mag_obs"])
 
     print(f"\n{'='*60}")
@@ -516,7 +531,7 @@ def run_single(seed, true_params, mock_kwargs, config_path,
         for param in TRACKED_PARAMS:
             if param in samples:
                 s = np.asarray(samples[param])
-                bias = (s.mean() - tp[param]) / s.std()
+                bias = _standardised_bias(s, tp[param], param)
                 print(f"  {param:<15s}: {bias:+.2f}σ  "
                       f"(posterior {s.mean():.2f} ± {s.std():.2f}, "
                       f"true {tp[param]:.2f})")
