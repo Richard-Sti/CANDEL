@@ -118,8 +118,9 @@ def run_one_mock(seed, base_config_path, true_params, mock_kwargs,
         seed=seed, true_params=true_params, verbose=not quiet, **mock_kwargs)
     tp["mu_LMC"] = DEFAULT_ANCHORS["mu_LMC"]
     tp["mu_N4258"] = DEFAULT_ANCHORS["mu_N4258"]
-    tp["Vext_phi"] = np.deg2rad(tp["Vext_ell"])
-    tp["Vext_cos_theta"] = np.sin(np.deg2rad(tp["Vext_b"]))
+    _ra, _dec = candel.galactic_to_radec(tp["Vext_ell"], tp["Vext_b"])
+    tp["Vext_phi"] = np.deg2rad(_ra)
+    tp["Vext_cos_theta"] = np.sin(np.deg2rad(_dec))
     if mock_kwargs.get("mag_lim") is not None:
         tp["mag_lim_TRGB"] = mock_kwargs["mag_lim"]
     if mock_kwargs.get("mag_lim_width") is not None:
@@ -481,8 +482,9 @@ def run_single(seed, true_params, mock_kwargs, config_path,
         seed=seed, true_params=true_params, verbose=True, **mock_kwargs)
     tp["mu_LMC"] = DEFAULT_ANCHORS["mu_LMC"]
     tp["mu_N4258"] = DEFAULT_ANCHORS["mu_N4258"]
-    tp["Vext_phi"] = np.deg2rad(tp["Vext_ell"])
-    tp["Vext_cos_theta"] = np.sin(np.deg2rad(tp["Vext_b"]))
+    _ra, _dec = candel.galactic_to_radec(tp["Vext_ell"], tp["Vext_b"])
+    tp["Vext_phi"] = np.deg2rad(_ra)
+    tp["Vext_cos_theta"] = np.sin(np.deg2rad(_dec))
     n = len(data["mag_obs"])
 
     print(f"\n{'='*60}")
