@@ -180,12 +180,12 @@ class TRGBModel(H0ModelBase):
                    self.mag_N4258_TRGB))
 
         # --- Anchor distance prior ---
-        mu_anchors = jnp.array([mu_LMC, mu_N4258])
-        r_anchors = self.distmod2distance(mu_anchors, h=h)
-        lp_anchor_dist = self.log_prior_distance(r_anchors)
-        lp_anchor_dist += self.log_grad_distmod2comoving_distance(
-            mu_anchors, h=h)
-        factor("lp_anchor_dist", lp_anchor_dist)
+        # mu_anchors = jnp.array([mu_LMC, mu_N4258])
+        # r_anchors = self.distmod2distance(mu_anchors, h=h)
+        # lp_anchor_dist = self.log_prior_distance(r_anchors)
+        # lp_anchor_dist += self.log_grad_distmod2comoving_distance(
+        #     mu_anchors, h=h)
+        # factor("lp_anchor_dist", lp_anchor_dist)
 
         # --- Per-host cosmographic grids (fine grid) ---
         r_grid = self.r_host_range
