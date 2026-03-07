@@ -31,7 +31,7 @@ import tomli_w
 from scipy.stats import kstest
 
 
-REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 sys.path.insert(0, REPO_ROOT)
 os.chdir(REPO_ROOT)
 
@@ -41,7 +41,7 @@ os.environ.setdefault("JAX_PLATFORMS", "cpu")
 import candel  # noqa: E402
 from candel.inference import radec_cartesian_to_galactic  # noqa: E402
 from candel.mock import gen_EDD_2MTF_mock  # noqa: E402
-from candel.mock.EDD_2MTF_mock import DEFAULT_TRUE_PARAMS  # noqa: E402
+from candel.mock.dev.EDD_2MTF_mock import DEFAULT_TRUE_PARAMS  # noqa: E402
 
 TRACKED_PARAMS = ["H0", "a_TFR", "b_TFR", "sigma_int", "sigma_v",
                    "Vext_mag", "Vext_ell", "Vext_b",

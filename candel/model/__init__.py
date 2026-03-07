@@ -29,7 +29,7 @@ from .model_PV_PantheonPlus import PantheonPlusModel                            
 from .model_PV_FP import FPModel                                               # noqa
 from .model_H0_CH0 import CH0Model                                             # noqa
 from .model_H0_TRGB import TRGBModel                                           # noqa
-from .model_H0_2MTF import EDD2MTFModel                                        # noqa
+from .dev.model_H0_2MTF import EDD2MTFModel                                    # noqa
 from .interp import LOSInterpolator                                            # noqa
 from .simpson import ln_simpson, simpson_log_weights                            # noqa
 
