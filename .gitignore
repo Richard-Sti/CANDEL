@@ -22,6 +22,8 @@ scripts/runs/logs
 scripts/mocks/logs/
 
 modules_arc.sh
+python.sh
+*.out
 CLAUDE.md
 GEMINI.md
 AGENTS.md
