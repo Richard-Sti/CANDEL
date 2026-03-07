@@ -87,6 +87,23 @@ scale = 0.1
 low = 0.0
 high = 5.0
 
+[model.priors.alpha_low]
+dist = "truncated_normal"
+low = 0.0
+mean = 1.0
+scale = 1.0
+
+[model.priors.alpha_high]
+dist = "truncated_normal"
+low = 0.0
+mean = 0.5
+scale = 1.0
+
+[model.priors.log_rho_t]
+dist = "normal"
+loc = 0.0
+scale = 2.0
+
 # Selection thresholds
 [model.priors.mag_lim_TRGB]
 dist = "uniform"

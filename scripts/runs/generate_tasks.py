@@ -343,7 +343,10 @@ if __name__ == "__main__":
         "model/run_ppc": True,
         "model/which_selection": "TRGB_magnitude",
         "model/use_reconstruction": True,
-        "io/PV_main/EDD_TRGB/which_host_los": "Carrick2015",
+        # "io/PV_main/EDD_TRGB/which_host_los": "Carrick2015",
+        "model/which_bias": "double_powerlaw",
+        "io/PV_main/EDD_TRGB/which_host_los": "manticore_2MPP_MULTIBIN_N256_DES_V2",
+    #     # "io/which_host_los": "manticore_2MPP_MULTIBIN_N256_DES_V2",
         # "model/priors/Vext": [
         #     {"dist": "delta", "value": [0., 0., 0.]},
         # ],

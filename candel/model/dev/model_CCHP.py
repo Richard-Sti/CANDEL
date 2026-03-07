@@ -18,7 +18,6 @@ Minimal NumPyro model for CCHP TRGB distance calibrators to infer H0.
 WARNING: This module is under development and likely incorrect. Use with
 caution.
 """
-import warnings
 from abc import ABC
 from dataclasses import dataclass
 from typing import Optional
@@ -41,12 +40,6 @@ from ..simpson import ln_simpson
 from ..utils import load_priors, log_prob_integrand_sel, logmeanexp, predict_cz
 from .model_CSP import (CSPModel, CSPSelection, compute_per_source_selection,
                         extract_csp_median_errors, log1mexp)
-
-warnings.warn(
-    "The CCHP SNe model is under development and likely incorrect. "
-    "Use with caution.",
-    stacklevel=2,
-)
 
 
 def logsumexp_by_group(logp, idx, n_groups=None):

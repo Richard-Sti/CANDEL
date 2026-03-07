@@ -20,8 +20,6 @@ By default h=1.0, but h can be passed to __call__ for joint H0 inference.
 WARNING: This module is under development and likely incorrect. Use with
 caution.
 """
-import warnings
-
 import jax.numpy as jnp
 from jax import random
 from jax.scipy.special import log_ndtr, logsumexp, ndtr
@@ -36,12 +34,6 @@ from ..base_pv import BasePVModel
 from ..pv_utils import rsample, sample_galaxy_bias, sample_Vext
 from ..simpson import ln_simpson
 from ..utils import predict_cz
-
-warnings.warn(
-    "The CSP SNe model is under development and likely incorrect. "
-    "Use with caution.",
-    stacklevel=2,
-)
 
 ###############################################################################
 #                         Volume prior for distance                           #
