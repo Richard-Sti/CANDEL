@@ -23,7 +23,8 @@ get_toml_key() {
 
 # ---- defaults ----
 config="../runs/config_EDD_TRGB.toml"
-reconstruction="Carrick2015"
+# reconstruction="Carrick2015"
+reconstruction="manticore_2MPP_MULTIBIN_N256_DES_V2"
 queue="cmb"
 ncpu=1
 memory=32
