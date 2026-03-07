@@ -32,7 +32,7 @@ usage() {
     cat <<EOF
 usage: $(basename "$0") [-h] [-q QUEUE] [-n NCPU] [-m MEMORY] [--n-mocks N]
                         [--num-warmup N] [--num-samples N] [--config PATH]
-                        [--outdir PATH] [--infer-selection] [--local]
+                        [--outdir PATH] [--fix-selection] [--local]
 
 Submit TRGB mock closure test batch jobs to Glamdring.
 
@@ -47,12 +47,18 @@ options:
   --config PATH           Base config for inference settings (default:
                           scripts/runs/config_EDD_TRGB.toml)
   --outdir PATH           Output directory (default: results/mocks_TRGB)
-  --infer-selection       Infer selection thresholds instead of fixing them to
-                          true mock values (default: False)
+  --fix-selection         Fix selection thresholds to true mock values instead
+                          of inferring them (default: infer)
   --local                 Run locally with mpirun instead of submitting
                           (default: False)
 
 Extra arguments are forwarded to run_mock_TRGB.py (e.g. --H0 70 --sigma-int 0.15).
+
+Field-based mocks (e.g. Carrick2015):
+  Pass --field Carrick2015 as an extra argument. The config must point to a
+  TOML file with a [field] section (e.g. config_EDD_TRGB.toml). Example:
+
+    $(basename "$0") --outdir results/mocks_TRGB_field --use-field --field Carrick2015
 EOF
     exit 0
 }
@@ -71,7 +77,7 @@ while [[ $# -gt 0 ]]; do
         --num-samples)       num_samples="$2"; shift 2 ;;
         --config)            config="$2"; shift 2 ;;
         --outdir)            outdir="$2"; shift 2 ;;
-        --infer-selection)   extra_args="$extra_args --infer-selection"; shift ;;
+        --fix-selection)     extra_args="$extra_args --fix-selection"; shift ;;
         --single)            single_mode=true; extra_args="$extra_args --single"; shift ;;
         --plot-only)         extra_args="$extra_args --plot-only"; shift ;;
         --local)             local_mode=true; shift ;;

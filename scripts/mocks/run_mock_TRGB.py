@@ -623,9 +623,11 @@ def main():
                         help="Sigmoid width for cz selection")
     parser.add_argument("--rmax", type=float, default=40.0,
                         help="Maximum mock distance [Mpc]")
-    parser.add_argument("--infer-selection", action="store_true",
-                        help="Infer selection thresholds instead of fixing "
-                        "them to true mock values")
+    parser.add_argument("--fix-selection", action="store_false",
+                        dest="infer_selection",
+                        help="Fix selection thresholds to true mock values "
+                        "instead of inferring them (default: infer)")
+    parser.set_defaults(infer_selection=True)
 
     # Field-based mock options
     parser.add_argument("--use-field", action="store_true",
