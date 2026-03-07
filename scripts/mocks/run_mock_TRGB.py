@@ -326,20 +326,20 @@ PROGRESS_INTERVAL = 15
 
 def _print_bias_table(biases, header=None, show_ks=False):
     """Print a table of mean bias +/- std for accumulated biases."""
-    w = 50 if not show_ks else 60
+    w = 55 if not show_ks else 65
     if header:
         print(f"\n{'=' * w}")
         print(header)
         print("=" * w)
     if show_ks:
-        print(f"{'param':<15s}  {'mean +/- std':>20s}  {'KS p-value':>10s}")
+        print(f"{'param':<20s}  {'mean +/- std':>20s}  {'KS p-value':>10s}")
     else:
-        print(f"{'param':<15s}  {'mean +/- std':>20s}")
+        print(f"{'param':<20s}  {'mean +/- std':>20s}")
     print("-" * w)
     for p in TRACKED_PARAMS:
         if p in biases and len(biases[p]) >= 2:
             b = np.array(biases[p])
-            line = (f"{p:<15s}  "
+            line = (f"{p:<20s}  "
                     f"{f'{b.mean():+.3f} +/- {b.std():.3f}':>20s}")
             if show_ks:
                 pval = kstest(b, "norm").pvalue
