@@ -72,7 +72,11 @@ def trgb_like_model(data):
                   + log_dens)                            # (n_gal, n_r)
     log_like = jax.scipy.special.logsumexp(log_like_r, axis=-1)  # (n_gal,)
 
-    numpyro.factor("obs", log_like.sum())
+    # numpyro.factor uses obs=jnp.zeros(()) which is 0-d; vmap (vectorized
+    # chain_method) cannot map over 0-d arrays, so use a plate + per-galaxy
+    # factor instead — obs shape (n_gal,) is 1-d and vmap-safe.
+    with numpyro.plate("galaxies", n_gal):
+        numpyro.factor("obs", log_like)
 
 
 def run_benchmark(data, chain_method, num_chains, num_warmup, num_samples):
