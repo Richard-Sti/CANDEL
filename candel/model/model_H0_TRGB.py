@@ -230,8 +230,9 @@ class TRGBModel(H0ModelBase):
                 norm_jax.logcdf((cz_lim - self.czcmb) / cz_width)))
 
             lp_rand_dist_sel = lp_r_sel[None, None, :]
+            # Works for rhat_rand_los both (n_los, 3) and (n_sims, n_los, 3)
             Vext_rad_rand = jnp.sum(
-                Vext[None, :] * self.rhat_rand_los, axis=1)
+                Vext[None, :] * self.rhat_rand_los, axis=-1)
             if self.use_reconstruction:
                 rand_delta = \
                     self.f_rand_los_delta.interp_many_steps_per_galaxy(

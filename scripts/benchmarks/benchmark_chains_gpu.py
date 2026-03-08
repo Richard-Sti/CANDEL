@@ -9,7 +9,11 @@ Usage:
 """
 import argparse
 import json
+import os
 import time
+import traceback
+
+os.environ["JAX_TRACEBACK_FILTERING"] = "off"
 
 import jax
 import jax.numpy as jnp
@@ -50,73 +54,97 @@ def make_synthetic_data(n_fields=30, n_gal=100, n_r=301, seed=0):
     }
 
 
-def trgb_like_model(data):
-    """
-    Simplified TRGB-like NumPyro model.
+# ---------- Model variants for bisecting the vmap issue ----------
 
-    Samples H0, beta, sigma_v, Vext (3-vector). For each galaxy,
-    builds a likelihood that touches the full (n_fields, n_gal, n_r) arrays
-    to be representative of the real compute cost.
-    """
+def trivial_model(data):
+    """Just a Normal. Should always work with vectorized chains."""
+    x = numpyro.sample("x", dist.Normal(0, 1))
+    numpyro.sample("obs", dist.Normal(x, 1), obs=data["mu_obs"][0])
+
+
+def multi_param_model(data):
+    """Multiple parameters including a vector."""
+    H0 = numpyro.sample("H0", dist.Uniform(60.0, 80.0))
+    beta = numpyro.sample("beta", dist.Uniform(0.1, 1.0))
+    Vext = numpyro.sample("Vext", dist.Normal(jnp.zeros(3), 200.0))
+    y = H0 + beta + Vext.sum()
+    numpyro.sample("obs", dist.Normal(y, 1), obs=data["mu_obs"][0])
+
+
+def factor_model(data):
+    """Per-galaxy likelihood with numpyro.factor (scalar)."""
+    H0 = numpyro.sample("H0", dist.Uniform(60.0, 80.0))
+    mu_pred = jnp.full_like(data["mu_obs"], 5.0 * jnp.log10(100.0 * H0 / 2.998e5) + 25.0)
+    log_like = dist.Normal(mu_pred, 0.1).log_prob(data["mu_obs"]).sum()
+    numpyro.factor("ll", log_like)
+
+
+def array_likelihood_model(data):
+    """Per-galaxy likelihood with PrecomputedLogLike."""
+    H0 = numpyro.sample("H0", dist.Uniform(60.0, 80.0))
+    mu_pred = jnp.full_like(data["mu_obs"], 5.0 * jnp.log10(100.0 * H0 / 2.998e5) + 25.0)
+    log_like = dist.Normal(mu_pred, 0.1).log_prob(data["mu_obs"])
+    numpyro.sample("ll", PrecomputedLogLike(log_like), obs=jnp.zeros(len(data["mu_obs"])))
+
+
+def trgb_like_model(data):
+    """Full simplified TRGB-like model."""
     n_fields, n_gal, n_r = data["los_density"].shape
 
-    H0    = numpyro.sample("H0",    dist.Uniform(60.0, 80.0))
-    beta  = numpyro.sample("beta",  dist.Uniform(0.1, 1.0))
+    H0 = numpyro.sample("H0", dist.Uniform(60.0, 80.0))
+    beta = numpyro.sample("beta", dist.Uniform(0.1, 1.0))
     sigma_v = numpyro.sample("sigma_v", dist.Uniform(50.0, 500.0))
-    Vext  = numpyro.sample("Vext",  dist.Normal(jnp.zeros(3), 200.0 * jnp.ones(3)))
+    Vext = numpyro.sample("Vext", dist.Normal(jnp.zeros(3), 200.0 * jnp.ones(3)))
 
-    # Cosmographic: mu(r) = 5 log10(r * H0 / c) + 25, crude approximation
     c = 2.998e5
-    r = data["r"]                                        # (n_r,)
-    mu_r = 5.0 * jnp.log10(r * H0 / c) + 25.0          # (n_r,)
+    r = data["r"]
+    mu_r = 5.0 * jnp.log10(r * H0 / c) + 25.0
 
-    # Mean density over realisations: (n_gal, n_r)
     mean_dens = data["los_density"].mean(axis=0)
-
-    # Velocity correction: mean radial velocity -> delta_mu
-    mean_vel = data["los_velocity"].mean(axis=0)         # (n_gal, n_r)
-    # Vext projection: simplified scalar (would be dot with rhat in real model)
+    mean_vel = data["los_velocity"].mean(axis=0)
     vext_proj = Vext[0]
-    vpec = beta * mean_vel + vext_proj                   # (n_gal, n_r)
-    delta_mu = -5.0 / jnp.log(10.0) * vpec / (c * r)   # (n_gal, n_r)
+    vpec = beta * mean_vel + vext_proj
+    delta_mu = -5.0 / jnp.log(10.0) * vpec / (c * r)
 
-    # Per-galaxy: integrate over r, weight by density prior
-    mu_pred = mu_r[None, :] + delta_mu                  # (n_gal, n_r)
-    log_dens = jnp.log(jnp.clip(mean_dens, 1e-6))       # (n_gal, n_r)
+    mu_pred = mu_r[None, :] + delta_mu
+    log_dens = jnp.log(jnp.clip(mean_dens, 1e-6))
 
-    # Gaussian likelihood in distance modulus, marginalised over r
     sigma_tot = jnp.sqrt(data["sigma_obs"][:, None]**2
                          + (5.0 / jnp.log(10.0) * sigma_v / (c * r))**2)
     log_like_r = (dist.Normal(mu_pred, sigma_tot)
                   .log_prob(data["mu_obs"][:, None])
-                  + log_dens)                            # (n_gal, n_r)
-    log_like = jax.scipy.special.logsumexp(log_like_r, axis=-1)  # (n_gal,)
+                  + log_dens)
+    log_like = jax.scipy.special.logsumexp(log_like_r, axis=-1)
 
-    # numpyro.factor uses obs=jnp.zeros(()) which is 0-d and fails under vmap
-    # (chain_method="vectorized"). Use a custom distribution with obs shape
-    # (n_gal,) so vmap can map over axis 0.
-    numpyro.sample("obs", PrecomputedLogLike(log_like), obs=jnp.zeros(n_gal))
+    numpyro.factor("ll", log_like.sum())
 
 
-def run_benchmark(data, chain_method, num_chains, num_warmup, num_samples):
-    kernel = NUTS(trgb_like_model)
-    mcmc = MCMC(
-        kernel,
-        num_warmup=num_warmup,
-        num_samples=num_samples,
-        num_chains=num_chains,
-        chain_method=chain_method,
-        progress_bar=False,
-    )
+# ---------- Benchmark runner ----------
+
+def run_benchmark(model_fn, data, chain_method, num_chains,
+                  num_warmup, num_samples):
+    def _make_mcmc():
+        return MCMC(
+            NUTS(model_fn),
+            num_warmup=num_warmup,
+            num_samples=num_samples,
+            num_chains=num_chains,
+            chain_method=chain_method,
+            progress_bar=False,
+        )
 
     rng_key = jax.random.PRNGKey(42)
 
-    # Warmup (includes JIT compilation)
+    # First run (includes JIT compilation + warmup)
+    mcmc = _make_mcmc()
     t0 = time.perf_counter()
     mcmc.run(rng_key, data)
     t_total = time.perf_counter() - t0
 
-    # Second run: pure sampling time (JIT already compiled)
+    # Second run with fresh MCMC object: measures JIT-cached performance.
+    # Re-creating avoids the double-vmap bug in NumPyro where calling
+    # mcmc.run twice wraps _sample_fn in a second vmap layer.
+    mcmc = _make_mcmc()
     t0 = time.perf_counter()
     mcmc.run(rng_key, data)
     t_sample = time.perf_counter() - t0
@@ -140,6 +168,8 @@ def main():
                         help="JSON file to write results to")
     args = parser.parse_args()
 
+    print(f"JAX version: {jax.__version__}")
+    print(f"NumPyro version: {numpyro.__version__}")
     print(f"JAX devices: {jax.devices()}")
     print(f"JAX backend: {jax.default_backend()}")
     print(f"num_warmup={args.num_warmup}, num_samples={args.num_samples}\n")
@@ -147,6 +177,36 @@ def main():
     data = make_synthetic_data()
     print(f"Data shapes: los_density={data['los_density'].shape}, "
           f"mu_obs={data['mu_obs'].shape}\n")
+
+    # ---- Phase 1: Diagnose which model complexity breaks vectorized ----
+    print("=" * 60)
+    print("PHASE 1: Diagnosing vectorized chain support")
+    print("=" * 60)
+    diagnostic_models = [
+        ("trivial", trivial_model),
+        ("multi_param", multi_param_model),
+        ("factor", factor_model),
+        ("array_likelihood", array_likelihood_model),
+        ("trgb_like", trgb_like_model),
+    ]
+    for name, model_fn in diagnostic_models:
+        print(f"\n  Testing {name} model (vectorized x4)...", flush=True)
+        try:
+            kernel = NUTS(model_fn)
+            mcmc = MCMC(kernel, num_warmup=10, num_samples=10,
+                        num_chains=4, chain_method="vectorized",
+                        progress_bar=False)
+            mcmc.run(jax.random.PRNGKey(0), data)
+            print(f"    {name}: OK")
+        except Exception as e:
+            print(f"    {name}: FAILED — {e}")
+            traceback.print_exc()
+            break  # no point continuing
+
+    # ---- Phase 2: Full benchmark ----
+    print("\n" + "=" * 60)
+    print("PHASE 2: Full benchmark")
+    print("=" * 60)
 
     configs = [
         ("sequential", 1),
@@ -159,9 +219,9 @@ def main():
     results = []
     for chain_method, num_chains in configs:
         tag = f"{chain_method:>12s}  x{num_chains:2d} chains"
-        print(f"Running {tag} ...", flush=True)
+        print(f"\nRunning {tag} ...", flush=True)
         try:
-            r = run_benchmark(data, chain_method, num_chains,
+            r = run_benchmark(trgb_like_model, data, chain_method, num_chains,
                               args.num_warmup, args.num_samples)
             print(f"  {tag}:  {r['ms_per_sample']:.2f} ms/sample  "
                   f"({r['samples_per_s']:.1f} samples/s)  "
@@ -170,6 +230,7 @@ def main():
             results.append(r)
         except Exception as e:
             print(f"  FAILED: {e}")
+            traceback.print_exc()
 
     print("\n--- Summary (sorted by ms/sample) ---")
     results.sort(key=lambda x: x["ms_per_sample"])

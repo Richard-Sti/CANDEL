@@ -179,7 +179,8 @@ class CCHPTRGBSelectionComputation:
         lp_r_grid = ctx.log_prior_r_grid[None, None, :]
 
         # Project Vext onto random LOS directions
-        Vext_rad_rand = jnp.sum(Vext[None, :] * ctx.rhat_rand_los, axis=1)
+        # Works for rhat_rand_los both (n_los, 3) and (n_sims, n_los, 3)
+        Vext_rad_rand = jnp.sum(Vext[None, :] * ctx.rhat_rand_los, axis=-1)
 
         if ctx.use_reconstruction:
             rand_los_delta_grid = \
@@ -400,11 +401,24 @@ class BaseCCHPModel(ABC):
             )
 
             # Unit vectors for random LOS directions
-            rhat = radec_to_cartesian(
-                jnp.asarray(data["rand_los_RA"]),
-                jnp.asarray(data["rand_los_dec"]))
-            n = jnp.linalg.norm(rhat, axis=1, keepdims=True)
-            self.rhat_rand_los = rhat / jnp.where(n == 0.0, 1.0, n)
+            ra = np.asarray(data["rand_los_RA"])
+            dec = np.asarray(data["rand_los_dec"])
+            if ra.ndim == 1:
+                rhat = radec_to_cartesian(ra, dec)
+            else:
+                # Per-realisation (n_sims, n_gal) → (n_sims, n_gal, 3)
+                ra_rad = np.deg2rad(ra)
+                dec_rad = np.deg2rad(dec)
+                cos_dec = np.cos(dec_rad)
+                rhat = np.stack([
+                    cos_dec * np.cos(ra_rad),
+                    cos_dec * np.sin(ra_rad),
+                    np.sin(dec_rad),
+                ], axis=-1)
+            # axis=-1 works for both (n_gal, 3) and (n_sims, n_gal, 3)
+            n = jnp.linalg.norm(rhat, axis=-1, keepdims=True)
+            self.rhat_rand_los = jnp.asarray(
+                rhat / np.where(n == 0.0, 1.0, n))
 
         # Set up radial range for volume prior normalization
         r_limits_malmquist = get_nested(

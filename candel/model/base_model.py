@@ -151,7 +151,8 @@ class ModelBase(ABC):
                 attrs_set.append(k2)
 
         def _normalize_rows(x):
-            n = jnp.linalg.norm(x, axis=1, keepdims=True)
+            # axis=-1 works for both (n_gal, 3) and (n_sims, n_gal, 3)
+            n = jnp.linalg.norm(x, axis=-1, keepdims=True)
             return x / jnp.where(n == 0.0, 1.0, n)
 
         specs = [
@@ -162,12 +163,27 @@ class ModelBase(ABC):
         ]
         for attr, (ra_key, dec_key), label in specs:
             if ra_key in data and dec_key in data:
+                ra, dec = data[ra_key], data[dec_key]
                 fprint(f"Converting {label} RA/dec to "
                        "Cartesian coordinates.")
-                assert (data[ra_key].ndim == 1
-                        and data[dec_key].ndim == 1)
-                rhat = radec_to_cartesian(
-                    data[ra_key], data[dec_key])
+                if ra.ndim == 1:
+                    assert dec.ndim == 1
+                    rhat = radec_to_cartesian(ra, dec)
+                elif ra.ndim == 2:
+                    # Per-realisation random LOS: (n_sims, n_gal) →
+                    # (n_sims, n_gal, 3)
+                    assert attr == "rhat_rand_los" and dec.ndim == 2
+                    ra_rad = np.deg2rad(ra)
+                    dec_rad = np.deg2rad(dec)
+                    cos_dec = np.cos(dec_rad)
+                    rhat = np.stack([
+                        cos_dec * np.cos(ra_rad),
+                        cos_dec * np.sin(ra_rad),
+                        np.sin(dec_rad),
+                    ], axis=-1)
+                else:
+                    raise ValueError(
+                        f"{ra_key} must be 1D or 2D, got {ra.ndim}D")
                 setattr(self, attr, _normalize_rows(rhat))
                 attrs_set.append(attr)
 
@@ -208,7 +224,11 @@ class ModelBase(ABC):
                 # Also subsample RA/dec in the data dict
                 for k in ("rand_los_RA", "rand_los_dec"):
                     if k in data and data[k] is not None:
-                        data[k] = data[k][idx]
+                        if data[k].ndim == 1:
+                            data[k] = data[k][idx]
+                        else:
+                            # Per-realisation (n_sims, n_gal)
+                            data[k] = data[k][:, idx]
                 fprint(f"subsampled random LOS: {n_avail} -> {max_rand}.")
 
         fprint(f"loaded {which} galaxy LOS interpolators "
@@ -483,8 +503,9 @@ class H0ModelBase(ModelBase):
         """Prepare random-LOS distance prior grid and Vext projection."""
         if self.apply_sel:
             lp_rand_dist_grid = lp_host_dist_grid
+            # Works for rhat_rand_los both (n_los, 3) and (n_sims, n_los, 3)
             Vext_rad_rand = jnp.sum(
-                Vext[None, :] * self.rhat_rand_los, axis=1)
+                Vext[None, :] * self.rhat_rand_los, axis=-1)
         else:
             lp_rand_dist_grid = 0.
             Vext_rad_rand = 0.

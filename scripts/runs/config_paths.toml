@@ -88,6 +88,16 @@ rmin = 0.1
 rmax = 251
 num_steps = 251
 
+# Radial grid for random LOS. Uses dr (Mpc/h) instead of num_steps so that
+# per-reconstruction overrides are easy to set.
+[io.reconstruction_rand_los]
+rmin = 0.1
+rmax = 251
+dr = 1.0
+
+[io.reconstruction_rand_los.manticore_2MPP_MULTIBIN_N256_DES_V2]
+dr = 0.5
+
 [io.reconstruction_main.Carrick2015]
 path_density = "data/fields/carrick2015_twompp_density.npy"
 path_velocity = "data/fields/carrick2015_twompp_velocity.npy"

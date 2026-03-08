@@ -6,9 +6,7 @@
 QUEUE=${1:-cmbgpu}
 
 case "$QUEUE" in
-    gpulong) GPUTYPE="rtx2080with12gb" ;;
-    cmbgpu)  GPUTYPE="rtx3090with24gb" ;;
-    optgpu)  GPUTYPE="rtxa6000with48gb" ;;
+    gpulong|cmbgpu|optgpu) GPUTYPE="" ;;
     *) echo "Unknown queue: $QUEUE"; exit 1 ;;
 esac
 
@@ -34,4 +32,8 @@ echo "Python:  $PYTHON"
 echo "Command: $CMD"
 echo
 
-addqueue -q "$QUEUE" -s -m 16 --gpus 1 --gputype "$GPUTYPE" $CMD
+if [[ -n "$GPUTYPE" ]]; then
+    addqueue -q "$QUEUE" -s -m 16 --gpus 1 --gputype "$GPUTYPE" $CMD
+else
+    addqueue -q "$QUEUE" -s -m 16 --gpus 1 $CMD
+fi

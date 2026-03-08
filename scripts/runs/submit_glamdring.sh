@@ -90,17 +90,9 @@ fi
 # Determine if GPU queue and set default gputype
 is_gpu=false
 case "$queue" in
-    gpulong)
+    gpulong|cmbgpu|optgpu)
         is_gpu=true
-        [[ -z "$gputype" ]] && gputype="rtx2080with12gb"
-        ;;
-    cmbgpu)
-        is_gpu=true
-        [[ -z "$gputype" ]] && gputype="rtx3090with24gb"
-        ;;
-    optgpu)
-        is_gpu=true
-        ;;  # only one GPU type in this queue; addqueue doesn't accept --gputype here
+        ;;  # don't set default --gputype; addqueue often rejects it
 esac
 
 if [[ -n "$gputype" ]] && ! $is_gpu; then
