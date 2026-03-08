@@ -1,0 +1,60 @@
+###############################################################################
+#                          Shared default priors                              #
+###############################################################################
+# These are sensible defaults shared across H0 and PV flow models.
+# Run-specific configs can override any of these.
+
+[model]
+Om = 0.3
+
+# Hubble constant
+[model.priors.H0]
+dist = "uniform"
+low = 10
+high = 100
+
+# Peculiar velocity dispersion
+[model.priors.sigma_v]
+dist = "maxwell"
+scale = 200
+
+# External bulk flow
+[model.priors.Vext]
+dist = "vector_uniform_fixed"
+low = 0.0
+high = 1000
+
+# Reconstruction: linear bias
+[model.priors.beta]
+dist = "normal"
+loc = 0.43
+scale = 0.1
+
+[model.priors.b1]
+dist = "uniform"
+low = 0.0
+high = 10.0
+
+# Reconstruction: double power law bias
+[model.priors.alpha_low]
+dist = "truncated_normal"
+low = 0.0
+mean = 1.0
+scale = 1.0
+
+[model.priors.alpha_high]
+dist = "truncated_normal"
+low = 0.0
+mean = 0.5
+scale = 1.0
+
+[model.priors.log_rho_t]
+dist = "normal"
+loc = 0.0
+scale = 2.0
+
+# Intrinsic scatter (generic)
+[model.priors.sigma_int]
+dist = "jeffreys"
+low = 0.005
+high = 1.0

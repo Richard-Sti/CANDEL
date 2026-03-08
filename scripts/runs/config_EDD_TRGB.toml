@@ -1,3 +1,5 @@
+base = ["config_priors.toml", "config_paths.toml"]
+
 ###############################################################################
 #                               Inference                                     #
 ###############################################################################
@@ -22,7 +24,6 @@ dense_mass_params = [
 ###############################################################################
 
 [model]
-Om = 0.3
 which_run = "EDD_TRGB"
 
 use_reconstruction = true
@@ -47,13 +48,9 @@ mag_lim_TRGB_width = "infer"
 cz_lim_selection = "infer"
 cz_lim_selection_width = "infer"
 
-# Cosmology
-[model.priors.H0]
-dist = "uniform"
-low = 10
-high = 100
+# --- Overrides from default priors ---
 
-# TRGB absolute magnitude and intrinsic scatter
+# TRGB absolute magnitude
 [model.priors.M_TRGB]
 dist = "normal"
 loc = -4.05
@@ -63,17 +60,10 @@ scale = 0.5
 dist = "maxwell"
 scale = 0.0627
 
-# Peculiar velocities
 [model.priors.sigma_v]
 dist = "maxwell"
 scale = 157
 
-[model.priors.Vext]
-dist = "vector_uniform_fixed"
-low = 0.0
-high = 1000 
-
-# Reconstruction
 [model.priors.beta]
 dist = "truncated_normal"
 mean = 0.43
@@ -86,23 +76,6 @@ mean = 1.2
 scale = 0.1
 low = 0.0
 high = 5.0
-
-[model.priors.alpha_low]
-dist = "truncated_normal"
-low = 0.0
-mean = 1.0
-scale = 1.0
-
-[model.priors.alpha_high]
-dist = "truncated_normal"
-low = 0.0
-mean = 0.5
-scale = 1.0
-
-[model.priors.log_rho_t]
-dist = "normal"
-loc = 0.0
-scale = 2.0
 
 # Selection thresholds
 [model.priors.mag_lim_TRGB]
@@ -163,26 +136,10 @@ fname_output = "results/EDD_TRGB/test.hdf5"
 load_host_los = true
 load_rand_los = true
 
-los_file_random = "data/los_random_<X>.hdf5"
-los_r0_decay_scale = 5
-
-
-[io.PV_main]
-
-[io.PV_main.EDD_TRGB]
-root = "data/EDD_TRGB"
-los_file = "data/EDD_TRGB/los_EDD_TRGB_<X>.hdf5"
-which_host_los = "Carrick2015"
-
-
+# Override reconstruction grid for TRGB (shorter range, finer grid)
 [io.reconstruction_main]
-rmin = 0.1
 rmax = 51
 num_steps = 301
 
-[io.reconstruction_main.Carrick2015]
-path_density = "data/fields/carrick2015_twompp_density.npy"
-path_velocity = "data/fields/carrick2015_twompp_velocity.npy"
-
-[io.reconstruction_main.manticore_2MPP_MULTIBIN_N256_DES_V2]
-fpath_root = "/mnt/extraspace/rstiskalek/MANTICORE/2MPP_MULTIBIN_N256_DES_V2/sph_fields_new_feb/sph_fields"
+[io.PV_main.EDD_TRGB]
+which_host_los = "Carrick2015"

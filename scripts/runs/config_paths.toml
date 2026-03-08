@@ -1,0 +1,126 @@
+###############################################################################
+#                     Shared data and reconstruction paths                    #
+###############################################################################
+
+[io]
+los_file_random = "data/los_random_<X>.hdf5"
+los_r0_decay_scale = 5
+
+# --- Catalog paths ---
+
+[io.PV_main]
+
+[io.PV_main.EDD_TRGB]
+root = "data/EDD_TRGB"
+los_file = "data/EDD_TRGB/los_EDD_TRGB_<X>.hdf5"
+
+[io.PV_main.EDD_2MTF]
+root = "data/EDD_2MTF"
+los_file = "data/EDD_2MTF/los_EDD_2MTF_<X>.hdf5"
+
+[io.PV_main.SH0ES]
+root = "data/SH0ES"
+los_file = "data/SH0ES/los_SH0ES_TFR_<X>.hdf5"
+
+[io.PV_main.CF4]
+root = "data/CF4"
+which_band = "i"
+return_all = true
+los_file = "data/CF4/los_CF4_TFR_<X>.hdf5"
+
+[io.PV_main.2MTF]
+root = "data/2MTF"
+return_all = true
+los_file = "data/2MTF/los_2MTF_<X>.hdf5"
+
+[io.PV_main.SFI]
+root = "data/SFI"
+return_all = true
+los_file = "data/SFI/los_SFI_<X>.hdf5"
+
+[io.PV_main.Foundation]
+root = "data/Foundation"
+return_all = true
+los_file = "data/Foundation/los_Foundation_<X>.hdf5"
+
+[io.PV_main.LOSS]
+root = "data/LOSS"
+return_all = true
+los_file = "data/LOSS/los_LOSS_<X>.hdf5"
+
+[io.PV_main.PantheonPlus]
+root = "data/Pantheon+"
+return_all = true
+los_file = "data/Pantheon+/los_CF4_Pantheon+_<X>.hdf5"
+
+[io.PV_main.PantheonPlusLane]
+root = "data/Pantheon+_Lane"
+return_all = true
+los_file = "data/Pantheon+_Lane/los_CF4_PantheonPlusLane_<X>.hdf5"
+
+[io.PV_main.Clusters]
+root = "data/Clusters"
+return_all = true
+los_file = "data/Clusters/los_Clusters_<X>.hdf5"
+
+[io.PV_main.SDSS_FP]
+root = "data/SDSS"
+return_all = true
+los_file = "data/SDSS/los_SDSS_FP_<X>.hdf5"
+
+[io.PV_main.6dF_FP]
+root = "data/6dF_FP"
+return_all = true
+los_file = "data/6dF_FP/los_6dF_FP_<X>.hdf5"
+
+[io.PV_main.CSP]
+root = "data/CSP"
+return_all = true
+
+[io.PV_main.CF4_HQ]
+root = "data/CF4_HQ"
+los_file = "data/CF4_HQ/los_CF4_HQ_<X>.hdf5"
+
+# --- Reconstruction field paths ---
+
+[io.reconstruction_main]
+rmin = 0.1
+rmax = 251
+num_steps = 251
+
+[io.reconstruction_main.Carrick2015]
+path_density = "data/fields/carrick2015_twompp_density.npy"
+path_velocity = "data/fields/carrick2015_twompp_velocity.npy"
+
+# Machine-specific absolute paths below. These can be overridden
+# in local_config.toml if needed.
+[io.reconstruction_main.manticore_2MPP_MULTIBIN_N256_DES_V2]
+fpath_root = "/mnt/extraspace/rstiskalek/MANTICORE/2MPP_MULTIBIN_N256_DES_V2/sph_fields_new_feb/sph_fields"
+
+[io.reconstruction_main.Lilow2024]
+path_density = "/mnt/extraspace/rstiskalek/catalogs/Lilow2024_density.npy"
+path_velocity_x = "/mnt/extraspace/rstiskalek/catalogs/Lilow2024_xVelocity.npy"
+path_velocity_y = "/mnt/extraspace/rstiskalek/catalogs/Lilow2024_yVelocity.npy"
+path_velocity_z = "/mnt/extraspace/rstiskalek/catalogs/Lilow2024_zVelocity.npy"
+
+[io.reconstruction_main.CF4]
+folder = "/mnt/extraspace/rstiskalek/catalogs/CF4/CF4gp_23avr24_256-z008_test_100_realizations"
+
+[io.reconstruction_main.CLONES]
+file_path = "/mnt/extraspace/rstiskalek/CLONES/s8/cf2gvpecc1pt5elmo73_sig6distribsbvoldi_RZA3Derrv2_512_500_ss8_zinit60_000.hdf5"
+
+[io.reconstruction_main.HAMLET_V0]
+fpath_root = "/mnt/extraspace/rstiskalek/catalogs/HAMLET/HAMLET_V0"
+version = 0
+
+[io.reconstruction_main.HAMLET_V1]
+fpath_root = "/mnt/extraspace/rstiskalek/catalogs/HAMLET/HAMLET_V1"
+version = 1
+
+[io.reconstruction_main.CB1]
+fpath_root = "/mnt/extraspace/rstiskalek/csiborg1/field"
+version = "csiborg1"
+
+[io.reconstruction_main.CB2]
+fpath_root = "/mnt/extraspace/rstiskalek/csiborg2_main/field"
+version = "csiborg2"

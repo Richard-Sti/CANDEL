@@ -1,3 +1,5 @@
+base = ["../config_priors.toml", "../config_paths.toml"]
+
 ###############################################################################
 #                               Inference                                     #
 ###############################################################################
@@ -24,7 +26,6 @@ dense_mass_params = [
 ###############################################################################
 
 [model]
-Om = 0.3
 which_run = "EDD_TRGB_2MTF"
 
 use_reconstruction = true
@@ -51,11 +52,7 @@ mag_lim_TFR = 11.25
 eta_min_sel = -0.1
 eta_max_sel = 0.2
 
-# H0
-[model.priors.H0]
-dist = "uniform"
-low = 10
-high = 100
+# --- Overrides from default priors ---
 
 # TRGB absolute magnitude
 [model.priors.M_TRGB]
@@ -95,11 +92,6 @@ high = 2.0
 [model.priors.sigma_v]
 dist = "maxwell"
 scale = 157
-
-[model.priors.Vext]
-dist = "vector_uniform_fixed"
-low = 0.0
-high = 1000
 
 # Reconstruction
 [model.priors.beta]
@@ -150,30 +142,14 @@ fname_output = "results/EDD_TRGB_2MTF/test.hdf5"
 load_host_los = true
 load_rand_los = true
 
-los_file_random = "data/los_random_<X>.hdf5"
-los_r0_decay_scale = 5
-
-
-[io.PV_main]
-
 [io.PV_main.EDD_TRGB]
-root = "data/EDD_TRGB"
-los_file = "data/EDD_TRGB/los_EDD_TRGB_<X>.hdf5"
 which_host_los = "Carrick2015"
 
 [io.PV_main.EDD_2MTF]
-root = "data/EDD_2MTF"
-los_file = "data/EDD_2MTF/los_EDD_2MTF_<X>.hdf5"
 which_host_los = "Carrick2015"
 eta_min = -0.1
 eta_max = 0.2
 
-
 [io.reconstruction_main]
-rmin = 0.1
 rmax = 200
 num_steps = 301
-
-[io.reconstruction_main.Carrick2015]
-path_density = "data/fields/carrick2015_twompp_density.npy"
-path_velocity = "data/fields/carrick2015_twompp_velocity.npy"

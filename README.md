@@ -94,6 +94,8 @@ python -m pip install --upgrade pip setuptools
 python -m pip install -e .
 ```
 
+For GPU support (e.g. on Glamdring), see [INSTALL_GLAMDRING_GPU.md](INSTALL_GLAMDRING_GPU.md).
+
 For model-evidence computation, also install [harmonic](https://github.com/astro-informatics/harmonic) (note: there may be compatibility issues with recent JAX versions).
 
 ## Citation

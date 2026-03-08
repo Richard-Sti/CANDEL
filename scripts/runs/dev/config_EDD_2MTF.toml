@@ -1,3 +1,5 @@
+base = ["../config_priors.toml", "../config_paths.toml"]
+
 ###############################################################################
 #                               Inference                                     #
 ###############################################################################
@@ -14,7 +16,6 @@ seed = 42
 ###############################################################################
 
 [model]
-Om = 0.3
 which_run = "EDD_2MTF"
 
 marginalize_eta = true
@@ -30,6 +31,8 @@ num_points_malmquist = 301
 mag_lim = 11.25
 eta_min_sel = -0.1
 eta_max_sel = 0.2
+
+# --- Overrides from default priors ---
 
 # TFR zero-point
 [model.priors.a_TFR]
@@ -66,38 +69,10 @@ dist = "uniform"
 low = 50
 high = 500
 
-# External velocity
-[model.priors.Vext]
-dist = "vector_uniform_fixed"
-low = 0.0
-high = 1000
-
 # Reconstruction
 [model.priors.beta]
 dist = "delta"
 value = 0.0
-
-[model.priors.b1]
-dist = "uniform"
-low = 0.0
-high = 10.0
-
-[model.priors.alpha_low]
-dist = "truncated_normal"
-low = 0.0
-mean = 1.0
-scale = 1.0
-
-[model.priors.alpha_high]
-dist = "truncated_normal"
-low = 0.0
-mean = 0.5
-scale = 1.0
-
-[model.priors.log_rho_t]
-dist = "normal"
-loc = 0.0
-scale = 2.0
 
 ###############################################################################
 #                                  Data                                       #
@@ -110,20 +85,11 @@ fname_output = "results/EDD_2MTF/test.hdf5"
 load_host_los = false
 load_rand_los = false
 
-[io.PV_main]
-
 [io.PV_main.EDD_2MTF]
-root = "data/EDD_2MTF"
-los_file = "data/EDD_2MTF/los_EDD_2MTF_<X>.hdf5"
 which_host_los = "manticore_2MPP_MULTIBIN_N256_DES_V2"
 eta_min = -0.1
 eta_max = 0.2
 
 [io.reconstruction_main]
-rmin = 0.1
 rmax = 200
 num_steps = 301
-
-[io.reconstruction_main.Carrick2015]
-path_density = "data/fields/carrick2015_twompp_density.npy"
-path_velocity = "data/fields/carrick2015_twompp_velocity.npy"

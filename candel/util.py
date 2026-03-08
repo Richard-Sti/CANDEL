@@ -113,13 +113,48 @@ def convert_to_absolute_paths(config):
     return config
 
 
+def _deep_merge(base, override):
+    """Recursively merge `override` into `base`. Returns a new dict.
+
+    Dicts containing a ``dist`` key (prior specifications) are treated as
+    atomic values and replaced entirely rather than key-merged.
+    """
+    merged = base.copy()
+    for k, v in override.items():
+        if (k in merged and isinstance(merged[k], dict)
+                and isinstance(v, dict) and "dist" not in v):
+            merged[k] = _deep_merge(merged[k], v)
+        else:
+            merged[k] = v
+    return merged
+
+
 def load_config(config_path, replace_none=True, fill_paths=True,
                 replace_los_prior=True):
     """
     Load a TOML configuration file and convert "none" strings to None.
+
+    Supports a ``base`` key (string or list of strings) pointing to base
+    config files that are loaded first and deep-merged in order. Paths are
+    resolved relative to the directory containing the config file.
     """
+    config_dir = str(Path(config_path).resolve().parent)
+
     with open(config_path, 'rb') as f:
         config = tomllib.load(f)
+
+    # Load and merge base configs if specified
+    base_paths = config.pop("base", None)
+    if base_paths is not None:
+        if isinstance(base_paths, str):
+            base_paths = [base_paths]
+        merged = {}
+        for bp in base_paths:
+            if not isabs(bp):
+                bp = join(config_dir, bp)
+            with open(bp, 'rb') as f:
+                merged = _deep_merge(merged, tomllib.load(f))
+        config = _deep_merge(merged, config)
 
     # Inject defaults from local_config.toml (config values take precedence)
     project_root = Path(__file__).resolve().parent.parent
