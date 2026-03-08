@@ -27,7 +27,7 @@ from scipy.integrate import cumulative_trapezoid, simpson
 from scipy.special import logsumexp as logsumexp_np
 from tqdm import trange
 
-from ..cosmography import Distance2Redshift
+from ..cosmo.cosmography import Distance2Redshift
 from ..model import LOSInterpolator
 from ..model.pv_utils import lp_galaxy_bias
 from ..model.simpson import ln_simpson

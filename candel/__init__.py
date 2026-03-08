@@ -22,7 +22,7 @@ from candel import (                                                            
     redshift2real,                                                              # noqa
     )
 
-from .cosmography import (                                                      # noqa
+from .cosmo.cosmography import (                                                # noqa
     Distmod2Redshift,                                                           # noqa
     Distmod2Distance,                                                           # noqa
     Distance2Distmod,                                                           # noqa
@@ -37,14 +37,14 @@ from .cosmography import (                                                      
     redshift_to_dL_cosmography,                                                 # noqa
     )
 
-from .evidence import (                                                         # noqa
+from .inference.evidence import (                                               # noqa
     BIC_AIC,                                                                    # noqa
     laplace_evidence,                                                           # noqa
     harmonic_evidence,                                                          # noqa
     dict_samples_to_array,                                                      # noqa
     )
 
-from .inference import (                                                        # noqa
+from .inference.inference import (                                              # noqa
     find_initial_point,                                                         # noqa
     run_pv_inference,                                                           # noqa
     run_H0_inference,                                                          # noqa

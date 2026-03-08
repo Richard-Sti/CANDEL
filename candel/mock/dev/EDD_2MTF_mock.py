@@ -16,7 +16,7 @@
 import numpy as np
 from scipy.stats import norm
 
-from ...cosmography import Distance2Distmod, Distance2Redshift
+from ...cosmo.cosmography import Distance2Distmod, Distance2Redshift
 from ...util import SPEED_OF_LIGHT, radec_to_cartesian
 
 DEFAULT_TRUE_PARAMS = {

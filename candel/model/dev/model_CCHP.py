@@ -28,10 +28,10 @@ from jax.scipy.special import log_ndtr
 from numpyro import factor, handlers, plate, sample
 from numpyro.distributions import MultivariateNormal, Normal, Uniform
 
-from ...cosmography import (Distance2Distmod, Distance2Redshift,
-                            Distmod2Distance, Distmod2Redshift,
-                            LogGrad_Distmod2ComovingDistance,
-                            Redshift2Distance)
+from ...cosmo.cosmography import (Distance2Distmod, Distance2Redshift,
+                                  Distmod2Distance, Distmod2Redshift,
+                                  LogGrad_Distmod2ComovingDistance,
+                                  Redshift2Distance)
 from ...util import (fprint, get_nested, load_config, radec_to_cartesian,
                      replace_prior_with_delta)
 from ..interp import LOSInterpolator

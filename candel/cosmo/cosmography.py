@@ -20,7 +20,7 @@ from jax import numpy as jnp
 from jax import vmap
 from scipy.interpolate import CubicSpline
 
-from .util import SPEED_OF_LIGHT
+from ..util import SPEED_OF_LIGHT
 
 ###############################################################################
 #                              Helpers                                        #

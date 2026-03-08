@@ -16,7 +16,7 @@
 import numpy as np
 from scipy.stats import norm
 
-from ..cosmography import Distance2Distmod, Distance2Redshift
+from ..cosmo.cosmography import Distance2Distmod, Distance2Redshift
 from ..field import interpolate_los_density_velocity
 from ..field.field_interp import build_regular_interpolator
 from ..util import (SPEED_OF_LIGHT, cartesian_to_radec, galactic_to_radec,

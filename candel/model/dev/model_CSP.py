@@ -27,8 +27,8 @@ from jax.scipy.stats import norm as jax_norm
 from numpyro import factor, plate, sample
 from numpyro.distributions import Distribution, MultivariateNormal, constraints
 
-from ...cosmography import (Distance2Distmod, Distance2Redshift,
-                            Redshift2Distance)
+from ...cosmo.cosmography import (Distance2Distmod, Distance2Redshift,
+                                  Redshift2Distance)
 from ...util import SPEED_OF_LIGHT, fprint, get_nested
 from ..base_pv import BasePVModel
 from ..pv_utils import rsample, sample_galaxy_bias, sample_Vext

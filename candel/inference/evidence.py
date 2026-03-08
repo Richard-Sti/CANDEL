@@ -15,7 +15,7 @@
 """Evidence and BIC/AIC calculation for MCMC samples."""
 import numpy as np
 
-from .util import fprint
+from ..util import fprint
 
 
 def BIC_AIC(samples, log_density, ndata):
