@@ -93,9 +93,6 @@ def make_mock_config(base_config_path, seed, num_warmup=500,
             if cz_lim_width is not None:
                 config["model"]["cz_lim_selection_width"] = cz_lim_width
 
-    config["io"]["load_host_los"] = use_field
-    config["io"]["load_rand_los"] = use_field
-
     # When not using field, fix beta prior to delta(0)
     if not use_field:
         config["model"]["priors"]["beta"] = {"dist": "delta", "value": 0.0}

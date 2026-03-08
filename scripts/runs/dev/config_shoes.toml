@@ -146,9 +146,6 @@ scale = 3
 root_output = "results/CH0"
 fname_output = "results/CH0/test.hdf5"
 
-load_host_los = true
-load_rand_los = true
-
 
 [io.SH0ES]
 root = "data/SH0ES"

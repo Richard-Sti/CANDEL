@@ -345,7 +345,6 @@ if __name__ == "__main__":
         "model/use_reconstruction": True,
         # "io/PV_main/EDD_TRGB/which_host_los": "Carrick2015",
         "model/which_bias": "double_powerlaw",
-        "model/max_rand_los": 100,
         "io/PV_main/EDD_TRGB/which_host_los": "manticore_2MPP_MULTIBIN_N256_DES_V2",
     #     # "io/which_host_los": "manticore_2MPP_MULTIBIN_N256_DES_V2",
         # "model/priors/Vext": [

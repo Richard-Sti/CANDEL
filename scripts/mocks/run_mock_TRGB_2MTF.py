@@ -110,9 +110,6 @@ def make_mock_config(seed, num_warmup=500, num_samples=500,
 
     priors["c_TFR"] = {"dist": "delta", "value": 0.0}
 
-    config["io"]["load_host_los"] = False
-    config["io"]["load_rand_los"] = False
-
     priors["beta"] = {"dist": "delta", "value": 0.0}
 
     return config

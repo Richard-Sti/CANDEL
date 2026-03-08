@@ -380,32 +380,31 @@ class BaseCCHPModel(ABC):
         # Load random LOS interpolators if available (for selection modelling)
         self.has_rand_los = False
         self.num_rand_los = 1
-        if get_nested(config, "io/load_rand_los", False):
-            if "rand_los_velocity" in data and "rand_los_r" in data:
-                self.has_rand_los = True
-                self.num_rand_los = data["rand_los_velocity"].shape[1]
-                fprint(f"Number of random LOS: {self.num_rand_los}")
+        if "rand_los_velocity" in data and "rand_los_r" in data:
+            self.has_rand_los = True
+            self.num_rand_los = data["rand_los_velocity"].shape[1]
+            fprint(f"Number of random LOS: {self.num_rand_los}")
 
-                rand_los_delta = jnp.asarray(data["rand_los_density"]) - 1.0
-                self.f_rand_los_delta = LOSInterpolator(
-                    data["rand_los_r"],
-                    rand_los_delta,
-                    r0_decay_scale=r0_decay_scale,
-                    extrap_constant=0.0,
-                )
-                self.f_rand_los_velocity = LOSInterpolator(
-                    data["rand_los_r"],
-                    jnp.asarray(data["rand_los_velocity"]),
-                    r0_decay_scale=r0_decay_scale,
-                    extrap_constant=0.0,
-                )
+            rand_los_delta = jnp.asarray(data["rand_los_density"]) - 1.0
+            self.f_rand_los_delta = LOSInterpolator(
+                data["rand_los_r"],
+                rand_los_delta,
+                r0_decay_scale=r0_decay_scale,
+                extrap_constant=0.0,
+            )
+            self.f_rand_los_velocity = LOSInterpolator(
+                data["rand_los_r"],
+                jnp.asarray(data["rand_los_velocity"]),
+                r0_decay_scale=r0_decay_scale,
+                extrap_constant=0.0,
+            )
 
-                # Unit vectors for random LOS directions
-                rhat = radec_to_cartesian(
-                    jnp.asarray(data["rand_los_RA"]),
-                    jnp.asarray(data["rand_los_dec"]))
-                n = jnp.linalg.norm(rhat, axis=1, keepdims=True)
-                self.rhat_rand_los = rhat / jnp.where(n == 0.0, 1.0, n)
+            # Unit vectors for random LOS directions
+            rhat = radec_to_cartesian(
+                jnp.asarray(data["rand_los_RA"]),
+                jnp.asarray(data["rand_los_dec"]))
+            n = jnp.linalg.norm(rhat, axis=1, keepdims=True)
+            self.rhat_rand_los = rhat / jnp.where(n == 0.0, 1.0, n)
 
         # Set up radial range for volume prior normalization
         r_limits_malmquist = get_nested(
@@ -458,7 +457,7 @@ class BaseCCHPModel(ABC):
             if self.use_reconstruction and not self.has_rand_los:
                 raise ValueError(
                     "Selection modelling with reconstruction requires random "
-                    "LOS data. Set `load_rand_los = true` in config.")
+                    "LOS data (auto-loaded when use_reconstruction=true).")
 
             # When not using reconstruction but applying selection, create
             # dummy homogeneous random LOS (like SH0ES)

@@ -187,9 +187,6 @@ scale = 0.5
 # IO settings
 [io]
 fname_output = "results/CCHP/test.hdf5"
-load_host_los = true
-load_rand_los = true
-
 # Templates for LOS files; <X> will be replaced by `which_host_los` if set.
 los_file = "data/CCHP/los_<X>.hdf5"
 # which_host_los = "Carrick2015"

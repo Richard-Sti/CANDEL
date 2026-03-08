@@ -82,9 +82,6 @@ value = 0.0
 root_output = "results/EDD_2MTF"
 fname_output = "results/EDD_2MTF/test.hdf5"
 
-load_host_los = false
-load_rand_los = false
-
 [io.PV_main.EDD_2MTF]
 which_host_los = "manticore_2MPP_MULTIBIN_N256_DES_V2"
 eta_min = -0.1

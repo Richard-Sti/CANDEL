@@ -139,9 +139,6 @@ e_mag_N4258_TRGB = 0.0443
 root_output = "results/EDD_TRGB_2MTF"
 fname_output = "results/EDD_TRGB_2MTF/test.hdf5"
 
-load_host_los = true
-load_rand_los = true
-
 [io.PV_main.EDD_TRGB]
 which_host_los = "Carrick2015"
 

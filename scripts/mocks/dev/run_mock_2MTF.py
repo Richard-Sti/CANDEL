@@ -88,9 +88,6 @@ def make_mock_config(seed, nsamples=500, num_warmup=500, num_samples=500,
     # Always fix c_TFR for mocks
     priors["c_TFR"] = {"dist": "delta", "value": 0.0}
 
-    config["io"]["load_host_los"] = use_field
-    config["io"]["load_rand_los"] = False
-
     if not use_field:
         priors["beta"] = {"dist": "delta", "value": 0.0}
     else:

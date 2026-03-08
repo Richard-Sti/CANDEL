@@ -133,9 +133,6 @@ e_mag_N4258_TRGB = 0.0443
 root_output = "results/EDD_TRGB"
 fname_output = "results/EDD_TRGB/test.hdf5"
 
-load_host_los = true
-load_rand_los = true
-
 # Override reconstruction grid for TRGB (shorter range, finer grid)
 [io.reconstruction_main]
 rmax = 51
