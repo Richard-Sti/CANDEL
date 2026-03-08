@@ -467,8 +467,10 @@ def load_los(los_data_path, data, mask=None, verbose=True):
             data["los_RA"] = f["RA"][...]
             data["los_dec"] = f["dec"][...]
         else:
-            data["los_density"] = f['los_density'][...][:, mask, ...].astype(np.float32)
-            data["los_velocity"] = f['los_velocity'][...][:, mask, ...].astype(np.float32)
+            dens = f['los_density'][...][:, mask, ...]
+            data["los_density"] = dens.astype(np.float32)
+            vel = f['los_velocity'][...][:, mask, ...]
+            data["los_velocity"] = vel.astype(np.float32)
             data["los_r"] = f['r'][...]
             # Random LOS always use mask=None, so this 1D index is safe.
             data["los_RA"] = f["RA"][...][mask]

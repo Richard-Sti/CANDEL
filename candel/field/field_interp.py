@@ -86,7 +86,7 @@ def _trilinear_interp_field(field_flat, pos_flat, grid_min, grid_step,
         by1 = iy1 * s
 
         result[i] = (wx0 * (wy0 * (wz0 * field_flat[bx0 + by0 + iz0]
-                                    + wz1 * field_flat[bx0 + by0 + iz1])
+                                   + wz1 * field_flat[bx0 + by0 + iz1])
                             + wy1 * (wz0 * field_flat[bx0 + by1 + iz0]
                                      + wz1 * field_flat[bx0 + by1 + iz1]))
                      + wx1 * (wy0 * (wz0 * field_flat[bx1 + by0 + iz0]
