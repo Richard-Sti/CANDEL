@@ -14,198 +14,14 @@
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 """Posterior predictive check for the EDD TRGB H0 model."""
 import numpy as np
-from astropy.cosmology import FlatLambdaCDM
-from scipy.interpolate import interp1d
 from scipy.stats import ks_2samp, norm
 
-from .field import name2field_loader
-from .field.field_interp import build_regular_interpolator
-from .util import (SPEED_OF_LIGHT, cartesian_to_radec, fprint,
-                   galactic_to_radec, get_nested, load_config,
-                   radec_to_cartesian)
-
-###############################################################################
-#                          Cosmography helpers                                #
-###############################################################################
-
-
-def _build_numpy_cosmography(Om0, r_max_Mpch=60, npoints=2000):
-    """Build numpy-based distance-to-distmod and distance-to-redshift
-    interpolators at H0=100."""
-    cosmo = FlatLambdaCDM(H0=100, Om0=Om0)
-    z_grid = np.logspace(-8, np.log10(0.5), npoints)
-    r_grid = cosmo.comoving_distance(z_grid).value  # Mpc/h
-    mu_grid = cosmo.distmod(z_grid).value
-
-    r2mu_100 = interp1d(r_grid, mu_grid, kind="cubic",
-                        bounds_error=False, fill_value="extrapolate")
-    r2z_100 = interp1d(r_grid, z_grid, kind="cubic",
-                       bounds_error=False, fill_value="extrapolate")
-    return r2mu_100, r2z_100
-
-
-def _distmod(r, h, r2mu_100):
-    """Distance modulus: mu(r, h) = mu_100(r*h) - 5*log10(h)."""
-    return r2mu_100(r * h) - 5 * np.log10(h)
-
-
-def _redshift(r, h, r2z_100):
-    """Cosmological redshift: z(r, h) = z_100(r*h)."""
-    return r2z_100(r * h)
-
-
-###############################################################################
-#                              Smooth clip                                    #
-###############################################################################
-
-
-def _smoothclip(x, tau=0.1):
-    """Smooth zero-clipping matching the model's smoothclip_nr."""
-    return 0.5 * (x + np.sqrt(x**2 + tau**2))
-
-
-###############################################################################
-#                      Coordinate conversion                                  #
-###############################################################################
-
-
-def _xyz_to_radec_icrs(xyz, r_h, coordinate_frame):
-    """Convert field-frame Cartesian offsets to ICRS (RA, dec) in degrees."""
-    x, y, z = xyz[:, 0], xyz[:, 1], xyz[:, 2]
-    if coordinate_frame == "icrs":
-        return cartesian_to_radec(x, y, z)
-    elif coordinate_frame == "galactic":
-        ell = np.rad2deg(np.arctan2(y, x))
-        b = np.rad2deg(np.arcsin(z / r_h))
-        return galactic_to_radec(ell, b)
-    elif coordinate_frame == "supergalactic":
-        from astropy import units as u
-        from astropy.coordinates import SkyCoord
-        sgl = np.rad2deg(np.arctan2(y, x))
-        sgb = np.rad2deg(np.arcsin(z / r_h))
-        c = SkyCoord(sgl=sgl * u.deg, sgb=sgb * u.deg,
-                     frame='supergalactic')
-        return c.icrs.ra.deg, c.icrs.dec.deg
-    else:
-        raise ValueError(f"Unknown coordinate frame: {coordinate_frame}")
-
-
-###############################################################################
-#                     Sampling sphere radius                                  #
-###############################################################################
-
-
-def _compute_r_max_eff(which_sel, mag_lim_samples, mag_lim_fixed,
-                       mag_width_samples, mag_width_fixed,
-                       cz_lim_samples, cz_lim_fixed,
-                       M_TRGB, sigma_int, e_mag_obs, H0, r_max):
-    """Compute effective maximum distance (Mpc) based on selection."""
-    if which_sel == "TRGB_magnitude":
-        ml = float(np.max(mag_lim_samples)) \
-            if mag_lim_samples is not None else mag_lim_fixed
-        if ml is None or isinstance(ml, str):
-            return r_max
-
-        M_min = float(np.min(M_TRGB))
-        sint_max = float(np.max(sigma_int))
-        e_mag_max = float(np.max(e_mag_obs))
-        mw = float(np.max(mag_width_samples)) \
-            if mag_width_samples is not None else mag_width_fixed
-        if mw is None or isinstance(mw, str):
-            mw = 0.0
-
-        sigma_tot = np.sqrt(sint_max**2 + e_mag_max**2 + mw**2)
-        mu_cutoff = ml - M_min + 5 * sigma_tot
-        return min(10**((mu_cutoff - 25) / 5), r_max)
-
-    elif which_sel == "redshift":
-        cl = float(np.max(cz_lim_samples)) \
-            if cz_lim_samples is not None else cz_lim_fixed
-        if cl is None or isinstance(cl, str):
-            return r_max
-        h_min = float(np.min(H0)) / 100
-        return min(cl / (h_min * 100) * 1.5, r_max)
-
-    return r_max
-
-
-###############################################################################
-#                       3D field pool                                         #
-###############################################################################
-
-
-def _build_field_pool(field_loader, r_sphere, pool_size, gen):
-    """Pre-sample 3D positions and evaluate density/velocity in one batch.
-
-    Returns
-    -------
-    dict with r_h, rho, v_los, rhat_icrs, delta_max.
-    """
-    obs = field_loader.observer_pos
-    coord_frame = field_loader.coordinate_frame
-
-    eps = 1e-4
-    fprint("PPC: loading density field...")
-    density_raw = field_loader.load_density()
-    density_log = np.log(density_raw + eps).astype(np.float32)
-    f_density = build_regular_interpolator(
-        density_log, field_loader.boxsize,
-        fill_value=np.float32(np.log(1 + eps)))
-    delta_max = float(density_raw.max()) - 1
-    del density_raw, density_log
-
-    fprint("PPC: loading velocity field...")
-    velocity_3d = field_loader.load_velocity()
-    f_vel = []
-    for i in range(3):
-        f_vel.append(build_regular_interpolator(
-            velocity_3d[i], field_loader.boxsize,
-            fill_value=np.float32(0)))
-    del velocity_3d
-
-    # Sample positions uniformly in sphere (overallocate for sphere/cube ratio)
-    rmin_h = 0.1
-    n_cube = int(pool_size * 2.0)
-    fprint(f"PPC: sampling {n_cube} candidate positions "
-           f"(r_sphere={r_sphere:.1f} Mpc/h)...")
-    xyz = gen.uniform(-r_sphere, r_sphere,
-                      (n_cube, 3)).astype(np.float32)
-    r_sq = np.sum(xyz**2, axis=1)
-    mask = (r_sq < r_sphere**2) & (r_sq > rmin_h**2)
-    xyz = xyz[mask]
-    if len(xyz) > pool_size:
-        xyz = xyz[:pool_size]
-
-    r_h = np.linalg.norm(xyz, axis=1)
-
-    # Evaluate density at all pool positions (one batch)
-    fprint(f"PPC: evaluating density at {len(xyz)} positions...")
-    pos_box = (xyz + obs[None, :]).astype(np.float32)
-    rho_log = f_density(pos_box)
-    rho = np.exp(rho_log) - eps
-    np.clip(rho, eps, None, out=rho)
-
-    # Evaluate radial velocity at all pool positions (one batch)
-    fprint("PPC: evaluating velocity...")
-    rhat = xyz / r_h[:, None]
-    v_los = np.zeros(len(xyz), dtype=np.float32)
-    for i in range(3):
-        v_los += f_vel[i](pos_box) * rhat[:, i]
-
-    del f_density, f_vel, pos_box
-
-    # Convert to ICRS direction vectors
-    RA, dec = _xyz_to_radec_icrs(xyz, r_h, coord_frame)
-    rhat_icrs = radec_to_cartesian(RA, dec)
-
-    fprint(f"PPC: pool ready ({len(xyz)} positions)")
-    return {
-        "r_h": r_h.astype(np.float64),
-        "rho": rho.astype(np.float64),
-        "v_los": v_los.astype(np.float64),
-        "rhat_icrs": rhat_icrs.astype(np.float64),
-        "delta_max": delta_max,
-    }
+from ..cosmography import Distance2Distmod, Distance2Redshift
+from ..field import name2field_loader
+from ..util import (SPEED_OF_LIGHT, fprint, get_nested, load_config,
+                    radec_to_cartesian)
+from ._field_utils import (build_field_pool, compute_r_max_selection,
+                            smoothclip)
 
 
 ###############################################################################
@@ -289,20 +105,22 @@ def generate_trgb_ppc(samples, data, config, n_ppc=None, seed=42):
         ppc_factor = get_nested(config, "model/ppc_factor", 10)
         n_ppc = ppc_factor * n_hosts
 
-    # ---- Cosmography (numpy, built once) ----
+    # ---- Cosmography ----
     Om = get_nested(config, "model/Om", 0.3)
-    r2mu_100, r2z_100 = _build_numpy_cosmography(Om)
+    r2mu = Distance2Distmod(Om0=Om)
+    r2z = Distance2Redshift(Om0=Om)
 
     # ---- Distance limits ----
     r_limits = get_nested(config, "model/r_limits_malmquist", [0.01, 150])
     r_min, r_max = r_limits[0], r_limits[1]
 
     # ---- Effective sphere radius (selection-aware) ----
-    r_max_eff = _compute_r_max_eff(
-        which_sel, mag_lim_samples, mag_lim_fixed,
-        mag_width_samples, mag_width_fixed,
-        cz_lim_samples, cz_lim_fixed,
-        M_TRGB, sigma_int, e_mag_obs_all, H0, r_max)
+    r_max_eff = compute_r_max_selection(
+        mag_lim=mag_lim_samples if mag_lim_samples is not None else mag_lim_fixed,  # noqa
+        M_abs=M_TRGB, sigma_int=sigma_int, e_mag=e_mag_obs_all,
+        mag_lim_width=mag_width_samples if mag_width_samples is not None else mag_width_fixed,  # noqa
+        cz_lim=cz_lim_samples if cz_lim_samples is not None else cz_lim_fixed,
+        h=H0 / 100, r_max=r_max)
     fprint(f"PPC: effective r_max = {r_max_eff:.1f} Mpc "
            f"(config r_max = {r_max:.1f} Mpc)")
 
@@ -316,7 +134,7 @@ def generate_trgb_ppc(samples, data, config, n_ppc=None, seed=42):
             mag_width_samples, mag_width_fixed,
             cz_lim_samples, cz_lim_fixed, cz_width_samples, cz_width_fixed,
             e_mag_obs_all, e_czcmb_all,
-            r_min, r_max_eff, r2mu_100, r2z_100, n_ppc, n_hosts)
+            r_min, r_max_eff, r2mu, r2z, n_ppc, n_hosts)
     else:
         mag_sim, cz_sim = _ppc_homogeneous_path(
             gen, H0, M_TRGB, sigma_int, sigma_v, Vext, beta,
@@ -324,7 +142,7 @@ def generate_trgb_ppc(samples, data, config, n_ppc=None, seed=42):
             mag_width_samples, mag_width_fixed,
             cz_lim_samples, cz_lim_fixed, cz_width_samples, cz_width_fixed,
             e_mag_obs_all, e_czcmb_all,
-            r_min, r_max_eff, r2mu_100, r2z_100, n_ppc, n_hosts)
+            r_min, r_max_eff, r2mu, r2z, n_ppc, n_hosts)
 
     return {
         "mag_sim": mag_sim,
@@ -346,7 +164,7 @@ def _ppc_field_path(gen, config, H0, M_TRGB, sigma_int, sigma_v, Vext,
                     cz_lim_samples, cz_lim_fixed,
                     cz_width_samples, cz_width_fixed,
                     e_mag_obs_all, e_czcmb_all,
-                    r_min, r_max, r2mu_100, r2z_100, n_ppc, n_hosts):
+                    r_min, r_max, r2mu, r2z, n_ppc, n_hosts):
     """PPC using 3D field sampling (matches mock generator)."""
     n_post = len(H0)
     h_max = float(np.max(H0)) / 100
@@ -364,7 +182,7 @@ def _ppc_field_path(gen, config, H0, M_TRGB, sigma_int, sigma_v, Vext,
     # Build position pool
     r_sphere = r_max * h_max
     pool_size = max(n_ppc * 100, 500_000)
-    pool = _build_field_pool(field_loader, r_sphere, pool_size, gen)
+    pool = build_field_pool(field_loader, r_sphere, pool_size, gen)
 
     r_h_pool = pool["r_h"]
     rho_pool = pool["rho"]
@@ -373,7 +191,7 @@ def _ppc_field_path(gen, config, H0, M_TRGB, sigma_int, sigma_v, Vext,
     n_pool = len(r_h_pool)
 
     b1_max = float(np.max(b1))
-    rho_biased_max = _smoothclip(1 + b1_max * pool["delta_max"])
+    rho_biased_max = smoothclip(1 + b1_max * pool["delta_max"])
 
     # Vectorized rejection-sampling loop
     collected_mag = []
@@ -412,7 +230,7 @@ def _ppc_field_path(gen, config, H0, M_TRGB, sigma_int, sigma_v, Vext,
         in_range = (r_Mpc >= r_min) & (r_Mpc <= r_max)
 
         # Density rejection
-        weight = _smoothclip(1 + b1_cand * (rho - 1))
+        weight = smoothclip(1 + b1_cand * (rho - 1))
         accept_bias = gen.random(batch) < (weight / rho_biased_max)
 
         accept = in_range & accept_bias
@@ -432,7 +250,7 @@ def _ppc_field_path(gen, config, H0, M_TRGB, sigma_int, sigma_v, Vext,
         n_batch = len(r_Mpc)
 
         # Distance modulus
-        mu = _distmod(r_Mpc, h_acc, r2mu_100)
+        mu = np.asarray(r2mu(r_Mpc, h=h_acc))
 
         # Measurement errors resampled from observed distribution
         e_mag = gen.choice(e_mag_obs_all, n_batch)
@@ -443,7 +261,7 @@ def _ppc_field_path(gen, config, H0, M_TRGB, sigma_int, sigma_v, Vext,
         mag_sim = gen.normal(M_acc + mu, sigma_mag)
 
         # Redshift with peculiar velocity from field
-        z_cosmo = _redshift(r_Mpc, h_acc, r2z_100)
+        z_cosmo = np.asarray(r2z(r_Mpc, h=h_acc))
         Vext_rad = np.sum(Vext_acc * rhat_acc, axis=1)
         Vpec = bt_acc * v_los_acc + Vext_rad
 
@@ -481,7 +299,7 @@ def _ppc_homogeneous_path(gen, H0, M_TRGB, sigma_int, sigma_v, Vext, beta,
                           cz_lim_samples, cz_lim_fixed,
                           cz_width_samples, cz_width_fixed,
                           e_mag_obs_all, e_czcmb_all,
-                          r_min, r_max, r2mu_100, r2z_100, n_ppc, n_hosts):
+                          r_min, r_max, r2mu, r2z, n_ppc, n_hosts):
     """PPC with homogeneous distance sampling (no reconstruction)."""
     n_post = len(H0)
 
@@ -516,7 +334,7 @@ def _ppc_homogeneous_path(gen, H0, M_TRGB, sigma_int, sigma_v, Vext, beta,
         rhat = radec_to_cartesian(RA_rand, dec_rand)
 
         # Distance modulus
-        mu = _distmod(r, h, r2mu_100)
+        mu = np.asarray(r2mu(r, h=h))
 
         # Measurement errors resampled from observed distribution
         e_mag = gen.choice(e_mag_obs_all, batch)
@@ -527,7 +345,7 @@ def _ppc_homogeneous_path(gen, H0, M_TRGB, sigma_int, sigma_v, Vext, beta,
         mag_sim = gen.normal(M + mu, sigma_mag)
 
         # Redshift (no field velocity, only Vext)
-        z_cosmo = _redshift(r, h, r2z_100)
+        z_cosmo = np.asarray(r2z(r, h=h))
         Vext_rad = np.sum(Vext_cand * rhat, axis=1)
         cz_pred = SPEED_OF_LIGHT * (
             (1 + z_cosmo) * (1 + Vext_rad / SPEED_OF_LIGHT) - 1)

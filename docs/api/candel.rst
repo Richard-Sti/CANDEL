@@ -28,7 +28,7 @@ Evidence
 Posterior predictive checks
 ---------------------------
 
-.. automodule:: candel.ppc_trgb
+.. automodule:: candel.mock.ppc_trgb
    :members:
    :undoc-members:
    :show-inheritance:

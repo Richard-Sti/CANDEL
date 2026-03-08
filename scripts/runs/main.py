@@ -94,7 +94,7 @@ if __name__ == "__main__":
 
         # Posterior predictive check
         if get_nested(config, "model/run_ppc", True):
-            from candel.ppc_trgb import generate_trgb_ppc, plot_trgb_ppc
+            from candel.mock.ppc_trgb import generate_trgb_ppc, plot_trgb_ppc
 
             fprint("running posterior predictive check...")
             samples = candel.read_samples(

@@ -18,6 +18,7 @@ from scipy.stats import norm
 
 from ...cosmography import Distance2Distmod, Distance2Redshift
 from ...util import SPEED_OF_LIGHT, radec_to_cartesian
+from .._field_utils import field_xyz_to_radec, smoothclip
 
 DEFAULT_TRUE_PARAMS = {
     "H0": 73.0,
@@ -41,11 +42,6 @@ def _get_absmag_TFR(eta, a, b, c=0.0):
     return a + b * eta + np.where(eta > 0, c * eta**2, 0.0)
 
 
-def _smoothclip(x, tau=0.1):
-    """Smooth zero-clipping matching the model's smoothclip_nr."""
-    return 0.5 * (x + np.sqrt(x**2 + tau**2))
-
-
 def _apply_2MTF_selection(mag_obs, eta_obs, mag_lim, mag_lim_width,
                           eta_min_sel, eta_max_sel, gen):
     """Return boolean selection mask for 2MTF cuts."""
@@ -62,29 +58,6 @@ def _apply_2MTF_selection(mag_obs, eta_obs, mag_lim, mag_lim_width,
     if eta_max_sel is not None:
         sel &= eta_obs < eta_max_sel
     return sel
-
-
-def _field_xyz_to_radec(pos_rel, r, coordinate_frame):
-    """Convert field-frame Cartesian offsets to ICRS (RA, dec) in degrees."""
-    from ..util import cartesian_to_radec, galactic_to_radec
-    x, y, z = pos_rel[:, 0], pos_rel[:, 1], pos_rel[:, 2]
-    if coordinate_frame == "icrs":
-        return cartesian_to_radec(x, y, z)
-    elif coordinate_frame == "galactic":
-        ell = np.rad2deg(np.arctan2(y, x))
-        b = np.rad2deg(np.arcsin(z / r))
-        return galactic_to_radec(ell, b)
-    elif coordinate_frame == "supergalactic":
-        from astropy import units as u
-        from astropy.coordinates import SkyCoord
-        sgl = np.rad2deg(np.arctan2(y, x))
-        sgb = np.rad2deg(np.arcsin(z / r))
-        c = SkyCoord(sgl=sgl * u.deg, sgb=sgb * u.deg,
-                     frame='supergalactic')
-        return c.icrs.ra.deg, c.icrs.dec.deg
-    else:
-        raise ValueError(
-            f"Unknown coordinate frame: {coordinate_frame}")
 
 
 def _gen_homogeneous_path(nsamples, h, rmin, rmax, e_mag, e_eta,
@@ -189,7 +162,7 @@ def _gen_field_path(nsamples, h, b1, beta, rmin, rmax, e_mag, e_eta,
         fill_value=np.float32(np.log(1 + eps)))
 
     delta_max = float(density_raw.max()) - 1
-    max_weight = _smoothclip(1 + b1 * delta_max)
+    max_weight = smoothclip(1 + b1 * delta_max)
     del density_raw, density_log
 
     velocity_3d = field_loader.load_velocity()
@@ -231,7 +204,7 @@ def _gen_field_path(nsamples, h, b1, beta, rmin, rmax, e_mag, e_eta,
         rho_log = f_density_3d(xyz + obs[None, :])
         rho = np.exp(rho_log) - eps
         np.clip(rho, eps, None, out=rho)
-        weight = _smoothclip(1 + b1 * (rho - 1))
+        weight = smoothclip(1 + b1 * (rho - 1))
         accept = gen.random(len(weight)) < (weight / max_weight)
         xyz = xyz[accept]
         n_total_density_accepted += len(xyz)
@@ -240,7 +213,7 @@ def _gen_field_path(nsamples, h, b1, beta, rmin, rmax, e_mag, e_eta,
             continue
 
         r_h = np.linalg.norm(xyz, axis=1)
-        RA, dec = _field_xyz_to_radec(xyz, r_h, coord_frame)
+        RA, dec = field_xyz_to_radec(xyz, r_h, coord_frame)
 
         # Radial velocity at 3D positions
         pos_box = (xyz + obs[None, :]).astype(np.float32)
