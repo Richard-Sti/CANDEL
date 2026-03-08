@@ -76,7 +76,7 @@ def _compute_r_grid(r_limits, dr, data, Om=0.3):
         else:
             h_auto = 1.0
 
-        from ..cosmography import Redshift2Distance
+        from ..cosmo.cosmography import Redshift2Distance
 
         if "czcmb" in data:
             cz_obs = data["czcmb"]

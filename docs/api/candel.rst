@@ -4,7 +4,7 @@ candel
 Cosmography
 -----------
 
-.. automodule:: candel.cosmography
+.. automodule:: candel.cosmo.cosmography
    :members:
    :undoc-members:
    :show-inheritance:
@@ -12,7 +12,7 @@ Cosmography
 Inference
 ---------
 
-.. automodule:: candel.inference
+.. automodule:: candel.inference.inference
    :members:
    :undoc-members:
    :show-inheritance:
@@ -20,7 +20,7 @@ Inference
 Evidence
 --------
 
-.. automodule:: candel.evidence
+.. automodule:: candel.inference.evidence
    :members:
    :undoc-members:
    :show-inheritance:

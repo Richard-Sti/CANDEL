@@ -22,7 +22,7 @@ Generates two independent galaxy samples:
 import numpy as np
 from scipy.stats import norm
 
-from ...cosmography import Distance2Distmod, Distance2Redshift
+from ...cosmo.cosmography import Distance2Distmod, Distance2Redshift
 from ...util import (SPEED_OF_LIGHT, galactic_to_radec_cartesian,
                      radec_to_cartesian)
 

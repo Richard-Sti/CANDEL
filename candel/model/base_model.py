@@ -21,9 +21,10 @@ import jax.numpy as jnp
 import numpy as np
 from numpyro import factor
 
-from ..cosmography import (Distance2Distmod, Distance2Redshift,
-                           Distmod2Distance, Distmod2Redshift,
-                           LogGrad_Distmod2ComovingDistance, Redshift2Distance)
+from ..cosmo.cosmography import (Distance2Distmod, Distance2Redshift,
+                                 Distmod2Distance, Distmod2Redshift,
+                                 LogGrad_Distmod2ComovingDistance,
+                                 Redshift2Distance)
 from ..util import (fprint, fsection, get_nested, load_config,
                     radec_to_cartesian, replace_prior_with_delta)
 from .interp import LOSInterpolator
