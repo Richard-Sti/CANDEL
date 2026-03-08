@@ -53,6 +53,7 @@ setup(
         "scienceplots",
         "joblib",
         "getdist",
+        "healpy",
     ],
     include_package_data=True,
     zip_safe=False,

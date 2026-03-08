@@ -247,11 +247,13 @@ class ModelBase(ABC):
             self.config, "io/los_r0_decay_scale", 5)
         use_recon = get_nested(
             self.config, "model/use_reconstruction", False)
-        if use_recon and get_nested(self.config, "io/load_host_los"):
+        if use_recon and get_nested(
+                self.config, "io/load_host_los", use_recon):
             self._load_los_interpolator(
                 data, which="host",
                 r0_decay_scale=r0_decay_scale)
-        if use_recon and get_nested(self.config, "io/load_rand_los"):
+        if use_recon and get_nested(
+                self.config, "io/load_rand_los", use_recon):
             self._load_los_interpolator(
                 data, which="rand",
                 r0_decay_scale=r0_decay_scale)

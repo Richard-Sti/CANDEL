@@ -344,6 +344,7 @@ if __name__ == "__main__":
         "model/which_selection": "TRGB_magnitude",
         "model/use_reconstruction": True,
         # "io/PV_main/EDD_TRGB/which_host_los": "Carrick2015",
+        "model/priors/beta": {"dist": "delta", "value": 1.0},
         "model/which_bias": "double_powerlaw",
         "io/PV_main/EDD_TRGB/which_host_los": "manticore_2MPP_MULTIBIN_N256_DES_V2",
     #     # "io/which_host_los": "manticore_2MPP_MULTIBIN_N256_DES_V2",

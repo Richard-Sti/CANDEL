@@ -44,9 +44,9 @@ def _setup_platform():
     devices = jax.devices()
     device_str = ", ".join(f"{d.device_kind}({d.platform})" for d in devices)
     fprint(f"running inference on devices: {device_str}")
-    platform = "gpu" if any(d.platform == "gpu" for d in devices) else "cpu"
+    platform = "cuda" if any(d.platform == "gpu" for d in devices) else "cpu"
     set_platform(platform)
-    fprint(f"using NumPyro platform: {platform.upper()}")
+    fprint(f"using platform: {platform}")
 
 
 def _parse_dense_mass(kwargs, site_names=None):

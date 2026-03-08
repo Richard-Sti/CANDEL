@@ -25,7 +25,7 @@ get_toml_key() {
 # ---- defaults ----
 queue="cmb"
 ncpu=1
-memory=32
+memory=16
 gputype=""
 local_mode=false
 
@@ -53,7 +53,8 @@ options:
                             gpulong  -> rtx2080with12gb
                             cmbgpu   -> rtx3090with24gb
                             optgpu   -> rtxa6000with48gb
-                          Other options: rtx3070with8gb, rtxa6000with48gb
+                          Other options: rtx3070with8gb
+                          optgpu: only one type (rtxa6000with48gb), --gputype not needed
   --local                 Run on login node instead of submitting
 EOF
     exit 0
@@ -99,8 +100,7 @@ case "$queue" in
         ;;
     optgpu)
         is_gpu=true
-        [[ -z "$gputype" ]] && gputype="rtxa6000with48gb"
-        ;;
+        ;;  # only one GPU type in this queue; addqueue doesn't accept --gputype here
 esac
 
 if [[ -n "$gputype" ]] && ! $is_gpu; then
@@ -230,13 +230,18 @@ for i in "${!task_lines[@]}"; do
         eval "$pythoncmd"
     else
         if $is_gpu; then
-            cm="addqueue -q $queue -s -m $memory --gpus 1 --gputype $gputype $pythoncmd"
+            if [[ -n "$gputype" ]]; then
+                cm="addqueue -q $queue -s -m $memory --gpus 1 --gputype $gputype $pythoncmd"
+            else
+                cm="addqueue -q $queue -s -m $memory --gpus 1 $pythoncmd"
+            fi
         else
             cm="addqueue -s -q $queue -n $ncpu -m $memory $pythoncmd"
         fi
-        echo "[INFO] Submitting..."
+        mkdir -p logs
+        echo "[INFO] Submitting... (output -> logs/python-<jobid>.out)"
         echo "  $cm"
-        eval "$cm"
+        (cd logs && eval "$cm")
     fi
 
     echo
