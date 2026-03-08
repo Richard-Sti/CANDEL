@@ -461,15 +461,16 @@ class PVDataFrame:
 def load_los(los_data_path, data, mask=None, verbose=True):
     with File(los_data_path, 'r') as f:
         if mask is None:
-            data["los_density"] = f['los_density'][...]
-            data["los_velocity"] = f['los_velocity'][...]
+            data["los_density"] = f['los_density'][...].astype(np.float32)
+            data["los_velocity"] = f['los_velocity'][...].astype(np.float32)
             data["los_r"] = f['r'][...]
             data["los_RA"] = f["RA"][...]
             data["los_dec"] = f["dec"][...]
         else:
-            data["los_density"] = f['los_density'][...][:, mask, ...]
-            data["los_velocity"] = f['los_velocity'][...][:, mask, ...]
+            data["los_density"] = f['los_density'][...][:, mask, ...].astype(np.float32)
+            data["los_velocity"] = f['los_velocity'][...][:, mask, ...].astype(np.float32)
             data["los_r"] = f['r'][...]
+            # Random LOS always use mask=None, so this 1D index is safe.
             data["los_RA"] = f["RA"][...][mask]
             data["los_dec"] = f["dec"][...][mask]
 
