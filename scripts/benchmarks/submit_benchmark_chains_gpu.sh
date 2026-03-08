@@ -13,7 +13,8 @@ case "$QUEUE" in
 esac
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONFIG="$(dirname "$SCRIPT_DIR")/runs/local_config.toml"
+ROOT_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"
+CONFIG="$ROOT_DIR/local_config.toml"
 
 get_toml_key() {
     local key="$1" file="$2"
@@ -24,11 +25,8 @@ PYTHON=$(get_toml_key "python_exec_gpu" "$CONFIG")
 [[ -z "$PYTHON" ]] && PYTHON=$(get_toml_key "python_exec" "$CONFIG")
 [[ -z "$PYTHON" ]] && { echo "ERROR: python_exec not set in $CONFIG"; exit 1; }
 
-ROOT=$(get_toml_key "root_main" "$CONFIG")
-[[ -z "$ROOT" ]] && { echo "ERROR: root_main not set in $CONFIG"; exit 1; }
-
-BENCHMARK="$ROOT/scripts/benchmarks/benchmark_chains_gpu.py"
-OUTPUT="$ROOT/scripts/benchmarks/results_chains_gpu.json"
+BENCHMARK="$ROOT_DIR/scripts/benchmarks/benchmark_chains_gpu.py"
+OUTPUT="$ROOT_DIR/scripts/benchmarks/results_chains_gpu.json"
 
 CMD="$PYTHON $BENCHMARK --output $OUTPUT"
 echo "Queue:   $QUEUE ($GPUTYPE)"
