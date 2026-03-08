@@ -18,6 +18,26 @@ import numpyro.distributions as dist
 from numpyro.infer import MCMC, NUTS
 
 
+class PrecomputedLogLike(dist.Distribution):
+    """Wraps a precomputed per-element log-likelihood as a distribution.
+
+    obs=jnp.zeros(n) gives a 1-d tensor, which is safe under vmap
+    (chain_method="vectorized"), unlike numpyro.factor which uses
+    obs=jnp.zeros(()) and fails with vmap.
+    """
+    support = dist.constraints.real
+
+    def __init__(self, log_like):
+        self._log_like = log_like
+        super().__init__(batch_shape=log_like.shape)
+
+    def sample(self, key, sample_shape=()):
+        return jnp.zeros(sample_shape + self.batch_shape)
+
+    def log_prob(self, value):
+        return self._log_like
+
+
 def make_synthetic_data(n_fields=30, n_gal=100, n_r=301, seed=0):
     rng = jax.random.PRNGKey(seed)
     k1, k2, k3, k4 = jax.random.split(rng, 4)
@@ -72,11 +92,10 @@ def trgb_like_model(data):
                   + log_dens)                            # (n_gal, n_r)
     log_like = jax.scipy.special.logsumexp(log_like_r, axis=-1)  # (n_gal,)
 
-    # numpyro.factor uses obs=jnp.zeros(()) which is 0-d; vmap (vectorized
-    # chain_method) cannot map over 0-d arrays, so use a plate + per-galaxy
-    # factor instead — obs shape (n_gal,) is 1-d and vmap-safe.
-    with numpyro.plate("galaxies", n_gal):
-        numpyro.factor("obs", log_like)
+    # numpyro.factor uses obs=jnp.zeros(()) which is 0-d and fails under vmap
+    # (chain_method="vectorized"). Use a custom distribution with obs shape
+    # (n_gal,) so vmap can map over axis 0.
+    numpyro.sample("obs", PrecomputedLogLike(log_like), obs=jnp.zeros(n_gal))
 
 
 def run_benchmark(data, chain_method, num_chains, num_warmup, num_samples):
