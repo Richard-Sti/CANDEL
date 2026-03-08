@@ -16,7 +16,7 @@
 import numpy as np
 from scipy.stats import ks_2samp, norm
 
-from ..cosmography import Distance2Distmod, Distance2Redshift
+from ..cosmo.cosmography import Distance2Distmod, Distance2Redshift
 from ..field import name2field_loader
 from ..util import (SPEED_OF_LIGHT, fprint, get_nested, load_config,
                     radec_to_cartesian)
