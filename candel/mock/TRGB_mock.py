@@ -19,8 +19,8 @@ from scipy.stats import norm
 from ..cosmo.cosmography import Distance2Distmod, Distance2Redshift
 from ..field import interpolate_los_density_velocity
 from ..field.field_interp import build_regular_interpolator
-from ..util import (SPEED_OF_LIGHT, cartesian_to_radec, galactic_to_radec,
-                    galactic_to_radec_cartesian, radec_to_cartesian)
+from ..util import (SPEED_OF_LIGHT, galactic_to_radec_cartesian,
+                    radec_to_cartesian)
 from ._field_utils import field_xyz_to_radec, smoothclip
 
 DEFAULT_TRUE_PARAMS = {
@@ -128,7 +128,6 @@ def _gen_homogeneous_path(nsamples, h, rmin, rmax, e_mag, e_czcmb,
 
     collected["n_parent"] = n_parent
     return collected
-
 
 
 def _gen_field_path(nsamples, h, b1, beta, rmin, rmax, e_mag, e_czcmb,
@@ -306,7 +305,6 @@ def _gen_field_path(nsamples, h, b1, beta, rmin, rmax, e_mag, e_czcmb,
         "rand_los_dec": dec_rand,
     }
     return result
-
 
 
 def gen_TRGB_mock(nsamples=480, Om=0.3, e_mag=0.05, e_czcmb=10.0,

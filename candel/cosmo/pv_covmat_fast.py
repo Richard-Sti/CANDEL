@@ -33,7 +33,6 @@ References
 import numpy as np
 from scipy.integrate import simpson
 
-
 ###############################################################################
 # NumPy precomputation (runs once before MCMC)
 ###############################################################################
@@ -135,7 +134,6 @@ def assemble_pv_covariance_numpy(r, rhat, s_grid, psi_par, psi_perp,
     """
     from scipy.interpolate import interp1d as scipy_interp1d
 
-    N = len(r)
     x = r[:, None] * rhat  # (N, 3)
 
     # Separation vectors and magnitude
