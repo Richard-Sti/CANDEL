@@ -35,7 +35,7 @@ These models work in units of $h^{-1}\,\mathrm{Mpc}$ (i.e. assume $h = 1$). Mult
 
 - **Cepheid-calibrated $H_0$:** 35 Cepheid host galaxies from SH0ES
 - **TRGB-calibrated $H_0$:** Tip of the Red Giant Branch distances from CCHP and EDD
-- **2MTF-calibrated $H_0$:** Tully--Fisher distances from the EDD-2MTF sample
+- **2MTF-calibrated $H_0$:** Tully--Fisher distances from the EDD-2MTF sample *(experimental)*
 
 ## Package structure
 
@@ -43,13 +43,11 @@ These models work in units of $h^{-1}\,\mathrm{Mpc}$ (i.e. assume $h = 1$). Mult
 candel/
   model/          Forward models for each distance indicator
   pvdata/         Data loaders for all supported catalogues
-  cosmo/          Growth rate, PV covariance matrices (CAMB + Legendre)
+  cosmo/          Cosmography, growth rate, PV covariance matrices
+  inference/      NUTS sampling, evidence estimation, postprocessing
   field/          3D density/velocity field loading and LOS interpolation
   redshift2real/  Map observed redshift → cosmological redshift given a velocity field
   mock/           Synthetic catalogue generation for testing
-  inference.py    NUTS sampling, MAP initialisation, postprocessing
-  evidence.py     BIC/AIC, Laplace and harmonic evidence estimation
-  cosmography.py  Distance modulus ↔ comoving distance ↔ redshift
   util.py         Coordinate transforms, config I/O, plotting utilities
 ```
 
