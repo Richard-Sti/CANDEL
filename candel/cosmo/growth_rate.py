@@ -15,12 +15,13 @@
 """
 Conversion of the `beta` factor from linear theory to either `fsigma8` or `S8`
 """
+from warnings import warn
+
 import numpy as np
 from scipy.integrate import simpson
 from scipy.interpolate import interp1d
 from scipy.optimize import minimize_scalar
 from tqdm import tqdm
-from warnings import warn
 
 
 class Beta2Cosmology:

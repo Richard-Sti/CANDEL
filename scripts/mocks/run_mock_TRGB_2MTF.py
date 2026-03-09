@@ -33,9 +33,9 @@ os.environ.setdefault("JAX_PLATFORMS", "cpu")
 
 import candel  # noqa: E402
 from candel.inference import radec_cartesian_to_galactic  # noqa: E402
-from candel.mock.dev.TRGB_2MTF_mock import (DEFAULT_ANCHORS,  # noqa: E402
-                                             DEFAULT_TRUE_PARAMS,
-                                             gen_TRGB_2MTF_mock)
+from candel.mock.dev.TRGB_2MTF_mock import DEFAULT_ANCHORS  # noqa: E402
+from candel.mock.dev.TRGB_2MTF_mock import (DEFAULT_TRUE_PARAMS,
+                                            gen_TRGB_2MTF_mock)
 
 TRACKED_PARAMS = [
     "H0", "M_TRGB", "sigma_int_TRGB",

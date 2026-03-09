@@ -20,7 +20,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from candel import fprint, load_config, get_nested
+from candel import fprint, get_nested, load_config
 
 
 def exists(path):

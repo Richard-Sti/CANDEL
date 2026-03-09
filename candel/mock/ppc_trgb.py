@@ -20,9 +20,7 @@ from ..cosmo.cosmography import Distance2Distmod, Distance2Redshift
 from ..field import name2field_loader
 from ..util import (SPEED_OF_LIGHT, fprint, get_nested, load_config,
                     radec_to_cartesian)
-from ._field_utils import (build_field_pool, compute_r_max_selection,
-                            smoothclip)
-
+from ._field_utils import build_field_pool, compute_r_max_selection, smoothclip
 
 ###############################################################################
 #                         PPC generation                                      #

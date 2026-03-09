@@ -17,7 +17,7 @@ A script to compute the LOS density and radial velocity from an existing
 reconstruction and a catalogue of galaxies.
 """
 from argparse import ArgumentParser
-from os.path import dirname, basename, join, splitext
+from os.path import basename, dirname, join, splitext
 
 import numpy as np
 from h5py import File

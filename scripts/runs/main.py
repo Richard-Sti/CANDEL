@@ -38,8 +38,8 @@ if _pre_args.host_devices:
         numpyro.set_host_device_count(_pre_args.host_devices)
 
 # Only now import candel (which may import jax/numpyro internally)
-import candel                                                                   # noqa
-from candel import fprint, get_nested                                           # noqa
+import candel  # noqa
+from candel import fprint, get_nested  # noqa
 
 
 def insert_comment_at_top(path: str, label: str):

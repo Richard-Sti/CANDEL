@@ -31,13 +31,12 @@ from numpyro.infer.initialization import init_to_median, init_to_value
 from numpyro.infer.util import log_density
 from tqdm import trange
 
+from ..util import (fprint, fsection, galactic_to_radec, plot_corner,
+                    plot_radial_profiles, plot_Vext_moll, plot_Vext_rad_corner,
+                    plot_Vext_radmag, radec_cartesian_to_galactic,
+                    radec_to_cartesian, radec_to_galactic)
 from .evidence import (BIC_AIC, dict_samples_to_array, harmonic_evidence,
                        laplace_evidence)
-from ..util import (fprint, fsection, galactic_to_radec, plot_corner,
-                    plot_radial_profiles, plot_Vext_moll,
-                    plot_Vext_rad_corner, plot_Vext_radmag,
-                    radec_cartesian_to_galactic, radec_to_cartesian,
-                    radec_to_galactic)
 
 
 def _setup_platform():

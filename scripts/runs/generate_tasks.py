@@ -80,6 +80,7 @@ except ModuleNotFoundError:
     import tomli as tomllib
 
 import tomli_w
+
 from candel import (SPEED_OF_LIGHT, fprint, get_nested, load_config,  # noqa
                     replace_prior_with_delta)
 
