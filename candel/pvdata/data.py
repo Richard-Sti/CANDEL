@@ -231,6 +231,13 @@ class PVDataFrame:
             self.num_fields = 1
             self.has_precomputed_los = False
 
+        # Pre-compute Simpson log weights for the radial grid.
+        if "r_grid" in self.data:
+            from ..model.simpson import simpson_log_weights
+            self._simpson_log_w = simpson_log_weights(self.data["r_grid"])
+        else:
+            self._simpson_log_w = None
+
         self.has_calibrators = bool(self.num_calibrators > 0)
         self._cache = {}
 

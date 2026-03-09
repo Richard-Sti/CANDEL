@@ -126,6 +126,12 @@ class BasePVModel(ModelBase):
             beta=beta)
         return kwargs_dist, h, Vext, sigma_v, beta, bias_params
 
+    def _get_simpson_log_w(self, data, r_grid):
+        """Return pre-computed Simpson log weights, or compute on the fly."""
+        if hasattr(data, '_simpson_log_w') and data._simpson_log_w is not None:
+            return data._simpson_log_w
+        return simpson_log_weights(r_grid)
+
     def _setup_lp_dist_and_Vrad(self, data, r_grid, kwargs_dist, beta,
                                 bias_params):
         lp_dist = log_prior_r_empirical(
@@ -138,7 +144,7 @@ class BasePVModel(ModelBase):
                 data["los_log_density_r_grid"],
                 bias_params, self.galaxy_bias,
                 self.quadratic_bias_delta0)
-            log_w_r = simpson_log_weights(r_grid)
+            log_w_r = self._get_simpson_log_w(data, r_grid)
             lp_dist -= logsumexp(
                 lp_dist + log_w_r[None, None, :], axis=-1)[..., None]
         else:
@@ -156,8 +162,8 @@ class BasePVModel(ModelBase):
         return Normal(czpred, sigma_v).log_prob(
             data["czcmb"][None, :, None])
 
-    def _marginalize_over_r(self, ll, r_grid):
-        log_w_r = simpson_log_weights(r_grid)
+    def _marginalize_over_r(self, ll, r_grid, data=None):
+        log_w_r = self._get_simpson_log_w(data, r_grid)
         return logsumexp(ll + log_w_r[None, None, :], axis=-1)
 
     def _average_fields_and_factor(self, ll, data,
