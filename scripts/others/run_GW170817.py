@@ -13,10 +13,68 @@ Usage:
 """
 import argparse
 import os
+import threading
+import time
 
 import bilby
 import numpy as np
 from sklearn.mixture import GaussianMixture
+
+
+class ProgressMonitor:
+    """Write sampler progress to a file every `interval` seconds.
+
+    Works by polling the bilby sampler object in a background thread,
+    completely independent of dynesty's print_func callback and SLURM
+    stdout buffering.
+    """
+
+    def __init__(self, path, interval=30):
+        self.path = path
+        self.interval = interval
+        self._sampler = None
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+
+    def start(self, sampler_obj):
+        self._sampler = sampler_obj
+        self._thread.start()
+
+    def stop(self):
+        self._stop.set()
+        self._thread.join()
+
+    def _run(self):
+        while not self._stop.wait(self.interval):
+            self._write()
+        self._write()  # final write
+
+    def _write(self):
+        s = self._sampler
+        if s is None:
+            return
+        try:
+            it = s.it
+            nc = s.ncall
+            # Try to get the live ncall from the internal queue/pool
+            # to detect activity even mid-iteration
+            try:
+                pool_ncall = s.nqueue + nc
+            except Exception:
+                pool_ncall = nc
+            eff = it / nc * 100 if nc > 0 else 0
+            logz = s.results.logz[-1] if len(s.results.logz) > 0 else float('nan')
+            ts = time.strftime("%H:%M:%S")
+            line = (f"{ts}  iter={it}  ncall={nc:.2e}  "
+                    f"eff={eff:.1f}%  logz={logz:.2f}")
+            if pool_ncall != nc:
+                line += f"  [pending: +{pool_ncall - nc}]"
+            line += "\n"
+            with open(self.path, "a") as f:
+                f.write(line)
+                f.flush()
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -395,6 +453,9 @@ def get_injection_parameters():
 
 
 def main():
+    import logging
+    bilby.core.utils.logger.setLevel(logging.DEBUG)
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--real-data", action="store_true",
                         help="Use GWOSC strain instead of injection")
@@ -521,7 +582,27 @@ def main():
     print()
 
     # ----- Run sampler -----
-    print(f"Running dynesty with nlive={args.nlive}, maxmcmc={args.maxmcmc}")
+    print(f"Running dynesty with nlive={args.nlive}, maxmcmc={args.maxmcmc}, "
+          f"npool={args.npool}")
+
+    # Start a background progress monitor that writes directly to a file
+    # every 30s, independent of SLURM stdout buffering.
+    progress_log = os.path.join(outdir, "progress.log")
+    monitor = ProgressMonitor(progress_log, interval=30)
+
+    # Hook into bilby's Dynesty to start the monitor once the sampler exists
+    from bilby.core.sampler.dynesty import Dynesty as _Dynesty
+    _orig_run = _Dynesty._run_external_sampler_with_checkpointing
+
+    def _monitored_run(self):
+        monitor.start(self.sampler)
+        try:
+            return _orig_run(self)
+        finally:
+            monitor.stop()
+
+    _Dynesty._run_external_sampler_with_checkpointing = _monitored_run
+
     result = bilby.run_sampler(
         likelihood=likelihood,
         priors=priors,
@@ -534,7 +615,7 @@ def main():
         label=label,
         conversion_function=bilby.gw.conversion.generate_all_bns_parameters,
         check_point_delta_t=600,
-        resume=False,
+        resume=True,
     )
 
     # ----- Report results -----

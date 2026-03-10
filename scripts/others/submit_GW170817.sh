@@ -160,7 +160,7 @@ if [[ ! "$outdir" = /* ]] || [[ "$outdir" = /results* && ! -d /results ]]; then
 fi
 mkdir -p "$outdir"
 
-pythoncmd="$python_exec -u $script_dir/run_GW170817.py \
+pythoncmd="/usr/bin/stdbuf -oL -eL $python_exec -u $script_dir/run_GW170817.py \
     --nlive $nlive \
     --maxmcmc $maxmcmc \
     --nact $nact \
@@ -175,7 +175,7 @@ if $local_mode; then
     echo "Running locally..."
     eval "$pythoncmd"
 else
-    cm="addqueue -s -q $queue -n 1x$ncpu -m $memory $pythoncmd"
+    cm="addqueue -s -q $queue -n 1x$ncpu -m $memory -o python-%j.out $pythoncmd"
     echo "Submitting..."
     echo "  $cm"
     eval "$cm"
