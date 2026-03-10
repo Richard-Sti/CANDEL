@@ -56,20 +56,17 @@ class ProgressMonitor:
         try:
             it = s.it
             nc = s.ncall
-            # Try to get the live ncall from the internal queue/pool
-            # to detect activity even mid-iteration
-            try:
-                pool_ncall = s.nqueue + nc
-            except Exception:
-                pool_ncall = nc
             eff = it / nc * 100 if nc > 0 else 0
-            logz = s.results.logz[-1] if len(s.results.logz) > 0 else float('nan')
+
+            # Compute dlogz = ln(Z_remaining / Z_current), same as dynesty
+            logz = s.results.logz[-1] if len(s.results.logz) > 0 else -1e300
+            logvol = s.results.logvol[-1] if len(s.results.logvol) > 0 else 0
+            loglmax = max(s.live_logl)
+            dlogz = np.logaddexp(0, loglmax + logvol - logz)
+
             ts = time.strftime("%H:%M:%S")
             line = (f"{ts}  iter={it}  ncall={nc:.2e}  "
-                    f"eff={eff:.1f}%  logz={logz:.2f}")
-            if pool_ncall != nc:
-                line += f"  [pending: +{pool_ncall - nc}]"
-            line += "\n"
+                    f"eff={eff:.1f}%  dlogz={dlogz:.1f}\n")
             with open(self.path, "a") as f:
                 f.write(line)
                 f.flush()
@@ -84,6 +81,7 @@ TRIGGER_TIME = 1187008882.43
 RA_NGC4993 = 3.44616       # rad (197.45 deg)
 DEC_NGC4993 = -0.4085      # rad (-23.38 deg)
 Z_OBS = 0.0099             # observed CMB-frame redshift
+ROQ_BASIS_SEGLEN = 128.0   # segment length of the ROQ basis [s]
 
 
 # ---------------------------------------------------------------------------
@@ -191,31 +189,37 @@ class GWplusEMLikelihood(bilby.gw.GravitationalWaveTransient):
         super().__init__(*args, **kwargs)
         self.gmm = gmm
 
-    def log_likelihood_ratio(self, parameters=None):
-        """GW log-likelihood ratio + EM log-likelihood.
-
-        Only override log_likelihood_ratio; the base class log_likelihood()
-        dispatches to self.log_likelihood_ratio() + noise_log_likelihood(),
-        so the EM term is automatically included in both code paths without
-        double-counting.
-        """
-        log_lr_gw = super().log_likelihood_ratio(parameters=parameters)
-        if self.gmm is None or not np.isfinite(log_lr_gw):
-            return log_lr_gw
-
+    def _log_em(self, parameters):
         p = parameters if parameters is not None else self.parameters
         theta_jn = p["theta_jn"]
         dl = p["luminosity_distance"]
-
-        # Fold inclination to viewing angle [0, pi/2]
         theta_obs = min(theta_jn, np.pi - theta_jn)
+        return self.gmm.score_samples(np.array([[dl, theta_obs]]))[0]
 
-        # GMM log-density (encodes JetFit posterior; JetFit priors are flat,
-        # so dividing them out is just a constant shift that doesn't affect
-        # the posterior shape)
-        log_l_em = self.gmm.score_samples(np.array([[dl, theta_obs]]))[0]
+    def log_likelihood_ratio(self, parameters=None):
+        log_lr_gw = super().log_likelihood_ratio(parameters=parameters)
+        if self.gmm is None or not np.isfinite(log_lr_gw):
+            return log_lr_gw
+        return log_lr_gw + self._log_em(parameters)
 
-        return log_lr_gw + log_l_em
+
+class ROQplusEMLikelihood(bilby.gw.likelihood.ROQGravitationalWaveTransient):
+    """ROQ likelihood augmented with JetFit afterglow constraint."""
+
+    def __init__(self, *args, gmm=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.gmm = gmm
+
+    def log_likelihood_ratio(self, parameters=None):
+        log_lr_gw = super().log_likelihood_ratio(parameters=parameters)
+        if self.gmm is None or not np.isfinite(log_lr_gw):
+            return log_lr_gw
+        p = parameters if parameters is not None else self.parameters
+        theta_jn = p["theta_jn"]
+        dl = p["luminosity_distance"]
+        theta_obs = min(theta_jn, np.pi - theta_jn)
+        return log_lr_gw + self.gmm.score_samples(
+            np.array([[dl, theta_obs]]))[0]
 
 
 # ---------------------------------------------------------------------------
@@ -307,6 +311,10 @@ def setup_ifos_real_data(duration, sampling_frequency, fmin=23.0,
         if cache_file and os.path.exists(cache_file):
             print(f"  Loading cached strain for {det_name}")
             data = TimeSeries.read(cache_file)
+            # Crop to requested time range (cache may be longer)
+            if data.duration.value > duration + 0.01:
+                print(f"    Cropping {data.duration.value}s → {duration}s")
+                data = data.crop(start_time, end_time)
         else:
             print(f"  Fetching strain for {det_name} from GWOSC...")
             data = TimeSeries.fetch_open_data(det_name, start_time, end_time)
@@ -384,18 +392,37 @@ def setup_ifos_real_data(duration, sampling_frequency, fmin=23.0,
 # Priors
 # ---------------------------------------------------------------------------
 
-def build_priors(use_density_prior=False):
-    """Build high_spin_PhenomPNRT priors matching Abbott et al. 2019."""
-    priors = bilby.gw.prior.BNSPriorDict(aligned_spin=False)
+def build_priors(use_density_prior=False, no_tides=False,
+                  roq_scale_factor=None):
+    """Build priors for GW170817 PE.
 
-    # Sample in (mass_1, mass_2) with m1 >= m2
-    priors["mass_1"] = bilby.prior.Uniform(0.5, 7.7, name="mass_1")
-    priors["mass_2"] = bilby.prior.Uniform(0.5, 7.7, name="mass_2")
+    If no_tides=True, use BBHPriorDict (no lambda_1/lambda_2).
+    Otherwise use BNSPriorDict with tidal deformabilities.
+    """
+    if no_tides:
+        priors = bilby.gw.prior.BBHPriorDict(aligned_spin=False)
+    else:
+        priors = bilby.gw.prior.BNSPriorDict(aligned_spin=False)
+
+    if roq_scale_factor is not None:
+        # ROQ basis bounds (from params.dat), scaled by 1/s
+        s = roq_scale_factor
+        m_min = 1.0014 / s + 0.001  # comp-min from basis
+        mc_min = 1.4206 / s
+        mc_max = 2.6021 / s
+        priors["mass_1"] = bilby.prior.Uniform(m_min, 7.7, name="mass_1")
+        priors["mass_2"] = bilby.prior.Uniform(m_min, 7.7, name="mass_2")
+        priors["chirp_mass"] = bilby.prior.Constraint(
+            mc_min, mc_max, name="chirp_mass")
+    else:
+        priors["mass_1"] = bilby.prior.Uniform(0.5, 7.7, name="mass_1")
+        priors["mass_2"] = bilby.prior.Uniform(0.5, 7.7, name="mass_2")
     priors["mass_ratio"] = bilby.prior.Constraint(0.125, 1.0)
-    del priors["chirp_mass"]
+    if "chirp_mass" in priors and roq_scale_factor is None:
+        del priors["chirp_mass"]
 
-    priors["a_1"] = bilby.prior.Uniform(0, 0.89, name="a_1")
-    priors["a_2"] = bilby.prior.Uniform(0, 0.89, name="a_2")
+    priors["a_1"] = bilby.prior.Uniform(0, 0.80, name="a_1")
+    priors["a_2"] = bilby.prior.Uniform(0, 0.80, name="a_2")
     priors["tilt_1"] = bilby.prior.Sine(name="tilt_1")
     priors["tilt_2"] = bilby.prior.Sine(name="tilt_2")
     priors["phi_12"] = bilby.prior.Uniform(0, 2 * np.pi, name="phi_12")
@@ -419,8 +446,9 @@ def build_priors(use_density_prior=False):
         TRIGGER_TIME - 0.1, TRIGGER_TIME + 0.1, name="geocent_time",
     )
 
-    priors["lambda_1"] = bilby.prior.Uniform(0, 5000, name="lambda_1")
-    priors["lambda_2"] = bilby.prior.Uniform(0, 5000, name="lambda_2")
+    if not no_tides:
+        priors["lambda_1"] = bilby.prior.Uniform(0, 5000, name="lambda_1")
+        priors["lambda_2"] = bilby.prior.Uniform(0, 5000, name="lambda_2")
 
     return priors
 
@@ -477,21 +505,42 @@ def main():
                         help="Disable JetFit EM constraint")
     parser.add_argument("--density-prior", action="store_true",
                         help="Use density-weighted distance prior")
+    parser.add_argument("--roq", action="store_true",
+                        help="Use ROQ likelihood with IMRPhenomPv2 (no tides)")
+    parser.add_argument("--roq-folder", type=str, default=None,
+                        help="Path to ROQ basis folder (default: data/ROQ)")
     parser.add_argument("--outdir", type=str, default=None)
     parser.add_argument("--npool", type=int, default=1)
     args = parser.parse_args()
 
     if args.real_data and args.duration < 16:
-        args.duration = 128.0
+        if args.roq:
+            args.duration = 106.5  # 128/106.5 = 1.20188, mc_min_eff = 1.18
+        else:
+            args.duration = 128.0
         print(f"Real data mode: setting duration = {args.duration} s")
 
+    if args.roq:
+        # Validate duration * sampling_frequency is integer
+        prod = args.duration * args.sampling_frequency
+        if abs(prod - round(prod)) > 1e-6:
+            raise ValueError(
+                f"duration={args.duration} * fs={args.sampling_frequency} "
+                f"= {prod} is not integer. For ROQ with basis seglen="
+                f"{ROQ_BASIS_SEGLEN}, try duration=106.5 or 106.0")
+
     if args.fmin is None:
-        args.fmin = 23.0 if args.real_data else 200.0
+        if args.roq:
+            args.fmin = 25.0
+        else:
+            args.fmin = 23.0 if args.real_data else 200.0
 
     use_jetfit = not args.no_jetfit
 
     # Output directory
     label = "GW170817"
+    if args.roq:
+        label += "_roq"
     if use_jetfit:
         label += "_jetfit"
     if args.density_prior:
@@ -515,7 +564,10 @@ def main():
         print(f"  GMM log-density at (D_L=40, theta_obs=0.53): {log_p:.2f}")
 
     # ----- Build priors -----
-    priors = build_priors(use_density_prior=args.density_prior)
+    roq_sf = ROQ_BASIS_SEGLEN / args.duration if args.roq else None
+    priors = build_priors(use_density_prior=args.density_prior,
+                          no_tides=args.roq,
+                          roq_scale_factor=roq_sf)
 
     # ----- Set up interferometers -----
     injection_parameters = get_injection_parameters()
@@ -531,22 +583,66 @@ def main():
             fmin=args.fmin)
 
     # ----- Waveform generator -----
+    if args.roq:
+        approximant = "IMRPhenomPv2"
+        source_model = bilby.gw.source.binary_black_hole_roq
+        param_conversion = (
+            bilby.gw.conversion.convert_to_lal_binary_black_hole_parameters
+        )
+    else:
+        approximant = "IMRPhenomPv2_NRTidal"
+        source_model = bilby.gw.source.lal_binary_neutron_star
+        param_conversion = (
+            bilby.gw.conversion.convert_to_lal_binary_neutron_star_parameters
+        )
+
+    waveform_args = {
+        "waveform_approximant": approximant,
+        "reference_frequency": 100.0,
+        "minimum_frequency": args.fmin,
+    }
+    if args.roq:
+        roq_folder = args.roq_folder or os.path.join(
+            os.path.dirname(__file__), "..", "..", "data", "ROQ")
+        waveform_args["frequency_nodes_linear"] = np.load(
+            os.path.join(roq_folder, "fnodes_linear.npy")) * roq_sf
+        waveform_args["frequency_nodes_quadratic"] = np.load(
+            os.path.join(roq_folder, "fnodes_quadratic.npy")) * roq_sf
+
     waveform_generator = bilby.gw.WaveformGenerator(
         duration=args.duration,
         sampling_frequency=args.sampling_frequency,
-        frequency_domain_source_model=bilby.gw.source.lal_binary_neutron_star,
-        parameter_conversion=(
-            bilby.gw.conversion.convert_to_lal_binary_neutron_star_parameters
-        ),
-        waveform_arguments={
-            "waveform_approximant": "IMRPhenomPv2_NRTidal",
-            "reference_frequency": 100.0,
-            "minimum_frequency": args.fmin,
-        },
+        frequency_domain_source_model=source_model,
+        parameter_conversion=param_conversion,
+        waveform_arguments=waveform_args,
     )
 
     # ----- Likelihood -----
-    if use_jetfit:
+    if args.roq:
+        roq_scale_factor = roq_sf
+        print(f"Using ROQ likelihood from {roq_folder}")
+        print(f"  scale_factor = {ROQ_BASIS_SEGLEN}/{args.duration} "
+              f"= {roq_scale_factor:.5f}")
+        print(f"  mc range (scaled): "
+              f"[{1.42/roq_scale_factor:.4f}, {2.60/roq_scale_factor:.4f}]")
+        print(f"  flow (scaled): {20*roq_scale_factor:.2f} Hz")
+
+        roq_kwargs = dict(
+            interferometers=ifos,
+            waveform_generator=waveform_generator,
+            priors=priors,
+            linear_matrix=os.path.join(roq_folder, "B_linear.npy"),
+            quadratic_matrix=os.path.join(roq_folder, "B_quadratic.npy"),
+            roq_params=os.path.join(roq_folder, "params.dat"),
+            roq_scale_factor=roq_scale_factor,
+        )
+        if use_jetfit:
+            print("  + JetFit EM constraint")
+            likelihood = ROQplusEMLikelihood(**roq_kwargs, gmm=gmm)
+        else:
+            likelihood = bilby.gw.likelihood.ROQGravitationalWaveTransient(
+                **roq_kwargs)
+    elif use_jetfit:
         print("Using GW + JetFit EM likelihood")
         likelihood = GWplusEMLikelihood(
             interferometers=ifos,
@@ -564,7 +660,12 @@ def main():
 
     # ----- Quick likelihood evaluation test -----
     print("\n--- Likelihood sanity check ---")
-    log_l = likelihood.log_likelihood(parameters=injection_parameters)
+    test_params = dict(injection_parameters)
+    if args.roq:
+        # Remove tidal params for BBH waveform
+        test_params.pop("lambda_1", None)
+        test_params.pop("lambda_2", None)
+    log_l = likelihood.log_likelihood(parameters=test_params)
     print(f"  log L at injection: {log_l:.2f}")
 
     if use_jetfit:
@@ -613,7 +714,10 @@ def main():
         maxmcmc=args.maxmcmc,
         outdir=outdir,
         label=label,
-        conversion_function=bilby.gw.conversion.generate_all_bns_parameters,
+        conversion_function=(
+            bilby.gw.conversion.generate_all_bbh_parameters if args.roq
+            else bilby.gw.conversion.generate_all_bns_parameters
+        ),
         check_point_delta_t=600,
         resume=True,
     )

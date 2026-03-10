@@ -90,6 +90,8 @@ EOF
 # ---- parse arguments ----
 local_mode=false
 real_data=true
+use_roq=false
+duration_set=false
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -h|--help)              usage ;;
@@ -99,17 +101,27 @@ while [[ $# -gt 0 ]]; do
         --nlive)                nlive="$2"; shift 2 ;;
         --maxmcmc)              maxmcmc="$2"; shift 2 ;;
         --nact)                 nact="$2"; shift 2 ;;
-        --duration)             duration="$2"; shift 2 ;;
+        --duration)             duration="$2"; duration_set=true; shift 2 ;;
         --fmin)                 fmin="$2"; shift 2 ;;
         --outdir)               outdir="$2"; shift 2 ;;
         --label)                outdir="$repo_root/results/$2"; shift 2 ;;
         --no-jetfit)            extra_args="$extra_args --no-jetfit"; shift ;;
         --density-prior)        extra_args="$extra_args --density-prior"; shift ;;
+        --roq)                  extra_args="$extra_args --roq"; use_roq=true; shift ;;
         --real-data)            real_data=true; shift ;;
         --local)                local_mode=true; shift ;;
         *)                      extra_args="$extra_args $1"; shift ;;
     esac
 done
+
+# ROQ requires shorter duration (128/s must give integer * fs)
+# and fmin >= scaled flow (20 * 128/duration ~ 24 Hz)
+if $use_roq && ! $duration_set; then
+    duration=106.5
+fi
+if $use_roq && [[ "$fmin" -lt 25 ]]; then
+    fmin=25
+fi
 
 python_exec=$(get_toml_key "python_exec")
 if [[ -z "$python_exec" ]]; then
