@@ -336,17 +336,40 @@ class ModelBase(ABC):
         self.Rmax = jnp.max(self.r_host_range)
         self._simpson_log_w = simpson_log_weights(self.r_host_range)
 
-        # Separate coarser grid for selection integrals (Malmquist).
-        # The selection function is much smoother than the per-host
-        # integrand, so a coarser grid suffices.
+        # Separate grid for selection integrals (Malmquist).
+        # The selection function is smoother than the per-host integrand,
+        # so a coarser/shorter grid often suffices. Uses `dr_malmquist`
+        # for uniform spacing.
+        r_max_sel = get_nested(
+            config, "model/r_max_selection", r_max)
+        dr_malmquist = get_nested(config, "model/dr_malmquist", None)
         delta_mu_sel = get_nested(config, "model/delta_mu_sel", None)
         dr_max_sel = get_nested(config, "model/dr_max_sel", None)
+
         if delta_mu_sel is not None and dr_max_sel is not None:
-            r_sel = make_adaptive_grid(r_min, r_max, delta_mu_sel, dr_max_sel)
+            r_sel = make_adaptive_grid(
+                r_min, r_max_sel, delta_mu_sel, dr_max_sel)
             self.r_sel_range = jnp.asarray(r_sel)
             self._simpson_log_w_sel = simpson_log_weights(self.r_sel_range)
-            fprint(f"selection grid: {len(r_sel)} points "
+            fprint(f"selection grid: {len(r_sel)} points over "
+                   f"[{r_min}, {r_max_sel}] Mpc "
                    f"(delta_mu_sel={delta_mu_sel}, dr_max_sel={dr_max_sel}).")
+        elif dr_malmquist is not None or r_max_sel != r_max:
+            if dr_malmquist is None:
+                dr_malmquist = float(
+                    (r_max - r_min) / (self._num_points_malmquist - 1))
+            num_pts_sel = int(np.round(
+                (r_max_sel - r_min) / dr_malmquist)) + 1
+            # Simpson's rule requires an odd number >= 3
+            num_pts_sel = max(num_pts_sel, 3)
+            if num_pts_sel % 2 == 0:
+                num_pts_sel += 1
+            self.r_sel_range = jnp.linspace(r_min, r_max_sel, num_pts_sel)
+            self._simpson_log_w_sel = simpson_log_weights(self.r_sel_range)
+            dr_actual = float((r_max_sel - r_min) / (num_pts_sel - 1))
+            fprint(f"selection grid: {num_pts_sel} points over "
+                   f"[{r_min}, {r_max_sel}] Mpc "
+                   f"(dr={dr_actual:.3f}).")
         else:
             self.r_sel_range = self.r_host_range
             self._simpson_log_w_sel = self._simpson_log_w
@@ -386,11 +409,8 @@ class ModelBase(ABC):
             self.rand_los_dec = None
 
     def _setup_fields_and_bias(self):
-        """Count field realizations and set bias clip."""
+        """Count field realizations."""
         if self.use_reconstruction:
-            self.br_min_clip = get_nested(
-                self.config, "model/galaxy_bias_min_clip",
-                1e-5)
             self.num_fields = len(self.host_los_velocity)
             fprint(f"marginalizing over {self.num_fields} "
                    f"field realizations.")
@@ -407,9 +427,8 @@ class ModelBase(ABC):
     # ------------------------------------------------------------------
 
     def log_prior_distance(self, r):
-        """Uniform-in-volume distance prior: p(r) ~ r^2."""
-        return (2 * jnp.log(r)
-                - 3 * jnp.log(self.Rmax) + jnp.log(3))
+        """Unnormalized uniform-in-volume distance prior: p(r) ~ r^2."""
+        return 2 * jnp.log(r)
 
     def log_S_cz(self, lp_r, Vpec, H0, sigma_v,
                  cz_lim, cz_width):
@@ -512,9 +531,13 @@ class H0ModelBase(ModelBase):
             Vext_rad_rand = 0.
         return lp_rand_dist_grid, Vext_rad_rand
 
-    def _apply_host_reconstruction(self, lp_host_dist, lp_host_dist_grid,
-                                   r_host, h, bias_params):
-        """Apply galaxy bias to host LOS and normalize."""
+    def _apply_host_reconstruction(self, lp_host_dist, r_host, h,
+                                   bias_params):
+        """Apply galaxy bias to host LOS (unnormalized).
+
+        The distance prior is NOT normalized because the angular prior
+        π(ℓ,b) ∝ Z_i(ℓ,b) cancels the normalization constant Z_i.
+        """
         rh_host = r_host * h
         lp_host_dist = lp_host_dist[None, :]
         los_delta_host = self.f_host_los_delta(rh_host)
@@ -526,48 +549,8 @@ class H0ModelBase(ModelBase):
             los_delta_host, log_rho_host, bias_params,
             self.which_bias)
 
-        los_delta_grid = \
-            self.f_host_los_delta.interp_many_steps_per_galaxy(
-                self.r_host_range * h)
-        log_rho_grid = (jnp.log(1 + los_delta_grid)
-                        if _needs_log_rho else None)
-        lp_host_dist_grid += lp_galaxy_bias(
-            los_delta_grid, log_rho_grid, bias_params,
-            self.which_bias)
+        return lp_host_dist, los_delta_host, rh_host
 
-        lp_host_dist_norm = ln_simpson_precomputed(
-            lp_host_dist_grid, self._simpson_log_w, axis=-1)
-
-        ll_reconstruction = lp_host_dist - lp_host_dist_norm
-        lp_host_dist_grid -= lp_host_dist_norm[:, :, None]
-
-        return ll_reconstruction, lp_host_dist_grid, los_delta_host, rh_host
-
-    def _apply_rand_reconstruction(self, lp_rand_dist_grid, h, bias_params):
-        """Apply galaxy bias to random LOS and normalize."""
-        rand_los_delta_grid = \
-            self.f_rand_los_delta.interp_many_steps_per_galaxy(
-                self.r_host_range * h)
-
-        log_rho = (jnp.log(1 + rand_los_delta_grid)
-                   if "linear" not in self.which_bias else None)
-        lp_rand_dist_grid += lp_galaxy_bias(
-            rand_los_delta_grid, log_rho,
-            bias_params, self.which_bias)
-        log_Z = ln_simpson_precomputed(
-            lp_rand_dist_grid, self._simpson_log_w, axis=-1)
-        lp_rand_dist_grid -= log_Z[..., None]
-
-        rand_los_Vpec_grid = \
-            self.f_rand_los_velocity.interp_many_steps_per_galaxy(
-                self.r_host_range * h)
-
-        return lp_rand_dist_grid, rand_los_delta_grid, rand_los_Vpec_grid, \
-            log_Z
-
-    def _no_reconstruction_fallback(self, lp_host_dist, lp_host_dist_grid):
+    def _no_reconstruction_fallback(self, lp_host_dist):
         """Handle the no-reconstruction branch."""
-        lp_host_dist_grid = jnp.repeat(
-            lp_host_dist_grid, self.num_hosts, axis=1)
         factor("lp_host_dist", lp_host_dist)
-        return lp_host_dist_grid

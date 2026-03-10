@@ -585,8 +585,8 @@ class BaseCCHPModel(ABC):
                 self.selection = CCHPTRGBSelectionComputation(ctx)
 
     def log_prior_distance(self, r):
-        """Log prior on physical distance (volume prior, r^2)."""
-        return 2.0 * jnp.log(r) - 3.0 * jnp.log(self.Rmax) + jnp.log(3.0)
+        """Unnormalized uniform-in-volume distance prior: p(r) ~ r^2."""
+        return 2.0 * jnp.log(r)
 
     def replace_priors(self, config):
         """Replace priors on parameters that are not used in the model."""

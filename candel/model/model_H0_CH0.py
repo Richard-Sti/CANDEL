@@ -19,10 +19,9 @@ from numpyro.distributions import MultivariateNormal, Normal, Uniform
 
 from ..util import fprint, get_nested, replace_prior_with_delta
 from .base_model import H0ModelBase
-from .pv_utils import (lp_galaxy_bias, rsample, sample_distance_prior,
-                       sample_galaxy_bias)
-from .simpson import ln_simpson
-from .utils import (log_prior_r_empirical, log_prob_integrand_sel, logmeanexp,
+from .pv_utils import lp_galaxy_bias, rsample, sample_galaxy_bias
+from .simpson import ln_simpson_precomputed
+from .utils import (log_prob_integrand_sel, logmeanexp,
                     mvn_logpdf_cholesky, predict_cz)
 
 ###############################################################################
@@ -50,16 +49,6 @@ class CH0Model(H0ModelBase):
             config, "model/use_reconstruction", False)
         which_selection = get_nested(
             config, "model/which_selection", None)
-        which_distance_prior = get_nested(
-            config, "model/which_distance_prior", "volume")
-
-        if which_selection == "empirical":
-            fprint("selected `empirical` selection. Switching the distance "
-                   "prior.")
-            which_selection = None
-            config["model"]["which_selection"] = None
-            which_distance_prior = "empirical"
-            config["model"]["which_distance_prior"] = "empirical"
 
         if which_selection not in ["SN_magnitude", "SN_magnitude_redshift"]:  # noqa
             replace_prior_with_delta(config, "M_B", -19.25)
@@ -74,14 +63,6 @@ class CH0Model(H0ModelBase):
 
         if not use_reconstruction:
             replace_prior_with_delta(config, "beta", 0.0)
-
-        if which_distance_prior != "empirical":
-            fprint("not using empirical distance prior. Disabling "
-                   "its parameters.")
-            app = "dist_emp"
-            replace_prior_with_delta(config, f"R_{app}", 1., verbose=False)
-            replace_prior_with_delta(config, f"p_{app}", 2., verbose=False)
-            replace_prior_with_delta(config, f"n_{app}", 1., verbose=False)
 
         config = self._replace_bias_priors(config)
         return config
@@ -105,9 +86,6 @@ class CH0Model(H0ModelBase):
     def _load_model_flags(self):
         super()._load_model_flags()
         config = self.config
-        self.which_distance_prior = get_nested(
-            config, "model/which_distance_prior", "volume")
-        fprint(f"which_distance_prior set to {self.which_distance_prior}")
         self.num_hosts_selection_mag = get_nested(
             config, "model/num_hosts_selection_mag", None)
         fprint("num_hosts_selection_mag set to "
@@ -151,10 +129,6 @@ class CH0Model(H0ModelBase):
     def _precompute_cepheid_stats(self):
         self.mean_logP = jnp.mean(self.logP)
         self.mean_OH = jnp.mean(self.OH)
-        self.logP_min = jnp.min(self.logP)
-        self.logP_max = jnp.max(self.logP)
-        self.OH_min = jnp.min(self.OH)
-        self.OH_max = jnp.max(self.OH)
 
     # ------------------------------------------------------------------
     #  Validation
@@ -192,9 +166,7 @@ class CH0Model(H0ModelBase):
         if self.which_selection not in allowed_selection:
             raise ValueError(
                 f"Unknown `which_selection`: {self.which_selection}. "
-                "Expected one of ['redshift', 'SN_magnitude', "
-                "'SN_magnitude_redshift', "
-                "'SN_magnitude_or_redshift_Nmag', None].")
+                f"Expected one of {allowed_selection}.")
 
         if self.which_selection in ["redshift", "SN_magnitude_redshift", "SN_magnitude_or_redshift_Nmag"] and not self.use_Cepheid_host_redshift:  # noqa
             raise ValueError(
@@ -277,9 +249,9 @@ class CH0Model(H0ModelBase):
         Probability of detection term if supernova magnitude and
         redshift-truncated.
         """
-        zcosmo = self.distance2redshift(self.r_host_range, h=H0 / 100)
+        zcosmo = self.distance2redshift(self.r_sel_range, h=H0 / 100)
         cz_r = predict_cz(zcosmo[None, None, :], Vpec)
-        mag = self.distance2distmod(self.r_host_range, h=H0 / 100) + M_SN
+        mag = self.distance2distmod(self.r_sel_range, h=H0 / 100) + M_SN
 
         sigma_v = jnp.asarray(sigma_v)
         while sigma_v.ndim < cz_r.ndim:
@@ -290,21 +262,8 @@ class CH0Model(H0ModelBase):
             self.mag_lim_SN, self.mag_lim_SN_width)
         log_prob += log_prob_integrand_sel(
             cz_r, sigma_v, self.cz_lim_selection, self.cz_lim_selection_width)
-        return ln_simpson(
-            lp_r + log_prob, x=self.r_host_range[None, None, :], axis=-1)
-
-    def log_prior_distance(self, r, **kwargs):
-        """Log prior on the physical distance."""
-        if self.which_distance_prior == "volume":
-            return super().log_prior_distance(r)
-        elif self.which_distance_prior == "empirical":
-            return log_prior_r_empirical(
-                r, kwargs["R"], kwargs["p"], kwargs["n"],
-                Rmax_grid=self.Rmax)
-        else:
-            raise ValueError(
-                f"Unknown distance prior: "
-                f"`{self.which_distance_prior}`")
+        return ln_simpson_precomputed(
+            lp_r + log_prob, self._simpson_log_w_sel, axis=-1)
 
     def sigma_v_from_density(self, delta, sigma_v_low, sigma_v_high,
                              log_rho_t, k):
@@ -345,9 +304,6 @@ class CH0Model(H0ModelBase):
         bias_params = sample_galaxy_bias(
             self.priors, self.which_bias, beta=beta, Om=self.Om)
 
-        # Empirical distance prior calibration
-        kwargs_dist = sample_distance_prior(self.priors)
-
         def map_sigma_v(delta):
             if self.use_density_dependent_sigma_v:
                 return self.sigma_v_from_density(
@@ -385,8 +341,7 @@ class CH0Model(H0ModelBase):
         if self.use_uniform_mu_host_priors:
             lp_host_dist = jnp.zeros(self.num_hosts)
         else:
-            lp_all_host_dist = self.log_prior_distance(
-                r_host_all, **kwargs_dist)
+            lp_all_host_dist = self.log_prior_distance(r_host_all)
             lp_all_host_dist += self.log_grad_distmod2comoving_distance(
                 mu_host_all, h=h)
             lp_host_dist = lp_all_host_dist[:self.num_hosts]
@@ -394,30 +349,25 @@ class CH0Model(H0ModelBase):
             lp_anchor_dist = lp_all_host_dist[self.num_hosts:]
             factor("lp_anchor_dist", lp_anchor_dist)
 
-        # Prepare the grid of r^2 prior of shape (eventually)
-        # `(n_fields, n_galaxies, n_steps)`.
-        lp_host_dist_grid = self.log_prior_distance(
-            self.r_host_range, **kwargs_dist)[None, None, :]
+        # Selection grid: built on r_sel_range (coarser, sufficient for
+        # the smooth selection integrals).
+        lp_sel_dist_grid = self.log_prior_distance(
+            self.r_sel_range)[None, None, :]
+        lp_rand_dist_grid, Vext_rad_rand = \
+            self._prepare_selection_grid(lp_sel_dist_grid, Vext)
 
         sigma_v_host = None
         sigma_v_selection = None
 
-        lp_rand_dist_grid, Vext_rad_rand = \
-            self._prepare_selection_grid(lp_host_dist_grid, Vext)
-
         if self.use_reconstruction:
-            ll_reconstruction, lp_host_dist_grid, los_delta_host, rh_host = \
+            ll_reconstruction, los_delta_host, rh_host = \
                 self._apply_host_reconstruction(
-                    lp_host_dist, lp_host_dist_grid, r_host, h,
-                    bias_params)
+                    lp_host_dist, r_host, h, bias_params)
             sigma_v_host = map_sigma_v(los_delta_host)
             if self.apply_sel:
-                # Inline reconstruction for selection: skip
-                # normalization (unnormalized joint prior) and skip
-                # velocity interpolation when not needed.
                 rand_los_delta_grid = \
                     self.f_rand_los_delta.interp_many_steps_per_galaxy(
-                        self.r_host_range * h)
+                        self.r_sel_range * h)
                 log_rho = (jnp.log(1 + rand_los_delta_grid)
                            if "linear" not in self.which_bias
                            else None)
@@ -432,7 +382,7 @@ class CH0Model(H0ModelBase):
                     rand_los_Vpec_grid = \
                         self.f_rand_los_velocity\
                         .interp_many_steps_per_galaxy(
-                            self.r_host_range * h)
+                            self.r_sel_range * h)
                 else:
                     rand_los_Vpec_grid = 0.
             else:
@@ -440,14 +390,13 @@ class CH0Model(H0ModelBase):
                 sigma_v_selection = map_sigma_v(
                     jnp.zeros(
                         (self.num_fields, self.num_rand_los,
-                         self.r_host_range.size)))
+                         self.r_sel_range.size)))
         else:
             rand_los_Vpec_grid = 0.
-            lp_host_dist_grid = self._no_reconstruction_fallback(
-                lp_host_dist, lp_host_dist_grid)
+            self._no_reconstruction_fallback(lp_host_dist)
             sigma_v_host = map_sigma_v(jnp.zeros((1, self.num_hosts)))
             sigma_v_selection = map_sigma_v(
-                jnp.zeros((1, self.num_rand_los, self.r_host_range.size)))
+                jnp.zeros((1, self.num_rand_los, self.r_sel_range.size)))
 
         # Selection function (unnormalized prior — no log_Z correction)
         if self.which_selection == "redshift":

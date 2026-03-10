@@ -19,10 +19,8 @@ num_chains_harmonic = 10
 [model]
 which_run = "CH0"
 
-# Make "empirical" selection tag
 which_selection = "redshift"
 use_uniform_mu_host_priors = false
-which_distance_prior = "volume"
 
 use_Cepheid_host_redshift = true
 
@@ -44,7 +42,10 @@ mag_lim_SN_width = 0.15
 # Homogeneous and inhomogeneous Malmquist bias gridding
 r_limits_malmquist = [0.01, 150]
 distmod_limits = [15, 43]
-galaxy_bias_min_clip = 1e-5
+
+# Selection integral grid
+r_max_selection = 70
+dr_malmquist = 0.5
 
 # --- Overrides from default priors ---
 
@@ -112,24 +113,6 @@ scale = 0.5
 dist = "vector_uniform_fixed"
 low = 0.0
 high = 2500
-
-[model.priors.R_dist_emp]
-dist = "uniform"
-low = 1.0
-high = 100
-
-[model.priors.p_dist_emp]
-dist = "truncated_normal"
-low = 0.0
-mean = 2.0
-scale = 0.1
-
-[model.priors.n_dist_emp]
-dist = "truncated_normal"
-low = 0.0
-mean = 1.0
-scale = 3
-
 
 ################################################################################
 #                                  Data                                        #
