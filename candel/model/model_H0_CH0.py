@@ -14,8 +14,6 @@
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 """Cepheid-calibrated H0 (CH0) forward model in JAX."""
 import jax.numpy as jnp
-from jax.debug import print as jprint  # noqa
-from jax.scipy.stats import norm as norm_jax
 from numpyro import deterministic, factor, plate, sample
 from numpyro.distributions import MultivariateNormal, Normal, Uniform
 
@@ -96,8 +94,6 @@ class CH0Model(H0ModelBase):
             "cz_lim_selection_width": None,
             "mag_lim_SN": 14.0,
             "mag_lim_SN_width": None,
-            "mag_lim_Cepheid": 24.0,
-            "e_mag_Cepheid": 0.1,
         }
         for name, default in spec.items():
             val = get_nested(config, f"model/{name}", default)
@@ -191,13 +187,13 @@ class CH0Model(H0ModelBase):
                     f"{', '.join(missing)}.")
 
         allowed_selection = [
-            "redshift", "SN_magnitude", "Cepheid_magnitude",
+            "redshift", "SN_magnitude",
             "SN_magnitude_redshift", "SN_magnitude_or_redshift_Nmag", None]
         if self.which_selection not in allowed_selection:
             raise ValueError(
                 f"Unknown `which_selection`: {self.which_selection}. "
                 "Expected one of ['redshift', 'SN_magnitude', "
-                "'Cepheid_magnitude', 'SN_magnitude_redshift', "
+                "'SN_magnitude_redshift', "
                 "'SN_magnitude_or_redshift_Nmag', None].")
 
         if self.which_selection in ["redshift", "SN_magnitude_redshift", "SN_magnitude_or_redshift_Nmag"] and not self.use_Cepheid_host_redshift:  # noqa
@@ -297,18 +293,6 @@ class CH0Model(H0ModelBase):
         return ln_simpson(
             lp_r + log_prob, x=self.r_host_range[None, None, :], axis=-1)
 
-    def log_S_Cepheid_mag(self, lp_r, M_W, b_W, Z_W, H0):
-        """Probability of detection term if Cepheid magnitude-truncated."""
-        raise NotImplementedError(
-            "Cepheid selection is not understood well enough.")
-        mu = self.distance2distmod(self.r_host_range, h=H0 / 100)
-        mag = mu[None, :] + M_W + b_W * self.mean_logP + Z_W * self.mean_OH
-
-        log_cdf = norm_jax.logcdf(
-            (self.mag_lim_Cepheid - mag[None, ...]) / self.e_mag_Cepheid)
-        return ln_simpson(
-            lp_r + log_cdf, x=self.r_host_range[None, None, :], axis=-1)
-
     def log_prior_distance(self, r, **kwargs):
         """Log prior on the physical distance."""
         if self.which_distance_prior == "volume":
@@ -330,7 +314,7 @@ class CH0Model(H0ModelBase):
         return sigma_v_low + (sigma_v_high - sigma_v_low) / (
             1.0 + jnp.exp(-k * (log_rho - log_rho_t)))
 
-    def __call__(self, ):
+    def __call__(self):
         # Hubble constant
         H0 = rsample("H0", self.priors["H0"])
 
@@ -530,9 +514,6 @@ class CH0Model(H0ModelBase):
                     self.mag_SN_unique_Cepheid_host, mag_SN,
                     self.L_SN_unique_Cepheid_host)
                 )
-        elif self.which_selection == "Cepheid_magnitude":
-            raise NotImplementedError(
-                "Cepheid selection is not understood well enough.")
         else:
             log_S = jnp.zeros((1, self.num_hosts))
 
