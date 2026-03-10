@@ -95,6 +95,9 @@ rmin = 0.1
 rmax = 251
 dr = 1.0
 
+[io.reconstruction_rand_los.Carrick2015]
+dr = 0.5
+
 [io.reconstruction_rand_los.manticore_2MPP_MULTIBIN_N256_DES_V2]
 dr = 0.5
 

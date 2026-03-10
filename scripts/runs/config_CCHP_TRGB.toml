@@ -1,0 +1,123 @@
+# Job started at: 2026-03-09 10:30:40
+# Job started at: 2026-03-09 10:26:32
+# Job started at: 2026-03-09 10:24:22
+base = ["config_priors.toml", "config_paths.toml"]
+
+###############################################################################
+#                               Inference                                     #
+###############################################################################
+
+[inference]
+num_warmup = 500
+num_samples = 500
+num_chains = 1
+chain_method = "parallel"
+seed = 44
+
+###############################################################################
+#                                 Model                                       #
+###############################################################################
+
+[model]
+which_run = "CCHP"
+
+use_reconstruction = false
+which_bias = "linear"
+which_selection = "SN_magnitude"
+
+distmod_limits = [15, 40]
+r_limits_malmquist = [0.01, 150]
+num_points_malmquist = 101
+
+mag_lim_SN = "infer"
+mag_lim_SN_width = "infer"
+cz_lim_selection = "infer"
+cz_lim_selection_width = "infer"
+mag_lim_TRGB = "infer"
+mag_lim_TRGB_width = "infer"
+
+# --- Overrides from default priors ---
+
+[model.priors.M_TRGB]
+dist = "normal"
+loc = -4.05
+scale = 0.5
+
+[model.priors.sigma_int]
+dist = "maxwell"
+scale = 0.0627
+
+[model.priors.sigma_v]
+dist = "maxwell"
+scale = 157
+
+[model.priors.M_B]
+dist = "normal"
+loc = -19.0
+scale = 1.0
+
+# Selection thresholds
+[model.priors.mag_lim_SN]
+dist = "uniform"
+low = 12.0
+high = 20.0
+
+[model.priors.mag_lim_SN_width]
+dist = "uniform"
+low = 0.05
+high = 2.0
+
+[model.priors.mag_lim_TRGB]
+dist = "uniform"
+low = 20.0
+high = 29.0
+
+[model.priors.mag_lim_TRGB_width]
+dist = "uniform"
+low = 0.05
+high = 1.5
+
+[model.priors.cz_lim_selection]
+dist = "uniform"
+low = 100.0
+high = 3500.0
+
+[model.priors.cz_lim_selection_width]
+dist = "uniform"
+low = 50.0
+high = 500.0
+
+###############################################################################
+#                             TRGB Calibration                                #
+###############################################################################
+
+[model.anchors]
+mu_LMC = 18.477
+e_mu_LMC = 0.026
+mag_LMC_TRGB = 14.456
+e_mag_LMC_TRGB = 0.018
+mu_N4258 = 29.398
+e_mu_N4258 = 0.032
+mag_N4258_TRGB = 25.347
+e_mag_N4258_TRGB = 0.0443
+
+###############################################################################
+#                                  Data                                       #
+###############################################################################
+
+[io]
+root_output = "results/CCHP"
+fname_output = "results/CCHP/test_sn_sel.hdf5"
+
+[io.CCHP]
+path = "data/CCHP/cchp_processed_data.tsv"
+los_file = "data/CCHP/los_CCHP_<X>.hdf5"
+
+# Override the default reconstruction grid to match EDD TRGB
+[io.reconstruction_main]
+rmin = 0.1
+rmax = 51
+num_steps = 301
+
+[io.CCHP_redshift_source]
+kind = "cz_cmb"

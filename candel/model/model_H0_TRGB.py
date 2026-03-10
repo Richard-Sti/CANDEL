@@ -14,6 +14,7 @@
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 """TRGB-calibrated H0 forward model for EDD TRGB distance indicators."""
 import jax.numpy as jnp
+import numpy as np
 from jax.scipy.special import logsumexp
 from jax.scipy.stats import norm as norm_jax
 from numpyro import factor, sample
@@ -43,6 +44,12 @@ class TRGBModel(H0ModelBase):
         if not use_reconstruction:
             replace_prior_with_delta(config, "beta", 0.0)
 
+        # M_B only needed for SN_magnitude selection
+        which_sel = get_nested(config, "model/which_selection", None)
+        if which_sel != "SN_magnitude":
+            replace_prior_with_delta(
+                config, "M_B", -19.0, verbose=False)
+
         config = self._replace_bias_priors(config)
         return config
 
@@ -57,6 +64,8 @@ class TRGBModel(H0ModelBase):
             active = {"mag_lim_TRGB", "mag_lim_TRGB_width"}
         elif which_sel == "redshift":
             active = {"cz_lim_selection", "cz_lim_selection_width"}
+        elif which_sel == "SN_magnitude":
+            active = {"mag_lim_SN", "mag_lim_SN_width"}
         else:
             active = set()
 
@@ -65,6 +74,8 @@ class TRGBModel(H0ModelBase):
             "cz_lim_selection_width":  None,
             "mag_lim_TRGB":           None,
             "mag_lim_TRGB_width":     None,
+            "mag_lim_SN":             None,
+            "mag_lim_SN_width":       None,
         }
         for name, default in spec.items():
             if name not in active:
@@ -91,6 +102,22 @@ class TRGBModel(H0ModelBase):
     # ------------------------------------------------------------------
 
     def _load_data(self, data):
+        # Extract SN-level data before super() processes the data dict
+        self._has_sn_data = ("m_Bprime" in data
+                             and data["m_Bprime"] is not None)
+        if self._has_sn_data:
+            self._sn_group_index = jnp.asarray(
+                data.pop("sn_group_index"))
+            self._m_Bprime = jnp.asarray(data.pop("m_Bprime"))
+            self._e_m_Bprime = jnp.asarray(data.pop("e_m_Bprime"))
+            self._e2_m_Bprime = self._e_m_Bprime ** 2
+            self._e_m_Bprime_median = float(
+                data.pop("e_m_Bprime_median"))
+            n_sn = len(self._m_Bprime)
+            n_hosts = len(np.unique(np.asarray(self._sn_group_index)))
+            fprint(f"loaded {n_sn} SNe across {n_hosts} hosts "
+                   f"for SN magnitude data.")
+
         super()._load_data(data)
         self.num_hosts = len(self.mag_obs)
         fprint(f"loaded {self.num_hosts} TRGB host galaxies.")
@@ -107,11 +134,18 @@ class TRGBModel(H0ModelBase):
             raise ValueError(
                 "`use_reconstruction` requires host LOS interpolators.")
 
-        allowed_selection = ["TRGB_magnitude", "redshift", None]
+        allowed_selection = [
+            "TRGB_magnitude", "redshift", "SN_magnitude", None]
         if self.which_selection not in allowed_selection:
             raise ValueError(
                 f"Unknown `which_selection`: {self.which_selection}. "
                 f"Expected one of {allowed_selection}.")
+
+        if self.which_selection == "SN_magnitude" \
+                and not self._has_sn_data:
+            raise ValueError(
+                "SN_magnitude selection requires SN data "
+                "(m_Bprime, e_m_Bprime) in the data dict.")
 
         if self.apply_sel and self.use_reconstruction \
                 and not self.has_rand_los:
@@ -130,6 +164,12 @@ class TRGBModel(H0ModelBase):
                 raise ValueError(
                     "`cz_lim_selection` must be set or "
                     "'infer' for redshift selection.")
+        if self.which_selection == "SN_magnitude":
+            if self.mag_lim_SN is None \
+                    and not self._infer_mag_lim_SN:
+                raise ValueError(
+                    "`mag_lim_SN` must be set or 'infer' "
+                    "for SN_magnitude selection.")
 
     # ------------------------------------------------------------------
     #  Selection functions
@@ -199,6 +239,8 @@ class TRGBModel(H0ModelBase):
         lp_r_sel = self.log_prior_distance(r_sel)
 
         log_S = None
+        ll_sn_host = None
+
         if self.which_selection == "TRGB_magnitude":
             mag_lim = self._resolve_threshold("mag_lim_TRGB")
             mag_width = self._resolve_threshold("mag_lim_TRGB_width")
@@ -254,13 +296,54 @@ class TRGBModel(H0ModelBase):
                 + beta * rand_los_Vpec_sel,
                 H0, sigma_v, cz_lim, cz_width), axis=-1)
 
+        elif self.which_selection == "SN_magnitude":
+            M_B = rsample("M_B", self.priors["M_B"])
+            mag_lim = self._resolve_threshold("mag_lim_SN")
+            mag_width = self._resolve_threshold("mag_lim_SN_width")
+
+            # Per-SN selection probability
+            factor("ll_sel_per_object", jnp.sum(
+                norm_jax.logcdf(
+                    (mag_lim - self._m_Bprime) / mag_width)))
+
+            # Population selection integral using M_B
+            lp_rand_dist_sel = lp_r_sel[None, None, :]
+            if self.use_reconstruction:
+                rand_delta = \
+                    self.f_rand_los_delta.interp_many_steps_per_galaxy(
+                        r_sel * h)
+                log_rho = (jnp.log(1 + rand_delta)
+                           if "linear" not in self.which_bias
+                           else None)
+                lp_rand_dist_sel = lp_rand_dist_sel + lp_galaxy_bias(
+                    rand_delta, log_rho, bias_params, self.which_bias)
+
+            mu_grid_sel = self.distance2distmod(r_sel, h=h)
+            log_S = logmeanexp(self.log_S_mag(
+                lp_rand_dist_sel, M_B, H0,
+                self._e_m_Bprime_median,
+                mag_lim, mag_width, mu_grid=mu_grid_sel), axis=-1)
+
+            # SN magnitude likelihood on distance grid
+            # Per-SN: (n_sn, n_grid)
+            ll_sn_per = Normal(
+                M_B + mu_grid[None, :],
+                self._e_m_Bprime[:, None]).log_prob(
+                    self._m_Bprime[:, None])
+            # Sum SNe per host: (n_hosts, n_grid)
+            ll_sn_host = jnp.zeros(
+                (self.num_hosts, len(r_grid)))
+            ll_sn_host = ll_sn_host.at[
+                self._sn_group_index].add(ll_sn_per)
+
         # --- Per-host distance handling ---
         e_cz = jnp.sqrt(self.e2_czcmb + sigma_v**2)
 
         self._call_marginalized(
             h, M_TRGB, sigma_int, sigma_v, beta, bias_params,
             Vext_rad_host, r_grid, lp_r, e_cz, log_S,
-            mu_grid=mu_grid, z_grid=z_grid)
+            mu_grid=mu_grid, z_grid=z_grid,
+            ll_sn_host=ll_sn_host)
 
     # ------------------------------------------------------------------
     #  Distance marginalization path
@@ -269,7 +352,8 @@ class TRGBModel(H0ModelBase):
     def _call_marginalized(self, h, M_TRGB, sigma_int, sigma_v, beta,
                            bias_params, Vext_rad_host, r_grid, lp_r,
                            e_cz, log_S,
-                           mu_grid=None, z_grid=None):
+                           mu_grid=None, z_grid=None,
+                           ll_sn_host=None):
         if mu_grid is None:
             mu_grid = self.distance2distmod(r_grid, h=h)
         if z_grid is None:
@@ -310,9 +394,10 @@ class TRGBModel(H0ModelBase):
             # We do NOT subtract log_normalizer (= log Z_i) because the
             # angular prior π(ℓ,b) ∝ Z(ℓ,b) cancels it. The b₁ constraint
             # comes from Z_i variation across hosts.
-            ll_host = logsumexp(
-                lp_dist_w + ll_mag[None, :, :] + ll_cz,
-                axis=-1)
+            integrand = lp_dist_w + ll_mag[None, :, :] + ll_cz
+            if ll_sn_host is not None:
+                integrand = integrand + ll_sn_host[None, :, :]
+            ll_host = logsumexp(integrand, axis=-1)
 
             if self.apply_sel:
                 ll_host -= log_S[:, None]
@@ -330,9 +415,11 @@ class TRGBModel(H0ModelBase):
                 cz_pred, e_cz[:, None]).log_prob(self.czcmb[:, None])
 
             # Marginalize over distance
+            integrand = lp_dist + ll_mag + ll_cz
+            if ll_sn_host is not None:
+                integrand = integrand + ll_sn_host
             ll_host = ln_simpson_precomputed(
-                lp_dist + ll_mag + ll_cz,
-                log_w, axis=-1) - log_normalizer
+                integrand, log_w, axis=-1) - log_normalizer
 
             if self.apply_sel:
                 ll_host -= log_S[0]

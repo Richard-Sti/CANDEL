@@ -259,7 +259,7 @@ def main():
                 f.create_dataset("RA", data=RA, dtype=dt)
                 f.create_dataset("dec", data=dec, dtype=dt)
             f.create_dataset("r", data=r, dtype=dt)
-            f.create_dataset("los_density", data=los_density, dtype=dt16)
+            f.create_dataset("los_density", data=los_density, dtype=dt)
             f.create_dataset("los_velocity", data=los_velocity, dtype=dt16)
 
         fprint("all finished.")

@@ -256,7 +256,9 @@ def generate_dynamic_tag(config, base_tag="default"):
             parts.append(f"sel-{which_sel}")
         if get_nested(config, "model/use_reconstruction", False):
             parts.append(get_nested(
-                config, "io/PV_main/EDD_TRGB/which_host_los", None))
+                config, "io/which_host_los",
+                get_nested(config,
+                           "io/PV_main/EDD_TRGB/which_host_los", None)))
 
     if base_tag != "default":
         parts.append(base_tag)
@@ -338,40 +340,34 @@ if __name__ == "__main__":
     # Load machine-specific settings from local_config.toml
     _local_cfg = load_local_config()
 
-    # --- EDD TRGB: magnitude selection, no reconstruction ---
+    # --- EDD TRGB: redshift selection, Carrick reconstruction ---
     manual_overrides = {
         **{k: v for k, v in _local_cfg.items()},
-        "model/run_ppc": True,
-        "model/which_selection": "TRGB_magnitude",
+        "model/which_selection": "redshift",
         "model/use_reconstruction": True,
-        # "io/PV_main/EDD_TRGB/which_host_los": "Carrick2015",
-        "model/priors/beta": {"dist": "delta", "value": 1.0},
-        "model/which_bias": "double_powerlaw",
-        "io/PV_main/EDD_TRGB/which_host_los": "manticore_2MPP_MULTIBIN_N256_DES_V2",
-    #     # "io/which_host_los": "manticore_2MPP_MULTIBIN_N256_DES_V2",
-        # "model/priors/Vext": [
-        #     {"dist": "delta", "value": [0., 0., 0.]},
-        # ],
+        "model/which_bias": "linear",
+        "io/which_host_los": "Carrick2015",
     }
-    # # --- CCHP overrides ---
+
+    # # --- CCHP TRGB: SN magnitude selection, Carrick reconstruction ---
+    # config_path = "./config_CCHP_TRGB.toml"
     # manual_overrides = {
-    #     "io/root_output": "results_test",
-    #     # "model/which_selection": ["none", "SN_magnitude", "redshift"],
-    #     "model/which_run": "CCHP_CSP",
-    #     "model/which_selection": "CSP",
-    #     "model/use_reconstruction": False,
-    #     "io/which_host_los": "Carrick2015",
-    #     # "io/which_host_los": "manticore_2MPP_MULTIBIN_N256_DES_V2",
+    #     **{k: v for k, v in _local_cfg.items()},
+    #     "model/which_selection": "SN_magnitude",
+    #     "model/use_reconstruction": True,
     #     "model/which_bias": "linear",
-    #     "model/infer_sel": True,
-    #     "model/priors/Vext": [
-    #         {"dist": "delta", "value": [0., 0., 0.]},
-    #     ],
-    #     "model/priors/beta": [
-    #         {"dist": "normal", "loc": 0.43, "scale": 0.02},
-    #         # {"dist": "delta", "value": 1.0},
-    #         # {"dist": "normal", "loc": 1.0, "scale": 0.5},
-    #     ],
+    #     "io/which_host_los": "Carrick2015",
+    # }
+
+    # # --- EDD TRGB: magnitude selection, Manticore reconstruction ---
+    # manual_overrides = {
+    #     **{k: v for k, v in _local_cfg.items()},
+    #     "model/run_ppc": True,
+    #     "model/which_selection": "TRGB_magnitude",
+    #     "model/use_reconstruction": True,
+    #     "model/priors/beta": {"dist": "delta", "value": 1.0},
+    #     "model/which_bias": "double_powerlaw",
+    #     "io/which_host_los": "manticore_2MPP_MULTIBIN_N256_DES_V2",
     # }
 
     task_file = f"tasks_{tasks_index}.txt"

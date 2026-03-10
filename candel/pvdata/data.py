@@ -1197,18 +1197,19 @@ def load_CCHP_from_config(config_path, ra_dec_only=False):
     """
     Load the processed CCHP TRGB catalogue from a TSV file.
 
+    Returns data in EDD-TRGB-compatible format (host-level arrays with
+    ``mag_obs``, ``e_mag_obs``, ``czcmb``, ``e_czcmb``, ``RA_host``,
+    ``dec_host``) plus SN-level arrays (``m_Bprime``, ``e_m_Bprime``,
+    ``sn_group_index``) for SN magnitude selection.
+
     Expects the TSV to contain at least the columns:
     SN, Galaxy, cz_cmb, e_czcmb, mu_TRGB_CCHP, sigma_TRGB_CCHP,
     m_Bprime_CSP, sigma_Bprime_CSP.
-
-    Set io.CSP.load_CSP_matches = true in config to load matched CSP data
-    (st, BV, obs_vec, cov, RA, dec, stellar masses) with CSP_ prefix.
     """
     config = load_config(config_path, replace_los_prior=False)
     use_recon = get_nested(config, "model/use_reconstruction", False)
     config["io"]["load_host_los"] = use_recon
     config["io"]["load_rand_los"] = use_recon
-    load_csp_match = get_nested(config, "io/CSP/load_CSP_matches", False)
     path = config["io"]["CCHP"]["path"]
     redshift_source = get_nested(
         config, "io/CCHP_redshift_source/kind", "cz_cmb")
@@ -1227,6 +1228,7 @@ def load_CCHP_from_config(config_path, ra_dec_only=False):
 
     # Check here about the wavelength!
     mag_trgb = data_tbl["mu_TRGB_CCHP"] - 4.049
+    e_mag_trgb = data_tbl["sigma_TRGB_CCHP"]
 
     # Fixed anchor values (LMC and NGC 4258) for convenience.
     # LMC (Pietrzynski et al. 2019): https://arxiv.org/abs/1903.08096
@@ -1259,6 +1261,9 @@ def load_CCHP_from_config(config_path, ra_dec_only=False):
             f"{redshift_source}. Use 'cz_cmb' or 'cz_cmb_NED'.")
 
     e_czcmb = data_tbl["e_czcmb"]
+    m_Bprime = data_tbl["m_Bprime_CSP"]
+    e_m_Bprime = data_tbl["sigma_Bprime_CSP"]
+    galaxies = np.asarray(data_tbl["Galaxy"])
 
     if ra_dec_only:
         return {
@@ -1268,34 +1273,66 @@ def load_CCHP_from_config(config_path, ra_dec_only=False):
             "e_czcmb": e_czcmb,
         }
 
+    # Mask entries with non-finite SN photometry
+    sn_mask = np.isfinite(m_Bprime) & np.isfinite(e_m_Bprime)
+    n_masked = int(np.sum(~sn_mask))
+    if n_masked > 0:
+        fprint(f"CCHP: masking {n_masked}/{len(sn_mask)} entries "
+               "without finite SN photometry.")
+    mag_trgb = mag_trgb[sn_mask]
+    e_mag_trgb = e_mag_trgb[sn_mask]
+    cz_cmb = cz_cmb[sn_mask]
+    e_czcmb = e_czcmb[sn_mask]
+    m_Bprime = m_Bprime[sn_mask]
+    e_m_Bprime = e_m_Bprime[sn_mask]
+    ra = ra[sn_mask]
+    dec = dec[sn_mask]
+    galaxies = galaxies[sn_mask]
+
+    # Group by Galaxy (multiple SNe per host)
+    galaxies_unique, inverse = np.unique(galaxies, return_inverse=True)
+    n_hosts = len(galaxies_unique)
+    first_idx = np.array([np.where(inverse == i)[0][0]
+                          for i in range(n_hosts)])
+    fprint(f"CCHP: {len(galaxies)} SNe across {n_hosts} unique hosts.")
+
+    # Anchor calibration from config (with CCHP defaults)
+    anchors = get_nested(config, "model/anchors", {})
+
+    # Build output dict with EDD-compatible host-level keys
     data = {
-        "SN": data_tbl["SN"],
-        "Galaxy": data_tbl["Galaxy"],
-        "cz_cmb": cz_cmb,
-        "e_czcmb": e_czcmb,
-        "mag_TRGB": mag_trgb,
-        "e_mag_TRGB": data_tbl["sigma_TRGB_CCHP"],
-        "m_Bprime": data_tbl["m_Bprime_CSP"],
-        "sigma_Bprime": data_tbl["sigma_Bprime_CSP"],
-        "RA": ra,
-        "DEC": dec,
-        "mu_LMC_anchor": mu_LMC_anchor,
-        "e_mu_LMC_anchor": e_mu_LMC_anchor,
-        "mag_LMC_TRGB": mag_LMC_TRGB,
-        "e_mag_LMC_TRGB": e_mag_LMC_TRGB,
-        "mu_N4258_anchor": mu_N4258_anchor,
-        "e_mu_N4258_anchor": e_mu_N4258_anchor,
-        "mag_N4258_TRGB": mag_N4258_TRGB,
-        "e_mag_N4258_TRGB": e_mag_N4258_TRGB,
+        # Host-level arrays (one per unique host)
+        "mag_obs": mag_trgb[first_idx],
+        "e_mag_obs": e_mag_trgb[first_idx],
+        "czcmb": cz_cmb[first_idx],
+        "e_czcmb": e_czcmb[first_idx],
+        "RA_host": ra[first_idx],
+        "dec_host": dec[first_idx],
+        "e_mag_median": float(np.median(e_mag_trgb[first_idx])),
+        # SN-level arrays (one per SN)
+        "m_Bprime": m_Bprime,
+        "e_m_Bprime": e_m_Bprime,
+        "e_m_Bprime_median": float(np.median(e_m_Bprime)),
+        "sn_group_index": inverse.astype(np.int32),
+        # Anchors
+        "mu_LMC_anchor": anchors.get("mu_LMC", mu_LMC_anchor),
+        "e_mu_LMC_anchor": anchors.get("e_mu_LMC", e_mu_LMC_anchor),
+        "mag_LMC_TRGB": anchors.get("mag_LMC_TRGB", mag_LMC_TRGB),
+        "e_mag_LMC_TRGB": anchors.get("e_mag_LMC_TRGB", e_mag_LMC_TRGB),
+        "mu_N4258_anchor": anchors.get("mu_N4258", mu_N4258_anchor),
+        "e_mu_N4258_anchor": anchors.get("e_mu_N4258", e_mu_N4258_anchor),
+        "mag_N4258_TRGB": anchors.get("mag_N4258_TRGB", mag_N4258_TRGB),
+        "e_mag_N4258_TRGB": anchors.get(
+            "e_mag_N4258_TRGB", e_mag_N4258_TRGB),
     }
 
-    # Optionally load LOS data (host and/or random) if requested in config.
+    # Load LOS data (host and/or random)
     los_data_path = None
     rand_los_data_path = None
 
     which_host_los = get_nested(config, "io/which_host_los", None)
     if get_nested(config, "io/load_host_los", False):
-        los_file = get_nested(config, "io/los_file", None)
+        los_file = get_nested(config, "io/CCHP/los_file", None)
         if los_file is not None and which_host_los is not None:
             los_data_path = los_file.replace("<X>", which_host_los)
         else:
@@ -1310,8 +1347,12 @@ def load_CCHP_from_config(config_path, ra_dec_only=False):
 
     if los_data_path is not None:
         host_los = load_los(los_data_path, {}, mask=None)
-        data["host_los_density"] = host_los["los_density"]
-        data["host_los_velocity"] = host_los["los_velocity"]
+        # LOS file has one entry per row in the original TSV (25 entries).
+        # Select valid SN entries, then extract host-level via first_idx.
+        los_density = host_los["los_density"][:, sn_mask]
+        los_velocity = host_los["los_velocity"][:, sn_mask]
+        data["host_los_density"] = los_density[:, first_idx]
+        data["host_los_velocity"] = los_velocity[:, first_idx]
         data["host_los_r"] = host_los["los_r"]
 
     if rand_los_data_path is not None:
@@ -1325,38 +1366,6 @@ def load_CCHP_from_config(config_path, ra_dec_only=False):
         data["num_rand_los"] = data["rand_los_density"].shape[1]
     else:
         data["has_rand_los"] = False
-
-    # Optionally load matched CSP data
-    if load_csp_match:
-        csp_root = get_nested(config, "io/CSP/root", None)
-        if csp_root is None:
-            raise ValueError("CSP root not specified in config [io.CSP.root]")
-        if not isabs(csp_root):
-            csp_root = join(config["root_main"], csp_root)
-
-        csp_data = load_CSP(csp_root, return_all=True)
-        cchp_idx, csp_idx = match_cchp_to_csp(data, csp_data)
-
-        # Store matching indices
-        data["CSP_match_cchp_idx"] = cchp_idx
-        data["CSP_match_csp_idx"] = csp_idx
-
-        # Add matched CSP fields with prefix
-        n_cchp = len(data["SN"])
-        csp_fields = ["st", "BV", "obs_vec", "cov", "RA", "dec",
-                      "log_stellar_mass", "log_stellar_mass_lower",
-                      "log_stellar_mass_upper"]
-        for field in csp_fields:
-            arr = csp_data[field]
-            # Create array of NaN with CCHP shape, fill matched entries
-            if arr.ndim == 1:
-                out = np.full(n_cchp, np.nan)
-            elif arr.ndim == 2:
-                out = np.full((n_cchp, arr.shape[1]), np.nan)
-            else:
-                out = np.full((n_cchp,) + arr.shape[1:], np.nan)
-            out[cchp_idx] = arr[csp_idx]
-            data[f"CSP_{field}"] = out
 
     return data
 
@@ -1844,8 +1853,9 @@ def load_EDD_TRGB_from_config(config_path):
     data["e_mag_median"] = float(np.median(data["e_mag_obs"]))
 
     # LOS data
-    which_host_los = get_nested(config, "io/PV_main/EDD_TRGB/which_host_los",
-                                None)
+    which_host_los = get_nested(
+        config, "io/which_host_los",
+        get_nested(config, "io/PV_main/EDD_TRGB/which_host_los", None))
     los_data_path = None
     rand_los_data_path = None
 

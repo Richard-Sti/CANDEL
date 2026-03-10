@@ -169,7 +169,8 @@ def _ppc_field_path(gen, config, H0, M_TRGB, sigma_int, sigma_v, Vext,
 
     # Build field loader
     field_name = get_nested(
-        config, "io/PV_main/EDD_TRGB/which_host_los", None)
+        config, "io/which_host_los",
+        get_nested(config, "io/PV_main/EDD_TRGB/which_host_los", None))
     if field_name is None:
         raise ValueError(
             "use_reconstruction=True but no which_host_los specified")

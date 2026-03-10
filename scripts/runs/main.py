@@ -82,9 +82,9 @@ if __name__ == "__main__":
         model = candel.model.CH0Model(args.config, data)
         candel.run_H0_inference(model, )
     elif which_run == "CCHP":
-        fprint("selected `CCHP` model.")
+        fprint("selected `CCHP` model (TRGB with SN data).")
         data = candel.pvdata.load_CCHP_from_config(args.config)
-        model = candel.model.CCHPTRGBModel(args.config, data)
+        model = candel.model.TRGBModel(args.config, data)
         candel.run_H0_inference(model, )
     elif which_run == "EDD_TRGB":
         fprint("selected `EDD_TRGB` model.")
