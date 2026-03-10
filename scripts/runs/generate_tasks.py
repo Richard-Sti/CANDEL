@@ -329,7 +329,7 @@ if __name__ == "__main__":
         help="Arbitrary tag/index for this task list.")
     args = parser.parse_args()
 
-    config_path = "./config_EDD_TRGB.toml"
+    config_path = "./config_CCHP_TRGB.toml"
     config = load_config(
         config_path, replace_none=False, replace_los_prior=False,
         fill_paths=False)
@@ -340,13 +340,13 @@ if __name__ == "__main__":
     # Load machine-specific settings from local_config.toml
     _local_cfg = load_local_config()
 
-    # --- EDD TRGB: redshift selection, Carrick reconstruction ---
+    # --- CCHP TRGB: SN magnitude selection, Manticore reconstruction ---
     manual_overrides = {
         **{k: v for k, v in _local_cfg.items()},
-        "model/which_selection": "redshift",
+        "model/which_selection": "TRGB_magnitude",
         "model/use_reconstruction": True,
-        "model/which_bias": "linear",
-        "io/which_host_los": "Carrick2015",
+        "model/which_bias": "double_powerlaw",
+        "io/which_host_los": "manticore_2MPP_MULTIBIN_N256_DES_V2",
     }
 
     # # --- CCHP TRGB: SN magnitude selection, Carrick reconstruction ---
@@ -354,6 +354,16 @@ if __name__ == "__main__":
     # manual_overrides = {
     #     **{k: v for k, v in _local_cfg.items()},
     #     "model/which_selection": "SN_magnitude",
+    #     "model/use_reconstruction": True,
+    #     "model/which_bias": "linear",
+    #     "io/which_host_los": "Carrick2015",
+    # }
+
+    # # --- EDD TRGB: redshift selection, Carrick reconstruction ---
+    # config_path = "./config_EDD_TRGB.toml"
+    # manual_overrides = {
+    #     **{k: v for k, v in _local_cfg.items()},
+    #     "model/which_selection": "redshift",
     #     "model/use_reconstruction": True,
     #     "model/which_bias": "linear",
     #     "io/which_host_los": "Carrick2015",
@@ -418,6 +428,16 @@ if __name__ == "__main__":
                         fprint("forcing run_ppc=False for Manticore field.")
                         local_config = overwrite_config(
                             local_config, "model/run_ppc", False)
+                    # Default beta to delta(1) for Manticore unless already
+                    # explicitly set to a non-default prior in manual_overrides.
+                    beta_prior = get_nested(
+                        local_config, "model/priors/beta", None)
+                    if "model/priors/beta" not in override_set:
+                        if not _is_delta_prior(beta_prior):
+                            fprint("defaulting beta=delta(1) for Manticore.")
+                            local_config = overwrite_subtree(
+                                local_config, "model/priors/beta",
+                                {"dist": "delta", "value": 1.0})
                     break
 
             # Validate which_run
