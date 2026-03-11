@@ -441,7 +441,7 @@ class ModelBase(ABC):
         cz_r = predict_cz(zcosmo[None, None, :], Vpec)
         sigma_v = jnp.asarray(sigma_v)
         while sigma_v.ndim < cz_r.ndim:
-            sigma_v = sigma_v[..., None]
+            sigma_v = sigma_v[None, ...]
         sigma_v = jnp.broadcast_to(sigma_v, cz_r.shape)
         log_prob = log_prob_integrand_sel(
             cz_r, sigma_v, cz_lim, cz_width)

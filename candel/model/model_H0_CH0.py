@@ -13,14 +13,16 @@
 # with this program; if not, write to the Free Software Foundation, Inc.,
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 """Cepheid-calibrated H0 (CH0) forward model in JAX."""
+import numpy as np
 import jax.numpy as jnp
+from jax.scipy.stats import norm as norm_jax
 from numpyro import deterministic, factor, plate, sample
 from numpyro.distributions import MultivariateNormal, Normal, Uniform
 
 from ..util import fprint, get_nested, replace_prior_with_delta
 from .base_model import H0ModelBase
 from .pv_utils import lp_galaxy_bias, rsample, sample_galaxy_bias
-from .simpson import ln_simpson_precomputed
+from .simpson import ln_simpson_precomputed, simpson_log_weights
 from .utils import (log_prob_integrand_sel, logmeanexp, mvn_logpdf_cholesky,
                     normal_logpdf_var, predict_cz)
 
@@ -69,6 +71,19 @@ class CH0Model(H0ModelBase):
 
     def _load_selection_thresholds(self):
         config = self.config
+        priors = config.setdefault(
+            "model", {}).setdefault("priors", {})
+        which_sel = get_nested(config, "model/which_selection", None)
+
+        if which_sel == "redshift":
+            active = {"cz_lim_selection", "cz_lim_selection_width"}
+        elif which_sel == "SN_magnitude":
+            active = {"mag_lim_SN", "mag_lim_SN_width"}
+        elif which_sel == "SN_magnitude_redshift":
+            active = {"cz_lim_selection", "cz_lim_selection_width",
+                      "mag_lim_SN", "mag_lim_SN_width"}
+        else:
+            active = set()
 
         spec = {
             "cz_lim_selection": 3300.0,
@@ -77,11 +92,30 @@ class CH0Model(H0ModelBase):
             "mag_lim_SN_width": None,
         }
         for name, default in spec.items():
-            val = get_nested(config, f"model/{name}", default)
-            if val == "infer":
-                raise ValueError(
-                    f"CH0 model does not support inferring `{name}`.")
-            setattr(self, name, val)
+            if name not in active:
+                setattr(self, name, None)
+                setattr(self, f"_infer_{name}", False)
+                continue
+
+            raw = get_nested(config, f"model/{name}", default)
+            if raw == "infer":
+                p = priors.get(name)
+                if p is None:
+                    raise ValueError(
+                        f"`{name}` set to 'infer' but no "
+                        f"prior [model.priors.{name}] found.")
+                setattr(self, name, None)
+                setattr(self, f"_infer_{name}", True)
+                fprint(f"{name} will be inferred.")
+            else:
+                setattr(self, name, raw)
+                setattr(self, f"_infer_{name}", False)
+
+    def _resolve_threshold(self, name):
+        """Return the threshold value, sampling if flagged."""
+        if getattr(self, f"_infer_{name}"):
+            return rsample(name, self.priors[name])
+        return getattr(self, name)
 
     def _load_model_flags(self):
         super()._load_model_flags()
@@ -120,6 +154,28 @@ class CH0Model(H0ModelBase):
     def _set_data_arrays(self, data):
         skip = ("q_names", "host_map", "host_names")
         super()._set_data_arrays(data, skip_keys=skip)
+
+    def _setup_malmquist_grid(self):
+        """CH0 samples distance moduli directly — only the selection grid
+        is needed, not the host integration grid."""
+        config = self.config
+        r_min = 0.01
+        r_max_sel = get_nested(config, "model/r_max_selection", 70)
+        dr = get_nested(config, "model/dr_malmquist", 0.5)
+
+        num_pts = int(np.round((r_max_sel - r_min) / dr)) + 1
+        num_pts = max(num_pts, 3)
+        if num_pts % 2 == 0:
+            num_pts += 1
+
+        self.r_sel_range = jnp.linspace(r_min, r_max_sel, num_pts)
+        self._simpson_log_w_sel = simpson_log_weights(self.r_sel_range)
+        dr_actual = float((r_max_sel - r_min) / (num_pts - 1))
+        fprint(f"selection grid: {num_pts} points over "
+               f"[{r_min}, {r_max_sel}] Mpc (dr={dr_actual:.3f}).")
+
+        self._lp_sel_dist_grid = self.log_prior_distance(
+            self.r_sel_range)[None, None, :]
 
     # ------------------------------------------------------------------
     #  Validation
@@ -211,21 +267,20 @@ class CH0Model(H0ModelBase):
     #  Selection functions
     # ------------------------------------------------------------------
 
-    def log_S_cz(self, lp_r, Vpec, H0, sigma_v):
+    def log_S_cz(self, lp_r, Vpec, H0, sigma_v, cz_lim, cz_width):
         """Probability of detection term if redshift-truncated."""
         return super().log_S_cz(
-            lp_r, Vpec, H0, sigma_v,
-            self.cz_lim_selection,
-            self.cz_lim_selection_width)
+            lp_r, Vpec, H0, sigma_v, cz_lim, cz_width)
 
-    def log_S_SN_mag(self, lp_r, M_SN, H0):
+    def log_S_SN_mag(self, lp_r, M_SN, H0, mag_lim, mag_width):
         """Probability of detection term if supernova magnitude-truncated."""
         return self.log_S_mag(
             lp_r, M_SN, H0,
             self.mean_std_mag_SN_unique_Cepheid_host,
-            self.mag_lim_SN, self.mag_lim_SN_width)
+            mag_lim, mag_width)
 
-    def log_S_SN_mag_cz(self, lp_r, Vpec, M_SN, H0, sigma_v):
+    def log_S_SN_mag_cz(self, lp_r, Vpec, M_SN, H0, sigma_v,
+                         mag_lim, mag_width, cz_lim, cz_width):
         """
         Probability of detection term if supernova magnitude and
         redshift-truncated.
@@ -237,13 +292,13 @@ class CH0Model(H0ModelBase):
 
         sigma_v = jnp.asarray(sigma_v)
         while sigma_v.ndim < cz_r.ndim:
-            sigma_v = sigma_v[..., None]
+            sigma_v = sigma_v[None, ...]
         sigma_v = jnp.broadcast_to(sigma_v, cz_r.shape)
         log_prob = log_prob_integrand_sel(
             mag[None, None, :], self.mean_std_mag_SN_unique_Cepheid_host,
-            self.mag_lim_SN, self.mag_lim_SN_width)
+            mag_lim, mag_width)
         log_prob += log_prob_integrand_sel(
-            cz_r, sigma_v, self.cz_lim_selection, self.cz_lim_selection_width)
+            cz_r, sigma_v, cz_lim, cz_width)
         return ln_simpson_precomputed(
             lp_r + log_prob, self._simpson_log_w_sel, axis=-1)
 
@@ -380,37 +435,70 @@ class CH0Model(H0ModelBase):
                     self.mag_SN_unique_Cepheid_host, mag_SN,
                     self.L_SN_unique_Cepheid_host))
 
-        # Selection function (unnormalized prior — no log_Z correction)
+        # Per-object selection probability + population selection integral
         if self.which_selection == "redshift":
+            cz_lim = self._resolve_threshold("cz_lim_selection")
+            cz_width = self._resolve_threshold("cz_lim_selection_width")
+
+            factor("ll_sel_per_object", jnp.sum(
+                norm_jax.logcdf(
+                    (cz_lim - self.czcmb_cepheid_host) / cz_width)))
+
             log_S = self.log_S_cz(
                 lp_rand_dist_grid,
-                Vext_rad_rand[None, :, None] + beta * rand_los_Vpec_grid,
-                H0, sigma_v_selection)
+                Vext_rad_rand[None, ..., None] + beta * rand_los_Vpec_grid,
+                H0, sigma_v_selection, cz_lim, cz_width)
 
             if self.weight_selection_by_covmat_Neff:
                 log_S *= self.Neff_PV_covmat_cepheid_host / self.num_hosts
+
         elif self.which_selection == "SN_magnitude":
-            log_S = self.log_S_SN_mag(lp_rand_dist_grid, M_B, H0)
+            mag_lim = self._resolve_threshold("mag_lim_SN")
+            mag_width = self._resolve_threshold("mag_lim_SN_width")
+
+            factor("ll_sel_per_object", jnp.sum(
+                norm_jax.logcdf(
+                    (mag_lim - self.mag_SN_unique_Cepheid_host) / mag_width)))
+
+            log_S = self.log_S_SN_mag(
+                lp_rand_dist_grid, M_B, H0, mag_lim, mag_width)
 
             if self.weight_selection_by_covmat_Neff:
                 log_S *= self.Neff_C_SN_unique_Cepheid_host / self.num_hosts
+
         elif self.which_selection == "SN_magnitude_redshift":
+            cz_lim = self._resolve_threshold("cz_lim_selection")
+            cz_width = self._resolve_threshold("cz_lim_selection_width")
+            mag_lim = self._resolve_threshold("mag_lim_SN")
+            mag_width = self._resolve_threshold("mag_lim_SN_width")
+
+            factor("ll_sel_per_object", jnp.sum(
+                norm_jax.logcdf(
+                    (cz_lim - self.czcmb_cepheid_host) / cz_width)
+                + norm_jax.logcdf(
+                    (mag_lim - self.mag_SN_unique_Cepheid_host) / mag_width)))
+
             log_S = self.log_S_SN_mag_cz(
                 lp_rand_dist_grid,
-                Vext_rad_rand[None, :, None] + beta * rand_los_Vpec_grid,
-                M_B, H0, sigma_v_selection)
+                Vext_rad_rand[None, ..., None] + beta * rand_los_Vpec_grid,
+                M_B, H0, sigma_v_selection,
+                mag_lim, mag_width, cz_lim, cz_width)
 
             if self.weight_selection_by_covmat_Neff:
                 log_S *= self.Neff_PV_covmat_cepheid_host / self.num_hosts
         else:
             log_S = jnp.zeros((1, self.num_hosts))
 
+        # axis=-1 averages over random LOS.
         log_S = logmeanexp(log_S, axis=-1)
+        # Ensure log_S is (n_fields,) for broadcasting with
+        # ll_reconstruction (n_fields, n_hosts).
+        log_S = log_S.reshape(-1)
 
         if self.use_reconstruction:
             ll_reconstruction -= log_S[:, None]
         else:
-            factor("neg_log_S_correction", -log_S[0] * self.num_hosts)
+            factor("neg_log_S_correction", -log_S * self.num_hosts)
 
         # Now assign these host distances to each Cepheid.
         mu_cepheid = (self.L_Cepheid_host_dist @ mu_host_cepheid

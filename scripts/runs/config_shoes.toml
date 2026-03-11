@@ -32,7 +32,7 @@ use_fiducial_Cepheid_host_PV_covariance = false
 use_PV_covmat_scaling = false
 weight_selection_by_covmat_Neff = false
 
-# Selection parameters
+# Selection parameters (set to "infer" to sample from prior below)
 cz_lim_selection = 3300
 cz_lim_selection_width = 300
 
@@ -111,6 +111,28 @@ scale = 0.5
 dist = "vector_uniform_fixed"
 low = 0.0
 high = 2500
+
+# --- Selection threshold priors (used when value = "infer") ---
+
+[model.priors.cz_lim_selection]
+dist = "uniform"
+low = 500
+high = 5000
+
+[model.priors.cz_lim_selection_width]
+dist = "uniform"
+low = 50
+high = 1000
+
+[model.priors.mag_lim_SN]
+dist = "uniform"
+low = 10
+high = 18
+
+[model.priors.mag_lim_SN_width]
+dist = "uniform"
+low = 0.01
+high = 1.0
 
 ################################################################################
 #                                  Data                                        #

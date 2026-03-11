@@ -345,6 +345,8 @@ if __name__ == "__main__":
         "model/use_reconstruction": True,
         "model/which_bias": "double_powerlaw",
         "model/use_uniform_mu_host_priors": False,
+        "model/mag_lim_SN": "infer",
+        "model/mag_lim_SN_width": "infer",
         "io/SH0ES/which_host_los": "manticore_2MPP_MULTIBIN_N256_DES_V2",
     }
 
