@@ -37,7 +37,8 @@ from ...util import (fprint, get_nested, load_config, radec_to_cartesian,
 from ..interp import LOSInterpolator
 from ..pv_utils import lp_galaxy_bias, rsample, sample_galaxy_bias
 from ..simpson import ln_simpson
-from ..utils import load_priors, log_prob_integrand_sel, logmeanexp, predict_cz
+from ..utils import (load_priors, log_prob_integrand_sel, logmeanexp,
+                     normal_logpdf_var, predict_cz)
 from .model_CSP import (CSPModel, CSPSelection, compute_per_source_selection,
                         extract_csp_median_errors, log1mexp)
 
@@ -870,13 +871,12 @@ class CCHPTRGBModel(BaseCCHPModel):
         # Extract per-host (shape: nfields, num_groups)
         logp_host = logp_prior_per_sn[:, self.first_idx]
 
-        sigma_tot_mag = jnp.sqrt(self.e_mag_TRGB_host**2 + sigma_int**2)
-        sigma_tot_cz = jnp.sqrt(self.e_czcmb_host**2 + sigma_v**2)
+        var_tot_mag = self.e_mag_TRGB_host**2 + sigma_int**2
+        var_tot_cz = self.e_czcmb_host**2 + sigma_v**2
 
         # TRGB magnitude likelihood (once per host), shape: (1, num_groups)
-        logp_host += Normal(
-            mu_host + M_TRGB, sigma_tot_mag).log_prob(
-            self.mag_obs_host)[None, :]
+        logp_host += normal_logpdf_var(
+            self.mag_obs_host, mu_host + M_TRGB, var_tot_mag)[None, :]
 
         # Project Vext along LOS (per host)
         Vext_rad_host = jnp.sum(Vext[None, :] * self.rhat_host, axis=1)
@@ -894,7 +894,7 @@ class CCHPTRGBModel(BaseCCHPModel):
 
         # cz likelihood (once per host), shape: (n_field, num_groups)
         if self.use_cz_likelihood:
-            ll_cz = Normal(cz_th_host, sigma_tot_cz).log_prob(self.cz_cmb_host)
+            ll_cz = normal_logpdf_var(self.cz_cmb_host, cz_th_host, var_tot_cz)
             logp_host += ll_cz
 
         # =====================================================================
@@ -904,9 +904,9 @@ class CCHPTRGBModel(BaseCCHPModel):
 
         # Add the SN magnitude likelihood if using SN magnitude selection
         if self.which_selection == "SN_magnitude":
-            logp_sn += Normal(
-                mu_per_sn + M_B,
-                self.e_m_Bprime).log_prob(self.m_Bprime)[None, :]
+            logp_sn += normal_logpdf_var(
+                self.m_Bprime, mu_per_sn + M_B,
+                self.e_m_Bprime**2)[None, :]
 
         # Selection modelling
         if self.which_selection in (None, "none"):
@@ -1029,12 +1029,10 @@ class CCHPTRGBModel(BaseCCHPModel):
         logp_tot = logp_host + logp_sn
 
         # Anchor TRGB magnitudes
-        logp_tot += Normal(
-            M_TRGB + mu_LMC, self.e_mag_LMC_TRGB).log_prob(
-            self.mag_LMC_TRGB)
-        logp_tot += Normal(
-            M_TRGB + mu_N4258, self.e_mag_N4258_TRGB).log_prob(
-            self.mag_N4258_TRGB)
+        logp_tot += normal_logpdf_var(
+            self.mag_LMC_TRGB, M_TRGB + mu_LMC, self.e_mag_LMC_TRGB**2)
+        logp_tot += normal_logpdf_var(
+            self.mag_N4258_TRGB, M_TRGB + mu_N4258, self.e_mag_N4258_TRGB**2)
 
         factor("ll_total", logp_tot)
 

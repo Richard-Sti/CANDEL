@@ -33,7 +33,7 @@ from ...util import SPEED_OF_LIGHT, fprint, get_nested
 from ..base_pv import BasePVModel
 from ..pv_utils import rsample, sample_galaxy_bias, sample_Vext
 from ..simpson import ln_simpson
-from ..utils import predict_cz
+from ..utils import normal_logpdf_var, predict_cz
 
 ###############################################################################
 #                         Volume prior for distance                           #
@@ -653,7 +653,7 @@ class CSPModel(BasePVModel):
                 f"which_Vext='{self.which_Vext}' not supported with explicit "
                 "distance sampling. Use 'constant'.")
 
-        e_cz = jnp.sqrt(e_czcmb**2 + sigma_v**2)
+        var_cz = e_czcmb**2 + sigma_v**2
 
         # Measurement covariance with intrinsic scatter: (nsamples, 3, 3)
         cov_obs = cov.at[:, 0, 0].add(sigma_int_SN**2)
@@ -698,7 +698,7 @@ class CSPModel(BasePVModel):
         # cz likelihood
         zcosmo = self.distance2redshift(r, h=h)
         czpred = predict_cz(zcosmo, Vext_rad)
-        ll_cz = jax_norm.logpdf(czcmb, czpred, e_cz)
+        ll_cz = normal_logpdf_var(czcmb, czpred, var_cz)
 
         # Per-source selection: p(S=1 | obs_i)
         log_p_sel_i = compute_per_source_selection(

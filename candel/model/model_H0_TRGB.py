@@ -24,7 +24,7 @@ from ..util import fprint, get_nested, replace_prior_with_delta
 from .base_model import H0ModelBase
 from .pv_utils import lp_galaxy_bias, rsample, sample_galaxy_bias
 from .simpson import ln_simpson_precomputed
-from .utils import logmeanexp, predict_cz
+from .utils import logmeanexp, normal_logpdf_var, predict_cz
 
 
 class TRGBModel(H0ModelBase):
@@ -213,11 +213,13 @@ class TRGBModel(H0ModelBase):
 
         # --- TRGB magnitude anchor constraints ---
         factor("mag_LMC_TRGB_ll",
-               Normal(M_TRGB + mu_LMC, self.e_mag_LMC_TRGB).log_prob(
-                   self.mag_LMC_TRGB))
+               normal_logpdf_var(self.mag_LMC_TRGB,
+                                 M_TRGB + mu_LMC,
+                                 self.e_mag_LMC_TRGB**2))
         factor("mag_N4258_TRGB_ll",
-               Normal(M_TRGB + mu_N4258, self.e_mag_N4258_TRGB).log_prob(
-                   self.mag_N4258_TRGB))
+               normal_logpdf_var(self.mag_N4258_TRGB,
+                                 M_TRGB + mu_N4258,
+                                 self.e_mag_N4258_TRGB**2))
 
         # --- Anchor distance prior ---
         # mu_anchors = jnp.array([mu_LMC, mu_N4258])
@@ -326,10 +328,10 @@ class TRGBModel(H0ModelBase):
 
             # SN magnitude likelihood on distance grid
             # Per-SN: (n_sn, n_grid)
-            ll_sn_per = Normal(
+            ll_sn_per = normal_logpdf_var(
+                self._m_Bprime[:, None],
                 M_B + mu_grid[None, :],
-                self._e_m_Bprime[:, None]).log_prob(
-                    self._m_Bprime[:, None])
+                self._e2_m_Bprime[:, None])
             # Sum SNe per host: (n_hosts, n_grid)
             ll_sn_host = jnp.zeros(
                 (self.num_hosts, len(r_grid)))
@@ -337,11 +339,11 @@ class TRGBModel(H0ModelBase):
                 self._sn_group_index].add(ll_sn_per)
 
         # --- Per-host distance handling ---
-        e_cz = jnp.sqrt(self.e2_czcmb + sigma_v**2)
+        e2_cz = self.e2_czcmb + sigma_v**2
 
         self._call_marginalized(
             h, M_TRGB, sigma_int, sigma_v, beta, bias_params,
-            Vext_rad_host, r_grid, lp_r, e_cz, log_S,
+            Vext_rad_host, r_grid, lp_r, e2_cz, log_S,
             mu_grid=mu_grid, z_grid=z_grid,
             ll_sn_host=ll_sn_host)
 
@@ -351,7 +353,7 @@ class TRGBModel(H0ModelBase):
 
     def _call_marginalized(self, h, M_TRGB, sigma_int, sigma_v, beta,
                            bias_params, Vext_rad_host, r_grid, lp_r,
-                           e_cz, log_S,
+                           e2_cz, log_S,
                            mu_grid=None, z_grid=None,
                            ll_sn_host=None):
         if mu_grid is None:
@@ -361,10 +363,11 @@ class TRGBModel(H0ModelBase):
 
         log_w = self._simpson_log_w
 
-        sigma_mag = jnp.sqrt(self.e2_mag_obs + sigma_int**2)
-        ll_mag = Normal(
+        e2_mag = self.e2_mag_obs + sigma_int**2
+        ll_mag = normal_logpdf_var(
+            self.mag_obs[:, None],
             M_TRGB + mu_grid[None, :],
-            sigma_mag[:, None]).log_prob(self.mag_obs[:, None])
+            e2_mag[:, None])
 
         if self.use_reconstruction:
             rh_grid = r_grid * h
@@ -384,9 +387,9 @@ class TRGBModel(H0ModelBase):
                 rh_grid)
             Vpec_grid += Vext_rad_host[None, :, None]
             cz_pred = predict_cz(z_grid[None, None, :], Vpec_grid)
-            ll_cz = Normal(
-                cz_pred, e_cz[None, :, None]).log_prob(
-                    self.czcmb[None, :, None])
+            ll_cz = normal_logpdf_var(
+                self.czcmb[None, :, None], cz_pred,
+                e2_cz[None, :, None])
 
             lp_dist_w = lp_dist + log_w
 
@@ -411,8 +414,8 @@ class TRGBModel(H0ModelBase):
             # Redshift likelihood on grid
             cz_pred = predict_cz(
                 z_grid[None, :], Vext_rad_host[:, None])
-            ll_cz = Normal(
-                cz_pred, e_cz[:, None]).log_prob(self.czcmb[:, None])
+            ll_cz = normal_logpdf_var(
+                self.czcmb[:, None], cz_pred, e2_cz[:, None])
 
             # Marginalize over distance
             integrand = lp_dist + ll_mag + ll_cz

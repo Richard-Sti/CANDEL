@@ -16,14 +16,14 @@
 import jax.numpy as jnp
 from jax.scipy.special import logsumexp
 from numpyro import factor, plate, sample
-from numpyro.distributions import MultivariateNormal, Normal, Uniform
+from numpyro.distributions import MultivariateNormal, Uniform
 
 from ..util import fprint
 from .base_pv import BasePVModel
 from .pv_utils import (add_sigma_mag_to_lane_cov, lp_galaxy_bias, rsample,
                        sample_distance_prior, sample_galaxy_bias)
 from .simpson import ln_simpson
-from .utils import log_prior_r_empirical, predict_cz
+from .utils import log_prior_r_empirical, normal_logpdf_var, predict_cz
 
 
 class PantheonPlusModel(BasePVModel):
@@ -157,7 +157,7 @@ class PantheonPlusModel(BasePVModel):
                 self.distance2redshift(r, h=h)[None, :],
                 Vrad + Vext_rad[None, :])
             # Compute the redshift likelihood, and add the distance prior
-            ll = Normal(czpred, sigma_v).log_prob(data["czcmb"][None, :])
+            ll = normal_logpdf_var(data["czcmb"][None, :], czpred, sigma_v**2)
             ll += lp_dist
             # Average over field realizations and track
             factor("ll_obs", logsumexp(ll, axis=0) - jnp.log(data.num_fields))

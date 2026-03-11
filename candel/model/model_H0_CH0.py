@@ -22,7 +22,7 @@ from .base_model import H0ModelBase
 from .pv_utils import lp_galaxy_bias, rsample, sample_galaxy_bias
 from .simpson import ln_simpson_precomputed
 from .utils import (log_prob_integrand_sel, logmeanexp,
-                    mvn_logpdf_cholesky, predict_cz)
+                    mvn_logpdf_cholesky, normal_logpdf_var, predict_cz)
 
 ###############################################################################
 #                          Base CH0 model                                     #
@@ -86,10 +86,6 @@ class CH0Model(H0ModelBase):
     def _load_model_flags(self):
         super()._load_model_flags()
         config = self.config
-        self.num_hosts_selection_mag = get_nested(
-            config, "model/num_hosts_selection_mag", None)
-        fprint("num_hosts_selection_mag set to "
-               f"{self.num_hosts_selection_mag}")
         self.use_Cepheid_host_redshift = get_nested(
             config, "model/use_Cepheid_host_redshift", False)
         fprint(f"use_Cepheid_host_redshift set to {self.use_Cepheid_host_redshift}")  # noqa
@@ -162,13 +158,13 @@ class CH0Model(H0ModelBase):
 
         allowed_selection = [
             "redshift", "SN_magnitude",
-            "SN_magnitude_redshift", "SN_magnitude_or_redshift_Nmag", None]
+            "SN_magnitude_redshift", None]
         if self.which_selection not in allowed_selection:
             raise ValueError(
                 f"Unknown `which_selection`: {self.which_selection}. "
                 f"Expected one of {allowed_selection}.")
 
-        if self.which_selection in ["redshift", "SN_magnitude_redshift", "SN_magnitude_or_redshift_Nmag"] and not self.use_Cepheid_host_redshift:  # noqa
+        if self.which_selection in ["redshift", "SN_magnitude_redshift"] and not self.use_Cepheid_host_redshift:  # noqa
             raise ValueError(
                 "If `which_selection` is set to 'redshift', "
                 "`use_Cepheid_host_redshift` must be set to True.")
@@ -188,15 +184,6 @@ class CH0Model(H0ModelBase):
                 "Cannot use `weight_selection_by_covmat_Neff` without "
                 "`use_fiducial_Cepheid_host_PV_covariance` set to True.")
 
-        if self.which_selection == "SN_magnitude_or_redshift_Nmag":
-            if self.num_hosts_selection_mag is None:
-                raise ValueError(
-                    "Set `model/num_hosts_selection_mag` when using "
-                    "`SN_magnitude_or_redshift_Nmag` selection.")
-            if not (0 <= self.num_hosts_selection_mag <= self.num_hosts):
-                raise ValueError(
-                    "`num_hosts_selection_mag` must be between 0 and "
-                    "`num_hosts`.")
 
     # ------------------------------------------------------------------
     #  Sampling helpers
@@ -376,8 +363,7 @@ class CH0Model(H0ModelBase):
                     bias_params, self.which_bias)
                 sigma_v_selection = map_sigma_v(rand_los_delta_grid)
                 _needs_vel = self.which_selection in [
-                    "redshift", "SN_magnitude_redshift",
-                    "SN_magnitude_or_redshift_Nmag"]
+                    "redshift", "SN_magnitude_redshift"]
                 if _needs_vel:
                     rand_los_Vpec_grid = \
                         self.f_rand_los_velocity\
@@ -407,29 +393,6 @@ class CH0Model(H0ModelBase):
 
             if self.weight_selection_by_covmat_Neff:
                 log_S *= self.Neff_PV_covmat_cepheid_host / self.num_hosts
-        elif self.which_selection == "SN_magnitude_or_redshift_Nmag":
-            log_S_cz = self.log_S_cz(
-                lp_rand_dist_grid,
-                Vext_rad_rand[None, :, None] + beta * rand_los_Vpec_grid,
-                H0, sigma_v_selection)
-            log_S_mag = self.log_S_SN_mag(lp_rand_dist_grid, M_B, H0)
-
-            if self.weight_selection_by_covmat_Neff:
-                raise NotImplementedError(
-                    "Weighting by Neff not implemented for "
-                    "`SN_magnitude_or_redshift_Nmag` selection.")
-
-            mu_SN = self.L_SN_unique_Cepheid_host_dist @ mu_host_all
-            mag_SN = mu_SN + M_B
-
-            w_mag = self.num_hosts_selection_mag / self.num_hosts
-
-            factor(
-                "ll_SN",
-                w_mag * mvn_logpdf_cholesky(
-                    self.mag_SN_unique_Cepheid_host, mag_SN,
-                    self.L_SN_unique_Cepheid_host)
-                )
         elif self.which_selection == "SN_magnitude":
             mu_SN = self.L_SN_unique_Cepheid_host_dist @ mu_host_all
             mag_SN = mu_SN + M_B
@@ -466,15 +429,7 @@ class CH0Model(H0ModelBase):
         else:
             log_S = jnp.zeros((1, self.num_hosts))
 
-        # Average the selection term over the random line-of-sight
-        if self.which_selection == "SN_magnitude_or_redshift_Nmag":
-            log_S_cz = logmeanexp(log_S_cz, axis=-1)
-            log_S_mag = logmeanexp(log_S_mag, axis=-1)
-            w_mag = self.num_hosts_selection_mag / self.num_hosts
-            w_cz = 1 - w_mag
-            log_S = w_mag * log_S_mag + w_cz * log_S_cz
-        else:
-            log_S = logmeanexp(log_S, axis=-1)
+        log_S = logmeanexp(log_S, axis=-1)
 
         if self.use_reconstruction:
             ll_reconstruction -= log_S[:, None]
@@ -512,19 +467,17 @@ class CH0Model(H0ModelBase):
                 Vpec = beta * self.f_host_los_velocity(rh_host)
                 Vpec += Vext_rad_host[None, :]
                 cz_pred = predict_cz(z_cosmo[None, :], Vpec)
-                e_cz = jnp.sqrt(e2_cz)
 
                 if self.track_host_velocity:
                     deterministic("Vpec_host_skipZ", Vpec)
 
-                ll_reconstruction += Normal(cz_pred, e_cz).log_prob(
-                    self.czcmb_cepheid_host[None, :])
+                ll_reconstruction += normal_logpdf_var(
+                    self.czcmb_cepheid_host[None, :], cz_pred, e2_cz)
 
                 ll_reconstruction = logmeanexp(ll_reconstruction, axis=0)
                 factor("ll_reconstruction", ll_reconstruction)
             else:
                 cz_pred = predict_cz(z_cosmo, Vext_rad_host)
-                e_cz = jnp.sqrt(e2_cz)
-                with plate("Cepheid_anchors_redshift", self.num_hosts):
-                    sample("cz_pred", Normal(cz_pred, e_cz),
-                           obs=self.czcmb_cepheid_host)
+                factor("cz_pred",
+                       normal_logpdf_var(self.czcmb_cepheid_host,
+                                         cz_pred, e2_cz).sum())

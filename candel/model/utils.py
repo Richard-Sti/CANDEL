@@ -72,6 +72,12 @@ def mvn_logpdf_cholesky(y, mu, L):
     return -0.5 * (len(y) * jnp.log(2 * jnp.pi) + 2 * log_det + jnp.dot(z, z))
 
 
+def normal_logpdf_var(x, mean, var):
+    """Log-pdf of a normal distribution parameterized by variance."""
+    d = x - mean
+    return -0.5 * (jnp.log(2 * jnp.pi * var) + d * d / var)
+
+
 ###############################################################################
 #                                Priors                                       #
 ###############################################################################

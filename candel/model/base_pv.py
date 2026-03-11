@@ -18,7 +18,6 @@ Base classes for peculiar velocity (PV) forward models.
 import jax.numpy as jnp
 from jax.scipy.special import logsumexp
 from numpyro import deterministic, factor, handlers
-from numpyro.distributions import Normal
 
 from ..util import fprint, fsection, get_nested
 from .base_model import ModelBase
@@ -26,7 +25,7 @@ from .pv_utils import (_rsample, compute_Vext_radial, lp_galaxy_bias, rsample,
                        sample_distance_prior, sample_galaxy_bias, sample_Vext,
                        sumzero_basis)
 from .simpson import simpson_log_weights
-from .utils import config_hash, log_prior_r_empirical, predict_cz
+from .utils import config_hash, log_prior_r_empirical, normal_logpdf_var, predict_cz
 
 
 class BasePVModel(ModelBase):
@@ -159,8 +158,8 @@ class BasePVModel(ModelBase):
         czpred = predict_cz(
             self.distance2redshift(r_grid, h=h)[None, None, :],
             Vrad + Vext_rad)
-        return Normal(czpred, sigma_v).log_prob(
-            data["czcmb"][None, :, None])
+        return normal_logpdf_var(
+            data["czcmb"][None, :, None], czpred, sigma_v**2)
 
     def _marginalize_over_r(self, ll, r_grid, data=None):
         log_w_r = self._get_simpson_log_w(data, r_grid)

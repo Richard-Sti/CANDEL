@@ -45,7 +45,8 @@ from ..interp import LOSInterpolator
 from ..pv_utils import (gauss_hermite_log_weights, get_absmag_TFR,
                         lp_galaxy_bias, rsample, sample_galaxy_bias)
 from ..simpson import ln_simpson_precomputed
-from ..utils import log_prob_integrand_sel, logmeanexp, predict_cz
+from ..utils import (log_prob_integrand_sel, logmeanexp, normal_logpdf_var,
+                     predict_cz)
 
 
 class TRGB2MTFModel(H0ModelBase):
@@ -309,7 +310,7 @@ class TRGB2MTFModel(H0ModelBase):
                         a_TFR, b_TFR, c_TFR, sigma_int_TFR,
                         eta_mean, eta_std, mu_grid):
         """Compute TFR log-likelihood on distance grid: (n_hosts, n_r)."""
-        sigma_mag = jnp.sqrt(e2_mag + sigma_int_TFR**2)
+        var_mag = e2_mag + sigma_int_TFR**2
 
         var_h = eta_std**2
         var_o = e2_eta
@@ -317,15 +318,13 @@ class TRGB2MTFModel(H0ModelBase):
         mu_c = (eta_mean / var_h + eta / var_o) / prec
         sigma_c = 1.0 / jnp.sqrt(prec)
 
-        log_Z_eta = Normal(
-            eta_mean,
-            jnp.sqrt(var_h + var_o)).log_prob(eta)
+        log_Z_eta = normal_logpdf_var(eta, eta_mean, var_h + var_o)
 
         M_c = get_absmag_TFR(mu_c, a_TFR, b_TFR, c_TFR)
         M_prime_c = b_TFR + jnp.where(mu_c > 0, 2 * c_TFR * mu_c, 0.0)
 
-        sigma_eff_sq = sigma_mag**2 + (M_prime_c * sigma_c)**2
-        sigma_star = sigma_c * sigma_mag / jnp.sqrt(sigma_eff_sq)
+        sigma_eff_sq = var_mag + (M_prime_c * sigma_c)**2
+        sigma_star = sigma_c * jnp.sqrt(var_mag) / jnp.sqrt(sigma_eff_sq)
 
         R = (mag - M_c)[:, None] - mu_grid[None, :]
         delta_mu = (R * M_prime_c[:, None] * sigma_c[:, None]**2
@@ -338,9 +337,10 @@ class TRGB2MTFModel(H0ModelBase):
 
         M_eta = get_absmag_TFR(eta_nodes, a_TFR, b_TFR, c_TFR)
 
-        ll_mag = Normal(
+        ll_mag = normal_logpdf_var(
+            mag[:, None, None],
             mu_grid[None, :, None] + M_eta,
-            sigma_mag[:, None, None]).log_prob(mag[:, None, None])
+            var_mag[:, None, None])
 
         d_s2x = (delta_mu[:, :, None]
                  + jnp.sqrt(2.0) * sigma_star[:, None, None]
@@ -406,11 +406,13 @@ class TRGB2MTFModel(H0ModelBase):
 
         # --- TRGB magnitude anchor constraints ---
         factor("mag_LMC_TRGB_ll",
-               Normal(M_TRGB + mu_LMC, self.e_mag_LMC_TRGB).log_prob(
-                   self.mag_LMC_TRGB))
+               normal_logpdf_var(self.mag_LMC_TRGB,
+                                 M_TRGB + mu_LMC,
+                                 self.e_mag_LMC_TRGB**2))
         factor("mag_N4258_TRGB_ll",
-               Normal(M_TRGB + mu_N4258, self.e_mag_N4258_TRGB).log_prob(
-                   self.mag_N4258_TRGB))
+               normal_logpdf_var(self.mag_N4258_TRGB,
+                                 M_TRGB + mu_N4258,
+                                 self.e_mag_N4258_TRGB**2))
 
         # --- Anchor distance prior ---
         mu_anchors = jnp.array([mu_LMC, mu_N4258])
@@ -456,13 +458,14 @@ class TRGB2MTFModel(H0ModelBase):
                          r_grid, lp_r, mu_grid, z_grid):
         log_w = self._simpson_log_w
         Vext_rad = jnp.sum(Vext[None, :] * self.rhat_host, axis=1)
-        e_cz = jnp.sqrt(self.e2_czcmb + sigma_v**2)
+        e2_cz = self.e2_czcmb + sigma_v**2
 
         # TRGB magnitude likelihood: (n_trgb, n_r)
-        sigma_mag_TRGB = jnp.sqrt(self.e2_mag_obs + sigma_int_TRGB**2)
-        ll_TRGB = Normal(
+        var_mag_TRGB = self.e2_mag_obs + sigma_int_TRGB**2
+        ll_TRGB = normal_logpdf_var(
+            self.mag_obs[:, None],
             M_TRGB + mu_grid[None, :],
-            sigma_mag_TRGB[:, None]).log_prob(self.mag_obs[:, None])
+            var_mag_TRGB[:, None])
 
         # TFR likelihood for overlap hosts: (n_trgb, n_r)
         # For hosts without TFR data, this contributes 0.
@@ -512,9 +515,9 @@ class TRGB2MTFModel(H0ModelBase):
             Vpec_grid = beta * self.f_host_los_velocity.interp_many(rh_grid)
             Vpec_grid += Vext_rad[None, :, None]
             cz_pred = predict_cz(z_grid[None, None, :], Vpec_grid)
-            ll_cz = Normal(
-                cz_pred, e_cz[None, :, None]).log_prob(
-                    self.czcmb[None, :, None])
+            ll_cz = normal_logpdf_var(
+                self.czcmb[None, :, None],
+                cz_pred, e2_cz[None, :, None])
 
             lp_dist_w = lp_dist + log_w
             ll_host = logsumexp(
@@ -531,8 +534,8 @@ class TRGB2MTFModel(H0ModelBase):
 
             cz_pred = predict_cz(
                 z_grid[None, :], Vext_rad[:, None])
-            ll_cz = Normal(
-                cz_pred, e_cz[:, None]).log_prob(self.czcmb[:, None])
+            ll_cz = normal_logpdf_var(
+                self.czcmb[:, None], cz_pred, e2_cz[:, None])
 
             ll_host = ln_simpson_precomputed(
                 lp_dist + ll_TRGB + ll_TFR + ll_cz,
@@ -591,8 +594,8 @@ class TRGB2MTFModel(H0ModelBase):
             Vpec_grid = beta * self.f_tfr_los_velocity.interp_many(rh_grid)
             Vpec_grid += Vext_rad[None, :, None]
             cz_pred = predict_cz(z_grid[None, None, :], Vpec_grid)
-            ll_cz = Normal(
-                cz_pred, sigma_v).log_prob(self.tfr_czcmb[None, :, None])
+            ll_cz = normal_logpdf_var(
+                self.tfr_czcmb[None, :, None], cz_pred, sigma_v**2)
 
             lp_dist_w = lp_dist + log_w
             ll_host = logsumexp(
@@ -611,8 +614,8 @@ class TRGB2MTFModel(H0ModelBase):
 
             cz_pred = predict_cz(
                 z_grid[None, :], Vext_rad[:, None])
-            ll_cz = Normal(
-                cz_pred, sigma_v).log_prob(self.tfr_czcmb[:, None])
+            ll_cz = normal_logpdf_var(
+                self.tfr_czcmb[:, None], cz_pred, sigma_v**2)
 
             ll_host = ln_simpson_precomputed(
                 lp_dist + ll_TFR + ll_cz,
