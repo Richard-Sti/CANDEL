@@ -1,0 +1,142 @@
+base = ["config_priors.toml", "config_paths.toml"]
+
+###############################################################################
+#                               Inference                                     #
+###############################################################################
+
+[inference]
+num_warmup = 1000
+num_samples = 1000
+num_chains = 1
+chain_method = "parallel"
+seed = 44
+dense_mass_params = [
+    "H0", "M_TRGB", "sigma_int", "sigma_v",
+    "Vext_phi", "Vext_cos_theta", "Vext_mag",
+    "beta", "b1",
+    "mu_LMC", "mu_N4258",
+    "mag_lim_TRGB", "mag_lim_TRGB_width",
+    "cz_lim_selection", "cz_lim_selection_width",
+]
+
+###############################################################################
+#                                 Model                                       #
+###############################################################################
+
+[model]
+which_run = "EDD_TRGB"
+
+use_reconstruction = true
+which_bias = "linear"
+which_selection = "TRGB_magnitude"
+
+run_ppc = false
+ppc_factor = 10
+num_rand_los_no_recon = 1000
+max_rand_los = 1000
+distmod_limits = [10, 38]
+r_limits_malmquist = [0.01, 35]
+
+delta_mu = 0.03
+dr_max = 0.5
+
+delta_mu_sel = 0.35
+dr_max_sel = 1.5
+
+mag_lim_TRGB = "infer"
+mag_lim_TRGB_width = "infer"
+cz_lim_selection = "infer"
+cz_lim_selection_width = "infer"
+
+# --- Overrides from default priors ---
+
+# TRGB absolute magnitude
+[model.priors.M_TRGB]
+dist = "normal"
+loc = -4.05
+scale = 0.5
+
+[model.priors.sigma_int]
+dist = "maxwell"
+scale = 0.0627
+
+[model.priors.sigma_v]
+dist = "maxwell"
+scale = 157
+
+[model.priors.beta]
+dist = "truncated_normal"
+mean = 0.43
+scale = 0.1
+low = 0.0
+
+[model.priors.b1]
+dist = "truncated_normal"
+mean = 1.2
+scale = 0.1
+low = 0.0
+high = 5.0
+
+# Selection thresholds
+[model.priors.mag_lim_TRGB]
+dist = "uniform"
+low = 20.0
+high = 29.0
+
+[model.priors.mag_lim_TRGB_width]
+dist = "uniform"
+low = 0.05
+high = 1.5
+
+[model.priors.cz_lim_selection]
+dist = "uniform"
+low = 100.0
+high = 3500.0
+
+[model.priors.cz_lim_selection_width]
+dist = "uniform"
+low = 50.0
+high = 500.0
+
+###############################################################################
+#                             TRGB Calibration                                #
+###############################################################################
+# All TRGB magnitudes are in the F814W band.
+#
+# LMC geometric distance (Pietrzynski et al. 2019, arXiv:1903.08096):
+#   mu_LMC = 18.477 +/- 0.026
+#
+# LMC TRGB magnitude (Hoyt et al. 2021, arXiv:2106.13337):
+#   mag_LMC_TRGB = 14.456 +/- 0.018
+#
+# NGC 4258 geometric distance (Reid et al. 2019):
+#   mu_N4258 = 29.398 +/- 0.032
+#
+# NGC 4258 TRGB magnitude (Jang & Lee 2020, arXiv:2008.04181):
+#   mag_N4258_TRGB = 25.347 +/- 0.0443
+
+[model.anchors]
+mu_LMC = 18.477
+e_mu_LMC = 0.026
+mag_LMC_TRGB = 14.456
+e_mag_LMC_TRGB = 0.018
+mu_N4258 = 29.398
+e_mu_N4258 = 0.032
+mag_N4258_TRGB = 25.347
+e_mag_N4258_TRGB = 0.0443
+
+###############################################################################
+#                                  Data                                       #
+###############################################################################
+
+[io]
+root_output = "results/EDD_TRGB"
+fname_output = "results/EDD_TRGB/test.hdf5"
+
+# Override reconstruction grid for TRGB (shorter range, finer grid)
+[io.reconstruction_main]
+rmax = 51
+num_steps = 301
+
+[io.PV_main.EDD_TRGB]
+which_host_los = "Carrick2015"

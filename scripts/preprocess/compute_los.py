@@ -17,7 +17,7 @@ A script to compute the LOS density and radial velocity from an existing
 reconstruction and a catalogue of galaxies.
 """
 from argparse import ArgumentParser
-from os.path import dirname, basename, join, splitext
+from os.path import basename, dirname, join, splitext
 
 import numpy as np
 from h5py import File
@@ -27,6 +27,13 @@ import candel
 from candel import fprint
 
 
+def generate_random_sky(npoints, seed):
+    gen = np.random.default_rng(seed)
+    RA = gen.uniform(0, 360, size=npoints)
+    dec = np.arcsin(gen.uniform(-1, 1, size=npoints)) * 180 / np.pi
+    return RA, dec
+
+
 def load_los(catalogue, config, filepath=None, config_path=None):
     if "random_" in catalogue:
         d = config["io"].copy()
@@ -34,9 +41,7 @@ def load_los(catalogue, config, filepath=None, config_path=None):
 
         npoints = int(catalogue.replace("random_", ''))
         # This could, in principle, account for the ZoA mask.
-        gen = np.random.default_rng(42)
-        RA = gen.uniform(0, 360, size=npoints)
-        dec = np.arcsin(gen.uniform(-1, 1, size=npoints)) * 180 / np.pi
+        RA, dec = generate_random_sky(npoints, seed=42)
     elif catalogue == "CF4":
         d = config["io"]["PV_main"][catalogue].copy()
         los_file = d.pop("los_file")
@@ -81,6 +86,11 @@ def load_los(catalogue, config, filepath=None, config_path=None):
         d = config["io"]["PV_main"][catalogue].copy()
         los_file = d.pop("los_file")
         data = candel.pvdata.load_6dF_FP(**d)
+        RA, dec = data["RA"], data["dec"]
+    elif catalogue == "EDD_TRGB":
+        d = config["io"]["PV_main"][catalogue].copy()
+        los_file = d.pop("los_file")
+        data = candel.pvdata.load_EDD_TRGB(return_all=True, **d)
         RA, dec = data["RA"], data["dec"]
     elif catalogue == "SH0ES":
         d = config["io"]["PV_main"][catalogue].copy()
@@ -156,10 +166,25 @@ def main():
     fprint(f"iterating over {len(nsims)} simulations "
            f"for `{args.reconstruction}`.", verbose=verbose)
 
-    d = config["io"]["reconstruction_main"]
-    fprint(f"setting the radial grid from {d['rmin']} to {d['rmax']} with "
-           f"{d['num_steps']} steps.", verbose=verbose)
-    r = np.linspace(d["rmin"], d["rmax"], d["num_steps"])
+    if "random_" in args.catalogue:
+        # Use the dedicated random-LOS grid with per-reconstruction dr.
+        rand_cfg = config["io"].get("reconstruction_rand_los", {})
+        rmin = rand_cfg.get("rmin", 0.1)
+        rmax = rand_cfg.get("rmax", 251)
+        dr = rand_cfg.get("dr", 1.0)
+        recon_cfg = rand_cfg.get(args.reconstruction, {})
+        rmin = recon_cfg.get("rmin", rmin)
+        rmax = recon_cfg.get("rmax", rmax)
+        dr = recon_cfg.get("dr", dr)
+        num_steps = round((rmax - rmin) / dr) + 1
+        r = np.linspace(rmin, rmax, num_steps)
+        fprint(f"random LOS grid: {rmin} to {rmax} Mpc/h, "
+               f"dr={dr}, {num_steps} steps.", verbose=verbose)
+    else:
+        d = config["io"]["reconstruction_main"]
+        fprint(f"setting the radial grid from {d['rmin']} to {d['rmax']} "
+               f"with {d['num_steps']} steps.", verbose=verbose)
+        r = np.linspace(d["rmin"], d["rmax"], d["num_steps"])
 
     fprint(f"loading the catalogue `{args.catalogue}` with "
            f"reconstruction `{args.reconstruction}`.", verbose=verbose)
@@ -171,6 +196,10 @@ def main():
     n_gal = len(RA)
     n_r = len(r)
 
+    # For multi-realisation random catalogues, each sim gets independent sky
+    # positions drawn with seed = 42 + nsim instead of sharing seed=42.
+    is_random_multireal = "random_" in args.catalogue and n_sims > 1
+
     # Assign work: indices in nsims handled by this rank
     my_idxs = [i for i in range(n_sims) if (i % size) == rank]
 
@@ -181,24 +210,35 @@ def main():
         loader = candel.field.name2field_loader(args.reconstruction)(
             nsim=nsim,
             **config["io"]["reconstruction_main"][args.reconstruction])
+        if is_random_multireal:
+            RA_i, dec_i = generate_random_sky(n_gal, seed=42 + nsim)
+        else:
+            RA_i, dec_i = RA, dec
         dens_i, vel_i = candel.field.interpolate_los_density_velocity(
-            loader, r, RA, dec, args.smooth_target)
+            loader, r, RA_i, dec_i, args.smooth_target)
 
         # store with the global slot index so root can place it
         local_results.append(
-            (i, dens_i.astype(np.float32), vel_i.astype(np.float32)))
+            (i, dens_i.astype(np.float32), vel_i.astype(np.float32),
+             RA_i.astype(np.float32), dec_i.astype(np.float32)))
 
-    # Gather lists of (i, dens, vel) to root
+    # Gather lists of (i, dens, vel, RA, dec) to root
     all_results = comm.gather(local_results, root=0)
 
     if rank == 0:
         los_density = np.full((n_sims, n_gal, n_r), np.nan, dtype=np.float32)
         los_velocity = np.full_like(los_density, np.nan, dtype=np.float32)
+        if is_random_multireal:
+            all_RA = np.empty((n_sims, n_gal), dtype=np.float32)
+            all_dec = np.empty((n_sims, n_gal), dtype=np.float32)
 
         for rank_results in all_results:
-            for i, dens_i, vel_i in rank_results:
+            for i, dens_i, vel_i, RA_i, dec_i in rank_results:
                 los_density[i] = dens_i
                 los_velocity[i] = vel_i
+                if is_random_multireal:
+                    all_RA[i] = RA_i
+                    all_dec[i] = dec_i
 
         los_file = los_file.replace("<X>", args.reconstruction)
         if args.smooth_target is not None:
@@ -208,12 +248,19 @@ def main():
 
         fprint(f"saving the line of sight data to `{los_file}`.")
         dt = np.dtype(np.float32)
+        dt16 = np.dtype(np.float16)
         with File(los_file, "w") as f:
-            f.create_dataset("RA", data=RA, dtype=dt)
-            f.create_dataset("dec", data=dec, dtype=dt)
+            if is_random_multireal:
+                # RA/dec shape (n_sims, n_gal): each realisation has its own
+                # independent random sky positions.
+                f.create_dataset("RA", data=all_RA, dtype=dt)
+                f.create_dataset("dec", data=all_dec, dtype=dt)
+            else:
+                f.create_dataset("RA", data=RA, dtype=dt)
+                f.create_dataset("dec", data=dec, dtype=dt)
             f.create_dataset("r", data=r, dtype=dt)
             f.create_dataset("los_density", data=los_density, dtype=dt)
-            f.create_dataset("los_velocity", data=los_velocity, dtype=dt)
+            f.create_dataset("los_velocity", data=los_velocity, dtype=dt16)
 
         fprint("all finished.")
 

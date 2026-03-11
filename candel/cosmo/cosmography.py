@@ -20,8 +20,7 @@ from jax import numpy as jnp
 from jax import vmap
 from scipy.interpolate import CubicSpline
 
-from .util import SPEED_OF_LIGHT
-
+from ..util import SPEED_OF_LIGHT
 
 ###############################################################################
 #                              Helpers                                        #
@@ -50,7 +49,7 @@ def _build_interpolator(x, y, is_scalar=False):
 
 
 class Distmod2Distance:
-    """
+    r"""
     Interpolator to convert distance modulus to comoving distance in `Mpc`.
     Choice of `h` is determined when calling the `__call__` method.
 
@@ -65,6 +64,11 @@ class Distmod2Distance:
     is_scalar : bool
         If `True`, the interpolator is not vectorized. This is useful for
         debugging, but should be set to `False` for performance.
+
+    Notes
+    -----
+    The parameter `h` is defined as :math:`h = H_0 / 100\,\mathrm{km/s/Mpc}`.
+    The resulting comoving distance is in units of `Mpc`.
     """
     def __init__(self, Om0=0.3, zmin_interp=1e-8, zmax_interp=0.5,
                  npoints_interp=1000, is_scalar=False):
@@ -82,7 +86,7 @@ class Distmod2Distance:
 
 
 class Distance2Distmod:
-    """
+    r"""
     Interpolator to convert distance in `Mpc` to distance modulus.
     Choice of `h` is determined when calling the `__call__` method.
 
@@ -97,6 +101,11 @@ class Distance2Distmod:
     is_scalar : bool
         If `True`, the interpolator is not vectorized. This is useful for
         debugging, but should be set to `False` for performance.
+
+    Notes
+    -----
+    The parameter `h` is defined as :math:`h = H_0 / 100\,\mathrm{km/s/Mpc}`.
+    Distances are in units of `Mpc`.
     """
     def __init__(self, Om0=0.3, zmin_interp=1e-8, zmax_interp=0.5,
                  npoints_interp=1000, is_scalar=False):
@@ -111,7 +120,7 @@ class Distance2Distmod:
 
 
 class Distance2LogAngDist:
-    """
+    r"""
     Interpolator to convert distance in `Mpc` to log angular diameter
     distance. `h` is assumed to be one.
 
@@ -126,6 +135,11 @@ class Distance2LogAngDist:
     is_scalar : bool
         If `True`, the interpolator is not vectorized. This is useful for
         debugging, but should be set to `False` for performance.
+
+    Notes
+    -----
+    The parameter `h` is defined as :math:`h = H_0 / 100\,\mathrm{km/s/Mpc}`.
+    Distances are in units of `Mpc`.
     """
     def __init__(self, Om0=0.3, zmin_interp=1e-8, zmax_interp=0.5,
                  npoints_interp=1000, is_scalar=False):
@@ -141,7 +155,7 @@ class Distance2LogAngDist:
 
 
 class Distance2LogLumDist:
-    """
+    r"""
     Interpolator to convert distance in `Mpc` to log luminosity distance.
     `h` is assumed to be one.
 
@@ -156,6 +170,11 @@ class Distance2LogLumDist:
     is_scalar : bool
         If `True`, the interpolator is not vectorized. This is useful for
         debugging, but should be set to `False` for performance.
+
+    Notes
+    -----
+    The parameter `h` is defined as :math:`h = H_0 / 100\,\mathrm{km/s/Mpc}`.
+    Distances are in units of `Mpc`.
     """
     def __init__(self, Om0=0.3, zmin_interp=1e-8, zmax_interp=0.5,
                  npoints_interp=1000, is_scalar=False):
@@ -170,7 +189,7 @@ class Distance2LogLumDist:
 
 
 class LogAngularDiameterDistance2Distmod:
-    """
+    r"""
     Interpolator to convert log angular diameter distance in `Mpc` to
     distance modulus. Choice of `h` is determined when calling the
     `__call__` method.
@@ -183,6 +202,11 @@ class LogAngularDiameterDistance2Distmod:
         Minimum and maximum redshift for the interpolation grid.
     npoints_interp : int
         Number of points in the interpolation grid.
+
+    Notes
+    -----
+    The parameter `h` is defined as :math:`h = H_0 / 100\,\mathrm{km/s/Mpc}`.
+    Distances are in units of `Mpc`.
     """
     def __init__(self, Om0=0.3, zmin_interp=1e-8, zmax_interp=0.5,
                  npoints_interp=1000):
@@ -197,7 +221,7 @@ class LogAngularDiameterDistance2Distmod:
 
 
 class Distmod2Redshift:
-    """
+    r"""
     Interpolator to convert distance modulus to redshift.
     Choice of `h` is determined when calling the `__call__` method.
 
@@ -209,6 +233,11 @@ class Distmod2Redshift:
         Minimum and maximum redshift for the interpolation grid.
     npoints_interp : int
         Number of points in the interpolation grid.
+
+    Notes
+    -----
+    The parameter `h` is defined as :math:`h = H_0 / 100\,\mathrm{km/s/Mpc}`.
+    Distances are in units of `Mpc`.
     """
     def __init__(self, Om0=0.3, zmin_interp=1e-8, zmax_interp=0.5,
                  npoints_interp=1000):
@@ -225,7 +254,7 @@ class Distmod2Redshift:
 
 
 class Redshift2Distance:
-    """
+    r"""
     Interpolator to convert redshift to comoving distance in `Mpc`.
     Choice of `h` is determined when calling the `__call__` method.
 
@@ -240,6 +269,11 @@ class Redshift2Distance:
     is_scalar : bool
         If `True`, the interpolator is not vectorized. This is useful for
         debugging, but should be set to `False` for performance.
+
+    Notes
+    -----
+    The parameter `h` is defined as :math:`h = H_0 / 100\,\mathrm{km/s/Mpc}`.
+    Distances are in units of `Mpc`.
     """
     def __init__(self, Om0=0.3, zmin_interp=1e-8, zmax_interp=0.5,
                  npoints_interp=1000, is_scalar=False):
@@ -258,7 +292,7 @@ class Redshift2Distance:
 
 
 class Redshift2Distmod:
-    """
+    r"""
     Interpolator to convert redshift to distance modulus.
     Choice of `h` is determined when calling the `__call__` method.
 
@@ -270,6 +304,11 @@ class Redshift2Distmod:
         Minimum and maximum redshift for the interpolation grid.
     npoints_interp : int
         Number of points in the interpolation grid.
+
+    Notes
+    -----
+    The parameter `h` is defined as :math:`h = H_0 / 100\,\mathrm{km/s/Mpc}`.
+    Distances are in units of `Mpc`.
     """
     def __init__(self, Om0=0.3, zmin_interp=1e-8, zmax_interp=0.5,
                  npoints_interp=1000):
@@ -283,7 +322,7 @@ class Redshift2Distmod:
 
 
 class Distance2Redshift:
-    """
+    r"""
     Interpolator to convert comoving distance in `Mpc` to redshift.
     Choice of `h` is determined when calling the `__call__` method.
 
@@ -295,6 +334,11 @@ class Distance2Redshift:
         Minimum and maximum redshift for the interpolation grid.
     npoints_interp : int
         Number of points in the interpolation grid.
+
+    Notes
+    -----
+    The parameter `h` is defined as :math:`h = H_0 / 100\,\mathrm{km/s/Mpc}`.
+    Distances are in units of `Mpc`.
     """
     def __init__(self, Om0=0.3, zmin_interp=1e-8, zmax_interp=0.5,
                  npoints_interp=1000):
@@ -307,7 +351,7 @@ class Distance2Redshift:
 
 
 class LogGrad_Distmod2ComovingDistance:
-    """
+    r"""
     Interpolator to compute the log gradient of the comoving distance in
     `Mpc / h` with respect to distance modulus. Choice of `h` is determined
     when calling the `__call__` method.
@@ -322,6 +366,11 @@ class LogGrad_Distmod2ComovingDistance:
         Minimum and maximum redshift for the interpolation grid.
     npoints_interp : int
         Number of points in the interpolation grid.
+
+    Notes
+    -----
+    The parameter `h` is defined as :math:`h = H_0 / 100\,\mathrm{km/s/Mpc}`.
+    Distances are in units of `Mpc`.
     """
     def __init__(self, Om0=0.3, zmin_interp=1e-8, zmax_interp=0.5,
                  npoints_interp=1000):
@@ -342,9 +391,14 @@ class LogGrad_Distmod2ComovingDistance:
 ###############################################################################
 
 class Distance2Distmod_withOm:
-    """
+    r"""
     Interpolator to convert distance in `Mpc` to distance modulus, as a
     function of `h` and `Om`, which are specified on the fly.
+
+    Notes
+    -----
+    The parameter `h` is defined as :math:`h = H_0 / 100\,\mathrm{km/s/Mpc}`.
+    Distances are in units of `Mpc`.
     """
     def __init__(self, rmin=1e-3, rmax=500, nr=500,
                  Om_min=0.01, Om_max=0.99, nOm=500,
@@ -378,9 +432,14 @@ class Distance2Distmod_withOm:
 
 
 class Distance2Redshift_withOm:
-    """
+    r"""
     Interpolator to convert distance in `Mpc` to redshift, as a
     function of `h` and `Om`, which are specified on the fly.
+
+    Notes
+    -----
+    The parameter `h` is defined as :math:`h = H_0 / 100\,\mathrm{km/s/Mpc}`.
+    Distances are in units of `Mpc`.
     """
     def __init__(self, rmin=1e-3, rmax=500, nr=500,
                  Om_min=0.01, Om_max=0.99, nOm=500,
@@ -421,7 +480,7 @@ class Distance2Redshift_withOm:
 def redshift_to_dL_cosmography(z, H0, q0=-0.55, j0=1, s0=0.055):
     """
     Calculate the luminosity distance for a given redshift using cosmographic
-    expansion up to second order in redshift.
+    expansion up to third order in redshift.
     """
     return (SPEED_OF_LIGHT * z) / H0 * (
         1

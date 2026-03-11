@@ -1,16 +1,4 @@
-root_main = "/Users/rstiskalek/Projects/CANDEL/"
-python_exec = "/Users/rstiskalek/Projects/CANDEL/venv_candel/bin/python"
-machine = "local"
-
-# root_main = "/mnt/home/rstiskalek/ceph/CANDEL"
-# python_exec="/mnt/home/rstiskalek/CANDEL/venv_gpu_candel/bin/python"
-# machine="rusty"
-
-# root_main = "/home/phys1997/CANDEL/"
-# root_data = "/data/phys-galsim/phys1997/CANDEL/"
-# python_exec = "/home/phys1997/CANDEL/venv_candel/bin/python"
-# machine = "arc"
-
+base = ["./config_priors.toml"]
 
 ###############################################################################
 #                               Inference                                     #
@@ -20,7 +8,7 @@ machine = "local"
 num_warmup = 1000
 num_samples = 5000
 num_chains = 4
-chain_method = "parallel"
+chain_method = "vectorized"
 seed = 44
 num_chains_harmonic = 10
 
@@ -31,11 +19,8 @@ num_chains_harmonic = 10
 [model]
 which_run = "CH0"
 
-Om = 0.3
-# Make "empirical" selection tag
 which_selection = "redshift"
 use_uniform_mu_host_priors = false
-which_distance_prior = "volume"
 
 use_Cepheid_host_redshift = true
 
@@ -47,41 +32,26 @@ use_fiducial_Cepheid_host_PV_covariance = false
 use_PV_covmat_scaling = false
 weight_selection_by_covmat_Neff = false
 
-use_SNe_HF_SH0ES = false
-use_SNe_HF_Bayes = false
-
-# Selection parameters
+# Selection parameters (set to "infer" to sample from prior below)
 cz_lim_selection = 3300
 cz_lim_selection_width = 300
 
 mag_lim_SN = 14.0
 mag_lim_SN_width = 0.15
 
-mag_lim_Cepheid = 24.0
-e_mag_Cepheid = 0.1
-
-# Homogeneous and inghomogeneous Malmquist bias gridding
-r_limits_malmquist = [0.01, 150]
-dr_malmquist = 0.5
 distmod_limits = [15, 43]
-galaxy_bias_min_clip = 1e-5
+
+# Selection integral grid
+r_max_selection = 70
+dr_malmquist = 0.5
+
+# --- Overrides from default priors ---
 
 # SN absolute magnitude (only if including supernovae)
 [model.priors.M_B]
 dist = "uniform"
 low = -20
 high = -18
-
-# Hubble constant
-[model.priors.H0]
-dist = "uniform"
-low = 10
-high = 100
-
-# [model.priors.H0_dipole]
-# dist = "vector_uniform_fixed"
-# low = 0.0
-# high = 50.0
 
 # Cepheid absolute magnitude at P=10d, solar metallicity
 [model.priors.M_W]
@@ -106,8 +76,6 @@ high = 2
 dist = "jeffreys"
 low = 25
 high = 2500
-# dist = "delta"
-# value = 250
 
 [model.priors.sigma_v_low]
 dist = "maxwell"
@@ -132,11 +100,6 @@ scale = 1.0
 dist = "normal"
 loc = 0.43
 scale = 0.02
-# dist = "delta"
-# value = 1.0
-# dist = "normal"
-# loc = 1.0
-# scale = 0.25
 
 [model.priors.A_covmat]
 dist = "truncated_normal"
@@ -144,96 +107,49 @@ low = 0.0
 mean = 1.0
 scale = 0.5
 
-
 [model.priors.Vext]
-# dist = "delta"
-# value = [0.0, 0.0, 0.0]
 dist = "vector_uniform_fixed"
 low = 0.0
 high = 2500
 
-[model.priors.R_dist_emp]
+# --- Selection threshold priors (used when value = "infer") ---
+
+[model.priors.cz_lim_selection]
 dist = "uniform"
-low = 1.0
-high = 100
+low = 500
+high = 5000
 
-[model.priors.p_dist_emp]
-dist = "truncated_normal"
-low = 0.0
-mean = 2.0
-scale = 0.1
+[model.priors.cz_lim_selection_width]
+dist = "uniform"
+low = 50
+high = 1000
 
-[model.priors.n_dist_emp]
-dist = "truncated_normal"
-low = 0.0
-mean = 1.0
-scale = 3
+[model.priors.mag_lim_SN]
+dist = "uniform"
+low = 10
+high = 18
 
-[model.priors.alpha_low]
-dist = "truncated_normal"
-low = 0.0
-mean = 1.0
-scale = 1.0
-
-[model.priors.alpha_high]
-dist = "truncated_normal"
-low = 0.0
-mean = 0.5
-scale = 1.0
-
-[model.priors.log_rho_t]
-dist = "normal"
-loc = 0.0
-scale = 2.0
-
+[model.priors.mag_lim_SN_width]
+dist = "uniform"
+low = 0.01
+high = 1.0
 
 ################################################################################
 #                                  Data                                        #
 ################################################################################
 
 [io]
-# root_output = "results/"
-# fname_output = "results/test.hdf5"
 root_output = "results/CH0"
-# fname_output = "results/CH0/Cepheid_H0_scaled_PV_covmat_joint_sel.hdf5"
 fname_output = "results/CH0/test.hdf5"
-
-load_host_los = true
-load_rand_los = true
-
 los_file_random = "data/los_random_<X>.hdf5"
-
 los_r0_decay_scale = 5
-
 
 [io.SH0ES]
 root = "data/SH0ES"
 cepheid_host_cz_cmb_max = 3300
-replace_SN_HF_from_PP = false
 which_host_los = "Carrick2015"
 # which_host_los = "manticore_2MPP_MULTIBIN_N256_DES_V2"
-
-
-########
-# Static paths to define a general acces to the catalogues and reconstruction
-# fields without applying any cuts etc.
-########
-
-[io.PV_main]
 
 [io.PV_main.SH0ES]
 root = "data/SH0ES"
 los_file = "data/SH0ES/los_SH0ES_TFR_<X>.hdf5"
-
-
-[io.reconstruction_main]
-rmin = 0.1
-rmax = 100
-num_steps = 201
-
-[io.reconstruction_main.Carrick2015]
-path_density = "data/fields/carrick2015_twompp_density.npy"
-path_velocity = "data/fields/carrick2015_twompp_velocity.npy"
-
-[io.reconstruction_main.manticore_2MPP_MULTIBIN_N256_DES_V2]
-fpath_root = "/mnt/extraspace/rstiskalek/MANTICORE/2MPP_MULTIBIN_N256_DES_V2/sph_fields_new_feb/sph_fields"

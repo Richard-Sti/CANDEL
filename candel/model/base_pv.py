@@ -18,19 +18,31 @@ Base classes for peculiar velocity (PV) forward models.
 import jax.numpy as jnp
 from jax.scipy.special import logsumexp
 from numpyro import deterministic, factor, handlers
-from numpyro.distributions import Normal
 
 from ..util import fprint, fsection, get_nested
 from .base_model import ModelBase
-from .simpson import simpson_log_weights
-from .utils import config_hash, log_prior_r_empirical, predict_cz
 from .pv_utils import (_rsample, compute_Vext_radial, lp_galaxy_bias, rsample,
                        sample_distance_prior, sample_galaxy_bias, sample_Vext,
                        sumzero_basis)
+from .simpson import simpson_log_weights
+from .utils import (config_hash, log_prior_r_empirical, normal_logpdf_var,
+                    predict_cz)
 
 
 class BasePVModel(ModelBase):
-    """Base class for all PV models. """
+    """
+    Base class for Peculiar Velocity (PV) forward models.
+
+    This class provides common infrastructure for models that involve
+    distance-indicator observables and peculiar velocities derived from
+    reconstructed density/velocity fields or external dipoles.
+
+    It handles:
+    - Loading PV-specific configuration (Vext models, galaxy bias).
+    - Sampling of shared velocity-field parameters (beta, Vext, sigma_v).
+    - Rejection sampling of the distance prior weighted by density.
+    - Integration over the line-of-sight distance.
+    """
 
     def __init__(self, config_path):
         super().__init__(config_path)
@@ -114,6 +126,12 @@ class BasePVModel(ModelBase):
             beta=beta)
         return kwargs_dist, h, Vext, sigma_v, beta, bias_params
 
+    def _get_simpson_log_w(self, data, r_grid):
+        """Return pre-computed Simpson log weights, or compute on the fly."""
+        if hasattr(data, '_simpson_log_w') and data._simpson_log_w is not None:
+            return data._simpson_log_w
+        return simpson_log_weights(r_grid)
+
     def _setup_lp_dist_and_Vrad(self, data, r_grid, kwargs_dist, beta,
                                 bias_params):
         lp_dist = log_prior_r_empirical(
@@ -126,7 +144,7 @@ class BasePVModel(ModelBase):
                 data["los_log_density_r_grid"],
                 bias_params, self.galaxy_bias,
                 self.quadratic_bias_delta0)
-            log_w_r = simpson_log_weights(r_grid)
+            log_w_r = self._get_simpson_log_w(data, r_grid)
             lp_dist -= logsumexp(
                 lp_dist + log_w_r[None, None, :], axis=-1)[..., None]
         else:
@@ -141,11 +159,11 @@ class BasePVModel(ModelBase):
         czpred = predict_cz(
             self.distance2redshift(r_grid, h=h)[None, None, :],
             Vrad + Vext_rad)
-        return Normal(czpred, sigma_v).log_prob(
-            data["czcmb"][None, :, None])
+        return normal_logpdf_var(
+            data["czcmb"][None, :, None], czpred, sigma_v**2)
 
-    def _marginalize_over_r(self, ll, r_grid):
-        log_w_r = simpson_log_weights(r_grid)
+    def _marginalize_over_r(self, ll, r_grid, data=None):
+        log_w_r = self._get_simpson_log_w(data, r_grid)
         return logsumexp(ll + log_w_r[None, None, :], axis=-1)
 
     def _average_fields_and_factor(self, ll, data,
@@ -159,10 +177,20 @@ class BasePVModel(ModelBase):
 
 
 class JointPVModel:
-    """
-    A joint probabilistic velocity (PV) model that runs multiple submodels
-    (e.g., TFR models) on independent datasets, while sharing a subset of
-    parameters across all submodels.
+    r"""
+    Joint likelihood model for multiple independent PV datasets.
+
+    Enables joint inference where certain parameters (e.g., :math:`\beta`,
+    :math:`\sigma_v`, :math:`V_{\rm ext}`) are shared across different
+    distance-indicator catalogues while others (e.g., TFR zero-points) remain
+    catalogue-specific.
+
+    Parameters
+    ----------
+    submodels : list of BasePVModel
+        The individual models to be combined.
+    shared_param_names : list of str
+        Names of parameters from the ``[model.priors]`` section to be shared.
     """
 
     def __init__(self, submodels, shared_param_names):

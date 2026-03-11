@@ -15,10 +15,12 @@
 """
 Conversion of the `beta` factor from linear theory to either `fsigma8` or `S8`
 """
+from warnings import warn
+
 import numpy as np
 from scipy.integrate import simpson
 from scipy.interpolate import interp1d
-from scipy.optimize import minimize
+from scipy.optimize import minimize_scalar
 from tqdm import tqdm
 
 
@@ -72,8 +74,9 @@ class Beta2Cosmology:
         integrand = k**2 * Pk * Wk**2
         return np.sqrt(simpson(integrand * k, x=np.log(k)) / (2 * np.pi**2))
 
-    def compute_sigma8_nonlinear_from_beta(self, beta):
-        sigma8g = np.random.normal(
+    def compute_sigma8_nonlinear_from_beta(self, beta, seed=42):
+        gen = np.random.default_rng(seed)
+        sigma8g = gen.normal(
             self.mu_sigma8g, self.sigma_sigma8g, size=len(beta))
         fsigma8_nl = beta * sigma8g
         return fsigma8_nl / self.Om0**self.gamma
@@ -89,11 +92,15 @@ class Beta2Cosmology:
 
         p = self.cosmo_params
 
-        def loss(As):
-            return (self.compute_sigma8_nonlinear_from_pk(As) - sigma8_nl)**2
+        def residual(As):
+            return self.compute_sigma8_nonlinear_from_pk(As) - sigma8_nl
 
-        res = minimize(loss, 2.2)
-        return linear_new.As_to_sigma8(res.x[0], p["Om"], p["Ob"], p["h"],
+        res = minimize_scalar(
+            lambda As: residual(As)**2, bracket=(0.5, 2.2, 5.0))
+        if not res.success:
+            raise RuntimeError(
+                f"Failed to find As for sigma8_nl={sigma8_nl}: {res.message}")
+        return linear_new.As_to_sigma8(res.x, p["Om"], p["Ob"], p["h"],
                                        p["ns"], p["mnu"], p["w0"], p["wa"])
 
     def _build_sr_interp(self):
@@ -111,7 +118,14 @@ class Beta2Cosmology:
     def sigma8_nl_to_lin(self, sigma8_nl):
         """Converts a non-linear sigma8 to a linear sigma8."""
         if self.method == "sr":
-            return self._build_sr_interp()(sigma8_nl)
+            interp = self._build_sr_interp()
+            s8_min, s8_max = interp.x[0], interp.x[-1]
+            out_of_range = (sigma8_nl < s8_min) | (sigma8_nl > s8_max)
+            if np.any(out_of_range):
+                frac = np.mean(out_of_range)
+                warn(f"{frac:.1%} of sigma8_nl samples are outside the "
+                     f"interpolation range [{s8_min}, {s8_max}].")
+            return interp(sigma8_nl)
         elif self.method == "juszkiewicz":
             root = np.sqrt(1 + 4 * self.beta_jusz * sigma8_nl**2)
             return np.sqrt((root - 1) / (2 * self.beta_jusz))
@@ -125,9 +139,7 @@ class Beta2Cosmology:
         return sigma8_lin * self.Om0**self.gamma
 
     def compute_S8(self, beta):
-        """
-        Compute `S8` from samples of `beta`.
-        """
+        """Compute `S8 = sigma8_lin * (Om0 / 0.3)^0.5` from samples of beta."""
         sigma8_nl = self.compute_sigma8_nonlinear_from_beta(beta)
         sigma8_lin = self.sigma8_nl_to_lin(sigma8_nl)
-        return sigma8_lin * (self.Om0 / 0.3)**self.gamma
+        return sigma8_lin * (self.Om0 / 0.3)**0.5

@@ -1,0 +1,92 @@
+base = ["../config_priors.toml", "../config_paths.toml"]
+
+###############################################################################
+#                               Inference                                     #
+###############################################################################
+
+[inference]
+num_warmup = 500
+num_samples = 500
+num_chains = 1
+chain_method = "sequential"
+seed = 42
+
+###############################################################################
+#                                 Model                                       #
+###############################################################################
+
+[model]
+which_run = "EDD_2MTF"
+
+marginalize_eta = true
+n_gauss_hermite = 5
+use_reconstruction = false
+which_bias = "linear"
+which_selection = "magnitude"
+
+distmod_limits = [10, 38]
+r_limits_malmquist = [0.01, 200]
+num_points_malmquist = 301
+
+mag_lim = 11.25
+eta_min_sel = -0.1
+eta_max_sel = 0.2
+
+# --- Overrides from default priors ---
+
+# TFR zero-point
+[model.priors.a_TFR]
+dist = "uniform"
+low = -25.0
+high = -15.0
+
+# TFR slope
+[model.priors.b_TFR]
+dist = "uniform"
+low = -15.0
+high = 0.0
+
+# TFR curvature
+[model.priors.c_TFR]
+dist = "delta"
+value = 0.0
+
+# H0
+[model.priors.H0]
+dist = "uniform"
+low = 50
+high = 100
+
+# Intrinsic scatter
+[model.priors.sigma_int]
+dist = "uniform"
+low = 0.01
+high = 2.0
+
+# Velocity dispersion
+[model.priors.sigma_v]
+dist = "uniform"
+low = 50
+high = 500
+
+# Reconstruction
+[model.priors.beta]
+dist = "delta"
+value = 0.0
+
+###############################################################################
+#                                  Data                                       #
+###############################################################################
+
+[io]
+root_output = "results/EDD_2MTF"
+fname_output = "results/EDD_2MTF/test.hdf5"
+
+[io.PV_main.EDD_2MTF]
+which_host_los = "manticore_2MPP_MULTIBIN_N256_DES_V2"
+eta_min = -0.1
+eta_max = 0.2
+
+[io.reconstruction_main]
+rmax = 200
+num_steps = 301

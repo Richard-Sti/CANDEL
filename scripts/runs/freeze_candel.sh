@@ -1,16 +1,30 @@
 #!/bin/bash
 set -e
 
-# --- Parse machine from config.toml ---
-config_path="./config.toml"
-if [[ ! -f "$config_path" ]]; then
-    echo "[ERROR] config.toml not found at $config_path"
+# Extract a TOML key from a config file, with fallback to local_config.toml
+get_toml_key() {
+    local key="$1"
+    local config="$2"
+    local val
+    val=$(grep -E "^${key} *= *" "$config" 2>/dev/null | sed -E "s/^${key} *= *\"([^\"]+)\"$/\1/")
+    if [[ -z "$val" ]]; then
+        local local_config
+        local_config="$(cd "$(dirname "$0")/../.." && pwd)/local_config.toml"
+        val=$(grep -E "^${key} *= *" "$local_config" 2>/dev/null | sed -E "s/^${key} *= *\"([^\"]+)\"$/\1/")
+    fi
+    echo "$val"
+}
+
+# --- Parse machine from local_config.toml only ---
+local_config="$(cd "$(dirname "$0")/../.." && pwd)/local_config.toml"
+if [[ ! -f "$local_config" ]]; then
+    echo "[ERROR] local_config.toml not found at $local_config"
     exit 1
 fi
 
-machine=$(grep -E '^machine *= *' "$config_path" | sed -E 's/^machine *= *"([^"]+)"/\1/')
+machine=$(grep -E "^machine *= *" "$local_config" | sed -E "s/^machine *= *\"([^\"]+)\"$/\1/")
 if [[ -z "$machine" ]]; then
-    echo "[ERROR] Could not determine machine from config.toml"
+    echo "[ERROR] Could not determine machine from config.toml or local_config.toml"
     exit 2
 fi
 
@@ -23,6 +37,10 @@ elif [[ "$machine" == "local" ]]; then
     src_dir="/Users/${USER}/Projects/CANDEL/candel"
     main_script="/Users/${USER}/Projects/CANDEL/scripts/runs/main.py"
     frozen_root="/Users/${USER}/Projects/CANDEL_frozen"
+elif [[ "$machine" == "glamdring" ]]; then
+    src_dir="/mnt/users/${USER}/CANDEL/candel"
+    main_script="/mnt/users/${USER}/CANDEL/scripts/runs/main.py"
+    frozen_root="/mnt/users/${USER}/frozen_candel"
 elif [[ "$machine" == "arc" ]]; then
     ARC_USER="${USER:-phys1997}"
     src_dir="/home/${ARC_USER}/CANDEL/candel"
