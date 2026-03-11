@@ -20,8 +20,6 @@ By default h=1.0, but h can be passed to __call__ for joint H0 inference.
 WARNING: This module is under development and likely incorrect. Use with
 caution.
 """
-import warnings
-
 import jax.numpy as jnp
 from jax import random
 from jax.scipy.special import log_ndtr, logsumexp, ndtr
@@ -29,19 +27,13 @@ from jax.scipy.stats import norm as jax_norm
 from numpyro import factor, plate, sample
 from numpyro.distributions import Distribution, MultivariateNormal, constraints
 
-from ...cosmography import (Distance2Distmod, Distance2Redshift,
-                            Redshift2Distance)
+from ...cosmo.cosmography import (Distance2Distmod, Distance2Redshift,
+                                  Redshift2Distance)
 from ...util import SPEED_OF_LIGHT, fprint, get_nested
 from ..base_pv import BasePVModel
-from ..utils import predict_cz
 from ..pv_utils import rsample, sample_galaxy_bias, sample_Vext
 from ..simpson import ln_simpson
-
-warnings.warn(
-    "The CSP SNe model is under development and likely incorrect. "
-    "Use with caution.",
-    stacklevel=2,
-)
+from ..utils import normal_logpdf_var, predict_cz
 
 ###############################################################################
 #                         Volume prior for distance                           #
@@ -661,7 +653,7 @@ class CSPModel(BasePVModel):
                 f"which_Vext='{self.which_Vext}' not supported with explicit "
                 "distance sampling. Use 'constant'.")
 
-        e_cz = jnp.sqrt(e_czcmb**2 + sigma_v**2)
+        var_cz = e_czcmb**2 + sigma_v**2
 
         # Measurement covariance with intrinsic scatter: (nsamples, 3, 3)
         cov_obs = cov.at[:, 0, 0].add(sigma_int_SN**2)
@@ -706,7 +698,7 @@ class CSPModel(BasePVModel):
         # cz likelihood
         zcosmo = self.distance2redshift(r, h=h)
         czpred = predict_cz(zcosmo, Vext_rad)
-        ll_cz = jax_norm.logpdf(czcmb, czpred, e_cz)
+        ll_cz = normal_logpdf_var(czcmb, czpred, var_cz)
 
         # Per-source selection: p(S=1 | obs_i)
         log_p_sel_i = compute_per_source_selection(

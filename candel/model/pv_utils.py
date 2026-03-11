@@ -20,10 +20,9 @@ import jax.numpy as jnp
 from interpax import interp1d
 from jax import vmap
 from jax.lax import cond
-from jax.scipy.special import logsumexp
 from jax.scipy.stats.norm import cdf as jax_norm_cdf
-from numpyro import deterministic, factor, plate, sample
-from numpyro.distributions import (Delta, Normal, TruncatedNormal, Uniform)
+from numpyro import deterministic, plate, sample
+from numpyro.distributions import Delta, Normal, Uniform
 
 from .utils import smoothclip_nr
 
@@ -294,8 +293,9 @@ def get_absmag_TFR(eta, a_TFR, b_TFR, c_TFR=0.0):
 def gauss_hermite_log_weights(n):
     """Gauss-Hermite nodes and log-weights for Gaussian-weighted integration.
 
-    Returns (nodes, log_weights) such that:
-        ∫ f(x) N(x; mu, sigma) dx ≈ Σ_i exp(log_w_i) * f(mu + sqrt(2)*sigma*x_i)
+    Returns (nodes, log_weights) such that::
+
+        int f(x) N(x;mu,s) dx ~ sum_i exp(lw_i) * f(mu + sqrt(2)*s*x_i)
     """
     from numpy.polynomial.hermite import hermgauss
     x, w = hermgauss(n)
@@ -304,7 +304,7 @@ def gauss_hermite_log_weights(n):
 
 
 ###############################################################################
-#                          Galaxy bias & velocity                              #
+#                      Galaxy bias & velocity                                #
 ###############################################################################
 
 
@@ -346,7 +346,7 @@ def sample_galaxy_bias(priors, galaxy_bias, shared_params=None, **kwargs):
 def lp_galaxy_bias(delta, log_rho, bias_params, galaxy_bias,
                    quadratic_bias_delta0=0.0):
     """
-    Given the galaxy bias probabibility, given some density and a bias model.
+    Log galaxy bias probability, given some density and a bias model.
     """
     if galaxy_bias == "powerlaw":
         lp = bias_params[0] * log_rho
@@ -487,5 +487,3 @@ def add_sigma_mag_to_lane_cov(sigma_mag, Sigma_d):
     idx = 3 * jnp.arange(N)
     diag_D = jnp.zeros(n3).at[idx].set(sigma_mag**2)
     return Sigma_d + jnp.diag(diag_D)
-
-

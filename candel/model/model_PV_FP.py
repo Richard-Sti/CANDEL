@@ -17,7 +17,7 @@ import jax.numpy as jnp
 from numpyro import plate, sample
 from numpyro.distributions import Normal, Uniform
 
-from ..cosmography import Distance2LogAngDist
+from ..cosmo.cosmography import Distance2LogAngDist
 from .base_pv import BasePVModel
 from .pv_utils import marginalise_2d_latent, rsample
 

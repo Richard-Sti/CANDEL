@@ -42,7 +42,8 @@ class TFRModel(BasePVModel):
                 f"'{self.which_distance_prior}'.")
 
         if self.marginalize_eta:
-            n_gh = self.eta_grid_kwargs["n_grid"] if self.eta_grid_kwargs else 5
+            n_gh = (self.eta_grid_kwargs["n_grid"]
+                    if self.eta_grid_kwargs else 5)
             self._gh_nodes, self._gh_log_w = gauss_hermite_log_weights(n_gh)
             fprint(f"using Gauss-Hermite quadrature with {n_gh} nodes "
                    f"and Laplace centering for eta marginalization.")
@@ -133,11 +134,14 @@ class TFRModel(BasePVModel):
                 R = ((data["mag"] - Ab) - M_c)[:, None] - mu_grid[None, :]
                 delta_mu = (R * M_prime_c[:, None] * sigma_c[:, None]**2
                             / sigma_eff_sq[:, None])
-                mu_star = mu_c[:, None] + delta_mu
 
-                eta_nodes = (mu_star[:, :, None]
-                             + jnp.sqrt(2.0) * sigma_star[:, None, None]
-                             * self._gh_nodes[None, None, :])
+                # d_s2x = delta_mu + sqrt(2)*sigma_star*x_gh
+                # eta_nodes = mu_c + d_s2x (avoid materializing both)
+                sqrt2_sigma_star_x = (jnp.sqrt(2.0)
+                                      * sigma_star[:, None, None]
+                                      * self._gh_nodes[None, None, :])
+                d_s2x = delta_mu[:, :, None] + sqrt2_sigma_star_x
+                eta_nodes = mu_c[:, None, None] + d_s2x
 
                 M_eta = get_absmag_TFR(
                     eta_nodes, a_TFR[:, None, None], b_TFR, c_TFR)
@@ -147,9 +151,6 @@ class TFRModel(BasePVModel):
                     e_mag[:, None, None]).log_prob(
                         (data["mag"] - Ab)[:, None, None])
 
-                d_s2x = (delta_mu[:, :, None]
-                         + jnp.sqrt(2.0) * sigma_star[:, None, None]
-                         * self._gh_nodes[None, None, :])
                 log_ratio = (
                     jnp.log(sigma_star / sigma_c)[:, None, None]
                     + self._gh_nodes**2
@@ -162,7 +163,7 @@ class TFRModel(BasePVModel):
                 ll_eta += log_Z_eta[:, None]
 
                 ll = (ll_cz + lp_dist) + ll_eta[None, ...]
-                ll = self._marginalize_over_r(ll, r_grid)
+                ll = self._marginalize_over_r(ll, r_grid, data)
             else:
                 ll_mag = Normal(
                     self.distance2distmod(r_grid, h=h)[None, :] +
@@ -170,8 +171,9 @@ class TFRModel(BasePVModel):
                     e_mag[:, None]).log_prob(
                         (data["mag"] - Ab)[:, None])[None, ...]
                 ll = ll_cz + ll_mag + lp_dist
-                ll = self._marginalize_over_r(ll, r_grid)
+                ll = self._marginalize_over_r(ll, r_grid, data)
 
             self._average_fields_and_factor(
                 ll, data,
-                log_density_per_sample if self.track_log_density_per_sample else None)
+                log_density_per_sample
+                if self.track_log_density_per_sample else None)

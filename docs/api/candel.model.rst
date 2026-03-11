@@ -4,6 +4,11 @@ candel.model
 Base classes
 ------------
 
+.. automodule:: candel.model.base_model
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 .. automodule:: candel.model.base_pv
    :members:
    :undoc-members:
@@ -36,6 +41,16 @@ H0 models
 ---------
 
 .. automodule:: candel.model.model_H0_CH0
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: candel.model.model_H0_TRGB
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: candel.model.model_H0_2MTF
    :members:
    :undoc-members:
    :show-inheritance:

@@ -1,7 +1,4 @@
-# Paths and execution
-root_main = "/Users/rstiskalek/Projects/CANDEL/"
-python_exec = "/Users/rstiskalek/Projects/CANDEL/venv_candel/bin/python"
-machine = "local"
+base = ["../config_priors.toml", "../config_paths.toml"]
 
 # Inference settings
 [inference]
@@ -18,7 +15,6 @@ quadratic_bias_delta0 = 0.0  # Expansion point for quadratic bias
 
 # Model hyperparameters
 [model]
-Om = 0.3
 distmod_limits = [20.0, 40.0]
 use_reconstruction = true
 which_bias = "powerlaw"
@@ -61,10 +57,9 @@ auto_limits_nsigma = 5.0
 zcmb_limits_selection = "auto"
 use_stretch_gmm = false
 
+# --- Overrides from default priors ---
+
 [model.priors.H0]
-# dist = "uniformn"
-# low = 10.0
-# high = 100.0
 dist = "normal"
 loc = 70.0
 scale = 5.0
@@ -77,12 +72,6 @@ value = 0.0
 dist = "normal"
 loc = -4.05
 scale = 0.2
-
-[model.priors.sigma_v]
-dist = "maxwell"
-scale = 200
-# dist = "delta"
-# value = 350.0
 
 [model.priors.Vext]
 dist = "vector_uniform_fixed"
@@ -100,19 +89,10 @@ loc = 0
 scale = 1.0
 
 [model.priors.beta]
-# dist = "normal"
-# loc = 0.47
-# scale = 0.02
 dist = "delta"
 value = 1.0
 
 [model.priors.alpha]
-dist = "truncated_normal"
-low = 0.0
-mean = 1.0
-scale = 1.0
-
-[model.priors.alpha_low]
 dist = "truncated_normal"
 low = 0.0
 mean = 1.0
@@ -192,15 +172,11 @@ high = 22.0
 dist = "normal"
 loc = 0.0
 scale = 1.0
-# dist = "delta"
-# value = 0.0
 
 [model.priors.beta_sel]
 dist = "normal"
 loc = 0.0
 scale = 1.0
-# dist = "delta"
-# value = 0.0
 
 [model.priors.sigma_sel]
 dist = "truncated_normal"
@@ -211,15 +187,10 @@ scale = 0.5
 # IO settings
 [io]
 fname_output = "results/CCHP/test.hdf5"
-load_host_los = true
-load_rand_los = true
-
 # Templates for LOS files; <X> will be replaced by `which_host_los` if set.
 los_file = "data/CCHP/los_<X>.hdf5"
-los_file_random = "data/los_random_<X>.hdf5"
 # which_host_los = "Carrick2015"
 which_host_los = "manticore_2MPP_MULTIBIN_N256_DES_V2"
-los_r0_decay_scale = 5
 
 [io.CCHP]
 # Path to the processed TSV produced in notebooks/paper_CCHP/process_data.ipynb
@@ -236,13 +207,5 @@ which_sample = "CSPII"  # Options: "CSPI", "CSPII", "LSQ", or omit for all
 kind = "cz_cmb"
 
 [io.reconstruction_main]
-rmin = 0.1
 rmax = 100
 num_steps = 201
-
-[io.reconstruction_main.Carrick2015]
-path_density = "data/fields/carrick2015_twompp_density.npy"
-path_velocity = "data/fields/carrick2015_twompp_velocity.npy"
-
-[io.reconstruction_main.manticore_2MPP_MULTIBIN_N256_DES_V2]
-fpath_root = "/mnt/extraspace/rstiskalek/MANTICORE/2MPP_MULTIBIN_N256_DES_V2/sph_fields_new_feb/sph_fields"

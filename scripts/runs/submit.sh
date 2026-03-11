@@ -37,6 +37,20 @@ fi
 
 set -e
 
+# Extract a TOML key from a config file, with fallback to local_config.toml
+get_toml_key() {
+    local key="$1"
+    local config="$2"
+    local val
+    val=$(grep -E "^${key} *= *" "$config" 2>/dev/null | sed -E "s/^${key} *= *\"([^\"]+)\"$/\1/")
+    if [[ -z "$val" ]]; then
+        local local_config
+        local_config="$(cd "$(dirname "$0")/../.." && pwd)/local_config.toml"
+        val=$(grep -E "^${key} *= *" "$local_config" 2>/dev/null | sed -E "s/^${key} *= *\"([^\"]+)\"$/\1/")
+    fi
+    echo "$val"
+}
+
 if [[ -z "$1" ]]; then
     echo "Usage: sbatch $0 <task_index> [ncpus]"
     exit 1
@@ -86,8 +100,8 @@ for line in "${task_lines[@]}"; do
         continue
     fi
 
-    python_exec=$(grep -E '^python_exec *= *' "$config_path" | sed -E 's/^python_exec *= *"([^"]+)"$/\1/')
-    machine=$(grep -E '^machine *= *' "$config_path" | sed -E 's/^machine *= *"([^"]+)"$/\1/')
+    python_exec=$(get_toml_key "python_exec" "$config_path")
+    machine=$(get_toml_key "machine" "$config_path")
 
     if [[ -z "$python_exec" || -z "$machine" ]]; then
         echo "[ERROR] Missing python_exec or machine in: $config_path"

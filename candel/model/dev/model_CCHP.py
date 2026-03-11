@@ -18,8 +18,6 @@ Minimal NumPyro model for CCHP TRGB distance calibrators to infer H0.
 WARNING: This module is under development and likely incorrect. Use with
 caution.
 """
-import warnings
-
 from abc import ABC
 from dataclasses import dataclass
 from typing import Optional
@@ -30,25 +28,19 @@ from jax.scipy.special import log_ndtr
 from numpyro import factor, handlers, plate, sample
 from numpyro.distributions import MultivariateNormal, Normal, Uniform
 
-from ...cosmography import (Distance2Distmod, Distance2Redshift,
-                            Distmod2Distance, Distmod2Redshift,
-                            LogGrad_Distmod2ComovingDistance,
-                            Redshift2Distance)
+from ...cosmo.cosmography import (Distance2Distmod, Distance2Redshift,
+                                  Distmod2Distance, Distmod2Redshift,
+                                  LogGrad_Distmod2ComovingDistance,
+                                  Redshift2Distance)
 from ...util import (fprint, get_nested, load_config, radec_to_cartesian,
                      replace_prior_with_delta)
 from ..interp import LOSInterpolator
-from ..utils import (load_priors, log_prob_integrand_sel, logmeanexp,
-                     predict_cz)
 from ..pv_utils import lp_galaxy_bias, rsample, sample_galaxy_bias
+from ..simpson import ln_simpson
+from ..utils import (load_priors, log_prob_integrand_sel, logmeanexp,
+                     normal_logpdf_var, predict_cz)
 from .model_CSP import (CSPModel, CSPSelection, compute_per_source_selection,
                         extract_csp_median_errors, log1mexp)
-from ..simpson import ln_simpson
-
-warnings.warn(
-    "The CCHP SNe model is under development and likely incorrect. "
-    "Use with caution.",
-    stacklevel=2,
-)
 
 
 def logsumexp_by_group(logp, idx, n_groups=None):
@@ -188,7 +180,8 @@ class CCHPTRGBSelectionComputation:
         lp_r_grid = ctx.log_prior_r_grid[None, None, :]
 
         # Project Vext onto random LOS directions
-        Vext_rad_rand = jnp.sum(Vext[None, :] * ctx.rhat_rand_los, axis=1)
+        # Works for rhat_rand_los both (n_los, 3) and (n_sims, n_los, 3)
+        Vext_rad_rand = jnp.sum(Vext[None, :] * ctx.rhat_rand_los, axis=-1)
 
         if ctx.use_reconstruction:
             rand_los_delta_grid = \
@@ -389,32 +382,44 @@ class BaseCCHPModel(ABC):
         # Load random LOS interpolators if available (for selection modelling)
         self.has_rand_los = False
         self.num_rand_los = 1
-        if get_nested(config, "io/load_rand_los", False):
-            if "rand_los_velocity" in data and "rand_los_r" in data:
-                self.has_rand_los = True
-                self.num_rand_los = data["rand_los_velocity"].shape[1]
-                fprint(f"Number of random LOS: {self.num_rand_los}")
+        if "rand_los_velocity" in data and "rand_los_r" in data:
+            self.has_rand_los = True
+            self.num_rand_los = data["rand_los_velocity"].shape[1]
+            fprint(f"Number of random LOS: {self.num_rand_los}")
 
-                rand_los_delta = jnp.asarray(data["rand_los_density"]) - 1.0
-                self.f_rand_los_delta = LOSInterpolator(
-                    data["rand_los_r"],
-                    rand_los_delta,
-                    r0_decay_scale=r0_decay_scale,
-                    extrap_constant=0.0,
-                )
-                self.f_rand_los_velocity = LOSInterpolator(
-                    data["rand_los_r"],
-                    jnp.asarray(data["rand_los_velocity"]),
-                    r0_decay_scale=r0_decay_scale,
-                    extrap_constant=0.0,
-                )
+            rand_los_delta = jnp.asarray(data["rand_los_density"]) - 1.0
+            self.f_rand_los_delta = LOSInterpolator(
+                data["rand_los_r"],
+                rand_los_delta,
+                r0_decay_scale=r0_decay_scale,
+                extrap_constant=0.0,
+            )
+            self.f_rand_los_velocity = LOSInterpolator(
+                data["rand_los_r"],
+                jnp.asarray(data["rand_los_velocity"]),
+                r0_decay_scale=r0_decay_scale,
+                extrap_constant=0.0,
+            )
 
-                # Unit vectors for random LOS directions
-                rhat = radec_to_cartesian(
-                    jnp.asarray(data["rand_los_RA"]),
-                    jnp.asarray(data["rand_los_dec"]))
-                n = jnp.linalg.norm(rhat, axis=1, keepdims=True)
-                self.rhat_rand_los = rhat / jnp.where(n == 0.0, 1.0, n)
+            # Unit vectors for random LOS directions
+            ra = np.asarray(data["rand_los_RA"])
+            dec = np.asarray(data["rand_los_dec"])
+            if ra.ndim == 1:
+                rhat = radec_to_cartesian(ra, dec)
+            else:
+                # Per-realisation (n_sims, n_gal) → (n_sims, n_gal, 3)
+                ra_rad = np.deg2rad(ra)
+                dec_rad = np.deg2rad(dec)
+                cos_dec = np.cos(dec_rad)
+                rhat = np.stack([
+                    cos_dec * np.cos(ra_rad),
+                    cos_dec * np.sin(ra_rad),
+                    np.sin(dec_rad),
+                ], axis=-1)
+            # axis=-1 works for both (n_gal, 3) and (n_sims, n_gal, 3)
+            n = jnp.linalg.norm(rhat, axis=-1, keepdims=True)
+            self.rhat_rand_los = jnp.asarray(
+                rhat / np.where(n == 0.0, 1.0, n))
 
         # Set up radial range for volume prior normalization
         r_limits_malmquist = get_nested(
@@ -467,7 +472,7 @@ class BaseCCHPModel(ABC):
             if self.use_reconstruction and not self.has_rand_los:
                 raise ValueError(
                     "Selection modelling with reconstruction requires random "
-                    "LOS data. Set `load_rand_los = true` in config.")
+                    "LOS data (auto-loaded when use_reconstruction=true).")
 
             # When not using reconstruction but applying selection, create
             # dummy homogeneous random LOS (like SH0ES)
@@ -581,8 +586,8 @@ class BaseCCHPModel(ABC):
                 self.selection = CCHPTRGBSelectionComputation(ctx)
 
     def log_prior_distance(self, r):
-        """Log prior on physical distance (volume prior, r^2)."""
-        return 2.0 * jnp.log(r) - 3.0 * jnp.log(self.Rmax) + jnp.log(3.0)
+        """Unnormalized uniform-in-volume distance prior: p(r) ~ r^2."""
+        return 2.0 * jnp.log(r)
 
     def replace_priors(self, config):
         """Replace priors on parameters that are not used in the model."""
@@ -866,13 +871,12 @@ class CCHPTRGBModel(BaseCCHPModel):
         # Extract per-host (shape: nfields, num_groups)
         logp_host = logp_prior_per_sn[:, self.first_idx]
 
-        sigma_tot_mag = jnp.sqrt(self.e_mag_TRGB_host**2 + sigma_int**2)
-        sigma_tot_cz = jnp.sqrt(self.e_czcmb_host**2 + sigma_v**2)
+        var_tot_mag = self.e_mag_TRGB_host**2 + sigma_int**2
+        var_tot_cz = self.e_czcmb_host**2 + sigma_v**2
 
         # TRGB magnitude likelihood (once per host), shape: (1, num_groups)
-        logp_host += Normal(
-            mu_host + M_TRGB, sigma_tot_mag).log_prob(
-            self.mag_obs_host)[None, :]
+        logp_host += normal_logpdf_var(
+            self.mag_obs_host, mu_host + M_TRGB, var_tot_mag)[None, :]
 
         # Project Vext along LOS (per host)
         Vext_rad_host = jnp.sum(Vext[None, :] * self.rhat_host, axis=1)
@@ -890,7 +894,7 @@ class CCHPTRGBModel(BaseCCHPModel):
 
         # cz likelihood (once per host), shape: (n_field, num_groups)
         if self.use_cz_likelihood:
-            ll_cz = Normal(cz_th_host, sigma_tot_cz).log_prob(self.cz_cmb_host)
+            ll_cz = normal_logpdf_var(self.cz_cmb_host, cz_th_host, var_tot_cz)
             logp_host += ll_cz
 
         # =====================================================================
@@ -900,9 +904,9 @@ class CCHPTRGBModel(BaseCCHPModel):
 
         # Add the SN magnitude likelihood if using SN magnitude selection
         if self.which_selection == "SN_magnitude":
-            logp_sn += Normal(
-                mu_per_sn + M_B,
-                self.e_m_Bprime).log_prob(self.m_Bprime)[None, :]
+            logp_sn += normal_logpdf_var(
+                self.m_Bprime, mu_per_sn + M_B,
+                self.e_m_Bprime**2)[None, :]
 
         # Selection modelling
         if self.which_selection in (None, "none"):
@@ -1025,12 +1029,10 @@ class CCHPTRGBModel(BaseCCHPModel):
         logp_tot = logp_host + logp_sn
 
         # Anchor TRGB magnitudes
-        logp_tot += Normal(
-            M_TRGB + mu_LMC, self.e_mag_LMC_TRGB).log_prob(
-            self.mag_LMC_TRGB)
-        logp_tot += Normal(
-            M_TRGB + mu_N4258, self.e_mag_N4258_TRGB).log_prob(
-            self.mag_N4258_TRGB)
+        logp_tot += normal_logpdf_var(
+            self.mag_LMC_TRGB, M_TRGB + mu_LMC, self.e_mag_LMC_TRGB**2)
+        logp_tot += normal_logpdf_var(
+            self.mag_N4258_TRGB, M_TRGB + mu_N4258, self.e_mag_N4258_TRGB**2)
 
         factor("ll_total", logp_tot)
 

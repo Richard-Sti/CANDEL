@@ -17,3 +17,9 @@ from .model_CCHP import CCHPTRGBModel, JointTRGBCSPModel  # noqa
 from .model_CSP import (CSPSelection, CSPModel, VolumePrior,  # noqa
                         simulate_csp, compute_per_source_selection,  # noqa
                         extract_csp_median_errors)  # noqa
+from .model_H0_2MTF import EDD2MTFModel  # noqa
+from .model_H0_TRGB_2MTF import TRGB2MTFModel  # noqa
+
+from ..._dev_utils import mark_dev_exports as _mark
+_mark(globals(), __name__)
+del _mark

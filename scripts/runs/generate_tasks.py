@@ -72,10 +72,27 @@ from copy import deepcopy
 from itertools import product
 from os import makedirs
 from os.path import exists, join, splitext
+from pathlib import Path
+
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib
 
 import tomli_w
+
 from candel import (SPEED_OF_LIGHT, fprint, get_nested, load_config,  # noqa
                     replace_prior_with_delta)
+
+
+def load_local_config():
+    """Load machine-specific settings from local_config.toml at project root."""
+    project_root = Path(__file__).resolve().parent.parent.parent
+    local_config_path = project_root / "local_config.toml"
+    if local_config_path.exists():
+        with open(local_config_path, 'rb') as f:
+            return tomllib.load(f)
+    return {}
 
 
 def overwrite_config(config, key, value):
@@ -124,7 +141,7 @@ def generate_dynamic_tag(config, base_tag="default"):
     parts = []
     which_run = get_nested(config, "model/which_run", None)
 
-    if which_run in ("CH0", "CCHP", "CCHP_CSP"):
+    if which_run in ("CH0", "CCHP", "CCHP_CSP", "EDD_TRGB"):
         model_name = which_run
         catalogue = which_run
         parts.append(which_run)
@@ -189,11 +206,6 @@ def generate_dynamic_tag(config, base_tag="default"):
         which_sel = get_nested(config, "model/which_selection", None)
         if _is_active(which_sel):
             parts.append(f"sel-{which_sel}")
-            if which_sel == "SN_magnitude_or_redshift_Nmag":
-                nmag = get_nested(
-                    config, "model/num_hosts_selection_mag", None)
-                if nmag is not None:
-                    parts.append(f"Nmag{nmag}")
 
         if get_nested(config, "model/use_uniform_mu_host_priors", False):
             parts.append("uniform_mu_host")
@@ -232,6 +244,16 @@ def generate_dynamic_tag(config, base_tag="default"):
             config, "io/CCHP_redshift_source/kind", "cz_cmb")
         if redshift_kind != "cz_cmb":
             parts.append(redshift_kind)
+
+    elif which_run == "EDD_TRGB":
+        which_sel = get_nested(config, "model/which_selection", None)
+        if _is_active(which_sel):
+            parts.append(f"sel-{which_sel}")
+        if get_nested(config, "model/use_reconstruction", False):
+            parts.append(get_nested(
+                config, "io/which_host_los",
+                get_nested(config,
+                           "io/PV_main/EDD_TRGB/which_host_los", None)))
 
     if base_tag != "default":
         parts.append(base_tag)
@@ -302,7 +324,8 @@ if __name__ == "__main__":
         help="Arbitrary tag/index for this task list.")
     args = parser.parse_args()
 
-    config_path = "./config.toml"
+    # --- CH0: SN magnitude selection, Carrick reconstruction ---
+    config_path = "./config_shoes.toml"
     config = load_config(
         config_path, replace_none=False, replace_los_prior=False,
         fill_paths=False)
@@ -310,52 +333,63 @@ if __name__ == "__main__":
     tag = "default"
     tasks_index = args.tasks_index
 
-    # Multiple override options → this creates a job per combination
+    # Load machine-specific settings from local_config.toml
+    _local_cfg = load_local_config()
+
     manual_overrides = {
-        # --- Short test run: 2MTF + Carrick2015 ---
-        "root_main": "/Users/rstiskalek/Projects/CANDEL/",
-        "root_data": "/Users/rstiskalek/Projects/CANDEL/",
-        "python_exec": "/Users/rstiskalek/Projects/CANDEL/venv_candel/bin/python",
-        "machine": "local",
-        # Inference
-        "inference/num_warmup": 50,
-        "inference/num_samples": 50,
+        **{k: v for k, v in _local_cfg.items()},
+        "inference/num_warmup": 1000,
+        "inference/num_samples": 3000,
         "inference/num_chains": 1,
-        "inference/compute_log_density": False,
-        "inference/compute_evidence": False,
-        "inference/track_log_density_per_sample": False,
-        "inference/model": "TFRModel",
-        # PV model
-        "pv_model/kind": "precomputed_los_Carrick2015",
-        "pv_model/galaxy_bias": "linear_from_beta",
-        "pv_model/r_limits_malmquist": "auto",
-        "pv_model/dr_malmquist": 1.0,
-        # Model
-        "model/marginalize_eta": True,
-        "model/priors/beta": {"dist": "normal", "loc": 0.43, "scale": 0.1},
-        # IO
-        "io/catalogue_name": "2MTF",
-        "io/root_output": "results_test/",
+        "model/which_selection": "SN_magnitude",
+        "model/use_reconstruction": True,
+        "model/which_bias": "double_powerlaw",
+        "model/use_uniform_mu_host_priors": False,
+        "model/mag_lim_SN": "infer",
+        "model/mag_lim_SN_width": "infer",
+        "io/SH0ES/which_host_los": "manticore_2MPP_MULTIBIN_N256_DES_V2",
     }
-    # # --- CCHP overrides ---
+
+    # # --- CCHP TRGB: SN magnitude selection, Manticore reconstruction ---
+    # config_path = "./config_CCHP_TRGB.toml"
     # manual_overrides = {
-    #     "io/root_output": "results_test",
-    #     # "model/which_selection": ["none", "SN_magnitude", "redshift"],
-    #     "model/which_run": "CCHP_CSP",
-    #     "model/which_selection": "CSP",
-    #     "model/use_reconstruction": False,
-    #     "io/which_host_los": "Carrick2015",
-    #     # "io/which_host_los": "manticore_2MPP_MULTIBIN_N256_DES_V2",
+    #     **{k: v for k, v in _local_cfg.items()},
+    #     "model/which_selection": "TRGB_magnitude",
+    #     "model/use_reconstruction": True,
+    #     "model/which_bias": "double_powerlaw",
+    #     "io/which_host_los": "manticore_2MPP_MULTIBIN_N256_DES_V2",
+    # }
+
+    # # --- CCHP TRGB: SN magnitude selection, Carrick reconstruction ---
+    # config_path = "./config_CCHP_TRGB.toml"
+    # manual_overrides = {
+    #     **{k: v for k, v in _local_cfg.items()},
+    #     "model/which_selection": "SN_magnitude",
+    #     "model/use_reconstruction": True,
     #     "model/which_bias": "linear",
-    #     "model/infer_sel": True,
-    #     "model/priors/Vext": [
-    #         {"dist": "delta", "value": [0., 0., 0.]},
-    #     ],
-    #     "model/priors/beta": [
-    #         {"dist": "normal", "loc": 0.43, "scale": 0.02},
-    #         # {"dist": "delta", "value": 1.0},
-    #         # {"dist": "normal", "loc": 1.0, "scale": 0.5},
-    #     ],
+    #     "io/which_host_los": "Carrick2015",
+    # }
+
+    # # --- EDD TRGB: redshift selection, Carrick reconstruction ---
+    # config_path = "./config_EDD_TRGB.toml"
+    # manual_overrides = {
+    #     **{k: v for k, v in _local_cfg.items()},
+    #     "model/which_selection": "redshift",
+    #     "model/use_reconstruction": True,
+    #     "model/which_bias": "linear",
+    #     "io/which_host_los": "Carrick2015",
+    # }
+
+    # # --- EDD TRGB: magnitude selection, Manticore reconstruction ---
+    # config_path = "./config_EDD_TRGB.toml"
+    # manual_overrides = {
+    #     **{k: v for k, v in _local_cfg.items()},
+    #     "model/run_ppc": True,
+    #     "model/which_selection": "TRGB_magnitude",
+    #     "model/use_reconstruction": True,
+    #     "model/priors/beta": {"dist": "delta", "value": 1.0},
+    #     "model/which_bias": "double_powerlaw",
+    #     "io/which_host_los": "manticore_2MPP_MULTIBIN_N256_DES_V2",
     # }
 
     task_file = f"tasks_{tasks_index}.txt"
@@ -392,12 +426,39 @@ if __name__ == "__main__":
                 else:
                     local_config = overwrite_config(local_config, key, value)
 
+            # Force PPC off for Manticore (too expensive with many fields)
+            _los_keys = [
+                "io/PV_main/EDD_TRGB/which_host_los",
+                "io/PV_main/EDD_2MTF/which_host_los",
+                "io/SH0ES/which_host_los",
+                "io/which_host_los",
+            ]
+            for _k in _los_keys:
+                _los = get_nested(local_config, _k, None)
+                if isinstance(_los, str) and "manticore" in _los.lower():
+                    if get_nested(local_config, "model/run_ppc", False):
+                        fprint("forcing run_ppc=False for Manticore field.")
+                        local_config = overwrite_config(
+                            local_config, "model/run_ppc", False)
+                    # Default beta to delta(1) for Manticore unless already
+                    # explicitly set to a non-default prior in manual_overrides.
+                    beta_prior = get_nested(
+                        local_config, "model/priors/beta", None)
+                    if "model/priors/beta" not in override_set:
+                        if not _is_delta_prior(beta_prior):
+                            fprint("defaulting beta=delta(1) for Manticore.")
+                            local_config = overwrite_subtree(
+                                local_config, "model/priors/beta",
+                                {"dist": "delta", "value": 1.0})
+                    break
+
             # Validate which_run
             which_run = get_nested(local_config, "model/which_run", None)
-            if which_run is not None and which_run not in ("CCHP", "CCHP_CSP"):
+            valid_runs = (None, "CH0", "CCHP", "CCHP_CSP", "EDD_TRGB")
+            if which_run not in valid_runs:
                 raise ValueError(
                     f"Invalid which_run='{which_run}'. "
-                    "Must be 'CCHP' or 'CCHP_CSP'.")
+                    f"Must be one of {valid_runs}.")
 
             # Check that the output directory exists
             fdir_out = join(

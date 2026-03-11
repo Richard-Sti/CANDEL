@@ -26,7 +26,8 @@ def _check_uniform_grid(r, rtol=1e-4):
     """Verify that `r` is a uniform grid. Raises ValueError if not."""
     r_np = np.asarray(r)
     if r_np.ndim != 1 or len(r_np) < 2:
-        raise ValueError(f"Expected 1D array with >= 2 points, got {r_np.shape}")
+        raise ValueError(
+            f"Expected 1D array with >= 2 points, got {r_np.shape}")
     dr = np.diff(r_np)
     mean_dr = (r_np[-1] - r_np[0]) / (len(r_np) - 1)
     if np.any(np.abs(dr - mean_dr) / mean_dr > rtol):
