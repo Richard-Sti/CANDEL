@@ -1,4 +1,4 @@
-base = ["../config_priors.toml", "../config_paths.toml"]
+base = ["./config_priors.toml"]
 
 ###############################################################################
 #                               Inference                                     #
@@ -39,8 +39,6 @@ cz_lim_selection_width = 300
 mag_lim_SN = 14.0
 mag_lim_SN_width = 0.15
 
-# Homogeneous and inhomogeneous Malmquist bias gridding
-r_limits_malmquist = [0.01, 150]
 distmod_limits = [15, 43]
 
 # Selection integral grid
@@ -121,10 +119,15 @@ high = 2500
 [io]
 root_output = "results/CH0"
 fname_output = "results/CH0/test.hdf5"
-
+los_file_random = "data/los_random_<X>.hdf5"
+los_r0_decay_scale = 5
 
 [io.SH0ES]
 root = "data/SH0ES"
 cepheid_host_cz_cmb_max = 3300
 which_host_los = "Carrick2015"
 # which_host_los = "manticore_2MPP_MULTIBIN_N256_DES_V2"
+
+[io.PV_main.SH0ES]
+root = "data/SH0ES"
+los_file = "data/SH0ES/los_SH0ES_TFR_<X>.hdf5"

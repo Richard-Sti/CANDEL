@@ -304,11 +304,11 @@ class CH0Model(H0ModelBase):
 
         mu_host, mu_N4258, mu_LMC, mu_M31 = self.sample_host_distmod()
 
-        # Distance moduli for Cepheids, with corrections for LMC.
+        # Distance moduli for Cepheids, with per-Cepheid dZP correction.
         dZP = sample("dZP", Normal(0, self.sigma_grnd))
         mu_host_cepheid = jnp.concatenate(
             [mu_host,
-             jnp.array([mu_N4258, mu_LMC + dZP, mu_M31])]
+             jnp.array([mu_N4258, mu_LMC, mu_M31])]
             )
 
         # Distance moduli without any corrections.
@@ -413,7 +413,8 @@ class CH0Model(H0ModelBase):
             factor("neg_log_S_correction", -log_S[0] * self.num_hosts)
 
         # Now assign these host distances to each Cepheid.
-        mu_cepheid = self.L_Cepheid_host_dist @ mu_host_cepheid
+        mu_cepheid = (self.L_Cepheid_host_dist @ mu_host_cepheid
+                      ).at[self.idx_dZP].add(dZP)
 
         mag_cepheid = mu_cepheid + M_W + b_W * self.logP + Z_W * self.OH
         factor(

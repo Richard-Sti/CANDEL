@@ -997,6 +997,9 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
 
     # Systematic uncertainties btw ground-based and HST photometry.
     sigma_grnd = C[3211, 3211]**0.5
+    # Indices of Cepheids needing ground-based dZP correction (column 45 of
+    # the original L matrix is Delta_zp).
+    idx_dZP = np.where(L[:3130, 45] == 1)[0]
 
     q_names = np.asanyarray(
         ['mu_M101', 'mu_M1337', 'mu_N0691', 'mu_N1015', 'mu_N0105',
@@ -1085,6 +1088,7 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
         "M_Gaia": M_Gaia,
         "e_M_Gaia": e_M_Gaia,
         "sigma_grnd": sigma_grnd,
+        "idx_dZP": idx_dZP,
         # Cepheid host galaxy information.
         "q_names": q_names,
         "host_names": host_names,
@@ -1134,6 +1138,13 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
         data["OH"] = data["OH"][mask_cepheid]
         data["logP"] = data["logP"][mask_cepheid]
         data["mag_cepheid"] = data["mag_cepheid"][mask_cepheid]
+
+        # Remap idx_dZP: keep only indices that survive the mask, then
+        # convert to new positions in the masked array.
+        old_to_new = np.full(len(mask_cepheid), -1, dtype=int)
+        old_to_new[mask_cepheid] = np.arange(mask_cepheid.sum())
+        data["idx_dZP"] = old_to_new[data["idx_dZP"]]
+        data["idx_dZP"] = data["idx_dZP"][data["idx_dZP"] >= 0]
         data["C_Cepheid"] = data["C_Cepheid"][mask_cepheid][:, mask_cepheid]
         data["L_Cepheid"] = cholesky(data["C_Cepheid"], lower=True)
 

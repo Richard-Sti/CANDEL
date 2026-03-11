@@ -206,11 +206,6 @@ def generate_dynamic_tag(config, base_tag="default"):
         which_sel = get_nested(config, "model/which_selection", None)
         if _is_active(which_sel):
             parts.append(f"sel-{which_sel}")
-            if which_sel == "SN_magnitude_or_redshift_Nmag":
-                nmag = get_nested(
-                    config, "model/num_hosts_selection_mag", None)
-                if nmag is not None:
-                    parts.append(f"Nmag{nmag}")
 
         if get_nested(config, "model/use_uniform_mu_host_priors", False):
             parts.append("uniform_mu_host")
@@ -329,7 +324,8 @@ if __name__ == "__main__":
         help="Arbitrary tag/index for this task list.")
     args = parser.parse_args()
 
-    config_path = "./config_CCHP_TRGB.toml"
+    # --- CH0: SN magnitude selection, Carrick reconstruction ---
+    config_path = "./config_shoes.toml"
     config = load_config(
         config_path, replace_none=False, replace_los_prior=False,
         fill_paths=False)
@@ -340,14 +336,27 @@ if __name__ == "__main__":
     # Load machine-specific settings from local_config.toml
     _local_cfg = load_local_config()
 
-    # --- CCHP TRGB: SN magnitude selection, Manticore reconstruction ---
     manual_overrides = {
         **{k: v for k, v in _local_cfg.items()},
-        "model/which_selection": "TRGB_magnitude",
+        "inference/num_warmup": 1000,
+        "inference/num_samples": 3000,
+        "inference/num_chains": 1,
+        "model/which_selection": "SN_magnitude",
         "model/use_reconstruction": True,
         "model/which_bias": "double_powerlaw",
-        "io/which_host_los": "manticore_2MPP_MULTIBIN_N256_DES_V2",
+        "model/use_uniform_mu_host_priors": False,
+        "io/SH0ES/which_host_los": "manticore_2MPP_MULTIBIN_N256_DES_V2",
     }
+
+    # # --- CCHP TRGB: SN magnitude selection, Manticore reconstruction ---
+    # config_path = "./config_CCHP_TRGB.toml"
+    # manual_overrides = {
+    #     **{k: v for k, v in _local_cfg.items()},
+    #     "model/which_selection": "TRGB_magnitude",
+    #     "model/use_reconstruction": True,
+    #     "model/which_bias": "double_powerlaw",
+    #     "io/which_host_los": "manticore_2MPP_MULTIBIN_N256_DES_V2",
+    # }
 
     # # --- CCHP TRGB: SN magnitude selection, Carrick reconstruction ---
     # config_path = "./config_CCHP_TRGB.toml"
@@ -370,6 +379,7 @@ if __name__ == "__main__":
     # }
 
     # # --- EDD TRGB: magnitude selection, Manticore reconstruction ---
+    # config_path = "./config_EDD_TRGB.toml"
     # manual_overrides = {
     #     **{k: v for k, v in _local_cfg.items()},
     #     "model/run_ppc": True,
