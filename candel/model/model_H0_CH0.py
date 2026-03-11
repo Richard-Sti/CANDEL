@@ -280,7 +280,7 @@ class CH0Model(H0ModelBase):
             mag_lim, mag_width)
 
     def log_S_SN_mag_cz(self, lp_r, Vpec, M_SN, H0, sigma_v,
-                         mag_lim, mag_width, cz_lim, cz_width):
+                        mag_lim, mag_width, cz_lim, cz_width):
         """
         Probability of detection term if supernova magnitude and
         redshift-truncated.
