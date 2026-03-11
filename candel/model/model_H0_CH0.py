@@ -21,8 +21,8 @@ from ..util import fprint, get_nested, replace_prior_with_delta
 from .base_model import H0ModelBase
 from .pv_utils import lp_galaxy_bias, rsample, sample_galaxy_bias
 from .simpson import ln_simpson_precomputed
-from .utils import (log_prob_integrand_sel, logmeanexp,
-                    mvn_logpdf_cholesky, normal_logpdf_var, predict_cz)
+from .utils import (log_prob_integrand_sel, logmeanexp, mvn_logpdf_cholesky,
+                    normal_logpdf_var, predict_cz)
 
 ###############################################################################
 #                          Base CH0 model                                     #
@@ -183,7 +183,6 @@ class CH0Model(H0ModelBase):
             raise ValueError(
                 "Cannot use `weight_selection_by_covmat_Neff` without "
                 "`use_fiducial_Cepheid_host_PV_covariance` set to True.")
-
 
     # ------------------------------------------------------------------
     #  Sampling helpers
