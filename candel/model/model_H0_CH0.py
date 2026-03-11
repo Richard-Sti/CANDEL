@@ -116,15 +116,10 @@ class CH0Model(H0ModelBase):
 
     def _load_data(self, data):
         super()._load_data(data)
-        self._precompute_cepheid_stats()
 
     def _set_data_arrays(self, data):
         skip = ("q_names", "host_map", "host_names")
         super()._set_data_arrays(data, skip_keys=skip)
-
-    def _precompute_cepheid_stats(self):
-        self.mean_logP = jnp.mean(self.logP)
-        self.mean_OH = jnp.mean(self.OH)
 
     # ------------------------------------------------------------------
     #  Validation
@@ -203,12 +198,12 @@ class CH0Model(H0ModelBase):
         mu_LMC = sample("mu_LMC", dist)
         mu_M31 = sample("mu_M31", dist)
 
-        sample("mu_N4258_ll",
-               Normal(self.mu_N4258_anchor, self.e_mu_N4258_anchor),
-               obs=mu_N4258)
-        sample("mu_LMC_ll",
-               Normal(self.mu_LMC_anchor, self.e_mu_LMC_anchor),
-               obs=mu_LMC)
+        factor("mu_N4258_ll",
+               normal_logpdf_var(mu_N4258, self.mu_N4258_anchor,
+                                 self.e2_mu_N4258_anchor))
+        factor("mu_LMC_ll",
+               normal_logpdf_var(mu_LMC, self.mu_LMC_anchor,
+                                 self.e2_mu_LMC_anchor))
 
         return mu_host, mu_N4258, mu_LMC, mu_M31
 
@@ -235,9 +230,10 @@ class CH0Model(H0ModelBase):
         Probability of detection term if supernova magnitude and
         redshift-truncated.
         """
-        zcosmo = self.distance2redshift(self.r_sel_range, h=H0 / 100)
+        h = H0 / 100
+        zcosmo = self.distance2redshift(self.r_sel_range, h=h)
         cz_r = predict_cz(zcosmo[None, None, :], Vpec)
-        mag = self.distance2distmod(self.r_sel_range, h=H0 / 100) + M_SN
+        mag = self.distance2distmod(self.r_sel_range, h=h) + M_SN
 
         sigma_v = jnp.asarray(sigma_v)
         while sigma_v.ndim < cz_r.ndim:
@@ -298,12 +294,13 @@ class CH0Model(H0ModelBase):
             return jnp.broadcast_to(sigma_v_base, delta.shape)
 
         h = H0 / 100
-        # Project Vext along the LOS to each host.
-        Vext_rad_host = jnp.sum(Vext[None, :] * self.rhat_host, axis=1)
+        Vext_rad_host = self.rhat_host @ Vext
 
         # HST and Gaia zero-point calibration of MW Cepheids.
-        sample("M_W_HST", Normal(M_W, self.e_M_HST), obs=self.M_HST)
-        sample("M_W_Gaia", Normal(M_W, self.e_M_Gaia), obs=self.M_Gaia)
+        factor("M_W_HST",
+               normal_logpdf_var(self.M_HST, M_W, self.e2_M_HST))
+        factor("M_W_Gaia",
+               normal_logpdf_var(self.M_Gaia, M_W, self.e2_M_Gaia))
 
         mu_host, mu_N4258, mu_LMC, mu_M31 = self.sample_host_distmod()
 
@@ -335,15 +332,8 @@ class CH0Model(H0ModelBase):
             lp_anchor_dist = lp_all_host_dist[self.num_hosts:]
             factor("lp_anchor_dist", lp_anchor_dist)
 
-        # Selection grid: built on r_sel_range (coarser, sufficient for
-        # the smooth selection integrals).
-        lp_sel_dist_grid = self.log_prior_distance(
-            self.r_sel_range)[None, None, :]
         lp_rand_dist_grid, Vext_rad_rand = \
-            self._prepare_selection_grid(lp_sel_dist_grid, Vext)
-
-        sigma_v_host = None
-        sigma_v_selection = None
+            self._prepare_selection_grid(self._lp_sel_dist_grid, Vext)
 
         if self.use_reconstruction:
             ll_reconstruction, los_delta_host, rh_host = \
@@ -372,16 +362,23 @@ class CH0Model(H0ModelBase):
                     rand_los_Vpec_grid = 0.
             else:
                 rand_los_Vpec_grid = 0.
-                sigma_v_selection = map_sigma_v(
-                    jnp.zeros(
-                        (self.num_fields, self.num_rand_los,
-                         self.r_sel_range.size)))
         else:
             rand_los_Vpec_grid = 0.
             self._no_reconstruction_fallback(lp_host_dist)
             sigma_v_host = map_sigma_v(jnp.zeros((1, self.num_hosts)))
-            sigma_v_selection = map_sigma_v(
-                jnp.zeros((1, self.num_rand_los, self.r_sel_range.size)))
+            if self.apply_sel:
+                sigma_v_selection = map_sigma_v(
+                    jnp.zeros((1, self.num_rand_los,
+                               self.r_sel_range.size)))
+
+        # SN magnitude likelihood (shared by SN_magnitude* selections)
+        if self.which_selection in ["SN_magnitude", "SN_magnitude_redshift"]:
+            mag_SN = (self.L_SN_unique_Cepheid_host_dist @ mu_host_all) + M_B
+            factor(
+                "ll_SN",
+                mvn_logpdf_cholesky(
+                    self.mag_SN_unique_Cepheid_host, mag_SN,
+                    self.L_SN_unique_Cepheid_host))
 
         # Selection function (unnormalized prior — no log_Z correction)
         if self.which_selection == "redshift":
@@ -393,38 +390,18 @@ class CH0Model(H0ModelBase):
             if self.weight_selection_by_covmat_Neff:
                 log_S *= self.Neff_PV_covmat_cepheid_host / self.num_hosts
         elif self.which_selection == "SN_magnitude":
-            mu_SN = self.L_SN_unique_Cepheid_host_dist @ mu_host_all
-            mag_SN = mu_SN + M_B
-
             log_S = self.log_S_SN_mag(lp_rand_dist_grid, M_B, H0)
 
             if self.weight_selection_by_covmat_Neff:
                 log_S *= self.Neff_C_SN_unique_Cepheid_host / self.num_hosts
-
-            factor(
-                "ll_SN",
-                mvn_logpdf_cholesky(
-                    self.mag_SN_unique_Cepheid_host, mag_SN,
-                    self.L_SN_unique_Cepheid_host)
-                )
         elif self.which_selection == "SN_magnitude_redshift":
             log_S = self.log_S_SN_mag_cz(
                 lp_rand_dist_grid,
                 Vext_rad_rand[None, :, None] + beta * rand_los_Vpec_grid,
                 M_B, H0, sigma_v_selection)
 
-            mu_SN = self.L_SN_unique_Cepheid_host_dist @ mu_host_all
-            mag_SN = mu_SN + M_B
-
             if self.weight_selection_by_covmat_Neff:
                 log_S *= self.Neff_PV_covmat_cepheid_host / self.num_hosts
-
-            factor(
-                "ll_SN",
-                mvn_logpdf_cholesky(
-                    self.mag_SN_unique_Cepheid_host, mag_SN,
-                    self.L_SN_unique_Cepheid_host)
-                )
         else:
             log_S = jnp.zeros((1, self.num_hosts))
 
@@ -438,11 +415,7 @@ class CH0Model(H0ModelBase):
         # Now assign these host distances to each Cepheid.
         mu_cepheid = self.L_Cepheid_host_dist @ mu_host_cepheid
 
-        logP = self.logP
-        OH = self.OH
-
-        # Predict the Cepheid magnitudes and compute their likelihood.
-        mag_cepheid = mu_cepheid + M_W + b_W * logP + Z_W * OH
+        mag_cepheid = mu_cepheid + M_W + b_W * self.logP + Z_W * self.OH
         factor(
             "ll_cepheid",
             mvn_logpdf_cholesky(self.mag_cepheid, mag_cepheid, self.L_Cepheid)

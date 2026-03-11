@@ -374,6 +374,9 @@ class ModelBase(ABC):
             self.r_sel_range = self.r_host_range
             self._simpson_log_w_sel = self._simpson_log_w
 
+        self._lp_sel_dist_grid = self.log_prior_distance(
+            self.r_sel_range)[None, None, :]
+
     def _setup_random_los_grid(self):
         """Set up dummy random LOS when no reconstruction is used."""
         if not self.use_reconstruction and self.apply_sel:
