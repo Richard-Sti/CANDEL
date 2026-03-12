@@ -21,7 +21,8 @@ from numpyro.distributions import MultivariateNormal, Uniform
 from ..util import fprint
 from .base_pv import BasePVModel
 from .pv_utils import (add_sigma_mag_to_lane_cov, lp_galaxy_bias, rsample,
-                       sample_distance_prior, sample_galaxy_bias)
+                       sample_distance_prior, sample_galaxy_bias,
+                       sigma_v_from_density)
 from .simpson import ln_simpson
 from .utils import log_prior_r_empirical, normal_logpdf_var, predict_cz
 
@@ -78,15 +79,30 @@ class PantheonPlusModel(BasePVModel):
 
         # Sample velocity field parameters.
         Vext = rsample("Vext", self.priors["Vext"], shared_params)
-        sigma_v = rsample("sigma_v", self.priors["sigma_v"], shared_params)
+        if self.density_dependent_sigma_v:
+            sigma_v_low = rsample(
+                "sigma_v_low", self.priors["sigma_v_low"], shared_params)
+            sigma_v_high = rsample(
+                "sigma_v_high", self.priors["sigma_v_high"], shared_params)
+            log_sigma_v_rho_t = rsample(
+                "log_sigma_v_rho_t", self.priors["log_sigma_v_rho_t"],
+                shared_params)
+            sigma_v_k = rsample(
+                "sigma_v_k", self.priors["sigma_v_k"], shared_params)
+        else:
+            sigma_v = rsample(
+                "sigma_v", self.priors["sigma_v"], shared_params)
         # Radially-project Vext
         Vext_rad = jnp.sum(data["rhat"] * Vext[None, :], axis=1)
 
         # Remaining parameters
         beta = rsample("beta", self.priors["beta"], shared_params)
+        bias_kwargs = dict(Om=self.Om, beta=beta)
+        if self.galaxy_bias == "spline":
+            bias_kwargs["spline_bias_knots_delta"] = \
+                self.spline_bias_knots_delta
         bias_params = sample_galaxy_bias(
-            self.priors, self.galaxy_bias, shared_params,
-            Om=self.Om, beta=beta)
+            self.priors, self.galaxy_bias, shared_params, **bias_kwargs)
 
         # For the distance marginalization, h is not sampled. A grid is still
         # required to normalize the inhomogeneous Malmquist bias distribution.
@@ -157,7 +173,16 @@ class PantheonPlusModel(BasePVModel):
                 self.distance2redshift(r, h=h)[None, :],
                 Vrad + Vext_rad[None, :])
             # Compute the redshift likelihood, and add the distance prior
-            ll = normal_logpdf_var(data["czcmb"][None, :], czpred, sigma_v**2)
+            if self.density_dependent_sigma_v:
+                delta_at_r = data.f_los_delta(r)
+                sigma_v_r = sigma_v_from_density(
+                    delta_at_r, sigma_v_low, sigma_v_high,
+                    log_sigma_v_rho_t, sigma_v_k)
+                ll = normal_logpdf_var(
+                    data["czcmb"][None, :], czpred, sigma_v_r**2)
+            else:
+                ll = normal_logpdf_var(
+                    data["czcmb"][None, :], czpred, sigma_v**2)
             ll += lp_dist
             # Average over field realizations and track
             factor("ll_obs", logsumexp(ll, axis=0) - jnp.log(data.num_fields))

@@ -16,7 +16,8 @@ CANDEL runs locally for small samples or scales to computing clusters with GPU s
 - Forward modelling of the full distance ladder with JAX and NumPyro.
 - Joint calibration of distance-indicator relations and the underlying density/velocity field.
 - Analytical marginalisation of latent observables where Gaussian conjugacy allows, reducing sampler dimensionality.
-- Multiple galaxy-bias models (linear, power-law, double power-law).
+- Multiple galaxy-bias models: linear ($1 + b_1 \delta$), quadratic ($1 + b_1 \delta + b_2 \delta^2$), power-law ($\rho^\alpha$), double power-law, and free-form cubic spline in $\log(1+\delta)$ with a configurable number of knots.
+- Density-dependent velocity dispersion $\sigma_v(\delta)$ via a sigmoid in log-density, allowing different dispersions in underdense and overdense regions.
 - Redshift-to-real-space mapping of observed redshifts given a calibrated velocity field.
 - Peculiar-velocity covariance matrices from CAMB power spectra.
 - HPC-friendly tooling: batch config generation, SLURM submission scripts, GPU auto-detection.
