@@ -1767,40 +1767,84 @@ def load_CSP(root, zcmb_min=None, zcmb_max=None, b_min=None, quality_min=None,
     return _filter_data(data, mask, los_data_path)
 
 
-def load_EDD_TRGB(root, zcmb_min=None, zcmb_max=None, b_min=None,
-                  los_data_path=None, return_all=False,
-                  return_mask=False, **kwargs):
-    """Load EDD TRGB data from the pre-parsed CSV."""
-    x = np.genfromtxt(join(root, "EDD_TRGB.csv"), delimiter=",",
-                      names=True, dtype=None, encoding=None)
-    fprint(f"initially loaded {len(x)} galaxies from EDD TRGB data.")
+def _parse_edd_trgb_txt(fpath):
+    """Parse an EDD TRGB text file (5 header lines, comma-delimited).
 
-    RA = x["RA"].astype(np.float64)
-    dec = x["dec"].astype(np.float64)
+    Returns rows, header, and whether the file is the grouped format
+    (extra Vcmb column at index 1).
+    """
+    with open(fpath) as f:
+        lines = f.readlines()
+    header = [c.strip() for c in lines[1].strip().split(",")]
+    ncol = len(header)
+    rows = []
+    for line in lines[5:]:
+        row = [c.strip().strip('"') for c in line.strip().split(",")]
+        if len(row) == ncol:
+            rows.append(row)
 
-    z_helio = x["v"].astype(np.float64) / SPEED_OF_LIGHT
-    e_z_helio = x["e_v"].astype(np.float64) / SPEED_OF_LIGHT
-    zcmb, e_zcmb = heliocentric_to_cmb(z_helio, RA, dec, e_z_helio)
+    has_group_vcmb = (header[1] == "Vcmb")
+    return rows, header, has_group_vcmb
+
+
+def _edd_col_float(rows, idx):
+    """Extract a float column, returning NaN for empty/missing cells."""
+    out = np.full(len(rows), np.nan)
+    for i, row in enumerate(rows):
+        try:
+            out[i] = float(row[idx])
+        except (ValueError, IndexError):
+            pass
+    return out
+
+
+def _edd_col_str(rows, idx):
+    return np.array([row[idx].strip() for row in rows])
+
+
+def _load_edd_trgb_core(fpath, label, zcmb_min=None, zcmb_max=None,
+                        b_min=None, los_data_path=None, return_all=False,
+                        return_mask=False, e_czcmb_default=20.0):
+    """Shared loader for ungrouped and grouped EDD TRGB files.
+
+    The grouped file has an extra CF4 group Vcmb at column 1 (detected
+    automatically), stored as ``czcmb_group`` in km/s.
+    """
+    rows, header, has_group_vcmb = _parse_edd_trgb_txt(fpath)
+    n_orig = len(rows)
+    fprint(f"initially loaded {n_orig} galaxies from {label} data.")
+
+    off = 1 if has_group_vcmb else 0
+
+    RA = _edd_col_float(rows, 7 + off)        # RAJ
+    dec = _edd_col_float(rows, 8 + off)        # DeJ
+    czcmb = _edd_col_float(rows, 20 + off)     # individual Vcmb
+    T814 = _edd_col_float(rows, 45 + off)
+    T8_lo = _edd_col_float(rows, 46 + off)
+    T8_hi = _edd_col_float(rows, 47 + off)
+    A_814 = _edd_col_float(rows, 62 + off)
+    names = _edd_col_str(rows, 35 + off)
+
+    zcmb_arr = czcmb / SPEED_OF_LIGHT
 
     data = dict(
         RA=RA,
         dec=dec,
-        zcmb=zcmb,
-        e_zcmb=e_zcmb,
-        mag=x["T814"].astype(np.float64) - x["A_814"].astype(np.float64),
-        e_mag=(x["T8_hi"].astype(np.float64)
-               - x["T8_lo"].astype(np.float64)) / 2,
+        zcmb=zcmb_arr,
+        e_zcmb=np.full(n_orig, e_czcmb_default / SPEED_OF_LIGHT),
+        mag=T814 - A_814,
+        e_mag=(T8_hi - T8_lo) / 2,
     )
+
+    if has_group_vcmb:
+        data["czcmb_group"] = _edd_col_float(rows, 1)
 
     if return_all:
         return data
 
-    # Build a combined mask over the original catalogue indices.
-    n_orig = len(x)
     keep = np.ones(n_orig, dtype=bool)
 
     # Drop anchor and satellite galaxies (treated separately in the model).
-    names = np.array([n.strip() for n in x["name"]])
     drop = np.isin(names, ["LMC", "SMC", "NGC4258", "NGC4258-DF6"])
     if np.any(drop):
         fprint(f"dropping {np.sum(drop)} anchor/satellite galaxies: "
@@ -1808,20 +1852,17 @@ def load_EDD_TRGB(root, zcmb_min=None, zcmb_max=None, b_min=None,
     keep &= ~drop
 
     # Drop galaxies with missing TRGB magnitudes.
-    valid_mag = np.isfinite(data["mag"])
-    n_bad = np.sum(keep & ~valid_mag)
-    if n_bad > 0:
-        fprint(f"dropping {n_bad} galaxies with missing TRGB magnitudes.")
-    keep &= valid_mag
+    bad_mag = keep & ~np.isfinite(data["mag"])
+    if np.any(bad_mag):
+        fprint(f"dropping {np.sum(bad_mag)} galaxies with missing TRGB "
+               f"magnitudes.")
+    keep &= ~bad_mag
 
     # Apply zcmb / galactic latitude cuts on the kept subset.
     sub_mask = _zcmb_blat_mask(
-        zcmb[keep], RA[keep], dec[keep], zcmb_min, zcmb_max, b_min)
-    # Expand sub_mask back to the full catalogue.
-    idx_kept = np.where(keep)[0]
-    keep[idx_kept[~sub_mask]] = False
+        zcmb_arr[keep], RA[keep], dec[keep], zcmb_min, zcmb_max, b_min)
+    keep[np.where(keep)[0][~sub_mask]] = False
 
-    # Filter data arrays.
     for k in data:
         if isinstance(data[k], np.ndarray):
             data[k] = data[k][keep]
@@ -1836,53 +1877,61 @@ def load_EDD_TRGB(root, zcmb_min=None, zcmb_max=None, b_min=None,
     return data
 
 
-def load_EDD_TRGB_from_config(config_path):
-    """Load EDD TRGB data with LOS and anchor calibration from config."""
+def load_EDD_TRGB(root, **kwargs):
+    """Load ungrouped EDD TRGB data (``EDD_TRGB.txt``)."""
+    return _load_edd_trgb_core(
+        join(root, "EDD_TRGB.txt"), "EDD TRGB", **kwargs)
+
+
+def load_EDD_TRGB_grouped(root, **kwargs):
+    """Load grouped EDD TRGB data (``EDD_TRGB_grouped.txt``).
+
+    Includes ``czcmb_group`` from the CF4 group catalogue.
+    """
+    return _load_edd_trgb_core(
+        join(root, "EDD_TRGB_grouped.txt"), "EDD TRGB grouped", **kwargs)
+
+
+def _load_EDD_TRGB_from_config_common(config_path, config_key, loader):
+    """Shared from_config logic for both EDD TRGB variants."""
     config = load_config(config_path, replace_los_prior=False)
     use_recon = get_nested(config, "model/use_reconstruction", False)
     config["io"]["load_host_los"] = use_recon
     config["io"]["load_rand_los"] = use_recon
-    d = config["io"]["PV_main"]["EDD_TRGB"]
+    d = config["io"]["PV_main"][config_key]
     root = d["root"]
 
-    zcmb_min = get_nested(config, "io/PV_main/EDD_TRGB/zcmb_min", None)
-    zcmb_max = get_nested(config, "io/PV_main/EDD_TRGB/zcmb_max", None)
-    b_min = get_nested(config, "io/PV_main/EDD_TRGB/b_min", None)
+    zcmb_min = get_nested(config, f"io/PV_main/{config_key}/zcmb_min", None)
+    zcmb_max = get_nested(config, f"io/PV_main/{config_key}/zcmb_max", None)
+    b_min = get_nested(config, f"io/PV_main/{config_key}/b_min", None)
 
-    data, mask = load_EDD_TRGB(root, zcmb_min=zcmb_min, zcmb_max=zcmb_max,
-                               b_min=b_min, return_mask=True)
+    data, mask = loader(root, zcmb_min=zcmb_min, zcmb_max=zcmb_max,
+                        b_min=b_min, return_mask=True)
 
-    # Rename to match model expectations
     data["RA_host"] = data.pop("RA")
     data["dec_host"] = data.pop("dec")
     data["mag_obs"] = data.pop("mag")
     data["e_mag_obs"] = data.pop("e_mag")
     data["czcmb"] = data.pop("zcmb") * SPEED_OF_LIGHT
     data["e_czcmb"] = data.pop("e_zcmb") * SPEED_OF_LIGHT
-
-    # Median mag error for selection function smoothing
     data["e_mag_median"] = float(np.median(data["e_mag_obs"]))
 
-    # LOS data
-    which_host_los = get_nested(
+    which_los = get_nested(
         config, "io/which_host_los",
-        get_nested(config, "io/PV_main/EDD_TRGB/which_host_los", None))
+        get_nested(config, f"io/PV_main/{config_key}/which_host_los", None))
+
+    def _resolve_los_path(path):
+        if path is not None and which_los is not None:
+            return path.replace("<X>", which_los)
+        return path
+
     los_data_path = None
     rand_los_data_path = None
-
     if get_nested(config, "io/load_host_los", False):
-        los_file = d.get("los_file", None)
-        if los_file is not None and which_host_los is not None:
-            los_data_path = los_file.replace("<X>", which_host_los)
-        else:
-            los_data_path = los_file
-
+        los_data_path = _resolve_los_path(d.get("los_file", None))
     if get_nested(config, "io/load_rand_los", False):
-        rand_file = get_nested(config, "io/los_file_random", None)
-        if rand_file is not None and which_host_los is not None:
-            rand_los_data_path = rand_file.replace("<X>", which_host_los)
-        else:
-            rand_los_data_path = rand_file
+        rand_los_data_path = _resolve_los_path(
+            get_nested(config, "io/los_file_random", None))
 
     if los_data_path is not None:
         host_los = load_los(los_data_path, {}, mask=mask)
@@ -1902,7 +1951,6 @@ def load_EDD_TRGB_from_config(config_path):
     else:
         data["has_rand_los"] = False
 
-    # Anchor calibration from config
     anchors = get_nested(config, "model/anchors", {})
     data["mu_LMC_anchor"] = anchors.get("mu_LMC", 18.477)
     data["e_mu_LMC_anchor"] = anchors.get("e_mu_LMC", 0.026)
@@ -1914,6 +1962,18 @@ def load_EDD_TRGB_from_config(config_path):
     data["e_mag_N4258_TRGB"] = anchors.get("e_mag_N4258_TRGB", 0.0443)
 
     return data
+
+
+def load_EDD_TRGB_from_config(config_path):
+    """Load ungrouped EDD TRGB data from config."""
+    return _load_EDD_TRGB_from_config_common(
+        config_path, "EDD_TRGB", load_EDD_TRGB)
+
+
+def load_EDD_TRGB_grouped_from_config(config_path):
+    """Load grouped EDD TRGB data from config."""
+    return _load_EDD_TRGB_from_config_common(
+        config_path, "EDD_TRGB_grouped", load_EDD_TRGB_grouped)
 
 
 ###############################################################################
@@ -2075,5 +2135,6 @@ _CATALOGUE_LOADERS = {
     "PantheonPlusLane": load_PantheonPlus_Lane,
     "CSP": load_CSP,
     "EDD_TRGB": load_EDD_TRGB,
+    "EDD_TRGB_grouped": load_EDD_TRGB_grouped,
     "EDD_2MTF": load_EDD_2MTF,
 }
