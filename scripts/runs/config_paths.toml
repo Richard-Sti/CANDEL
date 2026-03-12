@@ -14,6 +14,10 @@ los_r0_decay_scale = 5
 root = "data/EDD_TRGB"
 los_file = "data/EDD_TRGB/los_EDD_TRGB_<X>.hdf5"
 
+[io.PV_main.EDD_TRGB_grouped]
+root = "data/EDD_TRGB"
+los_file = "data/EDD_TRGB/los_EDD_TRGB_grouped_<X>.hdf5"
+
 [io.PV_main.EDD_2MTF]
 root = "data/EDD_2MTF"
 los_file = "data/EDD_2MTF/los_EDD_2MTF_<X>.hdf5"

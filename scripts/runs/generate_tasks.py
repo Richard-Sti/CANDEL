@@ -141,7 +141,8 @@ def generate_dynamic_tag(config, base_tag="default"):
     parts = []
     which_run = get_nested(config, "model/which_run", None)
 
-    if which_run in ("CH0", "CCHP", "CCHP_CSP", "EDD_TRGB"):
+    if which_run in ("CH0", "CCHP", "CCHP_CSP", "EDD_TRGB",
+                      "EDD_TRGB_grouped"):
         model_name = which_run
         catalogue = which_run
         parts.append(which_run)
@@ -245,7 +246,7 @@ def generate_dynamic_tag(config, base_tag="default"):
         if redshift_kind != "cz_cmb":
             parts.append(redshift_kind)
 
-    elif which_run == "EDD_TRGB":
+    elif which_run in ("EDD_TRGB", "EDD_TRGB_grouped"):
         which_sel = get_nested(config, "model/which_selection", None)
         if _is_active(which_sel):
             parts.append(f"sel-{which_sel}")
@@ -253,7 +254,7 @@ def generate_dynamic_tag(config, base_tag="default"):
             parts.append(get_nested(
                 config, "io/which_host_los",
                 get_nested(config,
-                           "io/PV_main/EDD_TRGB/which_host_los", None)))
+                           f"io/PV_main/{which_run}/which_host_los", None)))
 
     if base_tag != "default":
         parts.append(base_tag)

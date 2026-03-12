@@ -31,6 +31,8 @@ from .data import (                                                             
     load_generic,                                                               # noqa
     load_EDD_TRGB,                                                              # noqa
     load_EDD_TRGB_from_config,                                                  # noqa
+    load_EDD_TRGB_grouped,                                                      # noqa
+    load_EDD_TRGB_grouped_from_config,                                          # noqa
     load_EDD_2MTF,                                                              # noqa
     load_EDD_2MTF_from_config,                                                  # noqa
     load_CSP,                                                                   # noqa
