@@ -325,8 +325,8 @@ if __name__ == "__main__":
         help="Arbitrary tag/index for this task list.")
     args = parser.parse_args()
 
-    # --- CH0: SN magnitude selection, Carrick reconstruction ---
-    config_path = "./config_shoes.toml"
+    # --- EDD TRGB: TRGB selection, Carrick, grouped + ungrouped ---
+    config_path = "./config_EDD_TRGB.toml"
     config = load_config(
         config_path, replace_none=False, replace_los_prior=False,
         fill_paths=False)
@@ -339,16 +339,11 @@ if __name__ == "__main__":
 
     manual_overrides = {
         **{k: v for k, v in _local_cfg.items()},
-        "inference/num_warmup": 1000,
-        "inference/num_samples": 3000,
-        "inference/num_chains": 1,
-        "model/which_selection": "SN_magnitude",
+        "model/which_run": ["EDD_TRGB", "EDD_TRGB_grouped"],
+        "model/which_selection": "TRGB_magnitude",
         "model/use_reconstruction": True,
-        "model/which_bias": "double_powerlaw",
-        "model/use_uniform_mu_host_priors": False,
-        "model/mag_lim_SN": "infer",
-        "model/mag_lim_SN_width": "infer",
-        "io/SH0ES/which_host_los": "manticore_2MPP_MULTIBIN_N256_DES_V2",
+        "model/which_bias": "powerlaw",
+        "io/which_host_los": "manticore_2MPP_MULTIBIN_N256_DES_V2",
     }
 
     # # --- CCHP TRGB: SN magnitude selection, Manticore reconstruction ---
@@ -430,6 +425,7 @@ if __name__ == "__main__":
             # Force PPC off for Manticore (too expensive with many fields)
             _los_keys = [
                 "io/PV_main/EDD_TRGB/which_host_los",
+                "io/PV_main/EDD_TRGB_grouped/which_host_los",
                 "io/PV_main/EDD_2MTF/which_host_los",
                 "io/SH0ES/which_host_los",
                 "io/which_host_los",
@@ -455,7 +451,8 @@ if __name__ == "__main__":
 
             # Validate which_run
             which_run = get_nested(local_config, "model/which_run", None)
-            valid_runs = (None, "CH0", "CCHP", "CCHP_CSP", "EDD_TRGB")
+            valid_runs = (None, "CH0", "CCHP", "CCHP_CSP", "EDD_TRGB",
+                          "EDD_TRGB_grouped")
             if which_run not in valid_runs:
                 raise ValueError(
                     f"Invalid which_run='{which_run}'. "

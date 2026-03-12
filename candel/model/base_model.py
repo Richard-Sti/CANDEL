@@ -502,11 +502,38 @@ class H0ModelBase(ModelBase):
         self.apply_sel = self.which_selection is not None
 
     def _replace_bias_priors(self, config):
-        """Inject delta priors for galaxy bias params if missing."""
+        """Inject delta priors for galaxy bias params if missing.
+
+        Required params for the active bias model must have explicit priors;
+        a missing prior raises ``ValueError``.  All other bias params get
+        silent delta defaults so that they exist but don't affect sampling.
+        """
         use_reconstruction = get_nested(
             config, "model/use_reconstruction", False)
+        which_bias = get_nested(config, "model/which_bias", "linear")
         priors = config.setdefault(
             "model", {}).setdefault("priors", {})
+
+        # Params required by each bias model.
+        _required = {
+            "unity": set(),
+            "powerlaw": {"alpha"},
+            "linear": {"b1"},
+            "linear_from_beta": set(),
+            "linear_from_beta_stochastic": {"delta_b1"},
+            "double_powerlaw": {"alpha_low", "alpha_high", "log_rho_t"},
+            "quadratic": {"b1", "b2"},
+            "spline": {"spline_bias_y"},
+        }
+        required = _required.get(which_bias, set())
+
+        if use_reconstruction:
+            for param in required:
+                if param not in priors:
+                    raise ValueError(
+                        f"Bias model '{which_bias}' requires prior "
+                        f"[model.priors.{param}] but none was found.")
+
         bias_defaults = {"b1": 1.0, "b2": 0.0, "alpha": 1.0,
                          "delta_b1": 0.0}
         for param, default in bias_defaults.items():

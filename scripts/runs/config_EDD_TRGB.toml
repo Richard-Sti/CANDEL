@@ -33,12 +33,12 @@ which_selection = "TRGB_magnitude"
 run_ppc = false
 ppc_factor = 10
 num_rand_los_no_recon = 1000
-max_rand_los = 1000
+# max_rand_los: disabled, use all available random LOS
 distmod_limits = [10, 38]
 r_limits_malmquist = [0.01, 35]
 
-delta_mu = 0.03
-dr_max = 0.5
+delta_mu = 0.025
+dr_max = 0.2
 
 delta_mu_sel = 0.35
 dr_max_sel = 1.5
@@ -61,8 +61,10 @@ dist = "maxwell"
 scale = 0.0627
 
 [model.priors.sigma_v]
-dist = "maxwell"
-scale = 157
+dist = "truncated_normal"
+mean = 250
+scale = 10
+low = 0.0
 
 [model.priors.beta]
 dist = "truncated_normal"

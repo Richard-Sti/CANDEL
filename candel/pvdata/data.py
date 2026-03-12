@@ -1858,6 +1858,12 @@ def _load_edd_trgb_core(fpath, label, zcmb_min=None, zcmb_max=None,
                f"magnitudes.")
     keep &= ~bad_mag
 
+    # Drop galaxies with fill-value Vcmb (9999 = no measured velocity).
+    bad_vcmb = keep & (np.abs(czcmb) >= 9999)
+    if np.any(bad_vcmb):
+        fprint(f"dropping {np.sum(bad_vcmb)} galaxies with fill-value Vcmb.")
+    keep &= ~bad_vcmb
+
     # Apply zcmb / galactic latitude cuts on the kept subset.
     sub_mask = _zcmb_blat_mask(
         zcmb_arr[keep], RA[keep], dec[keep], zcmb_min, zcmb_max, b_min)
@@ -1912,7 +1918,12 @@ def _load_EDD_TRGB_from_config_common(config_path, config_key, loader):
     data["dec_host"] = data.pop("dec")
     data["mag_obs"] = data.pop("mag")
     data["e_mag_obs"] = data.pop("e_mag")
-    data["czcmb"] = data.pop("zcmb") * SPEED_OF_LIGHT
+    # For grouped data, use the group Vcmb instead of individual.
+    if "czcmb_group" in data:
+        data["czcmb"] = data.pop("czcmb_group")
+        data.pop("zcmb")
+    else:
+        data["czcmb"] = data.pop("zcmb") * SPEED_OF_LIGHT
     data["e_czcmb"] = data.pop("e_zcmb") * SPEED_OF_LIGHT
     data["e_mag_median"] = float(np.median(data["e_mag_obs"]))
 
