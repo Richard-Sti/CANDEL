@@ -183,9 +183,9 @@ def load_config(config_path, replace_none=True, fill_paths=True,
     if fill_paths:
         config = convert_to_absolute_paths(config)
 
-    shared_params = config["inference"].get("shared_params", None)
+    shared_params = config.get("inference", {}).get("shared_params", None)
     if shared_params and str(shared_params).lower() != "none":
-        config["inference"]["shared_params"] = shared_params.split(",")
+        config.setdefault("inference", {})["shared_params"] = shared_params.split(",")
 
     return config
 
