@@ -175,9 +175,13 @@ if __name__ == "__main__":
             data = candel.pvdata.load_CCHP_from_config(args.config)
             model = candel.model.TRGBModel(args.config, data)
             candel.run_H0_inference(model, )
-        elif which_run == "EDD_TRGB":
-            fprint("selected `EDD_TRGB` model.")
-            data = candel.pvdata.load_EDD_TRGB_from_config(args.config)
+        elif which_run in ("EDD_TRGB", "EDD_TRGB_grouped"):
+            fprint(f"selected `{which_run}` model.")
+            if which_run == "EDD_TRGB_grouped":
+                data = candel.pvdata.load_EDD_TRGB_grouped_from_config(
+                    args.config)
+            else:
+                data = candel.pvdata.load_EDD_TRGB_from_config(args.config)
             model = candel.model.TRGBModel(args.config, data)
             candel.run_H0_inference(model, )
 
