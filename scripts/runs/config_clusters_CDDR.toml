@@ -1,0 +1,403 @@
+# Job finished at: 2026-03-13 22:08:47
+# Job started at: 2026-03-13 22:06:25
+# Job started at: 2026-03-13 22:00:25
+# Job started at: 2026-03-13 21:59:15
+# Job started at: 2026-03-13 21:58:30
+# Job finished at: 2026-03-13 21:53:28
+# Job started at: 2026-03-13 21:51:06
+# Job finished at: 2026-03-13 18:02:04
+# Job started at: 2026-03-13 17:59:40
+# Job started at: 2026-03-13 17:56:01
+# Job started at: 2026-03-13 17:53:37
+# Job started at: 2026-03-13 17:52:07
+# Job started at: 2026-03-13 17:51:51
+root_main = "./"
+python_exec = "python"
+machine = "local"
+
+[inference]
+model = [
+    "ClustersModel",
+    "ClustersModel",
+]
+shared_params = "A_LT,B_LT,A_YT,B_YT,sigma_LT,sigma_YT,sigma_v,R_dist_emp,p_dist_emp,n_dist_emp,beta,epsilon_CDDR,logT_prior_mean,logT_prior_std"
+num_warmup = 500
+num_samples = 500
+num_chains = 1
+chain_method = "sequential"
+seed = 44
+compute_log_density = true
+compute_evidence = true
+track_log_density_per_sample = false
+num_chains_harmonic = 10
+skip_if_exists = false
+
+[pv_model]
+kind = "precomputed_los_Carrick2015"
+galaxy_bias = "linear"
+which_Vext = "constant"
+Vext_per_pix_nside = 1
+which_zeropoint = "constant"
+which_H0 = "constant"
+anisotropy_per_pix_nside = 1
+zeropoint_parameterization = "magnitude"
+which_A = "constant"
+A_per_pix_nside = 1
+Vext_radial_bin_edges = [
+    0.0,
+    0.075,
+    0.35,
+]
+use_zspace = false
+r_limits_malmquist = [
+    0.1,
+    1401,
+]
+num_points_malmquist = 1401
+los_decay_scale = 20.0
+density_prior = false
+
+[model]
+Om = 0.3
+use_MNR = true
+marginalize_logT =  false
+marginalize_eta = true
+test_CDDR = true
+
+[model.logT_grid]
+k_sigma = 5
+n_grid = 31
+
+[model.eta_grid]
+k_sigma = 5
+n_grid = 31
+
+[model.priors.h]
+dist = "delta"
+value = 1.0
+
+[model.priors.b1]
+dist = "delta"
+value = 0.0
+
+[model.priors.beta]
+dist = "normal"
+loc = 0.43
+scale = 0.02
+
+[model.priors.alpha]
+dist = "delta"
+value = 0.0
+
+[model.priors.alpha_low]
+dist = "delta"
+value = 0.0
+
+[model.priors.alpha_high]
+dist = "delta"
+value = 0.0
+
+[model.priors.log_rho_t]
+dist = "delta"
+value = 0.0
+
+[model.priors.sigma_int]
+dist = "jeffreys"
+low = 0.05
+high = 0.5
+
+[model.priors.sigma_LT]
+dist = "jeffreys"
+low = 0.05
+high = 0.5
+
+[model.priors.sigma_YT]
+dist = "jeffreys"
+low = 0.05
+high = 0.5
+
+[model.priors.A_LT]
+dist = "uniform"
+low = -2
+high = 2.5
+
+[model.priors.B_LT]
+dist = "uniform"
+low = 1.5
+high = 3
+
+[model.priors.A_YT]
+dist = "uniform"
+low = -0.5
+high = 2.5
+
+[model.priors.B_YT]
+dist = "uniform"
+low = 1.5
+high = 3
+
+[model.priors.sigma_v]
+dist = "jeffreys"
+low = 150.0
+high = 3000.0
+
+[model.priors.epsilon_CDDR]
+dist = "uniform"
+low = -2.0
+high = 2.0
+
+[model.priors.Vext]
+dist = "delta"
+value = [
+    0.0,
+    0.0,
+    0.0,
+]
+
+[model.priors.Vext_pix]
+dist = "delta"
+value = [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+]
+
+[model.priors.Vext_quad]
+dist = "delta"
+value = [
+    [
+        0,
+        0,
+    ],
+    [
+        0,
+        0,
+    ],
+    [
+        0,
+        0,
+    ],
+]
+
+[model.priors.Vext_radial]
+dist = "vector_radial_spline_uniform"
+low = 0.0
+high = 2000
+rknot = [
+    0,
+    250,
+    500,
+    1000,
+]
+k = 1
+endpoints = "not-a-knot"
+
+[model.priors.Vext_radmag]
+dist = "vector_radialmag_uniform"
+low = [
+    0,
+    -5000,
+    -5000,
+    -5000,
+]
+high = 5000
+rknot = [
+    0,
+    250,
+    500,
+    1000,
+]
+method = "cubic"
+smoothness_threshold = 1000
+smoothness_scale = 200
+sample_galactic = true
+half_sky = false
+
+[model.priors.zeropoint_dipole]
+dist = "delta"
+value = [
+    0.0,
+    0.0,
+    0.0,
+]
+
+[model.priors.A_pix]
+dist = "array_uniform"
+low = -10.0
+high = 10.0
+nval = 12
+
+[model.priors.zeropoint_quad]
+dist = "delta"
+value = [
+    [
+        0,
+        0,
+    ],
+    [
+        0,
+        0,
+    ],
+    [
+        0,
+        0,
+    ],
+]
+
+[model.priors.zeropoint_pix]
+dist = "delta"
+value = [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+]
+
+[model.priors.H0_dipole]
+dist = "delta"
+value = [
+    0,
+    0,
+    0,
+]
+
+[model.priors.H0_quad]
+dist = "delta"
+value = [
+    [
+        0,
+        0,
+    ],
+    [
+        0,
+        0,
+    ],
+    [
+        0,
+        0,
+    ],
+]
+
+[model.priors.H0_pix]
+dist = "delta"
+value = [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+]
+
+[model.priors.dH0]
+dist = "delta"
+value = [
+    0,
+    0,
+    0,
+]
+
+[model.priors.R_dist_emp]
+dist = "uniform"
+low = 1
+high = 450
+
+[model.priors.p_dist_emp]
+dist = "truncated_normal"
+low = 0.0
+mean = 2.0
+scale = 0.1
+
+[model.priors.n_dist_emp]
+dist = "uniform"
+low = 0.1
+high = 4.0
+
+[io]
+root_output = "results/CDDR"
+catalogue_name = [
+    "Clusters_hasY",
+    "Clusters_LTtail",
+]
+apply_Ez_correction = true
+fname_output = "results/CDDR/Carrick2015_LTYT_CDDR.hdf5"
+
+[io.Clusters]
+root = "data/Clusters"
+zcmb_max = 0.45
+which_relation = "YT"
+finite_logY = true
+remove_noY = true
+only_missing_Y = false
+convert_to_CMB_frame = true
+los_file = "data/Clusters/los_Clusters_<X>.hdf5"
+nsamples_subsample = "none"
+seed_subsample = 42
+
+[io.Clusters_hasY]
+root = "data/Clusters"
+zcmb_max = 0.45
+which_relation = "LTYT"
+finite_logY = true
+remove_noY = true
+only_missing_Y = false
+convert_to_CMB_frame = true
+los_file = "data/Clusters/los_Clusters_<X>.hdf5"
+nsamples_subsample = "none"
+seed_subsample = 42
+logT_mean = 0.6325445009921037
+
+[io.Clusters_LTtail]
+root = "data/Clusters"
+zcmb_max = 0.45
+which_relation = "LT"
+finite_logY = false
+remove_noY = false
+only_missing_Y = true
+convert_to_CMB_frame = true
+los_file = "data/Clusters/los_Clusters_<X>.hdf5"
+nsamples_subsample = "none"
+seed_subsample = 42
+logT_mean = 0.6325445009921037
+
+[io.PV_main.Clusters]
+root = "data/Clusters"
+return_all = true
+los_file = "data/Clusters/los_Clusters_<X>.hdf5"
+
+[io.reconstruction_main]
+rmin = 0.001
+rmax = 330.0
+num_steps = 1001
+
+[io.reconstruction_main.manticore_2MPP_MULTIBIN_N256_DES_V2]
+fpath_root = "/mnt/extraspace/rstiskalek/MANTICORE/2MPP_MULTIBIN_N256_DES_V2/sph_fields_new_feb/sph_fields"
+
+[io.reconstruction_main.Carrick2015]
+path_density = "data/fields/carrick2015_twompp_density.npy"
+path_velocity = "data/fields/carrick2015_twompp_velocity.npy"
+
+[io.reconstruction_main.2mpp_zspace]
