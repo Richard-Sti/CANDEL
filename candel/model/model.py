@@ -1967,6 +1967,10 @@ class ClustersModel(BaseModel):
         self.distance2logda = Distance2LogAngDist(Om0=self.Om, zmax_interp=1.0)
         self.distance2logdl = Distance2LogLumDist(Om0=self.Om, zmax_interp=1.0)
 
+        # CDDR violation: D_L = (1+z)^(2+ε) D_A
+        self.test_CDDR = bool(
+            get_nested(self.config, "model/test_CDDR", False))
+
         if {"LT", "YT", "LTYT"} & self.used_relations:
             self.priors["CL_C"] = Delta(jnp.asarray(0.0))
         if "LY" in self.used_relations:
@@ -2322,6 +2326,12 @@ class ClustersModel(BaseModel):
                         [logT_prior_std**2, rho_TF * logT_prior_std * logF_prior_std],
                         [rho_TF * logT_prior_std * logF_prior_std, logF_prior_std**2]])
 
+        # CDDR violation: D_L = (1+z)^(2+ε) D_A (sample before plate)
+        if self.test_CDDR:
+            epsilon_CDDR = rsample(
+                "epsilon_CDDR", self.priors["epsilon_CDDR"],
+                shared_params)
+
         with plate("data", nsamples):
             if self.use_MNR:
                 if self.marginalize_logT:
@@ -2409,6 +2419,12 @@ class ClustersModel(BaseModel):
             r_grid = data["r_grid"] / h
             logdl_grid = self.distance2logdl(r_grid)
             logda_grid = self.distance2logda(r_grid)
+
+            # CDDR violation: D_L = (1+z)^(2+ε) D_A
+            if self.test_CDDR:
+                z_at_r = self.distance2redshift(r_grid, h=h)
+                logdl_grid = logdl_grid + epsilon_CDDR * jnp.log10(
+                    1 + z_at_r)
 
             if data.has_precomputed_los:
                 los_delta_r_grid = None
