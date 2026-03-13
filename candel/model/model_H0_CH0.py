@@ -21,7 +21,9 @@ from numpyro.distributions import MultivariateNormal, Normal, Uniform
 
 from ..util import fprint, get_nested, replace_prior_with_delta
 from .base_model import H0ModelBase
-from .pv_utils import lp_galaxy_bias, rsample, sample_galaxy_bias
+from .pv_utils import (lp_galaxy_bias, octupole_radial, quadrupole_radial,
+                       rsample, sample_galaxy_bias, sample_octupole,
+                       sample_quadrupole, sigmoid_monopole_radial)
 from .simpson import ln_simpson_precomputed, simpson_log_weights
 from .utils import (log_prob_integrand_sel, logmeanexp, mvn_logpdf_cholesky,
                     normal_logpdf_var, predict_cz)
@@ -324,6 +326,25 @@ class CH0Model(H0ModelBase):
 
         # Velocity field calibration
         Vext = rsample("Vext", self.priors["Vext"])
+        Vext_quad = None
+        if self.use_Vext_quadrupole:
+            Vext_quad = sample_quadrupole(
+                "Vext_quad", *self.Vext_quad_mag_range)
+        Vext_oct = None
+        if self.use_Vext_octupole:
+            Vext_oct = sample_octupole(
+                "Vext_oct", *self.Vext_oct_mag_range)
+        Vext_mono = None
+        if self.which_Vext_monopole == "constant":
+            Vext_mono = rsample("Vext_mono", self.priors["Vext_mono"])
+        elif self.which_Vext_monopole == "sigmoid":
+            Vext_mono_left = rsample(
+                "Vext_mono_left", self.priors["Vext_mono_left"])
+            Vext_mono_rt = rsample(
+                "Vext_mono_rt", self.priors["Vext_mono_rt"])
+            Vext_mono_angle = rsample(
+                "Vext_mono_angle", self.priors["Vext_mono_angle"])
+            Vext_mono = (Vext_mono_left, Vext_mono_rt, Vext_mono_angle)
         if self.use_density_dependent_sigma_v:
             sigma_v_low = rsample("sigma_v_low", self.priors["sigma_v_low"])
             sigma_v_high = rsample("sigma_v_high", self.priors["sigma_v_high"])
@@ -350,6 +371,14 @@ class CH0Model(H0ModelBase):
 
         h = H0 / 100
         Vext_rad_host = self.rhat_host @ Vext
+        if Vext_quad is not None:
+            Q_mag, q1_hat, q2_hat = Vext_quad
+            Vext_rad_host = Vext_rad_host + quadrupole_radial(
+                Q_mag, q1_hat, q2_hat, self.rhat_host)
+        if Vext_oct is not None:
+            O_mag, o1_hat, o2_hat, o3_hat = Vext_oct
+            Vext_rad_host = Vext_rad_host + octupole_radial(
+                O_mag, o1_hat, o2_hat, o3_hat, self.rhat_host)
 
         # HST and Gaia zero-point calibration of MW Cepheids.
         factor("M_W_HST",
@@ -375,6 +404,14 @@ class CH0Model(H0ModelBase):
         r_host_all = self.distmod2distance(mu_host_all, h=h)
         r_host = r_host_all[:self.num_hosts]
 
+        if isinstance(Vext_mono, tuple):
+            V_left, r_t, angle = Vext_mono
+            k = jnp.tan(angle)
+            Vext_rad_host = Vext_rad_host + sigmoid_monopole_radial(
+                V_left, r_t, k, r_host)
+        elif Vext_mono is not None:
+            Vext_rad_host = Vext_rad_host + Vext_mono
+
         # Do we use a r^2 prior on the host distance moduli?
         if self.use_uniform_mu_host_priors:
             lp_host_dist = jnp.zeros(self.num_hosts)
@@ -387,8 +424,10 @@ class CH0Model(H0ModelBase):
             lp_anchor_dist = lp_all_host_dist[self.num_hosts:]
             factor("lp_anchor_dist", lp_anchor_dist)
 
-        lp_rand_dist_grid, Vext_rad_rand = \
-            self._prepare_selection_grid(self._lp_sel_dist_grid, Vext)
+        lp_rand_dist_grid, Vext_rad_rand, Vext_mono_sel = \
+            self._prepare_selection_grid(
+                self._lp_sel_dist_grid, Vext, Vext_quad, Vext_oct,
+                Vext_mono)
 
         if self.use_reconstruction:
             ll_reconstruction, los_delta_host, rh_host = \
@@ -444,9 +483,12 @@ class CH0Model(H0ModelBase):
                 norm_jax.logcdf(
                     (cz_lim - self.czcmb_cepheid_host) / cz_width)))
 
+            Vpec_sel = (Vext_rad_rand[None, ..., None]
+                       + beta * rand_los_Vpec_grid)
+            if Vext_mono_sel is not None:
+                Vpec_sel = Vpec_sel + Vext_mono_sel[None, None, :]
             log_S = self.log_S_cz(
-                lp_rand_dist_grid,
-                Vext_rad_rand[None, ..., None] + beta * rand_los_Vpec_grid,
+                lp_rand_dist_grid, Vpec_sel,
                 H0, sigma_v_selection, cz_lim, cz_width)
 
             if self.weight_selection_by_covmat_Neff:
@@ -478,9 +520,12 @@ class CH0Model(H0ModelBase):
                 + norm_jax.logcdf(
                     (mag_lim - self.mag_SN_unique_Cepheid_host) / mag_width)))
 
+            Vpec_sel = (Vext_rad_rand[None, ..., None]
+                       + beta * rand_los_Vpec_grid)
+            if Vext_mono_sel is not None:
+                Vpec_sel = Vpec_sel + Vext_mono_sel[None, None, :]
             log_S = self.log_S_SN_mag_cz(
-                lp_rand_dist_grid,
-                Vext_rad_rand[None, ..., None] + beta * rand_los_Vpec_grid,
+                lp_rand_dist_grid, Vpec_sel,
                 M_B, H0, sigma_v_selection,
                 mag_lim, mag_width, cz_lim, cz_width)
 

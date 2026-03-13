@@ -28,7 +28,8 @@ from ..cosmo.cosmography import (Distance2Distmod, Distance2Redshift,
 from ..util import (fprint, fsection, get_nested, load_config,
                     radec_to_cartesian, replace_prior_with_delta)
 from .interp import LOSInterpolator
-from .pv_utils import lp_galaxy_bias
+from .pv_utils import (lp_galaxy_bias, octupole_radial, quadrupole_radial,
+                       sigmoid_monopole_radial)
 from .simpson import ln_simpson_precomputed, simpson_log_weights
 from .utils import load_priors, log_prob_integrand_sel, predict_cz
 
@@ -499,14 +500,86 @@ class H0ModelBase(ModelBase):
             config, "model/which_bias", "linear")
         if self.use_reconstruction:
             fprint(f"which_bias set to {self.which_bias}")
+        # Monopole: "none", "constant", "sigmoid", or legacy bool
+        _mono_raw = get_nested(
+            config, "model/which_Vext_monopole", "none")
+        # Backward compat: treat True → "constant", False/None → "none"
+        if _mono_raw is True:
+            _mono_raw = "constant"
+        elif _mono_raw is False or _mono_raw is None:
+            _mono_raw = "none"
+        # Also support legacy bool key
+        if _mono_raw == "none" and get_nested(
+                config, "model/use_Vext_monopole", False):
+            _mono_raw = "constant"
+        if _mono_raw not in ("none", "constant", "sigmoid"):
+            raise ValueError(
+                f"Invalid which_Vext_monopole: '{_mono_raw}'. "
+                "Expected 'none', 'constant', or 'sigmoid'.")
+        self.which_Vext_monopole = _mono_raw
+        if self.which_Vext_monopole != "none":
+            fprint(f"which_Vext_monopole set to {self.which_Vext_monopole}")
+        self.use_Vext_quadrupole = get_nested(
+            config, "model/use_Vext_quadrupole", False)
+        if self.use_Vext_quadrupole:
+            quad_prior = get_nested(
+                config, "model/priors/Vext_quad", None)
+            if quad_prior is None:
+                raise ValueError(
+                    "`use_Vext_quadrupole` requires "
+                    "[model.priors.Vext_quad].")
+            self.Vext_quad_mag_range = (quad_prior["low"],
+                                        quad_prior["high"])
+            fprint(f"use_Vext_quadrupole set to True "
+                   f"(mag range: {self.Vext_quad_mag_range})")
+        self.use_Vext_octupole = get_nested(
+            config, "model/use_Vext_octupole", False)
+        if self.use_Vext_octupole:
+            oct_prior = get_nested(
+                config, "model/priors/Vext_oct", None)
+            if oct_prior is None:
+                raise ValueError(
+                    "`use_Vext_octupole` requires "
+                    "[model.priors.Vext_oct].")
+            self.Vext_oct_mag_range = (oct_prior["low"],
+                                       oct_prior["high"])
+            fprint(f"use_Vext_octupole set to True "
+                   f"(mag range: {self.Vext_oct_mag_range})")
         self.apply_sel = self.which_selection is not None
 
     def _replace_bias_priors(self, config):
-        """Inject delta priors for galaxy bias params if missing."""
+        """Inject delta priors for galaxy bias params if missing.
+
+        Required params for the active bias model must have explicit priors;
+        a missing prior raises ``ValueError``.  All other bias params get
+        silent delta defaults so that they exist but don't affect sampling.
+        """
         use_reconstruction = get_nested(
             config, "model/use_reconstruction", False)
+        which_bias = get_nested(config, "model/which_bias", "linear")
         priors = config.setdefault(
             "model", {}).setdefault("priors", {})
+
+        # Params required by each bias model.
+        _required = {
+            "unity": set(),
+            "powerlaw": {"alpha"},
+            "linear": {"b1"},
+            "linear_from_beta": set(),
+            "linear_from_beta_stochastic": {"delta_b1"},
+            "double_powerlaw": {"alpha_low", "alpha_high", "log_rho_t"},
+            "quadratic": {"b1", "b2"},
+            "spline": {"spline_bias_y"},
+        }
+        required = _required.get(which_bias, set())
+
+        if use_reconstruction:
+            for param in required:
+                if param not in priors:
+                    raise ValueError(
+                        f"Bias model '{which_bias}' requires prior "
+                        f"[model.priors.{param}] but none was found.")
+
         bias_defaults = {"b1": 1.0, "b2": 0.0, "alpha": 1.0,
                          "delta_b1": 0.0}
         for param, default in bias_defaults.items():
@@ -522,17 +595,36 @@ class H0ModelBase(ModelBase):
     #  Reconstruction helpers
     # ------------------------------------------------------------------
 
-    def _prepare_selection_grid(self, lp_host_dist_grid, Vext):
+    def _prepare_selection_grid(self, lp_host_dist_grid, Vext,
+                                Vext_quad=None, Vext_oct=None,
+                                Vext_mono=None):
         """Prepare random-LOS distance prior grid and Vext projection."""
+        Vext_mono_sel = None
         if self.apply_sel:
             lp_rand_dist_grid = lp_host_dist_grid
             # Works for rhat_rand_los both (n_los, 3) and (n_sims, n_los, 3)
             Vext_rad_rand = jnp.sum(
                 Vext[None, :] * self.rhat_rand_los, axis=-1)
+            if isinstance(Vext_mono, tuple):
+                V_left, r_t, angle = Vext_mono
+                k = jnp.tan(angle)
+                Vext_mono_sel = sigmoid_monopole_radial(
+                    V_left, r_t, k, self.r_sel_range)
+            elif Vext_mono is not None:
+                Vext_mono_sel = jnp.full_like(
+                    self.r_sel_range, Vext_mono)
+            if Vext_quad is not None:
+                Q_mag, q1_hat, q2_hat = Vext_quad
+                Vext_rad_rand = Vext_rad_rand + quadrupole_radial(
+                    Q_mag, q1_hat, q2_hat, self.rhat_rand_los)
+            if Vext_oct is not None:
+                O_mag, o1_hat, o2_hat, o3_hat = Vext_oct
+                Vext_rad_rand = Vext_rad_rand + octupole_radial(
+                    O_mag, o1_hat, o2_hat, o3_hat, self.rhat_rand_los)
         else:
             lp_rand_dist_grid = 0.
             Vext_rad_rand = 0.
-        return lp_rand_dist_grid, Vext_rad_rand
+        return lp_rand_dist_grid, Vext_rad_rand, Vext_mono_sel
 
     def _apply_host_reconstruction(self, lp_host_dist, r_host, h,
                                    bias_params):

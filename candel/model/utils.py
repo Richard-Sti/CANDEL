@@ -180,6 +180,8 @@ def load_priors(config_priors):
         "vector_radial_uniform": lambda p: {"type": "vector_radial_uniform", "nval": len(p["rknot"]), "low": p["low"], "high": p["high"]},  # noqa
         "vector_components_uniform": lambda p: {"type": "vector_components_uniform", "low": p["low"], "high": p["high"],},  # noqa
         "vector_radialmag_uniform": lambda p: {"type": "vector_radialmag_uniform", "nval": len(p["rknot"]), "low": p["low"], "high": p["high"]},  # noqa
+        "quadrupole": lambda p: {"type": "quadrupole", "low": p["low"], "high": p["high"]},  # noqa
+        "octupole": lambda p: {"type": "octupole", "low": p["low"], "high": p["high"]},  # noqa
     }
     priors = {}
     prior_dist_name = {}
