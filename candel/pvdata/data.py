@@ -1944,13 +1944,17 @@ def _load_EDD_TRGB_from_config_common(config_path, config_key, loader):
         rand_los_data_path = _resolve_los_path(
             get_nested(config, "io/los_file_random", None))
 
+    fprint(f"reconstruction: {which_los or 'none'}")
     if los_data_path is not None:
+        fprint(f"  host LOS path: {los_data_path}")
         host_los = load_los(los_data_path, {}, mask=mask)
         data["host_los_density"] = host_los["los_density"]
         data["host_los_velocity"] = host_los["los_velocity"]
         data["host_los_r"] = host_los["los_r"]
+        fprint(f"  host LOS shape: {host_los['los_density'].shape}")
 
     if rand_los_data_path is not None:
+        fprint(f"  random LOS path: {rand_los_data_path}")
         rand_los = load_los(rand_los_data_path, {}, mask=None, verbose=False)
         data["rand_los_density"] = rand_los["los_density"]
         data["rand_los_velocity"] = rand_los["los_velocity"]
@@ -1959,6 +1963,8 @@ def _load_EDD_TRGB_from_config_common(config_path, config_key, loader):
         data["rand_los_dec"] = rand_los.get("los_dec", None)
         data["has_rand_los"] = True
         data["num_rand_los"] = data["rand_los_density"].shape[1]
+        fprint(f"  random LOS shape: {rand_los['los_density'].shape}"
+               f" ({data['num_rand_los']} LOS)")
     else:
         data["has_rand_los"] = False
 

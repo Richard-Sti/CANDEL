@@ -552,7 +552,8 @@ def postprocess_samples(samples):
     model_prefixes.add("")  # Also handle unprefixed keys
 
     for model_prefix in model_prefixes:
-        for prefix in ["Vext_rad", "Vext_radmag", "Vext", "zeropoint_dipole"]:
+        for prefix in ["Vext_rad", "Vext_radmag", "Vext",
+                        "zeropoint_dipole"]:
             full_prefix = f"{model_prefix}{prefix}"
             # Spherical form: phi + cos_theta (+ mag optional)
             phi_key = f"{full_prefix}_phi"
@@ -581,6 +582,34 @@ def postprocess_samples(samples):
                 samples[f"{full_prefix}_mag"] = r
                 samples[f"{full_prefix}_ell"] = ell
                 samples[f"{full_prefix}_b"] = b
+
+    # Quadrupole postprocessing: convert q1/q2 from (phi, cos_theta) to
+    # galactic coordinates (ell, b).
+    for model_prefix in model_prefixes:
+        for qn in ("q1", "q2"):
+            phi_key = f"{model_prefix}Vext_quad_{qn}_phi"
+            cos_theta_key = f"{model_prefix}Vext_quad_{qn}_cos_theta"
+            if phi_key in samples and cos_theta_key in samples:
+                ra = np.rad2deg(samples.pop(phi_key))
+                theta = np.arccos(samples.pop(cos_theta_key))
+                dec = np.rad2deg(0.5 * np.pi - theta)
+                ell, b = radec_to_galactic(ra, dec)
+                samples[f"{model_prefix}Vext_quad_{qn}_ell"] = ell
+                samples[f"{model_prefix}Vext_quad_{qn}_b"] = b
+
+    # Octupole postprocessing: convert q1/q2/q3 from (phi, cos_theta) to
+    # galactic coordinates (ell, b).
+    for model_prefix in model_prefixes:
+        for qn in ("q1", "q2", "q3"):
+            phi_key = f"{model_prefix}Vext_oct_{qn}_phi"
+            cos_theta_key = f"{model_prefix}Vext_oct_{qn}_cos_theta"
+            if phi_key in samples and cos_theta_key in samples:
+                ra = np.rad2deg(samples.pop(phi_key))
+                theta = np.arccos(samples.pop(cos_theta_key))
+                dec = np.rad2deg(0.5 * np.pi - theta)
+                ell, b = radec_to_galactic(ra, dec)
+                samples[f"{model_prefix}Vext_oct_{qn}_ell"] = ell
+                samples[f"{model_prefix}Vext_oct_{qn}_b"] = b
 
     return samples
 

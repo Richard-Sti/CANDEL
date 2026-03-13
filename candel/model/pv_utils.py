@@ -59,6 +59,40 @@ def sample_vector_fixed(name, mag_min, mag_max):
         )
 
 
+def sample_quadrupole(name, mag_min, mag_max):
+    """
+    Sample a general symmetric traceless quadrupole (5 DOF).
+
+    The quadrupole tensor is parameterized by a magnitude Q and two unit
+    vectors q1, q2. The radial velocity contribution is:
+        V_quad = Q * [(q1.rhat)(q2.rhat) - 1/3 (q1.q2)]
+
+    All phis are sampled independently (no ordering constraint) to avoid
+    dependent distributions that break L-BFGS / NUTS initialization.
+    The q1<->q2 swap degeneracy is harmless: NUTS stays in one mode and
+    the physical prediction is invariant.
+
+    Returns (Q_mag, q1_hat, q2_hat).
+    """
+    Q_mag = sample(f"{name}_mag", Uniform(mag_min, mag_max))
+
+    q1_phi = sample(f"{name}_q1_phi", Uniform(0, 2 * jnp.pi))
+    q1_cos_theta = sample(f"{name}_q1_cos_theta", Uniform(-1, 1))
+    q1_sin_theta = jnp.sqrt(1 - q1_cos_theta**2)
+    q1_hat = jnp.array([q1_sin_theta * jnp.cos(q1_phi),
+                         q1_sin_theta * jnp.sin(q1_phi),
+                         q1_cos_theta])
+
+    q2_phi = sample(f"{name}_q2_phi", Uniform(0, 2 * jnp.pi))
+    q2_cos_theta = sample(f"{name}_q2_cos_theta", Uniform(-1, 1))
+    q2_sin_theta = jnp.sqrt(1 - q2_cos_theta**2)
+    q2_hat = jnp.array([q2_sin_theta * jnp.cos(q2_phi),
+                         q2_sin_theta * jnp.sin(q2_phi),
+                         q2_cos_theta])
+
+    return Q_mag, q1_hat, q2_hat
+
+
 def sample_radialmag_vector(name, nval, low, high):
     """
     Sample a vector whose magnitude varies at `nval` knots but a direction
@@ -176,6 +210,12 @@ def _rsample(name, dist):
 
     if isinstance(dist, dict) and dist.get("type") == "vector_uniform_fixed":
         return sample_vector_fixed(name, dist["low"], dist["high"])
+
+    if isinstance(dist, dict) and dist.get("type") == "quadrupole":
+        return sample_quadrupole(name, dist["low"], dist["high"])
+
+    if isinstance(dist, dict) and dist.get("type") == "octupole":
+        return sample_octupole(name, dist["low"], dist["high"])
 
     if isinstance(dist, dict) and dist.get("type") == "vector_components_uniform":  # noqa
         return sample_vector_components_uniform(
@@ -434,6 +474,127 @@ def compute_Vext_radial(data, r_grid, Vext, which_Vext, **kwargs_Vext):
     else:
         raise ValueError(f"Invalid which_Vext '{which_Vext}'.")
     return Vext_rad
+
+
+def quadrupole_radial(Q_mag, q1_hat, q2_hat, rhat):
+    """
+    General symmetric traceless quadrupole radial velocity.
+
+        V_quad = Q_mag * [(q1.rhat)(q2.rhat) - 1/3 (q1.q2)]
+
+    Parameters
+    ----------
+    Q_mag : scalar
+        Quadrupole magnitude.
+    q1_hat, q2_hat : (3,) arrays
+        Unit vectors defining the quadrupole axes.
+    rhat : (..., 3) array
+        Unit direction vectors.
+
+    Returns
+    -------
+    V_quad_rad : (...) array
+    """
+    q1_dot_r = jnp.sum(q1_hat * rhat, axis=-1)
+    q2_dot_r = jnp.sum(q2_hat * rhat, axis=-1)
+    q1_dot_q2 = jnp.sum(q1_hat * q2_hat)
+    return Q_mag * (q1_dot_r * q2_dot_r - q1_dot_q2 / 3)
+
+
+def sample_octupole(name, mag_min, mag_max):
+    """
+    Sample a general symmetric traceless octupole (7 DOF).
+
+    Parameterized by a magnitude O and three unit vectors q1, q2, q3.
+    The radial velocity contribution is:
+        V_oct = O * [(q1.r)(q2.r)(q3.r)
+                     - 1/5 ((q1.q2)(q3.r) + (q1.q3)(q2.r) + (q2.q3)(q1.r))]
+
+    All phis are sampled independently (no ordering constraint) to avoid
+    dependent distributions that break L-BFGS / NUTS initialization.
+
+    Returns (O_mag, q1_hat, q2_hat, q3_hat).
+    """
+    O_mag = sample(f"{name}_mag", Uniform(mag_min, mag_max))
+
+    q1_phi = sample(f"{name}_q1_phi", Uniform(0, 2 * jnp.pi))
+    q1_cos_theta = sample(f"{name}_q1_cos_theta", Uniform(-1, 1))
+    q1_sin_theta = jnp.sqrt(1 - q1_cos_theta**2)
+    q1_hat = jnp.array([q1_sin_theta * jnp.cos(q1_phi),
+                         q1_sin_theta * jnp.sin(q1_phi),
+                         q1_cos_theta])
+
+    q2_phi = sample(f"{name}_q2_phi", Uniform(0, 2 * jnp.pi))
+    q2_cos_theta = sample(f"{name}_q2_cos_theta", Uniform(-1, 1))
+    q2_sin_theta = jnp.sqrt(1 - q2_cos_theta**2)
+    q2_hat = jnp.array([q2_sin_theta * jnp.cos(q2_phi),
+                         q2_sin_theta * jnp.sin(q2_phi),
+                         q2_cos_theta])
+
+    q3_phi = sample(f"{name}_q3_phi", Uniform(0, 2 * jnp.pi))
+    q3_cos_theta = sample(f"{name}_q3_cos_theta", Uniform(-1, 1))
+    q3_sin_theta = jnp.sqrt(1 - q3_cos_theta**2)
+    q3_hat = jnp.array([q3_sin_theta * jnp.cos(q3_phi),
+                         q3_sin_theta * jnp.sin(q3_phi),
+                         q3_cos_theta])
+
+    return O_mag, q1_hat, q2_hat, q3_hat
+
+
+def octupole_radial(O_mag, q1_hat, q2_hat, q3_hat, rhat):
+    """
+    General symmetric traceless octupole radial velocity.
+
+        V_oct = O * [(q1.r)(q2.r)(q3.r)
+                     - 1/5 ((q1.q2)(q3.r) + (q1.q3)(q2.r) + (q2.q3)(q1.r))]
+
+    Parameters
+    ----------
+    O_mag : scalar
+        Octupole magnitude.
+    q1_hat, q2_hat, q3_hat : (3,) arrays
+        Unit vectors defining the octupole axes.
+    rhat : (..., 3) array
+        Unit direction vectors.
+
+    Returns
+    -------
+    V_oct_rad : (...) array
+    """
+    q1r = jnp.sum(q1_hat * rhat, axis=-1)
+    q2r = jnp.sum(q2_hat * rhat, axis=-1)
+    q3r = jnp.sum(q3_hat * rhat, axis=-1)
+    q1q2 = jnp.sum(q1_hat * q2_hat)
+    q1q3 = jnp.sum(q1_hat * q3_hat)
+    q2q3 = jnp.sum(q2_hat * q3_hat)
+    return O_mag * (q1r * q2r * q3r
+                    - (q1q2 * q3r + q1q3 * q2r + q2q3 * q1r) / 5)
+
+
+def sigmoid_monopole_radial(V_left, r_t, k, r):
+    """
+    Radially decaying monopole velocity: large at small r, zero at large r.
+
+        V_mono(r) = V_left / (1 + exp(k * (r - r_t)))
+
+    Callers typically pass k = tan(angle) where angle is sampled uniformly.
+
+    Parameters
+    ----------
+    V_left : scalar
+        Monopole amplitude at r << r_t.
+    r_t : scalar
+        Transition radius (Mpc).
+    k : scalar
+        Steepness (inverse Mpc). Larger k = sharper transition.
+    r : (...) array
+        Radial distances (Mpc).
+
+    Returns
+    -------
+    V_mono : (...) array
+    """
+    return V_left / (1 + jnp.exp(k * (r - r_t)))
 
 
 def sample_distance_prior(priors):

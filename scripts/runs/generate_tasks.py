@@ -178,6 +178,21 @@ def generate_dynamic_tag(config, base_tag="default"):
     if _is_delta_prior(get_nested(config, "model/priors/Vext", None)):
         parts.append("noVext")
 
+    _mono = get_nested(config, "model/which_Vext_monopole", "none")
+    if _mono == "none" and get_nested(
+            config, "model/use_Vext_monopole", False):
+        _mono = "constant"
+    if _mono == "constant":
+        parts.append("Vmono")
+    elif _mono == "sigmoid":
+        parts.append("Vmono_sigmoid")
+
+    if get_nested(config, "model/use_Vext_quadrupole", False):
+        parts.append("Vquad")
+
+    if get_nested(config, "model/use_Vext_octupole", False):
+        parts.append("Voct")
+
     which_Vext = get_nested(config, "pv_model/which_Vext", None)
     if which_Vext is not None and which_Vext != "constant":
         parts.append(f"Vext_{which_Vext}")
@@ -339,11 +354,14 @@ if __name__ == "__main__":
 
     manual_overrides = {
         **{k: v for k, v in _local_cfg.items()},
-        "model/which_run": ["EDD_TRGB", "EDD_TRGB_grouped"],
+        "model/which_run": "EDD_TRGB_grouped",
         "model/which_selection": "TRGB_magnitude",
         "model/use_reconstruction": True,
+        "model/use_Vext_monopole": True,
+        "model/use_Vext_quadrupole": False,
+        "model/use_Vext_octupole": False,
+        "io/PV_main/EDD_TRGB_grouped/which_host_los": "manticore_2MPP_MULTIBIN_N256_DES_V2",
         "model/which_bias": "powerlaw",
-        "io/which_host_los": "manticore_2MPP_MULTIBIN_N256_DES_V2",
     }
 
     # # --- CCHP TRGB: SN magnitude selection, Manticore reconstruction ---

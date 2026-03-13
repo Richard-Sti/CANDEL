@@ -22,7 +22,9 @@ from numpyro.distributions import Normal, Uniform
 
 from ..util import fprint, get_nested, replace_prior_with_delta
 from .base_model import H0ModelBase
-from .pv_utils import lp_galaxy_bias, rsample, sample_galaxy_bias
+from .pv_utils import (lp_galaxy_bias, octupole_radial, quadrupole_radial,
+                       rsample, sample_galaxy_bias, sample_octupole,
+                       sample_quadrupole, sigmoid_monopole_radial)
 from .simpson import ln_simpson_precomputed
 from .utils import logmeanexp, normal_logpdf_var, predict_cz
 
@@ -192,6 +194,25 @@ class TRGBModel(H0ModelBase):
         sigma_int = rsample("sigma_int", self.priors["sigma_int"])
         sigma_v = rsample("sigma_v", self.priors["sigma_v"])
         Vext = rsample("Vext", self.priors["Vext"])
+        Vext_quad = None
+        if self.use_Vext_quadrupole:
+            Vext_quad = sample_quadrupole(
+                "Vext_quad", *self.Vext_quad_mag_range)
+        Vext_oct = None
+        if self.use_Vext_octupole:
+            Vext_oct = sample_octupole(
+                "Vext_oct", *self.Vext_oct_mag_range)
+        Vext_mono = None
+        if self.which_Vext_monopole == "constant":
+            Vext_mono = rsample("Vext_mono", self.priors["Vext_mono"])
+        elif self.which_Vext_monopole == "sigmoid":
+            Vext_mono_left = rsample(
+                "Vext_mono_left", self.priors["Vext_mono_left"])
+            Vext_mono_rt = rsample(
+                "Vext_mono_rt", self.priors["Vext_mono_rt"])
+            Vext_mono_angle = rsample(
+                "Vext_mono_angle", self.priors["Vext_mono_angle"])
+            Vext_mono = (Vext_mono_left, Vext_mono_rt, Vext_mono_angle)
         beta = rsample("beta", self.priors["beta"])
         bias_params = sample_galaxy_bias(
             self.priors, self.which_bias, beta=beta, Om=self.Om)
@@ -233,6 +254,23 @@ class TRGBModel(H0ModelBase):
         r_grid = self.r_host_range
         lp_r = self.log_prior_distance(r_grid)
         Vext_rad_host = jnp.sum(Vext[None, :] * self.rhat_host, axis=1)
+        Vext_mono_host_grid = None
+        if isinstance(Vext_mono, tuple):
+            V_left, r_t, angle = Vext_mono
+            k = jnp.tan(angle)
+            Vext_mono_host_grid = sigmoid_monopole_radial(
+                V_left, r_t, k, r_grid)
+        elif Vext_mono is not None:
+            Vext_mono_host_grid = jnp.broadcast_to(
+                Vext_mono, r_grid.shape)
+        if Vext_quad is not None:
+            Q_mag, q1_hat, q2_hat = Vext_quad
+            Vext_rad_host = Vext_rad_host + quadrupole_radial(
+                Q_mag, q1_hat, q2_hat, self.rhat_host)
+        if Vext_oct is not None:
+            O_mag, o1_hat, o2_hat, o3_hat = Vext_oct
+            Vext_rad_host = Vext_rad_host + octupole_radial(
+                O_mag, o1_hat, o2_hat, o3_hat, self.rhat_host)
         mu_grid = self.distance2distmod(r_grid, h=h)
         z_grid = self.distance2redshift(r_grid, h=h)
 
@@ -277,6 +315,14 @@ class TRGBModel(H0ModelBase):
             # Works for rhat_rand_los both (n_los, 3) and (n_sims, n_los, 3)
             Vext_rad_rand = jnp.sum(
                 Vext[None, :] * self.rhat_rand_los, axis=-1)
+            if Vext_quad is not None:
+                Q_mag, q1_hat, q2_hat = Vext_quad
+                Vext_rad_rand = Vext_rad_rand + quadrupole_radial(
+                    Q_mag, q1_hat, q2_hat, self.rhat_rand_los)
+            if Vext_oct is not None:
+                O_mag, o1_hat, o2_hat, o3_hat = Vext_oct
+                Vext_rad_rand = Vext_rad_rand + octupole_radial(
+                    O_mag, o1_hat, o2_hat, o3_hat, self.rhat_rand_los)
             if self.use_reconstruction:
                 rand_delta = \
                     self.f_rand_los_delta.interp_many_steps_per_galaxy(
@@ -292,10 +338,17 @@ class TRGBModel(H0ModelBase):
             else:
                 rand_los_Vpec_sel = 0.
 
+            Vpec_sel = (Vext_rad_rand[None, :, None]
+                       + beta * rand_los_Vpec_sel)
+            if isinstance(Vext_mono, tuple):
+                V_left, r_t, angle = Vext_mono
+                k = jnp.tan(angle)
+                Vpec_sel = Vpec_sel + sigmoid_monopole_radial(
+                    V_left, r_t, k, r_sel)[None, None, :]
+            elif Vext_mono is not None:
+                Vpec_sel = Vpec_sel + Vext_mono
             log_S = logmeanexp(self.log_S_cz(
-                lp_rand_dist_sel,
-                Vext_rad_rand[None, :, None]
-                + beta * rand_los_Vpec_sel,
+                lp_rand_dist_sel, Vpec_sel,
                 H0, sigma_v, cz_lim, cz_width), axis=-1)
 
         elif self.which_selection == "SN_magnitude":
@@ -345,7 +398,8 @@ class TRGBModel(H0ModelBase):
             h, M_TRGB, sigma_int, sigma_v, beta, bias_params,
             Vext_rad_host, r_grid, lp_r, e2_cz, log_S,
             mu_grid=mu_grid, z_grid=z_grid,
-            ll_sn_host=ll_sn_host)
+            ll_sn_host=ll_sn_host,
+            Vext_mono_host_grid=Vext_mono_host_grid)
 
     # ------------------------------------------------------------------
     #  Distance marginalization path
@@ -355,7 +409,8 @@ class TRGBModel(H0ModelBase):
                            bias_params, Vext_rad_host, r_grid, lp_r,
                            e2_cz, log_S,
                            mu_grid=None, z_grid=None,
-                           ll_sn_host=None):
+                           ll_sn_host=None,
+                           Vext_mono_host_grid=None):
         if mu_grid is None:
             mu_grid = self.distance2distmod(r_grid, h=h)
         if z_grid is None:
@@ -386,6 +441,8 @@ class TRGBModel(H0ModelBase):
             Vpec_grid = beta * self.f_host_los_velocity.interp_many(
                 rh_grid)
             Vpec_grid += Vext_rad_host[None, :, None]
+            if Vext_mono_host_grid is not None:
+                Vpec_grid += Vext_mono_host_grid[None, None, :]
             cz_pred = predict_cz(z_grid[None, None, :], Vpec_grid)
             ll_cz = normal_logpdf_var(
                 self.czcmb[None, :, None], cz_pred,
@@ -412,8 +469,10 @@ class TRGBModel(H0ModelBase):
                 lp_dist, log_w, axis=-1)
 
             # Redshift likelihood on grid
-            cz_pred = predict_cz(
-                z_grid[None, :], Vext_rad_host[:, None])
+            Vpec_no_recon = Vext_rad_host[:, None]
+            if Vext_mono_host_grid is not None:
+                Vpec_no_recon = Vpec_no_recon + Vext_mono_host_grid[None, :]
+            cz_pred = predict_cz(z_grid[None, :], Vpec_no_recon)
             ll_cz = normal_logpdf_var(
                 self.czcmb[:, None], cz_pred, e2_cz[:, None])
 

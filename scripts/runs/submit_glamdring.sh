@@ -23,7 +23,7 @@ get_toml_key() {
 }
 
 # ---- defaults ----
-queue="cmb"
+queue="gpulong"
 ncpu=1
 memory=16
 gputype=""
