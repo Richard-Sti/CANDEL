@@ -434,6 +434,14 @@ class Manticore_FieldLoader(BaseFieldLoader):
             v2 = f["p2"][:] / density
         return np.array([v0, v1, v2], dtype=np.float32)
 
+    def load_velocity_component(self, component):
+        key = f"p{component}"
+        with File(self.fname, "r") as f:
+            density = f["density"][:]
+            v = f[key][:] / density
+        del density
+        return v.astype(np.float32)
+
 
 ###############################################################################
 #             Shortcut to get the appropriate field class.                    #

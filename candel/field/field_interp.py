@@ -261,13 +261,8 @@ def build_regular_interpolator(field, boxsize, fill_value=None):
         method="linear",)
 
 
-def interpolate_los_density_velocity(field_loader, r, RA, dec,
-                                     smooth_target=None, verbose=True):
-    """
-    Interpolate the density and velocity fields along the line of sight
-    specified by `RA` and `dec` at radial steps `r` from the observer. The
-    former is expected in degrees, while the latter in `Mpc / h`.
-    """
+def _prepare_los_geometry(field_loader, r, RA, dec):
+    """Compute LOS positions and unit vectors for interpolation."""
     if field_loader.coordinate_frame == "icrs":
         rhat = radec_to_cartesian(RA, dec)
     elif field_loader.coordinate_frame == "galactic":
@@ -282,38 +277,53 @@ def interpolate_los_density_velocity(field_loader, r, RA, dec,
             "Please add support for it.")
 
     rhat = rhat.astype(np.float32)
-
-    # Precompute positions (n_r, n_gal, 3)
     n_r, n_gal = len(r), len(RA)
     pos = (field_loader.observer_pos[None, None, :]
            + r[:, None, None] * rhat[None, :, :]).astype(np.float32)
     pos_flat = pos.reshape(-1, 3)
-
-    # Tile rhat to match pos_flat: (n_r, n_gal, 3) -> (n_r*n_gal, 3)
     rhat_rep = np.tile(rhat, (n_r, 1))
+    return pos_flat, rhat_rep, n_r, n_gal
 
-    # Load and prepare fields
-    fprint("interpolating the density field...", verbose=verbose)
-    eps = np.float32(1e-4)
-    density = field_loader.load_density().astype(np.float32, copy=False)
-    np.add(density, eps, out=density)
-    np.log(density, out=density)
-    fill_value = np.float32(np.log(1 + eps))
 
-    ngrid = density.shape[0]
+def _get_grid_params(field_loader, ngrid):
+    """Return grid geometry and smoothing metadata."""
     cellsize = np.float32(field_loader.boxsize / ngrid)
     grid_min = np.float32(0.5 * cellsize)
-
     try:
         voxel_size = field_loader.effective_resolution
     except AttributeError:
         voxel_size = cellsize
+    return cellsize, grid_min, voxel_size
+
+
+def interpolate_los_density_velocity(field_loader, r, RA, dec,
+                                     smooth_target=None, verbose=True):
+    """
+    Interpolate the density and velocity fields along the line of sight
+    specified by `RA` and `dec` at radial steps `r` from the observer. The
+    former is expected in degrees, while the latter in `Mpc / h`.
+
+    Fields are loaded and interpolated one component at a time to limit
+    peak memory usage (important for large grids like Manticore 1024^3).
+    """
+    pos_flat, rhat_rep, n_r, n_gal = _prepare_los_geometry(
+        field_loader, r, RA, dec)
+    n_flat = pos_flat.shape[0]
+    eps = np.float32(1e-4)
+    fill_value = np.float32(np.log(1 + eps))
+
+    # --- Density ---
+    fprint("interpolating the density field...", verbose=verbose)
+    density = field_loader.load_density().astype(np.float32, copy=False)
+    ngrid = density.shape[0]
+    cellsize, grid_min, voxel_size = _get_grid_params(field_loader, ngrid)
+
+    smooth_scale = None
     if smooth_target is not None:
         if smooth_target < voxel_size:
             raise ValueError(
                 f"Target smoothing scale {smooth_target} is smaller than "
                 f"the voxel size {voxel_size}.")
-
         smooth_scale = np.sqrt(smooth_target**2 - voxel_size**2)
         fprint(f"applying Gaussian smoothing with scale {smooth_scale:.1f} "
                f"Mpc/h to match target {smooth_target:.1f} Mpc/h.",
@@ -321,32 +331,54 @@ def interpolate_los_density_velocity(field_loader, r, RA, dec,
         density = apply_gaussian_smoothing(
             density, smooth_scale, field_loader.boxsize, make_copy=True)
 
-    fprint("interpolating the velocity field...", verbose=verbose)
-    velocity = field_loader.load_velocity()  # shape (3, ngrid, ngrid, ngrid)
-
-    if smooth_target is not None:
-        for i in range(3):
-            velocity[i] = apply_gaussian_smoothing(
-                velocity[i], smooth_scale, field_loader.boxsize,
-                make_copy=True)
-
-    # Ravel fields to 1D for flat indexing in the fused kernel.
-    # density is already float32 & C-contiguous -> ravel is a view.
-    density_flat = density.ravel()
-    vx_flat = np.ascontiguousarray(velocity[0], dtype=np.float32).ravel()
-    vy_flat = np.ascontiguousarray(velocity[1], dtype=np.float32).ravel()
-    vz_flat = np.ascontiguousarray(velocity[2], dtype=np.float32).ravel()
-    del velocity
-
-    # Fused Numba kernel: density + velocity + LOS dot product in one pass
-    los_density_flat, los_velocity_flat = _trilinear_interp_density_velocity(
-        density_flat, vx_flat, vy_flat, vz_flat,
-        pos_flat, rhat_rep, grid_min, cellsize, ngrid, fill_value)
+    np.add(density, eps, out=density)
+    np.log(density, out=density)
+    los_density_flat = _trilinear_interp_field(
+        density.ravel(), pos_flat, grid_min, cellsize, ngrid, fill_value)
+    del density
 
     los_density = los_density_flat.reshape(n_r, n_gal)
+    del los_density_flat
     los_density = np.exp(los_density) - eps
     los_density = np.clip(los_density, eps, None)
     assert np.all(los_density > 0)
+
+    # --- Velocity (one component at a time) ---
+    los_velocity_flat = np.zeros(n_flat, dtype=np.float32)
+    can_load_component = hasattr(field_loader, 'load_velocity_component')
+
+    if can_load_component:
+        for comp in range(3):
+            fprint(f"interpolating velocity component {comp}...",
+                   verbose=verbose)
+            v_comp = field_loader.load_velocity_component(comp)
+            if smooth_scale is not None:
+                v_comp = apply_gaussian_smoothing(
+                    v_comp, smooth_scale, field_loader.boxsize,
+                    make_copy=True)
+            v_flat = np.ascontiguousarray(v_comp, dtype=np.float32).ravel()
+            del v_comp
+            los_v_comp = _trilinear_interp_field(
+                v_flat, pos_flat, grid_min, cellsize, ngrid, np.float32(0.0))
+            del v_flat
+            los_velocity_flat += los_v_comp * rhat_rep[:, comp]
+            del los_v_comp
+    else:
+        fprint("interpolating the velocity field...", verbose=verbose)
+        velocity = field_loader.load_velocity()
+        if smooth_scale is not None:
+            for i in range(3):
+                velocity[i] = apply_gaussian_smoothing(
+                    velocity[i], smooth_scale, field_loader.boxsize,
+                    make_copy=True)
+        for comp in range(3):
+            v_flat = np.ascontiguousarray(
+                velocity[comp], dtype=np.float32).ravel()
+            los_v_comp = _trilinear_interp_field(
+                v_flat, pos_flat, grid_min, cellsize, ngrid,
+                np.float32(0.0))
+            los_velocity_flat += los_v_comp * rhat_rep[:, comp]
+        del velocity
 
     los_velocity = los_velocity_flat.reshape(n_r, n_gal)
     assert np.all(np.isfinite(los_velocity))

@@ -23,7 +23,7 @@ from ..util import fprint, fsection, get_nested
 from .base_model import ModelBase
 from .pv_utils import (_rsample, compute_Vext_radial, lp_galaxy_bias, rsample,
                        sample_distance_prior, sample_galaxy_bias, sample_Vext,
-                       sumzero_basis)
+                       sigma_v_from_density, sumzero_basis)
 from .simpson import simpson_log_weights
 from .utils import (config_hash, log_prior_r_empirical, normal_logpdf_var,
                     predict_cz)
@@ -101,29 +101,76 @@ class BasePVModel(ModelBase):
         if self.galaxy_bias not in ["unity", "powerlaw", "linear",
                                     "linear_from_beta",
                                     "linear_from_beta_stochastic",
-                                    "double_powerlaw", "quadratic"]:
+                                    "double_powerlaw", "quadratic",
+                                    "spline"]:
             raise ValueError(
                 f"Invalid galaxy bias model '{self.galaxy_bias}'.")
         self.quadratic_bias_delta0 = get_nested(
             config, "pv_model/quadratic_bias_delta0", 0.0)
+
+        if self.galaxy_bias == "spline":
+            knots = get_nested(config, "pv_model/spline_bias_knots_delta")
+            if knots is None:
+                raise ValueError(
+                    "spline_bias_knots_delta must be set for spline bias.")
+            if 0.0 not in knots:
+                raise ValueError(
+                    "spline_bias_knots_delta must include 0.0 (pinned knot).")
+            self.spline_bias_knots_delta = sorted(knots)
+
+        self.density_dependent_sigma_v = get_nested(
+            config, "pv_model/density_dependent_sigma_v", False)
+        if self.density_dependent_sigma_v:
+            kind = get_nested(config, "pv_model/kind", "")
+            if not kind.startswith("precomputed_los"):
+                raise ValueError(
+                    "density_dependent_sigma_v requires precomputed LOS data.")
+            required = ["sigma_v_low", "sigma_v_high",
+                        "log_sigma_v_rho_t", "sigma_v_k"]
+            missing = [k for k in required if k not in self.priors]
+            if missing:
+                raise ValueError(
+                    "Missing priors for density-dependent sigma_v: "
+                    f"{', '.join(missing)}.")
 
         self.which_distance_prior = get_nested(
             config, "pv_model/which_distance_prior", "empirical")
 
         fprint(f"Om={self.Om}, Vext={self.which_Vext}, "
                f"galaxy_bias={self.galaxy_bias}, "
-               f"distance_prior={self.which_distance_prior}")
+               f"distance_prior={self.which_distance_prior}, "
+               f"density_dependent_sigma_v="
+               f"{self.density_dependent_sigma_v}")
 
     def _sample_common_params(self, shared_params):
         kwargs_dist = sample_distance_prior(self.priors)
         h = 1.
         Vext = sample_Vext(
             self.priors, self.which_Vext, shared_params, self.kwargs_Vext)
-        sigma_v = rsample("sigma_v", self.priors["sigma_v"], shared_params)
+
+        if self.density_dependent_sigma_v:
+            sigma_v_low = rsample(
+                "sigma_v_low", self.priors["sigma_v_low"], shared_params)
+            sigma_v_high = rsample(
+                "sigma_v_high", self.priors["sigma_v_high"], shared_params)
+            log_sigma_v_rho_t = rsample(
+                "log_sigma_v_rho_t", self.priors["log_sigma_v_rho_t"],
+                shared_params)
+            sigma_v_k = rsample(
+                "sigma_v_k", self.priors["sigma_v_k"], shared_params)
+            sigma_v = (sigma_v_low, sigma_v_high, log_sigma_v_rho_t,
+                       sigma_v_k)
+        else:
+            sigma_v = rsample(
+                "sigma_v", self.priors["sigma_v"], shared_params)
+
         beta = rsample("beta", self.priors["beta"], shared_params)
+        bias_kwargs = dict(Om=self.Om, beta=beta)
+        if self.galaxy_bias == "spline":
+            bias_kwargs["spline_bias_knots_delta"] = \
+                self.spline_bias_knots_delta
         bias_params = sample_galaxy_bias(
-            self.priors, self.galaxy_bias, shared_params, Om=self.Om,
-            beta=beta)
+            self.priors, self.galaxy_bias, shared_params, **bias_kwargs)
         return kwargs_dist, h, Vext, sigma_v, beta, bias_params
 
     def _get_simpson_log_w(self, data, r_grid):
@@ -159,6 +206,15 @@ class BasePVModel(ModelBase):
         czpred = predict_cz(
             self.distance2redshift(r_grid, h=h)[None, None, :],
             Vrad + Vext_rad)
+
+        if self.density_dependent_sigma_v:
+            sigma_v_low, sigma_v_high, log_rho_t, k = sigma_v
+            sigma_v_grid = sigma_v_from_density(
+                data["los_delta_r_grid"], sigma_v_low, sigma_v_high,
+                log_rho_t, k)
+            return normal_logpdf_var(
+                data["czcmb"][None, :, None], czpred, sigma_v_grid**2)
+
         return normal_logpdf_var(
             data["czcmb"][None, :, None], czpred, sigma_v**2)
 
@@ -205,6 +261,10 @@ class JointPVModel:
 
         self.config = submodels[0].config
         self.which_Vext = submodels[0].which_Vext
+        self.galaxy_bias = submodels[0].galaxy_bias
+        if hasattr(submodels[0], 'spline_bias_knots_delta'):
+            self.spline_bias_knots_delta = \
+                submodels[0].spline_bias_knots_delta
 
     def _sample_shared_params(self, priors):
         shared = {}

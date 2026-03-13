@@ -24,6 +24,41 @@ dist = "vector_uniform_fixed"
 low = 0.0
 high = 1000
 
+# External velocity monopole: constant (1 DOF)
+[model.priors.Vext_mono]
+dist = "uniform"
+low = -500
+high = 500
+
+# External velocity sigmoid monopole (3 DOF: amplitude, transition radius,
+# transition angle controlling steepness)
+[model.priors.Vext_mono_left]
+dist = "uniform"
+low = -500
+high = 500
+
+[model.priors.Vext_mono_rt]
+dist = "uniform"
+low = 0
+high = 50
+
+[model.priors.Vext_mono_angle]
+dist = "uniform"
+low = 0.01
+high = 1.5607
+
+# External velocity quadrupole (5 DOF: magnitude + two unit vectors)
+[model.priors.Vext_quad]
+dist = "quadrupole"
+low = 0.0
+high = 500
+
+# External velocity octupole (7 DOF: magnitude + three unit vectors)
+[model.priors.Vext_oct]
+dist = "octupole"
+low = 0.0
+high = 500
+
 # Reconstruction: linear bias
 [model.priors.beta]
 dist = "normal"
@@ -34,6 +69,13 @@ scale = 0.1
 dist = "uniform"
 low = 0.0
 high = 10.0
+
+# Reconstruction: power law bias
+[model.priors.alpha]
+dist = "truncated_normal"
+low = 0.0
+mean = 1.0
+scale = 1.0
 
 # Reconstruction: double power law bias
 [model.priors.alpha_low]
