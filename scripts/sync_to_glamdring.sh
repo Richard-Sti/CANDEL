@@ -2,12 +2,12 @@
 set -euo pipefail
 
 # ---- local source ----
-SRC_BASE="$HOME/code/CANDEL"
+SRC_BASE="$HOME/projects/CANDEL"
 
 # ---- glamdring destination ----
 DEST_USER="yasin"
 DEST_HOST="glamdring.physics.ox.ac.uk"
-DEST_PATH="/mnt/users/yasin/code/CANDEL"
+DEST_PATH="/mnt/users/yasin/projects/CANDEL"
 SSH_KEY="$HOME/.ssh/id_ed25519"
 
 usage() {

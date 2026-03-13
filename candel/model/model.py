@@ -1967,9 +1967,16 @@ class ClustersModel(BaseModel):
         self.distance2logda = Distance2LogAngDist(Om0=self.Om, zmax_interp=1.0)
         self.distance2logdl = Distance2LogLumDist(Om0=self.Om, zmax_interp=1.0)
 
-        # CDDR violation: D_L = (1+z)^(2+ε) D_A
+        # CDDR violation
         self.test_CDDR = bool(
             get_nested(self.config, "model/test_CDDR", False))
+        self.CDDR_parameterisation = get_nested(
+            self.config, "model/CDDR_parameterisation", "power_law")
+
+        # Systematic dipoles on individual observables
+        self._has_dipole_L = self._prior_is_varying("dipole_L")
+        self._has_dipole_Y = self._prior_is_varying("dipole_Y")
+        self._has_dipole_T = self._prior_is_varying("dipole_T")
 
         if {"LT", "YT", "LTYT"} & self.used_relations:
             self.priors["CL_C"] = Delta(jnp.asarray(0.0))
@@ -2177,12 +2184,10 @@ class ClustersModel(BaseModel):
         if self._has_varying_H0_dipole and H0_dipole is not None:
             # dipH0 run: H0 affects z→r mapping
             # Auto-derive zeropoint magnitude from H0 for the likelihood
-            H0_mag = jnp.linalg.norm(H0_dipole)
-            H0_dir = H0_dipole / jnp.maximum(H0_mag, 1e-30)
-            zp_dipole_mag = _frac_to_mag(H0_mag) * H0_dir
+            # Project fractional δH/H onto each LOS first, then convert
+            frac_per_gal = jnp.sum(H0_dipole[None, :] * data["rhat"], axis=1)
+            zp_dipole_radial = _frac_to_mag(frac_per_gal)
 
-            # Compute radial projection for likelihood
-            zp_dipole_radial = jnp.sum(zp_dipole_mag * data["rhat"], axis=1)
             delta_A = zp_dipole_radial if delta_A is None else delta_A + zp_dipole_radial
 
         elif self._legacy_stretch_mode and self._has_varying_zeropoint_dipole:
@@ -2233,6 +2238,23 @@ class ClustersModel(BaseModel):
                 A_LT = A_LT + delta_A
             if A_YT is not None:
                 A_YT = A_YT + delta_A
+
+        # Systematic dipoles on individual observables (L, Y, T)
+        if self._has_dipole_L:
+            dip_L = rsample("dipole_L", self.priors["dipole_L"], shared_params)
+            dip_L_rad = jnp.sum(dip_L * data["rhat"], axis=1)
+            if A_LT is not None:
+                A_LT = A_LT + dip_L_rad
+
+        if self._has_dipole_Y:
+            dip_Y = rsample("dipole_Y", self.priors["dipole_Y"], shared_params)
+            dip_Y_rad = jnp.sum(dip_Y * data["rhat"], axis=1)
+            if A_YT is not None:
+                A_YT = A_YT + dip_Y_rad
+
+        if self._has_dipole_T:
+            dip_T = rsample("dipole_T", self.priors["dipole_T"], shared_params)
+            dip_T_rad = jnp.sum(dip_T * data["rhat"], axis=1)
 
         if relation in ["LT", "LTY"]:
             A = A_LT
@@ -2389,6 +2411,10 @@ class ClustersModel(BaseModel):
                 logY = data["logY"]
                 logF = data["logF"]
 
+            # Apply T dipole systematic (shifts effective logT per cluster)
+            if self._has_dipole_T:
+                logT = logT + dip_T_rad
+
             logY_safe = logY
             e2_logY_safe = data["e2_logY"]
             if relation == "LT":
@@ -2420,11 +2446,21 @@ class ClustersModel(BaseModel):
             logdl_grid = self.distance2logdl(r_grid)
             logda_grid = self.distance2logda(r_grid)
 
-            # CDDR violation: D_L = (1+z)^(2+ε) D_A
+            # CDDR violation
             if self.test_CDDR:
                 z_at_r = self.distance2redshift(r_grid, h=h)
-                logdl_grid = logdl_grid + epsilon_CDDR * jnp.log10(
-                    1 + z_at_r)
+                if self.CDDR_parameterisation == "power_law":
+                    # η(z) = (1+z)^ε
+                    logdl_grid = logdl_grid + epsilon_CDDR * jnp.log10(
+                        1 + z_at_r)
+                elif self.CDDR_parameterisation == "linear":
+                    # η(z) = 1 + ε z
+                    logdl_grid = logdl_grid + jnp.log10(
+                        1 + epsilon_CDDR * z_at_r)
+                else:
+                    raise ValueError(
+                        f"Unknown CDDR_parameterisation "
+                        f"'{self.CDDR_parameterisation}'.")
 
             if data.has_precomputed_los:
                 los_delta_r_grid = None
@@ -2741,7 +2777,7 @@ class ClustersModel(BaseModel):
             # Marginalise over temperature grid first (if enabled)
             if self.use_MNR and self.marginalize_logT:
                 # ll shape: (n_field, n_gal, n_rbin, n_T_grid) -> (n_field, n_gal, n_rbin)
-                ll = ln_simpson(ll, x=logT_grid[None, None, None, :], axis=-1)
+                ll = ln_simpson(ll, x=logT_grid[None, :, None, :], axis=-1)
 
             # Marginalise over the radial distance, average over realisations
             # and track the log-density.
