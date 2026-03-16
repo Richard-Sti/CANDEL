@@ -377,13 +377,10 @@ def run_inference_on_mock(config_path, mock_dir, mock_id, output_dir,
     # Set unique output file for this mock and iteration
     # temp_suffix contains info about which run this is (e.g., "_nodipole" or "_dipole_iter0")
     output_file = join(output_dir, f"mock_{mock_id:04d}{temp_suffix}.hdf5")
-    config_text = config_text.replace(
-        'fname_output = "results/mocks/nodipole.hdf5"',
-        f'fname_output = "{output_file}"'
-    )
-    config_text = config_text.replace(
-        'fname_output = "results/mocks/dipole.hdf5"',
-        f'fname_output = "{output_file}"'
+    config_text = re.sub(
+        r'fname_output\s*=\s*"[^"]*"',
+        f'fname_output = "{output_file}"',
+        config_text,
     )
 
     config_text = config_text.replace(

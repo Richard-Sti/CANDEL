@@ -36,7 +36,7 @@ density_prior = false
 [model]
 Om = 0.3
 use_MNR = false
-marginalize_eta = true
+marginalize_eta = false
 
 [model.eta_grid]
 k_sigma = 5
@@ -172,10 +172,10 @@ low = 0.0
 high = 1000.0
 
 [io]
-root_output = "results/mocks"
+root_output = "results/mocks_noMNR"
 catalogue_name = "Clusters_mock_0"
 apply_Ez_correction = true
-fname_output = "results/mocks/dipole.hdf5"
+fname_output = "results/mocks_noMNR/dipole.hdf5"
 
 # This section will be updated by the script
 [io.Clusters_mock]

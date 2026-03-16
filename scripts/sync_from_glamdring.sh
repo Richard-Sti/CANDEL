@@ -7,8 +7,8 @@ DEST_BASE="$HOME/code/CANDEL"
 # ---- glamdring source ----
 SRC_USER="yasin"
 SRC_HOST="glamdring.physics.ox.ac.uk"
-SRC_PATH="/mnt/users/yasin/code/CANDEL"
-SSH_KEY="$HOME/.ssh/id_ed25519"
+SRC_PATH="/mnt/users/yasin/projects/CANDEL"
+SSH_PASS="$(security find-generic-password -a yasin -s glamdring -w)"
 
 usage() {
     echo "Usage: $0 [results|data|results/<subfolder>|data/<subfolder>]"
@@ -36,7 +36,7 @@ case "$SYNC_TARGET" in
         fi
         echo "[INFO] Pulling '${SYNC_TARGET}' from glamdring -> ${DEST_DIR}"
         mkdir -p "$DEST_DIR"
-        rsync -avh --progress -e "ssh -i $SSH_KEY" \
+        rsync -avh --progress -e "sshpass -p '$SSH_PASS' ssh" \
           "$SRC_USER@$SRC_HOST:$SRC_DIR" \
           "$DEST_DIR"
         ;;
