@@ -1880,7 +1880,6 @@ def _ensure_scaling_priors(priors):
 
     priors.setdefault("CL_A", deepcopy(priors["A_LT"]))
     priors.setdefault("CL_B", deepcopy(priors["B_LT"]))
-    priors.setdefault("rho12", {"dist": "uniform", "low": 0.0, "high": 0.95})
 
 
 class ClustersModel(BaseModel):
