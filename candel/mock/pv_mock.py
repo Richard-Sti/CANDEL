@@ -22,7 +22,7 @@ from ..util import (SPEED_OF_LIGHT, fprint, galactic_to_radec,
 from ..cosmography import Distance2LogAngDist, Distance2LogLumDist
 
 
-def sample_distance(r_grid, los_density, b1, R, p, n, gen):
+def sample_distance(r_grid, los_density, b1, R, p, n, gen, r_max=None):
     los_delta = los_density - 1
     bias = np.clip(1 + b1 * los_delta, 1e-5, None)
 
@@ -33,6 +33,9 @@ def sample_distance(r_grid, los_density, b1, R, p, n, gen):
     else:
         # soft cutoff
         pi_r = bias * r_grid**p * np.exp(-(r_grid / R)**n)
+
+    if r_max is not None:
+        pi_r = np.where(r_grid <= r_max, pi_r, 0.0)
 
     cdf_r = cumulative_simpson(pi_r, x=r_grid, initial=0)
 
@@ -91,12 +94,21 @@ def gen_TFR_mock(nsamples, r_grid, Vext_mag, Vext_ell, Vext_b, sigma_v, beta,
         los_density = np.ones((nsamples, len(r_grid)))
         los_velocity = np.zeros_like(los_density)
 
+    # Compute r_max from zcmb_max so distances are truncated consistently
+    # with the redshift cut applied to the data.
+    if zcmb_max is not None:
+        z_grid = r2z(r_grid, h=h)
+        r_max = np.interp(zcmb_max, z_grid, r_grid)
+    else:
+        r_max = None
+
     r = np.full(nsamples, np.nan)
     Vpec = np.full(nsamples, np.nan)
     b1 = Om**0.55 / beta
     for i in range(nsamples):
         Vpec[i] = Vext_rad[i]
-        r[i] = sample_distance(r_grid, los_density[i], b1, R, p, n, gen)
+        r[i] = sample_distance(r_grid, los_density[i], b1, R, p, n, gen,
+                               r_max=r_max)
         Vpec[i] += beta * np.interp(r[i], r_grid, los_velocity[i])
         if linear_dir is not None:
             Vpec[i] += linear_Vext_slope * r[i] * np.dot(linear_dir, rhat[i])
@@ -243,6 +255,14 @@ def gen_Clusters_mock(nsamples, r_grid, Vext_mag, Vext_ell, Vext_b, sigma_v,
     # if Hnew is not None:
     #     print('new Hubble constants', Hnew)
 
+    # Compute r_max from zcmb_max so distances are truncated consistently
+    # with the redshift cut applied to the data.
+    if zcmb_max is not None:
+        z_grid = r2z(r_grid, h=h)
+        r_max = np.interp(zcmb_max, z_grid, r_grid)
+    else:
+        r_max = None
+
     # Sample distances
     r = np.full(nsamples, np.nan)
     Vpec = np.full(nsamples, np.nan)
@@ -268,7 +288,8 @@ def gen_Clusters_mock(nsamples, r_grid, Vext_mag, Vext_ell, Vext_b, sigma_v,
             los_velocity_i = los_velocity[i]
 
         r[i] = sample_distance(r_grid, los_density_i, b1,
-                               R_dist_emp, p_dist_emp, n_dist_emp, gen)
+                               R_dist_emp, p_dist_emp, n_dist_emp, gen,
+                               r_max=r_max)
         Vpec[i] += beta * np.interp(r[i], r_grid, los_velocity_i)
         if linear_dir is not None:
             Vpec[i] += linear_Vext_slope * r[i] * np.dot(linear_dir, rhat[i])

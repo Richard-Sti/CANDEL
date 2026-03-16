@@ -1880,6 +1880,7 @@ def _ensure_scaling_priors(priors):
 
     priors.setdefault("CL_A", deepcopy(priors["A_LT"]))
     priors.setdefault("CL_B", deepcopy(priors["B_LT"]))
+    priors.setdefault("rho12", {"dist": "uniform", "low": 0.0, "high": 0.95})
 
 
 class ClustersModel(BaseModel):
@@ -1967,6 +1968,18 @@ class ClustersModel(BaseModel):
         self.distance2logda = Distance2LogAngDist(Om0=self.Om, zmax_interp=1.0)
         self.distance2logdl = Distance2LogLumDist(Om0=self.Om, zmax_interp=1.0)
 
+        # Distance truncation from zcmb_max: ensures the empirical distance
+        # prior normalisation matches the redshift cut applied to the data.
+        zcmb_max = self._get_zcmb_max()
+        if zcmb_max is not None:
+            _r2d = Redshift2Distance(Om0=self.Om)
+            self.Rmax_truncate = float(
+                _r2d(np.atleast_1d(zcmb_max), h=1.0)[0])
+            fprint(f"Distance prior truncated at r={self.Rmax_truncate:.1f} "
+                   f"Mpc/h (zcmb_max={zcmb_max})")
+        else:
+            self.Rmax_truncate = None
+
         # CDDR violation
         self.test_CDDR = bool(
             get_nested(self.config, "model/test_CDDR", False))
@@ -1977,6 +1990,13 @@ class ClustersModel(BaseModel):
         self._has_dipole_L = self._prior_is_varying("dipole_L")
         self._has_dipole_Y = self._prior_is_varying("dipole_Y")
         self._has_dipole_T = self._prior_is_varying("dipole_T")
+
+        # Temperature bias with redshift: logT -> logT + delta_T_z * z
+        self._has_delta_T_z = self._prior_is_varying("delta_T_z")
+
+        # Free E(z) exponents
+        self._has_gamma_LT = self._prior_is_varying("gamma_LT")
+        self._has_gamma_YT = self._prior_is_varying("gamma_YT")
 
         if {"LT", "YT", "LTYT"} & self.used_relations:
             self.priors["CL_C"] = Delta(jnp.asarray(0.0))
@@ -2056,6 +2076,15 @@ class ClustersModel(BaseModel):
             return prior.get("type") != "delta" and prior.get("dist") != "delta"
         return True
 
+    def _get_zcmb_max(self):
+        """Read the maximum zcmb_max across all catalogue io sections."""
+        io_cfg = self.config.get("io", {})
+        vals = []
+        for key, val in io_cfg.items():
+            if isinstance(val, dict) and "zcmb_max" in val:
+                vals.append(val["zcmb_max"])
+        return max(vals) if vals else None
+
     def _validate_relation(self, relation):
         if relation not in self._VALID_RELATIONS:
             raise ValueError(
@@ -2126,11 +2155,17 @@ class ClustersModel(BaseModel):
         if use_LT_branch:
             A_LT = rsample("A_LT", self.priors["A_LT"], shared_params)
             B_LT = rsample("B_LT", self.priors["B_LT"], shared_params)
+            C_LT = rsample("C_LT", self.priors["C_LT"], shared_params) if "C_LT" in self.priors else 0.0
             sigma_LT = rsample("sigma_LT", self.priors["sigma_int"], shared_params)
+        else:
+            C_LT = 0.0
         if use_YT_branch:
             A_YT = rsample("A_YT", self.priors["A_YT"], shared_params)
             B_YT = rsample("B_YT", self.priors["B_YT"], shared_params)
+            C_YT = rsample("C_YT", self.priors["C_YT"], shared_params) if "C_YT" in self.priors else 0.0
             sigma_YT = rsample("sigma_YT", self.priors["sigma_int"], shared_params)
+        else:
+            C_YT = 0.0
 
         C = rsample("C_CL", self.priors["CL_C"], shared_params)
 
@@ -2256,6 +2291,9 @@ class ClustersModel(BaseModel):
             dip_T = rsample("dipole_T", self.priors["dipole_T"], shared_params)
             dip_T_rad = jnp.sum(dip_T * data["rhat"], axis=1)
 
+        if self._has_delta_T_z:
+            delta_T_z = rsample("delta_T_z", self.priors["delta_T_z"], shared_params)
+
         if relation in ["LT", "LTY"]:
             A = A_LT
             B = B_LT
@@ -2267,7 +2305,7 @@ class ClustersModel(BaseModel):
             B = B_LT
 
         if relation == "LTYT":
-            rho12 = sample("rho12", Uniform(-0.99, 0.99))  # avoid singular cov
+            rho12 = rsample("rho12", self.priors["rho12"], shared_params)
 
         # For the distance marginalization, h is not sampled.
         h = 1.
@@ -2415,6 +2453,10 @@ class ClustersModel(BaseModel):
             if self._has_dipole_T:
                 logT = logT + dip_T_rad
 
+            # Temperature bias with redshift
+            if self._has_delta_T_z:
+                logT = logT + delta_T_z * data["zcmb"]
+
             logY_safe = logY
             e2_logY_safe = data["e2_logY"]
             if relation == "LT":
@@ -2542,8 +2584,8 @@ class ClustersModel(BaseModel):
 
             # Homogeneous Malmqusit distance prior, `(n_field, n_gal, n_rbin)`
             lp_dist = log_prior_r_empirical(
-                r_grid, **kwargs_dist, Rmax_grid=r_grid[-1])[None, None, :]
-            #lp_dist = 0.
+                r_grid, **kwargs_dist, Rmax_grid=r_grid[-1],
+                Rmax_truncate=self.Rmax_truncate)[None, None, :]
 
             # Predict logF/logY incorporating (optional) cosmological E(z)
             if self.apply_Ez_correction:
@@ -2553,8 +2595,10 @@ class ClustersModel(BaseModel):
             # For marginalized case, use logT_grid[:, 0] for broadcasting shape
             logEz_broadcast_ref = logT_grid[:, 0] if (self.use_MNR and self.marginalize_logT) else logT
             logEz = _broadcast_param(logEz_raw, logEz_broadcast_ref)
-            logEz_LT = logEz
-            logEz_YT = -logEz
+            gamma_LT_val = rsample("gamma_LT", self.priors["gamma_LT"], shared_params) if self._has_gamma_LT else 1.0
+            gamma_YT_val = rsample("gamma_YT", self.priors["gamma_YT"], shared_params) if self._has_gamma_YT else -1.0
+            logEz_LT = gamma_LT_val * logEz
+            logEz_YT = gamma_YT_val * logEz
 
             # Predict logF from the scaling relation
             if relation in ["LT", "LTY"]:
@@ -2625,8 +2669,8 @@ class ClustersModel(BaseModel):
                     A_YT_vec = _broadcast_param(A_YT, logT_grid[:, 0])
 
                     # Intrinsic means over T grid: (n_gal, n_T_grid)
-                    mL_T = logEz_LT[:, None] + A_LT_vec[:, None] + B_LT * logT_grid
-                    mY_T = logEz_YT[:, None] + A_YT_vec[:, None] + B_YT * logT_grid
+                    mL_T = logEz_LT[:, None] + A_LT_vec[:, None] + B_LT * logT_grid + C_LT * logT_grid**2
+                    mY_T = logEz_YT[:, None] + A_YT_vec[:, None] + B_YT * logT_grid + C_YT * logT_grid**2
 
                     # Map to observables: (n_gal, n_rbin, n_T_grid)
                     mF = (mL_T[:, None, :] - jnp.log10(4 * jnp.pi)
@@ -2655,8 +2699,8 @@ class ClustersModel(BaseModel):
                     # --- Intrinsic means in log-space at fixed T ---
                     A_LT_vec = _broadcast_param(A_LT, logT)
                     A_YT_vec = _broadcast_param(A_YT, logT)
-                    mL = (logEz_LT + A_LT_vec + B_LT * logT)[:, None]   # (n_gal,)
-                    mY = (logEz_YT + A_YT_vec + B_YT * logT)[:, None]   # (n_gal,)
+                    mL = (logEz_LT + A_LT_vec + B_LT * logT + C_LT * logT**2)[:, None]   # (n_gal,)
+                    mY = (logEz_YT + A_YT_vec + B_YT * logT + C_YT * logT**2)[:, None]   # (n_gal,)
 
                     # --- Map to observable means over the distance grid ---
                     # logF = logL - log10(4π) - 2 log DL
@@ -2675,9 +2719,11 @@ class ClustersModel(BaseModel):
                     v12 = jnp.ones_like(v11) * rho12 * sigma_LT * sigma_YT           # scalar → broadcasts
                     if self.use_MNR == False:
                         # Add measurement error propagation from T
-                        v11 += B_LT**2 * data["e2_logT"]
-                        v22 += B_YT**2 * data["e2_logT"]
-                        v12 += B_LT * B_YT * data["e2_logT"]
+                        dLdlogT = B_LT + 2 * C_LT * logT
+                        dYdlogT = B_YT + 2 * C_YT * logT
+                        v11 += dLdlogT**2 * data["e2_logT"]
+                        v22 += dYdlogT**2 * data["e2_logT"]
+                        v12 += dLdlogT * dYdlogT * data["e2_logT"]
 
                     # Broadcast across the distance grid
                     V11 = v11[:, None]   # (n_gal, 1)
@@ -3255,7 +3301,10 @@ class ClustersAnisModel:
         if relation in ["LT", "LTYT"]:
             A_LT = rsample("A_LT", self.priors["A_LT"], shared_params)
             B_LT = rsample("B_LT", self.priors["B_LT"], shared_params)
+            C_LT = rsample("C_LT", self.priors["C_LT"], shared_params) if "C_LT" in self.priors else 0.0
             sigma_LT = rsample("sigma_LT", self.priors["sigma_int"], shared_params)
+        else:
+            C_LT = 0.0
         if relation in ["YT", "LTYT"]:
             A_YT = rsample("A_YT", self.priors["A_YT"], shared_params)
             B_YT = rsample("B_YT", self.priors["B_YT"], shared_params)
@@ -3264,7 +3313,7 @@ class ClustersAnisModel:
         C = rsample("C_CL", self.priors["CL_C"], shared_params)
 
         if relation == "LTYT":
-            rho12 = sample("rho12", Uniform(-0.99, 0.99))
+            rho12 = rsample("rho12", self.priors["rho12"], shared_params)
 
         # H0 dipole affects scaling relation zeropoint
         # Convert fractional H0 dipole to magnitude offset: ΔA = 2·log10(1 + δH)
@@ -3384,10 +3433,11 @@ class ClustersAnisModel:
             if relation == "LT":
                 sigma_logF = jnp.sqrt(data["e2_logF"] + sigma_LT**2)
                 if not self.use_MNR:
+                    dLdlogT = B_LT + 2 * C_LT * logT
                     sigma_logF = jnp.sqrt(
-                        sigma_logF**2 + B_LT**2 * data["e2_logT"])
+                        sigma_logF**2 + dLdlogT**2 * data["e2_logT"])
 
-                logF_pred = (logEz + A_LT + B_LT * logT)[:, None] - jnp.log10(
+                logF_pred = (logEz + A_LT + B_LT * logT + C_LT * logT**2)[:, None] - jnp.log10(
                     4 * jnp.pi) - 2 * logdl_grid[None, :]
 
                 ll = Normal(logF_pred, sigma_logF[:, None]).log_prob(
@@ -3407,7 +3457,7 @@ class ClustersAnisModel:
             elif relation == "LTYT":
                 A_LT_vec = A_LT
                 A_YT_vec = A_YT
-                mL = (logEz + A_LT_vec + B_LT * logT)[:, None]
+                mL = (logEz + A_LT_vec + B_LT * logT + C_LT * logT**2)[:, None]
                 mY = (-logEz + A_YT_vec + B_YT * logT)[:, None]
 
                 mF = mL - jnp.log10(4 * jnp.pi) - 2.0 * logdl_grid[None, :]
@@ -3418,9 +3468,10 @@ class ClustersAnisModel:
                 v12 = jnp.ones_like(v11) * rho12 * sigma_LT * sigma_YT
 
                 if not self.use_MNR:
-                    v11 = v11 + B_LT**2 * data["e2_logT"]
+                    dLdlogT = B_LT + 2 * C_LT * logT
+                    v11 = v11 + dLdlogT**2 * data["e2_logT"]
                     v22 = v22 + B_YT**2 * data["e2_logT"]
-                    v12 = v12 + B_LT * B_YT * data["e2_logT"]
+                    v12 = v12 + dLdlogT * B_YT * data["e2_logT"]
 
                 V11, V22, V12 = v11[:, None], v22[:, None], v12[:, None]
                 xF = data["logF"][:, None]
