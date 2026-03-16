@@ -48,13 +48,100 @@ def sample_uniform(n=1, low=0.0, high=10.0, seed=None):
     return rng.uniform(low, high, size=n)
 
 
+def sample_truth_from_config(config_path, rng):
+    """Parse prior specs from config and sample one truth draw per parameter.
+
+    Parameters
+    ----------
+    config_path : str
+        Path to a TOML config file with ``[model.priors.*]`` sections.
+    rng : numpy.random.Generator
+        Random number generator for reproducibility.
+
+    Returns
+    -------
+    truth : dict
+        Sampled truth values keyed by parameter name.
+    los_decay_scale : float
+        The ``los_decay_scale`` value from ``[pv_model]``.
+    """
+    config = candel.load_config(config_path)
+    priors = config['model']['priors']
+
+    def _sample_prior(spec):
+        dist = spec['dist']
+        if dist == 'delta':
+            return spec['value']
+        elif dist == 'uniform':
+            return rng.uniform(spec['low'], spec['high'])
+        elif dist == 'jeffreys':
+            return np.exp(rng.uniform(np.log(spec['low']),
+                                      np.log(spec['high'])))
+        elif dist == 'normal':
+            return rng.normal(spec['loc'], spec['scale'])
+        elif dist == 'truncated_normal':
+            val = rng.normal(spec['mean'], spec['scale'])
+            return max(val, spec.get('low', -np.inf))
+        elif dist == 'vector_uniform_fixed':
+            mag = rng.uniform(spec['low'], spec['high'])
+            phi = rng.uniform(0.0, 2 * np.pi)
+            cos_theta = rng.uniform(-1.0, 1.0)
+            sin_theta = np.sqrt(1 - cos_theta**2)
+            vec = mag * np.array([sin_theta * np.cos(phi),
+                                  sin_theta * np.sin(phi),
+                                  cos_theta])
+            return {'vec': vec, 'mag': mag, 'phi': phi,
+                    'cos_theta': cos_theta}
+        else:
+            raise ValueError(f"Unknown prior dist: {dist}")
+
+    # Scalar parameters to extract
+    scalar_keys = ['b1', 'beta', 'sigma_v', 'sigma_YT', 'sigma_LT',
+                   'A_YT', 'B_YT', 'A_LT', 'B_LT',
+                   'R_dist_emp', 'p_dist_emp', 'n_dist_emp', 'h']
+
+    truth = {}
+    for key in scalar_keys:
+        if key in priors:
+            truth[key] = _sample_prior(priors[key])
+
+    # H0_dipole (vector)
+    if 'H0_dipole' in priors:
+        dip = _sample_prior(priors['H0_dipole'])
+        if isinstance(dip, dict):
+            truth['H0_dipole'] = dip['vec']
+            truth['H0_dipole_mag'] = dip['mag']
+            truth['H0_dipole_phi'] = dip['phi']
+            truth['H0_dipole_cos_theta'] = dip['cos_theta']
+            theta = np.arccos(dip['cos_theta'])
+            ra = np.rad2deg(dip['phi'])
+            dec = np.rad2deg(0.5 * np.pi - theta)
+            ell, b = radec_to_galactic(ra, dec)
+            truth['H0_dipole_ell'] = ell
+            truth['H0_dipole_b'] = b
+        else:
+            truth['H0_dipole'] = np.asarray(dip)
+
+    # Hardcoded correlation for LTYT
+    which_relation = config.get('io', {}).get('Clusters', {}).get(
+        'which_relation', 'YT')
+    if which_relation == 'LTYT':
+        truth['rho12'] = 0.85
+    else:
+        truth.setdefault('rho12', 0.0)
+
+    los_decay_scale = config.get('pv_model', {}).get('los_decay_scale', 5.0)
+    return truth, los_decay_scale
+
+
 def generate_mock(
     nsamples, seed, field_loader, output_dir, mock_id=0,
-    which_relation="YT",
+    which_relation="YT", truth_from_config=None,
+    los_decay_scale_override=None,
 ):
     """
     Generate a mock cluster dataset.
-    
+
     Parameters
     ----------
     nsamples : int
@@ -67,7 +154,12 @@ def generate_mock(
         Directory to save the mock HDF5 file
     mock_id : int
         Mock identifier for naming
-    
+    truth_from_config : dict, optional
+        Pre-sampled truth values from ``sample_truth_from_config``.
+        If None, uses the legacy hardcoded ranges.
+    los_decay_scale_override : float, optional
+        Override for ``los_decay_scale`` (from config).
+
     Returns
     -------
     mock : dict
@@ -75,59 +167,72 @@ def generate_mock(
     mock_path : str
         Path to saved mock file
     """
-    
+
     rng = np.random.default_rng(seed)
 
-    # fixed values
-    b1 = 4.0 #rng.uniform(1.0, 4.0)
-    beta = 0.43 #rng.normal(0.43, 0.02)
-
-    # Sample sigma_YT from Jeffreys prior between 0.01 and 0.2
-    log_sigma_YT = rng.uniform(np.log(0.01), np.log(0.2))
-    sigma_YT = np.exp(log_sigma_YT)
-
-    log_sigma_v = rng.uniform(np.log(450.0), np.log(600.0))
-    sigma_v = np.exp(log_sigma_v)
-
-    # draw ALL random params from the SAME rng
-    A_YT = rng.uniform(1.0, 3.0)
-    B_YT = rng.uniform(2.0, 3.0)
-
-    # LT parameters: draw from priors for LTYT, fix for YT-only
-    if which_relation == "LTYT":
-        A_LT = rng.uniform(1.0, 3.0)
-        B_LT = rng.uniform(2.0, 3.0)
-        log_sigma_LT = rng.uniform(np.log(0.01), np.log(0.2))
-        sigma_LT = np.exp(log_sigma_LT)
-        rho12 = 0.85  # fixed for initial testing
+    if truth_from_config is not None:
+        # Use config-derived truth values
+        t = truth_from_config
+        b1 = t['b1']
+        beta = t['beta']
+        sigma_YT = t['sigma_YT']
+        sigma_v = t['sigma_v']
+        A_YT = t['A_YT']
+        B_YT = t['B_YT']
+        A_LT = t.get('A_LT', 0.0)
+        B_LT = t.get('B_LT', 2.5)
+        sigma_LT = t.get('sigma_LT', 0.15)
+        rho12 = t.get('rho12', 0.0)
+        R = t['R_dist_emp']
+        p = t['p_dist_emp']
+        n = t['n_dist_emp']
+        h = t.get('h', 1.0)
+        H0_dipole = t['H0_dipole']
+        H0_dipole_mag = t['H0_dipole_mag']
+        H0_dipole_phi = t['H0_dipole_phi']
+        H0_dipole_cos_theta = t['H0_dipole_cos_theta']
+        H0_dipole_ell = t['H0_dipole_ell']
+        H0_dipole_b = t['H0_dipole_b']
+        los_decay = los_decay_scale_override if los_decay_scale_override is not None else 5.0
     else:
-        A_LT, B_LT, sigma_LT, rho12 = 0.0, 2.5, 0.15, 0.0
+        # Legacy hardcoded ranges
+        b1 = 4.0
+        beta = 0.43
+        log_sigma_YT = rng.uniform(np.log(0.01), np.log(0.2))
+        sigma_YT = np.exp(log_sigma_YT)
+        log_sigma_v = rng.uniform(np.log(450.0), np.log(600.0))
+        sigma_v = np.exp(log_sigma_v)
+        A_YT = rng.uniform(1.0, 3.0)
+        B_YT = rng.uniform(2.0, 3.0)
 
-    # Sample H0_dipole directly as fractional δH (matching new H0_dipole prior)
-    H0_dipole_mag = rng.uniform(0.0, 0.15)  # fractional δH/H
+        if which_relation == "LTYT":
+            A_LT = rng.uniform(1.0, 3.0)
+            B_LT = rng.uniform(2.0, 3.0)
+            log_sigma_LT = rng.uniform(np.log(0.01), np.log(0.2))
+            sigma_LT = np.exp(log_sigma_LT)
+            rho12 = 0.85
+        else:
+            A_LT, B_LT, sigma_LT, rho12 = 0.0, 2.5, 0.15, 0.0
 
-    # Isotropic direction: phi ~ U[0,2π), cosθ ~ U[-1,1]
-    H0_dipole_phi = rng.uniform(0.0, 2*np.pi)
-    H0_dipole_cos_theta = rng.uniform(-1.0, 1.0)
+        H0_dipole_mag = rng.uniform(0.0, 0.15)
+        H0_dipole_phi = rng.uniform(0.0, 2*np.pi)
+        H0_dipole_cos_theta = rng.uniform(-1.0, 1.0)
+        sin_theta = np.sqrt(1 - H0_dipole_cos_theta**2)
+        H0_dipole = H0_dipole_mag * np.array([
+            sin_theta * np.cos(H0_dipole_phi),
+            sin_theta * np.sin(H0_dipole_phi),
+            H0_dipole_cos_theta
+        ])
+        theta = np.arccos(H0_dipole_cos_theta)
+        ra = np.rad2deg(H0_dipole_phi)
+        dec = np.rad2deg(0.5*np.pi - theta)
+        H0_dipole_ell, H0_dipole_b = radec_to_galactic(ra, dec)
 
-    # Build 3D Cartesian vector (ICRS frame)
-    sin_theta = np.sqrt(1 - H0_dipole_cos_theta**2)
-    H0_dipole = H0_dipole_mag * np.array([
-        sin_theta * np.cos(H0_dipole_phi),
-        sin_theta * np.sin(H0_dipole_phi),
-        H0_dipole_cos_theta
-    ])
-
-    # Compute galactic coordinates for reference
-    theta = np.arccos(H0_dipole_cos_theta)
-    ra = np.rad2deg(H0_dipole_phi)
-    dec = np.rad2deg(0.5*np.pi - theta)
-    H0_dipole_ell, H0_dipole_b = radec_to_galactic(ra, dec)
-
-    # Fixed distance model parameters
-    R = rng.uniform(80.0, 130.0)
-    p = 2.0
-    n = 1.1
+        R = rng.uniform(80.0, 130.0)
+        p = 2.0
+        n = 1.1
+        h = 1.0
+        los_decay = 5.0
 
     fprint(f"Generating mock with {nsamples} clusters, seed={seed}, relation={which_relation}")
     fprint(f"  b1={b1:.3f}, sigma_YT={sigma_YT:.4f}, sigma_v={sigma_v:.1f}")
@@ -135,6 +240,7 @@ def generate_mock(
     fprint(f"  A_LT={A_LT:.3f}, B_LT={B_LT:.3f}, sigma_LT={sigma_LT:.4f}, rho12={rho12:.3f}")
     fprint(f"  R={R:.1f}, p={p:.2f}, n={n:.2f}")
     fprint(f"  H0_dipole: mag={H0_dipole_mag:.4f}, ell={H0_dipole_ell:.1f}, b={H0_dipole_b:.1f}")
+    fprint(f"  los_decay_scale={los_decay:.1f}, beta={beta:.4f}")
 
     kwargs = {
         'r_grid': np.linspace(0.1, 1401, 501),
@@ -151,15 +257,13 @@ def generate_mock(
         'B_LT': B_LT,
         'sigma_LT': sigma_LT,
         'rho12': rho12,
-        # H0 dipole as 3D vector (magnitude = fractional δH)
         'H0_dipole': H0_dipole,
-        # Truth parameters for bias testing (matching inference output names)
         'H0_dipole_mag': H0_dipole_mag,
         'H0_dipole_phi': H0_dipole_phi,
         'H0_dipole_cos_theta': H0_dipole_cos_theta,
         'H0_dipole_ell': H0_dipole_ell,
         'H0_dipole_b': H0_dipole_b,
-        'h': 1.0,
+        'h': h,
         'logT_prior_mean': 0.0,
         'logT_prior_std': 0.2,
         'e_logT': 0.03,
@@ -172,12 +276,12 @@ def generate_mock(
         'n_dist_emp': n,
         'field_loader': field_loader,
         'apply_Ez_correction': True,
-        'los_decay_scale': 5.0,
+        'los_decay_scale': los_decay,
         'r2distmod': candel.Distance2Distmod(),
         'r2z': candel.Distance2Redshift(),
         'Om': 0.3,
     }
-    
+
     mock = candel.mock.gen_Clusters_mock(nsamples, seed=seed, **kwargs)
 
     fprint("Maximum zcmb in mock: {:.4f}".format(np.max(mock['zcmb'])))
@@ -454,10 +558,11 @@ def main():
                         help='Path to config file for model WITHOUT dipole (default: scripts/cluster_runs/mock_cluster_nodipole.toml)')
     parser.add_argument('--config_dipole', type=str, default='scripts/cluster_runs/mock_cluster_dipole.toml',
                         help='Path to config file for model WITH dipole (default: scripts/cluster_runs/mock_cluster_dipole.toml)')
-    parser.add_argument('--field_density', type=str, default=os.path.expanduser('~/code/CANDEL/data/fields/carrick2015_twompp_density.npy'),
-                        help='Path to field density file (default: ~/code/CANDEL/data/fields/carrick2015_twompp_density.npy)')
-    parser.add_argument('--field_velocity', type=str, default=os.path.expanduser('~/code/CANDEL/data/fields/carrick2015_twompp_velocity.npy'),
-                        help='Path to field velocity file (default: ~/code/CANDEL/data/fields/carrick2015_twompp_velocity.npy)')
+    _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+    parser.add_argument('--field_density', type=str, default=os.path.join(_REPO_ROOT, 'data/fields/carrick2015_twompp_density.npy'),
+                        help='Path to field density file')
+    parser.add_argument('--field_velocity', type=str, default=os.path.join(_REPO_ROOT, 'data/fields/carrick2015_twompp_velocity.npy'),
+                        help='Path to field velocity file')
     parser.add_argument('--nclusters', type=int, default=275,
                         help='Number of clusters per mock (default: 275)')
     parser.add_argument('--n_mocks_total', type=int, default=None,
@@ -480,7 +585,14 @@ def main():
                         help='Scaling relation for mock generation (default: YT)')
     parser.add_argument('--num_samples', type=int, default=1000,
                         help='Number of samples for inference runs (default: 500)')
+    parser.add_argument('--config_truth', type=str, default=None,
+                        help='Config file from which to sample truth values. '
+                             'If None, defaults to --config_dipole.')
     args = parser.parse_args()
+
+    # Default config_truth to config_dipole if not specified
+    if args.config_truth is None:
+        args.config_truth = args.config_dipole
     
     # Create output directory
     if rank == 0:
@@ -538,9 +650,17 @@ def main():
         
         # Generate mock with unique seed
         seed = args.seed_offset + mock_id
+
+        # Sample truth values from config priors
+        truth_rng = np.random.default_rng(seed)
+        truth_from_config, los_decay_scale = sample_truth_from_config(
+            args.config_truth, truth_rng)
+
         mock, mock_path = generate_mock(
             args.nclusters, seed, field_loader, mock_dir, mock_id=mock_id,
-            which_relation=args.which_relation)
+            which_relation=args.which_relation,
+            truth_from_config=truth_from_config,
+            los_decay_scale_override=los_decay_scale)
     
         fprint(f"Starting cluster removal analysis...")
         fprint(f"  Initial clusters: {args.nclusters}")
