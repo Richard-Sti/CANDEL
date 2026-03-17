@@ -98,7 +98,7 @@ def sample_truth_from_config(config_path, rng):
     # Scalar parameters to extract
     scalar_keys = ['b1', 'beta', 'sigma_v', 'sigma_YT', 'sigma_LT',
                    'A_YT', 'B_YT', 'A_LT', 'B_LT',
-                   'R_dist_emp', 'p_dist_emp', 'n_dist_emp', 'h']
+                   'R_dist_emp', 'p_dist_emp', 'n_dist_emp', 'h', 'rho12']
 
     truth = {}
     for key in scalar_keys:
@@ -122,13 +122,7 @@ def sample_truth_from_config(config_path, rng):
         else:
             truth['H0_dipole'] = np.asarray(dip)
 
-    # Hardcoded correlation for LTYT
-    which_relation = config.get('io', {}).get('Clusters', {}).get(
-        'which_relation', 'YT')
-    if which_relation == 'LTYT':
-        truth['rho12'] = 0.85
-    else:
-        truth.setdefault('rho12', 0.0)
+    truth.setdefault('rho12', 0.0)
 
     los_decay_scale = config.get('pv_model', {}).get('los_decay_scale', 5.0)
     return truth, los_decay_scale
