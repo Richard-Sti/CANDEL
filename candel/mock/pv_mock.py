@@ -94,13 +94,8 @@ def gen_TFR_mock(nsamples, r_grid, Vext_mag, Vext_ell, Vext_b, sigma_v, beta,
         los_density = np.ones((nsamples, len(r_grid)))
         los_velocity = np.zeros_like(los_density)
 
-    # Compute r_max from zcmb_max so distances are truncated consistently
-    # with the redshift cut applied to the data.
-    if zcmb_max is not None:
-        z_grid = r2z(r_grid, h=h)
-        r_max = np.interp(zcmb_max, z_grid, r_grid)
-    else:
-        r_max = None
+    # Truncate distance sampling at the grid edge to match inference.
+    r_max = r_grid[-1]
 
     r = np.full(nsamples, np.nan)
     Vpec = np.full(nsamples, np.nan)
@@ -255,13 +250,8 @@ def gen_Clusters_mock(nsamples, r_grid, Vext_mag, Vext_ell, Vext_b, sigma_v,
     # if Hnew is not None:
     #     print('new Hubble constants', Hnew)
 
-    # Compute r_max from zcmb_max so distances are truncated consistently
-    # with the redshift cut applied to the data.
-    if zcmb_max is not None:
-        z_grid = r2z(r_grid, h=h)
-        r_max = np.interp(zcmb_max, z_grid, r_grid)
-    else:
-        r_max = None
+    # Truncate distance sampling at the grid edge to match inference.
+    r_max = r_grid[-1]
 
     # Sample distances
     r = np.full(nsamples, np.nan)
