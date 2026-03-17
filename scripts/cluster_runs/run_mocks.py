@@ -124,14 +124,19 @@ def sample_truth_from_config(config_path, rng):
 
     truth.setdefault('rho12', 0.0)
 
-    los_decay_scale = config.get('pv_model', {}).get('los_decay_scale', 5.0)
-    return truth, los_decay_scale
+    pv = config.get('pv_model', {})
+    mock_settings = {
+        'los_decay_scale': pv.get('los_decay_scale', 5.0),
+        'r_limits_malmquist': pv.get('r_limits_malmquist', [0.1, 1401]),
+        'num_points_malmquist': pv.get('num_points_malmquist', 1401),
+    }
+    return truth, mock_settings
 
 
 def generate_mock(
     nsamples, seed, field_loader, output_dir, mock_id=0,
     which_relation="YT", truth_from_config=None,
-    los_decay_scale_override=None,
+    mock_settings=None,
 ):
     """
     Generate a mock cluster dataset.
@@ -151,8 +156,9 @@ def generate_mock(
     truth_from_config : dict, optional
         Pre-sampled truth values from ``sample_truth_from_config``.
         If None, uses the legacy hardcoded ranges.
-    los_decay_scale_override : float, optional
-        Override for ``los_decay_scale`` (from config).
+    mock_settings : dict, optional
+        Settings from config (los_decay_scale, r_limits_malmquist,
+        num_points_malmquist).
 
     Returns
     -------
@@ -187,7 +193,8 @@ def generate_mock(
         H0_dipole_cos_theta = t['H0_dipole_cos_theta']
         H0_dipole_ell = t['H0_dipole_ell']
         H0_dipole_b = t['H0_dipole_b']
-        los_decay = los_decay_scale_override if los_decay_scale_override is not None else 5.0
+        ms = mock_settings or {}
+        los_decay = ms.get('los_decay_scale', 5.0)
     else:
         # Legacy hardcoded ranges
         b1 = 4.0
@@ -236,8 +243,12 @@ def generate_mock(
     fprint(f"  H0_dipole: mag={H0_dipole_mag:.4f}, ell={H0_dipole_ell:.1f}, b={H0_dipole_b:.1f}")
     fprint(f"  los_decay_scale={los_decay:.1f}, beta={beta:.4f}")
 
+    ms = mock_settings or {}
+    r_lim = ms.get('r_limits_malmquist', [0.1, 1401])
+    n_pts = ms.get('num_points_malmquist', 1401)
+
     kwargs = {
-        'r_grid': np.linspace(0.1, 1401, 501),
+        'r_grid': np.linspace(r_lim[0], r_lim[1], n_pts),
         'Vext_mag': 0.00,
         'Vext_ell': 0.0,
         'Vext_b': 0.0,
@@ -644,14 +655,14 @@ def main():
 
         # Sample truth values from config priors
         truth_rng = np.random.default_rng(seed)
-        truth_from_config, los_decay_scale = sample_truth_from_config(
+        truth_from_config, mock_settings = sample_truth_from_config(
             args.config_truth, truth_rng)
 
         mock, mock_path = generate_mock(
             args.nclusters, seed, field_loader, mock_dir, mock_id=mock_id,
             which_relation=args.which_relation,
             truth_from_config=truth_from_config,
-            los_decay_scale_override=los_decay_scale)
+            mock_settings=mock_settings)
     
         fprint(f"Starting cluster removal analysis...")
         fprint(f"  Initial clusters: {args.nclusters}")

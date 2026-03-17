@@ -2134,14 +2134,14 @@ class ClustersModel(BaseModel):
             A_LT = rsample("A_LT", self.priors["A_LT"], shared_params)
             B_LT = rsample("B_LT", self.priors["B_LT"], shared_params)
             C_LT = rsample("C_LT", self.priors["C_LT"], shared_params) if "C_LT" in self.priors else 0.0
-            sigma_LT = rsample("sigma_LT", self.priors["sigma_int"], shared_params)
+            sigma_LT = rsample("sigma_LT", self.priors.get("sigma_LT", self.priors["sigma_int"]), shared_params)
         else:
             C_LT = 0.0
         if use_YT_branch:
             A_YT = rsample("A_YT", self.priors["A_YT"], shared_params)
             B_YT = rsample("B_YT", self.priors["B_YT"], shared_params)
             C_YT = rsample("C_YT", self.priors["C_YT"], shared_params) if "C_YT" in self.priors else 0.0
-            sigma_YT = rsample("sigma_YT", self.priors["sigma_int"], shared_params)
+            sigma_YT = rsample("sigma_YT", self.priors.get("sigma_YT", self.priors["sigma_int"]), shared_params)
         else:
             C_YT = 0.0
 
@@ -3279,13 +3279,13 @@ class ClustersAnisModel:
             A_LT = rsample("A_LT", self.priors["A_LT"], shared_params)
             B_LT = rsample("B_LT", self.priors["B_LT"], shared_params)
             C_LT = rsample("C_LT", self.priors["C_LT"], shared_params) if "C_LT" in self.priors else 0.0
-            sigma_LT = rsample("sigma_LT", self.priors["sigma_int"], shared_params)
+            sigma_LT = rsample("sigma_LT", self.priors.get("sigma_LT", self.priors["sigma_int"]), shared_params)
         else:
             C_LT = 0.0
         if relation in ["YT", "LTYT"]:
             A_YT = rsample("A_YT", self.priors["A_YT"], shared_params)
             B_YT = rsample("B_YT", self.priors["B_YT"], shared_params)
-            sigma_YT = rsample("sigma_YT", self.priors["sigma_int"], shared_params)
+            sigma_YT = rsample("sigma_YT", self.priors.get("sigma_YT", self.priors["sigma_int"]), shared_params)
 
         C = rsample("C_CL", self.priors["CL_C"], shared_params)
 
