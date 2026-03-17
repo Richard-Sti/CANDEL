@@ -87,6 +87,7 @@ def get_mock_init_values(data, model):
         'A_LT', 'B_LT', 'A_YT', 'B_YT', 'C_CL',
         'A_CL', 'B_CL', 'A_CL_LT', 'B_CL_LT',  # legacy support
         'R_dist_emp', 'p_dist_emp', 'n_dist_emp',
+        'rho12',
         # Vector parameters are stored as components that NumPyro samples
         'zeropoint_dipole_mag', 'zeropoint_dipole_phi', 'zeropoint_dipole_cos_theta',
         'H0_dipole_mag', 'H0_dipole_phi', 'H0_dipole_cos_theta',

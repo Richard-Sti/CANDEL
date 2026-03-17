@@ -1967,18 +1967,6 @@ class ClustersModel(BaseModel):
         self.distance2logda = Distance2LogAngDist(Om0=self.Om, zmax_interp=1.0)
         self.distance2logdl = Distance2LogLumDist(Om0=self.Om, zmax_interp=1.0)
 
-        # Distance truncation from zcmb_max: ensures the empirical distance
-        # prior normalisation matches the redshift cut applied to the data.
-        zcmb_max = self._get_zcmb_max()
-        if zcmb_max is not None:
-            _r2d = Redshift2Distance(Om0=self.Om)
-            self.Rmax_truncate = float(
-                _r2d(np.atleast_1d(zcmb_max), h=1.0)[0])
-            fprint(f"Distance prior truncated at r={self.Rmax_truncate:.1f} "
-                   f"Mpc/h (zcmb_max={zcmb_max})")
-        else:
-            self.Rmax_truncate = None
-
         # CDDR violation
         self.test_CDDR = bool(
             get_nested(self.config, "model/test_CDDR", False))
@@ -2074,15 +2062,6 @@ class ClustersModel(BaseModel):
         if isinstance(prior, dict):
             return prior.get("type") != "delta" and prior.get("dist") != "delta"
         return True
-
-    def _get_zcmb_max(self):
-        """Read the maximum zcmb_max across all catalogue io sections."""
-        io_cfg = self.config.get("io", {})
-        vals = []
-        for key, val in io_cfg.items():
-            if isinstance(val, dict) and "zcmb_max" in val:
-                vals.append(val["zcmb_max"])
-        return max(vals) if vals else None
 
     def _validate_relation(self, relation):
         if relation not in self._VALID_RELATIONS:
@@ -2583,8 +2562,7 @@ class ClustersModel(BaseModel):
 
             # Homogeneous Malmqusit distance prior, `(n_field, n_gal, n_rbin)`
             lp_dist = log_prior_r_empirical(
-                r_grid, **kwargs_dist, Rmax_grid=r_grid[-1],
-                Rmax_truncate=self.Rmax_truncate)[None, None, :]
+                r_grid, **kwargs_dist, Rmax_grid=r_grid[-1])[None, None, :]
 
             # Predict logF/logY incorporating (optional) cosmological E(z)
             if self.apply_Ez_correction:
