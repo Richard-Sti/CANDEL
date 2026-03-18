@@ -275,7 +275,7 @@ def generate_mock(
         'e_logY': 0.09,
         'e_logF': 0.05,
         'b_min': 20.0,
-        'zcmb_max': 0.45,
+        'zcmb_max': None,
         'R_dist_emp': R,
         'p_dist_emp': p,
         'n_dist_emp': n,
