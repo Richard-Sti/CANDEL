@@ -18,6 +18,8 @@ import time
 
 import bilby
 import numpy as np
+from bilby.gw.utils import ln_i0
+from scipy.special import logsumexp
 from sklearn.mixture import GaussianMixture
 
 
@@ -201,6 +203,230 @@ class GWplusEMLikelihood(bilby.gw.GravitationalWaveTransient):
         if self.gmm is None or not np.isfinite(log_lr_gw):
             return log_lr_gw
         return log_lr_gw + self._log_em(parameters)
+
+
+class PsiMarginalizedLikelihood(GWplusEMLikelihood):
+    """GW+EM likelihood with psi numerically marginalised out.
+
+    For fixed (ra, dec, geocent_time), the antenna patterns rotate as:
+        F+(psi) =  F+(0) cos(2psi) + Fx(0) sin(2psi)
+        Fx(psi) = -F+(0) sin(2psi) + Fx(0) cos(2psi)
+
+    We compute waveform inner products once and evaluate the likelihood
+    at N_psi values of psi cheaply, then logsumexp to marginalise.
+    """
+
+    def __init__(self, *args, n_psi=50, marginalize_phase=False,
+                 marginalize_time=False, **kwargs):
+        if marginalize_time:
+            kwargs['time_marginalization'] = True
+            kwargs.setdefault('jitter_time', True)
+        super().__init__(*args, **kwargs)
+        self.n_psi = n_psi
+        self.psi_grid = np.linspace(0, np.pi, n_psi, endpoint=False)
+        self._marginalize_phase = marginalize_phase
+        self._marginalize_time = marginalize_time
+
+    def _inner_product(self, aa, bb, psd, duration):
+        """Noise-weighted inner product: 4/T * Re(sum(conj(aa) * bb / S))."""
+        return 4.0 / duration * np.sum(np.conj(aa) * bb / psd).real
+
+    def _complex_inner_product(self, aa, bb, psd, duration):
+        """Complex noise-weighted inner product: 4/T * sum(conj(aa) * bb / S).
+
+        The real part gives <a|b>, the imaginary part is needed for
+        the signal-vs-data terms where we need the full complex value.
+        """
+        return 4.0 / duration * np.sum(np.conj(aa) * bb / psd)
+
+    def _matched_filter_fft(self, h_pol, data, psd_array, duration):
+        """Compute <h|d>(t) for all time shifts via FFT.
+
+        Returns complex array of length N_t = duration * fs / 2.
+        """
+        n_freq = len(psd_array)
+        # Zero where PSD is inf/zero (out-of-band); drop Nyquist
+        integrand = np.zeros(n_freq - 1, dtype=complex)
+        valid = (psd_array[:-1] > 0) & np.isfinite(psd_array[:-1])
+        integrand[valid] = (
+            np.conj(h_pol[:-1][valid]) * data[:-1][valid] / psd_array[:-1][valid]
+        )
+        # FFT gives sum at each time bin; normalise by 4/T
+        return 4.0 / duration * np.fft.fft(integrand)
+
+    def log_likelihood_ratio(self, parameters=None):
+        if parameters is not None:
+            self.parameters.update(parameters)
+
+        # Force psi=0 for waveform generation (psi only enters via antenna)
+        self.parameters["psi"] = 0.0
+
+        # Generate waveform polarisations
+        wf_pols = self.waveform_generator.frequency_domain_strain(
+            self.parameters)
+        if wf_pols is None:
+            return np.nan_to_num(-np.inf)
+
+        hp = wf_pols["plus"]
+        hc = wf_pols["cross"]
+
+        ra = self.parameters["ra"]
+        dec = self.parameters["dec"]
+        tc = self.parameters["geocent_time"]
+
+        n_det = len(self.interferometers)
+        Fp0 = np.zeros(n_det)
+        Fc0 = np.zeros(n_det)
+        C = np.zeros(n_det)
+        D = np.zeros(n_det)
+        E = np.zeros(n_det)
+
+        if self._marginalize_time:
+            # FFT-based matched filter: compute A(t), B(t) arrays
+            # Apply only geometric delay (not geocentric offset) to template;
+            # the geocentric time shift is explored via the FFT time grid.
+            # Handle time_jitter sub-bin correction
+            time_jitter = self.parameters.get("time_jitter", 0.0)
+            tc_ref = tc + time_jitter
+
+            A_arrays = []
+            B_arrays = []
+            for i, ifo in enumerate(self.interferometers):
+                psd_full = ifo.power_spectral_density_array
+                dur = ifo.strain_data.duration
+                data_full = ifo.frequency_domain_strain
+
+                # Geometric delay only (no geocentric offset)
+                dt_geo = ifo.time_delay_from_geocenter(ra, dec, tc_ref)
+                dt_start = tc_ref - ifo.strain_data.start_time
+                time_shift = dt_geo + dt_start
+                freqs_full = ifo.frequency_array
+                phase_shift = np.exp(-2j * np.pi * freqs_full * time_shift)
+
+                if ifo.calibration_model is not None:
+                    cal = ifo.calibration_model.get_calibration_factor(
+                        freqs_full[ifo.frequency_mask],
+                        prefix=f"recalib_{ifo.name}_",
+                        **self.parameters)
+                    cal_full = np.ones_like(freqs_full, dtype=complex)
+                    cal_full[ifo.frequency_mask] = cal
+                else:
+                    cal_full = 1.0
+
+                hp_shifted = hp * phase_shift * cal_full
+                hc_shifted = hc * phase_shift * cal_full
+
+                # Zero out-of-band frequencies via PSD (set to inf)
+                psd_eff = psd_full.copy()
+                psd_eff[~ifo.frequency_mask] = np.inf
+
+                A_arrays.append(
+                    self._matched_filter_fft(hp_shifted, data_full, psd_eff, dur))
+                B_arrays.append(
+                    self._matched_filter_fft(hc_shifted, data_full, psd_eff, dur))
+
+                # Template-template products (time-independent, use masked)
+                mask = ifo.frequency_mask
+                psd = psd_full[mask]
+                hp_s = hp_shifted[mask]
+                hc_s = hc_shifted[mask]
+                C[i] = self._inner_product(hp_s, hp_s, psd, dur)
+                D[i] = self._inner_product(hp_s, hc_s, psd, dur)
+                E[i] = self._inner_product(hc_s, hc_s, psd, dur)
+
+                Fp0[i] = ifo.antenna_response(ra, dec, tc_ref, 0.0, "plus")
+                Fc0[i] = ifo.antenna_response(ra, dec, tc_ref, 0.0, "cross")
+
+            A_array = np.array(A_arrays)  # (n_det, n_times)
+            B_array = np.array(B_arrays)
+
+            # Time grid and prior from bilby's setup
+            n_times = A_array.shape[1]
+            time_prior = self.time_prior_array
+
+            # Evaluate log L at each psi, marginalising over time
+            log_ls = np.empty(self.n_psi)
+            for k, psi in enumerate(self.psi_grid):
+                c2 = np.cos(2 * psi)
+                s2 = np.sin(2 * psi)
+                Fp = Fp0 * c2 + Fc0 * s2
+                Fc = -Fp0 * s2 + Fc0 * c2
+
+                signal_signal = np.sum(
+                    Fp**2 * C + 2 * Fp * Fc * D + Fc**2 * E)
+
+                # z(t) = sum_d [Fp_d * A_d(t) + Fc_d * B_d(t)]
+                z_t = Fp @ A_array + Fc @ B_array  # (n_times,)
+
+                if self._marginalize_phase:
+                    log_l_t = ln_i0(np.abs(z_t)) - 0.5 * signal_signal
+                else:
+                    log_l_t = z_t.real - 0.5 * signal_signal
+
+                log_ls[k] = logsumexp(log_l_t, b=time_prior)
+
+        else:
+            # Original scalar path (no time marginalisation)
+            A = np.zeros(n_det, dtype=complex)
+            B = np.zeros(n_det, dtype=complex)
+
+            for i, ifo in enumerate(self.interferometers):
+                mask = ifo.frequency_mask
+                psd = ifo.power_spectral_density_array[mask]
+                dur = ifo.strain_data.duration
+                data = ifo.frequency_domain_strain[mask]
+
+                dt = ifo.time_delay_from_geocenter(ra, dec, tc)
+                dt_geocent = self.parameters["geocent_time"] - ifo.strain_data.start_time
+                time_shift = dt + dt_geocent
+                freqs = ifo.frequency_array[mask]
+                phase_shift = np.exp(-2j * np.pi * freqs * time_shift)
+
+                if ifo.calibration_model is not None:
+                    cal = ifo.calibration_model.get_calibration_factor(
+                        freqs, prefix=f"recalib_{ifo.name}_",
+                        **self.parameters)
+                else:
+                    cal = 1.0
+
+                hp_s = hp[mask] * phase_shift * cal
+                hc_s = hc[mask] * phase_shift * cal
+
+                A[i] = self._complex_inner_product(hp_s, data, psd, dur)
+                B[i] = self._complex_inner_product(hc_s, data, psd, dur)
+                C[i] = self._inner_product(hp_s, hp_s, psd, dur)
+                D[i] = self._inner_product(hp_s, hc_s, psd, dur)
+                E[i] = self._inner_product(hc_s, hc_s, psd, dur)
+
+                Fp0[i] = ifo.antenna_response(ra, dec, tc, 0.0, "plus")
+                Fc0[i] = ifo.antenna_response(ra, dec, tc, 0.0, "cross")
+
+            # Evaluate log L at each psi value
+            log_ls = np.empty(self.n_psi)
+            for k, psi in enumerate(self.psi_grid):
+                c2 = np.cos(2 * psi)
+                s2 = np.sin(2 * psi)
+                Fp = Fp0 * c2 + Fc0 * s2
+                Fc = -Fp0 * s2 + Fc0 * c2
+
+                signal_signal = np.sum(
+                    Fp**2 * C + 2 * Fp * Fc * D + Fc**2 * E)
+
+                if self._marginalize_phase:
+                    z = np.sum(Fp * A + Fc * B)
+                    log_ls[k] = ln_i0(abs(z)) - 0.5 * signal_signal
+                else:
+                    signal_data = np.sum(Fp * A + Fc * B).real
+                    log_ls[k] = signal_data - 0.5 * signal_signal
+
+        # Marginalise over psi: logsumexp - log(N_psi)
+        log_lr = float(np.logaddexp.reduce(log_ls) - np.log(self.n_psi))
+
+        # Add EM term if GMM is present
+        if self.gmm is not None and np.isfinite(log_lr):
+            log_lr += self._log_em(None)
+
+        return log_lr
 
 
 class ROQplusEMLikelihood(bilby.gw.likelihood.ROQGravitationalWaveTransient):
@@ -393,7 +619,8 @@ def setup_ifos_real_data(duration, sampling_frequency, fmin=23.0,
 # ---------------------------------------------------------------------------
 
 def build_priors(use_density_prior=False, no_tides=False,
-                  roq_scale_factor=None):
+                  roq_scale_factor=None, marginalize_psi=False,
+                  aligned_spin=False, marginalize_phase=False):
     """Build priors for GW170817 PE.
 
     If no_tides=True, use BBHPriorDict (no lambda_1/lambda_2).
@@ -423,10 +650,17 @@ def build_priors(use_density_prior=False, no_tides=False,
 
     priors["a_1"] = bilby.prior.Uniform(0, 0.80, name="a_1")
     priors["a_2"] = bilby.prior.Uniform(0, 0.80, name="a_2")
-    priors["tilt_1"] = bilby.prior.Sine(name="tilt_1")
-    priors["tilt_2"] = bilby.prior.Sine(name="tilt_2")
-    priors["phi_12"] = bilby.prior.Uniform(0, 2 * np.pi, name="phi_12")
-    priors["phi_jl"] = bilby.prior.Uniform(0, 2 * np.pi, name="phi_jl")
+
+    if aligned_spin:
+        priors["tilt_1"] = bilby.prior.DeltaFunction(0.0, name="tilt_1")
+        priors["tilt_2"] = bilby.prior.DeltaFunction(0.0, name="tilt_2")
+        priors["phi_12"] = bilby.prior.DeltaFunction(0.0, name="phi_12")
+        priors["phi_jl"] = bilby.prior.DeltaFunction(0.0, name="phi_jl")
+    else:
+        priors["tilt_1"] = bilby.prior.Sine(name="tilt_1")
+        priors["tilt_2"] = bilby.prior.Sine(name="tilt_2")
+        priors["phi_12"] = bilby.prior.Uniform(0, 2 * np.pi, name="phi_12")
+        priors["phi_jl"] = bilby.prior.Uniform(0, 2 * np.pi, name="phi_jl")
 
     if use_density_prior:
         priors["luminosity_distance"] = build_density_prior()
@@ -439,8 +673,16 @@ def build_priors(use_density_prior=False, no_tides=False,
     priors["dec"] = bilby.prior.DeltaFunction(DEC_NGC4993, name="dec")
 
     priors["theta_jn"] = bilby.prior.Sine(name="theta_jn")
-    priors["phase"] = bilby.prior.Uniform(0, 2 * np.pi, name="phase")
-    priors["psi"] = bilby.prior.Uniform(0, np.pi, name="psi")
+
+    if marginalize_phase:
+        priors["phase"] = bilby.prior.DeltaFunction(0.0, name="phase")
+    else:
+        priors["phase"] = bilby.prior.Uniform(0, 2 * np.pi, name="phase")
+
+    if marginalize_psi:
+        priors["psi"] = bilby.prior.DeltaFunction(0.0, name="psi")
+    else:
+        priors["psi"] = bilby.prior.Uniform(0, np.pi, name="psi")
 
     priors["geocent_time"] = bilby.prior.Uniform(
         TRIGGER_TIME - 0.1, TRIGGER_TIME + 0.1, name="geocent_time",
@@ -491,9 +733,9 @@ def main():
                         help="Number of live points (default: 50 for testing)")
     parser.add_argument("--maxmcmc", type=int, default=500,
                         help="Max MCMC steps per live point proposal")
-    parser.add_argument("--nact", type=int, default=5,
+    parser.add_argument("--nact", type=int, default=10,
                         help="Autocorrelation lengths for act-walk proposals "
-                             "(default: 5; bilby default is 2)")
+                             "(default: 10; bilby default is 2)")
     parser.add_argument("--duration", type=float, default=32.0,
                         help="Segment duration [s] (default: 32 for test, "
                              "128 for real)")
@@ -509,6 +751,19 @@ def main():
                         help="Use ROQ likelihood with IMRPhenomPv2 (no tides)")
     parser.add_argument("--roq-folder", type=str, default=None,
                         help="Path to ROQ basis folder (default: data/ROQ)")
+    parser.add_argument("--marginalize-psi", action="store_true",
+                        help="Marginalize over polarisation angle "
+                             "(numerical quadrature)")
+    parser.add_argument("--n-psi", type=int, default=50,
+                        help="Number of psi quadrature points (default: 50)")
+    parser.add_argument("--aligned-spin", action="store_true",
+                        help="Use aligned-spin waveform "
+                             "(fix tilt/phi to 0)")
+    parser.add_argument("--marginalize-phase", action="store_true",
+                        help="Analytically marginalize over phase "
+                             "(requires --aligned-spin)")
+    parser.add_argument("--marginalize-time", action="store_true",
+                        help="Marginalize over coalescence time (FFT grid)")
     parser.add_argument("--outdir", type=str, default=None)
     parser.add_argument("--npool", type=int, default=1)
     args = parser.parse_args()
@@ -535,6 +790,12 @@ def main():
         else:
             args.fmin = 23.0 if args.real_data else 200.0
 
+    if args.marginalize_phase and not args.aligned_spin:
+        parser.error("--marginalize-phase requires --aligned-spin")
+    if args.marginalize_psi and args.roq:
+        parser.error("--marginalize-psi is not supported with --roq")
+    if args.marginalize_time and not args.marginalize_psi:
+        parser.error("--marginalize-time requires --marginalize-psi")
     use_jetfit = not args.no_jetfit
 
     # Output directory
@@ -545,6 +806,14 @@ def main():
         label += "_jetfit"
     if args.density_prior:
         label += "_density"
+    if args.marginalize_psi:
+        label += "_psimarg"
+    if args.aligned_spin:
+        label += "_aligned"
+    if args.marginalize_phase:
+        label += "_phasemarg"
+    if args.marginalize_time:
+        label += "_timemarg"
 
     outdir = args.outdir or os.path.join(
         os.path.dirname(__file__), "..", "..", "results", label)
@@ -567,7 +836,10 @@ def main():
     roq_sf = ROQ_BASIS_SEGLEN / args.duration if args.roq else None
     priors = build_priors(use_density_prior=args.density_prior,
                           no_tides=args.roq,
-                          roq_scale_factor=roq_sf)
+                          roq_scale_factor=roq_sf,
+                          marginalize_psi=args.marginalize_psi,
+                          aligned_spin=args.aligned_spin,
+                          marginalize_phase=args.marginalize_phase)
 
     # ----- Set up interferometers -----
     injection_parameters = get_injection_parameters()
@@ -588,6 +860,12 @@ def main():
         source_model = bilby.gw.source.binary_black_hole_roq
         param_conversion = (
             bilby.gw.conversion.convert_to_lal_binary_black_hole_parameters
+        )
+    elif args.aligned_spin:
+        approximant = "IMRPhenomD_NRTidal"
+        source_model = bilby.gw.source.lal_binary_neutron_star
+        param_conversion = (
+            bilby.gw.conversion.convert_to_lal_binary_neutron_star_parameters
         )
     else:
         approximant = "IMRPhenomPv2_NRTidal"
@@ -618,6 +896,8 @@ def main():
     )
 
     # ----- Likelihood -----
+    phase_marg = args.marginalize_phase
+
     if args.roq:
         roq_scale_factor = roq_sf
         print(f"Using ROQ likelihood from {roq_folder}")
@@ -635,6 +915,7 @@ def main():
             quadratic_matrix=os.path.join(roq_folder, "B_quadratic.npy"),
             roq_params=os.path.join(roq_folder, "params.dat"),
             roq_scale_factor=roq_scale_factor,
+            phase_marginalization=phase_marg,
         )
         if use_jetfit:
             print("  + JetFit EM constraint")
@@ -642,6 +923,20 @@ def main():
         else:
             likelihood = bilby.gw.likelihood.ROQGravitationalWaveTransient(
                 **roq_kwargs)
+    elif args.marginalize_psi:
+        desc = "GW + psi-marginalised"
+        if use_jetfit:
+            desc += " + JetFit EM"
+        print(f"Using {desc} likelihood (n_psi={args.n_psi})")
+        likelihood = PsiMarginalizedLikelihood(
+            interferometers=ifos,
+            waveform_generator=waveform_generator,
+            priors=priors,
+            gmm=gmm if use_jetfit else None,
+            n_psi=args.n_psi,
+            marginalize_phase=args.marginalize_phase,
+            marginalize_time=args.marginalize_time,
+        )
     elif use_jetfit:
         print("Using GW + JetFit EM likelihood")
         likelihood = GWplusEMLikelihood(
@@ -649,6 +944,7 @@ def main():
             waveform_generator=waveform_generator,
             priors=priors,
             gmm=gmm,
+            phase_marginalization=phase_marg,
         )
     else:
         print("Using standard GW likelihood")
@@ -656,15 +952,20 @@ def main():
             interferometers=ifos,
             waveform_generator=waveform_generator,
             priors=priors,
+            phase_marginalization=phase_marg,
         )
 
     # ----- Quick likelihood evaluation test -----
     print("\n--- Likelihood sanity check ---")
     test_params = dict(injection_parameters)
     if args.roq:
-        # Remove tidal params for BBH waveform
         test_params.pop("lambda_1", None)
         test_params.pop("lambda_2", None)
+    if args.aligned_spin:
+        test_params["tilt_1"] = 0.0
+        test_params["tilt_2"] = 0.0
+        test_params["phi_12"] = 0.0
+        test_params["phi_jl"] = 0.0
     log_l = likelihood.log_likelihood(parameters=test_params)
     print(f"  log L at injection: {log_l:.2f}")
 
