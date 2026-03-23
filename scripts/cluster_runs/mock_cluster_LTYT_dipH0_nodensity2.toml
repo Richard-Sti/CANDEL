@@ -177,10 +177,10 @@ low = 0.0
 high = 1000.0
 
 [io]
-root_output = "results/mocks_noMNR"
+root_output = "results/mock_cluster_LTYT_dipH0"
 catalogue_name = "Clusters_mock_0"
 apply_Ez_correction = true
-fname_output = "results/mocks_noMNR/dipole.hdf5"
+fname_output = "results/mock_cluster_LTYT_dipH0/dipole.hdf5"
 
 # This section will be updated by the script
 [io.Clusters_mock]
