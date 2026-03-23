@@ -35,7 +35,7 @@ density_prior = false
 
 [model]
 Om = 0.3
-use_MNR = false
+use_MNR = true
 marginalize_eta = false
 
 [model.eta_grid]
@@ -79,6 +79,11 @@ value = 0.0
 [model.priors.log_rho_t]
 dist = "delta"
 value = 0.0
+
+[model.priors.rho12]
+dist = "uniform"
+low = 0.0
+high = 0.95
 
 [model.priors.sigma_int]
 dist = "jeffreys"

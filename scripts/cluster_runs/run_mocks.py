@@ -98,7 +98,8 @@ def sample_truth_from_config(config_path, rng):
     # Scalar parameters to extract
     scalar_keys = ['b1', 'beta', 'sigma_v', 'sigma_YT', 'sigma_LT',
                    'A_YT', 'B_YT', 'A_LT', 'B_LT',
-                   'R_dist_emp', 'p_dist_emp', 'n_dist_emp', 'h', 'rho12']
+                   'R_dist_emp', 'p_dist_emp', 'n_dist_emp', 'h', 'rho12',
+                   'logT_prior_mean', 'logT_prior_std']
 
     truth = {}
     for key in scalar_keys:
@@ -187,6 +188,8 @@ def generate_mock(
         p = t['p_dist_emp']
         n = t['n_dist_emp']
         h = t.get('h', 1.0)
+        logT_prior_mean = t['logT_prior_mean']
+        logT_prior_std = t['logT_prior_std']
         H0_dipole = t['H0_dipole']
         H0_dipole_mag = t['H0_dipole_mag']
         H0_dipole_phi = t['H0_dipole_phi']
@@ -233,6 +236,8 @@ def generate_mock(
         p = 2.0
         n = 1.1
         h = 1.0
+        logT_prior_mean = 0.0
+        logT_prior_std = 0.2
         los_decay = 5.0
 
     fprint(f"Generating mock with {nsamples} clusters, seed={seed}, relation={which_relation}")
@@ -269,8 +274,8 @@ def generate_mock(
         'H0_dipole_ell': H0_dipole_ell,
         'H0_dipole_b': H0_dipole_b,
         'h': h,
-        'logT_prior_mean': 0.0,
-        'logT_prior_std': 0.2,
+        'logT_prior_mean': logT_prior_mean,
+        'logT_prior_std': logT_prior_std,
         'e_logT': 0.03,
         'e_logY': 0.09,
         'e_logF': 0.05,
@@ -437,7 +442,9 @@ def run_inference_on_mock(config_path, mock_dir, mock_id, output_dir,
         else:
             lp = None
 
-    os.remove(temp_config)
+    # Save the analysis config alongside the output
+    saved_config = join(output_dir, f"mock_{mock_id:04d}{temp_suffix}_config.toml")
+    os.rename(temp_config, saved_config)
 
     return lp, (samples, log_density), data
 

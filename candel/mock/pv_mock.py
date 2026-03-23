@@ -301,11 +301,10 @@ def gen_Clusters_mock(nsamples, r_grid, Vext_mag, Vext_ell, Vext_b, sigma_v,
     logL_intrinsic = A_LT + B_LT * logT_true + epsilon_L
     
     # Apply H0 dipole as zeropoint offset (same for both Y and L)
-    # Convert fractional δH to magnitude offset: ΔA = 2·log10(1 + δH)
+    # Project fractional δH/H onto each LOS, then convert to magnitude
     if H0_dipole_mag is not None and H0_dipole_mag > 0:
-        zp_mag = _frac_to_mag(H0_dipole_mag)
-        zp_vec = zp_mag * H0_dipole_dir
-        dipole_term = np.sum(zp_vec[None, :] * rhat, axis=1)
+        frac_per_gal = np.sum(H0_dipole[None, :] * rhat, axis=1)
+        dipole_term = _frac_to_mag(frac_per_gal)
         logY_intrinsic += dipole_term
         logL_intrinsic += dipole_term
     

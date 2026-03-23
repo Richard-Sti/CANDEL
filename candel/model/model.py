@@ -27,7 +27,7 @@ from jax.debug import print as jprint  # noqa
 from jax.lax import cond
 from interpax import interp1d
 from jax.scipy.linalg import solve_triangular
-from jax.scipy.special import gammainc, gammaln, logsumexp
+from jax.scipy.special import gammainc, gammaln, log_ndtr, logsumexp
 from jax.scipy.stats.norm import cdf as jax_norm_cdf
 from jax_cosmo.scipy.interpolate import InterpolatedUnivariateSpline
 from numpyro import deterministic, factor, handlers, plate, sample
@@ -1972,6 +1972,16 @@ class ClustersModel(BaseModel):
             get_nested(self.config, "model/test_CDDR", False))
         self.CDDR_parameterisation = get_nested(
             self.config, "model/CDDR_parameterisation", "power_law")
+        if self.CDDR_parameterisation == "nonparametric":
+            self.CDDR_rknot = jnp.asarray(
+                get_nested(self.config, "model/CDDR_rknot"))
+
+        # Malmquist bias correction for flux-limited samples
+        self.malmquist_flux = bool(
+            get_nested(self.config, "model/malmquist_flux", False))
+        if self.malmquist_flux:
+            self.logF_min = get_nested(self.config, "model/logF_min")
+            self.logT_sel_grid = jnp.linspace(-0.5, 1.5, 51)
 
         # Systematic dipoles on individual observables
         self._has_dipole_L = self._prior_is_varying("dipole_L")
@@ -2319,7 +2329,7 @@ class ClustersModel(BaseModel):
             def _shared_or_sample(name, dist):
                 if shared_params is not None and name in shared_params:
                     return shared_params[name]
-                value = sample(name, dist)
+                value = _rsample(name, dist)
                 if shared_params is not None:
                     shared_params[name] = value
                 return value
@@ -2327,42 +2337,31 @@ class ClustersModel(BaseModel):
             # All scaling relations need T hyperprior
             logT_prior_mean = _shared_or_sample(
                 "logT_prior_mean",
-                Uniform(data["min_logT"], data["max_logT"]),
+                self.priors.get(
+                    "logT_prior_mean",
+                    Uniform(data["min_logT"], data["max_logT"])),
             )
             logT_prior_std = _shared_or_sample(
                 "logT_prior_std",
-                Uniform(0.0, data["max_logT"] - data["min_logT"]),
+                self.priors.get(
+                    "logT_prior_std",
+                    Uniform(0.0, data["max_logT"] - data["min_logT"])),
             )
 
-            if relation in ["LTY", "YTL"]:
-                # These relations need bivariate MNR priors
-                if relation == "LTY":
-                    # T and Y bivariate prior
-                    logY_prior_mean = sample(
-                        "logY_prior_mean", Uniform(data["min_logY"], data["max_logY"]))
-                    logY_prior_std = sample(
-                        "logY_prior_std",
-                        Uniform(0.0, data["max_logY"] - data["min_logY"]))
-                    rho_TY = sample("rho_TY", Uniform(-1, 1))
-                    
-                    mu_TY = jnp.array([logT_prior_mean, logY_prior_mean])
-                    cov_TY = jnp.array([
-                        [logT_prior_std**2, rho_TY * logT_prior_std * logY_prior_std],
-                        [rho_TY * logT_prior_std * logY_prior_std, logY_prior_std**2]])
-                
-                elif relation == "YTL":
-                    # T and L bivariate prior  
-                    logF_prior_mean = sample(
-                        "logF_prior_mean", Uniform(data["min_logF"], data["max_logF"]))
-                    logF_prior_std = sample(
-                        "logF_prior_std",
-                        Uniform(0.0, data["max_logF"] - data["min_logF"]))
-                    rho_TF = sample("rho_TF", Uniform(-1, 1))
-                    
-                    mu_TF = jnp.array([logT_prior_mean, logF_prior_mean])
-                    cov_TF = jnp.array([
-                        [logT_prior_std**2, rho_TF * logT_prior_std * logF_prior_std],
-                        [rho_TF * logT_prior_std * logF_prior_std, logF_prior_std**2]])
+        # T hyperprior for Malmquist selection integral (when not using MNR)
+        if self.malmquist_flux and not self.use_MNR:
+            logT_prior_mean = rsample(
+                "logT_prior_mean",
+                self.priors.get(
+                    "logT_prior_mean",
+                    Uniform(data["min_logT"], data["max_logT"])),
+                shared_params)
+            logT_prior_std = rsample(
+                "logT_prior_std",
+                self.priors.get(
+                    "logT_prior_std",
+                    Uniform(0.01, data["max_logT"] - data["min_logT"])),
+                shared_params)
 
         # CDDR violation: D_L = (1+z)^(2+ε) D_A (sample before plate)
         if self.test_CDDR:
@@ -2373,12 +2372,6 @@ class ClustersModel(BaseModel):
         with plate("data", nsamples):
             if self.use_MNR:
                 if self.marginalize_logT:
-                    # Marginalize over temperature instead of sampling
-                    if relation in ["LTY", "YTL"]:
-                        raise NotImplementedError(
-                            "logT marginalization not supported for bivariate MNR "
-                            f"relations ({relation}). Use LT, YT, or LTYT.")
-
                     # Create adaptive temperature grid: (n_gal, n_T_grid)
                     logT_grid = make_adaptive_grid(
                         data["logT"], data["e_logT"],
@@ -2396,32 +2389,12 @@ class ClustersModel(BaseModel):
                     logY = data["logY"]
                     logF = data["logF"]
 
-                elif relation in ["LT", "YT", "LTYT"]:
-                    # T-only MNR for these relations (non-marginalized)
+                else:
+                    # T-only MNR (non-marginalized)
                     logT = sample("logT_latent", Normal(logT_prior_mean, logT_prior_std))
                     sample("logT_obs", Normal(logT, data["e_logT"]), obs=data["logT"])
                     logY = data["logY"]
                     logF = data["logF"]
-
-                elif relation == "LTY":
-                    # T and Y bivariate MNR
-                    x_latent = sample("x_latent_TY", MultivariateNormal(mu_TY, cov_TY))
-                    logT = x_latent[:, 0]
-                    logY = x_latent[:, 1]
-
-                    sample("logT_obs", Normal(logT, data["e_logT"]), obs=data["logT"])
-                    sample("logY_obs", Normal(logY, data["e_logY"]), obs=data["logY"])
-                    logF = data["logF"]
-
-                elif relation == "YTL":
-                    # T and L bivariate MNR
-                    x_latent = sample("x_latent_TF", MultivariateNormal(mu_TF, cov_TF))
-                    logT = x_latent[:, 0]
-                    logF = x_latent[:, 1]
-
-                    sample("logT_obs", Normal(logT, data["e_logT"]), obs=data["logT"])
-                    sample("logF_obs", Normal(logF, data["e_logF"]), obs=data["logF"])
-                    logY = data["logY"]
             else:
                 logT = data["logT"]
                 logY = data["logY"]
@@ -2477,6 +2450,13 @@ class ClustersModel(BaseModel):
                     # η(z) = 1 + ε z
                     logdl_grid = logdl_grid + jnp.log10(
                         1 + epsilon_CDDR * z_at_r)
+                elif self.CDDR_parameterisation == "nonparametric":
+                    # D_L = δ(r) · D_A, with δ(r=0) = 1 fixed.
+                    # epsilon_CDDR has nknots-1 values; prepend 1.
+                    delta_knots = jnp.concatenate(
+                        [jnp.ones(1), epsilon_CDDR])
+                    logdl_grid = logda_grid + jnp.log10(jnp.interp(
+                        r_grid, self.CDDR_rknot, delta_knots))
                 else:
                     raise ValueError(
                         f"Unknown CDDR_parameterisation "
@@ -2560,9 +2540,14 @@ class ClustersModel(BaseModel):
                     los_log_density_r_grid = data["los_log_density_r_grid"]
 
 
-            # Homogeneous Malmqusit distance prior, `(n_field, n_gal, n_rbin)`
-            lp_dist = log_prior_r_empirical(
-                r_grid, **kwargs_dist, Rmax_grid=r_grid[-1])[None, None, :]
+            # Homogeneous Malmquist distance prior, `(n_field, n_gal, n_rbin)`
+            if self.malmquist_flux:
+                lp_dist = 2 * jnp.log(r_grid)[None, None, :]
+                lp_dist = lp_dist - ln_simpson(
+                    lp_dist, x=r_grid[None, None, :], axis=-1)[..., None]
+            else:
+                lp_dist = log_prior_r_empirical(
+                    r_grid, **kwargs_dist, Rmax_grid=r_grid[-1])[None, None, :]
 
             # Predict logF/logY incorporating (optional) cosmological E(z)
             if self.apply_Ez_correction:
@@ -2813,6 +2798,51 @@ class ClustersModel(BaseModel):
                 log_density_per_sample += ll
                 deterministic("log_density_per_sample", log_density_per_sample)
 
+        # Malmquist flux-limit selection correction (outside the plate)
+        if self.malmquist_flux:
+            n_obs = len(data["logF"])
+            logT_g = self.logT_sel_grid
+
+            # Population T weight
+            log_pT = Normal(logT_prior_mean, logT_prior_std).log_prob(logT_g)
+
+            # Predicted mean flux: mu_F(logT, r)
+            z_rg = self.distance2redshift(r_grid, h=h)
+            Ez_rg = jnp.sqrt(self.Om * (1 + z_rg)**3 + (1 - self.Om))
+            logEz_rg = gamma_LT_val * jnp.log10(Ez_rg)
+
+            A_LT_sel = A_LT  # scalar (constant mode)
+            mu_F = (A_LT_sel + B_LT * logT_g[:, None]
+                    + C_LT * logT_g[:, None]**2
+                    + logEz_rg[None, :]
+                    - jnp.log10(4 * jnp.pi)
+                    - 2 * logdl_grid[None, :])
+
+            # Total scatter: intrinsic + mean measurement error
+            sigma_sel = jnp.sqrt(
+                sigma_LT**2 + jnp.mean(data["e_logF"])**2)
+
+            # log Phi((mu_F - logF_min) / sigma_sel)
+            log_sel = log_ndtr(
+                (mu_F - self.logF_min) / sigma_sel)
+
+            # Inner integral over logT
+            log_integrand_T = log_pT[:, None] + log_sel
+            log_g_r = ln_simpson(
+                log_integrand_T[None, :, :],
+                x=logT_g[None, :, None], axis=1).squeeze(0)
+
+            # Outer integral over r
+            log_r2 = 2 * jnp.log(r_grid)
+            log_num = ln_simpson(
+                (log_r2 + log_g_r)[None, None, :],
+                x=r_grid[None, None, :], axis=-1).squeeze()
+            log_den = ln_simpson(
+                log_r2[None, None, :],
+                x=r_grid[None, None, :], axis=-1).squeeze()
+            log_psel = log_num - log_den
+
+            factor("ll_malmquist", -n_obs * log_psel)
 
 
 class HybridClustersModel(BaseModel):

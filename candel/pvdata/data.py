@@ -1449,6 +1449,7 @@ def load_clusters(root, zcmb_min=None, zcmb_max=None, los_data_path=None,
                   finite_logY=True, convert_to_CMB_frame=True,
                   remove_noY=False, only_missing_Y=False,
                   return_all=False, logT_mean=None, subtract_logT_mean=True,
+                  logF_min=None, logF_max=None,
                   **kwargs):
     """
     Load the cluster scaling relation data from the given root directory.
@@ -1543,6 +1544,11 @@ def load_clusters(root, zcmb_min=None, zcmb_max=None, los_data_path=None,
 
     if zcmb_max is not None:
         mask &= z < zcmb_max
+
+    if logF_min is not None:
+        mask &= logF >= logF_min
+    if logF_max is not None:
+        mask &= logF < logF_max
 
     fprint(f"removed {len(mask) - np.sum(mask)} clusters, thus "
            f"{len(data['RA'][mask])} remain.")
