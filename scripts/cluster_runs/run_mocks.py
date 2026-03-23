@@ -565,8 +565,8 @@ def main():
     )
     parser.add_argument('--config_nodipole', type=str, default='scripts/cluster_runs/mock_cluster_nodipole.toml',
                         help='Path to config file for model WITHOUT dipole (default: scripts/cluster_runs/mock_cluster_nodipole.toml)')
-    parser.add_argument('--config_dipole', type=str, default='scripts/cluster_runs/mock_cluster_dipole.toml',
-                        help='Path to config file for model WITH dipole (default: scripts/cluster_runs/mock_cluster_dipole.toml)')
+    parser.add_argument('--config_dipole', type=str, default='scripts/cluster_runs/mock_cluster_LTYT_dipH0_nodensity2.toml',
+                        help='Path to config file for model WITH dipole (default: scripts/cluster_runs/mock_cluster_LTYT_dipH0_nodensity2.toml)')
     _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
     parser.add_argument('--field_density', type=str, default=os.path.join(_REPO_ROOT, 'data/fields/carrick2015_twompp_density.npy'),
                         help='Path to field density file')
