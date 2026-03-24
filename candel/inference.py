@@ -228,8 +228,14 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
         save_mcmc_samples(
             samples, log_density, log_density_per_sample, gof, fname_out)
 
+        mock_truths = None
+        if data is not None:
+            data_dict = data.data if hasattr(data, "data") else data
+            mock_truths = data_dict.get("_mock_truths", None)
+
         fname_plot = splitext(fname_out)[0] + ".png"
-        plot_corner(samples, show_fig=False, filename=fname_plot,)
+        plot_corner(samples, show_fig=False, filename=fname_plot,
+                    truths=mock_truths)
 
         fname_summary = splitext(fname_out)[0] + "_summary.txt"
         with open(fname_summary, "w") as f:

@@ -15,6 +15,7 @@ import h5py
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy import stats
+from tarp import get_tarp_coverage
 
 
 # ---------------------------------------------------------------------------
@@ -262,13 +263,22 @@ def plot_pit_histograms(pits, param_names, n_bins, output_dir):
     for ax, name in zip(axes, param_names):
         vals = pits[name]
         valid = vals[np.isfinite(vals)]
+        N = len(valid)
         ks_stat, ks_p = stats.kstest(valid, "uniform")
         ax.hist(valid, bins=n_bins, density=True, alpha=0.7, edgecolor="black")
         ax.axhline(1.0, ls="--", color="red", lw=1.5)
+        # Binomial uncertainty bands on uniform density
+        p_bin = 1.0 / n_bins
+        bin_width = 1.0 / n_bins
+        sigma_density = np.sqrt(N * p_bin * (1 - p_bin)) / (N * bin_width)
+        ax.axhspan(1.0 - sigma_density, 1.0 + sigma_density,
+                   alpha=0.2, color="grey")
+        ax.axhspan(1.0 - 2 * sigma_density, 1.0 + 2 * sigma_density,
+                   alpha=0.1, color="grey")
         ax.set_xlim(0, 1)
         ax.set_xlabel("PIT")
         ax.set_ylabel("Density")
-        ax.set_title(f"{name}\nKS={ks_stat:.3f}, p={ks_p:.3f}, n={len(valid)}")
+        ax.set_title(f"{name}\nKS p={ks_p:.3f}, n={N}")
         ax.grid(alpha=0.2)
 
     fig.tight_layout()
@@ -425,6 +435,49 @@ def main():
 
     plot_qq(pits, param_names, output_dir)
     print(f"  qq.png")
+
+    # ------------------------------------------------------------------
+    # TARP coverage test
+    # ------------------------------------------------------------------
+    # Build arrays: samples (n_samples, n_sims, n_dims), theta (n_sims, n_dims)
+    n_dims = len(param_names)
+    n_samp = min(len(s) for s in param_samples[param_names[0]])
+    tarp_samples = np.zeros((n_samp, n_runs, n_dims))
+    tarp_theta = np.zeros((n_runs, n_dims))
+    for j, p in enumerate(param_names):
+        for i in range(n_runs):
+            tarp_samples[:, i, j] = param_samples[p][i][:n_samp]
+            tarp_theta[i, j] = param_truths[p][i]
+
+    tarp_out = get_tarp_coverage(
+        tarp_samples, tarp_theta, norm=True, bootstrap=False,
+        references="random", seed=42)
+    ecp, alpha = tarp_out[0], tarp_out[1]
+
+    # Expected sigma bands from finite sample size
+    sigma_binom = np.sqrt(alpha * (1 - alpha) / n_runs)
+
+    # Plot TARP
+    fig, ax = plt.subplots(1, 1, figsize=(5, 5))
+    ax.fill_between(alpha, alpha - 2 * sigma_binom,
+                     alpha + 2 * sigma_binom,
+                     alpha=0.1, color="grey", label=r"$2\sigma$")
+    ax.fill_between(alpha, alpha - sigma_binom,
+                     alpha + sigma_binom,
+                     alpha=0.2, color="grey", label=r"$1\sigma$")
+    ax.plot(alpha, ecp, "C0-", lw=1.5)
+    ax.plot([0, 1], [0, 1], "k--", lw=1)
+    ax.set_xlabel("Credibility level")
+    ax.set_ylabel("Expected coverage")
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    ax.set_aspect("equal")
+    ax.legend(fontsize=8, loc="upper left")
+    ax.grid(alpha=0.2)
+    fig.tight_layout()
+    fig.savefig(os.path.join(output_dir, "tarp.png"), dpi=150)
+    plt.close(fig)
+    print(f"  tarp.png")
 
     # ------------------------------------------------------------------
     # Summary report

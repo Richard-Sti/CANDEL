@@ -121,7 +121,22 @@ def sample_truth_from_config(config_path, rng):
             truth['H0_dipole_ell'] = ell
             truth['H0_dipole_b'] = b
         else:
-            truth['H0_dipole'] = np.asarray(dip)
+            vec = np.asarray(dip, dtype=float)
+            mag = np.linalg.norm(vec)
+            direction = vec / max(mag, 1e-30)
+            truth['H0_dipole'] = vec
+            truth['H0_dipole_mag'] = mag
+            # Convert Cartesian to (phi, cos_theta) then to galactic
+            cos_theta = direction[2]
+            phi = np.arctan2(direction[1], direction[0]) % (2 * np.pi)
+            truth['H0_dipole_phi'] = phi
+            truth['H0_dipole_cos_theta'] = cos_theta
+            theta = np.arccos(cos_theta)
+            ra = np.rad2deg(phi)
+            dec = np.rad2deg(0.5 * np.pi - theta)
+            ell, b = radec_to_galactic(ra, dec)
+            truth['H0_dipole_ell'] = ell
+            truth['H0_dipole_b'] = b
 
     truth.setdefault('rho12', 0.0)
 

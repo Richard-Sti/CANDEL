@@ -580,10 +580,12 @@ def sort_params(keys):
     return sorted(keys, key=sort_key)
 
 
-def plot_corner(samples, show_fig=True, filename=None, smooth=1, keys=None):
+def plot_corner(samples, show_fig=True, filename=None, smooth=1, keys=None,
+                truths=None):
     """Plot a corner plot from posterior samples."""
     flat_samples = []
     labels = []
+    param_keys = []
 
     for k, v in samples.items():
         if keys is not None and k not in keys:
@@ -594,14 +596,20 @@ def plot_corner(samples, show_fig=True, filename=None, smooth=1, keys=None):
             for i in range(nbin):
                 flat_samples.append(v[:, i])
                 labels.append(fr"$V_{{\mathrm{{ext}}, {{{i}}}}}$")
+                param_keys.append(f"Vext_radmag_mag_{i}")
 
         if v.ndim > 1:
             continue
         flat_samples.append(v.reshape(-1))
         labels.append(name2label(k))
+        param_keys.append(k)
 
     if not flat_samples:
         raise ValueError("No valid samples to plot.")
+
+    truth_vals = None
+    if truths is not None:
+        truth_vals = [truths.get(k, None) for k in param_keys]
 
     data = np.vstack(flat_samples).T
 
@@ -610,6 +618,7 @@ def plot_corner(samples, show_fig=True, filename=None, smooth=1, keys=None):
         labels=labels,
         show_titles=True,
         smooth=smooth,
+        truths=truth_vals,
     )
 
     if filename is not None:

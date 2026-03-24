@@ -1,0 +1,172 @@
+# Truth config for PPT: all parameters fixed to MAP from real-data
+# Carrick2015 LTYT noMNR dipH0 hasY run (results/nodensity2/)
+
+root_main = "./"
+python_exec = "python"
+machine = "local"
+
+[inference]
+model = "ClustersModel"
+shared_params = "none"
+num_warmup = 1000
+num_samples = 1000
+num_chains = 1
+chain_method = "sequential"
+seed = 44
+compute_log_density = true
+compute_evidence = false
+track_log_density_per_sample = false
+num_chains_harmonic = 10
+skip_if_exists = false
+
+[pv_model]
+kind = "precomputed_los_Carrick2015"
+galaxy_bias = "linear"
+which_Vext = "constant"
+Vext_per_pix_nside = 1
+which_A = "constant"
+A_per_pix_nside = 1
+r_limits_malmquist = [0.1, 1401]
+num_points_malmquist = 1401
+los_decay_scale = 20.0
+density_prior = false
+
+[model]
+Om = 0.3
+use_MNR = true
+marginalize_eta = false
+
+[model.eta_grid]
+k_sigma = 5
+n_grid = 31
+
+# All truths fixed to MAP values
+[model.priors.logT_prior_mean]
+dist = "delta"
+value = 0.0
+
+[model.priors.logT_prior_std]
+dist = "delta"
+value = 0.22
+
+[model.priors.h]
+dist = "delta"
+value = 1.0
+
+[model.priors.b1]
+dist = "delta"
+value = 0.0
+
+[model.priors.beta]
+dist = "delta"
+value = 0.46
+
+[model.priors.alpha]
+dist = "delta"
+value = 0.0
+
+[model.priors.alpha_low]
+dist = "delta"
+value = 0.0
+
+[model.priors.alpha_high]
+dist = "delta"
+value = 0.0
+
+[model.priors.log_rho_t]
+dist = "delta"
+value = 0.0
+
+[model.priors.rho12]
+dist = "delta"
+value = 0.89
+
+[model.priors.sigma_int]
+dist = "delta"
+value = 0.15
+
+[model.priors.sigma_LT]
+dist = "delta"
+value = 0.23
+
+[model.priors.sigma_YT]
+dist = "delta"
+value = 0.16
+
+[model.priors.A_LT]
+dist = "delta"
+value = -0.19
+
+[model.priors.B_LT]
+dist = "delta"
+value = 2.06
+
+[model.priors.A_YT]
+dist = "delta"
+value = 2.14
+
+[model.priors.B_YT]
+dist = "delta"
+value = 2.39
+
+[model.priors.sigma_v]
+dist = "delta"
+value = 214.5
+
+[model.priors.Vext]
+dist = "delta"
+value = [0.0, 0.0, 0.0]
+
+[model.priors.Vext_quad]
+dist = "delta"
+value = [
+    [0, 0],
+    [0, 0],
+    [0, 0],
+]
+
+[model.priors.zeropoint_dipole]
+dist = "delta"
+value = [0, 0, 0]
+
+[model.priors.zeropoint_quad]
+dist = "delta"
+value = [
+    [0, 0],
+    [0, 0],
+    [0, 0],
+]
+
+# H0 dipole at MAP: mag=0.02, ell=127, b=28 -> Cartesian ICRS
+[model.priors.H0_dipole]
+dist = "delta"
+value = [-0.00059525, 0.00114910, 0.01995809]
+
+[model.priors.R_dist_emp]
+dist = "delta"
+value = 32.9
+
+[model.priors.p_dist_emp]
+dist = "delta"
+value = 1.99
+
+[model.priors.n_dist_emp]
+dist = "delta"
+value = 0.71
+
+[model.priors.Vext_sigma]
+dist = "delta"
+value = 0.0
+
+[io]
+root_output = "results/PPT_carrick"
+catalogue_name = "Clusters_mock_0"
+apply_Ez_correction = true
+fname_output = "results/PPT_carrick/dipole.hdf5"
+
+[io.Clusters_mock]
+root = "PLACEHOLDER_MOCK_DIR"
+
+[io.Clusters]
+which_relation = "LTYT"
+zcmb_max = 0.45
