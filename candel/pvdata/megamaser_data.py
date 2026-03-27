@@ -92,7 +92,7 @@ def _parse_mrt_line(line):
     return row
 
 
-def load_NGC5765b_spots(root):
+def load_NGC5765b_spots(root, v_cmb_obs=None, v_helio_to_cmb=0.0):
     """Load maser spot data for NGC 5765b from Gao+2016 Table 6.
 
     The table provides velocity, position (x, y), and acceleration for 192
@@ -149,6 +149,9 @@ def load_NGC5765b_spots(root):
     # All spots in Gao+2016 have acceleration measurements.
     accel_measured = np.ones(n, dtype=bool)
 
+    if v_cmb_obs is None:
+        raise ValueError("v_cmb_obs must be provided for NGC5765b.")
+
     data = {
         "spot_type": spot_type,
         "velocity": velocity,
@@ -163,6 +166,8 @@ def load_NGC5765b_spots(root):
         "is_highvel": is_red | is_blue,
         "n_spots": n,
         "galaxy_name": "NGC5765b",
+        "v_cmb_obs": float(v_cmb_obs),
+        "v_helio_to_cmb": float(v_helio_to_cmb),
     }
 
     fprint(f"loaded {n} maser spots for NGC5765b "
@@ -177,7 +182,8 @@ def _is_missing(s):
     return s in ("...", "sdotsdotsdot", "")
 
 
-def _load_kuo_table2(root, fname, galaxy_label, v_sys_lsr, dv_threshold=200.0):
+def _load_kuo_table2(root, fname, galaxy_label, v_sys_lsr, dv_threshold=200.0,
+                     v_cmb_obs=None, v_helio_to_cmb=0.0):
     """Load maser spots from a Kuo+ Table 2 file with inline accelerations.
 
     The table is tab-delimited with columns: V_op, Theta_x, sigma_x,
@@ -273,6 +279,9 @@ def _load_kuo_table2(root, fname, galaxy_label, v_sys_lsr, dv_threshold=200.0):
     spot_type[is_red] = "r"
     spot_type[is_blue] = "b"
 
+    if v_cmb_obs is None:
+        raise ValueError(f"v_cmb_obs must be provided for {galaxy_label}.")
+
     data = {
         "spot_type": spot_type,
         "velocity": velocity,
@@ -287,6 +296,8 @@ def _load_kuo_table2(root, fname, galaxy_label, v_sys_lsr, dv_threshold=200.0):
         "is_highvel": is_red | is_blue,
         "n_spots": n,
         "galaxy_name": galaxy_label,
+        "v_cmb_obs": float(v_cmb_obs),
+        "v_helio_to_cmb": float(v_helio_to_cmb),
     }
 
     n_accel = int(accel_measured.sum())
@@ -297,28 +308,32 @@ def _load_kuo_table2(root, fname, galaxy_label, v_sys_lsr, dv_threshold=200.0):
     return data
 
 
-def load_NGC6264_spots(root):
+def load_NGC6264_spots(root, v_cmb_obs=None, v_helio_to_cmb=0.0):
     """Load maser spot data for NGC 6264 from Kuo+2013 Table 2."""
     return _load_kuo_table2(
         root, "NGC6264_Kuo2013_table2.txt", "NGC6264",
-        _KUO2011_V_SYS_LSR["NGC 6264"])
+        _KUO2011_V_SYS_LSR["NGC 6264"],
+        v_cmb_obs=v_cmb_obs, v_helio_to_cmb=v_helio_to_cmb)
 
 
-def load_NGC6323_spots(root):
+def load_NGC6323_spots(root, v_cmb_obs=None, v_helio_to_cmb=0.0):
     """Load maser spot data for NGC 6323 from Kuo+2015 Table 2."""
     return _load_kuo_table2(
         root, "NGC6323_Kuo2015_table2.txt", "NGC6323",
-        _KUO2011_V_SYS_LSR["NGC 6323"])
+        _KUO2011_V_SYS_LSR["NGC 6323"],
+        v_cmb_obs=v_cmb_obs, v_helio_to_cmb=v_helio_to_cmb)
 
 
-def load_UGC3789_spots(root):
+def load_UGC3789_spots(root, v_cmb_obs=None, v_helio_to_cmb=0.0):
     """Load maser spot data for UGC 3789 from Reid+2013 Table 1."""
     return _load_kuo_table2(
         root, "UGC3789_Reid2013_table1.txt", "UGC3789",
-        _KUO2011_V_SYS_LSR["UGC 3789"])
+        _KUO2011_V_SYS_LSR["UGC 3789"],
+        v_cmb_obs=v_cmb_obs, v_helio_to_cmb=v_helio_to_cmb)
 
 
-def load_megamaser_spots(root, galaxy="CGCG074-064"):
+def load_megamaser_spots(root, galaxy="CGCG074-064", v_cmb_obs=None,
+                         v_helio_to_cmb=0.0):
     """Load individual maser spot data for a megamaser galaxy.
 
     Parameters
@@ -326,25 +341,37 @@ def load_megamaser_spots(root, galaxy="CGCG074-064"):
     root
         Directory containing the data file.
     galaxy
-        Galaxy name: ``"CGCG074-064"`` or ``"NGC5765b"``.
+        Galaxy name: ``"CGCG074-064"``, ``"NGC5765b"``, etc.
+    v_cmb_obs
+        Observed CMB-frame recession velocity in km/s. Required.
+    v_helio_to_cmb
+        Heliocentric-to-CMB velocity correction in km/s (default 0).
 
     Returns
     -------
-    dict with numpy arrays for each spot property plus derived masks.
+    dict with numpy arrays for each spot property plus derived masks,
+    including ``v_cmb_obs`` and ``v_helio_to_cmb``.
     """
     if galaxy == "NGC5765b":
-        return load_NGC5765b_spots(root)
+        return load_NGC5765b_spots(root, v_cmb_obs=v_cmb_obs,
+                                   v_helio_to_cmb=v_helio_to_cmb)
     if galaxy == "NGC6264":
-        return load_NGC6264_spots(root)
+        return load_NGC6264_spots(root, v_cmb_obs=v_cmb_obs,
+                                  v_helio_to_cmb=v_helio_to_cmb)
     if galaxy == "NGC6323":
-        return load_NGC6323_spots(root)
+        return load_NGC6323_spots(root, v_cmb_obs=v_cmb_obs,
+                                  v_helio_to_cmb=v_helio_to_cmb)
     if galaxy == "UGC3789":
-        return load_UGC3789_spots(root)
+        return load_UGC3789_spots(root, v_cmb_obs=v_cmb_obs,
+                                  v_helio_to_cmb=v_helio_to_cmb)
 
     _all = list(_MRT_FILES) + ["NGC5765b", "NGC6264", "NGC6323", "UGC3789"]
     if galaxy not in _MRT_FILES:
         raise ValueError(
             f"Unknown galaxy '{galaxy}'. Available: {_all}")
+
+    if v_cmb_obs is None:
+        raise ValueError(f"v_cmb_obs must be provided for {galaxy}.")
 
     fpath = join(root, _MRT_FILES[galaxy])
     fprint(f"loading maser spots from '{fpath}'.")
@@ -390,6 +417,8 @@ def load_megamaser_spots(root, galaxy="CGCG074-064"):
         "is_highvel": (spot_type == "b") | (spot_type == "r"),
         "n_spots": n,
         "galaxy_name": galaxy,
+        "v_cmb_obs": float(v_cmb_obs),
+        "v_helio_to_cmb": float(v_helio_to_cmb),
     }
 
     fprint(f"loaded {n} maser spots for {galaxy} "

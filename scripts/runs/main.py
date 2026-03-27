@@ -216,15 +216,12 @@ if __name__ == "__main__":
                        f"({len(galaxy_names)} galaxies: "
                        f"{', '.join(galaxy_names)}).")
                 data_list = [
-                    candel.pvdata.load_megamaser_spots(root, g)
+                    candel.pvdata.load_megamaser_spots(
+                        root, g,
+                        v_cmb_obs=all_galaxies[g]["v_cmb_obs"],
+                        v_helio_to_cmb=all_galaxies[g].get(
+                            "v_helio_to_cmb", 0.0))
                     for g in galaxy_names]
-
-                config["model"]["v_cmb_obs_per_galaxy"] = {
-                    g: all_galaxies[g]["v_cmb_obs"]
-                    for g in galaxy_names}
-                config["model"]["v_helio_to_cmb_per_galaxy"] = {
-                    g: all_galaxies[g].get("v_helio_to_cmb", 0.0)
-                    for g in galaxy_names}
                 config["io"]["fname_output"] = "results/Maser/joint.hdf5"
 
                 tmp = tempfile.NamedTemporaryFile(
@@ -236,9 +233,7 @@ if __name__ == "__main__":
             else:
                 fprint(f"selected maser disk model for {galaxy}.")
                 gal_cfg = all_galaxies.get(galaxy, {})
-                for key in ("v_helio_to_cmb", "v_cmb_obs",
-                            "fit_di_dr", "sample_accel_det",
-                            "use_selection"):
+                for key in ("fit_di_dr", "sample_accel_det", "use_selection"):
                     if key in gal_cfg:
                         config["model"][key] = gal_cfg[key]
                 gal_priors = gal_cfg.get("priors", {})
@@ -251,7 +246,10 @@ if __name__ == "__main__":
                     mode="wb", suffix=".toml", delete=False)
                 tomli_w.dump(config, tmp)
                 tmp.close()
-                data = candel.pvdata.load_megamaser_spots(root, galaxy)
+                data = candel.pvdata.load_megamaser_spots(
+                    root, galaxy,
+                    v_cmb_obs=gal_cfg["v_cmb_obs"],
+                    v_helio_to_cmb=gal_cfg.get("v_helio_to_cmb", 0.0))
                 model = candel.model.MaserDiskModel(tmp.name, data)
 
             candel.run_H0_inference(model)

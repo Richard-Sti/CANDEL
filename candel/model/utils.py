@@ -25,7 +25,7 @@ from jax import random
 from jax.scipy.linalg import solve_triangular
 from jax.scipy.special import gammainc, gammaln, logsumexp
 from jax.scipy.stats import norm as norm_jax
-from numpyro.distributions import (Delta, Distribution, Normal,
+from numpyro.distributions import (Delta, Distribution, LogUniform, Normal,
                                    TruncatedNormal, Uniform, constraints)
 
 from ..util import SPEED_OF_LIGHT
@@ -172,6 +172,7 @@ def load_priors(config_priors):
         "normal": lambda p: Normal(p["loc"], p["scale"]),
         "truncated_normal": lambda p: TruncatedNormal(p["mean"], p["scale"], low=p.get("low", None), high= p.get("high", None)),  # noqa
         "uniform": lambda p: Uniform(p["low"], p["high"]),
+        "log_uniform": lambda p: LogUniform(p["low"], p["high"]),
         "delta": lambda p: Delta(p["value"]),
         "jeffreys": lambda p: JeffreysPrior(p["low"], p["high"]),
         "maxwell": lambda p: Maxwell(p["scale"]),

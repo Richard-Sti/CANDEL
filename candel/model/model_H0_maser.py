@@ -47,6 +47,7 @@ from ..util import SPEED_OF_LIGHT, fprint, fsection, get_nested
 from .base_model import ModelBase
 from .pv_utils import rsample
 from .simpson import simpson_log_weights, ln_simpson_precomputed
+from .utils import normal_logpdf_var
 
 
 # -----------------------------------------------------------------------
@@ -61,9 +62,6 @@ C_g = 1.974e-11    # dimensionless: 2*GM_sun / (c^2 * 1 mas * 1 Mpc)
 # -----------------------------------------------------------------------
 # Disk physics functions
 # -----------------------------------------------------------------------
-
-def normal_logpdf(x, mu, sigma):
-    return -0.5 * ((x - mu) / sigma)**2 - jnp.log(sigma) - 0.5 * jnp.log(2 * jnp.pi)
 
 
 def warp_geometry(r, i0_rad, di_dr_rad, Omega0_rad, dOmega_dr_rad):
@@ -365,19 +363,19 @@ def _spot_log_likelihood_on_grid(
     V_pred = predict_velocity_los(r_2d, phi_2d, D, M_BH, v_sys, i_at_r, Omega_at_r)
     A_pred = predict_acceleration_los(r_2d, phi_2d, D, M_BH, i_at_r)
 
-    sigma_x = jnp.sqrt(sigma_x_k**2 + sigma_x_floor**2)
-    sigma_y = jnp.sqrt(sigma_y_k**2 + sigma_y_floor**2)
-    ll_pos = (normal_logpdf(x_obs_k, X_pred, sigma_x)
-              + normal_logpdf(y_obs_k, Y_pred, sigma_y))
+    var_x = sigma_x_k**2 + sigma_x_floor**2
+    var_y = sigma_y_k**2 + sigma_y_floor**2
+    ll_pos = (normal_logpdf_var(x_obs_k, X_pred, var_x)
+              + normal_logpdf_var(y_obs_k, Y_pred, var_y))
 
     cos2_phi = jnp.cos(phi_2d)**2
-    sigma_v = jnp.sqrt(sigma_v_hv**2 + (sigma_v_sys**2 - sigma_v_hv**2) * cos2_phi)
-    ll_vel = normal_logpdf(v_obs_k, V_pred, sigma_v)
+    var_v = sigma_v_hv**2 + (sigma_v_sys**2 - sigma_v_hv**2) * cos2_phi
+    ll_vel = normal_logpdf_var(v_obs_k, V_pred, var_v)
 
-    sigma_a = jnp.sqrt(sigma_a_k**2 + sigma_a_floor**2)
+    var_a = sigma_a_k**2 + sigma_a_floor**2
 
     log_p_det = jax_norm.logcdf((jnp.abs(a_obs_k) - A_thr) / sigma_det)
-    ll_measured = log_p_det + normal_logpdf(a_obs_k, A_pred, sigma_a)
+    ll_measured = log_p_det + normal_logpdf_var(a_obs_k, A_pred, var_a)
 
     sigma_nondet = jnp.sqrt(sigma_det**2 + 0.25 + sigma_a_floor**2)
     ll_unmeasured = jax_norm.logcdf((A_thr - jnp.abs(A_pred)) / sigma_nondet)
@@ -592,17 +590,15 @@ class MaserDiskModel(ModelBase):
 
         self._set_data_arrays(
             data, skip_keys=("spot_type", "is_systemic", "is_highvel",
-                             "accel_measured", "n_spots", "galaxy_name"))
+                             "accel_measured", "n_spots", "galaxy_name",
+                             "v_cmb_obs", "v_helio_to_cmb"))
 
-        self.v_helio_to_cmb = get_nested(
-            self.config, "model/v_helio_to_cmb", 0.0)
-
-        v_cmb_obs = get_nested(self.config, "model/v_cmb_obs", None)
-        if v_cmb_obs is None:
+        if "v_cmb_obs" not in data:
             raise ValueError(
-                "model/v_cmb_obs must be set to the observed CMB-frame "
-                "recession velocity (km/s).")
-        self.v_cmb_obs = float(v_cmb_obs)
+                "data must contain 'v_cmb_obs' (CMB-frame recession "
+                "velocity in km/s).")
+        self.v_cmb_obs = float(data["v_cmb_obs"])
+        self.v_helio_to_cmb = float(data.get("v_helio_to_cmb", 0.0))
         self.v_sys_obs = self.v_cmb_obs - self.v_helio_to_cmb
 
         D_min = float(get_nested(self.config, "model/priors/D/low", 10.0))
@@ -633,48 +629,52 @@ class MaserDiskModel(ModelBase):
         fprint(f"fit_di_dr = {self.fit_di_dr}")
         fprint(f"sample_accel_det = {self.sample_accel_det}")
 
-    def __call__(self):
-        H0 = rsample("H0", self.priors["H0"])
-        sigma_pec = rsample("sigma_pec", self.priors["sigma_pec"])
-        h = H0 / 100.0
+    def _sample_galaxy(self, H0, sigma_pec, h, suffix=""):
+        """Sample all per-galaxy parameters and accumulate log-likelihood.
 
-        D_c = rsample("D_c", self.priors["D"])
-        factor("lp_vol", 2.0 * jnp.log(D_c))
+        Parameters
+        ----------
+        H0, sigma_pec : shared scalars (already sampled)
+        h : H0 / 100
+        suffix : appended to every numpyro site name (e.g. "_NGC4258")
+        """
+        D_c = rsample(f"D_c{suffix}", self.priors["D"])
+        factor(f"lp_vol{suffix}", 2.0 * jnp.log(D_c))
 
         z_cosmo = self.distance2redshift(
             jnp.atleast_1d(D_c), h=h).squeeze()
         D_A = D_c / (1 + z_cosmo)
 
-        M_BH = rsample("M_BH", self.priors["M_BH"])
-        x0 = rsample("x0", self.priors["x0"])
-        y0 = rsample("y0", self.priors["y0"])
+        M_BH = rsample(f"M_BH{suffix}", self.priors["M_BH"])
+        x0 = rsample(f"x0{suffix}", self.priors["x0"])
+        y0 = rsample(f"y0{suffix}", self.priors["y0"])
 
-        i0_deg = rsample("i0", self.priors["i0"])
-        Omega0_deg = rsample("Omega0", self.priors["Omega0"])
-        dOmega_dr_deg = rsample("dOmega_dr", self.priors["dOmega_dr"])
+        i0_deg = rsample(f"i0{suffix}", self.priors["i0"])
+        Omega0_deg = rsample(f"Omega0{suffix}", self.priors["Omega0"])
+        dOmega_dr_deg = rsample(f"dOmega_dr{suffix}", self.priors["dOmega_dr"])
 
         i0 = jnp.deg2rad(i0_deg)
         Omega0 = jnp.deg2rad(Omega0_deg)
         dOmega_dr = jnp.deg2rad(dOmega_dr_deg)
 
         if self.fit_di_dr:
-            di_dr_deg = rsample("di_dr", self.priors["di_dr"])
+            di_dr_deg = rsample(f"di_dr{suffix}", self.priors["di_dr"])
             di_dr = jnp.deg2rad(di_dr_deg)
         else:
             di_dr = jnp.array(0.0)
 
         sigma_x_floor = rsample(
-            "sigma_x_floor", self.priors["sigma_x_floor"])
+            f"sigma_x_floor{suffix}", self.priors["sigma_x_floor"])
         sigma_y_floor = rsample(
-            "sigma_y_floor", self.priors["sigma_y_floor"])
-        sigma_v_sys = rsample("sigma_v_sys", self.priors["sigma_v_sys"])
-        sigma_v_hv = rsample("sigma_v_hv", self.priors["sigma_v_hv"])
+            f"sigma_y_floor{suffix}", self.priors["sigma_y_floor"])
+        sigma_v_sys = rsample(f"sigma_v_sys{suffix}", self.priors["sigma_v_sys"])
+        sigma_v_hv = rsample(f"sigma_v_hv{suffix}", self.priors["sigma_v_hv"])
         sigma_a_floor = rsample(
-            "sigma_a_floor", self.priors["sigma_a_floor"])
+            f"sigma_a_floor{suffix}", self.priors["sigma_a_floor"])
 
         if self.sample_accel_det:
-            A_thr = rsample("A_thr", self.priors["A_thr"])
-            sigma_det = rsample("sigma_det", self.priors["sigma_det"])
+            A_thr = rsample(f"A_thr{suffix}", self.priors["A_thr"])
+            sigma_det = rsample(f"sigma_det{suffix}", self.priors["sigma_det"])
         else:
             A_thr = jnp.array(0.0)
             sigma_det = jnp.array(0.1)
@@ -690,41 +690,37 @@ class MaserDiskModel(ModelBase):
             sigma_a_floor, A_thr, sigma_det,
             self._dr_offsets, self._dphi_offsets,
             self._log_wr, self._log_wphi)
-        factor("ll_disk", ll_disk)
+        factor(f"ll_disk{suffix}", ll_disk)
 
         cz_cosmo = SPEED_OF_LIGHT * z_cosmo
-        ll_vpec = normal_logpdf(self.v_cmb_obs, cz_cosmo, sigma_pec)
-        factor("ll_vpec", ll_vpec)
+        ll_vpec = jax_norm.logpdf(self.v_cmb_obs, cz_cosmo, sigma_pec)
+        factor(f"ll_vpec{suffix}", ll_vpec)
 
         if self.use_selection:
-            D_lim = rsample("D_lim", self.priors["D_lim"])
-            D_width = rsample("D_width", self.priors["D_width"])
+            D_lim = rsample(f"D_lim{suffix}", self.priors["D_lim"])
+            D_width = rsample(f"D_width{suffix}", self.priors["D_width"])
 
-            from jax.scipy.stats import norm as norm_jax
+            log_sel_this = jax_norm.logcdf((D_lim - D_c) / D_width)
+            factor(f"ll_sel_per_object{suffix}", log_sel_this)
 
-            log_sel_this = norm_jax.logcdf((D_lim - D_c) / D_width)
-            factor("ll_sel_per_object", log_sel_this)
-
-            log_sel_grid = norm_jax.logcdf(
+            log_sel_grid = jax_norm.logcdf(
                 (D_lim - self._sel_D_grid) / D_width)
             log_integrand = log_sel_grid + self._sel_lp_vol
             log_Z_sel = logsumexp(log_integrand) + jnp.log(self._sel_dD)
-            factor("ll_sel_norm", -log_Z_sel)
+            factor(f"ll_sel_norm{suffix}", -log_Z_sel)
 
-
-# Per-galaxy parameter names (sampled with galaxy-indexed names).
-_PER_GALAXY_PARAMS = [
-    "D_c", "M_BH", "x0", "y0", "i0", "Omega0", "dOmega_dr",
-    "sigma_x_floor", "sigma_y_floor", "sigma_v_sys", "sigma_v_hv",
-    "sigma_a_floor", "A_thr", "sigma_det",
-]
+    def __call__(self):
+        H0 = rsample("H0", self.priors["H0"])
+        sigma_pec = rsample("sigma_pec", self.priors["sigma_pec"])
+        self._sample_galaxy(H0, sigma_pec, H0 / 100.0)
 
 
 class JointMaserModel(ModelBase):
     """Joint multi-galaxy megamaser H0 model.
 
-    Samples shared H0 and sigma_pec once, then loops over galaxies sampling
-    per-galaxy disk parameters with galaxy-indexed names.
+    Shares H0 and sigma_pec across all galaxies; all other parameters are
+    per-galaxy and sampled with galaxy-indexed numpyro site names via
+    MaserDiskModel._sample_galaxy.
     """
 
     def __init__(self, config_path, data_list):
@@ -732,153 +728,15 @@ class JointMaserModel(ModelBase):
         fsection("Joint Maser Disk Model")
         self._load_and_set_priors()
 
-        self.n_galaxies = len(data_list)
+        self.models = [MaserDiskModel(config_path, data) for data in data_list]
         self.galaxy_names = [d["galaxy_name"] for d in data_list]
-
-        self.gal_n_spots = []
-        self.gal_is_systemic = []
-        self.gal_is_highvel = []
-        self.gal_accel_measured = []
-        self.gal_phi_lo = []
-        self.gal_phi_hi = []
-        self.gal_x = []
-        self.gal_sigma_x = []
-        self.gal_y = []
-        self.gal_sigma_y = []
-        self.gal_velocity = []
-        self.gal_a = []
-        self.gal_sigma_a = []
-
-        for data in data_list:
-            n = data["n_spots"]
-            self.gal_n_spots.append(n)
-            self.gal_is_systemic.append(jnp.asarray(data["is_systemic"]))
-            self.gal_is_highvel.append(jnp.asarray(data["is_highvel"]))
-            self.gal_accel_measured.append(jnp.asarray(data["accel_measured"]))
-            phi_lo, phi_hi = _phi_bounds(data["spot_type"], n)
-            self.gal_phi_lo.append(phi_lo)
-            self.gal_phi_hi.append(phi_hi)
-            self.gal_x.append(jnp.asarray(data["x"]))
-            self.gal_sigma_x.append(jnp.asarray(data["sigma_x"]))
-            self.gal_y.append(jnp.asarray(data["y"]))
-            self.gal_sigma_y.append(jnp.asarray(data["sigma_y"]))
-            self.gal_velocity.append(jnp.asarray(data["velocity"]))
-            self.gal_a.append(jnp.asarray(data["a"]))
-            self.gal_sigma_a.append(jnp.asarray(data["sigma_a"]))
-
-        self.sample_accel_det = get_nested(
-            self.config, "model/sample_accel_det", True)
-
-        gc = build_grid_config()
-        self._dr_offsets = gc["dr_offsets"]
-        self._dphi_offsets = gc["dphi_offsets"]
-        self._log_wr = gc["log_wr"]
-        self._log_wphi = gc["log_wphi"]
-
-        v_corrections = get_nested(
-            self.config, "model/v_helio_to_cmb_per_galaxy", None)
-        if v_corrections is not None:
-            self.gal_v_helio_to_cmb = [
-                float(v_corrections[name]) for name in self.galaxy_names]
-        else:
-            default_v = get_nested(self.config, "model/v_helio_to_cmb", 0.0)
-            self.gal_v_helio_to_cmb = [default_v] * self.n_galaxies
-
-        v_cmb_obs_dict = get_nested(
-            self.config, "model/v_cmb_obs_per_galaxy", None)
-        if v_cmb_obs_dict is not None:
-            self.gal_v_cmb_obs = [
-                float(v_cmb_obs_dict[name]) for name in self.galaxy_names]
-        else:
-            raise ValueError(
-                "model/v_cmb_obs_per_galaxy must be set for all galaxies.")
-        self.gal_v_sys_obs = [
-            v_cmb - v_corr for v_cmb, v_corr
-            in zip(self.gal_v_cmb_obs, self.gal_v_helio_to_cmb)]
-
-        self.use_selection = get_nested(
-            self.config, "model/use_selection", False)
-        self.fit_di_dr = get_nested(
-            self.config, "model/fit_di_dr", False)
-
-        for i, name in enumerate(self.galaxy_names):
-            fprint(f"galaxy {i}: {name}, {self.gal_n_spots[i]} spots, "
-                   f"v_helio_to_cmb = {self.gal_v_helio_to_cmb[i]:.1f}")
-        fprint(f"use_selection = {self.use_selection}")
-        fprint(f"fit_di_dr = {self.fit_di_dr}")
+        fprint(f"loaded {len(self.models)} galaxies: "
+               f"{', '.join(self.galaxy_names)}")
 
     def __call__(self):
         H0 = rsample("H0", self.priors["H0"])
         sigma_pec = rsample("sigma_pec", self.priors["sigma_pec"])
         h = H0 / 100.0
 
-        for gi in range(self.n_galaxies):
-            gname = self.galaxy_names[gi]
-
-            D_c = rsample(f"D_c_{gname}", self.priors["D"])
-            factor(f"lp_vol_{gname}", 2.0 * jnp.log(D_c))
-
-            z_cosmo = self.distance2redshift(
-                jnp.atleast_1d(D_c), h=h).squeeze()
-            D_A = D_c / (1 + z_cosmo)
-
-            M_BH = rsample(f"M_BH_{gname}", self.priors["M_BH"])
-            x0 = rsample(f"x0_{gname}", self.priors["x0"])
-            y0 = rsample(f"y0_{gname}", self.priors["y0"])
-
-            i0_deg = rsample(f"i0_{gname}", self.priors["i0"])
-            Omega0_deg = rsample(
-                f"Omega0_{gname}", self.priors["Omega0"])
-            dOmega_dr_deg = rsample(
-                f"dOmega_dr_{gname}", self.priors["dOmega_dr"])
-
-            i0 = jnp.deg2rad(i0_deg)
-            Omega0 = jnp.deg2rad(Omega0_deg)
-            dOmega_dr = jnp.deg2rad(dOmega_dr_deg)
-
-            if self.fit_di_dr:
-                di_dr_deg = rsample(
-                    f"di_dr_{gname}", self.priors["di_dr"])
-                di_dr = jnp.deg2rad(di_dr_deg)
-            else:
-                di_dr = jnp.array(0.0)
-
-            sigma_x_floor = rsample(
-                f"sigma_x_floor_{gname}", self.priors["sigma_x_floor"])
-            sigma_y_floor = rsample(
-                f"sigma_y_floor_{gname}", self.priors["sigma_y_floor"])
-            sigma_v_sys = rsample(
-                f"sigma_v_sys_{gname}", self.priors["sigma_v_sys"])
-            sigma_v_hv = rsample(
-                f"sigma_v_hv_{gname}", self.priors["sigma_v_hv"])
-            sigma_a_floor = rsample(
-                f"sigma_a_floor_{gname}", self.priors["sigma_a_floor"])
-
-            if self.sample_accel_det:
-                A_thr = rsample(
-                    f"A_thr_{gname}", self.priors["A_thr"])
-                sigma_det = rsample(
-                    f"sigma_det_{gname}", self.priors["sigma_det"])
-            else:
-                A_thr = jnp.array(0.0)
-                sigma_det = jnp.array(0.1)
-
-            ll_disk, _, _ = marginalise_spots(
-                self.gal_x[gi], self.gal_sigma_x[gi],
-                self.gal_y[gi], self.gal_sigma_y[gi],
-                self.gal_velocity[gi], self.gal_a[gi],
-                self.gal_sigma_a[gi], self.gal_accel_measured[gi],
-                self.gal_phi_lo[gi], self.gal_phi_hi[gi],
-                x0, y0, D_A, M_BH, self.gal_v_sys_obs[gi],
-                i0, di_dr, Omega0, dOmega_dr,
-                sigma_x_floor, sigma_y_floor,
-                sigma_v_sys, sigma_v_hv, sigma_a_floor,
-                A_thr, sigma_det,
-                self._dr_offsets, self._dphi_offsets,
-                self._log_wr, self._log_wphi)
-            factor(f"ll_disk_{gname}", ll_disk)
-
-            cz_cosmo = SPEED_OF_LIGHT * z_cosmo
-            ll_vpec = normal_logpdf(
-                self.gal_v_cmb_obs[gi], cz_cosmo, sigma_pec)
-            factor(f"ll_vpec_{gname}", ll_vpec)
+        for model, gname in zip(self.models, self.galaxy_names):
+            model._sample_galaxy(H0, sigma_pec, h, suffix=f"_{gname}")

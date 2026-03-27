@@ -42,7 +42,7 @@ low = 5.0
 high = 250.0
 
 [model.priors.M_BH]
-dist = "uniform"
+dist = "log_uniform"
 low = 1.0e6
 high = 1.0e8
 
