@@ -23,9 +23,9 @@ Per-spot (r, phi) are marginalised numerically:
 
 using Strategy D (adaptive per-spot grid, recentered every MCMC step):
 
-1. Find peak (r*, phi*) for each spot using an analytical initial guess
-   followed by a few Gauss--Newton iterations on the joint
-   position+velocity+acceleration residual.
+1. Find peak (r*, phi*) for each spot using an analytical initial guess,
+   Gauss--Newton refinement with autodiff Jacobians, and a scan-grid
+   hard-argmax for robustness.
 
 2. Build per-spot local grids centred at (r*_k, phi*_k) with fixed shape
    (Nr x Nphi). Different centres are fine under vmap; only the shape
@@ -167,8 +167,10 @@ DEFAULT_DELTA_PHI = 0.50   # rad half-width
 DEFAULT_NR = 21            # odd for Simpson
 DEFAULT_NPHI = 31          # odd for Simpson
 
-SCAN_NR = 7
-SCAN_NPHI = 9
+SCAN_DELTA_R = 0.15        # mas half-width for scan
+SCAN_DELTA_PHI = 0.50      # rad half-width for scan
+SCAN_NR = 11
+SCAN_NPHI = 15
 
 
 def make_relative_grids(Nr=DEFAULT_NR, Nphi=DEFAULT_NPHI,
@@ -190,43 +192,25 @@ def make_relative_grids(Nr=DEFAULT_NR, Nphi=DEFAULT_NPHI,
 
 
 # -----------------------------------------------------------------------
-# Peak finder: analytical guess + Gauss-Newton on full residual
+# Peak finder: analytical initial guess + scan-grid soft-argmax
 # -----------------------------------------------------------------------
 
-def find_peak_rphi(x_obs, y_obs, v_obs, a_obs, accel_measured,
-                   phi_lo, phi_hi,
-                   x0, y0, D, M_BH, v_sys,
-                   i0, di_dr, Omega0, dOmega_dr,
-                   sigma_v_sys, sigma_v_hv,
-                   sigma_a_obs, sigma_a_floor,
-                   n_iter=6):
-    """Find integrand peak (r*, phi*) for each spot.
+def _analytical_init(x_obs, y_obs, v_obs, a_obs, accel_measured,
+                     phi_lo, phi_hi,
+                     x0, y0, D, M_BH, v_sys,
+                     i0, di_dr, Omega0, dOmega_dr,
+                     sigma_v_sys, sigma_v_hv,
+                     sigma_a_obs, sigma_a_floor):
+    """Physics-based initial guess for (r, phi) per spot.
 
-    Uses an analytical initial guess followed by Gauss--Newton refinement
-    on the joint position + velocity residual.
-
-    For near-edge-on disks (i ~ 90 deg), position only constrains
-    u = r*sin(phi). Velocity depends on sin(phi), which is symmetric
-    about pi/2, creating a two-fold ambiguity. Acceleration (cos(phi))
-    breaks this degeneracy.
-
-    Parameters
-    ----------
-    x_obs, y_obs, v_obs, a_obs : (N_spots,) observed data
-    accel_measured : (N_spots,) boolean
-    phi_lo, phi_hi : (N_spots,) per-spot azimuthal bounds
-    (remaining) : scalar geometry/physics parameters
-
-    Returns
-    -------
-    r_star, phi_star : (N_spots,) peak locations
+    Uses position geometry to estimate r, then scores 4 phi candidates
+    (arcsin branches + 2pi wraps) against velocity + acceleration residuals.
     """
     sin_O0, cos_O0 = jnp.sin(Omega0), jnp.cos(Omega0)
     sin_i0 = jnp.sin(i0)
 
     dx = x_obs - x0
     dy = y_obs - y0
-
     u_from_pos = dx * sin_O0 + dy * cos_O0
 
     dv = v_obs - v_sys
@@ -238,10 +222,12 @@ def find_peak_rphi(x_obs, y_obs, v_obs, a_obs, accel_measured,
     phi_a = jnp.arcsin(sin_phi)
     phi_b = jnp.pi - phi_a
 
-    c1 = jnp.clip(phi_a, phi_lo, phi_hi)
-    c2 = jnp.clip(phi_b, phi_lo, phi_hi)
-    c3 = jnp.clip(2.0 * jnp.pi + phi_a, phi_lo, phi_hi)
-    c4 = jnp.clip(2.0 * jnp.pi + phi_b - jnp.pi, phi_lo, phi_hi)
+    candidates = jnp.stack([
+        jnp.clip(phi_a, phi_lo, phi_hi),
+        jnp.clip(phi_b, phi_lo, phi_hi),
+        jnp.clip(2.0 * jnp.pi + phi_a, phi_lo, phi_hi),
+        jnp.clip(2.0 * jnp.pi + phi_b - jnp.pi, phi_lo, phi_hi),
+    ])  # (4, N_spots)
 
     i_at_r, O_at_r = warp_geometry(r_init, i0, di_dr, Omega0, dOmega_dr)
 
@@ -249,85 +235,106 @@ def find_peak_rphi(x_obs, y_obs, v_obs, a_obs, accel_measured,
         v_c = predict_velocity_los(r_init, phi_c, D, M_BH, v_sys, i_at_r, O_at_r)
         a_c = predict_acceleration_los(r_init, phi_c, D, M_BH, i_at_r)
         cos2_phi = jnp.cos(phi_c)**2
-        sigma_v = jnp.sqrt(sigma_v_hv**2 + (sigma_v_sys**2 - sigma_v_hv**2) * cos2_phi)
+        sigma_v = jnp.sqrt(
+            sigma_v_hv**2 + (sigma_v_sys**2 - sigma_v_hv**2) * cos2_phi)
         sigma_a = jnp.sqrt(sigma_a_obs**2 + sigma_a_floor**2)
-        score = -0.5 * ((v_c - v_obs) / sigma_v)**2
-        score = score + jnp.where(accel_measured,
-                                  -0.5 * ((a_c - a_obs) / sigma_a)**2,
-                                  0.0)
-        return score
+        s = -0.5 * ((v_c - v_obs) / sigma_v)**2
+        s += jnp.where(accel_measured, -0.5 * ((a_c - a_obs) / sigma_a)**2, 0.0)
+        return s
 
-    s1 = _score(c1)
-    s2 = _score(c2)
-    s3 = _score(c3)
-    s4 = _score(c4)
+    scores = jax.vmap(_score)(candidates)  # (4, N_spots)
+    best_idx = jnp.argmax(scores, axis=0)  # (N_spots,)
+    phi_init = candidates[best_idx, jnp.arange(candidates.shape[1])]
 
-    best = c1
-    best_s = s1
-    best = jnp.where(s2 > best_s, c2, best)
-    best_s = jnp.maximum(s2, best_s)
-    best = jnp.where(s3 > best_s, c3, best)
-    best_s = jnp.maximum(s3, best_s)
-    best = jnp.where(s4 > best_s, c4, best)
+    return r_init, phi_init
 
-    r = jnp.clip(r_init, 0.05, 5.0)
-    phi = jnp.clip(best, phi_lo, phi_hi)
 
-    cos2_phi_gn = jnp.cos(phi)**2
-    sigma_v = jnp.sqrt(sigma_v_hv**2 + (sigma_v_sys**2 - sigma_v_hv**2) * cos2_phi_gn)
+def _gauss_newton_refine(r0, phi0, phi_lo, phi_hi,
+                         x_obs, y_obs, v_obs, a_obs, accel_measured,
+                         x0, y0, D, M_BH, v_sys,
+                         i0, di_dr, Omega0, dOmega_dr,
+                         sigma_x_floor, sigma_y_floor, sigma_v_sys, sigma_v_hv,
+                         sigma_a_obs, sigma_a_floor,
+                         n_iter=6):
+    """Refine (r, phi) via Gauss-Newton with autodiff Jacobians.
+
+    Minimises the weighted position + velocity residual sum-of-squares.
+    Jacobians are computed via JAX autodiff instead of hand-coded
+    expressions.
+    """
+    cos2_phi_gn = jnp.cos(phi0)**2
+    sigma_v = jnp.sqrt(
+        sigma_v_hv**2 + (sigma_v_sys**2 - sigma_v_hv**2) * cos2_phi_gn)
+
+    def _predict_X(r, phi):
+        i, Omega = warp_geometry(r, i0, di_dr, Omega0, dOmega_dr)
+        X, _ = predict_position(r, phi, x0, y0, i, Omega)
+        return X
+
+    def _predict_Y(r, phi):
+        i, Omega = warp_geometry(r, i0, di_dr, Omega0, dOmega_dr)
+        _, Y = predict_position(r, phi, x0, y0, i, Omega)
+        return Y
+
+    def _predict_V(r, phi):
+        i, Omega = warp_geometry(r, i0, di_dr, Omega0, dOmega_dr)
+        return predict_velocity_los(r, phi, D, M_BH, v_sys, i, Omega)
+
+    dXdr_fn = jax.grad(_predict_X, argnums=0)
+    dXdp_fn = jax.grad(_predict_X, argnums=1)
+    dYdr_fn = jax.grad(_predict_Y, argnums=0)
+    dYdp_fn = jax.grad(_predict_Y, argnums=1)
+    dVdr_fn = jax.grad(_predict_V, argnums=0)
+    dVdp_fn = jax.grad(_predict_V, argnums=1)
 
     def _step(carry, _):
         r, phi = carry
-        i, Omega = warp_geometry(r, i0, di_dr, Omega0, dOmega_dr)
-        X_pred, Y_pred = predict_position(r, phi, x0, y0, i, Omega)
-        V_pred = predict_velocity_los(r, phi, D, M_BH, v_sys, i, Omega)
 
-        w_x, w_y, w_v = 50.0, 20.0, 1.0 / sigma_v
-        fx = (X_pred - x_obs) * w_x
-        fy = (Y_pred - y_obs) * w_y
-        fv = (V_pred - v_obs) * w_v
+        def _one_gn(r_k, phi_k, x_k, y_k, v_k, sv_k):
+            X_pred = _predict_X(r_k, phi_k)
+            Y_pred = _predict_Y(r_k, phi_k)
+            V_pred = _predict_V(r_k, phi_k)
 
-        sin_phi, cos_phi = jnp.sin(phi), jnp.cos(phi)
-        sin_O, cos_O = jnp.sin(Omega), jnp.cos(Omega)
-        cos_i, sin_i = jnp.cos(i), jnp.sin(i)
+            dXdr = dXdr_fn(r_k, phi_k)
+            dXdp = dXdp_fn(r_k, phi_k)
+            dYdr = dYdr_fn(r_k, phi_k)
+            dYdp = dYdp_fn(r_k, phi_k)
+            dVdr = dVdr_fn(r_k, phi_k)
+            dVdp = dVdp_fn(r_k, phi_k)
 
-        dXdr = (sin_phi * sin_O - cos_phi * cos_O * cos_i) * w_x
-        dXdp = r * (cos_phi * sin_O + sin_phi * cos_O * cos_i) * w_x
-        dYdr = (sin_phi * cos_O + cos_phi * sin_O * cos_i) * w_y
-        dYdp = r * (cos_phi * cos_O - sin_phi * sin_O * cos_i) * w_y
+            w_x, w_y, w_v = 50.0, 20.0, 1.0 / sv_k
+            fx = (X_pred - x_k) * w_x
+            fy = (Y_pred - y_k) * w_y
+            fv = (V_pred - v_k) * w_v
+            dXdr *= w_x; dXdp *= w_x
+            dYdr *= w_y; dYdp *= w_y
+            dVdr *= w_v; dVdp *= w_v
 
-        v_kep = C_v * jnp.sqrt(M_BH / (r * D))
-        dVdr = -0.5 * v_kep / r * sin_phi * sin_i * w_v
-        dVdp = v_kep * cos_phi * sin_i * w_v
+            JtJ_00 = dXdr**2 + dYdr**2 + dVdr**2
+            JtJ_01 = dXdr * dXdp + dYdr * dYdp + dVdr * dVdp
+            JtJ_11 = dXdp**2 + dYdp**2 + dVdp**2
+            Jtf_0 = dXdr * fx + dYdr * fy + dVdr * fv
+            Jtf_1 = dXdp * fx + dYdp * fy + dVdp * fv
 
-        JtJ_00 = dXdr**2 + dYdr**2 + dVdr**2
-        JtJ_01 = dXdr * dXdp + dYdr * dYdp + dVdr * dVdp
-        JtJ_11 = dXdp**2 + dYdp**2 + dVdp**2
-        Jtf_0 = dXdr * fx + dYdr * fy + dVdr * fv
-        Jtf_1 = dXdp * fx + dYdp * fy + dVdp * fv
+            reg = 1e-4 * (JtJ_00 + JtJ_11) + 1e-8
+            JtJ_00 += reg; JtJ_11 += reg
+            det = JtJ_00 * JtJ_11 - JtJ_01**2 + 1e-30
 
-        reg = 1e-4 * (JtJ_00 + JtJ_11) + 1e-8
-        JtJ_00 = JtJ_00 + reg
-        JtJ_11 = JtJ_11 + reg
+            dr = (JtJ_11 * Jtf_0 - JtJ_01 * Jtf_1) / det
+            dphi = (-JtJ_01 * Jtf_0 + JtJ_00 * Jtf_1) / det
+            return dr, dphi
 
-        det = JtJ_00 * JtJ_11 - JtJ_01**2 + 1e-30
-
-        dr = (JtJ_11 * Jtf_0 - JtJ_01 * Jtf_1) / det
-        dphi = (-JtJ_01 * Jtf_0 + JtJ_00 * Jtf_1) / det
+        dr, dphi = jax.vmap(_one_gn)(r, phi, x_obs, y_obs, v_obs, sigma_v)
 
         step_mag = jnp.sqrt(dr**2 + dphi**2 + 1e-30)
         max_step = 0.3 * r + 0.5
         scale = jnp.where(step_mag > max_step, max_step / step_mag, 1.0)
-        r_new = r - scale * dr
-        phi_new = phi - scale * dphi
-
-        r_new = jnp.clip(r_new, 0.05, 5.0)
-        phi_new = jnp.clip(phi_new, phi_lo, phi_hi)
+        r_new = jnp.clip(r - scale * dr, 0.05, 5.0)
+        phi_new = jnp.clip(phi - scale * dphi, phi_lo, phi_hi)
         return (r_new, phi_new), None
 
-    (r, phi), _ = jax.lax.scan(_step, (r, phi), None, length=n_iter)
-
-    return jax.lax.stop_gradient(r), jax.lax.stop_gradient(phi)
+    (r, phi), _ = jax.lax.scan(_step, (r0, phi0), None, length=n_iter)
+    return r, phi
 
 
 # -----------------------------------------------------------------------
@@ -385,6 +392,55 @@ def _spot_log_likelihood_on_grid(
     return ll_pos + ll_vel + ll_acc
 
 
+def _scan_peak(r_center, phi_center, phi_lo, phi_hi,
+               x_obs, sigma_x, y_obs, sigma_y,
+               v_obs, a_obs, sigma_a, accel_measured,
+               x0, y0, D, M_BH, v_sys,
+               i0, di_dr, Omega0, dOmega_dr,
+               sigma_x_floor, sigma_y_floor, sigma_v_sys, sigma_v_hv,
+               sigma_a_floor, A_thr, sigma_det):
+    """Soft-argmax peak on a coarse grid around (r_center, phi_center).
+
+    Evaluates the full log-likelihood on a coarse grid centered on the
+    analytical init, then returns the softmax-weighted average as a
+    differentiable, robust peak location.
+    """
+    dr_s = jnp.linspace(-SCAN_DELTA_R, SCAN_DELTA_R, SCAN_NR)
+    dphi_s = jnp.linspace(-SCAN_DELTA_PHI, SCAN_DELTA_PHI, SCAN_NPHI)
+    r_scan = jnp.clip(r_center[:, None] + dr_s[None, :], 0.01, 10.0)
+    phi_scan = jnp.clip(phi_center[:, None] + dphi_s[None, :],
+                        phi_lo[:, None], phi_hi[:, None])
+
+    def _eval_one(rg, pg, xk, sxk, yk, syk, vk, ak, sak, amk):
+        return _spot_log_likelihood_on_grid(
+            rg, pg, xk, sxk, yk, syk, vk, ak, sak, amk,
+            x0, y0, D, M_BH, v_sys,
+            i0, di_dr, Omega0, dOmega_dr,
+            sigma_x_floor, sigma_y_floor, sigma_v_sys, sigma_v_hv,
+            sigma_a_floor, A_thr, sigma_det)
+
+    log_scan = jax.vmap(_eval_one)(
+        r_scan, phi_scan,
+        x_obs, sigma_x, y_obs, sigma_y,
+        v_obs, a_obs, sigma_a, accel_measured)
+
+    N_spots = x_obs.shape[0]
+    r_2d = jnp.broadcast_to(r_scan[:, :, None],
+                             (N_spots, SCAN_NR, SCAN_NPHI))
+    phi_2d = jnp.broadcast_to(phi_scan[:, None, :],
+                               (N_spots, SCAN_NR, SCAN_NPHI))
+    log_flat = log_scan.reshape(N_spots, -1)
+
+    # Hard argmax: since stop_gradient is applied, softmax averaging
+    # would only add bias without any gradient benefit.
+    best_idx = jnp.argmax(log_flat, axis=-1)
+    r_star = jax.lax.stop_gradient(
+        r_2d.reshape(N_spots, -1)[jnp.arange(N_spots), best_idx])
+    phi_star = jax.lax.stop_gradient(
+        phi_2d.reshape(N_spots, -1)[jnp.arange(N_spots), best_idx])
+    return r_star, phi_star
+
+
 # -----------------------------------------------------------------------
 # Main marginalisation routine
 # -----------------------------------------------------------------------
@@ -399,12 +455,12 @@ def marginalise_spots(
         sigma_x_floor, sigma_y_floor, sigma_v_sys, sigma_v_hv,
         sigma_a_floor, A_thr, sigma_det,
         dr_offsets, dphi_offsets, log_wr, log_wphi,
-        n_newton=6, bimodal=True):
+        bimodal=True):
     """Compute sum of marginalised log-likelihoods for all spots.
 
-    Uses G-N for initial grid centering, then the mode 1 grid's argmax
-    as a robust peak (fused -- no separate scan needed). Mode 2 is
-    centered on phi2 = pi - phi1 (or 3pi - phi1 for blue spots).
+    Uses analytical init + autodiff G-N refinement + scan-grid argmax
+    for grid centering. Mode 2 is centered on phi2 = pi - phi1
+    (or 3pi - phi1 for blue spots).
 
     Parameters
     ----------
@@ -413,23 +469,38 @@ def marginalise_spots(
     x0, y0, D, M_BH, ... : scalar model parameters
     dr_offsets, dphi_offsets : (Nr,), (Nphi,) relative grid offsets
     log_wr, log_wphi : (Nr,), (Nphi,) pre-computed Simpson log-weights
-    n_newton : Gauss--Newton iterations for peak finding
     bimodal : if True, integrate both modes via logaddexp
 
     Returns
     -------
     ll_total : scalar, sum_k log int L_k(r, phi) dr dphi
-    r_star : (N_spots,) peak r values (from grid argmax)
-    phi_star : (N_spots,) peak phi values (from grid argmax)
+    r_star : (N_spots,) peak r values (from scan soft-argmax)
+    phi_star : (N_spots,) peak phi values (from scan soft-argmax)
     """
-    r_gn, phi_gn = find_peak_rphi(
+    r_init, phi_init = _analytical_init(
         x_obs, y_obs, v_obs, a_obs, accel_measured,
         phi_lo, phi_hi,
         x0, y0, D, M_BH, v_sys,
         i0, di_dr, Omega0, dOmega_dr,
         sigma_v_sys, sigma_v_hv,
-        sigma_a, sigma_a_floor,
-        n_iter=n_newton)
+        sigma_a, sigma_a_floor)
+
+    r_ref, phi_ref = _gauss_newton_refine(
+        r_init, phi_init, phi_lo, phi_hi,
+        x_obs, y_obs, v_obs, a_obs, accel_measured,
+        x0, y0, D, M_BH, v_sys,
+        i0, di_dr, Omega0, dOmega_dr,
+        sigma_x_floor, sigma_y_floor, sigma_v_sys, sigma_v_hv,
+        sigma_a, sigma_a_floor)
+
+    r_star, phi_star = _scan_peak(
+        r_ref, phi_ref, phi_lo, phi_hi,
+        x_obs, sigma_x, y_obs, sigma_y,
+        v_obs, a_obs, sigma_a, accel_measured,
+        x0, y0, D, M_BH, v_sys,
+        i0, di_dr, Omega0, dOmega_dr,
+        sigma_x_floor, sigma_y_floor, sigma_v_sys, sigma_v_hv,
+        sigma_a_floor, A_thr, sigma_det)
 
     def _integrate_mode(r_center, phi_center):
         r_grids = r_center[:, None] + dr_offsets[None, :]
@@ -457,39 +528,6 @@ def marginalise_spots(
         log_int_phi = ln_simpson_precomputed(log_integrand, log_wphi, axis=-1)
         return ln_simpson_precomputed(log_int_phi, log_wr, axis=-1)
 
-    # Soft argmax over coarse scan grid for robust, differentiable peak location
-    dr_s = jnp.linspace(-DEFAULT_DELTA_R, DEFAULT_DELTA_R, SCAN_NR)
-    dphi_s = jnp.linspace(-DEFAULT_DELTA_PHI, DEFAULT_DELTA_PHI, SCAN_NPHI)
-    r_scan_grids = jnp.clip(r_gn[:, None] + dr_s[None, :], 0.01, 10.0)
-    phi_scan_grids = jnp.clip(phi_gn[:, None] + dphi_s[None, :],
-                              phi_lo[:, None], phi_hi[:, None])
-
-    def _scan_h_one(rg, pg, xk, sxk, yk, syk, vk, ak, sak, amk):
-        return _spot_log_likelihood_on_grid(
-            rg, pg, xk, sxk, yk, syk, vk, ak, sak, amk,
-            x0, y0, D, M_BH, v_sys,
-            i0, di_dr, Omega0, dOmega_dr,
-            sigma_x_floor, sigma_y_floor, sigma_v_sys, sigma_v_hv,
-            sigma_a_floor, A_thr, sigma_det)
-
-    log_scan = jax.vmap(_scan_h_one)(
-        r_scan_grids, phi_scan_grids,
-        x_obs, sigma_x, y_obs, sigma_y,
-        v_obs, a_obs, sigma_a, accel_measured)
-
-    N_spots = x_obs.shape[0]
-    r_2d = jnp.broadcast_to(r_scan_grids[:, :, None],
-                             (N_spots, SCAN_NR, SCAN_NPHI))
-    phi_2d = jnp.broadcast_to(phi_scan_grids[:, None, :],
-                               (N_spots, SCAN_NR, SCAN_NPHI))
-    log_flat = log_scan.reshape(N_spots, -1)
-    r_flat = r_2d.reshape(N_spots, -1)
-    phi_flat = phi_2d.reshape(N_spots, -1)
-
-    weights = jax.nn.softmax(log_flat, axis=-1)
-    r_star = jax.lax.stop_gradient(jnp.sum(weights * r_flat, axis=-1))
-    phi_star = jax.lax.stop_gradient(jnp.sum(weights * phi_flat, axis=-1))
-
     ln_I1 = _integrate_mode(r_star, phi_star)
 
     if bimodal:
@@ -497,6 +535,7 @@ def marginalise_spots(
         i_m, Omega_m = warp_geometry(r_star, i0, di_dr, Omega0, dOmega_dr)
         sin_O, cos_O = jnp.sin(Omega_m), jnp.cos(Omega_m)
         cos_i = jnp.cos(i_m)
+
         sigma_x_tot = jnp.sqrt(sigma_x**2 + sigma_x_floor**2)
         sigma_y_tot = jnp.sqrt(sigma_y**2 + sigma_y_floor**2)
         px = 1.0 / sigma_x_tot**2

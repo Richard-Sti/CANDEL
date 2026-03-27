@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Capture reference values from current maser peak finder for regression."""
+"""Test maser peak refactor against saved reference values."""
 import os
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -11,7 +11,7 @@ import numpy as np
 
 from candel.mock.maser_disk_mock import gen_maser_mock_like_cgcg074
 from candel.model.model_H0_maser import (
-    MaserDiskModel, build_grid_config, find_peak_rphi, marginalise_spots,
+    MaserDiskModel, build_grid_config, marginalise_spots,
     _phi_bounds,
 )
 
@@ -41,11 +41,8 @@ ll, r_star, phi_star = marginalise_spots(
 )
 
 print(f"ll_total = {float(ll):.4f}")
-print(f"r_star  = {np.array(r_star)}")
-print(f"phi_star = {np.array(phi_star)}")
 
-np.savez("scripts/maser_peak_reference.npz",
-         ll=float(ll),
-         r_star=np.array(r_star),
-         phi_star=np.array(phi_star))
-print("Saved to scripts/maser_peak_reference.npz")
+ref = np.load(os.path.join(os.path.dirname(__file__),
+                           "maser_peak_reference.npz"))
+print(f"Reference ll = {ref['ll']:.4f}")
+print(f"Delta ll = {float(ll) - ref['ll']:.4f}")
