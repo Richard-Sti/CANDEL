@@ -366,7 +366,8 @@ def gen_maser_mock_like_cgcg074(seed, true_params=None, verbose=True):
 
     # Load real data for uncertainties and spot structure
     data_root = join(dirname(dirname(dirname(__file__))), "data", "Megamaser")
-    real = load_megamaser_spots(data_root, galaxy="CGCG074-064")
+    real = load_megamaser_spots(data_root, galaxy="CGCG074-064",
+                               v_cmb_obs=7144.0)
 
     n_spots = real["n_spots"]
     spot_types = real["spot_type"].copy()
