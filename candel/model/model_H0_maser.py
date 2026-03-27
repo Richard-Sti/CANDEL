@@ -41,7 +41,7 @@ import jax.numpy as jnp
 import numpy as np
 from jax.scipy.special import logsumexp
 from jax.scipy.stats import norm as jax_norm
-from numpyro import deterministic, factor
+from numpyro import factor
 
 from ..util import SPEED_OF_LIGHT, fprint, fsection, get_nested
 from .base_model import ModelBase
@@ -644,8 +644,6 @@ class MaserDiskModel(ModelBase):
         z_cosmo = self.distance2redshift(
             jnp.atleast_1d(D_c), h=h).squeeze()
         D_A = D_c / (1 + z_cosmo)
-        deterministic("z_cosmo", z_cosmo)
-        deterministic("D_A", D_A)
 
         M_BH = rsample("M_BH", self.priors["M_BH"])
         x0 = rsample("x0", self.priors["x0"])
@@ -823,8 +821,6 @@ class JointMaserModel(ModelBase):
             z_cosmo = self.distance2redshift(
                 jnp.atleast_1d(D_c), h=h).squeeze()
             D_A = D_c / (1 + z_cosmo)
-            deterministic(f"z_cosmo_{gname}", z_cosmo)
-            deterministic(f"D_A_{gname}", D_A)
 
             M_BH = rsample(f"M_BH_{gname}", self.priors["M_BH"])
             x0 = rsample(f"x0_{gname}", self.priors["x0"])
