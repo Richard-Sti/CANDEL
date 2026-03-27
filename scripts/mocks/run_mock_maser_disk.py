@@ -55,7 +55,8 @@ def run_one_mock(seed, num_warmup=1000, num_samples=500, quiet=True):
     config["inference"]["num_chains"] = 1
     # Set observed CMB velocity from mock truth
     v_cmb_obs = tp["v_sys"] + tp["v_helio_to_cmb"]
-    config["model"]["v_cmb_obs"] = v_cmb_obs
+    data["v_cmb_obs"] = v_cmb_obs
+    data["v_helio_to_cmb"] = tp["v_helio_to_cmb"]
     tmp = _write_tmp_config(config)
 
     # Init near truth for faster convergence.
