@@ -1,0 +1,239 @@
+# Megamaser disk H0 model configuration.
+#
+# Set galaxy = "CGCG074-064" (or any galaxy name) for a single-galaxy run.
+# Set galaxy = "joint" to fit all galaxies simultaneously with shared H0.
+# Per-galaxy settings override the shared defaults below.
+
+[inference]
+num_warmup = 2000
+num_samples = 2000
+num_chains = 1
+chain_method = "sequential"
+seed = 42
+dense_mass = true
+max_tree_depth = 8
+
+[model]
+which_run = "maser_disk"
+Om = 0.315
+galaxy = "CGCG074-064"
+
+use_selection = false
+fit_di_dr = false
+sample_accel_det = false
+
+# -----------------------------------------------------------------------
+# Shared priors (apply to all galaxies unless overridden)
+# -----------------------------------------------------------------------
+
+[model.priors.H0]
+dist = "uniform"
+low = 50.0
+high = 100.0
+
+[model.priors.sigma_pec]
+dist = "uniform"
+low = 50.0
+high = 500.0
+
+[model.priors.D]
+dist = "uniform"
+low = 5.0
+high = 250.0
+
+[model.priors.M_BH]
+dist = "uniform"
+low = 1.0e6
+high = 1.0e8
+
+[model.priors.x0]
+dist = "uniform"
+low = -0.5
+high = 0.5
+
+[model.priors.y0]
+dist = "uniform"
+low = -0.5
+high = 0.5
+
+[model.priors.i0]
+dist = "uniform"
+low = 65.0
+high = 110.0
+
+[model.priors.Omega0]
+dist = "uniform"
+low = 0.0
+high = 220.0
+
+[model.priors.dOmega_dr]
+dist = "uniform"
+low = -100.0
+high = 100.0
+
+[model.priors.di_dr]
+dist = "uniform"
+low = -100.0
+high = 100.0
+
+[model.priors.sigma_x_floor]
+dist = "uniform"
+low = 0.0
+high = 0.1
+
+[model.priors.sigma_y_floor]
+dist = "uniform"
+low = 0.0
+high = 0.1
+
+[model.priors.sigma_v_sys]
+dist = "truncated_normal"
+mean = 5.0
+scale = 3.0
+low = 0.5
+high = 20.0
+
+[model.priors.sigma_v_hv]
+dist = "truncated_normal"
+mean = 5.0
+scale = 3.0
+low = 0.5
+high = 20.0
+
+[model.priors.sigma_a_floor]
+dist = "uniform"
+low = 0.0
+high = 5.0
+
+[model.priors.A_thr]
+dist = "uniform"
+low = 0.0
+high = 10.0
+
+[model.priors.sigma_det]
+dist = "uniform"
+low = 0.01
+high = 5.0
+
+[model.priors.D_lim]
+dist = "uniform"
+low = 50.0
+high = 300.0
+
+[model.priors.D_width]
+dist = "uniform"
+low = 5.0
+high = 100.0
+
+[io]
+root_output = "results/Maser"
+
+[io.maser_data]
+root = "data/Megamaser"
+
+# -----------------------------------------------------------------------
+# Per-galaxy settings
+# -----------------------------------------------------------------------
+
+[model.galaxies."CGCG074-064"]
+v_helio_to_cmb = 263.3
+v_cmb_obs = 7172.2
+fit_di_dr = true
+sample_accel_det = true
+
+[model.galaxies."CGCG074-064".priors.D]
+dist = "uniform"
+low = 10.0
+high = 200.0
+
+[model.galaxies."CGCG074-064".priors.i0]
+dist = "uniform"
+low = 70.0
+high = 110.0
+
+[model.galaxies."CGCG074-064".priors.Omega0]
+dist = "uniform"
+low = 0.0
+high = 180.0
+
+[model.galaxies."NGC5765b"]
+v_helio_to_cmb = 210.1
+v_cmb_obs = 8525.7
+
+[model.galaxies."NGC5765b".priors.D]
+dist = "uniform"
+low = 50.0
+high = 200.0
+
+[model.galaxies."NGC5765b".priors.i0]
+dist = "uniform"
+low = 65.0
+high = 80.0
+
+[model.galaxies."NGC5765b".priors.Omega0]
+dist = "uniform"
+low = 100.0
+high = 200.0
+
+[model.galaxies."NGC5765b".priors.dOmega_dr]
+dist = "uniform"
+low = -50.0
+high = 50.0
+
+[model.galaxies."NGC6264"]
+v_helio_to_cmb = -3.3
+v_cmb_obs = 10128.0
+
+[model.galaxies."NGC6264".priors.D]
+dist = "uniform"
+low = 50.0
+high = 250.0
+
+[model.galaxies."NGC6264".priors.i0]
+dist = "uniform"
+low = 80.0
+high = 100.0
+
+[model.galaxies."NGC6264".priors.dOmega_dr]
+dist = "uniform"
+low = -50.0
+high = 50.0
+
+[model.galaxies."NGC6323"]
+v_helio_to_cmb = -33.5
+v_cmb_obs = 7805.0
+
+[model.galaxies."NGC6323".priors.D]
+dist = "uniform"
+low = 50.0
+high = 200.0
+
+[model.galaxies."NGC6323".priors.i0]
+dist = "uniform"
+low = 80.0
+high = 100.0
+
+[model.galaxies."NGC6323".priors.Omega0]
+dist = "uniform"
+low = 150.0
+high = 220.0
+
+[model.galaxies."NGC6323".priors.dOmega_dr]
+dist = "uniform"
+low = -50.0
+high = 50.0
+
+[model.galaxies."UGC3789"]
+v_helio_to_cmb = 419.9
+v_cmb_obs = 3325.3
+fit_di_dr = true
+
+[model.galaxies."UGC3789".priors.D]
+dist = "uniform"
+low = 20.0
+high = 100.0
+
+[model.galaxies."UGC3789".priors.i0]
+dist = "uniform"
+low = 80.0
+high = 100.0

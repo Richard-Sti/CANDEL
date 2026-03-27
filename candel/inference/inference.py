@@ -439,7 +439,13 @@ def run_H0_inference(model, model_kwargs=None, print_summary=True,
     else:
         site_names = None
     dense_mass = _parse_dense_mass(kwargs, site_names=site_names)
-    kernel = NUTS(model, init_strategy=init_strategy, dense_mass=dense_mass)
+    max_tree_depth = kwargs.get("max_tree_depth", 10)
+    target_accept_prob = kwargs.get("target_accept_prob", 0.8)
+    kernel = NUTS(model, init_strategy=init_strategy, dense_mass=dense_mass,
+                  max_tree_depth=max_tree_depth,
+                  target_accept_prob=target_accept_prob)
+    fprint(f"NUTS: max_tree_depth={max_tree_depth}, "
+           f"target_accept_prob={target_accept_prob}")
     mcmc = MCMC(
         kernel, num_warmup=kwargs["num_warmup"],
         num_samples=kwargs["num_samples"], num_chains=kwargs["num_chains"],
