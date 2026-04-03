@@ -30,7 +30,7 @@ from ..util import (fprint, fsection, get_nested, load_config,
 from .interp import LOSInterpolator
 from .pv_utils import (lp_galaxy_bias, octupole_radial, quadrupole_radial,
                        sigmoid_monopole_radial)
-from .simpson import ln_simpson_precomputed, simpson_log_weights
+from .integration import ln_simpson_precomputed, simpson_log_weights
 from .utils import load_priors, log_prob_integrand_sel, predict_cz
 
 
