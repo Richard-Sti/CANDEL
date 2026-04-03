@@ -31,6 +31,8 @@ import jax.numpy as jnp
 from jax.scipy.stats import norm as jax_norm
 from numpyro import factor, handlers, plate, sample
 from numpyro.distributions import Uniform
+from scipy.cluster.vq import kmeans2
+from scipy.optimize import minimize_scalar
 
 from ..util import SPEED_OF_LIGHT, fprint, fsection, get_nested
 from .base_model import ModelBase
@@ -46,6 +48,39 @@ C_v = 0.9420       # km/s: sqrt(GM_sun / (1 mas * 1 Mpc)) * 1e-3
 C_a = 1.872e-4     # km/s/yr: GM_sun * yr / ((1 mas * 1 Mpc)^2 * 1e3)
 C_g = 1.974e-11    # dimensionless: 2*GM_sun / (c^2 * 1 mas * 1 Mpc)
 LOG_2PI = 1.8378770664093453  # jnp.log(2 * pi), precomputed
+
+
+# -----------------------------------------------------------------------
+# Spot classification and disk PA estimation
+# -----------------------------------------------------------------------
+
+
+def classify_spots(v, n_clusters=3):
+    """Classify spots into blue, systemic, red via k-means on velocity."""
+    centroids, labels = kmeans2(v.astype(_np.float64), n_clusters, minit="++")
+    order = _np.argsort(centroids)
+    remap = _np.empty(n_clusters, dtype=int)
+    remap[order] = _np.arange(n_clusters)
+    labels = remap[labels]  # 0=blue, 1=systemic, 2=red
+    return labels
+
+
+def estimate_omega(x, y, v, is_hv):
+    """Estimate disk PA by maximising |corr(impact, v)| for HV spots."""
+    xh, yh, vh = x[is_hv], y[is_hv], v[is_hv]
+
+    def neg_abs_corr(omega):
+        b = xh * _np.sin(omega) + yh * _np.cos(omega)
+        return -_np.abs(_np.corrcoef(b, vh)[0, 1])
+
+    result = minimize_scalar(neg_abs_corr, bounds=(0, _np.pi),
+                             method="bounded")
+    # Pick the sign so that positive impact -> higher velocity (receding)
+    omega = result.x
+    b = xh * _np.sin(omega) + yh * _np.cos(omega)
+    if _np.corrcoef(b, vh)[0, 1] < 0:
+        omega = (omega + _np.pi) % (2 * _np.pi)
+    return omega
 
 
 # -----------------------------------------------------------------------
@@ -90,27 +125,27 @@ def _build_r_grid(r_min, r_max, n_r=251):
 PC_PER_MAS_MPC = 4.848e-3
 
 
-def warp_geometry(r_phys, r_phys_ref, i0_rad, di_dr_rad,
+def warp_geometry(r_ang, r_ang_ref, i0_rad, di_dr_rad,
                   Omega0_rad, dOmega_dr_rad):
-    """Evaluate warped inclination and position angle at physical radius.
+    """Evaluate warped inclination and position angle at angular radius.
 
-    The expansion is about r_phys_ref (in pc), so i0 and Omega0 are
-    the values at that physical radius. The warp rates di/dr and
-    dOmega/dr are in radians per pc.
+    The expansion is about r_ang_ref (in mas), so i0 and Omega0 are
+    the values at that angular radius. The warp rates di/dr and
+    dOmega/dr are in radians per mas.
 
     Parameters
     ----------
-    r_phys : physical radius in pc
-    r_phys_ref : reference physical radius in pc (expansion centre)
-    i0_rad, di_dr_rad : inclination at r_phys_ref and warp rate (rad/pc)
-    Omega0_rad, dOmega_dr_rad : position angle at r_phys_ref and
-        warp rate (rad/pc)
+    r_ang : angular radius in mas
+    r_ang_ref : reference angular radius in mas (expansion centre)
+    i0_rad, di_dr_rad : inclination at r_ang_ref and warp rate (rad/mas)
+    Omega0_rad, dOmega_dr_rad : position angle at r_ang_ref and
+        warp rate (rad/mas)
 
     Returns
     -------
-    i, Omega : inclination and position angle at r_phys, in radians
+    i, Omega : inclination and position angle at r_ang, in radians
     """
-    dr = r_phys - r_phys_ref
+    dr = r_ang - r_ang_ref
     i = i0_rad + di_dr_rad * dr
     Omega = Omega0_rad + dOmega_dr_rad * dr
     return i, Omega
@@ -246,7 +281,7 @@ def _spot_ll_syst(r_ang, sin_phi, cos_phi,
                   inv_var_x, inv_var_y, inv_var_v, inv_var_a,
                   log_norm,
                   x0, y0, D, M_BH, v_sys,
-                  r_phys_ref, i0, di_dr, Omega0, dOmega_dr):
+                  r_ang_ref, i0, di_dr, Omega0, dOmega_dr):
     """Per-spot log-likelihood for systemic spots.
 
     Uses precomputed trig of phi and inverse variances. The per-spot
@@ -256,9 +291,8 @@ def _spot_ll_syst(r_ang, sin_phi, cos_phi,
     -------
     ll : (N_sys, ..., G_sys) per-spot per-phi log-likelihood
     """
-    r_phys = r_ang * D * PC_PER_MAS_MPC
     i_r, Omega_r = warp_geometry(
-        r_phys, r_phys_ref, i0, di_dr, Omega0, dOmega_dr)
+        r_ang, r_ang_ref, i0, di_dr, Omega0, dOmega_dr)
     sin_i = jnp.sin(i_r)
     cos_i = jnp.cos(i_r)
     sin_O = jnp.sin(Omega_r)
@@ -279,7 +313,7 @@ def _spot_ll_hv(r_ang,
                 inv_var_x, inv_var_y, inv_var_v, inv_var_a,
                 log_norm,
                 x0, y0, D, M_BH, v_sys,
-                r_phys_ref, i0, di_dr, Omega0, dOmega_dr):
+                r_ang_ref, i0, di_dr, Omega0, dOmega_dr):
     """Log-likelihood for a pair of reflected phi modes.
 
     Velocity is computed once (sin(phi1) == sin(phi2) by construction).
@@ -289,9 +323,8 @@ def _spot_ll_hv(r_ang,
     -------
     ll : (N_hv, ..., G_hv) per-spot per-phi log-likelihood
     """
-    r_phys = r_ang * D * PC_PER_MAS_MPC
     i_r, Omega_r = warp_geometry(
-        r_phys, r_phys_ref, i0, di_dr, Omega0, dOmega_dr)
+        r_ang, r_ang_ref, i0, di_dr, Omega0, dOmega_dr)
     sin_i = jnp.sin(i_r)
     cos_i = jnp.cos(i_r)
     sin_O = jnp.sin(Omega_r)
@@ -352,13 +385,13 @@ class MaserDiskModel(ModelBase):
             data, skip_keys=("accel_measured", "is_highvel", "is_systemic",
                              "is_blue", "is_red", "spot_type",
                              "phi_lo", "phi_hi",
-                             "n_spots", "galaxy_name", "v_cmb_obs"))
+                             "n_spots", "galaxy_name", "v_sys_obs"))
 
-        if "v_cmb_obs" not in data:
+        if "v_sys_obs" not in data:
             raise ValueError(
-                "data must contain 'v_cmb_obs' (CMB-frame recession "
+                "data must contain 'v_sys_obs' (CMB-frame recession "
                 "velocity in km/s).")
-        self.v_cmb_obs = float(data["v_cmb_obs"])
+        self.v_sys_obs = float(data["v_sys_obs"])
 
         # Spot index arrays for systemic / red / blue subsets
         is_hv_np = _np.asarray(data["is_highvel"])
@@ -430,6 +463,7 @@ class MaserDiskModel(ModelBase):
             # Trapezoidal weights with flat (uniform) R_phys prior
             self._log_w_R = jnp.asarray(
                 trapz_log_weights(jnp.asarray(R_grid)))
+            # r_ang grid set after D_A_est is computed below
 
         # ---- Selection function grid ----
         D_min = float(get_nested(self.config, "model/priors/D/low", 10.0))
@@ -443,9 +477,32 @@ class MaserDiskModel(ModelBase):
         self.fit_di_dr = get_nested(
             self.config, "model/fit_di_dr", False)
 
-        # Reference physical radius for warp expansion (pc).
-        self._r_phys_ref = 0.5
-        fprint(f"warp reference: R_phys_ref = {self._r_phys_ref} pc")
+        # Reference angular radius for warp expansion (mas).
+        self._r_ang_ref = 0.0
+
+        # Fixed r_ang bounds for Mode 1 (estimated from v_sys_obs).
+        # Uses cosmographic D_A to convert R_phys bounds to angular.
+        z_est = self.v_sys_obs / SPEED_OF_LIGHT
+        q0 = -0.55
+        D_c_est = (SPEED_OF_LIGHT * z_est / 73.0
+                   * (1 + 0.5 * (1 - q0) * z_est))
+        D_A_est = D_c_est / (1 + z_est)
+        R_lo = float(get_nested(
+            self.config, "model/priors/R_phys/low", 0.01))
+        R_hi = float(get_nested(
+            self.config, "model/priors/R_phys/high", 1.5))
+        self._r_ang_lo = R_lo / (D_A_est * PC_PER_MAS_MPC)
+        self._r_ang_hi = R_hi / (D_A_est * PC_PER_MAS_MPC)
+        fprint(f"r_ang bounds: [{self._r_ang_lo:.3f}, "
+               f"{self._r_ang_hi:.3f}] mas "
+               f"(D_A_est = {D_A_est:.1f} Mpc)")
+
+        # Fixed r_ang grid for Mode 2
+        if self.marginalise_r:
+            self._r_ang_grid = self._R_phys_grid / (
+                D_A_est * PC_PER_MAS_MPC)
+            fprint(f"r_ang grid: [{float(self._r_ang_grid[0]):.4f}, "
+                   f"{float(self._r_ang_grid[-1]):.4f}] mas")
 
         mode = "r+phi" if self.marginalise_r else "phi only"
         fprint(f"loaded {self.n_spots} maser spots "
@@ -461,7 +518,7 @@ class MaserDiskModel(ModelBase):
         fprint(f"fit_di_dr = {self.fit_di_dr}")
 
     def _eval_marginal_phi(self, r_ang, x0, y0, D_A, M_BH, v_sys,
-                           r_phys_ref, i0, di_dr, Omega0, dOmega_dr,
+                           r_ang_ref, i0, di_dr, Omega0, dOmega_dr,
                            sigma_x_floor2, sigma_y_floor2,
                            var_v_sys, var_v_hv, sigma_a_floor2):
         """Evaluate per-spot log-likelihood marginalised over phi.
@@ -482,7 +539,7 @@ class MaserDiskModel(ModelBase):
         dpad = (slice(None),) + (None,) * n_extra
 
         shared = (x0, y0, D_A, M_BH, v_sys,
-                  r_phys_ref, i0, di_dr, Omega0, dOmega_dr)
+                  r_ang_ref, i0, di_dr, Omega0, dOmega_dr)
 
         # Per-spot log-normalisation: -0.5 * sum_obs log(2*pi*var).
         # Factored out of the (r, phi) grid — only per-spot shape.
@@ -569,8 +626,9 @@ class MaserDiskModel(ModelBase):
 
         log_MBH = rsample("log_MBH", self.priors["log_MBH"], shared_params)
         M_BH = 10.0**log_MBH
-        x0 = rsample("x0", self.priors["x0"], shared_params)
-        y0 = rsample("y0", self.priors["y0"], shared_params)
+        # x0, y0 sampled in uas, converted to mas for physics
+        x0 = rsample("x0", self.priors["x0"], shared_params) * 1e-3
+        y0 = rsample("y0", self.priors["y0"], shared_params) * 1e-3
 
         i0_deg = rsample("i0", self.priors["i0"], shared_params)
         Omega0_deg = rsample("Omega0", self.priors["Omega0"], shared_params)
@@ -587,10 +645,13 @@ class MaserDiskModel(ModelBase):
         else:
             di_dr = jnp.array(0.0)
 
-        sigma_x_floor2 = rsample(
-            "sigma_x_floor", self.priors["sigma_x_floor"], shared_params)**2
-        sigma_y_floor2 = rsample(
-            "sigma_y_floor", self.priors["sigma_y_floor"], shared_params)**2
+        # sigma floors sampled in uas, converted to mas^2
+        sigma_x_floor2 = (rsample(
+            "sigma_x_floor", self.priors["sigma_x_floor"],
+            shared_params) * 1e-3)**2
+        sigma_y_floor2 = (rsample(
+            "sigma_y_floor", self.priors["sigma_y_floor"],
+            shared_params) * 1e-3)**2
         var_v_sys = rsample(
             "sigma_v_sys", self.priors["sigma_v_sys"], shared_params)**2
         var_v_hv = rsample(
@@ -599,18 +660,17 @@ class MaserDiskModel(ModelBase):
             "sigma_a_floor", self.priors["sigma_a_floor"], shared_params)**2
 
         dv_sys = rsample("dv_sys", self.priors["dv_sys"], shared_params)
-        v_sys = self.v_cmb_obs + dv_sys
+        v_sys = self.v_sys_obs + dv_sys
 
         args = (x0, y0, D_A, M_BH, v_sys,
-                self._r_phys_ref, i0, di_dr, Omega0, dOmega_dr,
+                self._r_ang_ref, i0, di_dr, Omega0, dOmega_dr,
                 sigma_x_floor2, sigma_y_floor2, var_v_sys, var_v_hv,
                 sigma_a_floor2)
 
         if self.marginalise_r:
-            r_ang_grid = self._R_phys_grid / (D_A * PC_PER_MAS_MPC)
             r_all = jnp.broadcast_to(
-                r_ang_grid[None, :],
-                (self.n_spots, len(r_ang_grid)))
+                self._r_ang_grid[None, :],
+                (self.n_spots, len(self._r_ang_grid)))
 
             ll_per_r = self._eval_marginal_phi(r_all, *args)
 
@@ -619,15 +679,14 @@ class MaserDiskModel(ModelBase):
             ll_disk = jnp.sum(ll_per_spot)
 
         else:
-            # Sample angular radii directly to decouple from D_A.
-            # Jacobian correction recovers the uniform prior on R_phys.
-            R_prior = self.priors["R_phys"]
-            r_ang_lo = R_prior.low / (D_A * PC_PER_MAS_MPC)
-            r_ang_hi = R_prior.high / (D_A * PC_PER_MAS_MPC)
+            # Sample angular radii with fixed bounds (set at init from
+            # cosmographic D_A estimate). Jacobian correction recovers
+            # the uniform prior on R_phys.
             with plate("spots", self.n_spots):
-                r_spots = sample("r_ang", Uniform(r_ang_lo, r_ang_hi))
-            factor("prior_R_correction",
-                   self.n_spots * jnp.log(D_A * PC_PER_MAS_MPC))
+                r_spots = sample(
+                    "r_ang", Uniform(self._r_ang_lo, self._r_ang_hi))
+            # factor("prior_R_correction",
+            #        self.n_spots * jnp.log(D_A * PC_PER_MAS_MPC))
 
             ll_per_spot = self._eval_marginal_phi(r_spots, *args)
             ll_disk = jnp.sum(ll_per_spot)
