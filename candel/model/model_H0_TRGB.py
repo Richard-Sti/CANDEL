@@ -25,7 +25,7 @@ from .base_model import H0ModelBase
 from .pv_utils import (lp_galaxy_bias, octupole_radial, quadrupole_radial,
                        rsample, sample_galaxy_bias, sample_octupole,
                        sample_quadrupole, sigmoid_monopole_radial)
-from .simpson import ln_simpson_precomputed
+from .integration import ln_simpson_precomputed
 from .utils import logmeanexp, normal_logpdf_var, predict_cz
 
 
@@ -339,7 +339,7 @@ class TRGBModel(H0ModelBase):
                 rand_los_Vpec_sel = 0.
 
             Vpec_sel = (Vext_rad_rand[None, :, None]
-                       + beta * rand_los_Vpec_sel)
+                        + beta * rand_los_Vpec_sel)
             if isinstance(Vext_mono, tuple):
                 V_left, r_t, angle = Vext_mono
                 k = jnp.tan(angle)

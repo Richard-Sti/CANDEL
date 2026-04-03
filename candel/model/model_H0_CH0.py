@@ -24,7 +24,7 @@ from .base_model import H0ModelBase
 from .pv_utils import (lp_galaxy_bias, octupole_radial, quadrupole_radial,
                        rsample, sample_galaxy_bias, sample_octupole,
                        sample_quadrupole, sigmoid_monopole_radial)
-from .simpson import ln_simpson_precomputed, simpson_log_weights
+from .integration import ln_simpson_precomputed, simpson_log_weights
 from .utils import (log_prob_integrand_sel, logmeanexp, mvn_logpdf_cholesky,
                     normal_logpdf_var, predict_cz)
 
@@ -484,7 +484,7 @@ class CH0Model(H0ModelBase):
                     (cz_lim - self.czcmb_cepheid_host) / cz_width)))
 
             Vpec_sel = (Vext_rad_rand[None, ..., None]
-                       + beta * rand_los_Vpec_grid)
+                        + beta * rand_los_Vpec_grid)
             if Vext_mono_sel is not None:
                 Vpec_sel = Vpec_sel + Vext_mono_sel[None, None, :]
             log_S = self.log_S_cz(
@@ -521,7 +521,7 @@ class CH0Model(H0ModelBase):
                     (mag_lim - self.mag_SN_unique_Cepheid_host) / mag_width)))
 
             Vpec_sel = (Vext_rad_rand[None, ..., None]
-                       + beta * rand_los_Vpec_grid)
+                        + beta * rand_los_Vpec_grid)
             if Vext_mono_sel is not None:
                 Vpec_sel = Vpec_sel + Vext_mono_sel[None, None, :]
             log_S = self.log_S_SN_mag_cz(
