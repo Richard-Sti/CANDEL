@@ -350,6 +350,36 @@ class Distance2Redshift:
         return self._f(r * h)
 
 
+class AngularDiameterDistance2Redshift:
+    r"""
+    Interpolator to convert angular-diameter distance in `Mpc/h` to redshift.
+
+    Parameters
+    ----------
+    Om0 : float
+        Matter density parameter.
+    zmin_interp, zmax_interp : float
+        Minimum and maximum redshift for the interpolation grid.
+    npoints_interp : int
+        Number of points in the interpolation grid.
+
+    Notes
+    -----
+    The parameter `h` is defined as :math:`h = H_0 / 100\,\mathrm{km/s/Mpc}`.
+    D_A must be in Mpc. Only valid in the monotonic regime (z < ~1.5).
+    """
+    def __init__(self, Om0=0.3, zmin_interp=1e-8, zmax_interp=0.5,
+                 npoints_interp=1000):
+        cosmo = FlatLambdaCDM(H0=100, Om0=Om0)
+        z_grid = np.logspace(
+            np.log10(zmin_interp), np.log10(zmax_interp), npoints_interp)
+        da_grid = cosmo.angular_diameter_distance(z_grid).value
+        self._f = _build_interpolator(da_grid, z_grid)
+
+    def __call__(self, da, h=1):
+        return self._f(da * h)
+
+
 class LogGrad_Distmod2ComovingDistance:
     r"""
     Interpolator to compute the log gradient of the comoving distance in
