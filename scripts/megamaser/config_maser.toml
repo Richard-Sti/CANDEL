@@ -1,3 +1,66 @@
+# Job started at: 2026-04-03 20:34:56
+# Job started at: 2026-04-03 20:32:43
+# Job started at: 2026-04-03 20:29:28
+# Job started at: 2026-04-03 20:25:33
+# Job started at: 2026-04-03 20:07:44
+# Job started at: 2026-04-03 20:05:26
+# Job started at: 2026-04-03 19:46:30
+# Job started at: 2026-04-03 19:43:12
+# Job started at: 2026-04-03 19:38:38
+# Job started at: 2026-04-03 19:35:29
+# Job started at: 2026-04-03 16:49:12
+# Job started at: 2026-04-03 16:47:01
+# Job started at: 2026-03-27 23:10:31
+# Job started at: 2026-03-27 23:08:19
+# Job started at: 2026-03-27 23:04:24
+# Job started at: 2026-03-27 22:59:54
+# Job started at: 2026-03-27 22:59:03
+# Job started at: 2026-03-27 22:59:00
+# Job started at: 2026-03-27 22:56:52
+# Job started at: 2026-03-27 22:55:56
+# Job started at: 2026-03-27 22:54:35
+# Job started at: 2026-03-27 22:53:58
+# Job started at: 2026-03-27 22:52:25
+# Job started at: 2026-03-27 22:51:47
+# Job started at: 2026-03-27 22:49:45
+# Job started at: 2026-03-27 22:44:21
+# Job started at: 2026-03-27 22:41:00
+# Job started at: 2026-03-27 22:40:40
+# Job started at: 2026-03-27 22:39:14
+# Job started at: 2026-03-27 22:32:01
+# Job started at: 2026-03-27 22:21:16
+# Job started at: 2026-03-27 22:16:06
+# Job started at: 2026-03-27 22:13:57
+# Job started at: 2026-03-27 21:44:15
+# Job started at: 2026-03-27 21:43:29
+# Job started at: 2026-03-27 21:32:36
+# Job started at: 2026-03-27 21:16:31
+# Job started at: 2026-03-27 21:13:57
+# Job started at: 2026-03-27 21:11:37
+# Job started at: 2026-03-27 21:10:09
+# Job started at: 2026-03-27 21:08:13
+# Job started at: 2026-03-27 21:06:03
+# Job started at: 2026-03-27 21:02:21
+# Job started at: 2026-03-27 21:01:56
+# Job started at: 2026-03-27 20:56:10
+# Job started at: 2026-03-27 18:47:04
+# Job started at: 2026-03-27 18:45:20
+# Job started at: 2026-03-27 18:42:53
+# Job started at: 2026-03-27 18:40:57
+# Job started at: 2026-03-27 18:40:19
+# Job started at: 2026-03-27 18:34:51
+# Job started at: 2026-03-27 18:34:20
+# Job started at: 2026-03-27 18:33:14
+# Job started at: 2026-03-27 18:32:24
+# Job started at: 2026-03-27 18:31:44
+# Job started at: 2026-03-27 18:31:01
+# Job started at: 2026-03-27 18:18:24
+# Job started at: 2026-03-27 18:15:08
+# Job started at: 2026-03-27 18:14:54
+# Job started at: 2026-03-27 18:11:04
+# Job started at: 2026-03-27 18:07:22
+# Job started at: 2026-03-27 16:49:59
+# Job started at: 2026-03-27 16:46:33
 # Megamaser disk H0 model configuration.
 #
 # Set galaxy = "CGCG074-064" (or any galaxy name) for a single-galaxy run.
@@ -5,61 +68,79 @@
 # Per-galaxy settings override the shared defaults below.
 
 [inference]
-num_warmup = 2000
-num_samples = 2000
+num_warmup = 1000
+num_samples = 1000
 num_chains = 1
 chain_method = "sequential"
 seed = 42
-dense_mass = true
-max_tree_depth = 8
+dense_mass_blocks = [
+    ["D_c", "log_MBH", "dv_sys"],
+    ["i0", "di_dr"],
+    ["Omega0", "dOmega_dr"],
+    ["x0", "y0"],
+]
+init_maxiter = 1000
+max_tree_depth = 10
 
 [model]
 which_run = "maser_disk"
 Om = 0.315
-galaxy = "CGCG074-064"
+galaxy = "NGC5765b"
 
 use_selection = false
-fit_di_dr = false
-sample_accel_det = false
+fit_di_dr = true
+marginalise_r = false
 
 # -----------------------------------------------------------------------
 # Shared priors (apply to all galaxies unless overridden)
 # -----------------------------------------------------------------------
 
 [model.priors.H0]
-dist = "uniform"
-low = 50.0
-high = 100.0
+dist = "delta"
+value = 73.0
 
 [model.priors.sigma_pec]
-dist = "uniform"
-low = 50.0
-high = 500.0
+# dist = "uniform"
+# low = 50.0
+# high = 500.0
+dist = "delta"
+value = 250
 
 [model.priors.D]
 dist = "uniform"
 low = 5.0
 high = 250.0
 
-[model.priors.M_BH]
-dist = "log_uniform"
-low = 1.0e6
-high = 1.0e8
+[model.priors.log_MBH]
+dist = "uniform"
+low = 6.0
+high = 9.0
+
+[model.priors.R_phys]
+dist = "uniform"
+low = 0.01
+high = 3.0
+
+[model.priors.dv_sys]
+dist = "normal"
+loc = 0.0
+scale = 500.0
+
 
 [model.priors.x0]
 dist = "uniform"
-low = -0.5
-high = 0.5
+low = -500.0
+high = 500.0
 
 [model.priors.y0]
 dist = "uniform"
-low = -0.5
-high = 0.5
+low = -500.0
+high = 500.0
 
 [model.priors.i0]
 dist = "uniform"
 low = 65.0
-high = 110.0
+high = 75.0
 
 [model.priors.Omega0]
 dist = "uniform"
@@ -68,51 +149,45 @@ high = 220.0
 
 [model.priors.dOmega_dr]
 dist = "uniform"
-low = -100.0
-high = 100.0
+low = -30.0
+high = 30.0
 
 [model.priors.di_dr]
 dist = "uniform"
-low = -100.0
-high = 100.0
+low = -30.0
+high = 30.0
 
 [model.priors.sigma_x_floor]
-dist = "uniform"
+dist = "truncated_normal"
+mean = 10.0
+scale = 5.0
 low = 0.0
-high = 0.1
+high = 100.0
 
 [model.priors.sigma_y_floor]
-dist = "uniform"
+dist = "truncated_normal"
+mean = 10.0
+scale = 5.0
 low = 0.0
-high = 0.1
+high = 100.0
 
 [model.priors.sigma_v_sys]
 dist = "truncated_normal"
-mean = 5.0
-scale = 3.0
-low = 0.5
+mean = 2.0
+scale = 1.0
+low = 0.0
 high = 20.0
 
 [model.priors.sigma_v_hv]
 dist = "truncated_normal"
-mean = 5.0
-scale = 3.0
-low = 0.5
+mean = 2.0
+scale = 1.0
+low = 0.0
 high = 20.0
 
 [model.priors.sigma_a_floor]
 dist = "uniform"
 low = 0.0
-high = 5.0
-
-[model.priors.A_thr]
-dist = "uniform"
-low = 0.0
-high = 10.0
-
-[model.priors.sigma_det]
-dist = "uniform"
-low = 0.01
 high = 5.0
 
 [model.priors.D_lim]
@@ -136,10 +211,8 @@ root = "data/Megamaser"
 # -----------------------------------------------------------------------
 
 [model.galaxies."CGCG074-064"]
-v_helio_to_cmb = 263.3
-v_cmb_obs = 7172.2
+v_sys_obs = 6908.9
 fit_di_dr = true
-sample_accel_det = true
 
 [model.galaxies."CGCG074-064".priors.D]
 dist = "uniform"
@@ -157,8 +230,7 @@ low = 0.0
 high = 180.0
 
 [model.galaxies."NGC5765b"]
-v_helio_to_cmb = 210.1
-v_cmb_obs = 8525.7
+v_sys_obs = 8327.6
 
 [model.galaxies."NGC5765b".priors.D]
 dist = "uniform"
@@ -167,8 +239,8 @@ high = 200.0
 
 [model.galaxies."NGC5765b".priors.i0]
 dist = "uniform"
-low = 65.0
-high = 80.0
+low = 60.0
+high = 110.0
 
 [model.galaxies."NGC5765b".priors.Omega0]
 dist = "uniform"
@@ -181,8 +253,7 @@ low = -50.0
 high = 50.0
 
 [model.galaxies."NGC6264"]
-v_helio_to_cmb = -3.3
-v_cmb_obs = 10128.0
+v_sys_obs = 10131.3
 
 [model.galaxies."NGC6264".priors.D]
 dist = "uniform"
@@ -200,13 +271,12 @@ low = -50.0
 high = 50.0
 
 [model.galaxies."NGC6323"]
-v_helio_to_cmb = -33.5
-v_cmb_obs = 7805.0
+v_sys_obs = 7838.5
 
 [model.galaxies."NGC6323".priors.D]
 dist = "uniform"
-low = 50.0
-high = 200.0
+low = 95.0
+high = 125.0
 
 [model.galaxies."NGC6323".priors.i0]
 dist = "uniform"
@@ -224,8 +294,7 @@ low = -50.0
 high = 50.0
 
 [model.galaxies."UGC3789"]
-v_helio_to_cmb = 419.9
-v_cmb_obs = 3325.3
+v_sys_obs = 2905.4
 fit_di_dr = true
 
 [model.galaxies."UGC3789".priors.D]

@@ -14,7 +14,7 @@ import numpy as np
 import tomli_w
 from scipy.stats import kstest, norm
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
 import jax
 jax.config.update("jax_platform_name", "cpu")
@@ -24,13 +24,12 @@ from numpyro.infer import MCMC, NUTS
 from numpyro.infer.initialization import init_to_value
 
 import candel
-from candel.mock.maser_disk_mock import (DEFAULT_TRUE_PARAMS,
-                                          gen_maser_mock_like_cgcg074)
+from candel.mock.maser_disk_mock import gen_maser_disk_mock
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 BASE_CONFIG = os.path.join(REPO_ROOT, "scripts", "runs", "config_maser.toml")
 
-TRACKED_PARAMS = ["H0", "D_c", "M_BH", "i0", "Omega0", "dOmega_dr",
+TRACKED_PARAMS = ["H0", "D_c", "log_M_BH", "i0", "Omega0", "dOmega_dr",
                   "sigma_pec", "sigma_v_sys", "sigma_v_hv", "sigma_a_floor",
                   "A_thr", "sigma_det"]
 
@@ -45,8 +44,7 @@ def _write_tmp_config(config):
 def run_one_mock(seed, num_warmup=1000, num_samples=500, quiet=True):
     from candel.model.model_H0_maser import MaserDiskModel
 
-    data, tp = gen_maser_mock_like_cgcg074(
-        seed=seed, verbose=not quiet)
+    data, tp = gen_maser_disk_mock(seed=seed, verbose=not quiet)
 
     config = candel.load_config(BASE_CONFIG, replace_los_prior=False)
     config["inference"]["seed"] = seed
@@ -54,9 +52,7 @@ def run_one_mock(seed, num_warmup=1000, num_samples=500, quiet=True):
     config["inference"]["num_samples"] = num_samples
     config["inference"]["num_chains"] = 1
     # Set observed CMB velocity from mock truth
-    v_cmb_obs = tp["v_sys"] + tp["v_helio_to_cmb"]
-    data["v_cmb_obs"] = v_cmb_obs
-    data["v_helio_to_cmb"] = tp["v_helio_to_cmb"]
+    data["v_sys_obs"] = tp["v_sys"]
     tmp = _write_tmp_config(config)
 
     # Init near truth for faster convergence.
@@ -67,7 +63,7 @@ def run_one_mock(seed, num_warmup=1000, num_samples=500, quiet=True):
         'H0': jnp.array(tp['H0']),
         'sigma_pec': jnp.array(tp['sigma_pec']),
         'D_c': jnp.array(D_c_true),
-        'M_BH': jnp.array(tp['M_BH']),
+        'log_M_BH': jnp.array(jnp.log10(tp['M_BH'])),
         'x0': jnp.array(tp['x0']),
         'y0': jnp.array(tp['y0']),
         'i0': jnp.array(tp['i0']),
@@ -168,7 +164,7 @@ def main():
             dt = time.time() - t1
             elapsed = time.time() - t0
             b_str = "  ".join(f"{p}={biases.get(p, float('nan')):+.2f}"
-                              for p in ["H0", "D", "M_BH"])
+                              for p in ["H0", "D", "log_M_BH"])
             print(f"[{i+1}/{args.n_mocks}] seed={seed} {dt:.0f}s "
                   f"(total {elapsed:.0f}s) div={n_div}  {b_str}",
                   flush=True)
@@ -203,7 +199,7 @@ def main():
     print(f"Saved to {outfile}")
 
     # Plot
-    params = [p for p in ["H0", "D", "M_BH"] if all_biases[p]]
+    params = [p for p in ["H0", "D", "log_M_BH"] if all_biases[p]]
     fig, axes = plt.subplots(1, len(params), figsize=(5 * len(params), 4))
     if len(params) == 1:
         axes = [axes]
