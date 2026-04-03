@@ -32,7 +32,7 @@ from ...cosmo.cosmography import (Distance2Distmod, Distance2Redshift,
 from ...util import SPEED_OF_LIGHT, fprint, get_nested
 from ..base_pv import BasePVModel
 from ..pv_utils import rsample, sample_galaxy_bias, sample_Vext
-from ..simpson import ln_simpson
+from ..integration import ln_simpson
 from ..utils import normal_logpdf_var, predict_cz
 
 ###############################################################################

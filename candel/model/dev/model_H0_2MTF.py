@@ -38,7 +38,7 @@ from ...util import fprint, get_nested, replace_prior_with_delta
 from ..base_model import H0ModelBase
 from ..pv_utils import (gauss_hermite_log_weights, get_absmag_TFR,
                         lp_galaxy_bias, rsample, sample_galaxy_bias)
-from ..simpson import ln_simpson_precomputed
+from ..integration import ln_simpson_precomputed
 from ..utils import log_prob_integrand_sel, logmeanexp, predict_cz
 
 
