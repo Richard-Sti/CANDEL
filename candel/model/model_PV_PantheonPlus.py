@@ -23,7 +23,7 @@ from .base_pv import BasePVModel
 from .pv_utils import (add_sigma_mag_to_lane_cov, lp_galaxy_bias, rsample,
                        sample_distance_prior, sample_galaxy_bias,
                        sigma_v_from_density)
-from .simpson import ln_simpson
+from .integration import ln_simpson
 from .utils import log_prior_r_empirical, normal_logpdf_var, predict_cz
 
 
