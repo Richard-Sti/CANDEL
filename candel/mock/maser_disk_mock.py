@@ -34,8 +34,8 @@ DEFAULT_TRUE_PARAMS = {
     "y0": 0.0075,           # mas
     "i0": 90.8,             # degrees
     "Omega0": 99.6,         # degrees
-    "dOmega_dr": 4.7,       # degrees/pc
-    "di_dr": 0.0,           # degrees/pc (no inclination warp)
+    "dOmega_dr": 2.0,       # degrees/mas
+    "di_dr": 0.0,           # degrees/mas (no inclination warp)
     "sigma_x_floor": 0.002,       # mas
     "sigma_y_floor": 0.017,       # mas
     "sigma_v_sys": 4.8,           # km/s
@@ -147,10 +147,10 @@ def gen_maser_disk_mock(seed, true_params=None, n_spots=50, Om0=0.315,
     r_ang_true = R_phys_true / (D_A * PC_PER_MAS_MPC)
     phi_true = _draw_phi(spot_types, rng)
 
-    # Warped geometry at each spot (using physical radius)
-    R_PHYS_REF = 0.5  # pc, must match model
+    # Warped geometry at each spot (using angular radius)
+    r_ang_ref = float(np.median(r_ang_true))
     i_k, Omega_k = np.array(warp_geometry(
-        R_phys_true, R_PHYS_REF, i0_rad, di_dr_rad,
+        r_ang_true, r_ang_ref, i0_rad, di_dr_rad,
         Omega0_rad, dOmega_dr_rad))
 
     # True observables (using angular radius and D_A)
@@ -199,7 +199,7 @@ def gen_maser_disk_mock(seed, true_params=None, n_spots=50, Om0=0.315,
         "is_blue": is_blue,
         "n_spots": n_spots,
         "galaxy_name": "MOCK",
-        "v_cmb_obs": v_sys_cmb,
+        "v_sys_obs": v_sys_cmb,
     }
 
     true_params_expanded = {

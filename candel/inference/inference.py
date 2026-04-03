@@ -288,7 +288,8 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
 
     if init_params is not None:
         site_names = set(init_params.keys())
-    elif kwargs.get("dense_mass_params") is not None:
+    elif (kwargs.get("dense_mass_params") is not None
+          or kwargs.get("dense_mass_blocks") is not None):
         site_names = _get_sample_site_names(model, model_kwargs)
     else:
         site_names = None
@@ -478,7 +479,8 @@ def run_H0_inference(model, model_kwargs=None, print_summary=True,
 
     if init_params is not None:
         site_names = set(init_params.keys())
-    elif kwargs.get("dense_mass_params") is not None:
+    elif (kwargs.get("dense_mass_params") is not None
+          or kwargs.get("dense_mass_blocks") is not None):
         site_names = _get_sample_site_names(model, model_kwargs)
     else:
         site_names = None
