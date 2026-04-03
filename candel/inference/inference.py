@@ -55,12 +55,26 @@ def _parse_dense_mass(kwargs, site_names=None):
 
     Supports:
       - ``dense_mass = true/false`` (boolean, applies to all parameters)
-      - ``dense_mass_params = ["H0", "M_TRGB", ...]`` (list of site names
-        that share a dense mass matrix; remaining sites get diagonal)
+      - ``dense_mass_params = ["H0", "M_TRGB", ...]`` (single block)
+      - ``dense_mass_blocks = [["H0", "D_c"], ["i0", "di_dr"], ...]``
+        (multiple independent dense blocks)
 
-    If `site_names` is provided, any names in ``dense_mass_params`` that
-    are not actual sample sites are silently dropped.
+    If `site_names` is provided, any names not in actual sample sites
+    are silently dropped.
     """
+    blocks = kwargs.get("dense_mass_blocks", None)
+    if blocks is not None:
+        result = []
+        for block in blocks:
+            if site_names is not None:
+                block = [p for p in block if p in site_names]
+            if len(block) >= 2:
+                result.append(tuple(block))
+                fprint(f"dense mass block: {block}")
+            elif len(block) == 1:
+                fprint(f"dropped single-site block: {block}")
+        return result if result else False
+
     dense_mass_params = kwargs.get("dense_mass_params", None)
     if dense_mass_params is not None:
         if site_names is not None:
@@ -162,7 +176,37 @@ def find_initial_point(model, model_kwargs, maxiter=100, seed=42):
         return None
 
     unc_opt = unflatten(result.x)
-    return {k: transforms[k](v) for k, v in unc_opt.items()}
+    constrained_opt = {k: transforms[k](v) for k, v in unc_opt.items()}
+
+    # Re-trace at the optimised point to get live support bounds
+    # (important for parameters with dynamic bounds, e.g. r_ang
+    # whose Uniform bounds depend on the sampled D_A).
+    opt_model = handlers.substitute(
+        handlers.seed(model, rng_seed=seed), data=constrained_opt)
+    opt_trace = handlers.trace(opt_model).get_trace(**model_kwargs)
+
+    n_clamped = 0
+    eps = 1e-6
+    for k, v in constrained_opt.items():
+        site = opt_trace.get(k)
+        if site is None:
+            continue
+        support = site["fn"].support
+        lo = getattr(support, "lower_bound", None)
+        hi = getattr(support, "upper_bound", None)
+        if lo is not None or hi is not None:
+            v_new = v
+            if lo is not None:
+                v_new = jnp.maximum(v_new, lo + eps)
+            if hi is not None:
+                v_new = jnp.minimum(v_new, hi - eps)
+            if not jnp.array_equal(v_new, v):
+                n_clamped += int(jnp.sum(v_new != v))
+                constrained_opt[k] = v_new
+    if n_clamped > 0:
+        fprint(f"  clamped {n_clamped} parameters to support bounds.")
+
+    return constrained_opt
 
 
 def print_evidence(bic, aic, lnZ_laplace, err_lnZ_laplace,
@@ -559,7 +603,7 @@ def postprocess_samples(samples):
 
     for model_prefix in model_prefixes:
         for prefix in ["Vext_rad", "Vext_radmag", "Vext",
-                        "zeropoint_dipole"]:
+                       "zeropoint_dipole"]:
             full_prefix = f"{model_prefix}{prefix}"
             # Spherical form: phi + cos_theta (+ mag optional)
             phi_key = f"{full_prefix}_phi"
