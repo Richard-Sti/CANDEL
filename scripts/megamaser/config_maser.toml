@@ -1,3 +1,12 @@
+# Job started at: 2026-04-04 23:21:07
+# Job started at: 2026-04-04 23:20:32
+# Job started at: 2026-04-04 23:19:37
+# Job started at: 2026-04-04 23:18:16
+# Job started at: 2026-04-04 22:08:10
+# Job started at: 2026-04-04 21:36:55
+# Job started at: 2026-04-03 23:34:57
+# Job started at: 2026-04-03 23:22:54
+# Job started at: 2026-04-03 23:11:30
 # Job started at: 2026-04-03 20:34:56
 # Job started at: 2026-04-03 20:32:43
 # Job started at: 2026-04-03 20:29:28
@@ -79,7 +88,7 @@ dense_mass_blocks = [
     ["Omega0", "dOmega_dr"],
     ["x0", "y0"],
 ]
-init_maxiter = 1000
+init_maxiter = 0
 max_tree_depth = 10
 
 [model]

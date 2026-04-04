@@ -92,22 +92,19 @@ def load_NGC5765b_spots(root, v_sys_obs=None):
     -------
     dict with the same keys as ``load_megamaser_spots``.
     """
-    fname = "NGC5765b_Gao2016_table6.dat"
+    fname = "NGC5765b_Gao2016_table6_tex.dat"
     fpath = join(root, fname)
     fprint(f"loading maser spots from '{fpath}'.")
 
-    with open(fpath) as f:
-        lines = f.readlines()
-
+    cols = ["velocity", "x", "sigma_x", "y", "sigma_y", "a", "sigma_a"]
     rows = []
-    for line in lines:
-        line = line.rstrip("\n")
-        if not line or line.startswith("#"):
-            continue
-        row = {}
-        for key, (b0, b1) in _GAO2016_COLUMNS.items():
-            row[key] = float(line[b0 - 1:b1].strip())
-        rows.append(row)
+    with open(fpath) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split()
+            rows.append({k: float(v) for k, v in zip(cols, parts)})
 
     n = len(rows)
     velocity = np.array([r["velocity"] for r in rows])
@@ -118,8 +115,12 @@ def load_NGC5765b_spots(root, v_sys_obs=None):
     a = np.array([r["a"] for r in rows])
     sigma_a = np.array([r["sigma_a"] for r in rows])
 
-    # All spots in Gao+2016 have acceleration measurements.
-    accel_measured = np.ones(n, dtype=bool)
+    # Flag placeholder accelerations:
+    # A=1.0, sigma_a=1.0 (sentinel) and A=0.0, sigma_a=0.2 (undetected)
+    accel_measured = ~(
+        ((a == 1.0) & (sigma_a == 1.0))
+        | ((a == 0.0) & (np.abs(sigma_a - 0.2) < 0.01))
+    )
 
     if v_sys_obs is None:
         raise ValueError("v_sys_obs must be provided for NGC5765b.")
@@ -138,8 +139,9 @@ def load_NGC5765b_spots(root, v_sys_obs=None):
         "v_sys_obs": float(v_sys_obs),
     }
 
+    n_accel = int(accel_measured.sum())
     fprint(f"loaded {n} maser spots for NGC5765b "
-           f"({n} with measured acceleration).")
+           f"({n_accel} with measured acceleration).")
     return data
 
 
@@ -385,16 +387,15 @@ def load_megamaser_spots(root, galaxy="CGCG074-064", v_sys_obs=None):
     fprint(f"classified spots: {n_sys} systemic, {n_blue} blue, "
            f"{n_red} red ({method}).")
 
-    # Keep only spots with all three measurements
-    keep = data["accel_measured"]
-    n_drop = int((~keep).sum())
-    if n_drop > 0:
-        for key in ("velocity", "x", "sigma_x", "y", "sigma_y", "a",
-                     "sigma_a", "accel_measured", "is_systemic", "is_highvel",
-                     "is_blue", "spot_type", "phi_lo", "phi_hi"):
-            if key in data and isinstance(data[key], np.ndarray):
-                data[key] = data[key][keep]
-        data["n_spots"] = int(keep.sum())
-        fprint(f"dropped {n_drop} spots without acceleration measurement.")
+    # Mask acceleration for spots without real measurements.
+    # Keep the spots for position + velocity, but set sigma_a large
+    # so the acceleration term contributes nothing to the likelihood.
+    unmeasured = ~data["accel_measured"]
+    n_unmeasured = int(unmeasured.sum())
+    if n_unmeasured > 0:
+        data["a"][unmeasured] = 0.0
+        data["sigma_a"][unmeasured] = 1e6
+        fprint(f"masked acceleration for {n_unmeasured} spots "
+               f"(sigma_a -> 1e6).")
 
     return data
