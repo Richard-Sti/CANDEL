@@ -387,15 +387,4 @@ def load_megamaser_spots(root, galaxy="CGCG074-064", v_sys_obs=None):
     fprint(f"classified spots: {n_sys} systemic, {n_blue} blue, "
            f"{n_red} red ({method}).")
 
-    # Mask acceleration for spots without real measurements.
-    # Keep the spots for position + velocity, but set sigma_a large
-    # so the acceleration term contributes nothing to the likelihood.
-    unmeasured = ~data["accel_measured"]
-    n_unmeasured = int(unmeasured.sum())
-    if n_unmeasured > 0:
-        data["a"][unmeasured] = 0.0
-        data["sigma_a"][unmeasured] = 1e6
-        fprint(f"masked acceleration for {n_unmeasured} spots "
-               f"(sigma_a -> 1e6).")
-
     return data

@@ -571,7 +571,10 @@ class MaserDiskModel(ModelBase):
         n_a = sum(getattr(self, f"_n_{l}_a") for l in ("sys", "red", "blue"))
         n_noa = sum(getattr(self, f"_n_{l}_noa")
                     for l in ("sys", "red", "blue"))
-        fprint(f"accel split: {n_a} with, {n_noa} without.")
+        fprint(f"measured accelerations: {n_a}/{n_a + n_noa} "
+               f"(sys {self._n_sys_a}/{self._n_sys_a + self._n_sys_noa}, "
+               f"red {self._n_red_a}/{self._n_red_a + self._n_red_noa}, "
+               f"blue {self._n_blue_a}/{self._n_blue_a + self._n_blue_noa}).")
 
         # ---- Phi grids and precomputed trig ----
         phi_half = _build_phi_half_grid_hv()
