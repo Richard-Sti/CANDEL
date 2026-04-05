@@ -357,6 +357,56 @@ def _chi2_3obs(x_obs, X, inv_var_x, y_obs, Y, inv_var_y,
             + dv * dv * inv_var_v)
 
 
+def _stable_log_2cosh(x):
+    """log(2*cosh(x)), numerically stable for large |x|.
+
+    = log(exp(x) + exp(-x)) = |x| + log(1 + exp(-2|x|))
+    = |x| + softplus(-2|x|)
+    """
+    return jnp.abs(x) + jnp.log1p(jnp.exp(-2.0 * jnp.abs(x)))
+
+
+def _hv_reflected_ll(x_obs, y_obs, v_obs, a_obs,
+                     inv_vx, inv_vy, inv_vv, inv_va,
+                     Xmid, Xdel, Ymid, Ydel, V, A1):
+    """Log-likelihood for HV reflected pair using log-cosh trick.
+
+    For the two reflected phi modes (phi, pi-phi), positions differ by
+    ±delta while velocity and |acceleration| are shared. Instead of
+    computing two full chi² + logaddexp, we decompose into:
+
+        chi2_1 = chi2_v + S + C     (mode 1)
+        chi2_2 = chi2_v + S - C     (mode 2)
+
+    where S is the symmetric part and C the cross term. Then:
+
+        logaddexp(-0.5*chi2_1, -0.5*chi2_2)
+            = -0.5*(chi2_v + S) + log(2*cosh(0.5*C))
+
+    This avoids computing X1,X2,Y1,Y2 and two separate chi² calls.
+    """
+    dx_mid = x_obs - Xmid
+    dy_mid = y_obs - Ymid
+
+    # Symmetric part: (dx_mid² + Xdel²)*inv_vx + (dy_mid² + Ydel²)*inv_vy
+    S = ((dx_mid * dx_mid + Xdel * Xdel) * inv_vx
+         + (dy_mid * dy_mid + Ydel * Ydel) * inv_vy)
+
+    # Cross term: 2*(dx_mid*Xdel*inv_vx - dy_mid*Ydel*inv_vy)
+    C = 2.0 * (dx_mid * Xdel * inv_vx - dy_mid * Ydel * inv_vy)
+
+    # Add acceleration if measured (inv_va > 0).
+    # A1 = a_mag*cos_phi*sin_i, A2 = -A1.
+    # chi2_a1 = (a_obs-A1)², chi2_a2 = (a_obs+A1)²
+    # S_a = (a_obs² + A1²)*inv_va, C_a = -2*a_obs*A1*inv_va
+    S = S + (a_obs * a_obs + A1 * A1) * inv_va
+    C = C - 2.0 * a_obs * A1 * inv_va
+
+    chi2_v = (v_obs - V) ** 2 * inv_vv
+
+    return -0.5 * (chi2_v + S) + _stable_log_2cosh(0.5 * C)
+
+
 def _spot_ll_syst(r_ang, sin_phi, cos_phi,
                   x_obs, y_obs, v_obs, a_obs,
                   inv_var_x, inv_var_y, inv_var_v, inv_var_a,
@@ -723,44 +773,41 @@ class MaserDiskModel(ModelBase):
             vv = sv2[dpad] + var_v_floor
             inv_vx, inv_vy, inv_vv = 1.0 / vx, 1.0 / vy, 1.0 / vv
             idx = getattr(self, idx_attr)
-            r_sub = r_ang[idx][rpad]
-            pa_s, pb_s = pA[idx][rpad], pB[idx][rpad]
-            pc_s, pd_s = pC[idx][rpad], pD[idx][rpad]
+            (r_sub, si, vk, gm, zg, am,
+             pa_s, pb_s, pc_s, pd_s) = _r_precomp(idx)
+
+            # Position midpoint ± delta (sp1==sp2, cp2=-cp1).
+            Xmid = x0 + r_sub * sp1 * pa_s
+            Xdel = r_sub * cp1 * pb_s
+            Ymid = y0 + r_sub * sp1 * pc_s
+            Ydel = r_sub * cp1 * pd_s
+
+            # Velocity (shared by both modes — depends only on sin_phi).
+            v_z = vk * sp1 * si
+            one_plus_z_D = gm * (1.0 + v_z / SPEED_OF_LIGHT)
+            V = SPEED_OF_LIGHT * (
+                one_plus_z_D * zg * (1.0 + v_sys / SPEED_OF_LIGHT)
+                - 1.0)
+
+            # Acceleration (only for spots with measurements).
+            A1 = am * cp1 * si if has_accel else jnp.zeros(())
+            inv_va = 1.0 / (sa2[dpad] + sigma_a_floor2) if has_accel \
+                else jnp.zeros(())
+
+            # log-cosh trick replaces logaddexp of two full chi²
+            ll = _hv_reflected_ll(
+                x_d[dpad], y_d[dpad], v_d[dpad],
+                a_d[dpad] if has_accel else jnp.zeros(()),
+                inv_vx, inv_vy, inv_vv, inv_va,
+                Xmid, Xdel, Ymid, Ydel, V, A1)
 
             if has_accel:
-                va = sa2[dpad] + sigma_a_floor2
-                inv_va = 1.0 / va
-                X1, Y1, V, A1 = _obs_4(idx, sp1, cp1)
-                X2 = x0 + r_sub * (sp2 * pa_s - cp2 * pb_s)
-                Y2 = y0 + r_sub * (sp2 * pc_s + cp2 * pd_s)
-                A2 = -A1
-                chi2_v = (v_d[dpad] - V) ** 2 * inv_vv
-                chi2_1 = (_chi2_4obs(
-                    x_d[dpad], X1, inv_vx, y_d[dpad], Y1, inv_vy,
-                    v_d[dpad], V, inv_vv,
-                    a_d[dpad], A1, inv_va) - chi2_v)
-                chi2_2 = (_chi2_4obs(
-                    x_d[dpad], X2, inv_vx, y_d[dpad], Y2, inv_vy,
-                    v_d[dpad], V, inv_vv,
-                    a_d[dpad], A2, inv_va) - chi2_v)
                 lnorm = _lnorm_4(sx2[dpad], sy2[dpad], vv, sa2[dpad])
             else:
-                X1, Y1, V = _obs_3(idx, sp1, cp1)
-                X2 = x0 + r_sub * (sp2 * pa_s - cp2 * pb_s)
-                Y2 = y0 + r_sub * (sp2 * pc_s + cp2 * pd_s)
-                chi2_v = (v_d[dpad] - V) ** 2 * inv_vv
-                chi2_1 = (_chi2_3obs(
-                    x_d[dpad], X1, inv_vx, y_d[dpad], Y1, inv_vy,
-                    v_d[dpad], V, inv_vv) - chi2_v)
-                chi2_2 = (_chi2_3obs(
-                    x_d[dpad], X2, inv_vx, y_d[dpad], Y2, inv_vy,
-                    v_d[dpad], V, inv_vv) - chi2_v)
                 lnorm = _lnorm_3(sx2[dpad], sy2[dpad], vv)
 
             return ln_trapz_precomputed(
-                lnorm - 0.5 * chi2_v
-                + jnp.logaddexp(-0.5 * chi2_1, -0.5 * chi2_2),
-                log_w_phi, axis=-1)
+                lnorm + ll, log_w_phi, axis=-1)
 
         results = []
 
