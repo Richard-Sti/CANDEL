@@ -458,17 +458,6 @@ class MaserDiskModel(ModelBase):
                 setattr(self, f"_{key}2_{label}",
                         getattr(self, key)[idx]**2)
 
-        # Boolean mask: which spots have real acceleration measurements.
-        # Spots with sigma_a >= 1e4 are treated as unmeasured (the data
-        # loader sets sigma_a = 1e6 for sentinel/placeholder values).
-        accel_meas = _np.asarray(data.get(
-            "accel_measured", self.sigma_a < 1e4))
-        for label, idx in [("sys", self._idx_sys),
-                           ("red", self._idx_red),
-                           ("blue", self._idx_blue)]:
-            setattr(self, f"_has_accel_{label}",
-                    jnp.asarray(accel_meas[idx]))
-
         # ---- Phi grids and precomputed trig ----
         phi_half = _build_phi_half_grid_hv()
         phi_sys = _build_phi_grid_sys()
@@ -606,6 +595,10 @@ class MaserDiskModel(ModelBase):
             _precompute_r_quantities(r_ang, D_A, M_BH,
                                      sin_i, cos_i, sin_O, cos_O)
 
+        def _log_norm(var_x, var_y, var_v, var_a):
+            return -0.5 * (4 * LOG_2PI + jnp.log(var_x) + jnp.log(var_y)
+                           + jnp.log(var_v) + jnp.log(var_a))
+
         def _obs(idx, sp, cp):
             """Observables from precomputed r-quantities. No sqrt/div."""
             return _observables_from_precomputed(
@@ -617,35 +610,21 @@ class MaserDiskModel(ModelBase):
 
         results = []
 
-        def _inv_var_a(sigma_a2_sub, has_accel_sub):
-            """Inverse acceleration variance, zeroed for unmeasured spots."""
-            var_a = sigma_a2_sub[dpad] + sigma_a_floor2
-            return jnp.where(has_accel_sub[dpad], 1.0 / var_a, 0.0)
-
-        def _log_norm_a(sigma_a2_sub, has_accel_sub):
-            """Log-norm for acceleration: skip unmeasured (log(var)=0)."""
-            var_a = sigma_a2_sub[dpad] + sigma_a_floor2
-            return jnp.where(has_accel_sub[dpad],
-                             -0.5 * (LOG_2PI + jnp.log(var_a)), 0.0)
-
         # ---- Systemic spots ----
         if self._n_sys > 0:
             var_x = self._sigma_x2_sys[dpad] + sigma_x_floor2
             var_y = self._sigma_y2_sys[dpad] + sigma_y_floor2
             var_v = self._sigma_v2_sys[dpad] + var_v_sys
-            inv_va = _inv_var_a(self._sigma_a2_sys, self._has_accel_sys)
+            var_a = self._sigma_a2_sys[dpad] + sigma_a_floor2
             X, Y, V, A = _obs(
                 self._idx_sys, self._sin_phi_sys, self._cos_phi_sys)
             chi2 = _chi2_4obs(
                 self._x_sys[dpad], X, 1.0 / var_x,
                 self._y_sys[dpad], Y, 1.0 / var_y,
                 self._velocity_sys[dpad], V, 1.0 / var_v,
-                self._a_sys[dpad], A, inv_va)
-            lnorm = (-0.5 * (3 * LOG_2PI + jnp.log(var_x)
-                     + jnp.log(var_y) + jnp.log(var_v))
-                     + _log_norm_a(self._sigma_a2_sys, self._has_accel_sys))
+                self._a_sys[dpad], A, 1.0 / var_a)
             results.append(ln_trapz_precomputed(
-                lnorm - 0.5 * chi2,
+                _log_norm(var_x, var_y, var_v, var_a) - 0.5 * chi2,
                 self._log_w_phi_sys, axis=-1))
 
         # ---- Red HV spots ----
@@ -653,12 +632,10 @@ class MaserDiskModel(ModelBase):
             var_x = self._sigma_x2_red[dpad] + sigma_x_floor2
             var_y = self._sigma_y2_red[dpad] + sigma_y_floor2
             var_v = self._sigma_v2_red[dpad] + var_v_hv
+            var_a = self._sigma_a2_red[dpad] + sigma_a_floor2
             inv_vx, inv_vy = 1.0 / var_x, 1.0 / var_y
-            inv_vv = 1.0 / var_v
-            inv_va = _inv_var_a(self._sigma_a2_red, self._has_accel_red)
-            lnorm = (-0.5 * (3 * LOG_2PI + jnp.log(var_x)
-                     + jnp.log(var_y) + jnp.log(var_v))
-                     + _log_norm_a(self._sigma_a2_red, self._has_accel_red))
+            inv_vv, inv_va = 1.0 / var_v, 1.0 / var_a
+            lnorm = _log_norm(var_x, var_y, var_v, var_a)
             idx = self._idx_red
             X1, Y1, V, A1 = _obs(
                 idx, self._sin_phi1_red, self._cos_phi1_red)
@@ -687,12 +664,10 @@ class MaserDiskModel(ModelBase):
             var_x = self._sigma_x2_blue[dpad] + sigma_x_floor2
             var_y = self._sigma_y2_blue[dpad] + sigma_y_floor2
             var_v = self._sigma_v2_blue[dpad] + var_v_hv
+            var_a = self._sigma_a2_blue[dpad] + sigma_a_floor2
             inv_vx, inv_vy = 1.0 / var_x, 1.0 / var_y
-            inv_vv = 1.0 / var_v
-            inv_va = _inv_var_a(self._sigma_a2_blue, self._has_accel_blue)
-            lnorm = (-0.5 * (3 * LOG_2PI + jnp.log(var_x)
-                     + jnp.log(var_y) + jnp.log(var_v))
-                     + _log_norm_a(self._sigma_a2_blue, self._has_accel_blue))
+            inv_vv, inv_va = 1.0 / var_v, 1.0 / var_a
+            lnorm = _log_norm(var_x, var_y, var_v, var_a)
             idx = self._idx_blue
             X1, Y1, V, A1 = _obs(
                 idx, self._sin_phi1_blue, self._cos_phi1_blue)
