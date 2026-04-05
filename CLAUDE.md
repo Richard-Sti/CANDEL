@@ -80,22 +80,33 @@ Current state (megamaser disk model)
 ### What was done
 - Fixed NGC5765b distance: root cause was missing inclination warp (di/dr).
   Added init_values support to avoid NUTS getting trapped in wrong mode.
-- Fixed data filename and marginalise_r grid weights.
+- Fixed data filename and marginalise_r grid weights (r_ang weights on r_ang grid).
 - Speed optimisations for Mode 2 (marginalise_r):
-  - Precompute r-dependent quantities outside phi loop (eliminates 3 sqrts per phi point).
-  - Skip acceleration computation for 123/192 unmeasured spots (separate 3-obs chi²).
-  - HV reflection: log-cosh trick replaces double chi² + logaddexp (halves position work).
-  - Fused 2D logsumexp over (r, phi) eliminates (N, N_r) intermediate array.
+  - Precompute r-dependent quantities outside phi loop.
+  - Skip acceleration computation for unmeasured spots (3-obs chi²).
+  - Fused 2D logsumexp over (r, phi).
   - float32 for GPU runs.
-- Benchmarks (gradient, RTX 3070): f32 3.84 ms, f64 24.8 ms. Original f64: 31.9 ms.
-- CPU f64 gradient: 342 ms (original 730 ms, 2.1x faster).
+  - Reverted log-cosh trick (introduced 4e-3/point numerical error).
+- Benchmarks (gradient, RTX 3070): f32 3.84 ms, f64 24.8 ms.
+- Added Jacobian D_A*PC for r_ang→R_phys change of variables.
+
+### Mode 2 (marginalise_r) limitations — IMPORTANT
+Mode 2 with a global r_ang grid is NOT reliable for distance estimation.
+The marginalised-r likelihood has a volume effect: at small D, more r
+values produce velocities in the observed range, so the integral grows.
+This overwhelms the acceleration constraint and biases D downward.
+Mock tests confirm: log_density at truth (D_A=88) is 6800 worse than
+at D_A=49 even with all error floors fixed. The reference paper
+(arXiv:2601.14374) avoids this by using per-spot adaptive integration
+regions (±1.5° phi, narrow r range) rather than a global grid.
+**Use Mode 1 (per-spot r sampled by NUTS) for all production runs.**
 
 ### Current state
-- GPU job 617255 running on A6000: marginalise_r two-chain test (good vs bad init).
-- GPU benchmark job 617261 pending on A6000 (will run with latest optimisations).
-- NGC5765b with di/dr: D_A = 121.7 ± 8.2 Mpc (published 112-126 Mpc).
+- NGC5765b with Mode 1 + di/dr: D_A = 121.7 ± 8.2 Mpc (published 112-126 Mpc).
+- CGCG 074-064 with Mode 1: D_A = 87-91 Mpc (published 87.6). Works without di/dr.
+- Mode 2 validated for speed but NOT for accuracy. Do not use for distance.
 
 ### Next steps
-- Check A6000 benchmark and two-chain convergence results.
-- Run other galaxies (NGC6264, NGC6323, UGC3789) with di/dr.
-- Consider further optimisations if GPU is still bottlenecked.
+- Run other galaxies (NGC6264, NGC6323, UGC3789) with Mode 1 + di/dr.
+- If Mode 2 needed: implement per-spot adaptive r integration (as in 2601.14374).
+- Consider per-spot r initialisation via L-BFGS for faster Mode 1 convergence.
