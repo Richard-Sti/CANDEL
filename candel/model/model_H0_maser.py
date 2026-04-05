@@ -116,6 +116,8 @@ def _build_r_grid(r_min, r_max, n_r=251):
     return _np.logspace(_np.log10(r_min), _np.log10(r_max), n_r)
 
 
+
+
 # -----------------------------------------------------------------------
 # Disk physics functions
 # -----------------------------------------------------------------------
@@ -281,23 +283,17 @@ def _spot_ll_syst(r_ang, sin_phi, cos_phi,
                   inv_var_x, inv_var_y, inv_var_v, inv_var_a,
                   log_norm,
                   x0, y0, D, M_BH, v_sys,
-                  r_ang_ref, i0, di_dr, Omega0, dOmega_dr):
+                  sin_i, cos_i, sin_O, cos_O):
     """Per-spot log-likelihood for systemic spots.
 
-    Uses precomputed trig of phi and inverse variances. The per-spot
-    log-normalisation (log_norm) is factored out of the grid.
+    Warp trig (sin_i, cos_i, sin_O, cos_O) is precomputed on the
+    (N, N_r) grid by the caller, avoiding redundant recomputation
+    across the phi grid.
 
     Returns
     -------
     ll : (N_sys, ..., G_sys) per-spot per-phi log-likelihood
     """
-    i_r, Omega_r = warp_geometry(
-        r_ang, r_ang_ref, i0, di_dr, Omega0, dOmega_dr)
-    sin_i = jnp.sin(i_r)
-    cos_i = jnp.cos(i_r)
-    sin_O = jnp.sin(Omega_r)
-    cos_O = jnp.cos(Omega_r)
-
     X, Y, V, A = _compute_observables(
         r_ang, sin_phi, cos_phi, x0, y0, D, M_BH, v_sys,
         sin_i, cos_i, sin_O, cos_O)
@@ -313,23 +309,16 @@ def _spot_ll_hv(r_ang,
                 inv_var_x, inv_var_y, inv_var_v, inv_var_a,
                 log_norm,
                 x0, y0, D, M_BH, v_sys,
-                r_ang_ref, i0, di_dr, Omega0, dOmega_dr):
+                sin_i, cos_i, sin_O, cos_O):
     """Log-likelihood for a pair of reflected phi modes.
 
     Velocity is computed once (sin(phi1) == sin(phi2) by construction).
-    Uses precomputed trig and inverse variances.
+    Warp trig is precomputed by the caller.
 
     Returns
     -------
     ll : (N_hv, ..., G_hv) per-spot per-phi log-likelihood
     """
-    i_r, Omega_r = warp_geometry(
-        r_ang, r_ang_ref, i0, di_dr, Omega0, dOmega_dr)
-    sin_i = jnp.sin(i_r)
-    cos_i = jnp.cos(i_r)
-    sin_O = jnp.sin(Omega_r)
-    cos_O = jnp.cos(Omega_r)
-
     # Velocity: same for both modes (sin_phi1 == sin_phi2)
     X1, Y1, V, A1 = _compute_observables(
         r_ang, sin_phi1, cos_phi1, x0, y0, D, M_BH, v_sys,
@@ -497,14 +486,16 @@ class MaserDiskModel(ModelBase):
                f"{self._r_ang_hi:.3f}] mas "
                f"(D_A_est = {D_A_est:.1f} Mpc)")
 
-        # r_ang grid at D_A_est (for logging only; recomputed
-        # at each likelihood evaluation using the current D_A).
+        # Fixed r_ang grid for Mode 2 (from R_phys grid at D_A_est).
+        # D_A_est ~ v_sys / (H0 * (1+z)); good enough since the grid
+        # just needs to cover the plausible angular radius range.
         if self.marginalise_r:
-            r_ang_grid_est = self._R_phys_grid / (
-                D_A_est * PC_PER_MAS_MPC)
-            fprint(f"r_ang grid: [{float(r_ang_grid_est[0]):.4f}, "
-                   f"{float(r_ang_grid_est[-1]):.4f}] mas "
-                   f"(at D_A_est; recomputed per sample)")
+            self._r_ang_grid = jnp.asarray(
+                self._R_phys_grid / (D_A_est * PC_PER_MAS_MPC))
+            self._log_w_R = jnp.asarray(
+                trapz_log_weights(self._r_ang_grid))
+            fprint(f"r_ang grid: [{float(self._r_ang_grid[0]):.4f}, "
+                   f"{float(self._r_ang_grid[-1]):.4f}] mas")
 
         mode = "r+phi" if self.marginalise_r else "phi only"
         fprint(f"loaded {self.n_spots} maser spots "
@@ -540,8 +531,15 @@ class MaserDiskModel(ModelBase):
         n_extra = r_ang.ndim
         dpad = (slice(None),) + (None,) * n_extra
 
-        shared = (x0, y0, D_A, M_BH, v_sys,
-                  r_ang_ref, i0, di_dr, Omega0, dOmega_dr)
+        # Precompute warp geometry trig on the (N,) or (N, N_r) grid.
+        # These only depend on r, not phi, so computing them here
+        # avoids redundant work across the phi grid.
+        i_r, Omega_r = warp_geometry(
+            r_ang, r_ang_ref, i0, di_dr, Omega0, dOmega_dr)
+        sin_i = jnp.sin(i_r)
+        cos_i = jnp.cos(i_r)
+        sin_O = jnp.sin(Omega_r)
+        cos_O = jnp.cos(Omega_r)
 
         # Per-spot log-normalisation: -0.5 * sum_obs log(2*pi*var).
         # Factored out of the (r, phi) grid — only per-spot shape.
@@ -551,21 +549,26 @@ class MaserDiskModel(ModelBase):
 
         results = []
 
+        shared = (x0, y0, D_A, M_BH, v_sys)
+
         # ---- Systemic spots ----
         if self._n_sys > 0:
             var_x = self._sigma_x2_sys[dpad] + sigma_x_floor2
             var_y = self._sigma_y2_sys[dpad] + sigma_y_floor2
             var_v = self._sigma_v2_sys[dpad] + var_v_sys
             var_a = self._sigma_a2_sys[dpad] + sigma_a_floor2
+            idx_s = self._idx_sys
             ll_sys = _spot_ll_syst(
-                r_ang[self._idx_sys][rpad],
+                r_ang[idx_s][rpad],
                 self._sin_phi_sys, self._cos_phi_sys,
                 self._x_sys[dpad], self._y_sys[dpad],
                 self._velocity_sys[dpad], self._a_sys[dpad],
                 1.0 / var_x, 1.0 / var_y,
                 1.0 / var_v, 1.0 / var_a,
                 _log_norm(var_x, var_y, var_v, var_a),
-                *shared)
+                *shared,
+                sin_i[idx_s][rpad], cos_i[idx_s][rpad],
+                sin_O[idx_s][rpad], cos_O[idx_s][rpad])
             results.append(ln_trapz_precomputed(
                 ll_sys, self._log_w_phi_sys, axis=-1))
 
@@ -575,8 +578,9 @@ class MaserDiskModel(ModelBase):
             var_y = self._sigma_y2_red[dpad] + sigma_y_floor2
             var_v = self._sigma_v2_red[dpad] + var_v_hv
             var_a = self._sigma_a2_red[dpad] + sigma_a_floor2
+            idx_r = self._idx_red
             ll_red = _spot_ll_hv(
-                r_ang[self._idx_red][rpad],
+                r_ang[idx_r][rpad],
                 self._sin_phi1_red, self._cos_phi1_red,
                 self._sin_phi2_red, self._cos_phi2_red,
                 self._x_red[dpad], self._y_red[dpad],
@@ -584,7 +588,9 @@ class MaserDiskModel(ModelBase):
                 1.0 / var_x, 1.0 / var_y,
                 1.0 / var_v, 1.0 / var_a,
                 _log_norm(var_x, var_y, var_v, var_a),
-                *shared)
+                *shared,
+                sin_i[idx_r][rpad], cos_i[idx_r][rpad],
+                sin_O[idx_r][rpad], cos_O[idx_r][rpad])
             results.append(ln_trapz_precomputed(
                 ll_red, self._log_w_phi_hv, axis=-1))
 
@@ -594,8 +600,9 @@ class MaserDiskModel(ModelBase):
             var_y = self._sigma_y2_blue[dpad] + sigma_y_floor2
             var_v = self._sigma_v2_blue[dpad] + var_v_hv
             var_a = self._sigma_a2_blue[dpad] + sigma_a_floor2
+            idx_b = self._idx_blue
             ll_blue = _spot_ll_hv(
-                r_ang[self._idx_blue][rpad],
+                r_ang[idx_b][rpad],
                 self._sin_phi1_blue, self._cos_phi1_blue,
                 self._sin_phi2_blue, self._cos_phi2_blue,
                 self._x_blue[dpad], self._y_blue[dpad],
@@ -603,7 +610,9 @@ class MaserDiskModel(ModelBase):
                 1.0 / var_x, 1.0 / var_y,
                 1.0 / var_v, 1.0 / var_a,
                 _log_norm(var_x, var_y, var_v, var_a),
-                *shared)
+                *shared,
+                sin_i[idx_b][rpad], cos_i[idx_b][rpad],
+                sin_O[idx_b][rpad], cos_O[idx_b][rpad])
             results.append(ln_trapz_precomputed(
                 ll_blue, self._log_w_phi_hv, axis=-1))
 
@@ -670,11 +679,9 @@ class MaserDiskModel(ModelBase):
                 sigma_a_floor2)
 
         if self.marginalise_r:
-            # Convert physical radius grid to angular using current D_A.
-            r_ang_grid = self._R_phys_grid / (D_A * PC_PER_MAS_MPC)
             r_all = jnp.broadcast_to(
-                r_ang_grid[None, :],
-                (self.n_spots, len(r_ang_grid)))
+                self._r_ang_grid[None, :],
+                (self.n_spots, len(self._r_ang_grid)))
 
             ll_per_r = self._eval_marginal_phi(r_all, *args)
 
