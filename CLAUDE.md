@@ -5,7 +5,7 @@ Most important
 
 2. When there is a series of independent tasks to be completed, always deploy a series of agents.
 
-3. After completing each major step, update this file with: what was done, current state, and next steps.
+3. After completing each major step, update the "Current state" section at the bottom of this file with: what was done, current state, and next steps. Clear out stale entries that are no longer relevant.
 
 4. Note that the instructions below apply only to Python. But the sense of it applies to other languages too.
 
