@@ -92,7 +92,7 @@ def load_NGC5765b_spots(root, v_sys_obs=None):
     -------
     dict with the same keys as ``load_megamaser_spots``.
     """
-    fname = "NGC5765b_Gao2016_table6_tex.dat"
+    fname = "NGC5765b_Gao2016_table6.dat"
     fpath = join(root, fname)
     fprint(f"loading maser spots from '{fpath}'.")
 

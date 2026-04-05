@@ -264,6 +264,13 @@ if __name__ == "__main__":
                 gal_priors = gal_cfg.get("priors", {})
                 for pname, pval in gal_priors.items():
                     config["model"]["priors"][pname] = pval
+
+                # Per-galaxy init_values override global init settings.
+                gal_init = gal_cfg.get("init_values", None)
+                if gal_init is not None:
+                    config["inference"]["init_values"] = gal_init
+                    fprint(f"using per-galaxy init_values for {galaxy}.")
+
                 config["io"]["fname_output"] = (
                     f"results/Maser/{galaxy}.hdf5")
 

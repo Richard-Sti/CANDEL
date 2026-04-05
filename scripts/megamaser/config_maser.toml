@@ -240,6 +240,26 @@ high = 180.0
 
 [model.galaxies."NGC5765b"]
 v_sys_obs = 8327.6
+fit_di_dr = true
+
+# Init values near Pesce+2020 to avoid wrong mode (multimodal posterior).
+# Without these, NUTS initialises at prior median (i0=85, di_dr=0)
+# which converges to a local mode at D~200 Mpc (wrong).
+[model.galaxies."NGC5765b".init_values]
+D_c = 129.6
+log_MBH = 7.66
+x0 = -44.0
+y0 = -93.0
+i0 = 73.0
+di_dr = 12.7
+Omega0 = 149.2
+dOmega_dr = -2.7
+dv_sys = 5.0
+sigma_x_floor = 12.0
+sigma_y_floor = 3.0
+sigma_v_sys = 1.8
+sigma_v_hv = 3.6
+sigma_a_floor = 0.08
 
 [model.galaxies."NGC5765b".priors.D]
 dist = "uniform"
@@ -260,6 +280,11 @@ high = 200.0
 dist = "uniform"
 low = -50.0
 high = 50.0
+
+[model.galaxies."NGC5765b".priors.di_dr]
+dist = "uniform"
+low = -30.0
+high = 30.0
 
 [model.galaxies."NGC6264"]
 v_sys_obs = 10131.3
