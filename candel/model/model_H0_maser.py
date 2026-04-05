@@ -34,6 +34,8 @@ from numpyro.distributions import Uniform
 from scipy.cluster.vq import kmeans2
 from scipy.optimize import minimize_scalar
 
+from jax.scipy.special import logsumexp
+
 from ..util import SPEED_OF_LIGHT, fprint, fsection, get_nested
 from .base_model import ModelBase
 from .pv_utils import rsample
@@ -681,17 +683,17 @@ class MaserDiskModel(ModelBase):
     def _eval_marginal_phi(self, r_ang, x0, y0, D_A, M_BH, v_sys,
                            r_ang_ref, i0, di_dr, Omega0, dOmega_dr,
                            sigma_x_floor2, sigma_y_floor2,
-                           var_v_sys, var_v_hv, sigma_a_floor2):
-        """Evaluate per-spot log-likelihood marginalised over phi.
+                           var_v_sys, var_v_hv, sigma_a_floor2,
+                           log_w_r=None):
+        """Evaluate per-spot log-likelihood marginalised over phi [and r].
 
-        Mode 1 (sample r_ang): r_ang is (N,)
-        Mode 2 (marginalise R_phys): r_ang is (N, n_r)
+        Mode 1 (sample r_ang): r_ang is (N,), log_w_r is None.
+            Returns (N,) per-spot marginalised-phi log-likelihood.
+        Mode 2 (marginalise r): r_ang is (N, n_r), log_w_r is (n_r,).
+            Fuses the phi and r logsumexp into a single 2D reduction,
+            returning (N,) per-spot fully-marginalised log-likelihood.
 
         All sigma/var arguments are pre-squared.
-
-        Returns
-        -------
-        ll : (N,) or (N, n_r) per-spot marginalised log-likelihood
         """
         # rpad: adds trailing dim for phi broadcasting on r_ang
         # dpad: adds dims so 1D data arrays broadcast with r_ang + phi
@@ -740,6 +742,13 @@ class MaserDiskModel(ModelBase):
             return (_lnorm_3(sx2, sy2, sv2)
                     - 0.5 * (LOG_2PI + jnp.log(sa2 + sigma_a_floor2)))
 
+        # Combined phi[+r] integration weights for fused 2D logsumexp.
+        # In Mode 2, log_w_2d_* has shape (N_r, N_phi) and avoids
+        # materialising the (N, N_r) intermediate from phi-only reduction.
+        if log_w_r is not None:
+            log_w_2d_sys = log_w_r[:, None] + self._log_w_phi_sys[None, :]
+            log_w_2d_hv = log_w_r[:, None] + self._log_w_phi_hv[None, :]
+
         # ---- Systemic spots WITH accel ----
         def _sys_block(idx_attr, x_d, y_d, v_d, a_d,
                        sx2, sy2, sv2, sa2, var_v_floor, has_accel):
@@ -762,8 +771,11 @@ class MaserDiskModel(ModelBase):
                     x_d[dpad], X, 1.0 / vx, y_d[dpad], Y, 1.0 / vy,
                     v_d[dpad], V, 1.0 / vv)
                 lnorm = _lnorm_3(sx2[dpad], sy2[dpad], vv)
-            return ln_trapz_precomputed(lnorm - 0.5 * chi2,
-                                        self._log_w_phi_sys, axis=-1)
+            ll = lnorm - 0.5 * chi2
+            if log_w_r is not None:
+                # Fused 2D logsumexp over (r, phi) → (N_sub,)
+                return logsumexp(ll + log_w_2d_sys, axis=(-2, -1))
+            return ln_trapz_precomputed(ll, self._log_w_phi_sys, axis=-1)
 
         def _hv_block(idx_attr, sp1, cp1, sp2, cp2, log_w_phi,
                       x_d, y_d, v_d, a_d,
@@ -806,8 +818,10 @@ class MaserDiskModel(ModelBase):
             else:
                 lnorm = _lnorm_3(sx2[dpad], sy2[dpad], vv)
 
-            return ln_trapz_precomputed(
-                lnorm + ll, log_w_phi, axis=-1)
+            ll_full = lnorm + ll
+            if log_w_r is not None:
+                return logsumexp(ll_full + log_w_2d_hv, axis=(-2, -1))
+            return ln_trapz_precomputed(ll_full, log_w_phi, axis=-1)
 
         results = []
 
@@ -939,10 +953,10 @@ class MaserDiskModel(ModelBase):
                 self._r_ang_grid[None, :],
                 (self.n_spots, len(self._r_ang_grid)))
 
-            ll_per_r = self._eval_marginal_phi(r_all, *args)
-
-            ll_per_spot = ln_trapz_precomputed(
-                ll_per_r, self._log_w_R, axis=-1)
+            # Fused 2D logsumexp over (r, phi) — avoids materialising
+            # the (N, N_r) intermediate from phi-only reduction.
+            ll_per_spot = self._eval_marginal_phi(
+                r_all, *args, log_w_r=self._log_w_R)
             ll_disk = jnp.sum(ll_per_spot)
 
         else:
