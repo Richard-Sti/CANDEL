@@ -72,3 +72,30 @@ Basics
 11. In the function signature, do not describe the variable types. Python does not use that anyway.
 
 12. Never use conda. Always use the local venv of the package.
+
+
+Current state (megamaser disk model)
+------------------------------------
+
+### What was done
+- Fixed NGC5765b distance: root cause was missing inclination warp (di/dr).
+  Added init_values support to avoid NUTS getting trapped in wrong mode.
+- Fixed data filename and marginalise_r grid weights.
+- Speed optimisations for Mode 2 (marginalise_r):
+  - Precompute r-dependent quantities outside phi loop (eliminates 3 sqrts per phi point).
+  - Skip acceleration computation for 123/192 unmeasured spots (separate 3-obs chi²).
+  - HV reflection: log-cosh trick replaces double chi² + logaddexp (halves position work).
+  - Fused 2D logsumexp over (r, phi) eliminates (N, N_r) intermediate array.
+  - float32 for GPU runs.
+- Benchmarks (gradient, RTX 3070): f32 3.84 ms, f64 24.8 ms. Original f64: 31.9 ms.
+- CPU f64 gradient: 342 ms (original 730 ms, 2.1x faster).
+
+### Current state
+- GPU job 617255 running on A6000: marginalise_r two-chain test (good vs bad init).
+- GPU benchmark job 617261 pending on A6000 (will run with latest optimisations).
+- NGC5765b with di/dr: D_A = 121.7 ± 8.2 Mpc (published 112-126 Mpc).
+
+### Next steps
+- Check A6000 benchmark and two-chain convergence results.
+- Run other galaxies (NGC6264, NGC6323, UGC3789) with di/dr.
+- Consider further optimisations if GPU is still bottlenecked.
