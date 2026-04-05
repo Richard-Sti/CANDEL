@@ -267,6 +267,58 @@ def _compute_observables(r_ang, sin_phi, cos_phi, x0, y0, D, M_BH,
     return X, Y, V, A
 
 
+def _precompute_r_quantities(r_ang, D, M_BH, sin_i, cos_i, sin_O, cos_O):
+    """Precompute r-dependent quantities for the phi integration.
+
+    Returns quantities that depend only on r (not phi), to be
+    broadcast into the phi dimension by the caller. This avoids
+    3 expensive sqrt calls per (r, phi) grid point.
+
+    All inputs/outputs have shape (..., N_r) or broadcastable.
+    """
+    rD = r_ang * D
+    v_kep = C_v * jnp.sqrt(M_BH / rD)  # 1 sqrt
+
+    beta = v_kep / SPEED_OF_LIGHT
+    gamma = 1.0 / jnp.sqrt(1.0 - beta * beta)  # 1 sqrt
+
+    one_plus_z_g = 1.0 / jnp.sqrt(1.0 - C_g * M_BH / rD)  # 1 sqrt
+
+    a_mag = v_kep * v_kep / rD * (C_a / (C_v * C_v))
+
+    # Precompute position projection coefficients (multiply-add only).
+    # X = x0 + r * (sin_phi * pA - cos_phi * pB)
+    # Y = y0 + r * (sin_phi * pC + cos_phi * pD)
+    pA = sin_O
+    pB = cos_O * cos_i
+    pC = cos_O
+    pD = sin_O * cos_i
+
+    return v_kep, gamma, one_plus_z_g, a_mag, pA, pB, pC, pD
+
+
+def _observables_from_precomputed(sin_phi, cos_phi, x0, y0, v_sys,
+                                  sin_i, r_ang,
+                                  v_kep, gamma, one_plus_z_g, a_mag,
+                                  pA, pB, pC, pD):
+    """Compute observables using precomputed r-dependent quantities.
+
+    Only multiply-add operations — no sqrt, no division.
+    """
+    X = x0 + r_ang * (sin_phi * pA - cos_phi * pB)
+    Y = y0 + r_ang * (sin_phi * pC + cos_phi * pD)
+
+    v_z = v_kep * sin_phi * sin_i
+    one_plus_z_D = gamma * (1.0 + v_z / SPEED_OF_LIGHT)
+    V = SPEED_OF_LIGHT * (
+        one_plus_z_D * one_plus_z_g * (1.0 + v_sys / SPEED_OF_LIGHT)
+        - 1.0)
+
+    A = a_mag * cos_phi * sin_i
+
+    return X, Y, V, A
+
+
 def _chi2_4obs(x_obs, X, inv_var_x, y_obs, Y, inv_var_y,
                v_obs, V, inv_var_v, a_obs, A, inv_var_a):
     """Sum of 4 chi-squared terms. No log(var) — that's added per-spot."""
@@ -505,8 +557,8 @@ class MaserDiskModel(ModelBase):
         fprint(f"phi grids: HV half={len(phi_half)}, "
                f"sys={len(phi_sys)}")
         if self.marginalise_r:
-            fprint(f"R_phys grid: {len(R_grid)} log-spaced on "
-                   f"[{R_min:.3f}, {R_max:.3f}] pc")
+            fprint(f"r_ang grid: {len(self._r_ang_grid)} log-spaced, "
+                   f"R_phys in [{R_min:.3f}, {R_max:.3f}] pc")
         fprint(f"use_selection = {self.use_selection}")
         fprint(f"fit_di_dr = {self.fit_di_dr}")
 
@@ -531,25 +583,32 @@ class MaserDiskModel(ModelBase):
         n_extra = r_ang.ndim
         dpad = (slice(None),) + (None,) * n_extra
 
-        # Precompute warp geometry trig on the (N,) or (N, N_r) grid.
-        # These only depend on r, not phi, so computing them here
-        # avoids redundant work across the phi grid.
+        # Precompute ALL r-dependent quantities on the (N,) or (N, N_r)
+        # grid. The phi loop then only does multiply-add + logsumexp.
         i_r, Omega_r = warp_geometry(
             r_ang, r_ang_ref, i0, di_dr, Omega0, dOmega_dr)
         sin_i = jnp.sin(i_r)
         cos_i = jnp.cos(i_r)
         sin_O = jnp.sin(Omega_r)
         cos_O = jnp.cos(Omega_r)
+        v_kep, gamma, z_g_factor, a_mag, pA, pB, pC, pD = \
+            _precompute_r_quantities(r_ang, D_A, M_BH,
+                                     sin_i, cos_i, sin_O, cos_O)
 
-        # Per-spot log-normalisation: -0.5 * sum_obs log(2*pi*var).
-        # Factored out of the (r, phi) grid — only per-spot shape.
         def _log_norm(var_x, var_y, var_v, var_a):
             return -0.5 * (4 * LOG_2PI + jnp.log(var_x) + jnp.log(var_y)
                            + jnp.log(var_v) + jnp.log(var_a))
 
-        results = []
+        def _obs(idx, sp, cp):
+            """Observables from precomputed r-quantities. No sqrt/div."""
+            return _observables_from_precomputed(
+                sp, cp, x0, y0, v_sys, sin_i[idx][rpad], r_ang[idx][rpad],
+                v_kep[idx][rpad], gamma[idx][rpad],
+                z_g_factor[idx][rpad], a_mag[idx][rpad],
+                pA[idx][rpad], pB[idx][rpad],
+                pC[idx][rpad], pD[idx][rpad])
 
-        shared = (x0, y0, D_A, M_BH, v_sys)
+        results = []
 
         # ---- Systemic spots ----
         if self._n_sys > 0:
@@ -557,20 +616,16 @@ class MaserDiskModel(ModelBase):
             var_y = self._sigma_y2_sys[dpad] + sigma_y_floor2
             var_v = self._sigma_v2_sys[dpad] + var_v_sys
             var_a = self._sigma_a2_sys[dpad] + sigma_a_floor2
-            idx_s = self._idx_sys
-            ll_sys = _spot_ll_syst(
-                r_ang[idx_s][rpad],
-                self._sin_phi_sys, self._cos_phi_sys,
-                self._x_sys[dpad], self._y_sys[dpad],
-                self._velocity_sys[dpad], self._a_sys[dpad],
-                1.0 / var_x, 1.0 / var_y,
-                1.0 / var_v, 1.0 / var_a,
-                _log_norm(var_x, var_y, var_v, var_a),
-                *shared,
-                sin_i[idx_s][rpad], cos_i[idx_s][rpad],
-                sin_O[idx_s][rpad], cos_O[idx_s][rpad])
+            X, Y, V, A = _obs(
+                self._idx_sys, self._sin_phi_sys, self._cos_phi_sys)
+            chi2 = _chi2_4obs(
+                self._x_sys[dpad], X, 1.0 / var_x,
+                self._y_sys[dpad], Y, 1.0 / var_y,
+                self._velocity_sys[dpad], V, 1.0 / var_v,
+                self._a_sys[dpad], A, 1.0 / var_a)
             results.append(ln_trapz_precomputed(
-                ll_sys, self._log_w_phi_sys, axis=-1))
+                _log_norm(var_x, var_y, var_v, var_a) - 0.5 * chi2,
+                self._log_w_phi_sys, axis=-1))
 
         # ---- Red HV spots ----
         if self._n_red > 0:
@@ -578,21 +633,31 @@ class MaserDiskModel(ModelBase):
             var_y = self._sigma_y2_red[dpad] + sigma_y_floor2
             var_v = self._sigma_v2_red[dpad] + var_v_hv
             var_a = self._sigma_a2_red[dpad] + sigma_a_floor2
-            idx_r = self._idx_red
-            ll_red = _spot_ll_hv(
-                r_ang[idx_r][rpad],
-                self._sin_phi1_red, self._cos_phi1_red,
-                self._sin_phi2_red, self._cos_phi2_red,
-                self._x_red[dpad], self._y_red[dpad],
-                self._velocity_red[dpad], self._a_red[dpad],
-                1.0 / var_x, 1.0 / var_y,
-                1.0 / var_v, 1.0 / var_a,
-                _log_norm(var_x, var_y, var_v, var_a),
-                *shared,
-                sin_i[idx_r][rpad], cos_i[idx_r][rpad],
-                sin_O[idx_r][rpad], cos_O[idx_r][rpad])
+            inv_vx, inv_vy = 1.0 / var_x, 1.0 / var_y
+            inv_vv, inv_va = 1.0 / var_v, 1.0 / var_a
+            lnorm = _log_norm(var_x, var_y, var_v, var_a)
+            idx = self._idx_red
+            X1, Y1, V, A1 = _obs(
+                idx, self._sin_phi1_red, self._cos_phi1_red)
+            r_r = r_ang[idx][rpad]
+            X2 = x0 + r_r * (self._sin_phi2_red * pA[idx][rpad]
+                              - self._cos_phi2_red * pB[idx][rpad])
+            Y2 = y0 + r_r * (self._sin_phi2_red * pC[idx][rpad]
+                              + self._cos_phi2_red * pD[idx][rpad])
+            A2 = -A1
+            chi2_v = (self._velocity_red[dpad] - V) ** 2 * inv_vv
+            chi2_1 = (_chi2_4obs(
+                self._x_red[dpad], X1, inv_vx, self._y_red[dpad], Y1,
+                inv_vy, self._velocity_red[dpad], V, inv_vv,
+                self._a_red[dpad], A1, inv_va) - chi2_v)
+            chi2_2 = (_chi2_4obs(
+                self._x_red[dpad], X2, inv_vx, self._y_red[dpad], Y2,
+                inv_vy, self._velocity_red[dpad], V, inv_vv,
+                self._a_red[dpad], A2, inv_va) - chi2_v)
             results.append(ln_trapz_precomputed(
-                ll_red, self._log_w_phi_hv, axis=-1))
+                lnorm - 0.5 * chi2_v
+                + jnp.logaddexp(-0.5 * chi2_1, -0.5 * chi2_2),
+                self._log_w_phi_hv, axis=-1))
 
         # ---- Blue HV spots ----
         if self._n_blue > 0:
@@ -600,21 +665,31 @@ class MaserDiskModel(ModelBase):
             var_y = self._sigma_y2_blue[dpad] + sigma_y_floor2
             var_v = self._sigma_v2_blue[dpad] + var_v_hv
             var_a = self._sigma_a2_blue[dpad] + sigma_a_floor2
-            idx_b = self._idx_blue
-            ll_blue = _spot_ll_hv(
-                r_ang[idx_b][rpad],
-                self._sin_phi1_blue, self._cos_phi1_blue,
-                self._sin_phi2_blue, self._cos_phi2_blue,
-                self._x_blue[dpad], self._y_blue[dpad],
-                self._velocity_blue[dpad], self._a_blue[dpad],
-                1.0 / var_x, 1.0 / var_y,
-                1.0 / var_v, 1.0 / var_a,
-                _log_norm(var_x, var_y, var_v, var_a),
-                *shared,
-                sin_i[idx_b][rpad], cos_i[idx_b][rpad],
-                sin_O[idx_b][rpad], cos_O[idx_b][rpad])
+            inv_vx, inv_vy = 1.0 / var_x, 1.0 / var_y
+            inv_vv, inv_va = 1.0 / var_v, 1.0 / var_a
+            lnorm = _log_norm(var_x, var_y, var_v, var_a)
+            idx = self._idx_blue
+            X1, Y1, V, A1 = _obs(
+                idx, self._sin_phi1_blue, self._cos_phi1_blue)
+            r_b = r_ang[idx][rpad]
+            X2 = x0 + r_b * (self._sin_phi2_blue * pA[idx][rpad]
+                              - self._cos_phi2_blue * pB[idx][rpad])
+            Y2 = y0 + r_b * (self._sin_phi2_blue * pC[idx][rpad]
+                              + self._cos_phi2_blue * pD[idx][rpad])
+            A2 = -A1
+            chi2_v = (self._velocity_blue[dpad] - V) ** 2 * inv_vv
+            chi2_1 = (_chi2_4obs(
+                self._x_blue[dpad], X1, inv_vx, self._y_blue[dpad], Y1,
+                inv_vy, self._velocity_blue[dpad], V, inv_vv,
+                self._a_blue[dpad], A1, inv_va) - chi2_v)
+            chi2_2 = (_chi2_4obs(
+                self._x_blue[dpad], X2, inv_vx, self._y_blue[dpad], Y2,
+                inv_vy, self._velocity_blue[dpad], V, inv_vv,
+                self._a_blue[dpad], A2, inv_va) - chi2_v)
             results.append(ln_trapz_precomputed(
-                ll_blue, self._log_w_phi_hv, axis=-1))
+                lnorm - 0.5 * chi2_v
+                + jnp.logaddexp(-0.5 * chi2_1, -0.5 * chi2_2),
+                self._log_w_phi_hv, axis=-1))
 
         # Concat + gather replaces .at[idx].set() scatter ops
         return jnp.concatenate(results, axis=0)[self._inv_order]
