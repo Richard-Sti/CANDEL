@@ -897,6 +897,11 @@ class MaserDiskModel(ModelBase):
                 sigma_x_floor2, sigma_y_floor2, var_v_sys, var_v_hv,
                 sigma_a_floor2)
 
+        # Jacobian: the physical prior is uniform on R_phys, but we
+        # integrate/sample in r_ang = R_phys / (D_A * PC). The Jacobian
+        # |dR_phys/dr_ang| = D_A * PC must be included per spot.
+        log_jacobian_r = self.n_spots * jnp.log(D_A * PC_PER_MAS_MPC)
+
         if self.marginalise_r:
             r_all = jnp.broadcast_to(
                 self._r_ang_grid[None, :],
@@ -904,20 +909,15 @@ class MaserDiskModel(ModelBase):
 
             ll_per_spot = self._eval_marginal_phi(
                 r_all, *args, log_w_r=self._log_w_R)
-            ll_disk = jnp.sum(ll_per_spot)
+            ll_disk = jnp.sum(ll_per_spot) + log_jacobian_r
 
         else:
-            # Sample angular radii with fixed bounds (set at init from
-            # cosmographic D_A estimate). Jacobian correction recovers
-            # the uniform prior on R_phys.
             with plate("spots", self.n_spots):
                 r_spots = sample(
                     "r_ang", Uniform(self._r_ang_lo, self._r_ang_hi))
-            # factor("prior_R_correction",
-            #        self.n_spots * jnp.log(D_A * PC_PER_MAS_MPC))
 
             ll_per_spot = self._eval_marginal_phi(r_spots, *args)
-            ll_disk = jnp.sum(ll_per_spot)
+            ll_disk = jnp.sum(ll_per_spot) + log_jacobian_r
 
         factor("ll_disk", ll_disk)
 
