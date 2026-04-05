@@ -497,12 +497,14 @@ class MaserDiskModel(ModelBase):
                f"{self._r_ang_hi:.3f}] mas "
                f"(D_A_est = {D_A_est:.1f} Mpc)")
 
-        # Fixed r_ang grid for Mode 2
+        # r_ang grid at D_A_est (for logging only; recomputed
+        # at each likelihood evaluation using the current D_A).
         if self.marginalise_r:
-            self._r_ang_grid = self._R_phys_grid / (
+            r_ang_grid_est = self._R_phys_grid / (
                 D_A_est * PC_PER_MAS_MPC)
-            fprint(f"r_ang grid: [{float(self._r_ang_grid[0]):.4f}, "
-                   f"{float(self._r_ang_grid[-1]):.4f}] mas")
+            fprint(f"r_ang grid: [{float(r_ang_grid_est[0]):.4f}, "
+                   f"{float(r_ang_grid_est[-1]):.4f}] mas "
+                   f"(at D_A_est; recomputed per sample)")
 
         mode = "r+phi" if self.marginalise_r else "phi only"
         fprint(f"loaded {self.n_spots} maser spots "
@@ -668,9 +670,11 @@ class MaserDiskModel(ModelBase):
                 sigma_a_floor2)
 
         if self.marginalise_r:
+            # Convert physical radius grid to angular using current D_A.
+            r_ang_grid = self._R_phys_grid / (D_A * PC_PER_MAS_MPC)
             r_all = jnp.broadcast_to(
-                self._r_ang_grid[None, :],
-                (self.n_spots, len(self._r_ang_grid)))
+                r_ang_grid[None, :],
+                (self.n_spots, len(r_ang_grid)))
 
             ll_per_r = self._eval_marginal_phi(r_all, *args)
 
