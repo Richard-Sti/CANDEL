@@ -319,6 +319,23 @@ def _observables_from_precomputed(sin_phi, cos_phi, x0, y0, v_sys,
     return X, Y, V, A
 
 
+def _observables_no_accel(sin_phi, cos_phi, x0, y0, v_sys,
+                          sin_i, r_ang, v_kep, gamma, one_plus_z_g,
+                          pA, pB, pC, pD):
+    """Position + velocity only. Skips acceleration entirely for spots
+    without measured acceleration."""
+    X = x0 + r_ang * (sin_phi * pA - cos_phi * pB)
+    Y = y0 + r_ang * (sin_phi * pC + cos_phi * pD)
+
+    v_z = v_kep * sin_phi * sin_i
+    one_plus_z_D = gamma * (1.0 + v_z / SPEED_OF_LIGHT)
+    V = SPEED_OF_LIGHT * (
+        one_plus_z_D * one_plus_z_g * (1.0 + v_sys / SPEED_OF_LIGHT)
+        - 1.0)
+
+    return X, Y, V
+
+
 def _chi2_4obs(x_obs, X, inv_var_x, y_obs, Y, inv_var_y,
                v_obs, V, inv_var_v, a_obs, A, inv_var_a):
     """Sum of 4 chi-squared terms. No log(var) — that's added per-spot."""
@@ -328,6 +345,16 @@ def _chi2_4obs(x_obs, X, inv_var_x, y_obs, Y, inv_var_y,
     da = a_obs - A
     return (dx * dx * inv_var_x + dy * dy * inv_var_y
             + dv * dv * inv_var_v + da * da * inv_var_a)
+
+
+def _chi2_3obs(x_obs, X, inv_var_x, y_obs, Y, inv_var_y,
+               v_obs, V, inv_var_v):
+    """Sum of 3 chi-squared terms (no acceleration)."""
+    dx = x_obs - X
+    dy = y_obs - Y
+    dv = v_obs - V
+    return (dx * dx * inv_var_x + dy * dy * inv_var_y
+            + dv * dv * inv_var_v)
 
 
 def _spot_ll_syst(r_ang, sin_phi, cos_phi,
@@ -458,6 +485,42 @@ class MaserDiskModel(ModelBase):
                 setattr(self, f"_{key}2_{label}",
                         getattr(self, key)[idx]**2)
 
+        # Split each type into with-accel and without-accel sub-groups.
+        # Spots without acceleration get a 3-obs chi² (no A computed).
+        accel_meas = _np.asarray(data.get(
+            "accel_measured", self.sigma_a < 1e4))
+        for label, idx_arr in [("sys", self._idx_sys),
+                               ("red", self._idx_red),
+                               ("blue", self._idx_blue)]:
+            idx_np = _np.asarray(idx_arr)
+            has_a = accel_meas[idx_np]
+            setattr(self, f"_idx_{label}_a",
+                    jnp.asarray(idx_np[has_a]))
+            setattr(self, f"_idx_{label}_noa",
+                    jnp.asarray(idx_np[~has_a]))
+            setattr(self, f"_n_{label}_a", int(has_a.sum()))
+            setattr(self, f"_n_{label}_noa", int((~has_a).sum()))
+            # Pre-masked data for each sub-group
+            for key in ("x", "y", "velocity"):
+                arr = getattr(self, key)
+                setattr(self, f"_{key}_{label}_a", arr[idx_np[has_a]])
+                setattr(self, f"_{key}_{label}_noa", arr[idx_np[~has_a]])
+            setattr(self, f"_a_{label}_a",
+                    self.a[idx_np[has_a]])
+            for key in ("sigma_x", "sigma_y", "sigma_v"):
+                arr = getattr(self, key)
+                setattr(self, f"_{key}2_{label}_a",
+                        arr[idx_np[has_a]]**2)
+                setattr(self, f"_{key}2_{label}_noa",
+                        arr[idx_np[~has_a]]**2)
+            setattr(self, f"_sigma_a2_{label}_a",
+                    self.sigma_a[idx_np[has_a]]**2)
+
+        n_a = sum(getattr(self, f"_n_{l}_a") for l in ("sys", "red", "blue"))
+        n_noa = sum(getattr(self, f"_n_{l}_noa")
+                    for l in ("sys", "red", "blue"))
+        fprint(f"accel split: {n_a} with, {n_noa} without.")
+
         # ---- Phi grids and precomputed trig ----
         phi_half = _build_phi_half_grid_hv()
         phi_sys = _build_phi_grid_sys()
@@ -486,9 +549,12 @@ class MaserDiskModel(ModelBase):
         self._log_w_phi_hv = jnp.asarray(trapz_log_weights(phi_half))
         self._log_w_phi_sys = jnp.asarray(trapz_log_weights(phi_sys))
 
-        # Inverse permutation for concat+gather (replaces .at[idx].set)
+        # Inverse permutation for concat+gather (replaces .at[idx].set).
+        # Order: sys_a, sys_noa, red_a, red_noa, blue_a, blue_noa
         order = jnp.concatenate([
-            self._idx_sys, self._idx_red, self._idx_blue])
+            self._idx_sys_a, self._idx_sys_noa,
+            self._idx_red_a, self._idx_red_noa,
+            self._idx_blue_a, self._idx_blue_noa])
         self._inv_order = jnp.argsort(order)
 
         # ---- Physical radius grid (for Mode 2) ----
@@ -595,101 +661,169 @@ class MaserDiskModel(ModelBase):
             _precompute_r_quantities(r_ang, D_A, M_BH,
                                      sin_i, cos_i, sin_O, cos_O)
 
-        def _log_norm(var_x, var_y, var_v, var_a):
-            return -0.5 * (4 * LOG_2PI + jnp.log(var_x) + jnp.log(var_y)
-                           + jnp.log(var_v) + jnp.log(var_a))
+        def _r_precomp(idx):
+            """Slice precomputed r-quantities for a spot subset."""
+            return (r_ang[idx][rpad], sin_i[idx][rpad],
+                    v_kep[idx][rpad], gamma[idx][rpad],
+                    z_g_factor[idx][rpad], a_mag[idx][rpad],
+                    pA[idx][rpad], pB[idx][rpad],
+                    pC[idx][rpad], pD[idx][rpad])
 
-        def _obs(idx, sp, cp):
-            """Observables from precomputed r-quantities. No sqrt/div."""
+        def _obs_4(idx, sp, cp):
+            """X, Y, V, A from precomputed r-quantities."""
             return _observables_from_precomputed(
-                sp, cp, x0, y0, v_sys, sin_i[idx][rpad], r_ang[idx][rpad],
-                v_kep[idx][rpad], gamma[idx][rpad],
-                z_g_factor[idx][rpad], a_mag[idx][rpad],
-                pA[idx][rpad], pB[idx][rpad],
-                pC[idx][rpad], pD[idx][rpad])
+                sp, cp, x0, y0, v_sys, *_r_precomp(idx))
+
+        def _obs_3(idx, sp, cp):
+            """X, Y, V only — no acceleration computed."""
+            (r_sub, si, vk, gm, zg, _, pa, pb, pc, pd) = _r_precomp(idx)
+            return _observables_no_accel(
+                sp, cp, x0, y0, v_sys, si, r_sub, vk, gm, zg,
+                pa, pb, pc, pd)
+
+        def _lnorm_3(sx2, sy2, sv2):
+            return -0.5 * (3 * LOG_2PI + jnp.log(sx2 + sigma_x_floor2)
+                           + jnp.log(sy2 + sigma_y_floor2)
+                           + jnp.log(sv2))
+
+        def _lnorm_4(sx2, sy2, sv2, sa2):
+            return (_lnorm_3(sx2, sy2, sv2)
+                    - 0.5 * (LOG_2PI + jnp.log(sa2 + sigma_a_floor2)))
+
+        # ---- Systemic spots WITH accel ----
+        def _sys_block(idx_attr, x_d, y_d, v_d, a_d,
+                       sx2, sy2, sv2, sa2, var_v_floor, has_accel):
+            vx = sx2[dpad] + sigma_x_floor2
+            vy = sy2[dpad] + sigma_y_floor2
+            vv = sv2[dpad] + var_v_floor
+            idx = getattr(self, idx_attr)
+            if has_accel:
+                va = sa2[dpad] + sigma_a_floor2
+                X, Y, V, A = _obs_4(idx, self._sin_phi_sys,
+                                     self._cos_phi_sys)
+                chi2 = _chi2_4obs(
+                    x_d[dpad], X, 1.0 / vx, y_d[dpad], Y, 1.0 / vy,
+                    v_d[dpad], V, 1.0 / vv, a_d[dpad], A, 1.0 / va)
+                lnorm = _lnorm_4(sx2[dpad], sy2[dpad], vv, sa2[dpad])
+            else:
+                X, Y, V = _obs_3(idx, self._sin_phi_sys,
+                                  self._cos_phi_sys)
+                chi2 = _chi2_3obs(
+                    x_d[dpad], X, 1.0 / vx, y_d[dpad], Y, 1.0 / vy,
+                    v_d[dpad], V, 1.0 / vv)
+                lnorm = _lnorm_3(sx2[dpad], sy2[dpad], vv)
+            return ln_trapz_precomputed(lnorm - 0.5 * chi2,
+                                        self._log_w_phi_sys, axis=-1)
+
+        def _hv_block(idx_attr, sp1, cp1, sp2, cp2, log_w_phi,
+                      x_d, y_d, v_d, a_d,
+                      sx2, sy2, sv2, sa2, var_v_floor, has_accel):
+            vx = sx2[dpad] + sigma_x_floor2
+            vy = sy2[dpad] + sigma_y_floor2
+            vv = sv2[dpad] + var_v_floor
+            inv_vx, inv_vy, inv_vv = 1.0 / vx, 1.0 / vy, 1.0 / vv
+            idx = getattr(self, idx_attr)
+            r_sub = r_ang[idx][rpad]
+            pa_s, pb_s = pA[idx][rpad], pB[idx][rpad]
+            pc_s, pd_s = pC[idx][rpad], pD[idx][rpad]
+
+            if has_accel:
+                va = sa2[dpad] + sigma_a_floor2
+                inv_va = 1.0 / va
+                X1, Y1, V, A1 = _obs_4(idx, sp1, cp1)
+                X2 = x0 + r_sub * (sp2 * pa_s - cp2 * pb_s)
+                Y2 = y0 + r_sub * (sp2 * pc_s + cp2 * pd_s)
+                A2 = -A1
+                chi2_v = (v_d[dpad] - V) ** 2 * inv_vv
+                chi2_1 = (_chi2_4obs(
+                    x_d[dpad], X1, inv_vx, y_d[dpad], Y1, inv_vy,
+                    v_d[dpad], V, inv_vv,
+                    a_d[dpad], A1, inv_va) - chi2_v)
+                chi2_2 = (_chi2_4obs(
+                    x_d[dpad], X2, inv_vx, y_d[dpad], Y2, inv_vy,
+                    v_d[dpad], V, inv_vv,
+                    a_d[dpad], A2, inv_va) - chi2_v)
+                lnorm = _lnorm_4(sx2[dpad], sy2[dpad], vv, sa2[dpad])
+            else:
+                X1, Y1, V = _obs_3(idx, sp1, cp1)
+                X2 = x0 + r_sub * (sp2 * pa_s - cp2 * pb_s)
+                Y2 = y0 + r_sub * (sp2 * pc_s + cp2 * pd_s)
+                chi2_v = (v_d[dpad] - V) ** 2 * inv_vv
+                chi2_1 = (_chi2_3obs(
+                    x_d[dpad], X1, inv_vx, y_d[dpad], Y1, inv_vy,
+                    v_d[dpad], V, inv_vv) - chi2_v)
+                chi2_2 = (_chi2_3obs(
+                    x_d[dpad], X2, inv_vx, y_d[dpad], Y2, inv_vy,
+                    v_d[dpad], V, inv_vv) - chi2_v)
+                lnorm = _lnorm_3(sx2[dpad], sy2[dpad], vv)
+
+            return ln_trapz_precomputed(
+                lnorm - 0.5 * chi2_v
+                + jnp.logaddexp(-0.5 * chi2_1, -0.5 * chi2_2),
+                log_w_phi, axis=-1)
 
         results = []
 
-        # ---- Systemic spots ----
-        if self._n_sys > 0:
-            var_x = self._sigma_x2_sys[dpad] + sigma_x_floor2
-            var_y = self._sigma_y2_sys[dpad] + sigma_y_floor2
-            var_v = self._sigma_v2_sys[dpad] + var_v_sys
-            var_a = self._sigma_a2_sys[dpad] + sigma_a_floor2
-            X, Y, V, A = _obs(
-                self._idx_sys, self._sin_phi_sys, self._cos_phi_sys)
-            chi2 = _chi2_4obs(
-                self._x_sys[dpad], X, 1.0 / var_x,
-                self._y_sys[dpad], Y, 1.0 / var_y,
-                self._velocity_sys[dpad], V, 1.0 / var_v,
-                self._a_sys[dpad], A, 1.0 / var_a)
-            results.append(ln_trapz_precomputed(
-                _log_norm(var_x, var_y, var_v, var_a) - 0.5 * chi2,
-                self._log_w_phi_sys, axis=-1))
+        # ---- Systemic: with accel, then without ----
+        for suffix, has_a in [("_a", True), ("_noa", False)]:
+            n = getattr(self, f"_n_sys{suffix}")
+            if n > 0:
+                kw = dict(
+                    x_d=getattr(self, f"_x_sys{suffix}"),
+                    y_d=getattr(self, f"_y_sys{suffix}"),
+                    v_d=getattr(self, f"_velocity_sys{suffix}"),
+                    a_d=getattr(self, f"_a_sys_a", None) if has_a else None,
+                    sx2=getattr(self, f"_sigma_x2_sys{suffix}"),
+                    sy2=getattr(self, f"_sigma_y2_sys{suffix}"),
+                    sv2=getattr(self, f"_sigma_v2_sys{suffix}") + var_v_sys,
+                    sa2=getattr(self, f"_sigma_a2_sys_a", None) if has_a
+                        else None,
+                    var_v_floor=0.0,  # already added above
+                    has_accel=has_a)
+                results.append(_sys_block(f"_idx_sys{suffix}", **kw))
 
-        # ---- Red HV spots ----
-        if self._n_red > 0:
-            var_x = self._sigma_x2_red[dpad] + sigma_x_floor2
-            var_y = self._sigma_y2_red[dpad] + sigma_y_floor2
-            var_v = self._sigma_v2_red[dpad] + var_v_hv
-            var_a = self._sigma_a2_red[dpad] + sigma_a_floor2
-            inv_vx, inv_vy = 1.0 / var_x, 1.0 / var_y
-            inv_vv, inv_va = 1.0 / var_v, 1.0 / var_a
-            lnorm = _log_norm(var_x, var_y, var_v, var_a)
-            idx = self._idx_red
-            X1, Y1, V, A1 = _obs(
-                idx, self._sin_phi1_red, self._cos_phi1_red)
-            r_r = r_ang[idx][rpad]
-            X2 = x0 + r_r * (self._sin_phi2_red * pA[idx][rpad]
-                              - self._cos_phi2_red * pB[idx][rpad])
-            Y2 = y0 + r_r * (self._sin_phi2_red * pC[idx][rpad]
-                              + self._cos_phi2_red * pD[idx][rpad])
-            A2 = -A1
-            chi2_v = (self._velocity_red[dpad] - V) ** 2 * inv_vv
-            chi2_1 = (_chi2_4obs(
-                self._x_red[dpad], X1, inv_vx, self._y_red[dpad], Y1,
-                inv_vy, self._velocity_red[dpad], V, inv_vv,
-                self._a_red[dpad], A1, inv_va) - chi2_v)
-            chi2_2 = (_chi2_4obs(
-                self._x_red[dpad], X2, inv_vx, self._y_red[dpad], Y2,
-                inv_vy, self._velocity_red[dpad], V, inv_vv,
-                self._a_red[dpad], A2, inv_va) - chi2_v)
-            results.append(ln_trapz_precomputed(
-                lnorm - 0.5 * chi2_v
-                + jnp.logaddexp(-0.5 * chi2_1, -0.5 * chi2_2),
-                self._log_w_phi_hv, axis=-1))
+        # ---- Red HV: with accel, then without ----
+        for suffix, has_a in [("_a", True), ("_noa", False)]:
+            n = getattr(self, f"_n_red{suffix}")
+            if n > 0:
+                kw = dict(
+                    sp1=self._sin_phi1_red, cp1=self._cos_phi1_red,
+                    sp2=self._sin_phi2_red, cp2=self._cos_phi2_red,
+                    log_w_phi=self._log_w_phi_hv,
+                    x_d=getattr(self, f"_x_red{suffix}"),
+                    y_d=getattr(self, f"_y_red{suffix}"),
+                    v_d=getattr(self, f"_velocity_red{suffix}"),
+                    a_d=getattr(self, f"_a_red_a", None) if has_a else None,
+                    sx2=getattr(self, f"_sigma_x2_red{suffix}"),
+                    sy2=getattr(self, f"_sigma_y2_red{suffix}"),
+                    sv2=getattr(self, f"_sigma_v2_red{suffix}") + var_v_hv,
+                    sa2=getattr(self, f"_sigma_a2_red_a", None) if has_a
+                        else None,
+                    var_v_floor=0.0,
+                    has_accel=has_a)
+                results.append(_hv_block(f"_idx_red{suffix}", **kw))
 
-        # ---- Blue HV spots ----
-        if self._n_blue > 0:
-            var_x = self._sigma_x2_blue[dpad] + sigma_x_floor2
-            var_y = self._sigma_y2_blue[dpad] + sigma_y_floor2
-            var_v = self._sigma_v2_blue[dpad] + var_v_hv
-            var_a = self._sigma_a2_blue[dpad] + sigma_a_floor2
-            inv_vx, inv_vy = 1.0 / var_x, 1.0 / var_y
-            inv_vv, inv_va = 1.0 / var_v, 1.0 / var_a
-            lnorm = _log_norm(var_x, var_y, var_v, var_a)
-            idx = self._idx_blue
-            X1, Y1, V, A1 = _obs(
-                idx, self._sin_phi1_blue, self._cos_phi1_blue)
-            r_b = r_ang[idx][rpad]
-            X2 = x0 + r_b * (self._sin_phi2_blue * pA[idx][rpad]
-                              - self._cos_phi2_blue * pB[idx][rpad])
-            Y2 = y0 + r_b * (self._sin_phi2_blue * pC[idx][rpad]
-                              + self._cos_phi2_blue * pD[idx][rpad])
-            A2 = -A1
-            chi2_v = (self._velocity_blue[dpad] - V) ** 2 * inv_vv
-            chi2_1 = (_chi2_4obs(
-                self._x_blue[dpad], X1, inv_vx, self._y_blue[dpad], Y1,
-                inv_vy, self._velocity_blue[dpad], V, inv_vv,
-                self._a_blue[dpad], A1, inv_va) - chi2_v)
-            chi2_2 = (_chi2_4obs(
-                self._x_blue[dpad], X2, inv_vx, self._y_blue[dpad], Y2,
-                inv_vy, self._velocity_blue[dpad], V, inv_vv,
-                self._a_blue[dpad], A2, inv_va) - chi2_v)
-            results.append(ln_trapz_precomputed(
-                lnorm - 0.5 * chi2_v
-                + jnp.logaddexp(-0.5 * chi2_1, -0.5 * chi2_2),
-                self._log_w_phi_hv, axis=-1))
+        # ---- Blue HV: with accel, then without ----
+        for suffix, has_a in [("_a", True), ("_noa", False)]:
+            n = getattr(self, f"_n_blue{suffix}")
+            if n > 0:
+                kw = dict(
+                    sp1=self._sin_phi1_blue, cp1=self._cos_phi1_blue,
+                    sp2=self._sin_phi2_blue, cp2=self._cos_phi2_blue,
+                    log_w_phi=self._log_w_phi_hv,
+                    x_d=getattr(self, f"_x_blue{suffix}"),
+                    y_d=getattr(self, f"_y_blue{suffix}"),
+                    v_d=getattr(self, f"_velocity_blue{suffix}"),
+                    a_d=getattr(self, f"_a_blue_a", None) if has_a
+                        else None,
+                    sx2=getattr(self, f"_sigma_x2_blue{suffix}"),
+                    sy2=getattr(self, f"_sigma_y2_blue{suffix}"),
+                    sv2=getattr(self, f"_sigma_v2_blue{suffix}") + var_v_hv,
+                    sa2=getattr(self, f"_sigma_a2_blue_a", None) if has_a
+                        else None,
+                    var_v_floor=0.0,
+                    has_accel=has_a)
+                results.append(_hv_block(f"_idx_blue{suffix}", **kw))
 
         # Concat + gather replaces .at[idx].set() scatter ops
         return jnp.concatenate(results, axis=0)[self._inv_order]
