@@ -524,8 +524,10 @@ class MaserDiskModel(ModelBase):
         fprint(f"accel split: {n_a} with, {n_noa} without.")
 
         # ---- Phi grids and precomputed trig ----
-        phi_half = _build_phi_half_grid_hv()
-        phi_sys = _build_phi_grid_sys()
+        G_half = int(get_nested(self.config, "model/G_phi_half", 251))
+        G_sys = int(get_nested(self.config, "model/G_phi_sys", 501))
+        phi_half = _build_phi_half_grid_hv(G_half=G_half)
+        phi_sys = _build_phi_grid_sys(G=G_sys)
 
         # Systemic: trig of full grid
         self._sin_phi_sys = jnp.sin(jnp.asarray(phi_sys))
@@ -567,7 +569,8 @@ class MaserDiskModel(ModelBase):
                 self.config, "model/priors/R_phys/low", 0.01))
             R_max = float(get_nested(
                 self.config, "model/priors/R_phys/high", 1.5))
-            R_grid = _build_r_grid(R_min, R_max)
+            n_r = int(get_nested(self.config, "model/n_r", 251))
+            R_grid = _build_r_grid(R_min, R_max, n_r=n_r)
             self._R_phys_grid = jnp.asarray(R_grid)
             # Trapezoidal weights with flat (uniform) R_phys prior
             self._log_w_R = jnp.asarray(
@@ -664,8 +667,12 @@ class MaserDiskModel(ModelBase):
                                      sin_i, cos_i, sin_O, cos_O)
 
         def _r_precomp(idx):
-            """Slice precomputed r-quantities for a spot subset."""
-            return (r_ang[idx][rpad], sin_i[idx][rpad],
+            """Slice precomputed r-quantities for a spot subset.
+
+            Return order matches _observables_from_precomputed args
+            after (sin_phi, cos_phi, x0, y0, v_sys).
+            """
+            return (sin_i[idx][rpad], r_ang[idx][rpad],
                     v_kep[idx][rpad], gamma[idx][rpad],
                     z_g_factor[idx][rpad], a_mag[idx][rpad],
                     pA[idx][rpad], pB[idx][rpad],
@@ -678,7 +685,7 @@ class MaserDiskModel(ModelBase):
 
         def _obs_3(idx, sp, cp):
             """X, Y, V only — no acceleration computed."""
-            (r_sub, si, vk, gm, zg, _, pa, pb, pc, pd) = _r_precomp(idx)
+            (si, r_sub, vk, gm, zg, _, pa, pb, pc, pd) = _r_precomp(idx)
             return _observables_no_accel(
                 sp, cp, x0, y0, v_sys, si, r_sub, vk, gm, zg,
                 pa, pb, pc, pd)
@@ -897,11 +904,6 @@ class MaserDiskModel(ModelBase):
                 sigma_x_floor2, sigma_y_floor2, var_v_sys, var_v_hv,
                 sigma_a_floor2)
 
-        # Jacobian: the physical prior is uniform on R_phys, but we
-        # integrate/sample in r_ang = R_phys / (D_A * PC). The Jacobian
-        # |dR_phys/dr_ang| = D_A * PC must be included per spot.
-        log_jacobian_r = self.n_spots * jnp.log(D_A * PC_PER_MAS_MPC)
-
         if self.marginalise_r:
             r_all = jnp.broadcast_to(
                 self._r_ang_grid[None, :],
@@ -909,7 +911,7 @@ class MaserDiskModel(ModelBase):
 
             ll_per_spot = self._eval_marginal_phi(
                 r_all, *args, log_w_r=self._log_w_R)
-            ll_disk = jnp.sum(ll_per_spot) + log_jacobian_r
+            ll_disk = jnp.sum(ll_per_spot)
 
         else:
             with plate("spots", self.n_spots):
@@ -917,7 +919,7 @@ class MaserDiskModel(ModelBase):
                     "r_ang", Uniform(self._r_ang_lo, self._r_ang_hi))
 
             ll_per_spot = self._eval_marginal_phi(r_spots, *args)
-            ll_disk = jnp.sum(ll_per_spot) + log_jacobian_r
+            ll_disk = jnp.sum(ll_per_spot)
 
         factor("ll_disk", ll_disk)
 

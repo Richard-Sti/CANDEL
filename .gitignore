@@ -32,3 +32,4 @@ local_config.toml
 
 *.png
 *.pdf
+CLAUDE.md
