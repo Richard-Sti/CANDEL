@@ -271,12 +271,7 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
     if init_maxiter is None:
         init_maxiter = kwargs.get("init_maxiter", 1000)
 
-    config_init = kwargs.get("init_values", None)
-    if config_init is not None:
-        init_params = {k: jnp.array(v) for k, v in config_init.items()}
-        fprint("initialising NUTS from config init_values.")
-        init_strategy = init_to_value(values=init_params)
-    elif init_maxiter > 0:
+    if init_maxiter > 0:
         init_params = find_initial_point(
             model, model_kwargs, maxiter=init_maxiter,
             seed=kwargs["seed"])
@@ -466,14 +461,7 @@ def run_H0_inference(model, model_kwargs=None, print_summary=True,
     if init_maxiter is None:
         init_maxiter = kwargs.get("init_maxiter", 1000)
 
-    # Check for explicit init_values in config (e.g. for maser models
-    # where the posterior is multimodal and prior-median init fails).
-    config_init = kwargs.get("init_values", None)
-    if config_init is not None:
-        init_params = {k: jnp.array(v) for k, v in config_init.items()}
-        fprint("initialising NUTS from config init_values.")
-        init_strategy = init_to_value(values=init_params)
-    elif init_maxiter > 0:
+    if init_maxiter > 0:
         init_params = find_initial_point(
             model, model_kwargs, maxiter=init_maxiter,
             seed=kwargs["seed"])

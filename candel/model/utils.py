@@ -112,6 +112,52 @@ def log_prior_r_empirical(r, R, p, n, Rmax_grid, Rmax_truncate=None):
     return jnp.where(valid, logpdf, -jnp.inf)
 
 
+class SineAngle(Distribution):
+    r"""Sine-weighted angle prior for disk inclination.
+
+    Isotropic random orientation gives P(i) ∝ sin(i) for the inclination
+    angle i ∈ [low, high] (in radians internally, but the distribution
+    works in DEGREES to match the maser model convention).
+
+    PDF:
+        f(i) = sin(i) / (cos(low) - cos(high)),  low <= i <= high
+    where i, low, high are in degrees.
+    """
+    arg_constraints = {"low": constraints.real, "high": constraints.real}
+    reparametrized_params = ["low", "high"]
+
+    def __init__(self, low=0.0, high=180.0, validate_args=None):
+        self.low = jnp.asarray(low)
+        self.high = jnp.asarray(high)
+        batch_shape = jnp.broadcast_shapes(
+            jnp.shape(self.low), jnp.shape(self.high))
+        super().__init__(batch_shape=batch_shape, validate_args=validate_args)
+
+    @constraints.dependent_property(is_discrete=False, event_dim=0)
+    def support(self):
+        return constraints.interval(self.low, self.high)
+
+    def sample(self, key, sample_shape=()):
+        # CDF inversion: cos(i) ~ Uniform(cos(high), cos(low))
+        shape = sample_shape + self.batch_shape
+        lo_rad = jnp.deg2rad(self.low)
+        hi_rad = jnp.deg2rad(self.high)
+        u = random.uniform(key, shape)
+        cos_i = jnp.cos(hi_rad) + u * (jnp.cos(lo_rad) - jnp.cos(hi_rad))
+        return jnp.rad2deg(jnp.arccos(cos_i))
+
+    def log_prob(self, value):
+        lo_rad = jnp.deg2rad(self.low)
+        hi_rad = jnp.deg2rad(self.high)
+        val_rad = jnp.deg2rad(value)
+        log_norm = jnp.log(jnp.abs(jnp.cos(lo_rad) - jnp.cos(hi_rad)))
+        # sin(i) in radians, but value is in degrees so need deg->rad Jacobian
+        # f(i_deg) = sin(i_rad) / norm * (pi/180)
+        lp = jnp.log(jnp.sin(val_rad)) - log_norm + jnp.log(jnp.pi / 180)
+        in_bounds = (value >= self.low) & (value <= self.high)
+        return jnp.where(in_bounds, lp, -jnp.inf)
+
+
 class JeffreysPrior(Uniform):
     """
     Wrapper around Uniform that keeps Uniform sampling but overrides
@@ -176,6 +222,7 @@ def load_priors(config_priors):
         "delta": lambda p: Delta(p["value"]),
         "jeffreys": lambda p: JeffreysPrior(p["low"], p["high"]),
         "maxwell": lambda p: Maxwell(p["scale"]),
+        "sine_angle": lambda p: SineAngle(p.get("low", 0.0), p.get("high", 180.0)),
         "vector_uniform": lambda p: {"type": "vector_uniform", "low": p["low"], "high": p["high"]},  # noqa
         "vector_uniform_fixed": lambda p: {"type": "vector_uniform_fixed", "low": p["low"], "high": p["high"],},  # noqa
         "vector_radial_uniform": lambda p: {"type": "vector_radial_uniform", "nval": len(p["rknot"]), "low": p["low"], "high": p["high"]},  # noqa

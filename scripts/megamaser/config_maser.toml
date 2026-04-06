@@ -97,7 +97,6 @@ Om = 0.315
 galaxy = "NGC5765b"
 
 use_selection = false
-fit_di_dr = true
 marginalise_r = false
 
 # -----------------------------------------------------------------------
@@ -147,19 +146,19 @@ low = -500.0
 high = 500.0
 
 [model.priors.i0]
-dist = "uniform"
-low = 65.0
-high = 75.0
+dist = "sine_angle"
+low = 60.0
+high = 110.0
 
 [model.priors.Omega0]
 dist = "uniform"
 low = 0.0
-high = 220.0
+high = 360.0
 
 [model.priors.dOmega_dr]
 dist = "uniform"
-low = -30.0
-high = 30.0
+low = -20.0
+high = 20.0
 
 [model.priors.di_dr]
 dist = "uniform"
@@ -183,21 +182,23 @@ high = 100.0
 [model.priors.sigma_v_sys]
 dist = "truncated_normal"
 mean = 2.0
-scale = 1.0
+scale = 2.0
 low = 0.0
 high = 20.0
 
 [model.priors.sigma_v_hv]
 dist = "truncated_normal"
 mean = 2.0
-scale = 1.0
+scale = 2.0
 low = 0.0
 high = 20.0
 
 [model.priors.sigma_a_floor]
-dist = "uniform"
+dist = "truncated_normal"
+mean = 0.1
+scale = 0.2
 low = 0.0
-high = 5.0
+high = 1.0
 
 [model.priors.D_lim]
 dist = "uniform"
@@ -219,124 +220,38 @@ root = "data/Megamaser"
 # Per-galaxy settings
 # -----------------------------------------------------------------------
 
+# D priors: ±30 Mpc around D_c estimate from v_sys/(H0=70), Om=0.3.
 [model.galaxies."CGCG074-064"]
 v_sys_obs = 6908.9
-fit_di_dr = true
-
 [model.galaxies."CGCG074-064".priors.D]
 dist = "uniform"
-low = 10.0
-high = 200.0
-
-[model.galaxies."CGCG074-064".priors.i0]
-dist = "uniform"
-low = 70.0
-high = 110.0
-
-[model.galaxies."CGCG074-064".priors.Omega0]
-dist = "uniform"
-low = 0.0
-high = 180.0
+low = 68.7
+high = 128.7
 
 [model.galaxies."NGC5765b"]
 v_sys_obs = 8327.6
-fit_di_dr = true
-
-# Init values near Pesce+2020 to avoid wrong mode (multimodal posterior).
-# Without these, NUTS initialises at prior median (i0=85, di_dr=0)
-# which converges to a local mode at D~200 Mpc (wrong).
-[model.galaxies."NGC5765b".init_values]
-D_c = 129.6
-log_MBH = 7.66
-x0 = -44.0
-y0 = -93.0
-i0 = 73.0
-di_dr = 12.7
-Omega0 = 149.2
-dOmega_dr = -2.7
-dv_sys = 5.0
-sigma_x_floor = 12.0
-sigma_y_floor = 3.0
-sigma_v_sys = 1.8
-sigma_v_hv = 3.6
-sigma_a_floor = 0.08
-
 [model.galaxies."NGC5765b".priors.D]
 dist = "uniform"
-low = 50.0
-high = 200.0
-
-[model.galaxies."NGC5765b".priors.i0]
-dist = "uniform"
-low = 60.0
-high = 110.0
-
-[model.galaxies."NGC5765b".priors.Omega0]
-dist = "uniform"
-low = 100.0
-high = 200.0
-
-[model.galaxies."NGC5765b".priors.dOmega_dr]
-dist = "uniform"
-low = -50.0
-high = 50.0
-
-[model.galaxies."NGC5765b".priors.di_dr]
-dist = "uniform"
-low = -30.0
-high = 30.0
+low = 89.0
+high = 149.0
 
 [model.galaxies."NGC6264"]
 v_sys_obs = 10131.3
-
 [model.galaxies."NGC6264".priors.D]
 dist = "uniform"
-low = 50.0
-high = 250.0
-
-[model.galaxies."NGC6264".priors.i0]
-dist = "uniform"
-low = 80.0
-high = 100.0
-
-[model.galaxies."NGC6264".priors.dOmega_dr]
-dist = "uniform"
-low = -50.0
-high = 50.0
+low = 114.7
+high = 174.7
 
 [model.galaxies."NGC6323"]
 v_sys_obs = 7838.5
-
 [model.galaxies."NGC6323".priors.D]
 dist = "uniform"
-low = 95.0
-high = 125.0
-
-[model.galaxies."NGC6323".priors.i0]
-dist = "uniform"
-low = 80.0
-high = 100.0
-
-[model.galaxies."NGC6323".priors.Omega0]
-dist = "uniform"
-low = 150.0
-high = 220.0
-
-[model.galaxies."NGC6323".priors.dOmega_dr]
-dist = "uniform"
-low = -50.0
-high = 50.0
+low = 82.0
+high = 142.0
 
 [model.galaxies."UGC3789"]
 v_sys_obs = 2905.4
-fit_di_dr = true
-
 [model.galaxies."UGC3789".priors.D]
 dist = "uniform"
-low = 20.0
-high = 100.0
-
-[model.galaxies."UGC3789".priors.i0]
-dist = "uniform"
-low = 80.0
-high = 100.0
+low = 11.5
+high = 71.5

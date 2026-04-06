@@ -586,8 +586,7 @@ class MaserDiskModel(ModelBase):
         self.use_selection = get_nested(
             self.config, "model/use_selection", False)
 
-        self.fit_di_dr = get_nested(
-            self.config, "model/fit_di_dr", False)
+        # di_dr is always sampled (inclination warp).
 
         # Reference angular radius for warp expansion (mas).
         self._r_ang_ref = 0.0
@@ -631,7 +630,6 @@ class MaserDiskModel(ModelBase):
             fprint(f"r_ang grid: {len(self._r_ang_grid)} log-spaced, "
                    f"R_phys in [{R_min:.3f}, {R_max:.3f}] pc")
         fprint(f"use_selection = {self.use_selection}")
-        fprint(f"fit_di_dr = {self.fit_di_dr}")
 
     def _eval_marginal_phi(self, r_ang, x0, y0, D_A, M_BH, v_sys,
                            r_ang_ref, i0, di_dr, Omega0, dOmega_dr,
@@ -876,11 +874,8 @@ class MaserDiskModel(ModelBase):
         Omega0 = jnp.deg2rad(Omega0_deg)
         dOmega_dr = jnp.deg2rad(dOmega_dr_deg)
 
-        if self.fit_di_dr:
-            di_dr_deg = rsample("di_dr", self.priors["di_dr"], shared_params)
-            di_dr = jnp.deg2rad(di_dr_deg)
-        else:
-            di_dr = jnp.array(0.0)
+        di_dr_deg = rsample("di_dr", self.priors["di_dr"], shared_params)
+        di_dr = jnp.deg2rad(di_dr_deg)
 
         # sigma floors sampled in uas, converted to mas^2
         sigma_x_floor2 = (rsample(
