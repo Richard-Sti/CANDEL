@@ -30,7 +30,7 @@ import numpy as _np
 import jax.numpy as jnp
 from jax.scipy.stats import norm as jax_norm
 from numpyro import factor, handlers, plate, sample
-from numpyro.distributions import Uniform
+from numpyro.distributions import TruncatedNormal, Uniform
 from scipy.cluster.vq import kmeans2
 from scipy.optimize import minimize_scalar
 
@@ -83,6 +83,74 @@ def estimate_omega(x, y, v, is_hv):
     if _np.corrcoef(b, vh)[0, 1] < 0:
         omega = (omega + _np.pi) % (2 * _np.pi)
     return omega
+
+
+def estimate_disk_params(data, H0=73.0):
+    """Estimate disk parameters from raw spot data.
+
+    Returns a dict of rough estimates that can seed the optimizer or
+    narrow prior bounds. All angles are in degrees.
+
+    Estimates
+    ---------
+    x0, y0 : disk centre (median of systemic spots, in mas)
+    Omega0 : position angle (from velocity–impact correlation)
+    dv_sys : systemic velocity offset (median systemic v - v_sys_obs)
+    D_A    : angular diameter distance from Hubble flow
+    D_c    : comoving distance from Hubble flow
+    log_MBH : log10(M_BH/M_sun) from Keplerian relation (per-spot median)
+    """
+    v = data["velocity"]
+    x = data["x"]
+    y = data["y"]
+    v_sys_obs = data["v_sys_obs"]
+    is_hv = data["is_highvel"]
+    is_sys = ~is_hv
+
+    # Disk centre from systemic spots
+    x0 = float(_np.median(x[is_sys]))
+    y0 = float(_np.median(y[is_sys]))
+
+    # Position angle
+    Omega0_rad = estimate_omega(x, y, v, is_hv)
+    Omega0 = float(_np.rad2deg(Omega0_rad))
+
+    # Systemic velocity offset
+    dv_sys = float(_np.median(v[is_sys]) - v_sys_obs)
+
+    # Distance from Hubble flow
+    z_est = v_sys_obs / SPEED_OF_LIGHT
+    q0 = -0.5275  # standard LCDM deceleration parameter
+    D_c = float(SPEED_OF_LIGHT * z_est / H0
+                * (1 + 0.5 * (1 - q0) * z_est))
+    D_A = D_c / (1 + z_est)
+
+    # Angular radius of HV spots relative to centre
+    r_ang_hv = _np.sqrt((x[is_hv] - x0)**2 + (y[is_hv] - y0)**2)
+
+    # M_BH from Keplerian relation per spot: M_i = dv_i^2 * r_i * D_A / C_v^2
+    # Each spot gives its own estimate at its own radius, take median.
+    # This is M_true * sin^2(i) since dv = V_kep * sin(i).
+    dv_hv = _np.abs(v[is_hv] - v_sys_obs)
+    M_per_spot = dv_hv**2 * r_ang_hv * D_A / C_v**2
+    M_BH = float(_np.median(M_per_spot))
+    log_MBH = float(_np.log10(max(M_BH, 1.0)))
+
+    estimates = {
+        "x0": x0 * 1e3,  # mas -> uas (model convention)
+        "y0": y0 * 1e3,
+        "Omega0": Omega0,
+        "dv_sys": dv_sys,
+        "D_c": D_c,
+        "D_A": D_A,
+        "log_MBH": log_MBH,
+    }
+
+    fprint("disk parameter estimates from data:")
+    for k, val in estimates.items():
+        fprint(f"  {k:12s}: {val:.2f}")
+
+    return estimates
 
 
 # -----------------------------------------------------------------------
@@ -442,6 +510,13 @@ class MaserDiskModel(ModelBase):
         super().__init__(config_path)
         fsection("Maser Disk Model")
         self._load_and_set_priors()
+
+        # Override log_MBH prior with data-driven truncated normal
+        est = estimate_disk_params(data)
+        self.priors["log_MBH"] = TruncatedNormal(
+            est["log_MBH"], 0.5, low=6.0, high=9.0)
+        fprint(f"log_MBH prior: TruncatedNormal("
+               f"{est['log_MBH']:.2f}, 0.5, [6, 9])")
 
         self.n_spots = data["n_spots"]
         self.is_highvel = jnp.asarray(data["is_highvel"])
