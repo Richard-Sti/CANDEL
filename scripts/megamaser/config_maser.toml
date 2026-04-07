@@ -132,18 +132,18 @@ high = 3.0
 [model.priors.dv_sys]
 dist = "normal"
 loc = 0.0
-scale = 500.0
+scale = 25.0
 
 
 [model.priors.x0]
-dist = "uniform"
-low = -500.0
-high = 500.0
+dist = "normal"
+loc = 0.0
+scale = 150.0
 
 [model.priors.y0]
-dist = "uniform"
-low = -500.0
-high = 500.0
+dist = "normal"
+loc = 0.0
+scale = 150.0
 
 [model.priors.i0]
 dist = "sine_angle"
@@ -182,16 +182,16 @@ high = 100.0
 [model.priors.sigma_v_sys]
 dist = "truncated_normal"
 mean = 2.0
-scale = 2.0
+scale = 5.0
 low = 0.0
-high = 20.0
+high = 100.0
 
 [model.priors.sigma_v_hv]
 dist = "truncated_normal"
 mean = 2.0
-scale = 2.0
+scale = 5.0
 low = 0.0
-high = 20.0
+high = 100.0
 
 [model.priors.sigma_a_floor]
 dist = "truncated_normal"

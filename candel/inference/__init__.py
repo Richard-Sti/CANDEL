@@ -27,3 +27,8 @@ from .inference import (                                                        
     save_mcmc_samples,                                                          # noqa
     get_log_density,                                                            # noqa
     )
+
+try:
+    from .optimise import sobol_adam, find_MAP                                   # noqa
+except ImportError:
+    pass

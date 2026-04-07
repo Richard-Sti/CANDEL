@@ -458,24 +458,32 @@ def run_H0_inference(model, model_kwargs=None, print_summary=True,
 
     kwargs = model.config["inference"]
 
-    if init_maxiter is None:
-        init_maxiter = kwargs.get("init_maxiter", 1000)
+    init_method = kwargs.get("init_method", "lbfgs")
 
-    if init_maxiter > 0:
-        init_params = find_initial_point(
-            model, model_kwargs, maxiter=init_maxiter,
-            seed=kwargs["seed"])
-        if init_params is not None:
-            fprint("initialising NUTS from L-BFGS solution.")
-            init_strategy = init_to_value(values=init_params)
+    if init_method == "sobol_adam":
+        from .optimise import find_MAP
+        init_params = find_MAP(model, model_kwargs, seed=kwargs["seed"])
+        fprint("initialising NUTS from Sobol+Adam MAP.")
+        init_strategy = init_to_value(values=init_params)
+    else:
+        if init_maxiter is None:
+            init_maxiter = kwargs.get("init_maxiter", 1000)
+
+        if init_maxiter > 0:
+            init_params = find_initial_point(
+                model, model_kwargs, maxiter=init_maxiter,
+                seed=kwargs["seed"])
+            if init_params is not None:
+                fprint("initialising NUTS from L-BFGS solution.")
+                init_strategy = init_to_value(values=init_params)
+            else:
+                init_params = None
+                fprint("L-BFGS failed, initialising NUTS from prior median.")
+                init_strategy = init_to_median(num_samples=5000)
         else:
             init_params = None
-            fprint("L-BFGS failed, initialising NUTS from prior median.")
+            fprint("initialising NUTS from prior median.")
             init_strategy = init_to_median(num_samples=5000)
-    else:
-        init_params = None
-        fprint("initialising NUTS from prior median.")
-        init_strategy = init_to_median(num_samples=5000)
 
     if init_params is not None:
         site_names = set(init_params.keys())
