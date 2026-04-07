@@ -1,9 +1,10 @@
-"""Generic maser disk inference script.
+"""Generic maser disk inference script (NUTS or NSS nested sampling).
 
 Usage:
-    python run_maser_disk.py <galaxy_name> [--no-phi-prior] [--seed N]
+    python run_maser_disk.py <galaxy_name> [--sampler nuts|nss] [options]
 
-Galaxy name and v_sys_obs are read from config_maser.toml.
+All settings (priors, sampler config) are read from config_maser.toml.
+CLI args override config values where provided.
 """
 import os, sys, tomli
 with open(os.path.join(os.path.dirname(__file__), "../../local_config.toml"), "rb") as f:
@@ -22,9 +23,6 @@ import jax.numpy as jnp
 import tomli
 import tomli_w
 import time
-from numpyro.infer import MCMC, NUTS
-from numpyro.infer.initialization import init_to_median
-from jax import random
 
 from candel.pvdata.megamaser_data import load_megamaser_spots
 from candel.model.model_H0_maser import MaserDiskModel
@@ -32,21 +30,34 @@ from candel.util import fprint, fsection
 import jax
 print(f"JAX platform: {jax.default_backend()}, devices: {jax.devices()}", flush=True)
 
-# ---- Parse args ----
-parser = argparse.ArgumentParser()
-parser.add_argument("galaxy", type=str)
-parser.add_argument("--no-phi-prior", action="store_true")
-parser.add_argument("--seed", type=int, default=42)
-parser.add_argument("--num-warmup", type=int, default=1000)
-parser.add_argument("--num-samples", type=int, default=1000)
-args = parser.parse_args()
-
-galaxy = args.galaxy
-
-# ---- Load master config to get v_sys_obs ----
+# ---- Load master config ----
 with open("scripts/megamaser/config_maser.toml", "rb") as f:
     master_cfg = tomli.load(f)
 
+inf_cfg = master_cfg["inference"]
+
+# ---- Parse args (CLI overrides config) ----
+parser = argparse.ArgumentParser()
+parser.add_argument("galaxy", type=str)
+parser.add_argument("--sampler", type=str, default=None,
+                    choices=["nuts", "nss"])
+parser.add_argument("--no-phi-prior", action="store_true")
+parser.add_argument("--seed", type=int, default=None)
+# NUTS
+parser.add_argument("--num-warmup", type=int, default=None)
+parser.add_argument("--num-samples", type=int, default=None)
+# NSS
+parser.add_argument("--n-live", type=int, default=None)
+parser.add_argument("--num-mcmc-steps", type=int, default=None)
+parser.add_argument("--num-delete", type=int, default=None)
+parser.add_argument("--termination", type=float, default=None)
+args = parser.parse_args()
+
+galaxy = args.galaxy
+sampler = args.sampler or inf_cfg.get("sampler", "nss")
+seed = args.seed or inf_cfg.get("seed", 42)
+
+# ---- Validate galaxy ----
 galaxies = master_cfg["model"]["galaxies"]
 if galaxy not in galaxies:
     print(f"Unknown galaxy '{galaxy}'. "
@@ -59,88 +70,31 @@ v_sys_obs = galaxies[galaxy]["v_sys_obs"]
 fsection(f"Loading {galaxy} data")
 data = load_megamaser_spots("data/Megamaser", galaxy, v_sys_obs=v_sys_obs)
 
-# ---- Build config ----
+# ---- Build model config from master config ----
 use_phi_prior = not args.no_phi_prior
 
-dense_mass_blocks = [
+dense_mass_blocks = inf_cfg.get("dense_mass_blocks", [
     ["D_c", "log_MBH", "dv_sys"],
-    ["i0", "di_dr"],
-    ["Omega0", "dOmega_dr"],
+    ["i0", "di_dr", "Omega0", "dOmega_dr"],
     ["x0", "y0"],
-]
-if use_phi_prior:
-    dense_mass_blocks += [
-        ["phi_mu_red", "phi_sigma_red"],
-        ["phi_mu_blue", "phi_sigma_blue"],
-        ["phi_mu_sys", "phi_sigma_sys"],
-    ]
-dense_mass_blocks.append(["sigma_a_floor_sys", "sigma_a_floor_hv"])
-
-priors = {
-    "H0": {"dist": "delta", "value": 73.0},
-    "sigma_pec": {"dist": "delta", "value": 250.0},
-    "D": {"dist": "data_estimate_uniform", "half_width": 30.0},
-    "log_MBH": {"dist": "data_estimate_truncated_normal",
-                "scale": 0.5, "low": 6.0, "high": 9.0},
-    "R_phys": {"dist": "uniform", "low": 0.01, "high": 3.0},
-    "x0": {"dist": "uniform", "low": -500.0, "high": 500.0},
-    "y0": {"dist": "uniform", "low": -500.0, "high": 500.0},
-    "i0": {"dist": "uniform", "low": 60.0, "high": 110.0},
-    "Omega0": {"dist": "uniform", "low": 0.0, "high": 360.0},
-    "dOmega_dr": {"dist": "uniform", "low": -30.0, "high": 30.0},
-    "di_dr": {"dist": "uniform", "low": -30.0, "high": 30.0},
-    "dv_sys": {"dist": "uniform", "low": -100.0, "high": 100.0},
-    "sigma_x_floor": {"dist": "truncated_normal",
-                      "mean": 10.0, "scale": 10.0,
-                      "low": 0.0, "high": 100.0},
-    "sigma_y_floor": {"dist": "truncated_normal",
-                      "mean": 10.0, "scale": 10.0,
-                      "low": 0.0, "high": 100.0},
-    "sigma_v_sys": {"dist": "truncated_normal",
-                    "mean": 2.0, "scale": 2.0,
-                    "low": 0.0, "high": 20.0},
-    "sigma_v_hv": {"dist": "truncated_normal",
-                   "mean": 2.0, "scale": 2.0,
-                   "low": 0.0, "high": 20.0},
-    "sigma_a_floor_sys": {"dist": "truncated_normal",
-                          "mean": 0.1, "scale": 0.2,
-                          "low": 0.0, "high": 1.0},
-    "sigma_a_floor_hv": {"dist": "truncated_normal",
-                         "mean": 0.1, "scale": 0.2,
-                         "low": 0.0, "high": 1.0},
-}
-
-if use_phi_prior:
-    priors.update({
-        "phi_mu_red": {"dist": "uniform", "low": 0.0, "high": 90.0},
-        "phi_sigma_red": {"dist": "uniform", "low": 1.0, "high": 90.0},
-        "phi_mu_blue": {"dist": "uniform", "low": 0.0, "high": 90.0},
-        "phi_sigma_blue": {"dist": "uniform", "low": 1.0, "high": 90.0},
-        "phi_mu_sys": {"dist": "uniform", "low": -45.0, "high": 45.0},
-        "phi_sigma_sys": {"dist": "uniform", "low": 1.0, "high": 90.0},
-    })
+])
 
 config = {
     "inference": {
-        "num_warmup": args.num_warmup,
-        "num_samples": args.num_samples,
-        "num_chains": 1,
-        "chain_method": "sequential",
-        "seed": args.seed,
+        "num_warmup": args.num_warmup or inf_cfg.get("num_warmup", 1000),
+        "num_samples": args.num_samples or inf_cfg.get("num_samples", 1000),
+        "num_chains": inf_cfg.get("num_chains", 1),
+        "chain_method": inf_cfg.get("chain_method", "sequential"),
+        "seed": seed,
         "dense_mass_blocks": dense_mass_blocks,
-        "init_maxiter": 0,
-        "max_tree_depth": 10,
+        "init_maxiter": inf_cfg.get("init_maxiter", 0),
+        "max_tree_depth": inf_cfg.get("max_tree_depth", 10),
     },
-    "model": {
-        "which_run": "maser_disk",
-        "Om": 0.315,
-        "use_selection": False,
-        "marginalise_r": True,
-        "phi_prior": use_phi_prior,
-        "priors": priors,
-    },
-    "io": {"fname_output": f"results/Maser/{galaxy}.hdf5"},
+    "model": master_cfg["model"],
+    "io": master_cfg["io"],
 }
+# Ensure phi_prior flag is set
+config["model"]["phi_prior"] = use_phi_prior
 
 tmp = tempfile.NamedTemporaryFile(mode="wb", suffix=".toml", delete=False)
 tomli_w.dump(config, tmp)
@@ -148,22 +102,67 @@ tmp.close()
 model = MaserDiskModel(tmp.name, data)
 os.unlink(tmp.name)
 
-# ---- Run MCMC ----
+# ---- Run sampler ----
 n_spots = data["n_spots"]
-mode = "phi prior" if use_phi_prior else "no phi prior"
-fsection(f"Running NUTS ({galaxy}, {n_spots} spots, {mode})")
-t0 = time.time()
-kernel = NUTS(model, max_tree_depth=10, target_accept_prob=0.8,
-              init_strategy=init_to_median(num_samples=20))
-mcmc = MCMC(kernel, num_warmup=args.num_warmup, num_samples=args.num_samples,
-            num_chains=1, progress_bar=True)
-mcmc.run(random.PRNGKey(args.seed))
-dt = time.time() - t0
-mcmc.print_summary(exclude_deterministic=True)
+phi_mode = "phi prior" if use_phi_prior else "no phi prior"
 
-samples = mcmc.get_samples()
-n_div = int(mcmc.get_extra_fields()['diverging'].sum())
-print(f"\nWall time: {dt:.0f}s, Divergences: {n_div}", flush=True)
+if sampler == "nuts":
+    from numpyro.infer import MCMC, NUTS
+    from numpyro.infer.initialization import init_to_median
+    from jax import random
+
+    num_warmup = args.num_warmup or inf_cfg.get("num_warmup", 1000)
+    num_samples = args.num_samples or inf_cfg.get("num_samples", 1000)
+
+    fsection(f"Running NUTS ({galaxy}, {n_spots} spots, {phi_mode})")
+    t0 = time.time()
+    kernel = NUTS(model, max_tree_depth=inf_cfg.get("max_tree_depth", 10),
+                  target_accept_prob=0.8,
+                  init_strategy=init_to_median(num_samples=20))
+    mcmc = MCMC(kernel, num_warmup=num_warmup, num_samples=num_samples,
+                num_chains=1, progress_bar=True)
+    mcmc.run(random.PRNGKey(seed))
+    dt = time.time() - t0
+    mcmc.print_summary(exclude_deterministic=True)
+
+    samples = mcmc.get_samples()
+    n_div = int(mcmc.get_extra_fields()['diverging'].sum())
+    print(f"\nWall time: {dt:.0f}s, Divergences: {n_div}", flush=True)
+    suffix = "mode2"
+    meta = None
+
+elif sampler == "nss":
+    from candel.inference.nested import run_nss
+
+    n_live = args.n_live or inf_cfg.get("n_live", 5000)
+    num_mcmc_steps = args.num_mcmc_steps or inf_cfg.get("num_mcmc_steps", 0)
+    num_delete = args.num_delete or inf_cfg.get("num_delete", 0)
+    termination = args.termination or inf_cfg.get("termination", -3)
+
+    # 0 = auto: p=d, num_delete=n_live//10
+    if num_mcmc_steps == 0:
+        num_mcmc_steps = None  # run_nss will use default
+    if num_delete == 0:
+        num_delete = n_live // 10
+
+    fsection(f"Running NSS ({galaxy}, {n_spots} spots, {phi_mode})")
+    fprint(f"n_live={n_live}, mcmc_steps={num_mcmc_steps}, "
+           f"num_delete={num_delete}")
+    t0 = time.time()
+    samples = run_nss(
+        model, model_kwargs={},
+        n_live=n_live, num_mcmc_steps=num_mcmc_steps,
+        num_delete=num_delete,
+        termination=termination, seed=seed,
+    )
+    dt = time.time() - t0
+
+    meta = samples.pop("__nested__")
+    print(f"\nWall time: {dt:.0f}s", flush=True)
+    print(f"log Z = {meta['log_Z']:.2f} +/- {meta['log_Z_err']:.2f}",
+          flush=True)
+    print(f"n_eff = {meta['n_eff']}", flush=True)
+    suffix = "nested"
 
 # ---- Print results ----
 fsection("Results")
@@ -188,8 +187,12 @@ M_BH = 10**np.asarray(samples['log_MBH'])
 print(f"\n  D_A = {D_A.mean():.1f} +/- {D_A.std():.1f} Mpc", flush=True)
 print(f"  M_BH = {M_BH.mean():.2e} +/- {M_BH.std():.2e} M_sun", flush=True)
 
-outpath = f"results/Maser/{galaxy}_mode2.npz"
-np.savez(outpath,
-         **{k: np.asarray(samples[k]) for k in samples if k != 'r_ang'},
-         D_A=D_A, M_BH=M_BH)
+outpath = os.path.join(
+    master_cfg["io"].get("root_output", "results/Maser"),
+    f"{galaxy}_{suffix}.npz")
+save_dict = {k: np.asarray(samples[k]) for k in samples if k != 'r_ang'}
+save_dict.update(D_A=D_A, M_BH=M_BH)
+if meta is not None:
+    save_dict.update(log_Z=meta['log_Z'], log_Z_err=meta['log_Z_err'])
+np.savez(outpath, **save_dict)
 print(f"Saved to {outpath}", flush=True)
