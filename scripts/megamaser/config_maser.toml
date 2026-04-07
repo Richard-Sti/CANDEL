@@ -12,8 +12,7 @@ chain_method = "sequential"
 seed = 42
 dense_mass_blocks = [
     ["D_c", "log_MBH", "dv_sys"],
-    ["i0", "di_dr"],
-    ["Omega0", "dOmega_dr"],
+    ["i0", "di_dr", "Omega0", "dOmega_dr"],
     ["x0", "y0"],
     ["phi_mu_red", "phi_sigma_red", "phi_mu_blue", "phi_sigma_blue", "phi_mu_sys", "phi_sigma_sys"],
 ]
