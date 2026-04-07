@@ -53,8 +53,10 @@ config = {
             "sigma_v_hv": {"dist": "truncated_normal",
                            "mean": 2.0, "scale": 2.0,
                            "low": 0.0, "high": 20.0},
-            "sigma_a_floor": {"dist": "uniform",
-                              "low": 0.0, "high": 5.0},
+            "sigma_a_floor_sys": {"dist": "uniform",
+                                  "low": 0.0, "high": 5.0},
+            "sigma_a_floor_hv": {"dist": "uniform",
+                                 "low": 0.0, "high": 5.0},
         },
     },
     "io": {"fname_output": "/dev/null"},
@@ -82,7 +84,8 @@ def bench(label, use_f64):
         'dv_sys': 5.0,
         'sigma_x_floor': 12.0, 'sigma_y_floor': 3.0,
         'sigma_v_sys': 1.8, 'sigma_v_hv': 3.6,
-        'sigma_a_floor': 0.08,
+        'sigma_a_floor_sys': 0.08,
+        'sigma_a_floor_hv': 0.08,
     }.items()}
 
     pe_fn = jax.jit(lambda p: potential_energy(

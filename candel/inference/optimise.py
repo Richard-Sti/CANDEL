@@ -229,7 +229,8 @@ def _short_name(name, max_len=8):
         "sigma_y_floor": "sy_fl",
         "sigma_v_sys": "sv_sys",
         "sigma_v_hv": "sv_hv",
-        "sigma_a_floor": "sa_fl",
+        "sigma_a_floor_sys": "sa_f_s",
+        "sigma_a_floor_hv": "sa_f_h",
         "dOmega_dr": "dOm_dr",
         "Omega0": "Om0",
     }

@@ -31,8 +31,6 @@ import jax.numpy as jnp
 from jax.scipy.stats import norm as jax_norm
 from numpyro import factor, handlers, plate, sample
 from numpyro.distributions import TruncatedNormal, Uniform
-from scipy.cluster.vq import kmeans2
-from scipy.optimize import minimize_scalar
 
 from jax.scipy.special import logsumexp
 
@@ -57,100 +55,30 @@ LOG_2PI = 1.8378770664093453  # jnp.log(2 * pi), precomputed
 # -----------------------------------------------------------------------
 
 
-def classify_spots(v, n_clusters=3):
-    """Classify spots into blue, systemic, red via k-means on velocity."""
-    centroids, labels = kmeans2(v.astype(_np.float64), n_clusters, minit="++")
-    order = _np.argsort(centroids)
-    remap = _np.empty(n_clusters, dtype=int)
-    remap[order] = _np.arange(n_clusters)
-    labels = remap[labels]  # 0=blue, 1=systemic, 2=red
-    return labels
 
+def estimate_from_data(data, H0=73.0):
+    """Estimate D_c and log10(M_BH) from spot data.
 
-def estimate_omega(x, y, v, is_hv):
-    """Estimate disk PA by maximising |corr(impact, v)| for HV spots."""
-    xh, yh, vh = x[is_hv], y[is_hv], v[is_hv]
-
-    def neg_abs_corr(omega):
-        b = xh * _np.sin(omega) + yh * _np.cos(omega)
-        return -_np.abs(_np.corrcoef(b, vh)[0, 1])
-
-    result = minimize_scalar(neg_abs_corr, bounds=(0, _np.pi),
-                             method="bounded")
-    # Pick the sign so that positive impact -> higher velocity (receding)
-    omega = result.x
-    b = xh * _np.sin(omega) + yh * _np.cos(omega)
-    if _np.corrcoef(b, vh)[0, 1] < 0:
-        omega = (omega + _np.pi) % (2 * _np.pi)
-    return omega
-
-
-def estimate_disk_params(data, H0=73.0):
-    """Estimate disk parameters from raw spot data.
-
-    Returns a dict of rough estimates that can seed the optimizer or
-    narrow prior bounds. All angles are in degrees.
-
-    Estimates
-    ---------
-    x0, y0 : disk centre (median of systemic spots, in mas)
-    Omega0 : position angle (from velocity–impact correlation)
-    dv_sys : systemic velocity offset (median systemic v - v_sys_obs)
-    D_A    : angular diameter distance from Hubble flow
-    D_c    : comoving distance from Hubble flow
-    log_MBH : log10(M_BH/M_sun) from Keplerian relation (per-spot median)
+    D_c from Hubble flow with second-order correction.
+    log_MBH from per-spot Keplerian relation (biased low by sin^2(i)).
     """
-    v = data["velocity"]
-    x = data["x"]
-    y = data["y"]
     v_sys_obs = data["v_sys_obs"]
     is_hv = data["is_highvel"]
-    is_sys = ~is_hv
 
-    # Disk centre from systemic spots
-    x0 = float(_np.median(x[is_sys]))
-    y0 = float(_np.median(y[is_sys]))
-
-    # Position angle
-    Omega0_rad = estimate_omega(x, y, v, is_hv)
-    Omega0 = float(_np.rad2deg(Omega0_rad))
-
-    # Systemic velocity offset
-    dv_sys = float(_np.median(v[is_sys]) - v_sys_obs)
-
-    # Distance from Hubble flow
     z_est = v_sys_obs / SPEED_OF_LIGHT
-    q0 = -0.5275  # standard LCDM deceleration parameter
+    q0 = -0.5275
     D_c = float(SPEED_OF_LIGHT * z_est / H0
                 * (1 + 0.5 * (1 - q0) * z_est))
     D_A = D_c / (1 + z_est)
 
-    # Angular radius of HV spots relative to centre
-    r_ang_hv = _np.sqrt((x[is_hv] - x0)**2 + (y[is_hv] - y0)**2)
-
-    # M_BH from Keplerian relation per spot: M_i = dv_i^2 * r_i * D_A / C_v^2
-    # Each spot gives its own estimate at its own radius, take median.
-    # This is M_true * sin^2(i) since dv = V_kep * sin(i).
-    dv_hv = _np.abs(v[is_hv] - v_sys_obs)
+    r_ang_hv = _np.sqrt(data["x"][is_hv]**2 + data["y"][is_hv]**2)
+    dv_hv = _np.abs(data["velocity"][is_hv] - v_sys_obs)
     M_per_spot = dv_hv**2 * r_ang_hv * D_A / C_v**2
-    M_BH = float(_np.median(M_per_spot))
-    log_MBH = float(_np.log10(max(M_BH, 1.0)))
+    log_MBH = float(_np.log10(max(float(_np.median(M_per_spot)), 1.0)))
 
-    estimates = {
-        "x0": x0 * 1e3,  # mas -> uas (model convention)
-        "y0": y0 * 1e3,
-        "Omega0": Omega0,
-        "dv_sys": dv_sys,
-        "D_c": D_c,
-        "D_A": D_A,
-        "log_MBH": log_MBH,
-    }
-
-    fprint("disk parameter estimates from data:")
-    for k, val in estimates.items():
-        fprint(f"  {k:12s}: {val:.2f}")
-
-    return estimates
+    fprint(f"data estimates: D_c = {D_c:.1f} Mpc, "
+           f"log_MBH = {log_MBH:.2f}")
+    return D_c, log_MBH
 
 
 # -----------------------------------------------------------------------
@@ -308,35 +236,6 @@ def predict_acceleration_los(r_ang, phi, D, M_BH, i):
     return A_z
 
 
-def _compute_observables(r_ang, sin_phi, cos_phi, x0, y0, D, M_BH,
-                         v_sys, sin_i, cos_i, sin_O, cos_O):
-    """Fused computation of all observables. Avoids duplicate trig/sqrt.
-
-    All outputs broadcast to the shape of (r_ang * sin_phi).
-    """
-    # Position
-    X = x0 + r_ang * (sin_phi * sin_O - cos_phi * cos_O * cos_i)
-    Y = y0 + r_ang * (sin_phi * cos_O + cos_phi * sin_O * cos_i)
-
-    # Velocity (reuse v_kep for acceleration)
-    rD = r_ang * D
-    v_kep = C_v * jnp.sqrt(M_BH / rD)
-    v_z = v_kep * sin_phi * sin_i
-    beta = v_kep / SPEED_OF_LIGHT
-    gamma = 1.0 / jnp.sqrt(1.0 - beta * beta)
-    one_plus_z_D = gamma * (1.0 + v_z / SPEED_OF_LIGHT)
-    one_plus_z_g = 1.0 / jnp.sqrt(1.0 - C_g * M_BH / rD)
-    V = SPEED_OF_LIGHT * (
-        one_plus_z_D * one_plus_z_g * (1.0 + v_sys / SPEED_OF_LIGHT)
-        - 1.0)
-
-    # Acceleration (reuse v_kep^2 / rD = GM / r^2 D^2 in code units)
-    a_mag = v_kep * v_kep / rD * (C_a / (C_v * C_v))
-    A = a_mag * cos_phi * sin_i
-
-    return X, Y, V, A
-
-
 def _precompute_r_quantities(r_ang, D, M_BH, sin_i, cos_i, sin_O, cos_O):
     """Precompute r-dependent quantities for the phi integration.
 
@@ -427,72 +326,6 @@ def _chi2_3obs(x_obs, X, inv_var_x, y_obs, Y, inv_var_y,
             + dv * dv * inv_var_v)
 
 
-def _spot_ll_syst(r_ang, sin_phi, cos_phi,
-                  x_obs, y_obs, v_obs, a_obs,
-                  inv_var_x, inv_var_y, inv_var_v, inv_var_a,
-                  log_norm,
-                  x0, y0, D, M_BH, v_sys,
-                  sin_i, cos_i, sin_O, cos_O):
-    """Per-spot log-likelihood for systemic spots.
-
-    Warp trig (sin_i, cos_i, sin_O, cos_O) is precomputed on the
-    (N, N_r) grid by the caller, avoiding redundant recomputation
-    across the phi grid.
-
-    Returns
-    -------
-    ll : (N_sys, ..., G_sys) per-spot per-phi log-likelihood
-    """
-    X, Y, V, A = _compute_observables(
-        r_ang, sin_phi, cos_phi, x0, y0, D, M_BH, v_sys,
-        sin_i, cos_i, sin_O, cos_O)
-
-    chi2 = _chi2_4obs(x_obs, X, inv_var_x, y_obs, Y, inv_var_y,
-                      v_obs, V, inv_var_v, a_obs, A, inv_var_a)
-    return log_norm - 0.5 * chi2
-
-
-def _spot_ll_hv(r_ang,
-                sin_phi1, cos_phi1, sin_phi2, cos_phi2,
-                x_obs, y_obs, v_obs, a_obs,
-                inv_var_x, inv_var_y, inv_var_v, inv_var_a,
-                log_norm,
-                x0, y0, D, M_BH, v_sys,
-                sin_i, cos_i, sin_O, cos_O):
-    """Log-likelihood for a pair of reflected phi modes.
-
-    Velocity is computed once (sin(phi1) == sin(phi2) by construction).
-    Warp trig is precomputed by the caller.
-
-    Returns
-    -------
-    ll : (N_hv, ..., G_hv) per-spot per-phi log-likelihood
-    """
-    # Velocity: same for both modes (sin_phi1 == sin_phi2)
-    X1, Y1, V, A1 = _compute_observables(
-        r_ang, sin_phi1, cos_phi1, x0, y0, D, M_BH, v_sys,
-        sin_i, cos_i, sin_O, cos_O)
-
-    # Mode 2: only position and acceleration differ
-    X2 = x0 + r_ang * (sin_phi2 * sin_O - cos_phi2 * cos_O * cos_i)
-    Y2 = y0 + r_ang * (sin_phi2 * cos_O + cos_phi2 * sin_O * cos_i)
-    A2 = -A1
-
-    chi2_v = (v_obs - V) ** 2 * inv_var_v
-
-    chi2_1 = (_chi2_4obs(x_obs, X1, inv_var_x, y_obs, Y1, inv_var_y,
-                         v_obs, V, inv_var_v, a_obs, A1, inv_var_a)
-              - chi2_v)  # pos + accel only
-    chi2_2 = (_chi2_4obs(x_obs, X2, inv_var_x, y_obs, Y2, inv_var_y,
-                         v_obs, V, inv_var_v, a_obs, A2, inv_var_a)
-              - chi2_v)  # pos + accel only
-
-    # logaddexp avoids materialising a stacked (2, ...) array
-    ll = (log_norm - 0.5 * chi2_v
-          + jnp.logaddexp(-0.5 * chi2_1, -0.5 * chi2_2))
-    return ll
-
-
 # -----------------------------------------------------------------------
 # Model classes
 # -----------------------------------------------------------------------
@@ -511,12 +344,16 @@ class MaserDiskModel(ModelBase):
         fsection("Maser Disk Model")
         self._load_and_set_priors()
 
-        # Override log_MBH prior with data-driven truncated normal
-        est = estimate_disk_params(data)
+        # Override D and log_MBH priors with data-driven values
+        D_c_est, log_MBH_est = estimate_from_data(data)
+        D_hw = 30.0
+        self.priors["D"] = Uniform(max(D_c_est - D_hw, 1.0), D_c_est + D_hw)
         self.priors["log_MBH"] = TruncatedNormal(
-            est["log_MBH"], 0.5, low=6.0, high=9.0)
+            log_MBH_est, 0.5, low=6.0, high=9.0)
+        D_lo = max(D_c_est - D_hw, 1.0)
+        fprint(f"D prior: U({D_lo:.1f}, {D_c_est + D_hw:.1f})")
         fprint(f"log_MBH prior: TruncatedNormal("
-               f"{est['log_MBH']:.2f}, 0.5, [6, 9])")
+               f"{log_MBH_est:.2f}, 0.5, [6, 9])")
 
         self.n_spots = data["n_spots"]
         self.is_highvel = jnp.asarray(data["is_highvel"])
@@ -549,18 +386,6 @@ class MaserDiskModel(ModelBase):
         self._n_sys = int((~is_hv_np).sum())
         self._n_red = int(is_red_np.sum())
         self._n_blue = int(is_blue_np.sum())
-
-        # Pre-masked data arrays per subset (avoids indexing during inference)
-        # Store sigma^2 directly since only variances are needed downstream.
-        for label, idx in [("sys", self._idx_sys),
-                           ("red", self._idx_red),
-                           ("blue", self._idx_blue)]:
-            for key in ("x", "y", "velocity", "a"):
-                setattr(self, f"_{key}_{label}",
-                        getattr(self, key)[idx])
-            for key in ("sigma_x", "sigma_y", "sigma_v", "sigma_a"):
-                setattr(self, f"_{key}2_{label}",
-                        getattr(self, key)[idx]**2)
 
         # Split each type into with-accel and without-accel sub-groups.
         # Spots without acceleration get a 3-obs chi² (no A computed).
@@ -604,6 +429,10 @@ class MaserDiskModel(ModelBase):
         phi_half = _build_phi_half_grid_hv(G_half=G_half)
         phi_sys = _build_phi_grid_sys(G=G_sys)
 
+        # Store phi grids for phi prior computation
+        self._phi_half = jnp.asarray(phi_half)
+        self._phi_sys = jnp.asarray(phi_sys)
+
         # Systemic: trig of full grid
         self._sin_phi_sys = jnp.sin(jnp.asarray(phi_sys))
         self._cos_phi_sys = jnp.cos(jnp.asarray(phi_sys))
@@ -628,6 +457,9 @@ class MaserDiskModel(ModelBase):
         self._log_w_phi_hv = jnp.asarray(trapz_log_weights(phi_half))
         self._log_w_phi_sys = jnp.asarray(trapz_log_weights(phi_sys))
 
+        # ---- Phi prior (optional) ----
+        self.phi_prior = get_nested(self.config, "model/phi_prior", False)
+
         # Inverse permutation for concat+gather (replaces .at[idx].set).
         # Order: sys_a, sys_noa, red_a, red_noa, blue_a, blue_noa
         order = jnp.concatenate([
@@ -646,10 +478,7 @@ class MaserDiskModel(ModelBase):
                 self.config, "model/priors/R_phys/high", 1.5))
             n_r = int(get_nested(self.config, "model/n_r", 251))
             R_grid = _build_r_grid(R_min, R_max, n_r=n_r)
-            self._R_phys_grid = jnp.asarray(R_grid)
-            # Trapezoidal weights with flat (uniform) R_phys prior
-            self._log_w_R = jnp.asarray(
-                trapz_log_weights(jnp.asarray(R_grid)))
+            R_phys_grid = jnp.asarray(R_grid)
             # r_ang grid set after D_A_est is computed below
 
         # ---- Selection function grid ----
@@ -688,7 +517,7 @@ class MaserDiskModel(ModelBase):
         # just needs to cover the plausible angular radius range.
         if self.marginalise_r:
             self._r_ang_grid = jnp.asarray(
-                self._R_phys_grid / (D_A_est * PC_PER_MAS_MPC))
+                R_phys_grid / (D_A_est * PC_PER_MAS_MPC))
             self._log_w_R = jnp.asarray(
                 trapz_log_weights(self._r_ang_grid))
             fprint(f"r_ang grid: [{float(self._r_ang_grid[0]):.4f}, "
@@ -705,12 +534,17 @@ class MaserDiskModel(ModelBase):
             fprint(f"r_ang grid: {len(self._r_ang_grid)} log-spaced, "
                    f"R_phys in [{R_min:.3f}, {R_max:.3f}] pc")
         fprint(f"use_selection = {self.use_selection}")
+        fprint(f"phi_prior = {self.phi_prior}")
 
     def _eval_marginal_phi(self, r_ang, x0, y0, D_A, M_BH, v_sys,
                            r_ang_ref, i0, di_dr, Omega0, dOmega_dr,
                            sigma_x_floor2, sigma_y_floor2,
-                           var_v_sys, var_v_hv, sigma_a_floor2,
-                           log_w_r=None):
+                           var_v_sys, var_v_hv,
+                           sigma_a_floor2_sys, sigma_a_floor2_hv,
+                           log_w_r=None,
+                           phi_mu_red=None, phi_sigma_red=None,
+                           phi_mu_blue=None, phi_sigma_blue=None,
+                           phi_mu_sys=None, phi_sigma_sys=None):
         """Evaluate per-spot log-likelihood marginalised over phi [and r].
 
         Mode 1 (sample r_ang): r_ang is (N,), log_w_r is None.
@@ -768,30 +602,54 @@ class MaserDiskModel(ModelBase):
                            + jnp.log(sy2 + sigma_y_floor2)
                            + jnp.log(sv2))
 
-        def _lnorm_4(sx2, sy2, sv2, sa2):
+        def _lnorm_4(sx2, sy2, sv2, sa2, sa_floor2):
             return (_lnorm_3(sx2, sy2, sv2)
-                    - 0.5 * (LOG_2PI + jnp.log(sa2 + sigma_a_floor2)))
+                    - 0.5 * (LOG_2PI + jnp.log(sa2 + sa_floor2)))
+
+        # Phi prior weights (truncated Gaussian on phi grids).
+        # For HV: prior on phi_half ∈ [0, π/2]; symmetric under reflection
+        # so both modes get the same weight → reflection trick preserved.
+        # For sys: prior on phi ∈ [-π/2, π/2].
+        def _phi_prior_weights(phi_grid, base_w, mu, sigma):
+            """Add truncated Gaussian log-prior to trapezoidal weights."""
+            if sigma is None:
+                return base_w
+            lp = -0.5 * ((phi_grid - mu) / sigma)**2
+            log_Z = jnp.log(
+                jax_norm.cdf((phi_grid[-1] - mu) / sigma)
+                - jax_norm.cdf((phi_grid[0] - mu) / sigma))
+            return base_w + lp - jnp.log(sigma) - log_Z
+
+        log_w_phi_red = _phi_prior_weights(
+            self._phi_half, self._log_w_phi_hv, phi_mu_red, phi_sigma_red)
+        log_w_phi_blue = _phi_prior_weights(
+            self._phi_half, self._log_w_phi_hv, phi_mu_blue, phi_sigma_blue)
+        log_w_phi_sys = _phi_prior_weights(
+            self._phi_sys, self._log_w_phi_sys, phi_mu_sys, phi_sigma_sys)
 
         # Combined phi[+r] weights for fused 2D logsumexp in Mode 2.
         if log_w_r is not None:
-            log_w_2d_sys = log_w_r[:, None] + self._log_w_phi_sys[None, :]
-            log_w_2d_hv = log_w_r[:, None] + self._log_w_phi_hv[None, :]
+            log_w_2d_sys = log_w_r[:, None] + log_w_phi_sys[None, :]
+            log_w_2d_red = log_w_r[:, None] + log_w_phi_red[None, :]
+            log_w_2d_blue = log_w_r[:, None] + log_w_phi_blue[None, :]
 
-        # ---- Systemic spots WITH accel ----
+        # ---- Systemic spots ----
         def _sys_block(idx_attr, x_d, y_d, v_d, a_d,
-                       sx2, sy2, sv2, sa2, var_v_floor, has_accel):
+                       sx2, sy2, sv2, sa2, has_accel,
+                       sa_floor2):
             vx = sx2[dpad] + sigma_x_floor2
             vy = sy2[dpad] + sigma_y_floor2
-            vv = sv2[dpad] + var_v_floor
+            vv = sv2[dpad]
             idx = getattr(self, idx_attr)
             if has_accel:
-                va = sa2[dpad] + sigma_a_floor2
+                va = sa2[dpad] + sa_floor2
                 X, Y, V, A = _obs_4(idx, self._sin_phi_sys,
                                      self._cos_phi_sys)
                 chi2 = _chi2_4obs(
                     x_d[dpad], X, 1.0 / vx, y_d[dpad], Y, 1.0 / vy,
                     v_d[dpad], V, 1.0 / vv, a_d[dpad], A, 1.0 / va)
-                lnorm = _lnorm_4(sx2[dpad], sy2[dpad], vv, sa2[dpad])
+                lnorm = _lnorm_4(sx2[dpad], sy2[dpad], vv, sa2[dpad],
+                                 sa_floor2)
             else:
                 X, Y, V = _obs_3(idx, self._sin_phi_sys,
                                   self._cos_phi_sys)
@@ -802,14 +660,16 @@ class MaserDiskModel(ModelBase):
             ll = lnorm - 0.5 * chi2
             if log_w_r is not None:
                 return logsumexp(ll + log_w_2d_sys, axis=(-2, -1))
-            return ln_trapz_precomputed(ll, self._log_w_phi_sys, axis=-1)
+            return ln_trapz_precomputed(ll, log_w_phi_sys, axis=-1)
 
         def _hv_block(idx_attr, sp1, cp1, sp2, cp2, log_w_phi,
+                      log_w_2d,
                       x_d, y_d, v_d, a_d,
-                      sx2, sy2, sv2, sa2, var_v_floor, has_accel):
+                      sx2, sy2, sv2, sa2, has_accel,
+                      sa_floor2):
             vx = sx2[dpad] + sigma_x_floor2
             vy = sy2[dpad] + sigma_y_floor2
-            vv = sv2[dpad] + var_v_floor
+            vv = sv2[dpad]
             inv_vx, inv_vy, inv_vv = 1.0 / vx, 1.0 / vy, 1.0 / vv
             idx = getattr(self, idx_attr)
             r_sub = r_ang[idx][rpad]
@@ -817,7 +677,7 @@ class MaserDiskModel(ModelBase):
             pc_s, pd_s = pC[idx][rpad], pD[idx][rpad]
 
             if has_accel:
-                va = sa2[dpad] + sigma_a_floor2
+                va = sa2[dpad] + sa_floor2
                 inv_va = 1.0 / va
                 X1, Y1, V, A1 = _obs_4(idx, sp1, cp1)
                 X2 = x0 + r_sub * (sp2 * pa_s - cp2 * pb_s)
@@ -832,7 +692,8 @@ class MaserDiskModel(ModelBase):
                     x_d[dpad], X2, inv_vx, y_d[dpad], Y2, inv_vy,
                     v_d[dpad], V, inv_vv,
                     a_d[dpad], A2, inv_va) - chi2_v)
-                lnorm = _lnorm_4(sx2[dpad], sy2[dpad], vv, sa2[dpad])
+                lnorm = _lnorm_4(sx2[dpad], sy2[dpad], vv, sa2[dpad],
+                                 sa_floor2)
             else:
                 X1, Y1, V = _obs_3(idx, sp1, cp1)
                 X2 = x0 + r_sub * (sp2 * pa_s - cp2 * pb_s)
@@ -849,7 +710,7 @@ class MaserDiskModel(ModelBase):
             ll = (lnorm - 0.5 * chi2_v
                   + jnp.logaddexp(-0.5 * chi2_1, -0.5 * chi2_2))
             if log_w_r is not None:
-                return logsumexp(ll + log_w_2d_hv, axis=(-2, -1))
+                return logsumexp(ll + log_w_2d, axis=(-2, -1))
             return ln_trapz_precomputed(ll, log_w_phi, axis=-1)
 
         results = []
@@ -868,8 +729,9 @@ class MaserDiskModel(ModelBase):
                     sv2=getattr(self, f"_sigma_v2_sys{suffix}") + var_v_sys,
                     sa2=getattr(self, f"_sigma_a2_sys_a", None) if has_a
                         else None,
-                    var_v_floor=0.0,  # already added above
-                    has_accel=has_a)
+
+                    has_accel=has_a,
+                    sa_floor2=sigma_a_floor2_sys)
                 results.append(_sys_block(f"_idx_sys{suffix}", **kw))
 
         # ---- Red HV: with accel, then without ----
@@ -879,7 +741,8 @@ class MaserDiskModel(ModelBase):
                 kw = dict(
                     sp1=self._sin_phi1_red, cp1=self._cos_phi1_red,
                     sp2=self._sin_phi2_red, cp2=self._cos_phi2_red,
-                    log_w_phi=self._log_w_phi_hv,
+                    log_w_phi=log_w_phi_red,
+                    log_w_2d=log_w_2d_red if log_w_r is not None else None,
                     x_d=getattr(self, f"_x_red{suffix}"),
                     y_d=getattr(self, f"_y_red{suffix}"),
                     v_d=getattr(self, f"_velocity_red{suffix}"),
@@ -889,8 +752,9 @@ class MaserDiskModel(ModelBase):
                     sv2=getattr(self, f"_sigma_v2_red{suffix}") + var_v_hv,
                     sa2=getattr(self, f"_sigma_a2_red_a", None) if has_a
                         else None,
-                    var_v_floor=0.0,
-                    has_accel=has_a)
+
+                    has_accel=has_a,
+                    sa_floor2=sigma_a_floor2_hv)
                 results.append(_hv_block(f"_idx_red{suffix}", **kw))
 
         # ---- Blue HV: with accel, then without ----
@@ -900,7 +764,8 @@ class MaserDiskModel(ModelBase):
                 kw = dict(
                     sp1=self._sin_phi1_blue, cp1=self._cos_phi1_blue,
                     sp2=self._sin_phi2_blue, cp2=self._cos_phi2_blue,
-                    log_w_phi=self._log_w_phi_hv,
+                    log_w_phi=log_w_phi_blue,
+                    log_w_2d=log_w_2d_blue if log_w_r is not None else None,
                     x_d=getattr(self, f"_x_blue{suffix}"),
                     y_d=getattr(self, f"_y_blue{suffix}"),
                     v_d=getattr(self, f"_velocity_blue{suffix}"),
@@ -911,8 +776,9 @@ class MaserDiskModel(ModelBase):
                     sv2=getattr(self, f"_sigma_v2_blue{suffix}") + var_v_hv,
                     sa2=getattr(self, f"_sigma_a2_blue_a", None) if has_a
                         else None,
-                    var_v_floor=0.0,
-                    has_accel=has_a)
+
+                    has_accel=has_a,
+                    sa_floor2=sigma_a_floor2_hv)
                 results.append(_hv_block(f"_idx_blue{suffix}", **kw))
 
         # Concat + gather replaces .at[idx].set() scatter ops
@@ -963,16 +829,43 @@ class MaserDiskModel(ModelBase):
             "sigma_v_sys", self.priors["sigma_v_sys"], shared_params)**2
         var_v_hv = rsample(
             "sigma_v_hv", self.priors["sigma_v_hv"], shared_params)**2
-        sigma_a_floor2 = rsample(
-            "sigma_a_floor", self.priors["sigma_a_floor"], shared_params)**2
+        sigma_a_floor2_sys = rsample(
+            "sigma_a_floor_sys", self.priors["sigma_a_floor_sys"],
+            shared_params)**2
+        sigma_a_floor2_hv = rsample(
+            "sigma_a_floor_hv", self.priors["sigma_a_floor_hv"],
+            shared_params)**2
 
         dv_sys = rsample("dv_sys", self.priors["dv_sys"], shared_params)
         v_sys = self.v_sys_obs + dv_sys
 
+        # Phi prior parameters (optional)
+        phi_kw = {}
+        if self.phi_prior:
+            phi_mu_red = rsample(
+                "phi_mu_red", self.priors["phi_mu_red"], shared_params)
+            phi_sigma_red = rsample(
+                "phi_sigma_red", self.priors["phi_sigma_red"], shared_params)
+            phi_mu_blue = rsample(
+                "phi_mu_blue", self.priors["phi_mu_blue"], shared_params)
+            phi_sigma_blue = rsample(
+                "phi_sigma_blue", self.priors["phi_sigma_blue"], shared_params)
+            phi_mu_sys = rsample(
+                "phi_mu_sys", self.priors["phi_mu_sys"], shared_params)
+            phi_sigma_sys = rsample(
+                "phi_sigma_sys", self.priors["phi_sigma_sys"], shared_params)
+            phi_kw = dict(
+                phi_mu_red=jnp.deg2rad(phi_mu_red),
+                phi_sigma_red=jnp.deg2rad(phi_sigma_red),
+                phi_mu_blue=jnp.deg2rad(phi_mu_blue),
+                phi_sigma_blue=jnp.deg2rad(phi_sigma_blue),
+                phi_mu_sys=jnp.deg2rad(phi_mu_sys),
+                phi_sigma_sys=jnp.deg2rad(phi_sigma_sys))
+
         args = (x0, y0, D_A, M_BH, v_sys,
                 self._r_ang_ref, i0, di_dr, Omega0, dOmega_dr,
                 sigma_x_floor2, sigma_y_floor2, var_v_sys, var_v_hv,
-                sigma_a_floor2)
+                sigma_a_floor2_sys, sigma_a_floor2_hv)
 
         if self.marginalise_r:
             r_all = jnp.broadcast_to(
@@ -980,7 +873,7 @@ class MaserDiskModel(ModelBase):
                 (self.n_spots, len(self._r_ang_grid)))
 
             ll_per_spot = self._eval_marginal_phi(
-                r_all, *args, log_w_r=self._log_w_R)
+                r_all, *args, log_w_r=self._log_w_R, **phi_kw)
             ll_disk = jnp.sum(ll_per_spot)
 
         else:
@@ -988,7 +881,7 @@ class MaserDiskModel(ModelBase):
                 r_spots = sample(
                     "r_ang", Uniform(self._r_ang_lo, self._r_ang_hi))
 
-            ll_per_spot = self._eval_marginal_phi(r_spots, *args)
+            ll_per_spot = self._eval_marginal_phi(r_spots, *args, **phi_kw)
             ll_disk = jnp.sum(ll_per_spot)
 
         factor("ll_disk", ll_disk)

@@ -56,8 +56,10 @@ config = {
             "sigma_v_hv": {"dist": "truncated_normal",
                            "mean": 2.0, "scale": 2.0,
                            "low": 0.0, "high": 20.0},
-            "sigma_a_floor": {"dist": "uniform",
-                              "low": 0.0, "high": 5.0},
+            "sigma_a_floor_sys": {"dist": "uniform",
+                                  "low": 0.0, "high": 5.0},
+            "sigma_a_floor_hv": {"dist": "uniform",
+                                 "low": 0.0, "high": 5.0},
         },
     },
     "io": {"fname_output": "/dev/null"},
@@ -84,7 +86,8 @@ params = {
     'sigma_y_floor': jnp.array(3.0),
     'sigma_v_sys': jnp.array(1.8),
     'sigma_v_hv': jnp.array(3.6),
-    'sigma_a_floor': jnp.array(0.08),
+    'sigma_a_floor_sys': jnp.array(0.08),
+    'sigma_a_floor_hv': jnp.array(0.08),
 }
 
 # ---- Compile and time forward ----

@@ -40,7 +40,8 @@ DEFAULT_TRUE_PARAMS = {
     "sigma_y_floor": 0.017,       # mas
     "sigma_v_sys": 4.8,           # km/s
     "sigma_v_hv": 4.3,            # km/s
-    "sigma_a_floor": 0.43,        # km/s/yr
+    "sigma_a_floor_sys": 0.43,    # km/s/yr (systemic spots)
+    "sigma_a_floor_hv": 0.43,     # km/s/yr (high-velocity spots)
     "sigma_x": 0.05,             # mas (per-spot measurement)
     "sigma_y": 0.05,             # mas (per-spot measurement)
     "sigma_v": 1.0,              # km/s (per-spot velocity measurement)
@@ -177,7 +178,9 @@ def gen_maser_disk_mock(seed, true_params=None, n_spots=50, Om0=0.315,
     sigma_v_total = np.sqrt(sigma_v_obs**2 + sigma_v_intrinsic**2)
     v_obs = V_true + rng.normal(0, sigma_v_total)
 
-    sigma_a_total = np.sqrt(tp["sigma_a"]**2 + tp["sigma_a_floor"]**2)
+    sigma_a_floor = np.where(is_hv, tp["sigma_a_floor_hv"],
+                              tp["sigma_a_floor_sys"])
+    sigma_a_total = np.sqrt(tp["sigma_a"]**2 + sigma_a_floor**2)
     a_obs = A_true + rng.normal(0, sigma_a_total, n_spots)
 
     is_systemic = spot_types == "s"
