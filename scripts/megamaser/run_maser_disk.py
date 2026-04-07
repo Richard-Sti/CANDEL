@@ -5,11 +5,13 @@ Usage:
 
 Galaxy name and v_sys_obs are read from config_maser.toml.
 """
-import os, sys
-cuda_paths = "/usr/local/cuda-12.3/lib64:/usr/local/cuda-12.3/extras/CUPTI/lib64"
+import os, sys, tomli
+with open(os.path.join(os.path.dirname(__file__), "../../local_config.toml"), "rb") as f:
+    _lcfg = tomli.load(f)
 ld = os.environ.get("LD_LIBRARY_PATH", "")
-if "/usr/local/cuda" not in ld:
-    os.environ["LD_LIBRARY_PATH"] = f"{cuda_paths}:{ld}" if ld else cuda_paths
+needed = [p for p in _lcfg.get("gpu_ld_library_path", []) if p not in ld]
+if needed:
+    os.environ["LD_LIBRARY_PATH"] = ":".join(needed) + (f":{ld}" if ld else "")
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
 sys.path.insert(0, "/mnt/users/rstiskalek/CANDEL")
@@ -28,7 +30,7 @@ from candel.pvdata.megamaser_data import load_megamaser_spots
 from candel.model.model_H0_maser import MaserDiskModel
 from candel.util import fprint, fsection
 import jax
-print(f"JAX platform: {jax.default_backend()}", flush=True)
+print(f"JAX platform: {jax.default_backend()}, devices: {jax.devices()}", flush=True)
 
 # ---- Parse args ----
 parser = argparse.ArgumentParser()

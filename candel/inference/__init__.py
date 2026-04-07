@@ -32,3 +32,5 @@ try:
     from .optimise import sobol_adam, find_MAP                                   # noqa
 except ImportError:
     pass
+
+from .nested import run_nss, decompose_model                                    # noqa

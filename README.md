@@ -95,6 +95,13 @@ python -m pip install -e .
 
 For GPU support (e.g. on Glamdring), see [INSTALL_GLAMDRING_GPU.md](INSTALL_GLAMDRING_GPU.md).
 
+For nested sampling (NSS), install the [handley-lab blackjax fork](https://github.com/handley-lab/blackjax/tree/nested_sampling) and [nss](https://github.com/yallup/nss):
+```bash
+pip install "blackjax @ git+https://github.com/handley-lab/blackjax@nested_sampling" --no-deps
+pip install git+https://github.com/yallup/nss.git
+```
+These are optional — CANDEL's core functionality (NUTS, optimisation) works without them.
+
 For model-evidence computation, also install [harmonic](https://github.com/astro-informatics/harmonic) (note: there may be compatibility issues with recent JAX versions).
 
 ## Citation

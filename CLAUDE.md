@@ -152,6 +152,22 @@ it to -401.5 by shifting D_A from 122→117.
   geometry (~7 nats over 2 dex). The NUTS joint posterior constrains
   M_BH through D_c-logM correlation. This is expected, not a bug.
 
+### NSS evidence bias fix (2026-04-07)
+**Root cause:** NumPyro's `Uniform.log_prob` returns `log(1/(b-a))` even
+outside `[a, b]` when `validate_args=False` (the default). The blackjax NSS
+slice sampler only checks `loglikelihood > threshold` for acceptance, NOT
+`logprior > -inf`. This allows the sampler to explore outside the prior
+support, corrupting the prior volume compression. The bias scales as ~O(d)
+nats and is negative (evidence underestimated):
+- d=2: 0.04, d=5: -0.26, d=10: -0.79, d=15: -1.4, d=20: -3.5 nats.
+The bias is independent of n_live, num_mcmc_steps, and num_delete.
+
+**Fix:** Added explicit support checks (`_in_support`) in `decompose_model()`
+(`candel/inference/nested.py`). Both `log_prior_fn` and `log_likelihood_fn`
+now return `-inf` when parameters fall outside the prior bounds. After fix:
+- d=2: +0.01, d=5: +0.02, d=10: +0.02, d=15: -0.004, d=20: +0.20 nats.
+All within ~2sigma of truth.
+
 ### Next steps
 1. Run batch mock closure tests (25 mocks) for both modes.
 2. Run other galaxies (NGC6264, NGC6323, UGC3789).
