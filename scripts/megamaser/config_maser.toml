@@ -1,75 +1,3 @@
-# Job started at: 2026-04-04 23:21:07
-# Job started at: 2026-04-04 23:20:32
-# Job started at: 2026-04-04 23:19:37
-# Job started at: 2026-04-04 23:18:16
-# Job started at: 2026-04-04 22:08:10
-# Job started at: 2026-04-04 21:36:55
-# Job started at: 2026-04-03 23:34:57
-# Job started at: 2026-04-03 23:22:54
-# Job started at: 2026-04-03 23:11:30
-# Job started at: 2026-04-03 20:34:56
-# Job started at: 2026-04-03 20:32:43
-# Job started at: 2026-04-03 20:29:28
-# Job started at: 2026-04-03 20:25:33
-# Job started at: 2026-04-03 20:07:44
-# Job started at: 2026-04-03 20:05:26
-# Job started at: 2026-04-03 19:46:30
-# Job started at: 2026-04-03 19:43:12
-# Job started at: 2026-04-03 19:38:38
-# Job started at: 2026-04-03 19:35:29
-# Job started at: 2026-04-03 16:49:12
-# Job started at: 2026-04-03 16:47:01
-# Job started at: 2026-03-27 23:10:31
-# Job started at: 2026-03-27 23:08:19
-# Job started at: 2026-03-27 23:04:24
-# Job started at: 2026-03-27 22:59:54
-# Job started at: 2026-03-27 22:59:03
-# Job started at: 2026-03-27 22:59:00
-# Job started at: 2026-03-27 22:56:52
-# Job started at: 2026-03-27 22:55:56
-# Job started at: 2026-03-27 22:54:35
-# Job started at: 2026-03-27 22:53:58
-# Job started at: 2026-03-27 22:52:25
-# Job started at: 2026-03-27 22:51:47
-# Job started at: 2026-03-27 22:49:45
-# Job started at: 2026-03-27 22:44:21
-# Job started at: 2026-03-27 22:41:00
-# Job started at: 2026-03-27 22:40:40
-# Job started at: 2026-03-27 22:39:14
-# Job started at: 2026-03-27 22:32:01
-# Job started at: 2026-03-27 22:21:16
-# Job started at: 2026-03-27 22:16:06
-# Job started at: 2026-03-27 22:13:57
-# Job started at: 2026-03-27 21:44:15
-# Job started at: 2026-03-27 21:43:29
-# Job started at: 2026-03-27 21:32:36
-# Job started at: 2026-03-27 21:16:31
-# Job started at: 2026-03-27 21:13:57
-# Job started at: 2026-03-27 21:11:37
-# Job started at: 2026-03-27 21:10:09
-# Job started at: 2026-03-27 21:08:13
-# Job started at: 2026-03-27 21:06:03
-# Job started at: 2026-03-27 21:02:21
-# Job started at: 2026-03-27 21:01:56
-# Job started at: 2026-03-27 20:56:10
-# Job started at: 2026-03-27 18:47:04
-# Job started at: 2026-03-27 18:45:20
-# Job started at: 2026-03-27 18:42:53
-# Job started at: 2026-03-27 18:40:57
-# Job started at: 2026-03-27 18:40:19
-# Job started at: 2026-03-27 18:34:51
-# Job started at: 2026-03-27 18:34:20
-# Job started at: 2026-03-27 18:33:14
-# Job started at: 2026-03-27 18:32:24
-# Job started at: 2026-03-27 18:31:44
-# Job started at: 2026-03-27 18:31:01
-# Job started at: 2026-03-27 18:18:24
-# Job started at: 2026-03-27 18:15:08
-# Job started at: 2026-03-27 18:14:54
-# Job started at: 2026-03-27 18:11:04
-# Job started at: 2026-03-27 18:07:22
-# Job started at: 2026-03-27 16:49:59
-# Job started at: 2026-03-27 16:46:33
 # Megamaser disk H0 model configuration.
 #
 # Set galaxy = "CGCG074-064" (or any galaxy name) for a single-galaxy run.
@@ -115,12 +43,12 @@ dist = "delta"
 value = 250
 
 [model.priors.D]
-dist = "uniform"
-low = 5.0
-high = 250.0
+dist = "data_estimate_uniform"
+half_width = 30.0
 
 [model.priors.log_MBH]
-dist = "uniform"
+dist = "data_estimate_truncated_normal"
+scale = 0.5
 low = 6.0
 high = 9.0
 
@@ -133,7 +61,6 @@ high = 3.0
 dist = "normal"
 loc = 0.0
 scale = 25.0
-
 
 [model.priors.x0]
 dist = "normal"
@@ -227,38 +154,17 @@ root = "data/Megamaser"
 # Per-galaxy settings
 # -----------------------------------------------------------------------
 
-# D priors: ±30 Mpc around D_c estimate from v_sys/(H0=70), Om=0.3.
 [model.galaxies."CGCG074-064"]
 v_sys_obs = 6908.9
-[model.galaxies."CGCG074-064".priors.D]
-dist = "uniform"
-low = 68.7
-high = 128.7
 
 [model.galaxies."NGC5765b"]
 v_sys_obs = 8327.6
-[model.galaxies."NGC5765b".priors.D]
-dist = "uniform"
-low = 89.0
-high = 149.0
 
 [model.galaxies."NGC6264"]
 v_sys_obs = 10131.3
-[model.galaxies."NGC6264".priors.D]
-dist = "uniform"
-low = 114.7
-high = 174.7
 
 [model.galaxies."NGC6323"]
 v_sys_obs = 7838.5
-[model.galaxies."NGC6323".priors.D]
-dist = "uniform"
-low = 82.0
-high = 142.0
 
 [model.galaxies."UGC3789"]
 v_sys_obs = 2905.4
-[model.galaxies."UGC3789".priors.D]
-dist = "uniform"
-low = 11.5
-high = 71.5

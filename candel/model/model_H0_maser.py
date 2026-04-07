@@ -344,16 +344,9 @@ class MaserDiskModel(ModelBase):
         fsection("Maser Disk Model")
         self._load_and_set_priors()
 
-        # Override D and log_MBH priors with data-driven values
+        # Resolve data-estimate priors using spot data
         D_c_est, log_MBH_est = estimate_from_data(data)
-        D_hw = 30.0
-        self.priors["D"] = Uniform(max(D_c_est - D_hw, 1.0), D_c_est + D_hw)
-        self.priors["log_MBH"] = TruncatedNormal(
-            log_MBH_est, 0.5, low=6.0, high=9.0)
-        D_lo = max(D_c_est - D_hw, 1.0)
-        fprint(f"D prior: U({D_lo:.1f}, {D_c_est + D_hw:.1f})")
-        fprint(f"log_MBH prior: TruncatedNormal("
-               f"{log_MBH_est:.2f}, 0.5, [6, 9])")
+        self._resolve_data_estimate_priors(D_c_est, log_MBH_est)
 
         self.n_spots = data["n_spots"]
         self.is_highvel = jnp.asarray(data["is_highvel"])
@@ -535,6 +528,24 @@ class MaserDiskModel(ModelBase):
                    f"R_phys in [{R_min:.3f}, {R_max:.3f}] pc")
         fprint(f"use_selection = {self.use_selection}")
         fprint(f"phi_prior = {self.phi_prior}")
+
+    def _resolve_data_estimate_priors(self, D_c_est, log_MBH_est):
+        """Replace data-estimate prior sentinels with concrete dists."""
+        p = self.priors.get("D")
+        if isinstance(p, dict) and p.get("type") == "data_estimate_uniform":
+            hw = p["half_width"]
+            lo = max(D_c_est - hw, 1.0)
+            hi = D_c_est + hw
+            self.priors["D"] = Uniform(lo, hi)
+            fprint(f"D prior: U({lo:.1f}, {hi:.1f})")
+
+        p = self.priors.get("log_MBH")
+        if isinstance(p, dict) and p.get("type") == "data_estimate_truncated_normal":  # noqa
+            self.priors["log_MBH"] = TruncatedNormal(
+                log_MBH_est, p["scale"], low=p["low"], high=p["high"])
+            fprint(f"log_MBH prior: TruncatedNormal("
+                   f"{log_MBH_est:.2f}, {p['scale']}, "
+                   f"[{p['low']}, {p['high']}])")
 
     def _eval_marginal_phi(self, r_ang, x0, y0, D_A, M_BH, v_sys,
                            r_ang_ref, i0, di_dr, Omega0, dOmega_dr,

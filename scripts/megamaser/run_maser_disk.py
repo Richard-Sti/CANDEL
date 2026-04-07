@@ -77,8 +77,9 @@ dense_mass_blocks.append(["sigma_a_floor_sys", "sigma_a_floor_hv"])
 priors = {
     "H0": {"dist": "delta", "value": 73.0},
     "sigma_pec": {"dist": "delta", "value": 250.0},
-    "D": {"dist": "uniform", "low": 50.0, "high": 200.0},
-    "log_MBH": {"dist": "uniform", "low": 6.5, "high": 9.0},
+    "D": {"dist": "data_estimate_uniform", "half_width": 30.0},
+    "log_MBH": {"dist": "data_estimate_truncated_normal",
+                "scale": 0.5, "low": 6.0, "high": 9.0},
     "R_phys": {"dist": "uniform", "low": 0.01, "high": 3.0},
     "x0": {"dist": "uniform", "low": -500.0, "high": 500.0},
     "y0": {"dist": "uniform", "low": -500.0, "high": 500.0},
