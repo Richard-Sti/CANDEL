@@ -30,7 +30,7 @@ import jax.numpy as jnp
 import numpy as _np
 from jax.scipy.special import logsumexp
 from jax.scipy.stats import norm as jax_norm
-from numpyro import factor, handlers, plate, sample
+from numpyro import deterministic, factor, handlers, plate, sample
 from numpyro.distributions import TruncatedNormal, Uniform
 
 from ..util import SPEED_OF_LIGHT, fprint, fsection, get_nested
@@ -831,7 +831,10 @@ class MaserDiskModel(ModelBase):
             jnp.atleast_1d(D_c), h=h).squeeze()
         D_A = D_c / (1 + z_cosmo)
 
-        log_MBH = rsample("log_MBH", self.priors["log_MBH"], shared_params)
+        log_M_over_D = rsample("log_M_over_D", self.priors["log_M_over_D"],
+                               shared_params)
+        log_MBH = deterministic("log_MBH",
+                               log_M_over_D + jnp.log10(D_A))
         M_BH = 10.0**log_MBH
         # x0, y0 sampled in uas, converted to mas for physics
         x0 = rsample("x0", self.priors["x0"], shared_params) * 1e-3
