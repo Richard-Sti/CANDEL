@@ -834,7 +834,7 @@ class MaserDiskModel(ModelBase):
         log_M_over_D = rsample("log_M_over_D", self.priors["log_M_over_D"],
                                shared_params)
         log_MBH = deterministic("log_MBH",
-                               log_M_over_D + jnp.log10(D_A))
+                                log_M_over_D + jnp.log10(D_A))
         M_BH = 10.0**log_MBH
         # x0, y0 sampled in uas, converted to mas for physics
         x0 = rsample("x0", self.priors["x0"], shared_params) * 1e-3
