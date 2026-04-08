@@ -24,7 +24,7 @@ init_method = "sobol_adam"
 max_tree_depth = 10
 
 # NSS settings (Yallup+2025, arXiv:2601.23252)
-n_live = 3000
+n_live = 5000
 num_mcmc_steps = 0  # 0 = use ndim (p=d recommendation)
 num_delete = 250
 termination = -3
