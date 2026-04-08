@@ -118,6 +118,7 @@ config = {
         "seed": seed,
         "dense_mass_blocks": dense_mass_blocks,
         "init_maxiter": inf_cfg.get("init_maxiter", 0),
+        "init_method": inf_cfg.get("init_method", "lbfgs"),
         "max_tree_depth": inf_cfg.get("max_tree_depth", 10),
     },
     "model": master_cfg["model"],
