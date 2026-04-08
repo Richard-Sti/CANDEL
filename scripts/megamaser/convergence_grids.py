@@ -4,6 +4,10 @@ Calls _eval_marginal_phi directly with fixed representative parameters —
 no numpyro, no parameter transforms. Sweeps grid sizes and reports the
 per-spot log-likelihood and its deviation from the reference (finest) grid.
 
+Compares two HV phi grids:
+  OLD: arcsin-spaced (uniform in sin(phi)) — dense near phi=0
+  NEW: arccos-spaced (uniform in cos(phi)) — dense near phi=pi/2
+
 Usage:
     python scripts/megamaser/convergence_grids.py
 """
@@ -16,10 +20,22 @@ import numpy as np
 
 jax.config.update("jax_enable_x64", True)
 
+import numpy as _np_old
+
 from candel.model.model_H0_maser import (
     MaserDiskModel, _build_phi_half_grid_hv, _build_phi_grid_sys,
     _build_r_grid, warp_geometry,
 )
+
+# Old arcsin HV grid for comparison
+def _build_phi_half_grid_hv_old(G_half=251, s_min=0.0001, s_max=0.999, n_patch=8):
+    """Original arcsin-spaced HV half-grid (dense near phi=0)."""
+    s = _np_old.linspace(s_min, s_max, G_half)
+    phi = _np_old.arcsin(s)
+    phi_cut = phi[-(n_patch + 1)]
+    phi[-n_patch:] = _np_old.linspace(phi_cut, _np_old.pi / 2, n_patch + 2)[1:-1]
+    phi = _np_old.append(phi, _np_old.pi / 2)
+    return phi
 from candel.model.integration import trapz_log_weights
 from candel.pvdata.megamaser_data import load_megamaser_spots
 from candel.util import fprint, fsection, patch_tqdm
@@ -50,9 +66,15 @@ fprint(f"Loaded {n_spots} spots")
 # ── Helper: build r_ang grid for Mode 2 ──────────────────────────────────────
 R_MIN, R_MAX = 0.01, 3.0   # pc
 
-def build_model_shell(G_phi_half, G_phi_sys, n_r):
+def build_model_shell(G_phi_half, G_phi_sys, n_r, use_old_hv_grid=False):
     """Return a minimal MaserDiskModel with the requested grid sizes."""
+    import candel.model.model_H0_maser as _maser_mod
     import tempfile, tomli_w
+
+    # Temporarily swap the HV grid builder if testing the old spacing
+    if use_old_hv_grid:
+        _orig = _maser_mod._build_phi_half_grid_hv
+        _maser_mod._build_phi_half_grid_hv = _build_phi_half_grid_hv_old
     config = {
         "inference": {"num_warmup": 1, "num_samples": 1, "num_chains": 1,
                       "chain_method": "sequential", "seed": 42,
@@ -94,6 +116,10 @@ def build_model_shell(G_phi_half, G_phi_sys, n_r):
     tomli_w.dump(config, tmp); tmp.close()
     m = MaserDiskModel(tmp.name, data)
     os.unlink(tmp.name)
+
+    if use_old_hv_grid:
+        _maser_mod._build_phi_half_grid_hv = _orig
+
     return m
 
 
@@ -143,24 +169,28 @@ grids = [
     (31,  61,   31),
 ]
 
-fsection("Grid convergence (Mode 2, r+phi marginalisation)")
-hdr = f"  {'Grid (half/sys/r)':<24}" + "".join(
-    f"  {'logL_'+n:>12}  {'ΔlogL_'+n:>10}" for n in SPOT_INDICES)
-print(hdr)
-print("  " + "-" * (len(hdr) - 2))
+def run_sweep(label, use_old_hv_grid):
+    fsection(f"Grid convergence — {label} HV grid")
+    hdr = f"  {'Grid (half/sys/r)':<24}" + "".join(
+        f"  {'logL_'+n:>12}  {'ΔlogL_'+n:>10}" for n in SPOT_INDICES)
+    print(hdr)
+    print("  " + "-" * (len(hdr) - 2))
 
-ll_ref = None
-for G_half, G_sys, n_r in grids:
-    m   = build_model_shell(G_half, G_sys, n_r)
-    ll  = eval_integrals(m)
-    label = f"{G_half}/{G_sys}/{n_r}"
-    row = f"  {label:<24}"
-    for spot_name, spot_idx in SPOT_INDICES.items():
-        v = ll[spot_idx]
+    ll_ref = None
+    for G_half, G_sys, n_r in grids:
+        m   = build_model_shell(G_half, G_sys, n_r, use_old_hv_grid=use_old_hv_grid)
+        ll  = eval_integrals(m)
+        lbl = f"{G_half}/{G_sys}/{n_r}"
+        row = f"  {lbl:<24}"
+        for spot_name, spot_idx in SPOT_INDICES.items():
+            v = ll[spot_idx]
+            if ll_ref is None:
+                row += f"  {v:12.4f}  {'(ref)':>10}"
+            else:
+                row += f"  {v:12.4f}  {v - ll_ref[spot_idx]:+10.4f}"
+        print(row)
         if ll_ref is None:
-            row += f"  {v:12.4f}  {'(ref)':>10}"
-        else:
-            row += f"  {v:12.4f}  {v - ll_ref[spot_idx]:+10.4f}"
-    print(row)
-    if ll_ref is None:
-        ll_ref = ll
+            ll_ref = ll
+
+run_sweep("OLD arcsin", use_old_hv_grid=True)
+run_sweep("NEW arccos", use_old_hv_grid=False)

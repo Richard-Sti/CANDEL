@@ -83,13 +83,20 @@ def estimate_from_data(data, H0=73.0):
 # -----------------------------------------------------------------------
 
 
-def _build_phi_half_grid_hv(G_half=251, s_min=0.0001, s_max=0.999,
+def _build_phi_half_grid_hv(G_half=251, c_min=0.0001, c_max=0.9999,
                             n_patch=8):
-    """Arcsin-spaced half-grid on [0, pi/2] for HV spots."""
-    s = _np.linspace(s_min, s_max, G_half)
-    phi = _np.arcsin(s)
-    phi_cut = phi[-(n_patch + 1)]
-    phi[-n_patch:] = _np.linspace(phi_cut, _np.pi / 2, n_patch + 2)[1:-1]
+    """Arccos-spaced half-grid on [0, pi/2] for HV spots.
+
+    Uniform in cos(phi) gives density proportional to sin(phi) — dense
+    near phi=pi/2 where high-velocity masers sit (maximum LOS velocity),
+    sparse near phi=0.  The sparse low-phi tail is patched with a short
+    linear segment to avoid a coarse gap there.
+    """
+    c = _np.linspace(c_max, c_min, G_half)   # cos(phi): 1 -> 0
+    phi = _np.arccos(c)                        # phi: 0 -> pi/2
+    # Near phi=0 arccos is sparse; replace first n_patch with linear spacing
+    phi_cut = phi[n_patch]
+    phi[:n_patch] = _np.linspace(phi[0], phi_cut, n_patch + 2)[1:-1]
     phi = _np.append(phi, _np.pi / 2)
     return phi
 
