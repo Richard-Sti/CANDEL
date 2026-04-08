@@ -123,6 +123,7 @@ config = {
     },
     "model": master_cfg["model"],
     "io": master_cfg["io"],
+    "optimise": master_cfg.get("optimise", {}),
 }
 # Ensure phi_prior flag is set
 config["model"]["phi_prior"] = use_phi_prior
