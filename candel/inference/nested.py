@@ -219,14 +219,21 @@ def sample_prior(dists, names, sizes, n, seed=0):
     return samples
 
 
+def _free_gpu_bytes():
+    """Return free GPU memory in bytes, or None if unavailable."""
+    try:
+        device = jax.devices("gpu")[0]
+        stats = device.memory_stats()
+        return stats["bytes_limit"] - stats["bytes_in_use"]
+    except Exception:
+        return None
+
+
 def _estimate_batch_sizes(model, n_live):
     """Estimate num_delete and init_batch_size from model grid sizes.
 
-    Uses a cost heuristic based on the number of maser spots, phi/r grid
-    sizes, and floating-point precision. No GPU profiling needed.
-
-    Reference point (calibrated on A6000, 48 GB):
-      192 spots, G_phi=501, n_r=251, float64 -> batch=100.
+    Queries free GPU memory via JAX; falls back to a fixed 12 GB reference
+    if memory stats are unavailable.
     """
     n_spots = getattr(model, 'n_spots', None)
     if n_spots is None:
@@ -244,11 +251,19 @@ def _estimate_batch_sizes(model, n_live):
     n_r = len(r_grid) if (marginalise_r and r_grid is not None) else 1
     bytes_per = 8 if jax.config.x64_enabled else 4
 
-    cost = n_spots * G_phi * n_r * bytes_per
+    # Bytes per live point for the phi/r integration arrays
+    cost_per_point = n_spots * G_phi * n_r * bytes_per
 
-    ref_cost = 192 * 501 * 251 * 8
-    ref_batch = 100
-    max_batch = max(1, int(ref_batch * ref_cost / cost))
+    free = _free_gpu_bytes()
+    if free is not None:
+        # Use 50% of free memory (leaves room for model params, gradients, XLA)
+        max_batch = max(1, int(0.5 * free / cost_per_point))
+        fprint(f"GPU free memory: {free / 2**30:.1f} GB → max_batch={max_batch}")
+    else:
+        # Fallback: assume 12 GB free
+        fallback_bytes = 12 * 2**30
+        max_batch = max(1, int(0.5 * fallback_bytes / cost_per_point))
+        fprint(f"GPU memory unavailable, assuming 12 GB free → max_batch={max_batch}")
 
     num_delete = max(1, min(max_batch, n_live // 10))
     init_batch_size = min(max_batch, max(num_delete, 100))
