@@ -34,7 +34,8 @@ Om = 0.315
 galaxy = "NGC5765b"
 
 use_selection = false
-marginalise_r = false
+marginalise_r = true
+phi_prior = false
 
 # -----------------------------------------------------------------------
 # Shared priors (apply to all galaxies unless overridden)
@@ -53,7 +54,7 @@ value = 250
 
 [model.priors.D]
 dist = "data_estimate_uniform"
-half_width = 30.0
+half_width = 50.0
 
 [model.priors.log_MBH]
 dist = "data_estimate_truncated_normal"
@@ -142,6 +143,42 @@ mean = 0.1
 scale = 0.2
 low = 0.0
 high = 1.0
+
+[model.priors.phi_mu_red]
+dist = "uniform"
+low = 0.0
+high = 90.0
+
+[model.priors.phi_sigma_red]
+dist = "truncated_normal"
+mean = 5.0
+scale = 10.0
+low = 0.1
+high = 90.0
+
+[model.priors.phi_mu_blue]
+dist = "uniform"
+low = 0.0
+high = 90.0
+
+[model.priors.phi_sigma_blue]
+dist = "truncated_normal"
+mean = 5.0
+scale = 10.0
+low = 0.1
+high = 90.0
+
+[model.priors.phi_mu_sys]
+dist = "uniform"
+low = -90.0
+high = 90.0
+
+[model.priors.phi_sigma_sys]
+dist = "truncated_normal"
+mean = 5.0
+scale = 10.0
+low = 0.1
+high = 90.0
 
 [model.priors.D_lim]
 dist = "uniform"

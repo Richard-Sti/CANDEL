@@ -1,3 +1,17 @@
+# Copyright (C) 2026 Richard Stiskalek
+# This program is free software; you can redistribute it and/or modify it
+# under the terms of the GNU General Public License as published by the
+# Free Software Foundation; either version 3 of the License, or (at your
+# option) any later version.
+#
+# This program is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General
+# Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along
+# with this program; if not, write to the Free Software Foundation, Inc.,
+# 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 """Generic maser disk inference script (NUTS or NSS nested sampling).
 
 Usage:
@@ -15,7 +29,6 @@ if needed:
     os.environ["LD_LIBRARY_PATH"] = ":".join(needed) + (f":{ld}" if ld else "")
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
-sys.path.insert(0, "/mnt/users/rstiskalek/CANDEL")
 import argparse
 import tempfile
 import numpy as np
@@ -26,7 +39,9 @@ import time
 
 from candel.pvdata.megamaser_data import load_megamaser_spots
 from candel.model.model_H0_maser import MaserDiskModel
-from candel.util import fprint, fsection
+from candel.util import fprint, fsection, plot_corner
+from candel.inference.inference import print_clean_summary
+from candel.inference.nested import print_nested_summary
 import jax
 print(f"JAX platform: {jax.default_backend()}, devices: {jax.devices()}", flush=True)
 
@@ -41,7 +56,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("galaxy", type=str)
 parser.add_argument("--sampler", type=str, default=None,
                     choices=["nuts", "nss"])
-parser.add_argument("--no-phi-prior", action="store_true")
+parser.add_argument("--phi-prior", action="store_true")
 parser.add_argument("--seed", type=int, default=None)
 # NUTS
 parser.add_argument("--num-warmup", type=int, default=None)
@@ -71,7 +86,7 @@ fsection(f"Loading {galaxy} data")
 data = load_megamaser_spots("data/Megamaser", galaxy, v_sys_obs=v_sys_obs)
 
 # ---- Build model config from master config ----
-use_phi_prior = not args.no_phi_prior
+use_phi_prior = args.phi_prior or master_cfg["model"].get("phi_prior", False)
 
 dense_mass_blocks = inf_cfg.get("dense_mass_blocks", [
     ["D_c", "log_MBH", "dv_sys"],
@@ -123,7 +138,6 @@ if sampler == "nuts":
                 num_chains=1, progress_bar=True)
     mcmc.run(random.PRNGKey(seed))
     dt = time.time() - t0
-    mcmc.print_summary(exclude_deterministic=True)
 
     samples = mcmc.get_samples()
     n_div = int(mcmc.get_extra_fields()['diverging'].sum())
@@ -139,11 +153,11 @@ elif sampler == "nss":
     num_delete = args.num_delete or inf_cfg.get("num_delete", 0)
     termination = args.termination or inf_cfg.get("termination", -3)
 
-    # 0 = auto: p=d, num_delete=n_live//10
+    # 0 = auto
     if num_mcmc_steps == 0:
-        num_mcmc_steps = None  # run_nss will use default
+        num_mcmc_steps = None  # run_nss will use ndim
     if num_delete == 0:
-        num_delete = n_live // 10
+        num_delete = "auto"  # profile GPU memory and pick optimal
 
     fsection(f"Running NSS ({galaxy}, {n_spots} spots, {phi_mode})")
     fprint(f"n_live={n_live}, mcmc_steps={num_mcmc_steps}, "
@@ -187,9 +201,19 @@ M_BH = 10**np.asarray(samples['log_MBH'])
 print(f"\n  D_A = {D_A.mean():.1f} +/- {D_A.std():.1f} Mpc", flush=True)
 print(f"  M_BH = {M_BH.mean():.2e} +/- {M_BH.std():.2e} M_sun", flush=True)
 
-outpath = os.path.join(
-    master_cfg["io"].get("root_output", "results/Maser"),
-    f"{galaxy}_{suffix}.npz")
+# Summary table
+fsection("Summary")
+if sampler == "nuts":
+    print_clean_summary(samples)
+else:
+    print_nested_summary(samples, meta=meta)
+
+# Corner plot
+outdir = master_cfg["io"].get("root_output", "results/Maser")
+fname_corner = os.path.join(outdir, f"{galaxy}_{suffix}_corner.png")
+plot_corner(samples, show_fig=False, filename=fname_corner)
+
+outpath = os.path.join(outdir, f"{galaxy}_{suffix}.npz")
 save_dict = {k: np.asarray(samples[k]) for k in samples if k != 'r_ang'}
 save_dict.update(D_A=D_A, M_BH=M_BH)
 if meta is not None:

@@ -1,4 +1,4 @@
-# Copyright (C) 2025 Richard Stiskalek
+# Copyright (C) 2026 Richard Stiskalek
 # This program is free software; you can redistribute it and/or modify it
 # under the terms of the GNU General Public License as published by the
 # Free Software Foundation; either version 3 of the License, or (at your
@@ -12,11 +12,15 @@
 # You should have received a copy of the GNU General Public License along
 # with this program; if not, write to the Free Software Foundation, Inc.,
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
-"""Nested sampling interface for NumPyro models via NSS.
+"""
+Nested sampling interface for NumPyro models via NSS.
 
 Decomposes a NumPyro model into separate log-prior and log-likelihood
 callables, then runs the NSS nested slice sampler.
 """
+from functools import partial
+from timeit import default_timer as timer
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -25,15 +29,12 @@ from numpyro.distributions import Delta, Unit
 from numpyro.infer.initialization import init_to_median
 from numpyro.infer.util import log_density
 
+from ..util import fprint
 from .optimise import _prior_bounds
 
 
 def _get_param_info(model, model_args, model_kwargs, seed=42):
-    """Extract free parameter names, sizes, bounds, and distributions.
-
-    Returns (names, sizes, lo, hi, dists) where dists is a dict mapping
-    parameter names to their numpyro distribution objects.
-    """
+    """Extract free parameter names, sizes, bounds, and distributions."""
     substituted = handlers.substitute(
         handlers.seed(model, rng_seed=seed),
         substitute_fn=init_to_median(num_samples=15),
@@ -112,7 +113,6 @@ def decompose_model(model, model_args=(), model_kwargs=None, seed=42):
     hi_jax = jnp.array(hi)
 
     def _in_support(x):
-        """Check all parameters are within their prior support bounds."""
         return jnp.all((x >= lo_jax) & (x <= hi_jax))
 
     def log_prior_fn(x):
@@ -133,7 +133,6 @@ def decompose_model(model, model_args=(), model_kwargs=None, seed=42):
         tr = _get_trace(params)
         ll = 0.0
         for k, v in tr.items():
-            # factor() sites: observed Unit, log-factor stored in log_prob
             if (v["type"] == "sample"
                     and v.get("is_observed", False)
                     and isinstance(v["fn"], Unit)):
@@ -141,15 +140,19 @@ def decompose_model(model, model_args=(), model_kwargs=None, seed=42):
         # Enforce prior support: NSS slice sampler checks loglikelihood but
         # not log_prior for acceptance. Without this, the sampler explores
         # outside the prior support, biasing the evidence by ~O(d) nats.
-        return jnp.where(_in_support(x), ll, -jnp.inf)
+        ll = jnp.where(_in_support(x), ll, -jnp.inf)
+        # Clamp +inf from numerical overflow (e.g. phi prior weight
+        # log_Z underflow). Must preserve -inf for out-of-support.
+        max_ll = jnp.finfo(ll.dtype).max / 2
+        return jnp.where(ll == jnp.inf, max_ll, ll)
 
-    # Build joint for cross-validation
     def log_joint_fn(x):
         params = _unflatten(x, names, sizes)
         ld, _ = log_density(model, model_args, model_kwargs, params)
         return ld
 
-    return log_prior_fn, log_likelihood_fn, log_joint_fn, names, sizes, lo, hi, dists
+    return (log_prior_fn, log_likelihood_fn, log_joint_fn,
+            names, sizes, lo, hi, dists)
 
 
 def validate_decomposition(log_prior_fn, log_likelihood_fn, log_joint_fn,
@@ -170,7 +173,8 @@ def validate_decomposition(log_prior_fn, log_likelihood_fn, log_joint_fn,
             raise ValueError(
                 f"Decomposition failed at point {i}: "
                 f"prior={lp:.4f} + ll={ll:.4f} = {lp+ll:.4f} != "
-                f"joint={lj:.4f} (diff={diff:.6f}, tol={atol + rtol * scale:.6f})")
+                f"joint={lj:.4f} (diff={diff:.6f}, "
+                f"tol={atol + rtol * scale:.6f})")
 
     # Verify that log_prior and log_likelihood return -inf outside the prior
     # support. Without this, the slice sampler explores outside the prior,
@@ -195,7 +199,8 @@ def validate_decomposition(log_prior_fn, log_likelihood_fn, log_joint_fn,
                     f"{side} bound at dim {dim}. "
                     f"This causes O(d) evidence bias.")
 
-    print(f"Decomposition validated at {n_test} points (atol={atol}, rtol={rtol})")
+    fprint(f"Decomposition validated at {n_test} points "
+           f"(atol={atol}, rtol={rtol})")
 
 
 def sample_prior(dists, names, sizes, n, seed=0):
@@ -212,6 +217,43 @@ def sample_prior(dists, names, sizes, n, seed=0):
         samples = samples.at[:, offset:offset + size].set(s)
         offset += size
     return samples
+
+
+def _estimate_batch_sizes(model, n_live):
+    """Estimate num_delete and init_batch_size from model grid sizes.
+
+    Uses a cost heuristic based on the number of maser spots, phi/r grid
+    sizes, and floating-point precision. No GPU profiling needed.
+
+    Reference point (calibrated on A6000, 48 GB):
+      192 spots, G_phi=501, n_r=251, float64 -> batch=100.
+    """
+    n_spots = getattr(model, 'n_spots', None)
+    if n_spots is None:
+        nd = max(1, n_live // 10)
+        return nd, min(nd, 500)
+
+    phi_half = getattr(model, '_phi_half', None)
+    phi_sys = getattr(model, '_phi_sys', None)
+    G_phi = max(
+        len(phi_half) if phi_half is not None else 251,
+        len(phi_sys) if phi_sys is not None else 501,
+    )
+    marginalise_r = getattr(model, 'marginalise_r', False)
+    r_grid = getattr(model, '_r_ang_grid', None)
+    n_r = len(r_grid) if (marginalise_r and r_grid is not None) else 1
+    bytes_per = 8 if jax.config.x64_enabled else 4
+
+    cost = n_spots * G_phi * n_r * bytes_per
+
+    ref_cost = 192 * 501 * 251 * 8
+    ref_batch = 100
+    max_batch = max(1, int(ref_batch * ref_cost / cost))
+
+    num_delete = max(1, min(max_batch, n_live // 10))
+    init_batch_size = min(max_batch, max(num_delete, 100))
+
+    return num_delete, init_batch_size
 
 
 def run_nss(model, model_args=(), model_kwargs=None,
@@ -232,8 +274,9 @@ def run_nss(model, model_args=(), model_kwargs=None,
         Number of live points.
     num_mcmc_steps : int
         Number of slice sampling steps per dead point (p=d recommended).
-    num_delete : int
+    num_delete : int or "auto"
         Number of dead points per iteration (10% of n_live recommended).
+        If "auto", estimated from model grid sizes and precision.
     termination : float
         log(Z_live / Z_dead) threshold for termination.
     seed : int
@@ -250,8 +293,13 @@ def run_nss(model, model_args=(), model_kwargs=None,
         Contains ``__nested__`` key with metadata (log_Z, n_eff, etc.).
     """
     try:
-        from nss.ns import run_nested_sampling
-        from blackjax.ns.utils import log_weights
+        import blackjax  # noqa: F401
+        import tqdm
+        from blackjax.ns.adaptive import AdaptiveNSState, init_integrator
+        from blackjax.ns.base import init_state_strategy
+        from blackjax.ns.utils import finalise, log_weights
+        from blackjax.smc.tuning.from_particles import \
+            particles_covariance_matrix
     except ImportError as e:
         raise ImportError(
             "Nested sampling requires 'nss' and the handley-lab blackjax "
@@ -264,6 +312,7 @@ def run_nss(model, model_args=(), model_kwargs=None,
     if model_kwargs is None:
         model_kwargs = {}
 
+    # ---- Decompose model ----
     (log_prior_fn, log_likelihood_fn, log_joint_fn,
      names, sizes, lo, hi, dists) = decompose_model(
         model, model_args, model_kwargs, seed)
@@ -272,40 +321,149 @@ def run_nss(model, model_args=(), model_kwargs=None,
         validate_decomposition(
             log_prior_fn, log_likelihood_fn, log_joint_fn, lo, hi)
 
-    # Draw initial live points from prior
+    ndim = sum(sizes)
+    if num_mcmc_steps is None:
+        num_mcmc_steps = ndim
+
+    # ---- Auto-size batches ----
+    if num_delete == "auto":
+        num_delete, init_batch_size = _estimate_batch_sizes(model, n_live)
+        fprint(f"auto batch sizing: num_delete={num_delete}, "
+               f"init_batch_size={init_batch_size}")
+    else:
+        _, init_batch_size = _estimate_batch_sizes(model, n_live)
+
+    fprint(f"NSS: ndim={ndim}, num_mcmc_steps={num_mcmc_steps}, "
+           f"n_live={n_live}, num_delete={num_delete}")
+
+    # ---- Draw initial live points from prior ----
     initial_samples = sample_prior(dists, names, sizes, n_live, seed)
 
-    key = jax.random.PRNGKey(seed + 1)
-    final_state, res = run_nested_sampling(
-        key, log_likelihood_fn, log_prior_fn,
-        num_mcmc_steps=num_mcmc_steps,
-        initial_samples=initial_samples,
-        num_delete=num_delete,
-        termination=termination,
+    # ---- Batched initialisation (avoids GPU OOM) ----
+    fprint("initialising live points (batched)...")
+    init_state_fn = partial(
+        init_state_strategy,
+        logprior_fn=log_prior_fn,
+        loglikelihood_fn=log_likelihood_fn,
     )
-    print(res)
+    batched_fn = jax.jit(jax.vmap(init_state_fn))
 
-    # Extract weighted samples
-    key2 = jax.random.PRNGKey(seed + 2)
-    logw = log_weights(key2, final_state)
+    n_batches = (n_live + init_batch_size - 1) // init_batch_size
+    all_results = []
+    for i in range(0, n_live, init_batch_size):
+        batch = initial_samples[i:i + init_batch_size]
+        result = jax.block_until_ready(batched_fn(batch))
+        result = jax.tree.map(lambda x: np.asarray(x), result)
+        all_results.append(result)
+        fprint(f"init batch {i // init_batch_size + 1}/{n_batches} "
+               f"({min(i + init_batch_size, n_live)}/{n_live})")
+
+    particles = jax.tree.map(
+        lambda *arrs: jnp.concatenate(arrs, axis=0), *all_results)
+    integrator = init_integrator(particles)
+    cov = jnp.atleast_2d(particles_covariance_matrix(particles.position))
+
+    state = AdaptiveNSState(
+        particles=particles,
+        inner_kernel_params={"cov": cov},
+        integrator=integrator,
+    )
+    fprint("init done.")
+
+    # ---- Build NSS step function ----
+    algo = blackjax.nss(
+        logprior_fn=log_prior_fn,
+        loglikelihood_fn=log_likelihood_fn,
+        num_delete=num_delete,
+        num_inner_steps=num_mcmc_steps,
+    )
+
+    @jax.jit
+    def step_fn(carry, xs):
+        state, k = carry
+        k, subk = jax.random.split(k, 2)
+        state, dead_point = algo.step(subk, state)
+        return (state, k), dead_point
+
+    # ---- Run NSS loop ----
+    rng_key = jax.random.PRNGKey(seed + 1)
+
+    # Warmup JIT
+    (_, rng_key), _ = jax.block_until_ready(
+        step_fn((state, rng_key), None))
+
+    dead = []
+    t0 = timer()
+    n_dead = 0
+    with tqdm.tqdm(desc="NSS", unit=" pts") as pbar:
+        while not (state.integrator.logZ_live
+                   - state.integrator.logZ < termination):
+            (state, rng_key), dead_info = step_fn(
+                (state, rng_key), None)
+            dead.append(dead_info)
+            n_dead += num_delete
+
+            logZ = float(state.integrator.logZ)
+            pbar.set_postfix({"logZ": f"{logZ:.2f}"})
+            pbar.update(num_delete)
+
+            # Check for non-finite likelihood values
+            ll_live = state.particles.loglikelihood
+            ll_dead = dead_info.particles.loglikelihood
+            if not jnp.all(jnp.isfinite(ll_live)):
+                n_bad = int((~jnp.isfinite(ll_live)).sum())
+                print(f"\n*** WARNING: {n_bad} non-finite live "
+                      f"logL at {n_dead} dead ***", flush=True)
+                bad_idx = jnp.where(~jnp.isfinite(ll_live))[0]
+                for idx in bad_idx[:3]:
+                    pos = state.particles.position[idx]
+                    print(f"  idx={int(idx)}: "
+                          f"logL={float(ll_live[idx]):.4f}"
+                          f"  params={np.asarray(pos)}", flush=True)
+                break
+            if not jnp.all(jnp.isfinite(ll_dead)):
+                n_bad = int((~jnp.isfinite(ll_dead)).sum())
+                print(f"\n*** WARNING: {n_bad} non-finite dead "
+                      f"logL at {n_dead} dead ***", flush=True)
+                for j in range(min(n_bad, 3)):
+                    idx = jnp.where(~jnp.isfinite(ll_dead))[0][j]
+                    pos = dead_info.particles.position[idx]
+                    print(f"  idx={int(idx)}: logL="
+                          f"{float(ll_dead[idx]):.4f}"
+                          f"  params={np.asarray(pos)}", flush=True)
+                break
+            if not jnp.isfinite(logZ):
+                print(f"\n*** WARNING: logZ={logZ} at {n_dead} dead "
+                      f"but all logL finite! ***", flush=True)
+                print(f"  max live logL: {float(ll_live.max()):.2f}",
+                      flush=True)
+                print(f"  dead logL: {np.asarray(ll_dead)}", flush=True)
+                break
+    dt = timer() - t0
+
+    # ---- Finalise and compute evidence ----
+    final_state = finalise(state, dead)
+    logw = log_weights(rng_key, final_state)
     logw_mean = logw.mean(axis=-1)
 
-    # Positions from finalised state (dead + live)
+    # Evidence estimate (one per random compression realisation)
+    minimum = jnp.nan_to_num(logw).min()
+    logzs = jax.scipy.special.logsumexp(
+        jnp.nan_to_num(logw, nan=minimum), axis=0)
+    log_Z = float(logzs.mean())
+    log_Z_err = float(logzs.std())
+
+    # Resample to equal-weight samples
     positions = final_state.particles.position
-
-    # Filter out NaN weights (can happen with large num_delete)
-    valid = jnp.isfinite(logw_mean)
-    logw_mean = jnp.where(valid, logw_mean, -jnp.inf)
-
-    # Resample to equal-weight samples (like MCMC output)
+    logw_mean = jnp.where(jnp.isfinite(logw_mean), logw_mean, -jnp.inf)
     logw_norm = logw_mean - jax.scipy.special.logsumexp(logw_mean)
     p = jnp.exp(logw_norm)
     p = jnp.where(jnp.isfinite(p), p, 0.0)
     p = p / p.sum()
     n_eff = int(jnp.exp(-jnp.sum(jnp.where(p > 0, p * jnp.log(p), 0.0))))
-    key3 = jax.random.PRNGKey(seed + 3)
+    key2 = jax.random.PRNGKey(seed + 2)
     indices = jax.random.choice(
-        key3, positions.shape[0], shape=(max(n_eff, 100),), p=p)
+        key2, positions.shape[0], shape=(max(n_eff, 100),), p=p)
     resampled = positions[indices]
 
     # Unpack into named dict (same format as MCMC samples)
@@ -316,15 +474,47 @@ def run_nss(model, model_args=(), model_kwargs=None,
         samples[name] = s.squeeze(axis=-1) if size == 1 else s
         offset += size
 
-    # Attach metadata as attributes (accessible but not breaking MCMC compat)
     samples["__nested__"] = {
-        "log_Z": float(res.logZs.mean()),
-        "log_Z_err": float(res.logZs.std()),
-        "log_weights": logw_mean,
+        "log_Z": log_Z,
+        "log_Z_err": log_Z_err,
         "n_eff": n_eff,
-        "results": res,
+        "time": dt,
         "names": names,
         "sizes": sizes,
     }
 
     return samples
+
+
+def print_nested_summary(samples, meta=None):
+    """Print a summary table for nested sampling posterior samples."""
+    if meta is None:
+        meta = samples.get("__nested__")
+
+    if meta is not None:
+        print(f"\nlog Z = {meta['log_Z']:.2f} +/- {meta['log_Z_err']:.2f}")
+        print(f"n_eff = {meta['n_eff']}")
+
+    header = (f"{'':>20s} {'mean':>10s} {'std':>10s} {'median':>10s} "
+              f"{'5.0%':>10s} {'95.0%':>10s}")
+    print(f"\n{header}")
+    print("-" * len(header))
+
+    for k, v in samples.items():
+        if k == "__nested__":
+            continue
+        v = np.asarray(v)
+        if v.ndim == 0:
+            continue
+        if v.ndim == 1:
+            _print_param_row(k, v)
+        elif v.ndim == 2:
+            for i in range(v.shape[1]):
+                _print_param_row(f"{k}[{i}]", v[:, i])
+
+
+def _print_param_row(name, x):
+    """Print one row of the summary table."""
+    q5, q50, q95 = np.percentile(x, [5, 50, 95])
+    print(f"{name:>20s} {x.mean():10.3f} {x.std():10.3f} "
+          f"{q50:10.3f} {q5:10.3f} {q95:10.3f}")

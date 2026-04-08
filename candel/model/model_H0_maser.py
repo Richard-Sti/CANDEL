@@ -26,19 +26,17 @@ all per-spot latent variables. See candel/model/phi_marginalisation.md.
 All operations are fully batched over spots — no vmap or lax.scan.
 All angles are in RADIANS inside physics functions.
 """
-import numpy as _np
 import jax.numpy as jnp
+import numpy as _np
+from jax.scipy.special import logsumexp
 from jax.scipy.stats import norm as jax_norm
 from numpyro import factor, handlers, plate, sample
 from numpyro.distributions import TruncatedNormal, Uniform
 
-from jax.scipy.special import logsumexp
-
 from ..util import SPEED_OF_LIGHT, fprint, fsection, get_nested
 from .base_model import ModelBase
-from .pv_utils import rsample
 from .integration import ln_trapz_precomputed, trapz_log_weights
-
+from .pv_utils import rsample
 
 # -----------------------------------------------------------------------
 # Disk physics constants
@@ -53,7 +51,6 @@ LOG_2PI = 1.8378770664093453  # jnp.log(2 * pi), precomputed
 # -----------------------------------------------------------------------
 # Spot classification and disk PA estimation
 # -----------------------------------------------------------------------
-
 
 
 def estimate_from_data(data, H0=73.0):
@@ -114,12 +111,9 @@ def _build_r_grid(r_min, r_max, n_r=251):
     return _np.logspace(_np.log10(r_min), _np.log10(r_max), n_r)
 
 
-
-
 # -----------------------------------------------------------------------
 # Disk physics functions
 # -----------------------------------------------------------------------
-
 
 # Conversion: 1 mas at 1 Mpc = 4.848e-3 pc
 PC_PER_MAS_MPC = 4.848e-3
@@ -411,9 +405,9 @@ class MaserDiskModel(ModelBase):
             setattr(self, f"_sigma_a2_{label}_a",
                     self.sigma_a[idx_np[has_a]]**2)
 
-        n_a = sum(getattr(self, f"_n_{l}_a") for l in ("sys", "red", "blue"))
-        n_noa = sum(getattr(self, f"_n_{l}_noa")
-                    for l in ("sys", "red", "blue"))
+        _labels = ("sys", "red", "blue")
+        n_a = sum(getattr(self, f"_n_{lb}_a") for lb in _labels)
+        n_noa = sum(getattr(self, f"_n_{lb}_noa") for lb in _labels)
         fprint(f"accel split: {n_a} with, {n_noa} without.")
 
         # ---- Phi grids and precomputed trig ----
@@ -626,9 +620,16 @@ class MaserDiskModel(ModelBase):
             if sigma is None:
                 return base_w
             lp = -0.5 * ((phi_grid - mu) / sigma)**2
-            log_Z = jnp.log(
-                jax_norm.cdf((phi_grid[-1] - mu) / sigma)
-                - jax_norm.cdf((phi_grid[0] - mu) / sigma))
+            # Stable log(CDF(b) - CDF(a)): use log1p(-exp(logcdf_a -
+            # logcdf_b)) + logcdf_b to avoid catastrophic cancellation
+            # when mu is far outside [grid[0], grid[-1]].
+            logcdf_hi = jax_norm.logcdf((phi_grid[-1] - mu) / sigma)
+            logcdf_lo = jax_norm.logcdf((phi_grid[0] - mu) / sigma)
+            log_Z = logcdf_hi + jnp.log1p(-jnp.exp(logcdf_lo - logcdf_hi))
+            # Clamp log_Z to avoid -inf when mu is far from the grid.
+            # Dtype-aware: log(tiny) is ~ -87 for f32, -708 for f64.
+            log_Z = jnp.maximum(
+                log_Z, jnp.log(jnp.finfo(log_Z.dtype).tiny) + 10)
             return base_w + lp - jnp.log(sigma) - log_Z
 
         log_w_phi_red = _phi_prior_weights(
@@ -655,16 +656,16 @@ class MaserDiskModel(ModelBase):
             idx = getattr(self, idx_attr)
             if has_accel:
                 va = sa2[dpad] + sa_floor2
-                X, Y, V, A = _obs_4(idx, self._sin_phi_sys,
-                                     self._cos_phi_sys)
+                X, Y, V, A = _obs_4(
+                    idx, self._sin_phi_sys, self._cos_phi_sys)
                 chi2 = _chi2_4obs(
                     x_d[dpad], X, 1.0 / vx, y_d[dpad], Y, 1.0 / vy,
                     v_d[dpad], V, 1.0 / vv, a_d[dpad], A, 1.0 / va)
                 lnorm = _lnorm_4(sx2[dpad], sy2[dpad], sv2[dpad],
                                  sv_floor2, sa2[dpad], sa_floor2)
             else:
-                X, Y, V = _obs_3(idx, self._sin_phi_sys,
-                                  self._cos_phi_sys)
+                X, Y, V = _obs_3(
+                    idx, self._sin_phi_sys, self._cos_phi_sys)
                 chi2 = _chi2_3obs(
                     x_d[dpad], X, 1.0 / vx, y_d[dpad], Y, 1.0 / vy,
                     v_d[dpad], V, 1.0 / vv)
@@ -739,13 +740,13 @@ class MaserDiskModel(ModelBase):
                     x_d=getattr(self, f"_x_sys{suffix}"),
                     y_d=getattr(self, f"_y_sys{suffix}"),
                     v_d=getattr(self, f"_velocity_sys{suffix}"),
-                    a_d=getattr(self, f"_a_sys_a", None) if has_a else None,
+                    a_d=getattr(self, "_a_sys_a", None) if has_a else None,
                     sx2=getattr(self, f"_sigma_x2_sys{suffix}"),
                     sy2=getattr(self, f"_sigma_y2_sys{suffix}"),
                     sv2=getattr(self, f"_sigma_v2_sys{suffix}"),
                     sv_floor2=var_v_sys,
-                    sa2=getattr(self, f"_sigma_a2_sys_a", None) if has_a
-                        else None,
+                    sa2=(getattr(self, "_sigma_a2_sys_a", None)
+                         if has_a else None),
                     has_accel=has_a,
                     sa_floor2=sigma_a_floor2_sys)
                 results.append(_sys_block(f"_idx_sys{suffix}", **kw))
@@ -763,13 +764,13 @@ class MaserDiskModel(ModelBase):
                     x_d=getattr(self, f"_x_red{suffix}"),
                     y_d=getattr(self, f"_y_red{suffix}"),
                     v_d=getattr(self, f"_velocity_red{suffix}"),
-                    a_d=getattr(self, f"_a_red_a", None) if has_a else None,
+                    a_d=getattr(self, "_a_red_a", None) if has_a else None,
                     sx2=getattr(self, f"_sigma_x2_red{suffix}"),
                     sy2=getattr(self, f"_sigma_y2_red{suffix}"),
                     sv2=getattr(self, f"_sigma_v2_red{suffix}"),
                     sv_floor2=var_v_hv,
-                    sa2=getattr(self, f"_sigma_a2_red_a", None) if has_a
-                        else None,
+                    sa2=(getattr(self, "_sigma_a2_red_a", None)
+                         if has_a else None),
                     has_accel=has_a,
                     sa_floor2=sigma_a_floor2_hv)
                 results.append(_hv_block(f"_idx_red{suffix}", **kw))
@@ -787,14 +788,14 @@ class MaserDiskModel(ModelBase):
                     x_d=getattr(self, f"_x_blue{suffix}"),
                     y_d=getattr(self, f"_y_blue{suffix}"),
                     v_d=getattr(self, f"_velocity_blue{suffix}"),
-                    a_d=getattr(self, f"_a_blue_a", None) if has_a
-                        else None,
+                    a_d=(getattr(self, "_a_blue_a", None)
+                         if has_a else None),
                     sx2=getattr(self, f"_sigma_x2_blue{suffix}"),
                     sy2=getattr(self, f"_sigma_y2_blue{suffix}"),
                     sv2=getattr(self, f"_sigma_v2_blue{suffix}"),
                     sv_floor2=var_v_hv,
-                    sa2=getattr(self, f"_sigma_a2_blue_a", None) if has_a
-                        else None,
+                    sa2=(getattr(self, "_sigma_a2_blue_a", None)
+                         if has_a else None),
                     has_accel=has_a,
                     sa_floor2=sigma_a_floor2_hv)
                 results.append(_hv_block(f"_idx_blue{suffix}", **kw))
