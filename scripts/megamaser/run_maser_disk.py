@@ -104,7 +104,7 @@ data = load_megamaser_spots("data/Megamaser", galaxy, v_sys_obs=v_sys_obs)
 use_phi_prior = args.phi_prior or master_cfg["model"].get("phi_prior", False)
 
 dense_mass_blocks = inf_cfg.get("dense_mass_blocks", [
-    ["D_c", "log_M_over_D", "dv_sys"],
+    ["D_c", "eta", "dv_sys"],
     ["i0", "di_dr", "Omega0", "dOmega_dr"],
     ["x0", "y0"],
 ])
@@ -186,7 +186,7 @@ elif sampler == "nss":
 
 # ---- Print results ----
 fsection("Results")
-param_keys = ['D_c', 'log_M_over_D', 'log_MBH', 'i0', 'di_dr', 'Omega0', 'dOmega_dr',
+param_keys = ['D_c', 'eta', 'log_MBH', 'i0', 'di_dr', 'Omega0', 'dOmega_dr',
               'x0', 'y0', 'dv_sys',
               'sigma_x_floor', 'sigma_y_floor',
               'sigma_v_sys', 'sigma_v_hv',

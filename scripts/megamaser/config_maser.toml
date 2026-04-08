@@ -62,7 +62,7 @@ scale = 0.5
 low = 6.0
 high = 9.0
 
-[model.priors.log_M_over_D]
+[model.priors.eta]
 dist = "data_estimate_uniform"
 half_width = 2.0
 

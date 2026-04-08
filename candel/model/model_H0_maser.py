@@ -556,15 +556,15 @@ class MaserDiskModel(ModelBase):
                    f"{log_MBH_est:.2f}, {p['scale']}, "
                    f"[{p['low']}, {p['high']}])")
 
-        p = self.priors.get("log_M_over_D")
+        p = self.priors.get("eta")
         if isinstance(p, dict) and p.get("type") == "data_estimate_uniform":
             z_est = v_sys_obs / SPEED_OF_LIGHT
             D_A_est = D_c_est / (1 + z_est)
             log_mod_est = log_MBH_est - _np.log10(D_A_est)
             hw = p["half_width"]
-            self.priors["log_M_over_D"] = Uniform(
+            self.priors["eta"] = Uniform(
                 log_mod_est - hw, log_mod_est + hw)
-            fprint(f"log_M_over_D prior: U({log_mod_est - hw:.3f}, "
+            fprint(f"eta prior: U({log_mod_est - hw:.3f}, "
                    f"{log_mod_est + hw:.3f})  (est={log_mod_est:.3f})")
 
     def _eval_marginal_phi(self, r_ang, x0, y0, D_A, M_BH, v_sys,
@@ -831,10 +831,10 @@ class MaserDiskModel(ModelBase):
             jnp.atleast_1d(D_c), h=h).squeeze()
         D_A = D_c / (1 + z_cosmo)
 
-        log_M_over_D = rsample("log_M_over_D", self.priors["log_M_over_D"],
+        eta = rsample("eta", self.priors["eta"],
                                shared_params)
         log_MBH = deterministic("log_MBH",
-                                log_M_over_D + jnp.log10(D_A))
+                                eta + jnp.log10(D_A))
         M_BH = 10.0**log_MBH
         # x0, y0 sampled in uas, converted to mas for physics
         x0 = rsample("x0", self.priors["x0"], shared_params) * 1e-3
