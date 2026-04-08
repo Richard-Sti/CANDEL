@@ -20,7 +20,11 @@ Usage:
 All settings (priors, sampler config) are read from config_maser.toml.
 CLI args override config values where provided.
 """
-import os, sys, tomli
+import os
+import sys
+
+import tomli
+
 with open(os.path.join(os.path.dirname(__file__), "../../local_config.toml"), "rb") as f:
     _lcfg = tomli.load(f)
 ld = os.environ.get("LD_LIBRARY_PATH", "")
@@ -39,6 +43,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import tomli
 import tomli_w
+from h5py import File as H5File
 from jax import random
 from numpyro.infer import MCMC, NUTS
 from numpyro.infer.initialization import init_to_median, init_to_value
@@ -224,7 +229,7 @@ else:
     print_nested_summary(samples, meta=meta)
 
 # Spot classification plot
-outdir = master_cfg["io"].get("root_output", "results/Maser")
+outdir = os.path.abspath(master_cfg["io"].get("root_output", "results/Maser"))
 os.makedirs(outdir, exist_ok=True)
 
 _cls = np.where(~data["is_highvel"], "systemic",
@@ -250,13 +255,20 @@ fig.savefig(fname_spots, dpi=150, bbox_inches="tight")
 plt.close(fig)
 print(f"Spot classification plot saved to {fname_spots}", flush=True)
 
-outpath = os.path.join(outdir, f"{galaxy}_{suffix}.npz")
-save_dict = {k: np.asarray(samples[k]) for k in samples if k != 'r_ang'}
-save_dict.update(D_A=D_A, M_BH=M_BH)
-if meta is not None:
-    save_dict.update(log_Z=meta['log_Z'], log_Z_err=meta['log_Z_err'])
-np.savez(outpath, **save_dict)
-print(f"Saved to {outpath}", flush=True)
+outpath = os.path.abspath(os.path.join(outdir, f"{galaxy}_{suffix}.hdf5"))
+with H5File(outpath, 'w') as f:
+    grp = f.create_group("samples")
+    for k, v in samples.items():
+        if k == 'r_ang':
+            continue
+        grp.create_dataset(k, data=np.asarray(v), dtype=np.float32)
+    f.create_dataset("D_A", data=D_A.astype(np.float32))
+    f.create_dataset("M_BH", data=M_BH.astype(np.float32))
+    if meta is not None:
+        f.attrs["log_Z"] = meta['log_Z']
+        f.attrs["log_Z_err"] = meta['log_Z_err']
+        f.attrs["n_eff"] = meta['n_eff']
+fprint(f"saved samples to {outpath}")
 
 # Corner plots (smoothed and unsmoothed)
 fname_corner = os.path.join(outdir, f"{galaxy}_{suffix}_corner.png")
