@@ -14,12 +14,13 @@ num_samples = 1000
 num_chains = 1
 chain_method = "sequential"
 dense_mass_blocks = [
-    ["D_c", "log_MBH", "dv_sys"],
+    ["D_c", "eta", "dv_sys"],
     ["i0", "di_dr", "Omega0", "dOmega_dr"],
     ["x0", "y0"],
     ["phi_mu_red", "phi_sigma_red", "phi_mu_blue", "phi_sigma_blue", "phi_mu_sys", "phi_sigma_sys"],
 ]
 init_maxiter = 0
+init_method = "sobol_adam"
 max_tree_depth = 10
 
 # NSS settings (Yallup+2025, arXiv:2601.23252)
