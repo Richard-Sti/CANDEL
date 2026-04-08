@@ -340,7 +340,8 @@ class MaserDiskModel(ModelBase):
 
         # Resolve data-estimate priors using spot data
         D_c_est, log_MBH_est = estimate_from_data(data)
-        self._resolve_data_estimate_priors(D_c_est, log_MBH_est)
+        self._resolve_data_estimate_priors(
+            D_c_est, log_MBH_est, data["v_sys_obs"])
 
         self.n_spots = data["n_spots"]
         self.is_highvel = jnp.asarray(data["is_highvel"])
@@ -480,7 +481,13 @@ class MaserDiskModel(ModelBase):
         # di_dr is always sampled (inclination warp).
 
         # Reference angular radius for warp expansion (mas).
-        self._r_ang_ref = 0.0
+        # Pivot at the median projected HV-spot radius to decorrelate i0 from di_dr.
+        x_hv = _np.asarray(data["x"])[is_hv_np]
+        y_hv = _np.asarray(data["y"])[is_hv_np]
+        r_ang_hv = _np.sqrt(x_hv**2 + y_hv**2)
+        self._r_ang_ref = float(_np.median(r_ang_hv))
+        fprint(f"warp pivot r_ang_ref = {self._r_ang_ref:.3f} mas "
+               f"(median projected radius of {len(r_ang_hv)} HV spots)")
 
         # Fixed r_ang bounds for Mode 1 (estimated from v_sys_obs).
         # Uses cosmographic D_A to convert R_phys bounds to angular.
@@ -523,7 +530,7 @@ class MaserDiskModel(ModelBase):
         fprint(f"use_selection = {self.use_selection}")
         fprint(f"phi_prior = {self.phi_prior}")
 
-    def _resolve_data_estimate_priors(self, D_c_est, log_MBH_est):
+    def _resolve_data_estimate_priors(self, D_c_est, log_MBH_est, v_sys_obs):
         """Replace data-estimate prior sentinels with concrete dists."""
         from candel.model.utils import VolumePrior
 
@@ -548,6 +555,17 @@ class MaserDiskModel(ModelBase):
             fprint(f"log_MBH prior: TruncatedNormal("
                    f"{log_MBH_est:.2f}, {p['scale']}, "
                    f"[{p['low']}, {p['high']}])")
+
+        p = self.priors.get("log_M_over_D")
+        if isinstance(p, dict) and p.get("type") == "data_estimate_uniform":
+            z_est = v_sys_obs / SPEED_OF_LIGHT
+            D_A_est = D_c_est / (1 + z_est)
+            log_mod_est = log_MBH_est - _np.log10(D_A_est)
+            hw = p["half_width"]
+            self.priors["log_M_over_D"] = Uniform(
+                log_mod_est - hw, log_mod_est + hw)
+            fprint(f"log_M_over_D prior: U({log_mod_est - hw:.3f}, "
+                   f"{log_mod_est + hw:.3f})  (est={log_mod_est:.3f})")
 
     def _eval_marginal_phi(self, r_ang, x0, y0, D_A, M_BH, v_sys,
                            r_ang_ref, i0, di_dr, Omega0, dOmega_dr,
