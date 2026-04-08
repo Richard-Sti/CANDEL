@@ -525,6 +525,8 @@ class MaserDiskModel(ModelBase):
 
     def _resolve_data_estimate_priors(self, D_c_est, log_MBH_est):
         """Replace data-estimate prior sentinels with concrete dists."""
+        from candel.model.utils import VolumePrior
+
         p = self.priors.get("D")
         if isinstance(p, dict) and p.get("type") == "data_estimate_uniform":
             hw = p["half_width"]
@@ -532,6 +534,12 @@ class MaserDiskModel(ModelBase):
             hi = D_c_est + hw
             self.priors["D"] = Uniform(lo, hi)
             fprint(f"D prior: U({lo:.1f}, {hi:.1f})")
+        elif isinstance(p, dict) and p.get("type") == "data_estimate_volume":
+            hw = p["half_width"]
+            lo = max(D_c_est - hw, 1.0)
+            hi = D_c_est + hw
+            self.priors["D"] = VolumePrior(lo, hi)
+            fprint(f"D prior: Volume({lo:.1f}, {hi:.1f})")
 
         p = self.priors.get("log_MBH")
         if isinstance(p, dict) and p.get("type") == "data_estimate_truncated_normal":  # noqa

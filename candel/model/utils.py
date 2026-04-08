@@ -158,6 +158,41 @@ class SineAngle(Distribution):
         return jnp.where(in_bounds, lp, -jnp.inf)
 
 
+class VolumePrior(Distribution):
+    r"""Volumetric distance prior p(D) \propto D^2 on [low, high].
+
+    Normalised PDF: f(D) = 3 D^2 / (high^3 - low^3).
+    CDF inversion: D = (u * (high^3 - low^3) + low^3)^{1/3}.
+    """
+    arg_constraints = {"low": constraints.positive,
+                       "high": constraints.positive}
+    reparametrized_params = ["low", "high"]
+
+    def __init__(self, low, high, validate_args=None):
+        self.low = jnp.asarray(low, dtype=float)
+        self.high = jnp.asarray(high, dtype=float)
+        self._d3_diff = self.high**3 - self.low**3
+        self._log_norm = jnp.log(self._d3_diff / 3)
+        batch_shape = jnp.broadcast_shapes(
+            jnp.shape(self.low), jnp.shape(self.high))
+        super().__init__(batch_shape=batch_shape,
+                         validate_args=validate_args)
+
+    @constraints.dependent_property(is_discrete=False, event_dim=0)
+    def support(self):
+        return constraints.interval(self.low, self.high)
+
+    def sample(self, key, sample_shape=()):
+        shape = sample_shape + self.batch_shape
+        u = random.uniform(key, shape)
+        return (u * self._d3_diff + self.low**3)**(1 / 3)
+
+    def log_prob(self, value):
+        in_bounds = (value >= self.low) & (value <= self.high)
+        return jnp.where(in_bounds, 2 * jnp.log(value) - self._log_norm,
+                         -jnp.inf)
+
+
 class JeffreysPrior(Uniform):
     """
     Wrapper around Uniform that keeps Uniform sampling but overrides
@@ -221,6 +256,7 @@ def load_priors(config_priors):
         "log_uniform": lambda p: LogUniform(p["low"], p["high"]),
         "delta": lambda p: Delta(p["value"]),
         "jeffreys": lambda p: JeffreysPrior(p["low"], p["high"]),
+        "volume": lambda p: VolumePrior(p["low"], p["high"]),
         "maxwell": lambda p: Maxwell(p["scale"]),
         "sine_angle": lambda p: SineAngle(p.get("low", 0.0), p.get("high", 180.0)),
         "vector_uniform": lambda p: {"type": "vector_uniform", "low": p["low"], "high": p["high"]},  # noqa
@@ -231,6 +267,7 @@ def load_priors(config_priors):
         "quadrupole": lambda p: {"type": "quadrupole", "low": p["low"], "high": p["high"]},  # noqa
         "octupole": lambda p: {"type": "octupole", "low": p["low"], "high": p["high"]},  # noqa
         "data_estimate_uniform": lambda p: {"type": "data_estimate_uniform", "half_width": p["half_width"]},  # noqa
+        "data_estimate_volume": lambda p: {"type": "data_estimate_volume", "half_width": p["half_width"]},  # noqa
         "data_estimate_truncated_normal": lambda p: {"type": "data_estimate_truncated_normal", "scale": p["scale"], "low": p.get("low", None), "high": p.get("high", None)},  # noqa
     }
     priors = {}
