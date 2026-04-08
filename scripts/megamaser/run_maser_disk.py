@@ -160,14 +160,11 @@ elif sampler == "nss":
 
     n_live = args.n_live or inf_cfg.get("n_live", 5000)
     num_mcmc_steps = args.num_mcmc_steps or inf_cfg.get("num_mcmc_steps", 0)
-    num_delete = args.num_delete or inf_cfg.get("num_delete", 0)
+    num_delete = args.num_delete or inf_cfg.get("num_delete", 250)
     termination = args.termination or inf_cfg.get("termination", -3)
 
-    # 0 = auto
     if num_mcmc_steps == 0:
         num_mcmc_steps = None  # run_nss will use ndim
-    if num_delete == 0:
-        num_delete = "auto"  # profile GPU memory and pick optimal
 
     fsection(f"Running NSS ({galaxy}, {n_spots} spots, {phi_mode})")
     fprint(f"n_live={n_live}, mcmc_steps={num_mcmc_steps}, "

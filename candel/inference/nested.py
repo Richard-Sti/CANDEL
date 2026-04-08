@@ -219,58 +219,6 @@ def sample_prior(dists, names, sizes, n, seed=0):
     return samples
 
 
-def _free_gpu_bytes():
-    """Return free GPU memory in bytes, or None if unavailable."""
-    try:
-        device = jax.devices("gpu")[0]
-        stats = device.memory_stats()
-        return stats["bytes_limit"] - stats["bytes_in_use"]
-    except Exception:
-        return None
-
-
-def _estimate_batch_sizes(model, n_live):
-    """Estimate num_delete and init_batch_size from model grid sizes.
-
-    Queries free GPU memory via JAX; falls back to a fixed 12 GB reference
-    if memory stats are unavailable.
-    """
-    n_spots = getattr(model, 'n_spots', None)
-    if n_spots is None:
-        nd = max(1, n_live // 10)
-        return nd, min(nd, 500)
-
-    phi_half = getattr(model, '_phi_half', None)
-    phi_sys = getattr(model, '_phi_sys', None)
-    G_phi = max(
-        len(phi_half) if phi_half is not None else 251,
-        len(phi_sys) if phi_sys is not None else 501,
-    )
-    marginalise_r = getattr(model, 'marginalise_r', False)
-    r_grid = getattr(model, '_r_ang_grid', None)
-    n_r = len(r_grid) if (marginalise_r and r_grid is not None) else 1
-    bytes_per = 8 if jax.config.x64_enabled else 4
-
-    # Bytes per live point for the phi/r integration arrays
-    cost_per_point = n_spots * G_phi * n_r * bytes_per
-
-    free = _free_gpu_bytes()
-    if free is not None:
-        # cost_per_point overestimates ~2x (JAX fuses ops); factor 1.5 is
-        # empirically safe (199 batches fit on 12 GB RTX 2080 in float32)
-        max_batch = max(1, int(1.5 * free / cost_per_point))
-        fprint(f"GPU free memory: {free / 2**30:.1f} GB → max_batch={max_batch}")
-    else:
-        # Fallback: assume 12 GB free
-        fallback_bytes = 12 * 2**30
-        max_batch = max(1, int(1.5 * fallback_bytes / cost_per_point))
-        fprint(f"GPU memory unavailable, assuming 12 GB free → max_batch={max_batch}")
-
-    num_delete = max(1, min(max_batch, n_live // 10))
-    init_batch_size = min(max_batch, max(num_delete, 100))
-
-    return num_delete, init_batch_size
-
 
 def run_nss(model, model_args=(), model_kwargs=None,
             n_live=500, num_mcmc_steps=50, num_delete=1,
@@ -290,9 +238,8 @@ def run_nss(model, model_args=(), model_kwargs=None,
         Number of live points.
     num_mcmc_steps : int
         Number of slice sampling steps per dead point (p=d recommended).
-    num_delete : int or "auto"
+    num_delete : int
         Number of dead points per iteration (10% of n_live recommended).
-        If "auto", estimated from model grid sizes and precision.
     termination : float
         log(Z_live / Z_dead) threshold for termination.
     seed : int
@@ -341,14 +288,7 @@ def run_nss(model, model_args=(), model_kwargs=None,
     if num_mcmc_steps is None:
         num_mcmc_steps = ndim
 
-    # ---- Auto-size batches ----
-    if num_delete == "auto":
-        num_delete, init_batch_size = _estimate_batch_sizes(model, n_live)
-        fprint(f"auto batch sizing: num_delete={num_delete}, "
-               f"init_batch_size={init_batch_size}")
-    else:
-        _, init_batch_size = _estimate_batch_sizes(model, n_live)
-
+    init_batch_size = num_delete
     fprint(f"NSS: ndim={ndim}, num_mcmc_steps={num_mcmc_steps}, "
            f"n_live={n_live}, num_delete={num_delete}")
 
