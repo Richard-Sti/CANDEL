@@ -31,19 +31,24 @@ if needed:
 
 import argparse
 import tempfile
-import numpy as np
-import jax.numpy as jnp
-import matplotlib.pyplot as plt
-import tomli
-import tomli_w
 import time
 
-from candel.pvdata.megamaser_data import load_megamaser_spots
-from candel.model.model_H0_maser import MaserDiskModel
-from candel.util import fprint, fsection, plot_corner
-from candel.inference.inference import print_clean_summary
-from candel.inference.nested import print_nested_summary
 import jax
+import jax.numpy as jnp
+import matplotlib.pyplot as plt
+import numpy as np
+import tomli
+import tomli_w
+from jax import random
+from numpyro.infer import MCMC, NUTS
+from numpyro.infer.initialization import init_to_median
+
+from candel.inference.inference import print_clean_summary
+from candel.inference.nested import print_nested_summary, run_nss
+from candel.model.model_H0_maser import MaserDiskModel
+from candel.pvdata.megamaser_data import load_megamaser_spots
+from candel.util import fprint, fsection, plot_corner
+
 print(f"JAX platform: {jax.default_backend()}, devices: {jax.devices()}", flush=True)
 
 # ---- Load master config ----
@@ -132,10 +137,6 @@ n_spots = data["n_spots"]
 phi_mode = "phi prior" if use_phi_prior else "no phi prior"
 
 if sampler == "nuts":
-    from numpyro.infer import MCMC, NUTS
-    from numpyro.infer.initialization import init_to_median
-    from jax import random
-
     num_warmup = args.num_warmup or inf_cfg.get("num_warmup", 1000)
     num_samples = args.num_samples or inf_cfg.get("num_samples", 1000)
 
@@ -156,8 +157,6 @@ if sampler == "nuts":
     meta = None
 
 elif sampler == "nss":
-    from candel.inference.nested import run_nss
-
     n_live = args.n_live or inf_cfg.get("n_live", 5000)
     num_mcmc_steps = args.num_mcmc_steps or inf_cfg.get("num_mcmc_steps", 0)
     num_delete = args.num_delete or inf_cfg.get("num_delete", 250)
