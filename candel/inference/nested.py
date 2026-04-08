@@ -395,6 +395,9 @@ def run_nss(model, model_args=(), model_kwargs=None,
     dead = []
     t0 = timer()
     n_dead = 0
+    gap_prev = None
+    gap_rate_ema = None
+    ema_alpha = num_delete / n_live  # ~1 step per timescale → α≈0.1 for defaults
     with tqdm.tqdm(desc="NSS", unit=" pts") as pbar:
         while not (state.integrator.logZ_live
                    - state.integrator.logZ < termination):
@@ -404,7 +407,31 @@ def run_nss(model, model_args=(), model_kwargs=None,
             n_dead += num_delete
 
             logZ = float(state.integrator.logZ)
-            pbar.set_postfix({"logZ": f"{logZ:.2f}"})
+            gap = float(state.integrator.logZ_live) - logZ
+
+            # Rolling EMA of gap-change rate (nats/pt, expected < 0)
+            if gap_prev is not None:
+                d_gap = (gap - gap_prev) / num_delete
+                gap_rate_ema = (d_gap if gap_rate_ema is None
+                                else ema_alpha * d_gap
+                                + (1 - ema_alpha) * gap_rate_ema)
+            gap_prev = gap
+
+            # ETA: remaining pts ≈ (gap − termination) / |d_gap/pt|
+            eta_str = "?"
+            pts_per_sec = pbar.format_dict.get("rate") or 0
+            if (gap_rate_ema is not None and gap_rate_ema < 0
+                    and pts_per_sec > 0):
+                remaining_pts = (gap - termination) / (-gap_rate_ema)
+                eta_sec = remaining_pts / pts_per_sec
+                if eta_sec < 3600:
+                    eta_str = f"{eta_sec / 60:.0f}m"
+                else:
+                    eta_str = f"{eta_sec / 3600:.1f}h"
+
+            pbar.set_postfix({"logZ": f"{logZ:.2f}",
+                              "gap": f"{gap:.2f}",
+                              "ETA": eta_str})
             pbar.update(num_delete)
 
             # Check for non-finite likelihood values
