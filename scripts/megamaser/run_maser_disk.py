@@ -41,7 +41,7 @@ import tomli
 import tomli_w
 from jax import random
 from numpyro.infer import MCMC, NUTS
-from numpyro.infer.initialization import init_to_median
+from numpyro.infer.initialization import init_to_median, init_to_value
 
 from candel.inference.inference import print_clean_summary
 from candel.inference.nested import print_nested_summary, run_nss
@@ -142,10 +142,17 @@ if sampler == "nuts":
     num_samples = args.num_samples or inf_cfg.get("num_samples", 1000)
 
     fsection(f"Running NUTS ({galaxy}, {n_spots} spots, {phi_mode})")
+    init_method = inf_cfg.get("init_method", "median")
+    if init_method == "sobol_adam":
+        from candel.inference.optimise import find_MAP
+        init_params = find_MAP(model, model_kwargs={}, seed=seed)
+        init_strategy = init_to_value(values=init_params)
+    else:
+        init_strategy = init_to_median(num_samples=20)
     t0 = time.time()
     kernel = NUTS(model, max_tree_depth=inf_cfg.get("max_tree_depth", 10),
                   target_accept_prob=0.8,
-                  init_strategy=init_to_median(num_samples=20))
+                  init_strategy=init_strategy)
     mcmc = MCMC(kernel, num_warmup=num_warmup, num_samples=num_samples,
                 num_chains=1, progress_bar=True)
     mcmc.run(random.PRNGKey(seed))
