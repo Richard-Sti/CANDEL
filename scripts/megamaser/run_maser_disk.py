@@ -33,6 +33,7 @@ import argparse
 import tempfile
 import numpy as np
 import jax.numpy as jnp
+import matplotlib.pyplot as plt
 import tomli
 import tomli_w
 import time
@@ -71,6 +72,15 @@ args = parser.parse_args()
 galaxy = args.galaxy
 sampler = args.sampler or inf_cfg.get("sampler", "nss")
 seed = args.seed or inf_cfg.get("seed", 42)
+
+# Distance-prior tag for output filenames
+_D_TAG = {
+    "data_estimate_uniform": "Dflat",
+    "data_estimate_volume":  "Dvol",
+    "uniform":               "Dflat",
+}
+_d_prior_dist = master_cfg["model"]["priors"]["D"].get("dist", "unknown")
+dist_tag = _D_TAG.get(_d_prior_dist, _d_prior_dist.replace("_", ""))
 
 # ---- Validate galaxy ----
 galaxies = master_cfg["model"]["galaxies"]
@@ -142,7 +152,7 @@ if sampler == "nuts":
     samples = mcmc.get_samples()
     n_div = int(mcmc.get_extra_fields()['diverging'].sum())
     print(f"\nWall time: {dt:.0f}s, Divergences: {n_div}", flush=True)
-    suffix = "mode2"
+    suffix = f"nuts_{dist_tag}"
     meta = None
 
 elif sampler == "nss":
@@ -176,7 +186,7 @@ elif sampler == "nss":
     print(f"log Z = {meta['log_Z']:.2f} +/- {meta['log_Z_err']:.2f}",
           flush=True)
     print(f"n_eff = {meta['n_eff']}", flush=True)
-    suffix = "nested"
+    suffix = f"nss_{dist_tag}"
 
 # ---- Print results ----
 fsection("Results")
@@ -208,8 +218,34 @@ if sampler == "nuts":
 else:
     print_nested_summary(samples, meta=meta)
 
-# Corner plot
+# Spot classification plot
 outdir = master_cfg["io"].get("root_output", "results/Maser")
+os.makedirs(outdir, exist_ok=True)
+
+_cls = np.where(~data["is_highvel"], "systemic",
+                np.where(data["is_blue"], "blue HV", "red HV"))
+fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+for cls, col in [("systemic", "forestgreen"), ("blue HV", "royalblue"),
+                 ("red HV", "tomato")]:
+    m = _cls == cls
+    axes[0].scatter(data["x"][m], data["y"][m], c=col, s=12, alpha=0.7,
+                    label=f"{cls} ({m.sum()})")
+    axes[1].scatter(data["x"][m],
+                    data["velocity"][m] - data["v_sys_obs"],
+                    c=col, s=12, alpha=0.7)
+axes[0].set_xlabel(r"$\Delta x$ (mas)")
+axes[0].set_ylabel(r"$\Delta y$ (mas)")
+axes[0].legend(fontsize=8)
+axes[0].invert_xaxis()
+axes[1].set_xlabel(r"$\Delta x$ (mas)")
+axes[1].set_ylabel(r"$v - v_\mathrm{sys}$ (km s$^{-1}$)")
+fig.tight_layout()
+fname_spots = os.path.join(outdir, f"{galaxy}_{suffix}_spots.png")
+fig.savefig(fname_spots, dpi=150, bbox_inches="tight")
+plt.close(fig)
+print(f"Spot classification plot saved to {fname_spots}", flush=True)
+
+# Corner plot
 fname_corner = os.path.join(outdir, f"{galaxy}_{suffix}_corner.png")
 plot_corner(samples, show_fig=False, filename=fname_corner)
 
