@@ -340,7 +340,6 @@ def run_nss(model, model_args=(), model_kwargs=None,
     initial_samples = sample_prior(dists, names, sizes, n_live, seed)
 
     # ---- Batched initialisation (avoids GPU OOM) ----
-    fprint("initialising live points (batched)...")
     init_state_fn = partial(
         init_state_strategy,
         logprior_fn=log_prior_fn,
@@ -348,15 +347,13 @@ def run_nss(model, model_args=(), model_kwargs=None,
     )
     batched_fn = jax.jit(jax.vmap(init_state_fn))
 
-    n_batches = (n_live + init_batch_size - 1) // init_batch_size
     all_results = []
-    for i in range(0, n_live, init_batch_size):
+    batches = range(0, n_live, init_batch_size)
+    for i in tqdm.tqdm(batches, desc="init live pts", unit=" batch"):
         batch = initial_samples[i:i + init_batch_size]
         result = jax.block_until_ready(batched_fn(batch))
         result = jax.tree.map(lambda x: np.asarray(x), result)
         all_results.append(result)
-        fprint(f"init batch {i // init_batch_size + 1}/{n_batches} "
-               f"({min(i + init_batch_size, n_live)}/{n_live})")
 
     particles = jax.tree.map(
         lambda *arrs: jnp.concatenate(arrs, axis=0), *all_results)
@@ -368,7 +365,6 @@ def run_nss(model, model_args=(), model_kwargs=None,
         inner_kernel_params={"cov": cov},
         integrator=integrator,
     )
-    fprint("init done.")
 
     # ---- Build NSS step function ----
     algo = blackjax.nss(
