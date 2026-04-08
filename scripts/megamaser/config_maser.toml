@@ -65,7 +65,7 @@ high = 9.0
 
 [model.priors.eta]
 dist = "data_estimate_uniform"
-half_width = 0.5
+half_width = 1.5
 
 [model.priors.R_phys]
 dist = "uniform"
