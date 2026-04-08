@@ -609,7 +609,8 @@ class MaserDiskModel(ModelBase):
                            log_w_r=None,
                            phi_mu_red=None, phi_sigma_red=None,
                            phi_mu_blue=None, phi_sigma_blue=None,
-                           phi_mu_sys=None, phi_sigma_sys=None):
+                           phi_mu_sys=None, phi_sigma_sys=None,
+                           ecc=None, sin_omega=None, cos_omega=None):
         """Evaluate per-spot log-likelihood marginalised over phi [and r].
 
         Mode 1 (sample r_ang): r_ang is (N,), log_w_r is None.
@@ -661,6 +662,31 @@ class MaserDiskModel(ModelBase):
             return _observables_no_accel(
                 sp, cp, x0, y0, v_sys, si, r_sub, vk, gm, zg,
                 pa, pb, pc, pd)
+
+        def _obs_4_ecc(idx, sp, cp):
+            """X, Y, V (eccentric), A from precomputed r-quantities."""
+            (si, r_sub, vk, gm, zg, am, pa, pb, pc, pd) = _r_precomp(idx)
+            X = x0 + r_sub * (sp * pa - cp * pb)
+            Y = y0 + r_sub * (sp * pc + cp * pd)
+            ecc_fac = _ecc_vel_factor(sp, cp, ecc, sin_omega, cos_omega)
+            v_z = vk * ecc_fac * si
+            one_plus_z_D = gm * (1.0 + v_z / SPEED_OF_LIGHT)
+            V = SPEED_OF_LIGHT * (
+                one_plus_z_D * zg * (1.0 + v_sys / SPEED_OF_LIGHT) - 1.0)
+            A = am * cp * si
+            return X, Y, V, A
+
+        def _obs_3_ecc(idx, sp, cp):
+            """X, Y, V (eccentric) only — no acceleration."""
+            (si, r_sub, vk, gm, zg, _, pa, pb, pc, pd) = _r_precomp(idx)
+            X = x0 + r_sub * (sp * pa - cp * pb)
+            Y = y0 + r_sub * (sp * pc + cp * pd)
+            ecc_fac = _ecc_vel_factor(sp, cp, ecc, sin_omega, cos_omega)
+            v_z = vk * ecc_fac * si
+            one_plus_z_D = gm * (1.0 + v_z / SPEED_OF_LIGHT)
+            V = SPEED_OF_LIGHT * (
+                one_plus_z_D * zg * (1.0 + v_sys / SPEED_OF_LIGHT) - 1.0)
+            return X, Y, V
 
         def _lnorm_3(sx2, sy2, sv2, sv_floor2):
             return -0.5 * (3 * LOG_2PI + jnp.log(sx2 + sigma_x_floor2)
@@ -788,6 +814,76 @@ class MaserDiskModel(ModelBase):
                 return logsumexp(ll + log_w_2d, axis=(-2, -1))
             return ln_trapz_precomputed(ll, log_w_phi, axis=-1)
 
+        def _sys_block_ecc(idx_attr, log_w_r, log_w_2d,
+                           x_d, y_d, v_d, a_d,
+                           sx2, sy2, sv2, sv_floor2, sa2, has_accel,
+                           sa_floor2):
+            vx = sx2[dpad] + sigma_x_floor2
+            vy = sy2[dpad] + sigma_y_floor2
+            vv = sv2[dpad] + sv_floor2
+            idx = getattr(self, idx_attr)
+            if has_accel:
+                va = sa2[dpad] + sa_floor2
+                X, Y, V, A = _obs_4_ecc(
+                    idx, self._sin_phi_sys, self._cos_phi_sys)
+                chi2 = _chi2_4obs(
+                    x_d[dpad], X, 1.0 / vx, y_d[dpad], Y, 1.0 / vy,
+                    v_d[dpad], V, 1.0 / vv, a_d[dpad], A, 1.0 / va)
+                lnorm = _lnorm_4(sx2[dpad], sy2[dpad], sv2[dpad],
+                                 sv_floor2, sa2[dpad], sa_floor2)
+            else:
+                X, Y, V = _obs_3_ecc(
+                    idx, self._sin_phi_sys, self._cos_phi_sys)
+                chi2 = _chi2_3obs(
+                    x_d[dpad], X, 1.0 / vx, y_d[dpad], Y, 1.0 / vy,
+                    v_d[dpad], V, 1.0 / vv)
+                lnorm = _lnorm_3(sx2[dpad], sy2[dpad], sv2[dpad],
+                                 sv_floor2)
+            ll = lnorm - 0.5 * chi2
+            if log_w_r is not None:
+                return logsumexp(ll + log_w_2d, axis=(-2, -1))
+            return ln_trapz_precomputed(ll, log_w_phi_sys, axis=-1)
+
+        def _hv_block_ecc(idx_attr, sp1, cp1, sp2, cp2, log_w_phi,
+                          log_w_r, log_w_2d,
+                          x_d, y_d, v_d, a_d,
+                          sx2, sy2, sv2, sv_floor2, sa2, has_accel,
+                          sa_floor2):
+            """HV block with eccentricity: V1 != V2, no reflection shortcut."""
+            vx = sx2[dpad] + sigma_x_floor2
+            vy = sy2[dpad] + sigma_y_floor2
+            vv = sv2[dpad] + sv_floor2
+            inv_vx, inv_vy, inv_vv = 1.0 / vx, 1.0 / vy, 1.0 / vv
+            idx = getattr(self, idx_attr)
+            if has_accel:
+                va = sa2[dpad] + sa_floor2
+                inv_va = 1.0 / va
+                X1, Y1, V1, A1 = _obs_4_ecc(idx, sp1, cp1)
+                X2, Y2, V2, A2 = _obs_4_ecc(idx, sp2, cp2)
+                chi2_1 = _chi2_4obs(
+                    x_d[dpad], X1, inv_vx, y_d[dpad], Y1, inv_vy,
+                    v_d[dpad], V1, inv_vv, a_d[dpad], A1, inv_va)
+                chi2_2 = _chi2_4obs(
+                    x_d[dpad], X2, inv_vx, y_d[dpad], Y2, inv_vy,
+                    v_d[dpad], V2, inv_vv, a_d[dpad], A2, inv_va)
+                lnorm = _lnorm_4(sx2[dpad], sy2[dpad], sv2[dpad],
+                                 sv_floor2, sa2[dpad], sa_floor2)
+            else:
+                X1, Y1, V1 = _obs_3_ecc(idx, sp1, cp1)
+                X2, Y2, V2 = _obs_3_ecc(idx, sp2, cp2)
+                chi2_1 = _chi2_3obs(
+                    x_d[dpad], X1, inv_vx, y_d[dpad], Y1, inv_vy,
+                    v_d[dpad], V1, inv_vv)
+                chi2_2 = _chi2_3obs(
+                    x_d[dpad], X2, inv_vx, y_d[dpad], Y2, inv_vy,
+                    v_d[dpad], V2, inv_vv)
+                lnorm = _lnorm_3(sx2[dpad], sy2[dpad], sv2[dpad],
+                                 sv_floor2)
+            ll = lnorm + jnp.logaddexp(-0.5 * chi2_1, -0.5 * chi2_2)
+            if log_w_r is not None:
+                return logsumexp(ll + log_w_2d, axis=(-2, -1))
+            return ln_trapz_precomputed(ll, log_w_phi, axis=-1)
+
         results = []
 
         # ---- Systemic: with accel, then without ----
@@ -809,7 +905,8 @@ class MaserDiskModel(ModelBase):
                          if has_a else None),
                     has_accel=has_a,
                     sa_floor2=sigma_a_floor2)
-                results.append(_sys_block(f"_idx_sys{suffix}", **kw))
+                sys_fn = _sys_block_ecc if ecc is not None else _sys_block
+                results.append(sys_fn(f"_idx_sys{suffix}", **kw))
 
         # ---- Red and Blue HV: with accel, then without ----
         hv_colors = [
@@ -843,8 +940,8 @@ class MaserDiskModel(ModelBase):
                          if has_a else None),
                     has_accel=has_a,
                     sa_floor2=sigma_a_floor2)
-                results.append(
-                    _hv_block(f"_idx_{color}{suffix}", **kw))
+                hv_fn = _hv_block_ecc if ecc is not None else _hv_block
+                results.append(hv_fn(f"_idx_{color}{suffix}", **kw))
 
         # Concat + gather replaces .at[idx].set() scatter ops
         return jnp.concatenate(results, axis=0)[self._inv_order]
