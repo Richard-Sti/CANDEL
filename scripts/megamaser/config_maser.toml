@@ -62,6 +62,10 @@ scale = 0.5
 low = 6.0
 high = 9.0
 
+[model.priors.log_M_over_D]
+dist = "data_estimate_uniform"
+half_width = 2.0
+
 [model.priors.R_phys]
 dist = "uniform"
 low = 0.01
