@@ -436,7 +436,7 @@ def name2label(name):
         # Maser disk model
         "D_c": r"$D_c$",
         "eta": r"$\eta$",
-        "log_MBH": r"$\log_{10} M_{\rm BH}$",
+        "log_MBH": r"$\log M_{\rm BH}$",
         "i0": r"$i_0$",
         "di_dr": r"$\mathrm{d}i/\mathrm{d}r$",
         "Omega0": r"$\Omega_0$",
