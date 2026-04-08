@@ -113,9 +113,22 @@ def _build_phi_grid_sys(G=501, s_max=0.999, n_patch=10):
     return phi
 
 
-def _build_r_grid(r_min, r_max, n_r=251):
-    """Log-spaced radius grid."""
-    return _np.logspace(_np.log10(r_min), _np.log10(r_max), n_r)
+def _build_r_grid(r_min, r_max, n_r=101, scale=0.3):
+    """Sinh-spaced radius grid in [r_min, r_max].
+
+    Parameterisation: log(r) = sinh(t) * scale, t uniform.
+    This concentrates points where the Keplerian chi-squared integrand
+    has structure (small-to-mid r) while still covering the large-r tail.
+    Benchmarks show |ΔlogL| < 0.001 nats vs a 1001-point log-uniform
+    reference at n_r=101 (3× fewer points than log-uniform at the same
+    accuracy; see convergence_grids.py).
+    """
+    logr_lo = _np.log(r_min)
+    logr_hi = _np.log(r_max)
+    t_lo = _np.arcsinh(logr_lo / scale)
+    t_hi = _np.arcsinh(logr_hi / scale)
+    t = _np.linspace(t_lo, t_hi, n_r)
+    return _np.exp(_np.sinh(t) * scale)
 
 
 # -----------------------------------------------------------------------
