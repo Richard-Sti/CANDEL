@@ -503,15 +503,19 @@ def _log_weights(rng_key, dead_info, n_compress=100):
     num_live    = _compute_num_live(sorted_info)
 
     rng_key, subkey = jax.random.split(rng_key)
-    u    = jax.random.uniform(subkey, (len(ll), n_compress))
-    r    = jax.lax.log1p(jax.lax.neg(u))          # log(1-u) ~ Beta(n,1) log-space
+    # log(1-u) for u~Uniform(0,1) equals -Exp(1) in distribution.
+    # Sample exponential directly to avoid log(0) when u rounds to 1.0 in float32.
+    r    = -jax.random.exponential(subkey, (len(ll), n_compress))
     t    = r / num_live[:, jnp.newaxis]
     logX = jnp.cumsum(t, axis=0)
 
     # log(dX_i) = log((X_{i-1} - X_{i+1}) / 2)
     logXp  = jnp.concatenate([jnp.zeros((1, n_compress)), logX[:-1]], axis=0)
     logXm  = jnp.concatenate([logX[1:], jnp.full((1, n_compress), -jnp.inf)], axis=0)
-    logdX  = _log1mexp(logXm - logXp) + logXp - jnp.log(2.0)
+    # Float32 cumsum rounding over O(10^5) steps can produce log_diff > 0.
+    # _log1mexp(x > 0) returns NaN; clip to prevent this.
+    log_diff = jnp.minimum(logXm - logXp, 0.0)
+    logdX  = _log1mexp(log_diff) + logXp - jnp.log(2.0)
 
     ll_s   = sorted_info.particles.loglikelihood
     log_w  = logdX + ll_s[:, jnp.newaxis]
@@ -526,7 +530,7 @@ def run_nss(model, model_args=(), model_kwargs=None,
     """Run the Nested Slice Sampler on a NumPyro model.
 
     Recommended settings (Yallup+2025, arXiv:2601.23252):
-      n_live=1000, num_mcmc_steps=ndim, num_delete=n_live//10.
+      num_mcmc_steps=ndim, num_delete=n_live//10.
 
     Parameters
     ----------
@@ -685,7 +689,9 @@ def run_nss(model, model_args=(), model_kwargs=None,
     # ---- Finalise and compute evidence ----
     final = _finalise(state, dead)
     logw  = _log_weights(rng_key, final)
-    logw_mean = logw.mean(axis=-1)
+    # Average weights over stochastic compression realisations in linear space:
+    # log(mean_j(w_ij)) = logsumexp(logw, axis=-1) - log(n_compress)
+    logw_mean = jax.scipy.special.logsumexp(logw, axis=-1) - jnp.log(logw.shape[-1])
 
     minimum = jnp.nan_to_num(logw).min()
     logzs   = jax.scipy.special.logsumexp(
@@ -695,7 +701,9 @@ def run_nss(model, model_args=(), model_kwargs=None,
 
     # Resample to equal-weight posterior samples
     positions  = final.particles.position
-    logw_norm  = logw_mean - jax.scipy.special.logsumexp(logw_mean)
+    # NaN-safe: replace NaN weights with -inf (zero probability)
+    logw_mean_safe = jnp.where(jnp.isfinite(logw_mean), logw_mean, -jnp.inf)
+    logw_norm  = logw_mean_safe - jax.scipy.special.logsumexp(logw_mean_safe)
     logw_norm  = jnp.where(jnp.isfinite(logw_norm), logw_norm, -jnp.inf)
     p          = jnp.exp(logw_norm)
     p          = jnp.where(jnp.isfinite(p), p, 0.0)
