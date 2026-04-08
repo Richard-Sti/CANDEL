@@ -201,6 +201,9 @@ root = "data/Megamaser"
 [model.galaxies."CGCG074-064"]
 v_sys_obs = 6908.9
 
+[model.galaxies."NGC4258"]
+v_sys_obs = 472.0
+
 [model.galaxies."NGC5765b"]
 v_sys_obs = 8327.6
 
