@@ -256,13 +256,14 @@ def _estimate_batch_sizes(model, n_live):
 
     free = _free_gpu_bytes()
     if free is not None:
-        # Use 50% of free memory (leaves room for model params, gradients, XLA)
-        max_batch = max(1, int(0.5 * free / cost_per_point))
+        # cost_per_point overestimates ~2x (JAX fuses ops); factor 1.5 is
+        # empirically safe (199 batches fit on 12 GB RTX 2080 in float32)
+        max_batch = max(1, int(1.5 * free / cost_per_point))
         fprint(f"GPU free memory: {free / 2**30:.1f} GB → max_batch={max_batch}")
     else:
         # Fallback: assume 12 GB free
         fallback_bytes = 12 * 2**30
-        max_batch = max(1, int(0.5 * fallback_bytes / cost_per_point))
+        max_batch = max(1, int(1.5 * fallback_bytes / cost_per_point))
         fprint(f"GPU memory unavailable, assuming 12 GB free → max_batch={max_batch}")
 
     num_delete = max(1, min(max_batch, n_live // 10))
