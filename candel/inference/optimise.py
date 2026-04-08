@@ -568,7 +568,7 @@ def find_MAP(model, model_kwargs=None, seed=42):
         lr_end=opt_cfg.get("lr_end", 0.005),
         n_restarts=opt_cfg.get("n_restarts", 3),
         sobol_n_sigma=opt_cfg.get("sobol_n_sigma", 1),
-        sobol_batch=opt_cfg.get("sobol_batch", 1024),
+        sobol_batch=opt_cfg.get("sobol_batch", 128),
         min_dist_frac=opt_cfg.get("min_dist_frac", 0.01),
         seed=seed,
     )
