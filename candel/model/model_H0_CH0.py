@@ -44,13 +44,12 @@ class CH0Model(H0ModelBase):
     # ------------------------------------------------------------------
 
     def _replace_unused_priors(self, config):
-        """Replace priors on parameters not used in the model."""
+        config = super()._replace_unused_priors(config)
+
         use_Cepheid_host_redshift = get_nested(
             config, "model/use_Cepheid_host_redshift", False)
         use_PV_covmat_scaling = get_nested(
             config, "model/use_PV_covmat_scaling", False)
-        use_reconstruction = get_nested(
-            config, "model/use_reconstruction", False)
         which_selection = get_nested(
             config, "model/which_selection", None)
 
@@ -65,59 +64,23 @@ class CH0Model(H0ModelBase):
         if not use_PV_covmat_scaling:
             replace_prior_with_delta(config, "A_covmat", 1.0)
 
-        if not use_reconstruction:
-            replace_prior_with_delta(config, "beta", 0.0)
-
-        config = self._replace_bias_priors(config)
         return config
 
     def _load_selection_thresholds(self):
-        config = self.config
-        priors = config.setdefault(
-            "model", {}).setdefault("priors", {})
-        which_sel = get_nested(config, "model/which_selection", None)
-
-        if which_sel == "redshift":
-            active = {"cz_lim_selection", "cz_lim_selection_width"}
-        elif which_sel == "SN_magnitude":
-            active = {"mag_lim_SN", "mag_lim_SN_width"}
-        elif which_sel == "SN_magnitude_redshift":
-            active = {"cz_lim_selection", "cz_lim_selection_width",
-                      "mag_lim_SN", "mag_lim_SN_width"}
-        else:
-            active = set()
-
+        active_map = {
+            "redshift": {"cz_lim_selection", "cz_lim_selection_width"},
+            "SN_magnitude": {"mag_lim_SN", "mag_lim_SN_width"},
+            "SN_magnitude_redshift": {
+                "cz_lim_selection", "cz_lim_selection_width",
+                "mag_lim_SN", "mag_lim_SN_width"},
+        }
         spec = {
             "cz_lim_selection": 3300.0,
             "cz_lim_selection_width": None,
             "mag_lim_SN": 14.0,
             "mag_lim_SN_width": None,
         }
-        for name, default in spec.items():
-            if name not in active:
-                setattr(self, name, None)
-                setattr(self, f"_infer_{name}", False)
-                continue
-
-            raw = get_nested(config, f"model/{name}", default)
-            if raw == "infer":
-                p = priors.get(name)
-                if p is None:
-                    raise ValueError(
-                        f"`{name}` set to 'infer' but no "
-                        f"prior [model.priors.{name}] found.")
-                setattr(self, name, None)
-                setattr(self, f"_infer_{name}", True)
-                fprint(f"{name} will be inferred.")
-            else:
-                setattr(self, name, raw)
-                setattr(self, f"_infer_{name}", False)
-
-    def _resolve_threshold(self, name):
-        """Return the threshold value, sampling if flagged."""
-        if getattr(self, f"_infer_{name}"):
-            return rsample(name, self.priors[name])
-        return getattr(self, name)
+        super()._load_selection_thresholds(active_map, spec)
 
     def _load_model_flags(self):
         super()._load_model_flags()

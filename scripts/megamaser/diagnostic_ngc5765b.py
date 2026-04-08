@@ -1,7 +1,4 @@
 """Diagnostic: compare log-likelihood at published vs fitted parameters."""
-import sys
-sys.path.insert(0, "/mnt/users/rstiskalek/CANDEL")
-
 import os
 os.environ["JAX_PLATFORMS"] = "cpu"
 

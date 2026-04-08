@@ -282,41 +282,6 @@ def galactic_to_radec_cartesian(ell, b):
     return xyz[0] if np.isscalar(ell) and np.isscalar(b) else xyz
 
 
-def query_ned_cmb_redshift_radec(name):
-    """
-    Query NED for heliocentric redshift and ICRS coordinates and return the
-    CMB-frame velocity (cz_CMB) derived from the NED redshift.
-    """
-    try:
-        from astroquery.exceptions import RemoteServiceError
-        from astroquery.ned import Ned
-    except ImportError as exc:
-        raise ImportError("astroquery is required for querying NED.") from exc
-
-    try:
-        tab = Ned.query_object(name)
-    except (RemoteServiceError, IndexError) as exc:
-        raise RuntimeError(
-            f"NED did not return a valid entry for `{name}`: {exc}"
-        ) from exc
-
-    if len(tab) == 0:
-        raise RuntimeError(f"NED did not return any entry for `{name}`.")
-    required = {"Redshift", "RA", "DEC"}
-    if not required.issubset(tab.colnames):
-        raise RuntimeError(
-            f"Missing required columns in NED output: {tab.colnames}")
-
-    z_helio = tab["Redshift"][0]
-    ra_deg = tab["RA"][0]
-    dec_deg = tab["DEC"][0]
-
-    z_cmb = heliocentric_to_cmb(z_helio, ra_deg, dec_deg)
-    cz_cmb = z_cmb * SPEED_OF_LIGHT
-
-    return cz_cmb, ra_deg, dec_deg
-
-
 def supergalactic_to_radec(sgl, sgb):
     """
     Convert supergalactic coordinates (sgl, sgb) to equatorial
@@ -1113,7 +1078,6 @@ def plot_spline_bias(samples, knots_delta, show_fig=True, filename=None,
 
     knots_delta = np.array(sorted(knots_delta))
     knots_log1pd = np.log(1 + knots_delta)
-    pin_idx = int(np.argmin(np.abs(knots_delta)))
     n_knots = len(knots_delta)
 
     # Collect amplitude samples, shape (n_samples, n_knots)
@@ -1134,7 +1098,7 @@ def plot_spline_bias(samples, knots_delta, show_fig=True, filename=None,
         cs = CubicSpline(knots_log1pd, amp_samples[j], bc_type='natural')
         spline_eval[j] = cs(log1pd_eval)
 
-    p16, p50, p84 = np.percentile(spline_eval, [16, 50, 84], axis=0)
+    p16, _, p84 = np.percentile(spline_eval, [16, 50, 84], axis=0)
     mean = np.mean(spline_eval, axis=0)
 
     fig, ax = plt.subplots(figsize=(5, 4))

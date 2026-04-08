@@ -40,37 +40,21 @@ class TRGBModel(H0ModelBase):
     # ------------------------------------------------------------------
 
     def _replace_unused_priors(self, config):
-        use_reconstruction = get_nested(
-            config, "model/use_reconstruction", False)
+        config = super()._replace_unused_priors(config)
 
-        if not use_reconstruction:
-            replace_prior_with_delta(config, "beta", 0.0)
-
-        # M_B only needed for SN_magnitude selection
         which_sel = get_nested(config, "model/which_selection", None)
         if which_sel != "SN_magnitude":
             replace_prior_with_delta(
                 config, "M_B", -19.0, verbose=False)
 
-        config = self._replace_bias_priors(config)
         return config
 
     def _load_selection_thresholds(self):
-        config = self.config
-        priors = config.setdefault(
-            "model", {}).setdefault("priors", {})
-        which_sel = get_nested(config, "model/which_selection", None)
-
-        # Only load thresholds relevant to the active selection.
-        if which_sel == "TRGB_magnitude":
-            active = {"mag_lim_TRGB", "mag_lim_TRGB_width"}
-        elif which_sel == "redshift":
-            active = {"cz_lim_selection", "cz_lim_selection_width"}
-        elif which_sel == "SN_magnitude":
-            active = {"mag_lim_SN", "mag_lim_SN_width"}
-        else:
-            active = set()
-
+        active_map = {
+            "TRGB_magnitude": {"mag_lim_TRGB", "mag_lim_TRGB_width"},
+            "redshift": {"cz_lim_selection", "cz_lim_selection_width"},
+            "SN_magnitude": {"mag_lim_SN", "mag_lim_SN_width"},
+        }
         spec = {
             "cz_lim_selection":       None,
             "cz_lim_selection_width":  None,
@@ -79,25 +63,7 @@ class TRGBModel(H0ModelBase):
             "mag_lim_SN":             None,
             "mag_lim_SN_width":       None,
         }
-        for name, default in spec.items():
-            if name not in active:
-                setattr(self, name, None)
-                setattr(self, f"_infer_{name}", False)
-                continue
-
-            raw = get_nested(config, f"model/{name}", default)
-            if raw == "infer":
-                p = priors.get(name)
-                if p is None:
-                    raise ValueError(
-                        f"`{name}` set to 'infer' but no "
-                        f"prior [model.priors.{name}] found.")
-                setattr(self, name, None)
-                setattr(self, f"_infer_{name}", True)
-                fprint(f"{name} will be inferred.")
-            else:
-                setattr(self, name, raw)
-                setattr(self, f"_infer_{name}", False)
+        super()._load_selection_thresholds(active_map, spec)
 
     # ------------------------------------------------------------------
     #  Phase 2: data loading
@@ -172,16 +138,6 @@ class TRGBModel(H0ModelBase):
                 raise ValueError(
                     "`mag_lim_SN` must be set or 'infer' "
                     "for SN_magnitude selection.")
-
-    # ------------------------------------------------------------------
-    #  Selection functions
-    # ------------------------------------------------------------------
-
-    def _resolve_threshold(self, name):
-        """Return the threshold value, sampling if flagged."""
-        if getattr(self, f"_infer_{name}"):
-            return rsample(name, self.priors[name])
-        return getattr(self, name)
 
     # ------------------------------------------------------------------
     #  Forward model

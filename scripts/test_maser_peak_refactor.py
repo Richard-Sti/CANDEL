@@ -1,8 +1,6 @@
 #!/usr/bin/env python
 """Test maser peak refactor against saved reference values."""
 import os
-import sys
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import jax
 jax.config.update("jax_platform_name", "cpu")

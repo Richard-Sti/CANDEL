@@ -2,7 +2,6 @@
 """Batch mock closure tests for the full maser disk forward model."""
 import argparse
 import os
-import sys
 import tempfile
 import time
 from contextlib import redirect_stdout
@@ -13,8 +12,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import tomli_w
 from scipy.stats import kstest, norm
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
 import jax
 jax.config.update("jax_platform_name", "cpu")

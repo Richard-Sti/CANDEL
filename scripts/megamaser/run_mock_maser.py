@@ -1,7 +1,4 @@
 """Run inference on a mock maser disk galaxy."""
-import sys
-sys.path.insert(0, "/Users/rstiskalek/Projects/CANDEL")
-
 import os
 os.environ["JAX_PLATFORMS"] = "cpu"
 

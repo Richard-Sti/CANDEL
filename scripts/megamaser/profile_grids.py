@@ -1,7 +1,4 @@
 """Compare Mode 2 speed and accuracy across grid resolutions."""
-import sys
-sys.path.insert(0, "/mnt/users/rstiskalek/CANDEL")
-
 import os
 os.environ["JAX_PLATFORMS"] = "cpu"
 

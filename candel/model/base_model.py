@@ -29,7 +29,7 @@ from ..util import (fprint, fsection, get_nested, load_config,
                     radec_to_cartesian, replace_prior_with_delta)
 from .interp import LOSInterpolator
 from .pv_utils import (lp_galaxy_bias, octupole_radial, quadrupole_radial,
-                       sigmoid_monopole_radial)
+                       rsample, sigmoid_monopole_radial)
 from .integration import ln_simpson_precomputed, simpson_log_weights
 from .utils import load_priors, log_prob_integrand_sel, predict_cz
 
@@ -488,6 +488,14 @@ class H0ModelBase(ModelBase):
         self._load_selection_thresholds()
         self._load_model_flags()
 
+    def _replace_unused_priors(self, config):
+        use_reconstruction = get_nested(
+            config, "model/use_reconstruction", False)
+        if not use_reconstruction:
+            replace_prior_with_delta(config, "beta", 0.0)
+        config = self._replace_bias_priors(config)
+        return config
+
     def _load_model_flags(self):
         config = self.config
         self.which_selection = get_nested(
@@ -546,6 +554,38 @@ class H0ModelBase(ModelBase):
             fprint(f"use_Vext_octupole set to True "
                    f"(mag range: {self.Vext_oct_mag_range})")
         self.apply_sel = self.which_selection is not None
+
+    def _load_selection_thresholds(self, active_map, spec):
+        config = self.config
+        priors = config.setdefault(
+            "model", {}).setdefault("priors", {})
+        which_sel = get_nested(config, "model/which_selection", None)
+        active = active_map.get(which_sel, set())
+
+        for name, default in spec.items():
+            if name not in active:
+                setattr(self, name, None)
+                setattr(self, f"_infer_{name}", False)
+                continue
+
+            raw = get_nested(config, f"model/{name}", default)
+            if raw == "infer":
+                p = priors.get(name)
+                if p is None:
+                    raise ValueError(
+                        f"`{name}` set to 'infer' but no "
+                        f"prior [model.priors.{name}] found.")
+                setattr(self, name, None)
+                setattr(self, f"_infer_{name}", True)
+                fprint(f"{name} will be inferred.")
+            else:
+                setattr(self, name, raw)
+                setattr(self, f"_infer_{name}", False)
+
+    def _resolve_threshold(self, name):
+        if getattr(self, f"_infer_{name}"):
+            return rsample(name, self.priors[name])
+        return getattr(self, name)
 
     def _replace_bias_priors(self, config):
         """Inject delta priors for galaxy bias params if missing.

@@ -4,9 +4,6 @@ For each spot, evaluates the 1D log-likelihood as a function of phi at
 fiducial r, measures the peak width (sigma_phi), and reports statistics
 for HV and systemic spots separately. Also checks bimodal separation.
 """
-import sys
-sys.path.insert(0, "/mnt/users/rstiskalek/CANDEL")
-
 import numpy as np
 import jax
 import jax.numpy as jnp

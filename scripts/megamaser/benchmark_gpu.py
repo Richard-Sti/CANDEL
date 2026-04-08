@@ -1,7 +1,4 @@
 """Benchmark Mode 2 maser model on GPU: forward + gradient timing."""
-import sys
-sys.path.insert(0, "/mnt/users/rstiskalek/CANDEL")
-
 import os
 import time
 

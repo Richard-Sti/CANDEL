@@ -103,6 +103,17 @@ def _get_sample_site_names(model, model_kwargs, seed=42):
             if v["type"] == "sample" and not v.get("is_observed", False)}
 
 
+def _setup_dense_mass(kwargs, init_params, model, model_kwargs):
+    if init_params is not None:
+        site_names = set(init_params.keys())
+    elif (kwargs.get("dense_mass_params") is not None
+          or kwargs.get("dense_mass_blocks") is not None):
+        site_names = _get_sample_site_names(model, model_kwargs)
+    else:
+        site_names = None
+    return _parse_dense_mass(kwargs, site_names=site_names)
+
+
 def find_initial_point(model, model_kwargs, maxiter=100, seed=42):
     """Run L-BFGS to find a reasonable MCMC starting point.
 
@@ -286,14 +297,7 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
         fprint("initialising NUTS from prior median.")
         init_strategy = init_to_median(num_samples=5000)
 
-    if init_params is not None:
-        site_names = set(init_params.keys())
-    elif (kwargs.get("dense_mass_params") is not None
-          or kwargs.get("dense_mass_blocks") is not None):
-        site_names = _get_sample_site_names(model, model_kwargs)
-    else:
-        site_names = None
-    dense_mass = _parse_dense_mass(kwargs, site_names=site_names)
+    dense_mass = _setup_dense_mass(kwargs, init_params, model, model_kwargs)
     if init_params is not None:
         ndim = sum(int(np.prod(v.shape)) for v in init_params.values())
         if isinstance(dense_mass, bool):
@@ -485,14 +489,7 @@ def run_H0_inference(model, model_kwargs=None, print_summary=True,
             fprint("initialising NUTS from prior median.")
             init_strategy = init_to_median(num_samples=5000)
 
-    if init_params is not None:
-        site_names = set(init_params.keys())
-    elif (kwargs.get("dense_mass_params") is not None
-          or kwargs.get("dense_mass_blocks") is not None):
-        site_names = _get_sample_site_names(model, model_kwargs)
-    else:
-        site_names = None
-    dense_mass = _parse_dense_mass(kwargs, site_names=site_names)
+    dense_mass = _setup_dense_mass(kwargs, init_params, model, model_kwargs)
     max_tree_depth = kwargs.get("max_tree_depth", 10)
     target_accept_prob = kwargs.get("target_accept_prob", 0.8)
     kernel = NUTS(model, init_strategy=init_strategy, dense_mass=dense_mass,
