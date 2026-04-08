@@ -188,6 +188,9 @@ dist = "uniform"
 low = 5.0
 high = 100.0
 
+[optimise]
+sobol_batch = 128   # RTX 3090 has 24 GB; 1024 (default) OOMs
+
 [io]
 root_output = "results/Maser"
 
