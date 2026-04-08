@@ -4,17 +4,8 @@ Verifies evidence recovery and posterior mean/std in 20 dimensions.
 Analytic log Z = 20/2 * log(2*pi) + 0.5*log(det(Sigma)) - 20*log(20)
 (uniform prior on [-10, 10]^20).
 """
-import tqdm as _tqdm
-_OrigTqdm = _tqdm.tqdm
-
-
-class _SlowTqdm(_OrigTqdm):
-    def __init__(self, *a, **kw):
-        kw.setdefault("mininterval", 5)
-        super().__init__(*a, **kw)
-
-
-_tqdm.tqdm = _SlowTqdm
+from candel.util import patch_tqdm
+patch_tqdm()
 
 import jax  # noqa: E402
 import jax.numpy as jnp  # noqa: E402

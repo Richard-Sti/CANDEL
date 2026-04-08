@@ -53,6 +53,19 @@ def fprint(*args, verbose=True, **kwargs):
         print("  ", *args, **kwargs)
 
 
+def patch_tqdm(mininterval=5):
+    """Monkey-patch tqdm to reduce output frequency for long-running jobs."""
+    import tqdm
+    _Orig = tqdm.tqdm
+
+    class _Slow(_Orig):
+        def __init__(self, *a, **kw):
+            kw.setdefault("mininterval", mininterval)
+            super().__init__(*a, **kw)
+
+    tqdm.tqdm = _Slow
+
+
 def convert_none_strings(d):
     """
     Convert all string values in a dictionary to None if they are equal to

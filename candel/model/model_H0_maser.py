@@ -751,54 +751,40 @@ class MaserDiskModel(ModelBase):
                     sa_floor2=sigma_a_floor2_sys)
                 results.append(_sys_block(f"_idx_sys{suffix}", **kw))
 
-        # ---- Red HV: with accel, then without ----
-        for suffix, has_a in [("_a", True), ("_noa", False)]:
-            n = getattr(self, f"_n_red{suffix}")
-            if n > 0:
+        # ---- Red and Blue HV: with accel, then without ----
+        hv_colors = [
+            ("red", log_w_phi_red,
+             log_w_2d_red if log_w_r is not None else None),
+            ("blue", log_w_phi_blue,
+             log_w_2d_blue if log_w_r is not None else None),
+        ]
+        for color, lw_phi, lw_2d in hv_colors:
+            for suffix, has_a in [("_a", True), ("_noa", False)]:
+                if getattr(self, f"_n_{color}{suffix}") == 0:
+                    continue
                 kw = dict(
-                    sp1=self._sin_phi1_red, cp1=self._cos_phi1_red,
-                    sp2=self._sin_phi2_red, cp2=self._cos_phi2_red,
-                    log_w_phi=log_w_phi_red,
+                    sp1=getattr(self, f"_sin_phi1_{color}"),
+                    cp1=getattr(self, f"_cos_phi1_{color}"),
+                    sp2=getattr(self, f"_sin_phi2_{color}"),
+                    cp2=getattr(self, f"_cos_phi2_{color}"),
+                    log_w_phi=lw_phi,
                     log_w_r=log_w_r,
-                    log_w_2d=log_w_2d_red if log_w_r is not None else None,
-                    x_d=getattr(self, f"_x_red{suffix}"),
-                    y_d=getattr(self, f"_y_red{suffix}"),
-                    v_d=getattr(self, f"_velocity_red{suffix}"),
-                    a_d=getattr(self, "_a_red_a", None) if has_a else None,
-                    sx2=getattr(self, f"_sigma_x2_red{suffix}"),
-                    sy2=getattr(self, f"_sigma_y2_red{suffix}"),
-                    sv2=getattr(self, f"_sigma_v2_red{suffix}"),
+                    log_w_2d=lw_2d,
+                    x_d=getattr(self, f"_x_{color}{suffix}"),
+                    y_d=getattr(self, f"_y_{color}{suffix}"),
+                    v_d=getattr(self, f"_velocity_{color}{suffix}"),
+                    a_d=(getattr(self, f"_a_{color}_a", None)
+                         if has_a else None),
+                    sx2=getattr(self, f"_sigma_x2_{color}{suffix}"),
+                    sy2=getattr(self, f"_sigma_y2_{color}{suffix}"),
+                    sv2=getattr(self, f"_sigma_v2_{color}{suffix}"),
                     sv_floor2=var_v_hv,
-                    sa2=(getattr(self, "_sigma_a2_red_a", None)
+                    sa2=(getattr(self, f"_sigma_a2_{color}_a", None)
                          if has_a else None),
                     has_accel=has_a,
                     sa_floor2=sigma_a_floor2_hv)
-                results.append(_hv_block(f"_idx_red{suffix}", **kw))
-
-        # ---- Blue HV: with accel, then without ----
-        for suffix, has_a in [("_a", True), ("_noa", False)]:
-            n = getattr(self, f"_n_blue{suffix}")
-            if n > 0:
-                kw = dict(
-                    sp1=self._sin_phi1_blue, cp1=self._cos_phi1_blue,
-                    sp2=self._sin_phi2_blue, cp2=self._cos_phi2_blue,
-                    log_w_phi=log_w_phi_blue,
-                    log_w_r=log_w_r,
-                    log_w_2d=log_w_2d_blue if log_w_r is not None else None,
-                    x_d=getattr(self, f"_x_blue{suffix}"),
-                    y_d=getattr(self, f"_y_blue{suffix}"),
-                    v_d=getattr(self, f"_velocity_blue{suffix}"),
-                    a_d=(getattr(self, "_a_blue_a", None)
-                         if has_a else None),
-                    sx2=getattr(self, f"_sigma_x2_blue{suffix}"),
-                    sy2=getattr(self, f"_sigma_y2_blue{suffix}"),
-                    sv2=getattr(self, f"_sigma_v2_blue{suffix}"),
-                    sv_floor2=var_v_hv,
-                    sa2=(getattr(self, "_sigma_a2_blue_a", None)
-                         if has_a else None),
-                    has_accel=has_a,
-                    sa_floor2=sigma_a_floor2_hv)
-                results.append(_hv_block(f"_idx_blue{suffix}", **kw))
+                results.append(
+                    _hv_block(f"_idx_{color}{suffix}", **kw))
 
         # Concat + gather replaces .at[idx].set() scatter ops
         return jnp.concatenate(results, axis=0)[self._inv_order]
