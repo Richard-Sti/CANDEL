@@ -43,8 +43,7 @@ true_params = {
     "sigma_y_floor": 0.003,
     "sigma_v_sys": 1.5,
     "sigma_v_hv": 1.5,
-    "sigma_a_floor_sys": 0.04,
-    "sigma_a_floor_hv": 0.04,
+    "sigma_a_floor": 0.04,
     "H0": 73.0,
     "sigma_pec": 250.0,
 }
@@ -124,10 +123,8 @@ config = {
             "sigma_v_hv": {"dist": "truncated_normal",
                            "mean": 2.0, "scale": 1.0,
                            "low": 0.0, "high": 20.0},
-            "sigma_a_floor_sys": {"dist": "uniform",
-                                  "low": 1e-4, "high": 5.0},
-            "sigma_a_floor_hv": {"dist": "uniform",
-                                 "low": 1e-4, "high": 5.0},
+            "sigma_a_floor": {"dist": "uniform",
+                              "low": 1e-4, "high": 5.0},
         },
     },
     "io": {
@@ -176,7 +173,7 @@ global_keys = ["D_c", "log_MBH", "dv_sys", "x0", "y0",
                "i0", "Omega0", "dOmega_dr", "di_dr",
                "sigma_x_floor", "sigma_y_floor",
                "sigma_v_sys", "sigma_v_hv",
-               "sigma_a_floor_sys", "sigma_a_floor_hv"]
+               "sigma_a_floor"]
 
 fsection("Global parameter posteriors vs truth")
 for k in global_keys:

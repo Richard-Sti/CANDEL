@@ -553,7 +553,7 @@ class MaserDiskModel(ModelBase):
                            r_ang_ref, i0, di_dr, Omega0, dOmega_dr,
                            sigma_x_floor2, sigma_y_floor2,
                            var_v_sys, var_v_hv,
-                           sigma_a_floor2_sys, sigma_a_floor2_hv,
+                           sigma_a_floor2,
                            log_w_r=None,
                            phi_mu_red=None, phi_sigma_red=None,
                            phi_mu_blue=None, phi_sigma_blue=None,
@@ -756,7 +756,7 @@ class MaserDiskModel(ModelBase):
                     sa2=(getattr(self, "_sigma_a2_sys_a", None)
                          if has_a else None),
                     has_accel=has_a,
-                    sa_floor2=sigma_a_floor2_sys)
+                    sa_floor2=sigma_a_floor2)
                 results.append(_sys_block(f"_idx_sys{suffix}", **kw))
 
         # ---- Red and Blue HV: with accel, then without ----
@@ -790,7 +790,7 @@ class MaserDiskModel(ModelBase):
                     sa2=(getattr(self, f"_sigma_a2_{color}_a", None)
                          if has_a else None),
                     has_accel=has_a,
-                    sa_floor2=sigma_a_floor2_hv)
+                    sa_floor2=sigma_a_floor2)
                 results.append(
                     _hv_block(f"_idx_{color}{suffix}", **kw))
 
@@ -842,11 +842,8 @@ class MaserDiskModel(ModelBase):
             "sigma_v_sys", self.priors["sigma_v_sys"], shared_params)**2
         var_v_hv = rsample(
             "sigma_v_hv", self.priors["sigma_v_hv"], shared_params)**2
-        sigma_a_floor2_sys = rsample(
-            "sigma_a_floor_sys", self.priors["sigma_a_floor_sys"],
-            shared_params)**2
-        sigma_a_floor2_hv = rsample(
-            "sigma_a_floor_hv", self.priors["sigma_a_floor_hv"],
+        sigma_a_floor2 = rsample(
+            "sigma_a_floor", self.priors["sigma_a_floor"],
             shared_params)**2
 
         dv_sys = rsample("dv_sys", self.priors["dv_sys"], shared_params)
@@ -878,7 +875,7 @@ class MaserDiskModel(ModelBase):
         args = (x0, y0, D_A, M_BH, v_sys,
                 self._r_ang_ref, i0, di_dr, Omega0, dOmega_dr,
                 sigma_x_floor2, sigma_y_floor2, var_v_sys, var_v_hv,
-                sigma_a_floor2_sys, sigma_a_floor2_hv)
+                sigma_a_floor2)
 
         if self.marginalise_r:
             r_all = jnp.broadcast_to(

@@ -194,7 +194,7 @@ param_keys = ['D_c', 'log_MBH', 'i0', 'di_dr', 'Omega0', 'dOmega_dr',
               'x0', 'y0', 'dv_sys',
               'sigma_x_floor', 'sigma_y_floor',
               'sigma_v_sys', 'sigma_v_hv',
-              'sigma_a_floor_sys', 'sigma_a_floor_hv']
+              'sigma_a_floor']
 if use_phi_prior:
     param_keys += ['phi_mu_red', 'phi_sigma_red',
                    'phi_mu_blue', 'phi_sigma_blue',

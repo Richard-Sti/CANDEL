@@ -54,7 +54,7 @@ value = 250
 
 [model.priors.D]
 dist = "data_estimate_uniform"
-half_width = 50.0
+half_width = 40.0
 
 [model.priors.log_MBH]
 dist = "data_estimate_truncated_normal"
@@ -130,14 +130,7 @@ scale = 5.0
 low = 0.0
 high = 100.0
 
-[model.priors.sigma_a_floor_sys]
-dist = "truncated_normal"
-mean = 0.1
-scale = 0.2
-low = 0.0
-high = 1.0
-
-[model.priors.sigma_a_floor_hv]
+[model.priors.sigma_a_floor]
 dist = "truncated_normal"
 mean = 0.1
 scale = 0.2

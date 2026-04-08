@@ -28,7 +28,7 @@ BASE_CONFIG = os.path.join(REPO_ROOT, "scripts", "runs", "config_maser.toml")
 
 TRACKED_PARAMS = ["H0", "D_c", "log_M_BH", "i0", "Omega0", "dOmega_dr",
                   "sigma_pec", "sigma_v_sys", "sigma_v_hv",
-                  "sigma_a_floor_sys", "sigma_a_floor_hv",
+                  "sigma_a_floor",
                   "A_thr", "sigma_det"]
 
 
@@ -72,8 +72,7 @@ def run_one_mock(seed, num_warmup=1000, num_samples=500, quiet=True):
         'sigma_y_floor': jnp.array(tp['sigma_y_floor']),
         'sigma_v_sys': jnp.array(tp['sigma_v_sys']),
         'sigma_v_hv': jnp.array(tp['sigma_v_hv']),
-        'sigma_a_floor_sys': jnp.array(tp['sigma_a_floor']),
-        'sigma_a_floor_hv': jnp.array(tp['sigma_a_floor']),
+        'sigma_a_floor': jnp.array(tp['sigma_a_floor']),
         'A_thr': jnp.array(tp['A_thr']),
         'sigma_det': jnp.array(tp['sigma_det']),
     }
