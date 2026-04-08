@@ -327,6 +327,33 @@ def _chi2_3obs(x_obs, X, inv_var_x, y_obs, Y, inv_var_y,
             + dv * dv * inv_var_v)
 
 
+def _ecc_vel_factor(sin_phi, cos_phi, ecc, sin_omega, cos_omega):
+    """Velocity scaling factor for eccentric Keplerian orbit.
+
+    For disk azimuthal angle phi and orbital eccentricity (ecc, omega_disk):
+        v_z_ecc = v_kep * _ecc_vel_factor(...) * sin_i
+    where the circular result has factor = sin_phi.
+
+    Parameters
+    ----------
+    sin_phi, cos_phi : sin and cos of the disk azimuthal angle phi
+    ecc : orbital eccentricity, scalar in [0, 1)
+    sin_omega, cos_omega : sin and cos of omega_disk (argument of periapsis)
+
+    Returns
+    -------
+    factor : (sin_phi + ecc*sin(2*phi - omega)) / sqrt(1 + ecc*cos(phi - omega))
+    """
+    # cos(phi - omega) = cos_phi*cos_omega + sin_phi*sin_omega
+    cos_f = cos_phi * cos_omega + sin_phi * sin_omega
+    # sin(2*phi - omega) = 2*sin_phi*cos_phi*cos_omega - (cos_phi^2 - sin_phi^2)*sin_omega
+    sin_2phi_m_omega = (2.0 * sin_phi * cos_phi * cos_omega
+                        - (cos_phi * cos_phi - sin_phi * sin_phi) * sin_omega)
+    numerator = sin_phi + ecc * sin_2phi_m_omega
+    denominator = jnp.sqrt(1.0 + ecc * cos_f)
+    return numerator / denominator
+
+
 # -----------------------------------------------------------------------
 # Model classes
 # -----------------------------------------------------------------------
