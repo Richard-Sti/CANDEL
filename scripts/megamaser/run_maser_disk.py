@@ -200,7 +200,7 @@ elif sampler == "nss":
 
 # ---- Print results ----
 fsection("Results")
-param_keys = ['D_c', 'eta', 'log_MBH', 'i0', 'di_dr', 'Omega0', 'dOmega_dr',
+param_keys = ['D_c', 'log_MBH', 'i0', 'di_dr', 'Omega0', 'dOmega_dr',
               'x0', 'y0', 'dv_sys',
               'sigma_x_floor', 'sigma_y_floor',
               'sigma_v_sys', 'sigma_v_hv',
