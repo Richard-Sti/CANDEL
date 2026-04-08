@@ -178,6 +178,17 @@ scale = 10.0
 low = 0.1
 high = 90.0
 
+# Eccentricity priors (only used when model/use_ecc = true)
+[model.priors.ecc]
+dist = "uniform"
+low = 0.0
+high = 0.5
+
+[model.priors.omega_disk]
+dist = "uniform"
+low = 0.0
+high = 360.0
+
 [model.priors.D_lim]
 dist = "uniform"
 low = 50.0

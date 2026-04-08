@@ -481,6 +481,8 @@ class MaserDiskModel(ModelBase):
 
         # ---- Phi prior (optional) ----
         self.phi_prior = get_nested(self.config, "model/phi_prior", False)
+        self.use_ecc = get_nested(self.config, "model/use_ecc", False)
+        fprint(f"use_ecc = {self.use_ecc}")
 
         # Inverse permutation for concat+gather (replaces .at[idx].set).
         # Order: sys_a, sys_noa, red_a, red_noa, blue_a, blue_noa
@@ -1001,6 +1003,17 @@ class MaserDiskModel(ModelBase):
         dv_sys = rsample("dv_sys", self.priors["dv_sys"], shared_params)
         v_sys = self.v_sys_obs + dv_sys
 
+        # Eccentricity parameters (optional)
+        ecc_kw = {}
+        if self.use_ecc:
+            ecc = rsample("ecc", self.priors["ecc"], shared_params)
+            omega_disk_deg = rsample(
+                "omega_disk", self.priors["omega_disk"], shared_params)
+            omega_disk = jnp.deg2rad(omega_disk_deg)
+            sin_omega = jnp.sin(omega_disk)
+            cos_omega = jnp.cos(omega_disk)
+            ecc_kw = dict(ecc=ecc, sin_omega=sin_omega, cos_omega=cos_omega)
+
         # Phi prior parameters (optional)
         phi_kw = {}
         if self.phi_prior:
@@ -1035,7 +1048,7 @@ class MaserDiskModel(ModelBase):
                 (self.n_spots, len(self._r_ang_grid)))
 
             ll_per_spot = self._eval_marginal_phi(
-                r_all, *args, log_w_r=self._log_w_R, **phi_kw)
+                r_all, *args, log_w_r=self._log_w_R, **phi_kw, **ecc_kw)
             ll_disk = jnp.sum(ll_per_spot)
 
         else:
@@ -1043,7 +1056,8 @@ class MaserDiskModel(ModelBase):
                 r_spots = sample(
                     "r_ang", Uniform(self._r_ang_lo, self._r_ang_hi))
 
-            ll_per_spot = self._eval_marginal_phi(r_spots, *args, **phi_kw)
+            ll_per_spot = self._eval_marginal_phi(
+                r_spots, *args, **phi_kw, **ecc_kw)
             ll_disk = jnp.sum(ll_per_spot)
 
         factor("ll_disk", ll_disk)
