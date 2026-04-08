@@ -570,7 +570,7 @@ def plot_corner(samples, show_fig=True, filename=None, smooth=1, keys=None):
         if v.ndim > 1:
             continue
         v = v.reshape(-1)
-        if np.std(v) == 0:
+        if np.isclose(np.std(v), 0):
             continue
         flat_samples.append(v)
         labels.append(name2label(k))

@@ -250,12 +250,6 @@ fig.savefig(fname_spots, dpi=150, bbox_inches="tight")
 plt.close(fig)
 print(f"Spot classification plot saved to {fname_spots}", flush=True)
 
-# Corner plots (smoothed and unsmoothed)
-fname_corner = os.path.join(outdir, f"{galaxy}_{suffix}_corner.png")
-plot_corner(samples, show_fig=False, filename=fname_corner)
-fname_corner_raw = os.path.join(outdir, f"{galaxy}_{suffix}_corner_raw.png")
-plot_corner(samples, show_fig=False, filename=fname_corner_raw, smooth=False)
-
 outpath = os.path.join(outdir, f"{galaxy}_{suffix}.npz")
 save_dict = {k: np.asarray(samples[k]) for k in samples if k != 'r_ang'}
 save_dict.update(D_A=D_A, M_BH=M_BH)
@@ -263,3 +257,9 @@ if meta is not None:
     save_dict.update(log_Z=meta['log_Z'], log_Z_err=meta['log_Z_err'])
 np.savez(outpath, **save_dict)
 print(f"Saved to {outpath}", flush=True)
+
+# Corner plots (smoothed and unsmoothed)
+fname_corner = os.path.join(outdir, f"{galaxy}_{suffix}_corner.png")
+plot_corner(samples, show_fig=False, filename=fname_corner)
+fname_corner_raw = os.path.join(outdir, f"{galaxy}_{suffix}_corner_raw.png")
+plot_corner(samples, show_fig=False, filename=fname_corner_raw, smooth=False)
