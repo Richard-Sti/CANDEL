@@ -135,7 +135,7 @@ dist = "truncated_normal"
 mean = 0.1
 scale = 0.2
 low = 0.0
-high = 1.0
+high = 0.3
 
 [model.priors.phi_mu_red]
 dist = "uniform"
