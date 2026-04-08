@@ -435,7 +435,7 @@ def name2label(name):
         "mu_N4258": r"$\mu_{\rm N4258}$",
         # Maser disk model
         "D_c": r"$D_c~[\mathrm{Mpc}]$",
-        "eta": r"$\eta \equiv \log_{10}(M_{\rm BH}/D_A)$",
+        "eta": r"$\eta$",
         "log_MBH": r"$\log_{10} M_{\rm BH}$",
         "i0": r"$i_0~[\mathrm{deg}]$",
         "di_dr": r"$\mathrm{d}i/\mathrm{d}r~[\mathrm{deg/mas}]$",
