@@ -621,7 +621,12 @@ class MaserDiskModel(ModelBase):
         from candel.model.utils import VolumePrior
 
         p = self.priors.get("D")
-        if isinstance(p, dict) and p.get("type") == "data_estimate_uniform":
+        # Explicit per-galaxy bounds override data-estimate logic.
+        if "D_lo" in data and "D_hi" in data:
+            lo, hi = float(data["D_lo"]), float(data["D_hi"])
+            self.priors["D"] = Uniform(lo, hi)
+            fprint(f"D prior: U({lo:.1f}, {hi:.1f})")
+        elif isinstance(p, dict) and p.get("type") == "data_estimate_uniform":
             hw = data.get("D_half_width", p.get("half_width", 50.0))
             lo = max(D_c_est - hw, 1.0)
             hi = D_c_est + hw

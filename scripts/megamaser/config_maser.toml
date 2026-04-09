@@ -52,10 +52,8 @@ value = 73.0
 dist = "delta"
 value = 250
 
-[model.priors.D]
-# D_ref = 112.2, e_D_ref = 5.4  (Pesce+2020, NGC5765b)
-dist = "data_estimate_uniform"
-half_width = 50.0
+# D prior: set D_lo, D_hi per galaxy below.
+# The runner reads these and sets a Uniform(D_lo, D_hi) prior.
 
 [model.priors.log_MBH]
 dist = "data_estimate_truncated_normal"
@@ -216,30 +214,36 @@ root = "data/Megamaser"
 
 [model.galaxies."CGCG074-064"]
 v_sys_obs = 6908.9
-D_half_width = 30.0
+D_lo = 66.0
+D_hi = 126.0
 # D_ref = 87.6, e_D_ref = 5.8 (Pesce+2020)
 
 [model.galaxies."NGC4258"]
 v_sys_obs = 472.0
-D_half_width = 2.0
+D_lo = 4.0
+D_hi = 8.0
 # D_ref = 7.58, e_D_ref = 0.11 (Reid+2019)
 
 [model.galaxies."NGC5765b"]
 v_sys_obs = 8327.6
-D_half_width = 40.0
+D_lo = 77.0
+D_hi = 157.0
 # D_ref = 112.2, e_D_ref = 5.4 (Pesce+2020)
 
 [model.galaxies."NGC6264"]
 v_sys_obs = 10131.3
-D_half_width = 50.0
+D_lo = 92.0
+D_hi = 192.0
 # D_ref = 132.1, e_D_ref = 11.9 (Pesce+2020)
 
 [model.galaxies."NGC6323"]
 v_sys_obs = 7838.5
-D_half_width = 40.0
-# D_ref = 109.4, e_D_ref = 15.3 (Pesce+2020)
+D_lo = 35.0
+D_hi = 185.0
+# D_ref = 109.4, e_D_ref = 30 (Pesce+2020)
 
 [model.galaxies."UGC3789"]
 v_sys_obs = 2905.4
-D_half_width = 30.0
+D_lo = 10.0
+D_hi = 70.0
 # D_ref = 51.5, e_D_ref = 4.5 (Pesce+2020)

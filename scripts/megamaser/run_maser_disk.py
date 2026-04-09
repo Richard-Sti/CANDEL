@@ -115,8 +115,11 @@ v_sys_obs = gcfg["v_sys_obs"]
 fsection(f"Loading {galaxy} data")
 data = load_megamaser_spots("data/Megamaser", galaxy, v_sys_obs=v_sys_obs)
 
-# Pass per-galaxy D half-width to data dict
-if "D_half_width" in gcfg:
+# Pass per-galaxy D bounds to data dict
+if "D_lo" in gcfg and "D_hi" in gcfg:
+    data["D_lo"] = float(gcfg["D_lo"])
+    data["D_hi"] = float(gcfg["D_hi"])
+elif "D_half_width" in gcfg:
     data["D_half_width"] = float(gcfg["D_half_width"])
 
 # ---- Build model config from master config ----
