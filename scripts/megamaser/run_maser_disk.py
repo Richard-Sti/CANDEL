@@ -183,7 +183,10 @@ if sampler == "nuts":
         init_strategy = init_to_value(values=init_params)
         fprint("NUTS init from Sobol+Adam MAP:")
         for k, v in init_params.items():
-            fprint(f"  {k:20s} = {float(v):12.4f}")
+            if v.ndim == 0:
+                fprint(f"  {k:20s} = {float(v):12.4f}")
+            else:
+                fprint(f"  {k:20s} = [{len(v)} values]")
     else:
         init_strategy = init_to_median(num_samples=20)
         fprint(f"NUTS init: {init_method}")
