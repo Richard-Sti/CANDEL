@@ -101,34 +101,43 @@ def _build_phi_half_grid_hv(G_half=251, c_min=0.0001, c_max=0.9999,
     return phi
 
 
-def _build_phi_grid_sys(G=501, s_max=0.999, n_patch=10):
-    """Arcsin-spaced grid on [-pi/2, pi/2] for systemic spots."""
-    s = _np.linspace(-s_max, s_max, G)
-    phi = _np.arcsin(s)
-    phi_cut_lo = phi[n_patch]
-    phi[:n_patch] = _np.linspace(-_np.pi / 2, phi_cut_lo, n_patch + 2)[1:-1]
-    phi_cut_hi = phi[-(n_patch + 1)]
-    phi[-n_patch:] = _np.linspace(phi_cut_hi, _np.pi / 2, n_patch + 2)[1:-1]
-    phi = _np.concatenate([[-_np.pi / 2], phi, [_np.pi / 2]])
-    return phi
+def _build_phi_grid_sys(n_inner=31, inner_deg=5.0, n_wing=10):
+    """Two-zone grid on [-pi/2, pi/2] for systemic spots.
+
+    Inner zone: arcsin-spaced on [-inner_deg, +inner_deg] (dense near phi=0
+    where systemic masers cluster).
+    Wings: linear from ±inner_deg to ±pi/2 (sparse coverage for outliers).
+    Total points: 2*n_wing + n_inner (includes ±pi/2 endpoints).
+    """
+    inner_rad = _np.deg2rad(inner_deg)
+    # Inner: arcsin spacing, dense at phi=0
+    s = _np.linspace(-0.999, 0.999, n_inner)
+    phi_inner = _np.arcsin(s) * (inner_rad / (_np.pi / 2))  # scale to ±inner_rad
+
+    # Wings: linear from inner boundary to ±pi/2
+    phi_lo = _np.linspace(-_np.pi / 2, -inner_rad, n_wing + 1)[:-1]
+    phi_hi = _np.linspace(inner_rad, _np.pi / 2, n_wing + 1)[1:]
+
+    return _np.concatenate([phi_lo, phi_inner, phi_hi])
 
 
 def _build_r_grid(r_min, r_max, n_r=101, scale=0.3):
     """Sinh-spaced radius grid in [r_min, r_max].
 
-    Parameterisation: log(r) = sinh(t) * scale, t uniform.
-    This concentrates points where the Keplerian chi-squared integrand
-    has structure (small-to-mid r) while still covering the large-r tail.
-    Benchmarks show |ΔlogL| < 0.001 nats vs a 1001-point log-uniform
-    reference at n_r=101 (3× fewer points than log-uniform at the same
-    accuracy; see convergence_grids.py).
+    Parameterisation: log(r) = log(r_center) + sinh(t)*scale, t uniform,
+    where r_center = sqrt(r_min*r_max) is the geometric centre of the range.
+    This makes the grid densest at the centre of [r_min, r_max] in log-space,
+    independent of the galaxy's absolute angular radius scale.
+    Benchmarks show |ΔlogL| < 0.001 nats vs a 1001-point reference at
+    n_r=101; see convergence_grids.py.
     """
     logr_lo = _np.log(r_min)
     logr_hi = _np.log(r_max)
-    t_lo = _np.arcsinh(logr_lo / scale)
-    t_hi = _np.arcsinh(logr_hi / scale)
+    logr_c  = 0.5 * (logr_lo + logr_hi)          # geometric centre
+    t_lo = _np.arcsinh((logr_lo - logr_c) / scale)
+    t_hi = _np.arcsinh((logr_hi - logr_c) / scale)
     t = _np.linspace(t_lo, t_hi, n_r)
-    return _np.exp(_np.sinh(t) * scale)
+    return _np.exp(logr_c + _np.sinh(t) * scale)
 
 
 # -----------------------------------------------------------------------
@@ -188,14 +197,14 @@ def predict_position(r_ang, phi, x0, y0, i, Omega):
     return X, Y
 
 
-def predict_velocity_los(r_ang, phi, D, M_BH, v_sys, i):
+def predict_velocity_los(r_ang, phi, D, M_BH, v_sys, i, ecc=0.0, omega=0.0):
     """Predict line-of-sight velocity of maser spots (optical convention).
 
     Note: used by the mock generator. The inference hot path uses
     the fused ``_compute_observables`` instead.
 
     Includes Keplerian orbital velocity, relativistic Doppler, gravitational
-    redshift, and systemic redshift.
+    redshift, and systemic redshift. Supports eccentric orbits.
 
     Parameters
     ----------
@@ -205,6 +214,8 @@ def predict_velocity_los(r_ang, phi, D, M_BH, v_sys, i):
     M_BH : black hole mass in M_sun
     v_sys : systemic velocity in km/s
     i : inclination in radians
+    ecc : orbital eccentricity
+    omega : argument of periapsis (phi of periapsis) in radians
 
     Returns
     -------
@@ -212,10 +223,14 @@ def predict_velocity_los(r_ang, phi, D, M_BH, v_sys, i):
     """
     v_kep = C_v * jnp.sqrt(M_BH / (r_ang * D))
 
-    v_z = v_kep * jnp.sin(phi) * jnp.sin(i)
+    cos_f = jnp.cos(phi - omega)
+    ecc_fac = (jnp.sin(phi) + ecc * jnp.sin(omega)) / jnp.sqrt(1.0 + ecc * cos_f)
+    v_z = v_kep * ecc_fac * jnp.sin(i)
 
-    beta = v_kep / SPEED_OF_LIGHT
-    gamma = 1.0 / jnp.sqrt(1.0 - beta**2)
+    beta_c2 = (v_kep / SPEED_OF_LIGHT)**2
+    beta_e2 = beta_c2 * (1.0 + ecc**2 + 2.0 * ecc * cos_f) / (1.0 + ecc * cos_f)
+    gamma = 1.0 / jnp.sqrt(1.0 - beta_e2)
+
     one_plus_z_D = gamma * (1.0 + v_z / SPEED_OF_LIGHT)
 
     one_plus_z_g = 1.0 / jnp.sqrt(1.0 - C_g * M_BH / (r_ang * D))
@@ -355,14 +370,11 @@ def _ecc_vel_factor(sin_phi, cos_phi, ecc, sin_omega, cos_omega):
 
     Returns
     -------
-    factor : (sin_phi + ecc*sin(2*phi - omega)) / sqrt(1 + ecc*cos(phi - omega))
+    factor : (sin_phi + ecc*sin_omega) / sqrt(1 + ecc*cos(phi - omega))
     """
     # cos(phi - omega) = cos_phi*cos_omega + sin_phi*sin_omega
     cos_f = cos_phi * cos_omega + sin_phi * sin_omega
-    # sin(2*phi - omega) = 2*sin_phi*cos_phi*cos_omega - (cos_phi^2 - sin_phi^2)*sin_omega
-    sin_2phi_m_omega = (2.0 * sin_phi * cos_phi * cos_omega
-                        - (cos_phi * cos_phi - sin_phi * sin_phi) * sin_omega)
-    numerator = sin_phi + ecc * sin_2phi_m_omega
+    numerator = sin_phi + ecc * sin_omega
     denominator = jnp.sqrt(1.0 + ecc * cos_f)
     return numerator / denominator
 
@@ -388,7 +400,7 @@ class MaserDiskModel(ModelBase):
         # Resolve data-estimate priors using spot data
         D_c_est, log_MBH_est = estimate_from_data(data)
         self._resolve_data_estimate_priors(
-            D_c_est, log_MBH_est, data["v_sys_obs"])
+            D_c_est, log_MBH_est, data["v_sys_obs"], data)
 
         self.n_spots = data["n_spots"]
         self.is_highvel = jnp.asarray(data["is_highvel"])
@@ -459,10 +471,14 @@ class MaserDiskModel(ModelBase):
         fprint(f"accel split: {n_a} with, {n_noa} without.")
 
         # ---- Phi grids and precomputed trig ----
-        G_half = int(get_nested(self.config, "model/G_phi_half", 251))
-        G_sys = int(get_nested(self.config, "model/G_phi_sys", 501))
+        G_half = int(get_nested(self.config, "model/G_phi_half", 101))
+        n_inner_sys = int(get_nested(self.config, "model/n_inner_sys", 101))
+        inner_deg_sys = float(get_nested(self.config, "model/inner_deg_sys", 30.0))
+        n_wing_sys = int(get_nested(self.config, "model/n_wing_sys", 50))
         phi_half = _build_phi_half_grid_hv(G_half=G_half)
-        phi_sys = _build_phi_grid_sys(G=G_sys)
+        phi_sys = _build_phi_grid_sys(n_inner=n_inner_sys,
+                                      inner_deg=inner_deg_sys,
+                                      n_wing=n_wing_sys)
 
         # Store phi grids for phi prior computation
         self._phi_half = jnp.asarray(phi_half)
@@ -579,12 +595,28 @@ class MaserDiskModel(ModelBase):
         fprint(f"use_selection = {self.use_selection}")
         fprint(f"phi_prior = {self.phi_prior}")
 
-    def _resolve_data_estimate_priors(self, D_c_est, log_MBH_est, v_sys_obs):
+    def _resolve_data_estimate_priors(self, D_c_est, log_MBH_est,
+                                      v_sys_obs, data):
         """Replace data-estimate prior sentinels with concrete dists."""
         from candel.model.utils import VolumePrior
 
         p = self.priors.get("D")
-        if isinstance(p, dict) and p.get("type") == "data_estimate_uniform":
+        if isinstance(p, dict) and p.get("type") == "reference_uniform":
+            D_ref = data.get("D_ref")
+            e_D_ref = data.get("e_D_ref")
+            if D_ref is None or e_D_ref is None:
+                raise ValueError(
+                    "D prior is 'reference_uniform' but data is missing "
+                    "'D_ref' and/or 'e_D_ref'. Add them to the per-galaxy "
+                    "config.")
+            n_sigma = data.get("n_sigma", p["n_sigma"])
+            hw = n_sigma * e_D_ref
+            lo = max(D_ref - hw, 1.0)
+            hi = D_ref + hw
+            self.priors["D"] = Uniform(lo, hi)
+            fprint(f"D prior: U({lo:.1f}, {hi:.1f}) "
+                   f"[{n_sigma:.0f}σ around D_ref={D_ref:.1f}]")
+        elif isinstance(p, dict) and p.get("type") == "data_estimate_uniform":
             hw = p["half_width"]
             lo = max(D_c_est - hw, 1.0)
             hi = D_c_est + hw
@@ -680,12 +712,21 @@ class MaserDiskModel(ModelBase):
 
         def _obs_4_ecc(idx, sp, cp):
             """X, Y, V (eccentric), A from precomputed r-quantities."""
-            (si, r_sub, vk, gm, zg, am, pa, pb, pc, pd) = _r_precomp(idx)
+            (si, r_sub, vk, _, zg, am, pa, pb, pc, pd) = _r_precomp(idx)
             X = x0 + r_sub * (sp * pa - cp * pb)
             Y = y0 + r_sub * (sp * pc + cp * pd)
-            ecc_fac = _ecc_vel_factor(sp, cp, ecc, sin_omega, cos_omega)
+
+            # Velocity components
+            cos_f = cp * cos_omega + sp * sin_omega
+            ecc_fac = (sp + ecc * sin_omega) / jnp.sqrt(1.0 + ecc * cos_f)
             v_z = vk * ecc_fac * si
-            one_plus_z_D = gm * (1.0 + v_z / SPEED_OF_LIGHT)
+
+            # Precise Lorentz factor for eccentric orbit
+            beta_c2 = (vk / SPEED_OF_LIGHT)**2
+            beta_e2 = beta_c2 * (1.0 + ecc**2 + 2.0 * ecc * cos_f) / (1.0 + ecc * cos_f)
+            gm_e = 1.0 / jnp.sqrt(1.0 - beta_e2)
+
+            one_plus_z_D = gm_e * (1.0 + v_z / SPEED_OF_LIGHT)
             V = SPEED_OF_LIGHT * (
                 one_plus_z_D * zg * (1.0 + v_sys / SPEED_OF_LIGHT) - 1.0)
             A = am * cp * si
@@ -693,12 +734,19 @@ class MaserDiskModel(ModelBase):
 
         def _obs_3_ecc(idx, sp, cp):
             """X, Y, V (eccentric) only — no acceleration."""
-            (si, r_sub, vk, gm, zg, _, pa, pb, pc, pd) = _r_precomp(idx)
+            (si, r_sub, vk, _, zg, _, pa, pb, pc, pd) = _r_precomp(idx)
             X = x0 + r_sub * (sp * pa - cp * pb)
             Y = y0 + r_sub * (sp * pc + cp * pd)
-            ecc_fac = _ecc_vel_factor(sp, cp, ecc, sin_omega, cos_omega)
+
+            cos_f = cp * cos_omega + sp * sin_omega
+            ecc_fac = (sp + ecc * sin_omega) / jnp.sqrt(1.0 + ecc * cos_f)
             v_z = vk * ecc_fac * si
-            one_plus_z_D = gm * (1.0 + v_z / SPEED_OF_LIGHT)
+
+            beta_c2 = (vk / SPEED_OF_LIGHT)**2
+            beta_e2 = beta_c2 * (1.0 + ecc**2 + 2.0 * ecc * cos_f) / (1.0 + ecc * cos_f)
+            gm_e = 1.0 / jnp.sqrt(1.0 - beta_e2)
+
+            one_plus_z_D = gm_e * (1.0 + v_z / SPEED_OF_LIGHT)
             V = SPEED_OF_LIGHT * (
                 one_plus_z_D * zg * (1.0 + v_sys / SPEED_OF_LIGHT) - 1.0)
             return X, Y, V

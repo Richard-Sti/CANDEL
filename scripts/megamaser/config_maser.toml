@@ -54,8 +54,8 @@ dist = "delta"
 value = 250
 
 [model.priors.D]
-dist = "data_estimate_uniform"
-half_width = 40.0
+dist = "reference_uniform"
+n_sigma = 5.0
 
 [model.priors.log_MBH]
 dist = "data_estimate_truncated_normal"
@@ -209,20 +209,38 @@ root = "data/Megamaser"
 # Per-galaxy settings
 # -----------------------------------------------------------------------
 
+# D_ref, e_D_ref: reference distance [Mpc] and 1σ uncertainty.
+# Sources: Pesce+2020 (MCP XIII) for megamaser galaxies,
+#          Reid+2019 for NGC4258 (geometric parallax).
+# e_D_ref = max(|+err|, |-err|) from asymmetric uncertainties.
+
 [model.galaxies."CGCG074-064"]
 v_sys_obs = 6908.9
+D_ref = 87.6
+e_D_ref = 5.8
 
 [model.galaxies."NGC4258"]
 v_sys_obs = 472.0
+D_ref = 7.58
+e_D_ref = 0.11
+n_sigma = 10.0
 
 [model.galaxies."NGC5765b"]
 v_sys_obs = 8327.6
+D_ref = 112.2
+e_D_ref = 5.4
 
 [model.galaxies."NGC6264"]
 v_sys_obs = 10131.3
+D_ref = 132.1
+e_D_ref = 11.9
 
 [model.galaxies."NGC6323"]
 v_sys_obs = 7838.5
+D_ref = 109.4
+e_D_ref = 15.3
 
 [model.galaxies."UGC3789"]
 v_sys_obs = 2905.4
+D_ref = 51.5
+e_D_ref = 4.5

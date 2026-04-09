@@ -104,6 +104,22 @@ These are optional — CANDEL's core functionality (NUTS, optimisation) works wi
 
 For model-evidence computation, also install [harmonic](https://github.com/astro-informatics/harmonic) (note: there may be compatibility issues with recent JAX versions).
 
+## Paper notes
+
+Implementation findings, data notes, and numerical results that arise during development should be written up in the **"Notes from code"** appendix of the megamaser paper draft:
+
+```
+/mnt/users/rstiskalek/Papers/MMH0/main.tex  →  \section{Notes from code}
+```
+
+This appendix is the canonical place for:
+- Data availability findings (missing tables, non-public datasets, data quirks)
+- Numerical results from convergence/grid studies
+- Observations about spot classification or selection effects
+- Implementation decisions with physical motivation
+
+Keep entries terse and bolded by topic, matching the style of the existing subsections there.
+
 ## Citation
 
 If you use CANDEL, or find it useful, please cite the papers listed above.

@@ -99,11 +99,19 @@ if galaxy not in galaxies:
           f"Available: {list(galaxies.keys())}", flush=True)
     sys.exit(1)
 
-v_sys_obs = galaxies[galaxy]["v_sys_obs"]
+gcfg = galaxies[galaxy]
+v_sys_obs = gcfg["v_sys_obs"]
 
 # ---- Load data ----
 fsection(f"Loading {galaxy} data")
 data = load_megamaser_spots("data/Megamaser", galaxy, v_sys_obs=v_sys_obs)
+
+# Pass reference distance to data dict (for reference_uniform D prior)
+if "D_ref" in gcfg:
+    data["D_ref"] = float(gcfg["D_ref"])
+    data["e_D_ref"] = float(gcfg["e_D_ref"])
+if "n_sigma" in gcfg:
+    data["n_sigma"] = float(gcfg["n_sigma"])
 
 # ---- Build model config from master config ----
 use_phi_prior = args.phi_prior or master_cfg["model"].get("phi_prior", False)
@@ -217,7 +225,11 @@ for k in param_keys:
 D_c = np.asarray(samples['D_c'])
 z_cosmo = D_c * 73.0 / 299792.458
 D_A = D_c / (1 + z_cosmo)
-M_BH = 10**np.asarray(samples['log_MBH'])
+if 'log_MBH' in samples:
+    log_MBH = np.asarray(samples['log_MBH'])
+else:
+    log_MBH = np.asarray(samples['eta']) + np.log10(D_A)
+M_BH = 10**log_MBH
 print(f"\n  D_A = {D_A.mean():.1f} +/- {D_A.std():.1f} Mpc", flush=True)
 print(f"  M_BH = {M_BH.mean():.2e} +/- {M_BH.std():.2e} M_sun", flush=True)
 
