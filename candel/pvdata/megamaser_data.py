@@ -19,7 +19,6 @@ import numpy as np
 
 from ..util import fprint
 
-
 _MRT_FILES = {
     "CGCG074-064": "CGCG074-064_Pesce2020_mrt.txt",
 }
@@ -401,7 +400,7 @@ def load_megamaser_spots(root, galaxy="CGCG074-064", v_sys_obs=None):
         data = load_NGC4258_spots(root, v_sys_obs=v_sys_obs)
     else:
         _all = list(_MRT_FILES) + ["NGC5765b", "NGC6264", "NGC6323",
-                                    "UGC3789", "NGC4258"]
+                                   "UGC3789", "NGC4258"]
         if galaxy not in _MRT_FILES:
             raise ValueError(
                 f"Unknown galaxy '{galaxy}'. Available: {_all}")

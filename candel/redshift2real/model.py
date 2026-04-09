@@ -29,8 +29,8 @@ from tqdm import trange
 
 from ..cosmo.cosmography import Distance2Redshift
 from ..model import LOSInterpolator
-from ..model.pv_utils import lp_galaxy_bias
 from ..model.integration import ln_simpson
+from ..model.pv_utils import lp_galaxy_bias
 from ..model.utils import logmeanexp
 from ..util import SPEED_OF_LIGHT, fprint, radec_to_cartesian
 

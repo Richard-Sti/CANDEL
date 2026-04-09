@@ -258,7 +258,8 @@ def load_priors(config_priors):
         "jeffreys": lambda p: JeffreysPrior(p["low"], p["high"]),
         "volume": lambda p: VolumePrior(p["low"], p["high"]),
         "maxwell": lambda p: Maxwell(p["scale"]),
-        "sine_angle": lambda p: SineAngle(p.get("low", 0.0), p.get("high", 180.0)),
+        "sine_angle": lambda p: SineAngle(
+            p.get("low", 0.0), p.get("high", 180.0)),
         "vector_uniform": lambda p: {"type": "vector_uniform", "low": p["low"], "high": p["high"]},  # noqa
         "vector_uniform_fixed": lambda p: {"type": "vector_uniform_fixed", "low": p["low"], "high": p["high"],},  # noqa
         "vector_radial_uniform": lambda p: {"type": "vector_radial_uniform", "nval": len(p["rknot"]), "low": p["low"], "high": p["high"]},  # noqa

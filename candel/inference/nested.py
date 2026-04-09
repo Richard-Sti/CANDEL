@@ -41,8 +41,8 @@ from numpyro.infer.util import log_density
 from ..util import fprint
 from .optimise import _prior_bounds
 
+# ── Model decomposition (unchanged) ────────────────────────────────────
 
-# ── Model decomposition (unchanged) ─────────────────────────────────────────
 
 def _get_param_info(model, model_args, model_kwargs, seed=42):
     """Extract free parameter names, sizes, bounds, and distributions."""
@@ -239,26 +239,27 @@ def sample_prior(dists, names, sizes, n, seed=0):
 #   Skilling (2006)                 (nested sampling evidence integral)
 
 class _Particle(NamedTuple):
-    position:      jax.Array   # (ndim,)
-    logprior:      jax.Array   # scalar — log prior density (= "logdensity" in blackjax)
-    loglikelihood: jax.Array   # scalar
-    logL_birth:    jax.Array   # scalar — logL threshold at birth (nan for initial pts)
+    position: jax.Array       # (ndim,)
+    logprior: jax.Array       # scalar — log prior density
+    loglikelihood: jax.Array  # scalar
+    logL_birth: jax.Array     # scalar — logL threshold at birth
 
 
 class _Integrator(NamedTuple):
-    logX:      jax.Array   # log prior volume remaining
-    logZ:      jax.Array   # accumulated log evidence from dead points
-    logZ_live: jax.Array   # live-point estimate of remaining log evidence
+    logX: jax.Array       # log prior volume remaining
+    logZ: jax.Array       # accumulated log evidence from dead points
+    logZ_live: jax.Array  # live-point estimate of remaining log evidence
 
 
 class _NSSState(NamedTuple):
-    particles:  _Particle    # each field has leading axis (n_live,)
+    particles: _Particle    # leading axis (n_live,)
     integrator: _Integrator
-    cov:        jax.Array    # (ndim, ndim) empirical live-point covariance
+    cov: jax.Array          # (ndim, ndim) empirical covariance
 
 
 class _DeadInfo(NamedTuple):
-    particles: _Particle     # leading axis: (num_delete,) per step, (n_total,) after finalise
+    # leading axis: (num_delete,) per step, (n_total,) after finalise
+    particles: _Particle
 
 
 def _logmeanexp(x):
@@ -290,26 +291,26 @@ def _update_integrator(integrator, live_particles, dead_particles):
     """
     ll_live = live_particles.loglikelihood
     ll_dead = dead_particles.loglikelihood
-    n_live  = ll_live.shape[0]
-    n_dead  = ll_dead.shape[0]
-    dtype   = ll_live.dtype
+    n_live = ll_live.shape[0]
+    n_dead = ll_dead.shape[0]
+    dtype = ll_live.dtype
 
-    num_live   = jnp.arange(n_live, n_live - n_dead, -1, dtype=dtype)
+    num_live = jnp.arange(n_live, n_live - n_dead, -1, dtype=dtype)
     delta_logX = -1.0 / num_live
-    logX       = integrator.logX + jnp.cumsum(delta_logX)
-    log_dX     = logX + jnp.log(1.0 - jnp.exp(delta_logX))
-    log_dZ     = ll_dead + log_dX
+    logX = integrator.logX + jnp.cumsum(delta_logX)
+    log_dX = logX + jnp.log(1.0 - jnp.exp(delta_logX))
+    log_dZ = ll_dead + log_dX
 
-    logZ      = jnp.logaddexp(integrator.logZ,
-                              jax.scipy.special.logsumexp(log_dZ))
+    logZ = jnp.logaddexp(
+        integrator.logZ, jax.scipy.special.logsumexp(log_dZ))
     logZ_live = _logmeanexp(ll_live) + logX[-1]
     return _Integrator(logX[-1], logZ, logZ_live)
 
 
 def _make_particle(position, logprior_fn, loglikelihood_fn, logL_birth):
     """Evaluate a position and wrap it into a _Particle."""
-    lp    = logprior_fn(position)
-    ll    = loglikelihood_fn(position)
+    lp = logprior_fn(position)
+    ll = loglikelihood_fn(position)
     birth = logL_birth * jnp.ones_like(ll)
     return _Particle(position, lp, ll, birth)
 
@@ -320,10 +321,10 @@ def _sample_direction(rng_key, position, cov):
     Matches blackjax.mcmc.ss.sample_direction_from_covariance exactly.
     """
     ndim = position.shape[0]
-    d    = jax.random.multivariate_normal(
-        rng_key, mean=jnp.zeros(ndim, dtype=cov.dtype), cov=cov)
+    d = jax.random.multivariate_normal(
+        rng_key, jnp.zeros(ndim, dtype=cov.dtype), cov)
     invcov = jnp.linalg.inv(cov)
-    norm   = jnp.sqrt(jnp.einsum("i,ij,j", d, invcov, d))
+    norm = jnp.sqrt(jnp.einsum("i,ij,j", d, invcov, d))
     return d / norm * 2.0
 
 
@@ -353,13 +354,15 @@ def _hrss_step(rng_key, particle, logprior_fn, loglikelihood_fn,
     d = _sample_direction(dir_key, particle.position, cov)
 
     # Vertical slice: fix a log-prior level
-    u        = jax.random.uniform(vs_key)
+    u = jax.random.uniform(vs_key)
     logslice = particle.logprior + jnp.log(u)
 
     def _eval(t):
-        x     = particle.position + t * d
-        new_p = _make_particle(x, logprior_fn, loglikelihood_fn, logL_0)
-        ok    = (new_p.logprior >= logslice) & (new_p.loglikelihood > logL_0)
+        x = particle.position + t * d
+        new_p = _make_particle(
+            x, logprior_fn, loglikelihood_fn, logL_0)
+        ok = ((new_p.logprior >= logslice)
+              & (new_p.loglikelihood > logL_0))
         return new_p, ok
 
     # Stepping-out: find interval [left, right] that brackets the current pt
@@ -378,16 +381,18 @@ def _hrss_step(rng_key, particle, logprior_fn, loglikelihood_fn,
         i, _, _, is_acc = carry
         return is_acc & (i > 0)
 
-    j, _, left,  _ = jax.lax.while_loop(
-        _step_cond, _step_body, (j + 1, jnp.array(-1.0), 1.0 - u2, True))
+    j, _, left, _ = jax.lax.while_loop(
+        _step_cond, _step_body,
+        (j + 1, jnp.array(-1.0), 1.0 - u2, True))
     k, _, right, _ = jax.lax.while_loop(
-        _step_cond, _step_body, (k + 1, jnp.array( 1.0),      -u2, True))
+        _step_cond, _step_body,
+        (k + 1, jnp.array(1.0), -u2, True))
 
     # Shrinking: uniform sample within [left, right], shrink on rejection
     def _shrink_body(carry):
         n, key, lo, hi, p, _ = carry
         key, subkey = jax.random.split(key)
-        t     = jax.random.uniform(subkey, minval=lo, maxval=hi)
+        t = jax.random.uniform(subkey, minval=lo, maxval=hi)
         new_p, is_acc = _eval(t)
         lo = jnp.where(t < 0.0, t, lo)
         hi = jnp.where(t > 0.0, t, hi)
@@ -407,23 +412,25 @@ def _hrss_step(rng_key, particle, logprior_fn, loglikelihood_fn,
 
 
 def _nss_step(rng_key, state, logprior_fn, loglikelihood_fn,
-              num_delete, num_mcmc_steps, max_steps=10, max_shrinkage=100):
-    """One NSS iteration: remove num_delete worst live points, replace above L*.
+              num_delete, num_mcmc_steps, max_steps=10,
+              max_shrinkage=100):
+    """One NSS iteration: remove worst live points, replace above L*.
 
     Matches blackjax.nss exactly:
-      - delete_fn   : top_k(-logL, num_delete)
-      - L*          : max(dead loglikelihoods)
-      - start pts   : uniform over survivors with logL > L*
-      - MCMC        : num_mcmc_steps HRSS steps via lax.scan, take last
-      - cov update  : jnp.cov(positions, ddof=0, rowvar=False) from new live pts
-      - integrator  : updated after replacement
+      - delete_fn: top_k(-logL, num_delete)
+      - L*: max(dead loglikelihoods)
+      - start pts: uniform over survivors with logL > L*
+      - MCMC: num_mcmc_steps HRSS steps via lax.scan
+      - cov update: jnp.cov(ddof=0, rowvar=False)
+      - integrator: updated after replacement
     """
     particles = state.particles
 
     # Identify num_delete worst live points
-    _, dead_idx = jax.lax.top_k(-particles.loglikelihood, num_delete)
-    dead_p      = jax.tree.map(lambda x: x[dead_idx], particles)
-    logL_0      = dead_p.loglikelihood.max()
+    _, dead_idx = jax.lax.top_k(
+        -particles.loglikelihood, num_delete)
+    dead_p = jax.tree.map(lambda x: x[dead_idx], particles)
+    logL_0 = dead_p.loglikelihood.max()
 
     # Select starting particles uniformly from survivors (logL > L*)
     choice_key, mcmc_key = jax.random.split(rng_key)
@@ -437,29 +444,35 @@ def _nss_step(rng_key, state, logprior_fn, loglikelihood_fn,
     # Run num_mcmc_steps HRSS steps for each replacement particle (take last)
     def one_chain(rng_key, p0):
         def body(p, k):
-            return _hrss_step(k, p, logprior_fn, loglikelihood_fn,
-                              logL_0, state.cov, max_steps, max_shrinkage), None
-        keys     = jax.random.split(rng_key, num_mcmc_steps)
+            return _hrss_step(
+                k, p, logprior_fn, loglikelihood_fn,
+                logL_0, state.cov, max_steps,
+                max_shrinkage), None
+        keys = jax.random.split(rng_key, num_mcmc_steps)
         final_p, _ = jax.lax.scan(body, p0, keys)
         return final_p
 
-    new_p = jax.vmap(one_chain)(jax.random.split(mcmc_key, num_delete), start_p)
+    new_p = jax.vmap(one_chain)(
+        jax.random.split(mcmc_key, num_delete), start_p)
 
     # Replace dead positions
     updated = jax.tree.map(
         lambda full, new: full.at[dead_idx].set(new), particles, new_p)
 
     # Update covariance and integrator
-    new_cov        = jnp.atleast_2d(jnp.cov(updated.position, ddof=0, rowvar=False))
-    new_integrator = _update_integrator(state.integrator, updated, dead_p)
+    new_cov = jnp.atleast_2d(
+        jnp.cov(updated.position, ddof=0, rowvar=False))
+    new_integrator = _update_integrator(
+        state.integrator, updated, dead_p)
 
     return _NSSState(updated, new_integrator, new_cov), _DeadInfo(dead_p)
 
 
 def _finalise(state, dead_list):
     """Concatenate all dead particles with the final live particles."""
-    all_p  = [d.particles for d in dead_list] + [state.particles]
-    merged = jax.tree.map(lambda *xs: jnp.concatenate(xs, axis=0), *all_p)
+    all_p = [d.particles for d in dead_list] + [state.particles]
+    merged = jax.tree.map(
+        lambda *xs: jnp.concatenate(xs, axis=0), *all_p)
     return _DeadInfo(merged)
 
 
@@ -473,18 +486,18 @@ def _compute_num_live(dead_info):
     ll_death = dead_info.particles.loglikelihood
     n = ll_death.shape[0]
 
-    birth_ev = jnp.column_stack([ll_birth,  jnp.ones(n, dtype=jnp.int32)])
+    birth_ev = jnp.column_stack([ll_birth, jnp.ones(n, dtype=jnp.int32)])
     death_ev = jnp.column_stack([ll_death, -jnp.ones(n, dtype=jnp.int32)])
     combined = jnp.concatenate([birth_ev, death_ev], axis=0)
 
     logL_col = combined[:, 0]
-    n_col    = combined[:, 1].astype(jnp.int32)
-    not_nan  = (~jnp.isnan(logL_col)).astype(jnp.int32)
+    n_col = combined[:, 1].astype(jnp.int32)
+    not_nan = (~jnp.isnan(logL_col)).astype(jnp.int32)
 
-    # lexsort: NaN births come first (not_nan=0), then sort by logL, then by event type
+    # lexsort: NaN births first, then by logL, then by event type
     sorted_idx = jnp.lexsort((n_col, logL_col, not_nan))
-    sorted_n   = n_col[sorted_idx]
-    cumsum     = jnp.maximum(jnp.cumsum(sorted_n), 0)
+    sorted_n = n_col[sorted_idx]
+    cumsum = jnp.maximum(jnp.cumsum(sorted_n), 0)
     death_mask = sorted_n == -1
     return cumsum[death_mask] + 1
 
@@ -495,30 +508,35 @@ def _log_weights(rng_key, dead_info, n_compress=100):
     Matches blackjax.ns.utils.log_weights exactly (beta=1).
     Returns array of shape (n_total, n_compress).
     """
-    ll       = dead_info.particles.loglikelihood
+    ll = dead_info.particles.loglikelihood
     sort_idx = jnp.argsort(ll)
-    unsort_idx = jnp.empty_like(sort_idx).at[sort_idx].set(jnp.arange(len(sort_idx)))
+    unsort_idx = jnp.empty_like(sort_idx).at[sort_idx].set(
+        jnp.arange(len(sort_idx)))
 
-    sorted_info = _DeadInfo(jax.tree.map(lambda x: x[sort_idx], dead_info.particles))
-    num_live    = _compute_num_live(sorted_info)
+    sorted_info = _DeadInfo(jax.tree.map(
+        lambda x: x[sort_idx], dead_info.particles))
+    num_live = _compute_num_live(sorted_info)
 
     rng_key, subkey = jax.random.split(rng_key)
-    # log(1-u) for u~Uniform(0,1) equals -Exp(1) in distribution.
-    # Sample exponential directly to avoid log(0) when u rounds to 1.0 in float32.
-    r    = -jax.random.exponential(subkey, (len(ll), n_compress))
-    t    = r / num_live[:, jnp.newaxis]
+    # Sample -Exp(1) directly to avoid log(0) in float32.
+    r = -jax.random.exponential(
+        subkey, (len(ll), n_compress))
+    t = r / num_live[:, jnp.newaxis]
     logX = jnp.cumsum(t, axis=0)
 
     # log(dX_i) = log((X_{i-1} - X_{i+1}) / 2)
-    logXp  = jnp.concatenate([jnp.zeros((1, n_compress)), logX[:-1]], axis=0)
-    logXm  = jnp.concatenate([logX[1:], jnp.full((1, n_compress), -jnp.inf)], axis=0)
-    # Float32 cumsum rounding over O(10^5) steps can produce log_diff > 0.
+    logXp = jnp.concatenate(
+        [jnp.zeros((1, n_compress)), logX[:-1]], axis=0)
+    logXm = jnp.concatenate(
+        [logX[1:], jnp.full((1, n_compress), -jnp.inf)],
+        axis=0)
+    # Float32 cumsum rounding can produce log_diff > 0.
     # _log1mexp(x > 0) returns NaN; clip to prevent this.
     log_diff = jnp.minimum(logXm - logXp, 0.0)
-    logdX  = _log1mexp(log_diff) + logXp - jnp.log(2.0)
+    logdX = _log1mexp(log_diff) + logXp - jnp.log(2.0)
 
-    ll_s   = sorted_info.particles.loglikelihood
-    log_w  = logdX + ll_s[:, jnp.newaxis]
+    ll_s = sorted_info.particles.loglikelihood
+    log_w = logdX + ll_s[:, jnp.newaxis]
     return log_w[unsort_idx]
 
 
@@ -582,16 +600,17 @@ def run_nss(model, model_args=(), model_kwargs=None,
     # ---- Draw initial live points from prior ----
     initial_samples = sample_prior(dists, names, sizes, n_live, seed)
 
-    # ---- Batched initialisation (avoids GPU OOM, batch size = num_delete) ----
-    init_fn    = partial(_make_particle, logprior_fn=log_prior_fn,
-                         loglikelihood_fn=log_likelihood_fn,
-                         logL_birth=jnp.nan)
+    # ---- Batched init (avoids GPU OOM) ----
+    init_fn = partial(
+        _make_particle, logprior_fn=log_prior_fn,
+        loglikelihood_fn=log_likelihood_fn,
+        logL_birth=jnp.nan)
     batched_fn = jax.jit(jax.vmap(init_fn))
 
     all_results = []
     for i in tqdm.tqdm(range(0, n_live, num_delete),
                        desc="init live pts", unit=" batch"):
-        batch  = initial_samples[i:i + num_delete]
+        batch = initial_samples[i:i + num_delete]
         result = jax.block_until_ready(batched_fn(batch))
         result = jax.tree.map(lambda x: np.asarray(x), result)
         all_results.append(result)
@@ -600,14 +619,16 @@ def run_nss(model, model_args=(), model_kwargs=None,
         lambda *xs: jnp.concatenate(xs, axis=0), *all_results)
 
     integrator = _init_integrator(particles)
-    cov        = jnp.atleast_2d(jnp.cov(particles.position, ddof=0, rowvar=False))
-    state      = _NSSState(particles, integrator, cov)
+    cov = jnp.atleast_2d(
+        jnp.cov(particles.position, ddof=0, rowvar=False))
+    state = _NSSState(particles, integrator, cov)
 
     # ---- JIT the NSS step ----
     @jax.jit
     def step_fn(state, rng_key):
-        return _nss_step(rng_key, state, log_prior_fn, log_likelihood_fn,
-                         num_delete, num_mcmc_steps)
+        return _nss_step(
+            rng_key, state, log_prior_fn,
+            log_likelihood_fn, num_delete, num_mcmc_steps)
 
     # ---- Warmup JIT ----
     rng_key = jax.random.PRNGKey(seed + 1)
@@ -615,12 +636,12 @@ def run_nss(model, model_args=(), model_kwargs=None,
     state, _ = jax.block_until_ready(step_fn(state, subkey))
 
     # ---- Main loop ----
-    dead       = []
-    t0         = timer()
-    n_dead     = 0
-    gap_prev   = None
+    dead = []
+    t0 = timer()
+    n_dead = 0
+    gap_prev = None
     gap_rate_ema = None
-    ema_alpha  = num_delete / n_live
+    ema_alpha = num_delete / n_live
 
     with tqdm.tqdm(desc="NSS", unit=" pts") as pbar:
         while not (state.integrator.logZ_live
@@ -631,23 +652,29 @@ def run_nss(model, model_args=(), model_kwargs=None,
             n_dead += num_delete
 
             logZ = float(state.integrator.logZ)
-            gap  = float(state.integrator.logZ_live) - logZ
+            gap = float(state.integrator.logZ_live) - logZ
 
             if gap_prev is not None:
-                d_gap        = (gap - gap_prev) / num_delete
-                gap_rate_ema = (d_gap if gap_rate_ema is None
-                                else ema_alpha * d_gap
-                                + (1 - ema_alpha) * gap_rate_ema)
+                d_gap = (gap - gap_prev) / num_delete
+                gap_rate_ema = (
+                    d_gap if gap_rate_ema is None
+                    else ema_alpha * d_gap
+                    + (1 - ema_alpha) * gap_rate_ema)
             gap_prev = gap
 
             # ETA
-            eta_str    = "?"
+            eta_str = "?"
             pts_per_sec = pbar.format_dict.get("rate") or 0
-            if gap_rate_ema is not None and gap_rate_ema < 0 and pts_per_sec > 0:
-                remaining = (gap - termination) / (-gap_rate_ema)
-                eta_sec   = remaining / pts_per_sec
-                eta_str   = (f"{eta_sec / 60:.0f}m" if eta_sec < 3600
-                             else f"{eta_sec / 3600:.1f}h")
+            if (gap_rate_ema is not None
+                    and gap_rate_ema < 0
+                    and pts_per_sec > 0):
+                remaining = (gap - termination) / (
+                    -gap_rate_ema)
+                eta_sec = remaining / pts_per_sec
+                eta_str = (
+                    f"{eta_sec / 60:.0f}m"
+                    if eta_sec < 3600
+                    else f"{eta_sec / 3600:.1f}h")
 
             pbar.set_postfix({"logZ": f"{logZ:.2f}",
                               "gap":  f"{gap:.2f}",
@@ -680,55 +707,65 @@ def run_nss(model, model_args=(), model_kwargs=None,
             if not jnp.isfinite(logZ):
                 print(f"\n*** WARNING: logZ={logZ} at {n_dead} dead "
                       f"but all logL finite! ***", flush=True)
-                print(f"  max live logL: {float(ll_live.max()):.2f}", flush=True)
-                print(f"  dead logL: {np.asarray(ll_dead)}", flush=True)
+                print(f"  max live logL: "
+                      f"{float(ll_live.max()):.2f}",
+                      flush=True)
+                print(f"  dead logL: "
+                      f"{np.asarray(ll_dead)}",
+                      flush=True)
                 break
 
     dt = timer() - t0
 
     # ---- Finalise and compute evidence ----
     final = _finalise(state, dead)
-    logw  = _log_weights(rng_key, final)
-    # Average weights over stochastic compression realisations in linear space:
-    # log(mean_j(w_ij)) = logsumexp(logw, axis=-1) - log(n_compress)
-    logw_mean = jax.scipy.special.logsumexp(logw, axis=-1) - jnp.log(logw.shape[-1])
+    logw = _log_weights(rng_key, final)
+    # Average weights over stochastic compression realisations:
+    # log(mean_j(w_ij)) = logsumexp(logw, -1) - log(n_compress)
+    logw_mean = (jax.scipy.special.logsumexp(logw, axis=-1)
+                 - jnp.log(logw.shape[-1]))
 
     minimum = jnp.nan_to_num(logw).min()
-    logzs   = jax.scipy.special.logsumexp(
+    logzs = jax.scipy.special.logsumexp(
         jnp.nan_to_num(logw, nan=minimum), axis=0)
-    log_Z     = float(logzs.mean())
+    log_Z = float(logzs.mean())
     log_Z_err = float(logzs.std())
 
     # Resample to equal-weight posterior samples
-    positions  = final.particles.position
-    # NaN-safe: replace NaN weights with -inf (zero probability)
-    logw_mean_safe = jnp.where(jnp.isfinite(logw_mean), logw_mean, -jnp.inf)
-    logw_norm  = logw_mean_safe - jax.scipy.special.logsumexp(logw_mean_safe)
-    logw_norm  = jnp.where(jnp.isfinite(logw_norm), logw_norm, -jnp.inf)
-    p          = jnp.exp(logw_norm)
-    p          = jnp.where(jnp.isfinite(p), p, 0.0)
-    p          = p / p.sum()
-    n_eff      = int(jnp.exp(-jnp.sum(jnp.where(p > 0, p * jnp.log(p), 0.0))))
-    key2       = jax.random.PRNGKey(seed + 2)
-    indices    = jax.random.choice(
-        key2, positions.shape[0], shape=(max(n_eff, 100),), p=p)
-    resampled  = positions[indices]
+    positions = final.particles.position
+    # NaN-safe: replace NaN weights with -inf
+    logw_mean_safe = jnp.where(
+        jnp.isfinite(logw_mean), logw_mean, -jnp.inf)
+    logw_norm = (logw_mean_safe
+                 - jax.scipy.special.logsumexp(logw_mean_safe))
+    logw_norm = jnp.where(
+        jnp.isfinite(logw_norm), logw_norm, -jnp.inf)
+    p = jnp.exp(logw_norm)
+    p = jnp.where(jnp.isfinite(p), p, 0.0)
+    p = p / p.sum()
+    n_eff = int(jnp.exp(
+        -jnp.sum(jnp.where(p > 0, p * jnp.log(p), 0.0))))
+    key2 = jax.random.PRNGKey(seed + 2)
+    indices = jax.random.choice(
+        key2, positions.shape[0],
+        shape=(max(n_eff, 100),), p=p)
+    resampled = positions[indices]
 
     # Unpack into named dict (same format as MCMC samples)
     samples = {}
-    offset  = 0
+    offset = 0
     for name, size in zip(names, sizes):
         s = resampled[:, offset:offset + size]
         samples[name] = s.squeeze(axis=-1) if size == 1 else s
         offset += size
 
     samples["__nested__"] = {
-        "log_Z":     log_Z,
+        "log_Z": log_Z,
         "log_Z_err": log_Z_err,
-        "n_eff":     n_eff,
-        "time":      dt,
-        "names":     names,
-        "sizes":     sizes,
+        "n_eff": n_eff,
+        "time": dt,
+        "names": names,
+        "sizes": sizes,
     }
 
     return samples

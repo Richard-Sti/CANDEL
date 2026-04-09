@@ -21,10 +21,10 @@ from numpyro.distributions import MultivariateNormal, Normal, Uniform
 
 from ..util import fprint, get_nested, replace_prior_with_delta
 from .base_model import H0ModelBase
+from .integration import ln_simpson_precomputed, simpson_log_weights
 from .pv_utils import (lp_galaxy_bias, octupole_radial, quadrupole_radial,
                        rsample, sample_galaxy_bias, sample_octupole,
                        sample_quadrupole, sigmoid_monopole_radial)
-from .integration import ln_simpson_precomputed, simpson_log_weights
 from .utils import (log_prob_integrand_sel, logmeanexp, mvn_logpdf_cholesky,
                     normal_logpdf_var, predict_cz)
 

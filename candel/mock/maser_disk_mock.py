@@ -18,12 +18,11 @@ Reuses physics functions from candel.model.model_H0_maser.
 """
 import numpy as np
 
-from ..util import fprint, SPEED_OF_LIGHT
 from ..cosmo.cosmography import Distance2Redshift
-from ..model.model_H0_maser import (
-    PC_PER_MAS_MPC, predict_position, predict_velocity_los,
-    predict_acceleration_los, warp_geometry)
-
+from ..model.model_H0_maser import (PC_PER_MAS_MPC, predict_acceleration_los,
+                                    predict_position, predict_velocity_los,
+                                    warp_geometry)
+from ..util import SPEED_OF_LIGHT, fprint
 
 DEFAULT_TRUE_PARAMS = {
     "H0": 73.0,

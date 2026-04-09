@@ -27,10 +27,10 @@ from ..cosmo.cosmography import (Distance2Distmod, Distance2Redshift,
                                  Redshift2Distance)
 from ..util import (fprint, fsection, get_nested, load_config,
                     radec_to_cartesian, replace_prior_with_delta)
+from .integration import ln_simpson_precomputed, simpson_log_weights
 from .interp import LOSInterpolator
 from .pv_utils import (lp_galaxy_bias, octupole_radial, quadrupole_radial,
                        rsample, sigmoid_monopole_radial)
-from .integration import ln_simpson_precomputed, simpson_log_weights
 from .utils import load_priors, log_prob_integrand_sel, predict_cz
 
 

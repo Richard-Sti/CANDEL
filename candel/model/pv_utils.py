@@ -80,15 +80,15 @@ def sample_quadrupole(name, mag_min, mag_max):
     q1_cos_theta = sample(f"{name}_q1_cos_theta", Uniform(-1, 1))
     q1_sin_theta = jnp.sqrt(1 - q1_cos_theta**2)
     q1_hat = jnp.array([q1_sin_theta * jnp.cos(q1_phi),
-                         q1_sin_theta * jnp.sin(q1_phi),
-                         q1_cos_theta])
+                        q1_sin_theta * jnp.sin(q1_phi),
+                        q1_cos_theta])
 
     q2_phi = sample(f"{name}_q2_phi", Uniform(0, 2 * jnp.pi))
     q2_cos_theta = sample(f"{name}_q2_cos_theta", Uniform(-1, 1))
     q2_sin_theta = jnp.sqrt(1 - q2_cos_theta**2)
     q2_hat = jnp.array([q2_sin_theta * jnp.cos(q2_phi),
-                         q2_sin_theta * jnp.sin(q2_phi),
-                         q2_cos_theta])
+                        q2_sin_theta * jnp.sin(q2_phi),
+                        q2_cos_theta])
 
     return Q_mag, q1_hat, q2_hat
 
@@ -521,22 +521,22 @@ def sample_octupole(name, mag_min, mag_max):
     q1_cos_theta = sample(f"{name}_q1_cos_theta", Uniform(-1, 1))
     q1_sin_theta = jnp.sqrt(1 - q1_cos_theta**2)
     q1_hat = jnp.array([q1_sin_theta * jnp.cos(q1_phi),
-                         q1_sin_theta * jnp.sin(q1_phi),
-                         q1_cos_theta])
+                        q1_sin_theta * jnp.sin(q1_phi),
+                        q1_cos_theta])
 
     q2_phi = sample(f"{name}_q2_phi", Uniform(0, 2 * jnp.pi))
     q2_cos_theta = sample(f"{name}_q2_cos_theta", Uniform(-1, 1))
     q2_sin_theta = jnp.sqrt(1 - q2_cos_theta**2)
     q2_hat = jnp.array([q2_sin_theta * jnp.cos(q2_phi),
-                         q2_sin_theta * jnp.sin(q2_phi),
-                         q2_cos_theta])
+                        q2_sin_theta * jnp.sin(q2_phi),
+                        q2_cos_theta])
 
     q3_phi = sample(f"{name}_q3_phi", Uniform(0, 2 * jnp.pi))
     q3_cos_theta = sample(f"{name}_q3_cos_theta", Uniform(-1, 1))
     q3_sin_theta = jnp.sqrt(1 - q3_cos_theta**2)
     q3_hat = jnp.array([q3_sin_theta * jnp.cos(q3_phi),
-                         q3_sin_theta * jnp.sin(q3_phi),
-                         q3_cos_theta])
+                        q3_sin_theta * jnp.sin(q3_phi),
+                        q3_cos_theta])
 
     return O_mag, q1_hat, q2_hat, q3_hat
 

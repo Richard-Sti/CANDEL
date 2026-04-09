@@ -112,7 +112,7 @@ def _build_phi_grid_sys(n_inner=31, inner_deg=5.0, n_wing=10):
     inner_rad = _np.deg2rad(inner_deg)
     # Inner: arcsin spacing, dense at phi=0
     s = _np.linspace(-0.999, 0.999, n_inner)
-    phi_inner = _np.arcsin(s) * (inner_rad / (_np.pi / 2))  # scale to ±inner_rad
+    phi_inner = _np.arcsin(s) * (inner_rad / (_np.pi / 2))
 
     # Wings: linear from inner boundary to ±pi/2
     phi_lo = _np.linspace(-_np.pi / 2, -inner_rad, n_wing + 1)[:-1]
@@ -133,7 +133,7 @@ def _build_r_grid(r_min, r_max, n_r=101, scale=0.3):
     """
     logr_lo = _np.log(r_min)
     logr_hi = _np.log(r_max)
-    logr_c  = 0.5 * (logr_lo + logr_hi)          # geometric centre
+    logr_c = 0.5 * (logr_lo + logr_hi)  # geometric centre
     t_lo = _np.arcsinh((logr_lo - logr_c) / scale)
     t_hi = _np.arcsinh((logr_hi - logr_c) / scale)
     t = _np.linspace(t_lo, t_hi, n_r)
@@ -224,11 +224,13 @@ def predict_velocity_los(r_ang, phi, D, M_BH, v_sys, i, ecc=0.0, omega=0.0):
     v_kep = C_v * jnp.sqrt(M_BH / (r_ang * D))
 
     cos_f = jnp.cos(phi - omega)
-    ecc_fac = (jnp.sin(phi) + ecc * jnp.sin(omega)) / jnp.sqrt(1.0 + ecc * cos_f)
+    ecc_fac = ((jnp.sin(phi) + ecc * jnp.sin(omega))
+               / jnp.sqrt(1.0 + ecc * cos_f))
     v_z = v_kep * ecc_fac * jnp.sin(i)
 
     beta_c2 = (v_kep / SPEED_OF_LIGHT)**2
-    beta_e2 = beta_c2 * (1.0 + ecc**2 + 2.0 * ecc * cos_f) / (1.0 + ecc * cos_f)
+    beta_e2 = (beta_c2 * (1.0 + ecc**2 + 2.0 * ecc * cos_f)
+               / (1.0 + ecc * cos_f))
     gamma = 1.0 / jnp.sqrt(1.0 - beta_e2)
 
     one_plus_z_D = gamma * (1.0 + v_z / SPEED_OF_LIGHT)
@@ -473,7 +475,8 @@ class MaserDiskModel(ModelBase):
         # ---- Phi grids and precomputed trig ----
         G_half = int(get_nested(self.config, "model/G_phi_half", 101))
         n_inner_sys = int(get_nested(self.config, "model/n_inner_sys", 101))
-        inner_deg_sys = float(get_nested(self.config, "model/inner_deg_sys", 30.0))
+        inner_deg_sys = float(get_nested(
+            self.config, "model/inner_deg_sys", 30.0))
         n_wing_sys = int(get_nested(self.config, "model/n_wing_sys", 50))
         phi_half = _build_phi_half_grid_hv(G_half=G_half)
         phi_sys = _build_phi_grid_sys(n_inner=n_inner_sys,
@@ -546,7 +549,7 @@ class MaserDiskModel(ModelBase):
         # di_dr is always sampled (inclination warp).
 
         # Reference angular radius for warp expansion (mas).
-        # Pivot at the median projected HV-spot radius to decorrelate i0 from di_dr.
+        # Pivot at median projected HV-spot radius to decorrelate i0/di_dr.
         x_hv = _np.asarray(data["x"])[is_hv_np]
         y_hv = _np.asarray(data["y"])[is_hv_np]
         r_ang_hv = _np.sqrt(x_hv**2 + y_hv**2)
@@ -723,12 +726,15 @@ class MaserDiskModel(ModelBase):
 
             # Precise Lorentz factor for eccentric orbit
             beta_c2 = (vk / SPEED_OF_LIGHT)**2
-            beta_e2 = beta_c2 * (1.0 + ecc**2 + 2.0 * ecc * cos_f) / (1.0 + ecc * cos_f)
+            beta_e2 = (beta_c2
+                       * (1.0 + ecc**2 + 2.0 * ecc * cos_f)
+                       / (1.0 + ecc * cos_f))
             gm_e = 1.0 / jnp.sqrt(1.0 - beta_e2)
 
             one_plus_z_D = gm_e * (1.0 + v_z / SPEED_OF_LIGHT)
             V = SPEED_OF_LIGHT * (
-                one_plus_z_D * zg * (1.0 + v_sys / SPEED_OF_LIGHT) - 1.0)
+                one_plus_z_D * zg
+                * (1.0 + v_sys / SPEED_OF_LIGHT) - 1.0)
             A = am * cp * si
             return X, Y, V, A
 
@@ -743,12 +749,15 @@ class MaserDiskModel(ModelBase):
             v_z = vk * ecc_fac * si
 
             beta_c2 = (vk / SPEED_OF_LIGHT)**2
-            beta_e2 = beta_c2 * (1.0 + ecc**2 + 2.0 * ecc * cos_f) / (1.0 + ecc * cos_f)
+            beta_e2 = (beta_c2
+                       * (1.0 + ecc**2 + 2.0 * ecc * cos_f)
+                       / (1.0 + ecc * cos_f))
             gm_e = 1.0 / jnp.sqrt(1.0 - beta_e2)
 
             one_plus_z_D = gm_e * (1.0 + v_z / SPEED_OF_LIGHT)
             V = SPEED_OF_LIGHT * (
-                one_plus_z_D * zg * (1.0 + v_sys / SPEED_OF_LIGHT) - 1.0)
+                one_plus_z_D * zg
+                * (1.0 + v_sys / SPEED_OF_LIGHT) - 1.0)
             return X, Y, V
 
         def _lnorm_3(sx2, sy2, sv2, sv_floor2):
@@ -1026,7 +1035,7 @@ class MaserDiskModel(ModelBase):
         D_A = D_c / (1 + z_cosmo)
 
         eta = rsample("eta", self.priors["eta"],
-                               shared_params)
+                      shared_params)
         log_MBH = deterministic("log_MBH",
                                 eta + jnp.log10(D_A))
         M_BH = 10.0**log_MBH

@@ -36,7 +36,7 @@ from ..cosmo.cosmography import Redshift2Distance
 from ..model.integration import simpson_log_weights
 from ..model.interp import LOSInterpolator
 from ..util import (SPEED_OF_LIGHT, fprint, fsection, get_nested,
-                    heliocentric_to_cmb, load_config, radec_to_cartesian,
+                    load_config, radec_to_cartesian,
                     radec_to_galactic)
 from .dust import read_dustmap
 
@@ -2135,10 +2135,10 @@ def load_EDD_2MTF_from_config(config_path):
     return data
 
 
-
 ###############################################################################
 #                          Catalogue registry                                 #
 ###############################################################################
+
 
 _CATALOGUE_LOADERS = {
     "2MTF": load_2MTF,

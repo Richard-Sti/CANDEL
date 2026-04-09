@@ -34,9 +34,9 @@ from ...cosmo.cosmography import (Distance2Distmod, Distance2Redshift,
                                   Redshift2Distance)
 from ...util import (fprint, get_nested, load_config, radec_to_cartesian,
                      replace_prior_with_delta)
+from ..integration import ln_simpson
 from ..interp import LOSInterpolator
 from ..pv_utils import lp_galaxy_bias, rsample, sample_galaxy_bias
-from ..integration import ln_simpson
 from ..utils import (load_priors, log_prob_integrand_sel, logmeanexp,
                      normal_logpdf_var, predict_cz)
 from .model_CSP import (CSPModel, CSPSelection, compute_per_source_selection,
