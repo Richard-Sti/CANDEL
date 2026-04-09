@@ -12,15 +12,17 @@
 # You should have received a copy of the GNU General Public License along
 # with this program; if not, write to the Free Software Foundation, Inc.,
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
-"""Sobol + Adam multi-start MAP optimizer for NumPyro models.
+"""MAP optimizers for NumPyro models.
 
-Strategy:
-  1. Draw 2^N points from a scrambled Sobol sequence within prior bounds.
-  2. Evaluate log-density at all points (vmapped, batched for memory).
-  3. Select M best starts that are sufficiently distinct (L-inf distance).
-  4. Run Adam from all M starts simultaneously (vmapped over starts)
-     with cosine LR decay to find the MAP.
-  5. Cluster final points to detect multiple modes.
+Two strategies:
+  - **Sobol + Adam**: multi-start gradient-based optimizer. Good for
+    low-dimensional problems or models without expensive marginalization.
+  - **DE** (Differential Evolution): derivative-free global search
+    using evosax. Better for high-dimensional problems with expensive
+    likelihood (e.g. maser disk model with r+phi marginalization).
+
+Both operate in constrained space for the global survey, then (Adam only)
+switch to unconstrained space for gradient optimization.
 """
 import time
 
@@ -29,8 +31,14 @@ import jax.numpy as jnp
 import numpy as np
 import optax
 from numpyro import handlers
+from numpyro.distributions import Delta, Unit, biject_to
 from numpyro.infer.initialization import init_to_median
-from numpyro.infer.util import log_density
+from numpyro.infer.util import (
+    constrain_fn,
+    log_density,
+    potential_energy,
+    unconstrain_fn,
+)
 from scipy.stats.qmc import Sobol
 from tqdm import trange
 
@@ -128,7 +136,7 @@ def _get_bounds_from_trace(model, model_args, model_kwargs, sobol_n_sigma=5,
 
 
 def _build_logp_flat(model, model_args, model_kwargs, names, sizes):
-    """Build a flat-vector log-density function for the model."""
+    """Build a flat-vector log-density function in constrained space."""
     def logp(x):
         params = {}
         offset = 0
@@ -139,6 +147,160 @@ def _build_logp_flat(model, model_args, model_kwargs, names, sizes):
         ld, _ = log_density(model, model_args, model_kwargs, params)
         return ld
     return logp
+
+
+def _build_neg_potential_flat(model, model_args, model_kwargs, names, sizes):
+    """Build a flat-vector negative potential energy in unconstrained space.
+
+    Uses ``potential_energy`` which automatically includes the Jacobian
+    correction for the constrained->unconstrained bijection.
+    Returns -U(z) = log p(constrain(z)) + log|det J|.
+    """
+    def neg_U(z):
+        params = {}
+        offset = 0
+        for name, size in zip(names, sizes):
+            params[name] = z[offset:offset + size].reshape(()) \
+                if size == 1 else z[offset:offset + size]
+            offset += size
+        U = potential_energy(model, model_args, model_kwargs, params)
+        return -U
+    return neg_U
+
+
+def _build_tempered_fns(model, model_args, model_kwargs, names, sizes,
+                        seed=42):
+    """Build tempered log-density functions for beta-annealing.
+
+    Returns tempered_logp_fn(x, beta) in constrained space and
+    tempered_neg_U_fn(z, beta) in unconstrained space. Each traces
+    the model once per evaluation.
+    """
+    def _get_trace(params):
+        def sub_fn(msg):
+            if msg["name"] in params:
+                return params[msg["name"]]
+        substituted = handlers.substitute(
+            handlers.seed(model, rng_seed=seed), substitute_fn=sub_fn)
+        return handlers.trace(substituted).get_trace(
+            *model_args, **model_kwargs)
+
+    # Extract transforms for Jacobian computation
+    substituted = handlers.substitute(
+        handlers.seed(model, rng_seed=seed),
+        substitute_fn=init_to_median(num_samples=15),
+    )
+    tr = handlers.trace(substituted).get_trace(*model_args, **model_kwargs)
+
+    transforms = {}
+    lo_all, hi_all = [], []
+    for k, v in tr.items():
+        if (v["type"] == "sample"
+                and not v.get("is_observed", False)
+                and v["fn"].__class__.__name__ != "Delta"):
+            transforms[k] = biject_to(v["fn"].support)
+            support = v["fn"].support
+            lb = float(getattr(support, "lower_bound", -np.inf))
+            ub = float(getattr(support, "upper_bound", np.inf))
+            size = int(np.prod(v["value"].shape))
+            lo_all.append(np.broadcast_to(np.atleast_1d(lb), size))
+            hi_all.append(np.broadcast_to(np.atleast_1d(ub), size))
+
+    lo_jax = jnp.array(np.concatenate(lo_all))
+    hi_jax = jnp.array(np.concatenate(hi_all))
+
+    def _in_support(x):
+        return jnp.all((x >= lo_jax) & (x <= hi_jax))
+
+    def tempered_logp_fn(x, beta):
+        """log_prior(x) + beta * log_lik(x) in constrained space."""
+        params = _flat_to_dict(x, names, sizes)
+        trace = _get_trace(params)
+        lp = 0.0
+        ll = 0.0
+        for k, v in trace.items():
+            if v["type"] != "sample":
+                continue
+            if (not v.get("is_observed", False)
+                    and not isinstance(v["fn"], (Delta, Unit))):
+                lp = lp + jnp.sum(v["fn"].log_prob(v["value"]))
+            elif (v.get("is_observed", False)
+                    and isinstance(v["fn"], Unit)):
+                ll = ll + jnp.sum(v["fn"].log_prob(v["value"]))
+        return jnp.where(_in_support(x), lp + beta * ll, -jnp.inf)
+
+    def _log_jacobian(z):
+        """log |det J| for unconstrained -> constrained (cheap)."""
+        z_dict = _flat_to_dict(z, names, sizes)
+        log_jac = 0.0
+        for name in names:
+            t = transforms[name]
+            zi = z_dict[name]
+            log_jac = log_jac + jnp.sum(
+                t.log_abs_det_jacobian(zi, t(zi)))
+        return log_jac
+
+    def _constrain_via_transforms(z):
+        z_dict = _flat_to_dict(z, names, sizes)
+        x_dict = {}
+        for name in names:
+            x_dict[name] = transforms[name](z_dict[name])
+        return _constrained_to_flat(x_dict, names, sizes)
+
+    def tempered_neg_U_fn(z, beta):
+        """Tempered -U in unconstrained space."""
+        x = _constrain_via_transforms(z)
+        return tempered_logp_fn(x, beta) + _log_jacobian(z)
+
+    return tempered_logp_fn, tempered_neg_U_fn
+
+
+def _constrained_to_flat(params, names, sizes):
+    """Pack a param dict into a flat array (constrained space)."""
+    parts = []
+    for name, size in zip(names, sizes):
+        v = jnp.atleast_1d(jnp.asarray(params[name])).ravel()
+        parts.append(v)
+    return jnp.concatenate(parts)
+
+
+def _reflect_bounds(x):
+    """Reflect out-of-bounds values back into [0, 1].
+
+    Uses triangle-wave folding so that values beyond the boundary are
+    reflected rather than clipped. This prevents boundary-attractor
+    pathology in DE where clipping causes difference vectors to
+    collapse.
+    """
+    x = jnp.abs(x)
+    cycle = jnp.floor(x).astype(jnp.int32)
+    frac = x - jnp.floor(x)
+    return jnp.where(cycle % 2 == 0, frac, 1.0 - frac)
+
+
+def _flat_to_dict(x, names, sizes):
+    """Unpack a flat array into a param dict."""
+    params = {}
+    offset = 0
+    for name, size in zip(names, sizes):
+        params[name] = x[offset:offset + size].reshape(()) \
+            if size == 1 else x[offset:offset + size]
+        offset += size
+    return params
+
+
+def _constrain_flat(z_flat, model, model_args, model_kwargs, names, sizes):
+    """Map flat unconstrained vector -> flat constrained vector."""
+    z_dict = _flat_to_dict(z_flat, names, sizes)
+    c_dict = constrain_fn(model, model_args, model_kwargs, z_dict)
+    return _constrained_to_flat(c_dict, names, sizes)
+
+
+def _unconstrain_flat(x_flat, model, model_args, model_kwargs, names, sizes):
+    """Map flat constrained vector -> flat unconstrained vector."""
+    x_dict = _flat_to_dict(x_flat, names, sizes)
+    z_dict = unconstrain_fn(model, model_args, model_kwargs, x_dict)
+    return _constrained_to_flat(z_dict, names, sizes)
 
 
 def _select_distinct(points, logp_vals, M, min_dist_frac=0.01):
@@ -175,17 +337,22 @@ def _select_distinct(points, logp_vals, M, min_dist_frac=0.01):
     return np.array(selected[:M])
 
 
-def _cluster_modes(points, logp_vals, names, sizes, tol=0.02):
+def _cluster_modes(points, logp_vals, names, sizes, negU_vals=None,
+                    scale=None, tol=0.02):
     """Cluster final optimizer points into modes.
 
     Two points belong to the same mode if their L-inf distance
-    (normalised by parameter range) is < tol for all scalar params.
+    (normalised by ``scale``) is < tol for all dimensions.
 
-    Returns list of dicts, each with 'logp', 'count', 'best_idx',
-    'params' (best point as dict), sorted by logP descending.
+    ``scale`` should be the prior range (hi - lo). If None, falls back
+    to the spread of the final points (unreliable when all converge).
+
+    Returns list of dicts, each with 'logp', 'negU' (optional), 'count',
+    'best_idx', 'params' (best point as dict), sorted by logP descending.
     """
-    spread = np.max(points, axis=0) - np.min(points, axis=0)
-    spread = np.where(spread > 0, spread, 1.0)
+    if scale is None:
+        scale = np.max(points, axis=0) - np.min(points, axis=0)
+    scale = np.where(scale > 0, scale, 1.0)
 
     order = np.argsort(-logp_vals)
     modes = []  # each: {'indices': [...], 'best_idx': int}
@@ -194,7 +361,7 @@ def _cluster_modes(points, logp_vals, names, sizes, tol=0.02):
         matched = False
         for mode in modes:
             ref = points[mode["best_idx"]]
-            if np.all(np.abs(points[idx] - ref) / spread < tol):
+            if np.all(np.abs(points[idx] - ref) / scale < tol):
                 mode["indices"].append(idx)
                 matched = True
                 break
@@ -208,14 +375,17 @@ def _cluster_modes(points, logp_vals, names, sizes, tol=0.02):
         offset = 0
         for name, size in zip(names, sizes):
             val = points[best, offset:offset + size]
-            params[name] = float(val) if size == 1 else val
+            params[name] = float(val.ravel()[0]) if size == 1 else val
             offset += size
-        result.append({
+        entry = {
             "logp": float(logp_vals[best]),
             "count": len(mode["indices"]),
             "best_idx": best,
             "params": params,
-        })
+        }
+        if negU_vals is not None:
+            entry["negU"] = float(negU_vals[best])
+        result.append(entry)
 
     result.sort(key=lambda m: -m["logp"])
     return result
@@ -250,8 +420,8 @@ def _auto_fmt(val):
 
 
 def _print_points_table(points, logp_vals, names, sizes,
-                        max_params=20):
-    """Print a table of M points with their logP values."""
+                        negU_vals=None, max_params=20):
+    """Print a table of M points with their logP and -U values."""
     cols, col_offsets = [], []
     offset = 0
     for name, size in zip(names, sizes):
@@ -264,6 +434,8 @@ def _print_points_table(points, logp_vals, names, sizes,
 
     short = [_short_name(c) for c in cols]
     hdr = f"{'#':>3s} {'logP':>8s}"
+    if negU_vals is not None:
+        hdr += f" {'-U':>8s}"
     for s in short:
         hdr += f" {s:>8s}"
     fprint(hdr)
@@ -272,6 +444,8 @@ def _print_points_table(points, logp_vals, names, sizes,
     order = np.argsort(-logp_vals)
     for rank, idx in enumerate(order):
         row = f"{rank:3d} {logp_vals[idx]:8.1f}"
+        if negU_vals is not None:
+            row += f" {negU_vals[idx]:8.1f}"
         for col_off in col_offsets:
             row += f" {_auto_fmt(points[idx, col_off])}"
         fprint(row)
@@ -294,8 +468,11 @@ def _print_modes(modes, names, sizes, max_params=20):
     scalar_names = [n for n, s in zip(names, sizes) if s == 1][:max_params]
 
     for i, mode in enumerate(modes):
-        fprint(f"\nmode {i}: logP = {mode['logp']:.2f} "
-               f"({mode['count']}/{total} starts)")
+        line = f"\nmode {i}: logP = {mode['logp']:.2f}"
+        if "negU" in mode:
+            line += f", -U = {mode['negU']:.2f}"
+        line += f" ({mode['count']}/{total} starts)"
+        fprint(line)
         p = mode["params"]
         for name in scalar_names:
             if name in p and isinstance(p[name], (float, int)):
@@ -304,20 +481,106 @@ def _print_modes(modes, names, sizes, max_params=20):
 
 
 # -----------------------------------------------------------------------
+# Inner optimizers (unconstrained space)
+# -----------------------------------------------------------------------
+
+
+def _run_adam(z0, neg_U_fn, n_steps, lr, lr_end, n_restarts, seed,
+              verbose):
+    """Run parallel Adam optimization in unconstrained space.
+
+    Full state reset (m_t, v_t) at each warm restart prevents stale
+    adaptive state from suppressing the Jacobian restoring force in
+    the logit-transformed space.
+    """
+    neg_U_batch = jax.jit(jax.vmap(neg_U_fn))
+    steps_per_cycle = n_steps // n_restarts
+
+    def _make_optimizer(lr_init):
+        schedule = optax.cosine_decay_schedule(
+            init_value=lr_init, decay_steps=steps_per_cycle,
+            alpha=lr_end / lr_init)
+        return optax.adam(schedule)
+
+    optimizer = _make_optimizer(lr)
+
+    @jax.jit
+    def step(z, opt_state):
+        def _single(zi, osi):
+            g = jax.grad(lambda zz: -neg_U_fn(zz))(zi)
+            updates, new_osi = optimizer.update(g, osi)
+            zi_new = optax.apply_updates(zi, updates)
+            return zi_new, new_osi
+        return jax.vmap(_single)(z, opt_state)
+
+    opt_state = jax.vmap(optimizer.init)(z0)
+
+    # Compile
+    t0 = time.time()
+    z_cur, opt_state = step(z0, opt_state)
+    jax.block_until_ready(z_cur)
+    if verbose:
+        fprint(f"Adam JIT compiled in {time.time() - t0:.1f}s "
+               f"({n_restarts} restarts with state reset)")
+
+    # Track best across all restarts
+    best_z = z0
+    best_negU = np.asarray(neg_U_batch(z0))
+
+    t0 = time.time()
+    for restart in range(n_restarts):
+        if restart > 0:
+            # Full state reset: clear m_t and v_t, keep positions
+            opt_state = jax.vmap(optimizer.init)(z_cur)
+            if verbose:
+                fprint(f"  restart {restart}: reset Adam state")
+
+        start_step = restart * steps_per_cycle
+        end_step = (restart + 1) * steps_per_cycle
+        desc = f"Adam[{restart}]" if n_restarts > 1 else "Adam"
+        pbar = trange(start_step, end_step, desc=desc, disable=not verbose)
+
+        for s in pbar:
+            z_cur, opt_state = step(z_cur, opt_state)
+            if (s + 1) % 100 == 0:
+                jax.block_until_ready(z_cur)
+                negU_now = np.asarray(neg_U_batch(z_cur))
+                # Update best
+                improved = negU_now > best_negU
+                if np.any(improved):
+                    best_z = jnp.where(
+                        jnp.array(improved)[:, None], z_cur, best_z)
+                    best_negU = np.where(improved, negU_now, best_negU)
+                cycle_step = (s + 1) - restart * steps_per_cycle
+                cur_lr = float(optax.cosine_decay_schedule(
+                    init_value=lr, decay_steps=steps_per_cycle,
+                    alpha=lr_end / lr)(cycle_step))
+                pbar.set_postfix(negU=f"{float(best_negU.max()):.1f}",
+                                 lr=f"{cur_lr:.1e}")
+
+    jax.block_until_ready(best_z)
+    if verbose:
+        fprint(f"Adam done in {time.time() - t0:.1f}s")
+
+    return best_z
+
+
+# -----------------------------------------------------------------------
 # Main optimizer
 # -----------------------------------------------------------------------
 
 
-def sobol_adam(model, model_args=(), model_kwargs=None,
-               log2_N=14, M=10, n_steps=5000,
-               lr=0.1, lr_end=0.005, n_restarts=3,
-               sobol_n_sigma=1, sobol_batch=1024,
-               min_dist_frac=0.01, seed=42, verbose=True):
+def sobol_optimize(model, model_args=(), model_kwargs=None,
+                   log2_N=14, M=10, n_steps=5000,
+                   lr=0.1, lr_end=0.005, n_restarts=3,
+                   sobol_n_sigma=1, sobol_batch=1024,
+                   min_dist_frac=0.01, seed=42, verbose=True):
     """Multi-start MAP optimizer: Sobol survey + parallel Adam.
 
-    Uses cosine decay with warm restarts: the LR cycles from ``lr``
-    down to ``lr_end`` a total of ``n_restarts`` times over
-    ``n_steps``, allowing the optimizer to escape shallow local minima.
+    Optimization runs in **unconstrained space** using NumPyro's bijective
+    transforms, eliminating boundary-sticking artifacts. The Sobol survey
+    is done in constrained space (for interpretable bounds), then points
+    are transformed to unconstrained space for optimization.
 
     Parameters
     ----------
@@ -330,13 +593,13 @@ def sobol_adam(model, model_args=(), model_kwargs=None,
     log2_N : int
         log2 of Sobol sample count (default 2^14 = 16384).
     M : int
-        Number of Adam starts.
+        Number of parallel starts.
     n_steps : int
-        Total Adam steps per start.
+        Total gradient evaluations per start.
     lr : float
-        Peak learning rate (at each restart).
+        Peak learning rate.
     lr_end : float
-        Minimum learning rate (at end of each cycle).
+        Minimum learning rate.
     n_restarts : int
         Number of cosine warm restart cycles.
     sobol_n_sigma : float
@@ -347,37 +610,33 @@ def sobol_adam(model, model_args=(), model_kwargs=None,
     min_dist_frac : float
         Minimum L-inf distance (as fraction of range) between starts.
     seed : int
-        Random seed for Sobol scrambling.
+        Random seed.
     verbose : bool
         Print progress.
 
     Returns
     -------
     best_params : dict
-        Best MAP parameter values.
+        Best MAP parameter values (constrained space).
     best_logp : float
-        Log-density at the MAP.
+        Log-density at the MAP (constrained space, no Jacobian).
     all_results : dict
-        All M results: 'params' (M, D), 'logp' (M,), 'names', 'sizes',
-        'modes' (list of mode dicts).
+        All M results: 'params' (M, D) in constrained space,
+        'logp' (M,), 'names', 'sizes', 'modes' (list of mode dicts).
     """
     if model_kwargs is None:
         model_kwargs = {}
 
-    # --- Extract bounds ---
-    # Sobol bounds: tightened by sobol_n_sigma for non-Uniform priors
+    # --- Extract bounds (constrained space, for Sobol survey) ---
     names, sizes, lo_sobol, hi_sobol = _get_bounds_from_trace(
         model, model_args, model_kwargs,
         sobol_n_sigma=sobol_n_sigma, seed=seed)
-    # Adam clip bounds: prior support, but use 10-sigma for unbounded
-    _, _, lo_clip, hi_clip = _get_bounds_from_trace(
-        model, model_args, model_kwargs, sobol_n_sigma=10, seed=seed)
     D = len(lo_sobol)
     N_sobol = 2**log2_N
 
     if verbose:
-        fsection("Sobol + Adam MAP optimizer")
-        fprint(f"{D}D, {N_sobol} Sobol points, {M} Adam starts "
+        fsection("Sobol + Adam MAP optimizer (unconstrained)")
+        fprint(f"{D}D, {N_sobol} Sobol points, {M} starts "
                f"x {n_steps} steps")
         fprint(f"LR: {lr:.1e} -> {lr_end:.1e} "
                f"(cosine, {n_restarts} restarts)")
@@ -385,17 +644,24 @@ def sobol_adam(model, model_args=(), model_kwargs=None,
             offset = 0
             for name, size in zip(names, sizes):
                 s_lo, s_hi = lo_sobol[offset], hi_sobol[offset]
-                c_lo, c_hi = lo_clip[offset], hi_clip[offset]
-                line = f"  {name:20s}: Sobol [{s_lo:.4g}, {s_hi:.4g}]"
-                if c_lo != s_lo or c_hi != s_hi:
-                    line += f"  Adam [{c_lo:.4g}, {c_hi:.4g}]"
-                fprint(line)
+                fprint(f"  {name:20s}: Sobol [{s_lo:.4g}, {s_hi:.4g}]")
                 offset += size
 
-    # --- Build flat log-density ---
+    # --- Build log-density functions ---
     logp_fn = _build_logp_flat(
         model, model_args, model_kwargs, names, sizes)
     logp_batch = jax.jit(jax.vmap(logp_fn))
+
+    neg_U_fn = _build_neg_potential_flat(
+        model, model_args, model_kwargs, names, sizes)
+
+    # Vectorized constrained <-> unconstrained transforms
+    _to_unconst = lambda x: _unconstrain_flat(
+        x, model, model_args, model_kwargs, names, sizes)
+    _to_const = lambda z: _constrain_flat(
+        z, model, model_args, model_kwargs, names, sizes)
+    to_unconst_batch = jax.jit(jax.vmap(_to_unconst))
+    to_const_batch = jax.jit(jax.vmap(_to_const))
 
     # --- Compile ---
     t0 = time.time()
@@ -406,7 +672,7 @@ def sobol_adam(model, model_args=(), model_kwargs=None,
     if verbose:
         fprint(f"JIT compiled in {time.time() - t0:.1f}s")
 
-    # --- Sobol survey ---
+    # --- Sobol survey (constrained space) ---
     sampler = Sobol(d=D, scramble=True, seed=seed)
     sobol_01 = sampler.random(N_sobol)
     sobol_points = lo_sobol + sobol_01 * (hi_sobol - lo_sobol)
@@ -432,112 +698,521 @@ def sobol_adam(model, model_args=(), model_kwargs=None,
 
     # --- Select M distinct starts ---
     selected = _select_distinct(sobol_points, logp_all, M, min_dist_frac)
-    x0 = jnp.array(sobol_points[selected])
+    x0_constrained = jnp.array(sobol_points[selected])
 
     if verbose:
-        fsection("Starting points")
+        fsection("Starting points (constrained)")
         _print_points_table(sobol_points[selected], logp_all[selected],
                             names, sizes)
 
-    # --- Parallel Adam ---
-    lo_jax = jnp.array(lo_clip)
-    hi_jax = jnp.array(hi_clip)
-    eps = 1e-6 * (hi_jax - lo_jax)
-
-    # Cosine decay with warm restarts: n_restarts cycles over n_steps
-    steps_per_cycle = n_steps // n_restarts
-    boundaries = [steps_per_cycle * i for i in range(1, n_restarts)]
-    schedules = [
-        optax.cosine_decay_schedule(
-            init_value=lr, decay_steps=steps_per_cycle,
-            alpha=lr_end / lr)
-        for _ in range(n_restarts)
-    ]
-    schedule = optax.join_schedules(schedules, boundaries)
-    optimizer = optax.adam(schedule)
-
-    @jax.jit
-    def adam_step(x, opt_state):
-        def _single(xi, osi):
-            g = jax.grad(lambda z: -logp_fn(z))(xi)
-            updates, new_osi = optimizer.update(g, osi)
-            xi_new = optax.apply_updates(xi, updates)
-            xi_new = jnp.clip(xi_new, lo_jax + eps, hi_jax - eps)
-            return xi_new, new_osi
-        return jax.vmap(_single)(x, opt_state)
-
-    opt_state = jax.vmap(optimizer.init)(x0)
-
-    # Compile
+    # --- Transform to unconstrained space ---
     t0 = time.time()
-    x_cur, opt_state = adam_step(x0, opt_state)
-    jax.block_until_ready(x_cur)
+    z0 = to_unconst_batch(x0_constrained)
+    jax.block_until_ready(z0)
     if verbose:
-        fprint(f"Adam JIT compiled in {time.time() - t0:.1f}s")
+        fprint(f"Transformed to unconstrained space in "
+               f"{time.time() - t0:.1f}s")
 
-    # Run
-    t0 = time.time()
-    pbar = trange(1, n_steps, desc="Adam", disable=not verbose)
-    best_logp_so_far = -np.inf
-    for step in pbar:
-        x_cur, opt_state = adam_step(x_cur, opt_state)
-        if (step + 1) % 100 == 0:
-            jax.block_until_ready(x_cur)
-            lp_now = np.asarray(logp_batch(x_cur))
-            best_logp_so_far = float(lp_now.max())
-            cur_lr = float(schedule(step + 1))
-            pbar.set_postfix(logP=f"{best_logp_so_far:.1f}",
-                             lr=f"{cur_lr:.1e}")
-    jax.block_until_ready(x_cur)
-    x_final = np.asarray(x_cur)
+    # --- Run optimizer ---
+    z_final = _run_adam(
+        z0, neg_U_fn, n_steps=n_steps, lr=lr, lr_end=lr_end,
+        n_restarts=n_restarts, seed=seed, verbose=verbose)
 
-    if verbose:
-        fprint(f"Adam done in {time.time() - t0:.1f}s")
+    # --- Transform back to constrained space ---
+    x_final = np.asarray(to_const_batch(z_final))
 
-    # --- Evaluate final points and detect modes ---
+    # Evaluate both constrained logP and unconstrained -U
+    neg_U_batch = jax.jit(jax.vmap(neg_U_fn))
     logp_final = np.asarray(logp_batch(jnp.array(x_final)))
+    negU_final = np.asarray(neg_U_batch(z_final))
 
-    # Filter out points sitting at prior boundaries (Uniform priors).
-    # For Uniform priors, lo_sobol == support lower bound. A point
-    # within rtol of the boundary is likely a boundary artefact.
-    rtol = 1e-3
-    width = hi_sobol - lo_sobol
-    at_lo = np.any(x_final <= lo_sobol + rtol * width, axis=1)
-    at_hi = np.any(x_final >= hi_sobol - rtol * width, axis=1)
-    at_boundary = at_lo | at_hi
-    logp_filtered = np.where(at_boundary, -np.inf, logp_final)
+    modes = _cluster_modes(x_final, logp_final, names, sizes,
+                           negU_vals=negU_final,
+                           scale=hi_sobol - lo_sobol)
 
-    # Fall back to unfiltered if all points are at boundaries.
-    if np.all(at_boundary):
-        logp_filtered = logp_final
-        if verbose:
-            fprint("WARNING: all Adam points at prior boundaries, "
-                   "using unfiltered logP")
-    elif verbose and np.any(at_boundary):
-        n_filt = int(at_boundary.sum())
-        fprint(f"Filtered {n_filt}/{len(at_boundary)} boundary points")
-
-    modes = _cluster_modes(x_final, logp_filtered, names, sizes)
-
-    best_idx = np.argmax(logp_filtered)
+    best_idx = np.argmax(logp_final)
     best_logp = float(logp_final[best_idx])
     best_params = modes[0]["params"]
 
     if verbose:
-        fsection("Final points")
-        _print_points_table(x_final, logp_final, names, sizes)
+        fsection("Final points (constrained)")
+        _print_points_table(x_final, logp_final, names, sizes,
+                            negU_vals=negU_final)
         fsection("Mode summary")
         _print_modes(modes, names, sizes)
 
     all_results = {
         "params": x_final,
         "logp": logp_final,
+        "negU": negU_final,
         "names": names,
         "sizes": sizes,
         "lo_sobol": lo_sobol,
         "hi_sobol": hi_sobol,
-        "lo_clip": lo_clip,
-        "hi_clip": hi_clip,
+        "modes": modes,
+    }
+
+    return best_params, best_logp, all_results
+
+
+
+
+# -----------------------------------------------------------------------
+# Differential Evolution optimizer (derivative-free)
+# -----------------------------------------------------------------------
+
+
+def de_optimize(model, model_args=(), model_kwargs=None,
+                log2_N=16, pop_size=1000, max_generations=1000,
+                patience=100, eval_chunk=64,
+                sobol_n_sigma=5, min_dist_frac=0.005,
+                sobol_bounds_override=None,
+                log_every=100, seed=42, verbose=True):
+    """Derivative-free MAP optimizer using Differential Evolution.
+
+    Strategy:
+      1. Sobol survey in constrained space to seed the initial population.
+      2. DE evolves the population until convergence (no improvement
+         for ``patience`` generations).
+
+    Uses reflection boundary handling to avoid boundary-attractor
+    pathology (clipping causes DE difference vectors to collapse).
+
+    The Sobol survey can use tighter bounds than the DE search space
+    via ``sobol_bounds_override`` (e.g. Hubble-flow distance estimate
+    for the distance parameter). DE always operates in the full prior
+    bounds.
+
+    Operates entirely in constrained space (no gradient needed).
+    Requires ``evosax`` (JAX-native evolutionary strategies).
+
+    Parameters
+    ----------
+    model : callable
+        NumPyro model function.
+    model_args, model_kwargs
+        Arguments for the model.
+    log2_N : int
+        log2 of Sobol sample count (default 2^16 = 65536).
+    pop_size : int
+        DE population size.
+    max_generations : int
+        Maximum number of DE generations.
+    patience : int
+        Stop if no improvement (> 0.1 nats) for this many generations.
+    eval_chunk : int
+        Batch size for fitness evaluations (GPU memory control).
+    sobol_n_sigma : float
+        Sobol bounds width (mean +/- n_sigma * std, clipped to support).
+    min_dist_frac : float
+        Minimum L-inf distance between initial population members.
+    sobol_bounds_override : dict or None
+        Override Sobol survey bounds for specific parameters. Keys are
+        parameter names, values are (lo, hi) tuples. The DE search
+        space is unaffected.
+    log_every : int
+        Print progress every N generations.
+    seed : int
+        Random seed.
+    verbose : bool
+        Print progress.
+
+    Returns
+    -------
+    best_params : dict
+        Best MAP parameter values (constrained space).
+    best_logp : float
+        Log-density at the MAP.
+    all_results : dict
+        Contains 'names', 'sizes', 'lo_sobol', 'hi_sobol'.
+    """
+    from evosax.algorithms import DifferentialEvolution
+
+    if model_kwargs is None:
+        model_kwargs = {}
+
+    names, sizes, lo, hi = _get_bounds_from_trace(
+        model, model_args, model_kwargs,
+        sobol_n_sigma=sobol_n_sigma, seed=seed)
+    D = len(lo)
+    scale = hi - lo
+    N_sobol = 2**log2_N
+
+    # Sobol bounds: default to prior bounds, override where requested
+    sobol_lo = lo.copy()
+    sobol_hi = hi.copy()
+    if sobol_bounds_override is not None:
+        offset = 0
+        for name, size in zip(names, sizes):
+            if name in sobol_bounds_override:
+                s_lo, s_hi = sobol_bounds_override[name]
+                sobol_lo[offset:offset + size] = max(s_lo, lo[offset])
+                sobol_hi[offset:offset + size] = min(s_hi, hi[offset])
+            offset += size
+
+    if verbose:
+        fsection("DE MAP optimizer")
+        fprint(f"{D}D, pop={pop_size}, max_gen={max_generations}, "
+               f"patience={patience}")
+        if D <= 50:
+            offset = 0
+            for name, size in zip(names, sizes):
+                p_lo, p_hi = lo[offset], hi[offset]
+                s_lo, s_hi = sobol_lo[offset], sobol_hi[offset]
+                if s_lo != p_lo or s_hi != p_hi:
+                    fprint(f"  {name:20s}: [{p_lo:.4g}, {p_hi:.4g}] "
+                           f"(Sobol: [{s_lo:.4g}, {s_hi:.4g}])")
+                else:
+                    fprint(f"  {name:20s}: [{p_lo:.4g}, {p_hi:.4g}]")
+                offset += size
+
+    # Build log-density
+    logp_fn = _build_logp_flat(model, model_args, model_kwargs, names, sizes)
+    _logp_batch_raw = jax.jit(jax.vmap(logp_fn))
+
+    def _fitness_single(x_normed):
+        x = lo + x_normed * scale
+        return -logp_fn(x)
+
+    _fitness_raw = jax.jit(jax.vmap(_fitness_single))
+
+    def fitness_batch(x_normed):
+        n = x_normed.shape[0]
+        if n <= eval_chunk:
+            return _fitness_raw(x_normed)
+        parts = []
+        for i in range(0, n, eval_chunk):
+            parts.append(_fitness_raw(x_normed[i:i + eval_chunk]))
+            jax.block_until_ready(parts[-1])
+        return jnp.concatenate(parts)
+
+    # Compile
+    t0 = time.time()
+    x_test = jnp.tile(jnp.array(0.5 * (lo + hi))[None, :], (4, 1))
+    _ = _logp_batch_raw(x_test)
+    jax.block_until_ready(_)
+    if verbose:
+        fprint(f"JIT compiled in {time.time() - t0:.1f}s")
+
+    # Sobol survey (may use tighter bounds than DE)
+    sampler = Sobol(d=D, scramble=True, seed=seed)
+    sobol_01 = sampler.random(N_sobol)
+    sobol_points = sobol_lo + sobol_01 * (sobol_hi - sobol_lo)
+    sobol_jax = jnp.array(sobol_points)
+
+    t0 = time.time()
+    logp_all = []
+    n_batches = (N_sobol + eval_chunk - 1) // eval_chunk
+    for i in trange(n_batches, desc="Sobol", disable=not verbose):
+        start = i * eval_chunk
+        end = min(start + eval_chunk, N_sobol)
+        vals = _logp_batch_raw(sobol_jax[start:end])
+        jax.block_until_ready(vals)
+        logp_all.append(np.asarray(vals))
+    logp_all = np.concatenate(logp_all)
+    valid = np.isfinite(logp_all)
+    logp_all = np.where(valid, logp_all, -np.inf)
+
+    if verbose:
+        fprint(f"Sobol done in {time.time() - t0:.1f}s "
+               f"({valid.sum()}/{N_sobol} valid, "
+               f"best logP = {logp_all[valid].max():.1f})")
+
+    # Seed initial population from top Sobol points
+    selected = _select_distinct(sobol_points, logp_all, pop_size,
+                                min_dist_frac)
+    x0 = sobol_points[selected]
+    x0_normed = jnp.array((x0 - lo) / scale)
+
+    # Compile fitness
+    t0 = time.time()
+    f0 = fitness_batch(x0_normed)
+    jax.block_until_ready(f0)
+    if verbose:
+        fprint(f"Fitness JIT compiled in {time.time() - t0:.1f}s")
+
+    # DE loop
+    if verbose:
+        fsection(f"DE (pop={pop_size}, max_gen={max_generations})")
+
+    key = jax.random.PRNGKey(seed)
+    de = DifferentialEvolution(
+        population_size=pop_size, solution=jnp.zeros(D))
+    params = de.default_params
+    state = de.init(key, x0_normed, f0, params)
+
+    best_logp_so_far = -float(state.best_fitness)
+    gens_without_improvement = 0
+
+    t0 = time.time()
+    final_gen = max_generations
+    for gen in trange(max_generations, desc="DE", disable=not verbose):
+        key, ask_key, tell_key = jax.random.split(key, 3)
+        population, state = de.ask(ask_key, state, params)
+        population = _reflect_bounds(population)
+        fitnesses = fitness_batch(population)
+        jax.block_until_ready(fitnesses)
+        state, metrics = de.tell(
+            tell_key, population, fitnesses, state, params)
+
+        current_best = -float(state.best_fitness)
+        if current_best > best_logp_so_far + 0.1:
+            best_logp_so_far = current_best
+            gens_without_improvement = 0
+        else:
+            gens_without_improvement += 1
+
+        if verbose and (gen + 1) % log_every == 0:
+            x_best = np.asarray(lo + state.best_solution * scale)
+            true_logp = float(logp_fn(jnp.array(x_best)))
+            fprint(f"  gen {gen+1:5d}: logP = {true_logp:.2f}, "
+                   f"stale = {gens_without_improvement}/{patience}")
+
+        if gens_without_improvement >= patience:
+            if verbose:
+                fprint(f"  Converged at gen {gen+1} (no improvement "
+                       f"for {patience} generations)")
+            final_gen = gen + 1
+            break
+
+    de_time = time.time() - t0
+    if verbose:
+        fprint(f"DE done in {de_time:.1f}s ({final_gen} generations)")
+
+    # Extract best
+    x_best = np.asarray(lo + state.best_solution * scale)
+    best_logp = float(logp_fn(jnp.array(x_best)))
+    best_params = _flat_to_dict(jnp.array(x_best), names, sizes)
+    best_params = {
+        k: float(v) if jnp.ndim(v) == 0 else v
+        for k, v in best_params.items()
+    }
+
+    if verbose:
+        fsection("DE results")
+        fprint(f"Best logP = {best_logp:.2f}")
+        for name in names:
+            v = best_params[name]
+            if isinstance(v, (float, int)):
+                fprint(f"  {name:20s} = {v:.4f}")
+
+    all_results = {
+        "names": names,
+        "sizes": sizes,
+        "lo_sobol": lo,
+        "hi_sobol": hi,
+    }
+
+    return best_params, best_logp, all_results
+
+
+# -----------------------------------------------------------------------
+# Tempered optimization (beta-annealing)
+# -----------------------------------------------------------------------
+
+
+def tempered_optimize(model, model_args=(), model_kwargs=None,
+                      beta_min=0.01, n_cycles=4, n_steps=5000,
+                      log2_N=14, M=10,
+                      lr=0.1, lr_end=0.005,
+                      sobol_n_sigma=5, sobol_batch=1024,
+                      min_dist_frac=0.01, seed=42, verbose=True):
+    """Tempered MAP optimizer with cyclic beta annealing.
+
+    Sobol survey at low beta finds the broad basin, then Adam optimizes
+    with beta cycling between beta_min and 1.0. Each cycle heats
+    (beta drops to escape local minima) then cools (beta rises to
+    refine). The floor rises over time so early cycles explore broadly
+    and late cycles converge.
+
+    Beta schedule per step::
+
+        floor(t) = beta_min^(1 - t/T)          # rises from beta_min to 1
+        beta(t)  = floor + (1-floor) * cos_up   # oscillates floor -> 1 -> floor
+
+    where cos_up is a half-cosine within each cycle.
+    """
+    if model_kwargs is None:
+        model_kwargs = {}
+
+    names, sizes, lo_sobol, hi_sobol = _get_bounds_from_trace(
+        model, model_args, model_kwargs,
+        sobol_n_sigma=sobol_n_sigma, seed=seed)
+    D = len(lo_sobol)
+    N_sobol = 2**log2_N
+
+    if verbose:
+        fsection("Tempered MAP optimizer (cyclic annealing)")
+        fprint(f"{D}D, {N_sobol} Sobol points, {M} starts")
+        fprint(f"beta_min={beta_min}, {n_cycles} cycles, "
+               f"{n_steps} total steps")
+        fprint(f"LR {lr:.1e} -> {lr_end:.1e}")
+        if D <= 50:
+            offset = 0
+            for name, size in zip(names, sizes):
+                s_lo, s_hi = lo_sobol[offset], hi_sobol[offset]
+                fprint(f"  {name:20s}: Sobol [{s_lo:.4g}, {s_hi:.4g}]")
+                offset += size
+
+    # Build tempered functions
+    tempered_logp_fn, tempered_neg_U_fn = _build_tempered_fns(
+        model, model_args, model_kwargs, names, sizes, seed=seed)
+
+    # Standard logp for final evaluation
+    logp_fn = _build_logp_flat(
+        model, model_args, model_kwargs, names, sizes)
+    logp_batch = jax.jit(jax.vmap(logp_fn))
+
+    # Compile Sobol evaluator at beta_min
+    t0 = time.time()
+    x_test = jnp.array(0.5 * (lo_sobol + hi_sobol))
+
+    def _tempered_logp_cold(x):
+        return tempered_logp_fn(x, beta_min)
+
+    tempered_logp_batch = jax.jit(jax.vmap(_tempered_logp_cold))
+    _ = tempered_logp_batch(jnp.tile(x_test[None, :], (4, 1)))
+    jax.block_until_ready(_)
+    if verbose:
+        fprint(f"JIT compiled in {time.time() - t0:.1f}s")
+
+    # Sobol survey at beta_min
+    sampler = Sobol(d=D, scramble=True, seed=seed)
+    sobol_01 = sampler.random(N_sobol)
+    sobol_points = lo_sobol + sobol_01 * (hi_sobol - lo_sobol)
+    sobol_jax = jnp.array(sobol_points)
+
+    t0 = time.time()
+    logp_all = []
+    n_batches = (N_sobol + sobol_batch - 1) // sobol_batch
+    for i in trange(n_batches, desc=f"Sobol (beta={beta_min:.3f})",
+                    disable=not verbose):
+        start = i * sobol_batch
+        end = min(start + sobol_batch, N_sobol)
+        vals = tempered_logp_batch(sobol_jax[start:end])
+        jax.block_until_ready(vals)
+        logp_all.append(np.asarray(vals))
+    logp_all = np.concatenate(logp_all)
+    valid = np.isfinite(logp_all)
+    logp_all = np.where(valid, logp_all, -np.inf)
+
+    if verbose:
+        fprint(f"Sobol done in {time.time() - t0:.1f}s "
+               f"({valid.sum()}/{N_sobol} valid, "
+               f"best tempered logP = {logp_all[valid].max():.1f})")
+
+    # Select M starts
+    selected = _select_distinct(sobol_points, logp_all, M, min_dist_frac)
+    x0 = jnp.array(sobol_points[selected])
+
+    if verbose:
+        fsection("Starting points (constrained, tempered)")
+        _print_points_table(sobol_points[selected], logp_all[selected],
+                            names, sizes)
+
+    # Transform to unconstrained space
+    _to_unconst = lambda x: _unconstrain_flat(
+        x, model, model_args, model_kwargs, names, sizes)
+    to_unconst_batch = jax.jit(jax.vmap(_to_unconst))
+    _to_const = lambda z: _constrain_flat(
+        z, model, model_args, model_kwargs, names, sizes)
+    to_const_batch = jax.jit(jax.vmap(_to_const))
+
+    z_cur = to_unconst_batch(x0)
+    jax.block_until_ready(z_cur)
+
+    # --- Cyclic Adam with dynamic beta ---
+    lr_schedule = optax.cosine_decay_schedule(
+        init_value=lr, decay_steps=n_steps, alpha=lr_end / lr)
+    optimizer = optax.adam(lr_schedule)
+
+    @jax.jit
+    def step(z, opt_state, beta_val):
+        def _single(zi, osi):
+            g = jax.grad(lambda zz: -tempered_neg_U_fn(zz, beta_val))(zi)
+            updates, new_osi = optimizer.update(g, osi)
+            zi_new = optax.apply_updates(zi, updates)
+            return zi_new, new_osi
+        return jax.vmap(_single)(z, opt_state)
+
+    neg_U_full = _build_neg_potential_flat(
+        model, model_args, model_kwargs, names, sizes)
+    neg_U_batch_fn = jax.jit(jax.vmap(neg_U_full))
+
+    opt_state = jax.vmap(optimizer.init)(z_cur)
+
+    # Compile
+    t0 = time.time()
+    z_cur, opt_state = step(z_cur, opt_state, jnp.float32(1.0))
+    jax.block_until_ready(z_cur)
+    if verbose:
+        fprint(f"Adam JIT compiled in {time.time() - t0:.1f}s")
+
+    # Track best at beta=1 (true objective)
+    best_z = z_cur
+    best_negU = np.asarray(neg_U_batch_fn(z_cur))
+
+    steps_per_cycle = n_steps // n_cycles
+    log_beta_min = np.log(beta_min)
+
+    t0 = time.time()
+    pbar = trange(n_steps, desc="Adam (cyclic)", disable=not verbose)
+    for s in pbar:
+        # Beta schedule: floor rises from beta_min to 1, cosine oscillation
+        frac = s / max(n_steps - 1, 1)
+        floor = np.exp(log_beta_min * (1 - frac))  # beta_min^(1-frac)
+        cycle_frac = (s % steps_per_cycle) / max(steps_per_cycle - 1, 1)
+        beta = floor + (1.0 - floor) * (
+            1 - np.cos(np.pi * cycle_frac)) / 2
+
+        z_cur, opt_state = step(z_cur, opt_state, jnp.float32(beta))
+
+        if (s + 1) % 100 == 0:
+            jax.block_until_ready(z_cur)
+            negU_now = np.asarray(neg_U_batch_fn(z_cur))
+            improved = negU_now > best_negU
+            if np.any(improved):
+                best_z = jnp.where(
+                    jnp.array(improved)[:, None], z_cur, best_z)
+                best_negU = np.where(improved, negU_now, best_negU)
+            cur_lr = float(lr_schedule(s + 1))
+            pbar.set_postfix(
+                negU=f"{float(best_negU.max()):.1f}",
+                beta=f"{beta:.3f}",
+                lr=f"{cur_lr:.1e}")
+
+    jax.block_until_ready(best_z)
+    if verbose:
+        fprint(f"Adam done in {time.time() - t0:.1f}s")
+
+    # Final evaluation
+    x_final = np.asarray(to_const_batch(best_z))
+    logp_final = np.asarray(logp_batch(jnp.array(x_final)))
+    negU_final = np.asarray(neg_U_batch_fn(best_z))
+
+    modes = _cluster_modes(x_final, logp_final, names, sizes,
+                           negU_vals=negU_final,
+                           scale=hi_sobol - lo_sobol)
+
+    best_idx = np.argmax(logp_final)
+    best_logp = float(logp_final[best_idx])
+    best_params = modes[0]["params"]
+
+    if verbose:
+        fsection("Final points (constrained)")
+        _print_points_table(x_final, logp_final, names, sizes,
+                            negU_vals=negU_final)
+        fsection("Mode summary")
+        _print_modes(modes, names, sizes)
+
+    all_results = {
+        "params": x_final,
+        "logp": logp_final,
+        "negU": negU_final,
+        "names": names,
+        "sizes": sizes,
+        "lo_sobol": lo_sobol,
+        "hi_sobol": hi_sobol,
         "modes": modes,
     }
 
@@ -549,23 +1224,25 @@ def sobol_adam(model, model_args=(), model_kwargs=None,
 # -----------------------------------------------------------------------
 
 
+def _use_de(model):
+    """Check if DE should be used instead of Sobol+Adam.
+
+    DE is preferred for maser disk models with r+phi marginalization,
+    where the likelihood is expensive and the posterior is narrow in
+    high dimensions.
+    """
+    return getattr(model, "marginalise_r", False)
+
+
 def find_MAP(model, model_kwargs=None, seed=42):
-    """Find MAP estimate via Sobol + Adam.
+    """Find MAP estimate, automatically selecting the optimizer.
+
+    Uses DE for maser disk models with r+phi marginalization
+    (derivative-free, handles the narrow 14D posterior well).
+    Uses Sobol+Adam for everything else.
 
     Drop-in replacement for ``find_initial_point``. Reads optimizer
     settings from ``model.config["optimise"]`` (optional).
-
-    Config keys (all optional, under ``[optimise]``)::
-
-        log2_N = 14
-        M = 10
-        n_steps = 5000
-        lr = 0.1
-        lr_end = 0.005
-        n_restarts = 3
-        sobol_n_sigma = 5
-        sobol_batch = 1024
-        min_dist_frac = 0.01
 
     Returns
     -------
@@ -578,20 +1255,51 @@ def find_MAP(model, model_kwargs=None, seed=42):
 
     opt_cfg = model.config.get("optimise", {})
 
-    best_params, best_logp, results = sobol_adam(
-        model,
-        model_kwargs=model_kwargs,
-        log2_N=opt_cfg.get("log2_N", 14),
-        M=opt_cfg.get("M", 10),
-        n_steps=opt_cfg.get("n_steps", 5000),
-        lr=opt_cfg.get("lr", 0.1),
-        lr_end=opt_cfg.get("lr_end", 0.005),
-        n_restarts=opt_cfg.get("n_restarts", 3),
-        sobol_n_sigma=opt_cfg.get("sobol_n_sigma", 1),
-        sobol_batch=opt_cfg.get("sobol_batch", 128),
-        min_dist_frac=opt_cfg.get("min_dist_frac", 0.01),
-        seed=seed,
-    )
+    if _use_de(model):
+        # Compute Hubble-flow distance estimate for tighter Sobol seeding
+        sobol_bounds_override = None
+        v_sys = getattr(model, "v_sys_obs", None)
+        if v_sys is not None:
+            SPEED_OF_LIGHT = 299792.458
+            H0_est = opt_cfg.get("H0_for_D_estimate", 70.0)
+            sigma_v = opt_cfg.get("D_sobol_sigma_v", 500.0)
+            n_sigma = opt_cfg.get("D_sobol_n_sigma", 5)
+            z_est = v_sys / SPEED_OF_LIGHT
+            D_est = (SPEED_OF_LIGHT * z_est / H0_est
+                     * (1 - 0.5 * (1 + 0) * z_est))
+            sigma_D = sigma_v / H0_est
+            D_lo_sobol = D_est - n_sigma * sigma_D
+            D_hi_sobol = D_est + n_sigma * sigma_D
+            sobol_bounds_override = {"D_c": (D_lo_sobol, D_hi_sobol)}
+
+        kwargs = dict(
+            model_kwargs=model_kwargs,
+            log2_N=opt_cfg.get("log2_N", 16),
+            pop_size=opt_cfg.get("pop_size", 1000),
+            max_generations=opt_cfg.get("max_generations", 1000),
+            patience=opt_cfg.get("patience", 100),
+            eval_chunk=opt_cfg.get("eval_chunk", 64),
+            sobol_n_sigma=opt_cfg.get("sobol_n_sigma", 5),
+            min_dist_frac=opt_cfg.get("min_dist_frac", 0.005),
+            sobol_bounds_override=sobol_bounds_override,
+            seed=seed,
+        )
+        best_params, best_logp, results = de_optimize(model, **kwargs)
+    else:
+        kwargs = dict(
+            model_kwargs=model_kwargs,
+            log2_N=opt_cfg.get("log2_N", 14),
+            M=opt_cfg.get("M", 10),
+            n_steps=opt_cfg.get("n_steps", 5000),
+            lr=opt_cfg.get("lr", 0.1),
+            lr_end=opt_cfg.get("lr_end", 0.005),
+            n_restarts=opt_cfg.get("n_restarts", 3),
+            sobol_n_sigma=opt_cfg.get("sobol_n_sigma", 1),
+            sobol_batch=opt_cfg.get("sobol_batch", 128),
+            min_dist_frac=opt_cfg.get("min_dist_frac", 0.01),
+            seed=seed,
+        )
+        best_params, best_logp, results = sobol_optimize(model, **kwargs)
 
     # Convert scalar floats to jnp arrays (matching find_initial_point)
     return {k: jnp.array(v) for k, v in best_params.items()}

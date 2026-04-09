@@ -29,7 +29,7 @@ from .inference import (                                                        
     )
 
 try:
-    from .optimise import sobol_adam, find_MAP                                   # noqa
+    from .optimise import find_MAP, sobol_optimize, tempered_optimize, de_optimize  # noqa
 except ImportError:
     pass
 

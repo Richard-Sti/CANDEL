@@ -465,9 +465,10 @@ def run_H0_inference(model, model_kwargs=None, print_summary=True,
     init_method = kwargs.get("init_method", "lbfgs")
 
     if init_method == "sobol_adam":
-        from .optimise import find_MAP
+        from .optimise import find_MAP, _use_de
         init_params = find_MAP(model, model_kwargs, seed=kwargs["seed"])
-        fprint("initialising NUTS from Sobol+Adam MAP.")
+        method = "DE" if _use_de(model) else "Sobol+Adam"
+        fprint(f"initialising NUTS from {method} MAP.")
         init_strategy = init_to_value(values=init_params)
     else:
         if init_maxiter is None:
