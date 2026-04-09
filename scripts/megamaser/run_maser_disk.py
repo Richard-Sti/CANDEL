@@ -168,6 +168,11 @@ model = MaserDiskModel(tmp.name, data)
 os.unlink(tmp.name)
 
 # ---- Run sampler ----
+if sampler == "nss" and args.sample_r:
+    print("ERROR: nested sampling requires marginalising r "
+          "(remove --sample-r)", flush=True)
+    sys.exit(1)
+
 n_spots = data["n_spots"]
 phi_mode = "phi prior" if use_phi_prior else "no phi prior"
 
