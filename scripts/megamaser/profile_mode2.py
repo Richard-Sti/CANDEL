@@ -89,11 +89,11 @@ params = {
 fsection("Profiling Mode 2")
 print(f"Spots: {model.n_spots} ({model._n_sys} sys, "
       f"{model._n_red} red, {model._n_blue} blue)")
-print(f"R_phys grid: {len(model._R_phys_grid)} points")
+print(f"r grid: {model._n_r} sinh-spaced points")
 print(f"phi grids: HV half={len(model._sin_phi1_red)}, "
       f"sys={len(model._sin_phi_sys)}")
 
-n_r = len(model._R_phys_grid)
+n_r = model._n_r
 n_phi_hv = len(model._sin_phi1_red)
 n_phi_sys = len(model._sin_phi_sys)
 print(f"\nGrid sizes per spot type:")

@@ -524,18 +524,26 @@ class MaserDiskModel(ModelBase):
             self._idx_blue_a, self._idx_blue_noa])
         self._inv_order = jnp.argsort(order)
 
-        # ---- Physical radius grid (for Mode 2) ----
+        # ---- Radius grid setup (for Mode 2) ----
         self.marginalise_r = get_nested(
             self.config, "model/marginalise_r", False)
         if self.marginalise_r:
-            R_min = float(get_nested(
+            self._R_phys_lo = float(get_nested(
                 self.config, "model/priors/R_phys/low", 0.01))
-            R_max = float(get_nested(
+            self._R_phys_hi = float(get_nested(
                 self.config, "model/priors/R_phys/high", 1.5))
-            n_r = int(get_nested(self.config, "model/n_r", 502))
-            R_grid = _build_r_grid(R_min, R_max, n_r=n_r)
-            R_phys_grid = jnp.asarray(R_grid)
-            # r_ang grid set after D_A_est is computed below
+            self._n_r = int(get_nested(self.config, "model/n_r", 251))
+            # Spot-aware sinh grid: center on median log(r_proj),
+            # scale from data spread with conservative floor of 0.3.
+            r_proj = _np.sqrt(
+                _np.asarray(data["x"])**2 + _np.asarray(data["y"])**2)
+            r_proj = r_proj[r_proj > 1e-3]
+            self._r_logr_c = float(_np.median(_np.log(r_proj)))
+            self._r_scale = float(
+                max(0.5 * _np.std(_np.log(r_proj)), 0.3))
+            fprint(f"r grid: spot-aware sinh, logr_c={self._r_logr_c:.3f} "
+                   f"(r={_np.exp(self._r_logr_c):.3f} mas), "
+                   f"scale={self._r_scale:.3f}")
 
         # ---- Selection function grid ----
         D_min = float(get_nested(self.config, "model/priors/D/low", 10.0))
@@ -574,16 +582,14 @@ class MaserDiskModel(ModelBase):
                f"{self._r_ang_hi:.3f}] mas "
                f"(D_A_est = {D_A_est:.1f} Mpc)")
 
-        # Fixed R_phys grid for Mode 2. At each likelihood evaluation,
-        # r_ang = R_phys / (D_A * C) is recomputed from the current D_A
-        # and trapezoid weights are computed on the r_ang grid (uniform
-        # in r_ang, no prior width factors).
+        # At each likelihood evaluation, the r_ang grid is built
+        # directly in r_ang space from sinh(t) (precomputed) shifted
+        # to the current D_A. Trapezoid weights in r_ang space.
         if self.marginalise_r:
-            self._R_phys_grid = R_phys_grid
-            r_ang_est = R_phys_grid / (D_A_est * PC_PER_MAS_MPC)
+            r_lo_est = self._R_phys_lo / (D_A_est * PC_PER_MAS_MPC)
+            r_hi_est = self._R_phys_hi / (D_A_est * PC_PER_MAS_MPC)
             fprint(f"r_ang grid (at D_A_est): "
-                   f"[{float(r_ang_est[0]):.4f}, "
-                   f"{float(r_ang_est[-1]):.4f}] mas")
+                   f"[{r_lo_est:.4f}, {r_hi_est:.4f}] mas")
 
         mode = "r+phi" if self.marginalise_r else "phi only"
         fprint(f"loaded {self.n_spots} maser spots "
@@ -593,10 +599,21 @@ class MaserDiskModel(ModelBase):
         fprint(f"phi grids: HV half={len(phi_half)}, "
                f"sys={len(phi_sys)}")
         if self.marginalise_r:
-            fprint(f"R_phys grid: {len(self._R_phys_grid)} points, "
-                   f"[{R_min:.3f}, {R_max:.3f}] pc")
+            fprint(f"r grid: {self._n_r} points, "
+                   f"R_phys in [{self._R_phys_lo:.3f}, "
+                   f"{self._R_phys_hi:.3f}] pc")
         fprint(f"use_selection = {self.use_selection}")
         fprint(f"phi_prior = {self.phi_prior}")
+
+    def build_r_ang_grid(self, D_A):
+        """Build spot-aware sinh-spaced r_ang grid at a given D_A."""
+        conv = D_A * PC_PER_MAS_MPC
+        logr_lo = _np.log(self._R_phys_lo / conv)
+        logr_hi = _np.log(self._R_phys_hi / conv)
+        t_lo = _np.arcsinh((logr_lo - self._r_logr_c) / self._r_scale)
+        t_hi = _np.arcsinh((logr_hi - self._r_logr_c) / self._r_scale)
+        t = _np.linspace(t_lo, t_hi, self._n_r)
+        return _np.exp(self._r_logr_c + _np.sinh(t) * self._r_scale)
 
     def _resolve_data_estimate_priors(self, D_c_est, log_MBH_est,
                                       v_sys_obs, data):
@@ -1098,7 +1115,17 @@ class MaserDiskModel(ModelBase):
                 sigma_a_floor2)
 
         if self.marginalise_r:
-            r_ang_grid = self._R_phys_grid / (D_A * PC_PER_MAS_MPC)
+            # Build spot-aware sinh r_ang grid at current D_A
+            conv = D_A * PC_PER_MAS_MPC
+            logr_lo = jnp.log(self._R_phys_lo / conv)
+            logr_hi = jnp.log(self._R_phys_hi / conv)
+            t_lo = jnp.arcsinh(
+                (logr_lo - self._r_logr_c) / self._r_scale)
+            t_hi = jnp.arcsinh(
+                (logr_hi - self._r_logr_c) / self._r_scale)
+            t = jnp.linspace(t_lo, t_hi, self._n_r)
+            r_ang_grid = jnp.exp(
+                self._r_logr_c + jnp.sinh(t) * self._r_scale)
             log_w_r = trapz_log_weights(r_ang_grid)
             r_all = jnp.broadcast_to(
                 r_ang_grid[None, :],

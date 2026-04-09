@@ -152,7 +152,7 @@ if args.grid_factor != 1.0:
     m["G_phi_half"] = int(m.get("G_phi_half", 202) * gf)
     m["n_inner_sys"] = int(m.get("n_inner_sys", 202) * gf)
     m["n_wing_sys"] = int(m.get("n_wing_sys", 100) * gf)
-    m["n_r"] = int(m.get("n_r", 502) * gf)
+    m["n_r"] = int(m.get("n_r", 251) * gf)
     fprint(f"grid-factor={gf:g}: G_phi_half={m['G_phi_half']}, "
            f"n_inner_sys={m['n_inner_sys']}, "
            f"n_wing_sys={m['n_wing_sys']}, n_r={m['n_r']}")
