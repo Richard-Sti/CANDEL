@@ -177,8 +177,12 @@ if sampler == "nuts":
         from candel.inference.optimise import find_MAP
         init_params = find_MAP(model, model_kwargs={}, seed=seed)
         init_strategy = init_to_value(values=init_params)
+        fprint("NUTS init from Sobol+Adam MAP:")
+        for k, v in init_params.items():
+            fprint(f"  {k:20s} = {float(v):12.4f}")
     else:
         init_strategy = init_to_median(num_samples=20)
+        fprint(f"NUTS init: {init_method}")
     t0 = time.time()
     kernel = NUTS(model, max_tree_depth=inf_cfg.get("max_tree_depth", 10),
                   target_accept_prob=0.8,

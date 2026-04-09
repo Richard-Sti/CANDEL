@@ -496,9 +496,30 @@ def sobol_adam(model, model_args=(), model_kwargs=None,
 
     # --- Evaluate final points and detect modes ---
     logp_final = np.asarray(logp_batch(jnp.array(x_final)))
-    modes = _cluster_modes(x_final, logp_final, names, sizes)
 
-    best_idx = np.argmax(logp_final)
+    # Filter out points sitting at prior boundaries (Uniform priors).
+    # For Uniform priors, lo_sobol == support lower bound. A point
+    # within rtol of the boundary is likely a boundary artefact.
+    rtol = 1e-3
+    width = hi_sobol - lo_sobol
+    at_lo = np.any(x_final <= lo_sobol + rtol * width, axis=1)
+    at_hi = np.any(x_final >= hi_sobol - rtol * width, axis=1)
+    at_boundary = at_lo | at_hi
+    logp_filtered = np.where(at_boundary, -np.inf, logp_final)
+
+    # Fall back to unfiltered if all points are at boundaries.
+    if np.all(at_boundary):
+        logp_filtered = logp_final
+        if verbose:
+            fprint("WARNING: all Adam points at prior boundaries, "
+                   "using unfiltered logP")
+    elif verbose and np.any(at_boundary):
+        n_filt = int(at_boundary.sum())
+        fprint(f"Filtered {n_filt}/{len(at_boundary)} boundary points")
+
+    modes = _cluster_modes(x_final, logp_filtered, names, sizes)
+
+    best_idx = np.argmax(logp_filtered)
     best_logp = float(logp_final[best_idx])
     best_params = modes[0]["params"]
 
