@@ -639,10 +639,6 @@ def run_nss(model, model_args=(), model_kwargs=None,
     dead = []
     t0 = timer()
     n_dead = 0
-    gap_prev = None
-    gap_rate_ema = None
-    ema_alpha = num_delete / n_live
-
     with tqdm.tqdm(desc="NSS", unit=" pts") as pbar:
         while not (state.integrator.logZ_live
                    - state.integrator.logZ < termination):
@@ -654,31 +650,8 @@ def run_nss(model, model_args=(), model_kwargs=None,
             logZ = float(state.integrator.logZ)
             gap = float(state.integrator.logZ_live) - logZ
 
-            if gap_prev is not None:
-                d_gap = (gap - gap_prev) / num_delete
-                gap_rate_ema = (
-                    d_gap if gap_rate_ema is None
-                    else ema_alpha * d_gap
-                    + (1 - ema_alpha) * gap_rate_ema)
-            gap_prev = gap
-
-            # ETA
-            eta_str = "?"
-            pts_per_sec = pbar.format_dict.get("rate") or 0
-            if (gap_rate_ema is not None
-                    and gap_rate_ema < 0
-                    and pts_per_sec > 0):
-                remaining = (gap - termination) / (
-                    -gap_rate_ema)
-                eta_sec = remaining / pts_per_sec
-                eta_str = (
-                    f"{eta_sec / 60:.0f}m"
-                    if eta_sec < 3600
-                    else f"{eta_sec / 3600:.1f}h")
-
             pbar.set_postfix({"logZ": f"{logZ:.2f}",
-                              "gap":  f"{gap:.2f}",
-                              "ETA":  eta_str})
+                              "gap":  f"{gap:.2f}"})
             pbar.update(num_delete)
 
             # Non-finite likelihood checks
