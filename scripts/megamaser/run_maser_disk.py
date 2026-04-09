@@ -99,6 +99,8 @@ _D_TAG = {
 _D_prior = master_cfg["model"]["priors"].get("D", {})
 _d_prior_dist = _D_prior.get("dist", "uniform") if _D_prior else "uniform"
 dist_tag = _D_TAG.get(_d_prior_dist, _d_prior_dist.replace("_", ""))
+if args.sample_r:
+    dist_tag += "_sampleR"
 if args.grid_factor != 1.0:
     dist_tag += f"_gf{args.grid_factor:g}"
 
