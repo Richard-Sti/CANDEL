@@ -55,10 +55,6 @@ value = 250
 # D prior: set D_lo, D_hi per galaxy below.
 # The runner reads these and sets a Uniform(D_lo, D_hi) prior.
 
-[model.priors.log_MBH]
-dist = "uniform"
-low = 6.0
-high = 9.0
 
 [model.priors.eta]
 dist = "uniform"

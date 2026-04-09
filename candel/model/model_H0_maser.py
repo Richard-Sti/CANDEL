@@ -982,16 +982,6 @@ class MaserDiskModel(ModelBase):
                       shared_params)
         log_MBH = deterministic("log_MBH",
                                 eta + jnp.log10(D_A))
-        # Enforce uniform prior on log_MBH within [lo, hi].
-        # The Jacobian |d(eta)/d(log_MBH)| = 1, so no density
-        # correction is needed — only the support constraint.
-        logM_prior = self.priors.get("log_MBH")
-        if logM_prior is not None:
-            logM_lo = logM_prior.low
-            logM_hi = logM_prior.high
-            in_bounds = (log_MBH >= logM_lo) & (log_MBH <= logM_hi)
-            factor("log_MBH_bounds",
-                   jnp.where(in_bounds, 0.0, -jnp.inf))
         M_BH = 10.0**log_MBH
         # x0, y0 sampled in uas, converted to mas for physics
         x0 = rsample("x0", self.priors["x0"], shared_params) * 1e-3
