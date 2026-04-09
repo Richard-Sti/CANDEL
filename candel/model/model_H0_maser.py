@@ -473,11 +473,11 @@ class MaserDiskModel(ModelBase):
         fprint(f"accel split: {n_a} with, {n_noa} without.")
 
         # ---- Phi grids and precomputed trig ----
-        G_half = int(get_nested(self.config, "model/G_phi_half", 101))
-        n_inner_sys = int(get_nested(self.config, "model/n_inner_sys", 101))
+        G_half = int(get_nested(self.config, "model/G_phi_half", 202))
+        n_inner_sys = int(get_nested(self.config, "model/n_inner_sys", 202))
         inner_deg_sys = float(get_nested(
             self.config, "model/inner_deg_sys", 30.0))
-        n_wing_sys = int(get_nested(self.config, "model/n_wing_sys", 50))
+        n_wing_sys = int(get_nested(self.config, "model/n_wing_sys", 100))
         phi_half = _build_phi_half_grid_hv(G_half=G_half)
         phi_sys = _build_phi_grid_sys(n_inner=n_inner_sys,
                                       inner_deg=inner_deg_sys,
@@ -532,7 +532,7 @@ class MaserDiskModel(ModelBase):
                 self.config, "model/priors/R_phys/low", 0.01))
             R_max = float(get_nested(
                 self.config, "model/priors/R_phys/high", 1.5))
-            n_r = int(get_nested(self.config, "model/n_r", 251))
+            n_r = int(get_nested(self.config, "model/n_r", 502))
             R_grid = _build_r_grid(R_min, R_max, n_r=n_r)
             R_phys_grid = jnp.asarray(R_grid)
             # r_ang grid set after D_A_est is computed below
@@ -574,16 +574,16 @@ class MaserDiskModel(ModelBase):
                f"{self._r_ang_hi:.3f}] mas "
                f"(D_A_est = {D_A_est:.1f} Mpc)")
 
-        # Fixed r_ang grid for Mode 2 (from R_phys grid at D_A_est).
-        # D_A_est ~ v_sys / (H0 * (1+z)); good enough since the grid
-        # just needs to cover the plausible angular radius range.
+        # Fixed R_phys grid for Mode 2. At each likelihood evaluation,
+        # r_ang = R_phys / (D_A * C) is recomputed from the current D_A
+        # and trapezoid weights are computed on the r_ang grid (uniform
+        # in r_ang, no prior width factors).
         if self.marginalise_r:
-            self._r_ang_grid = jnp.asarray(
-                R_phys_grid / (D_A_est * PC_PER_MAS_MPC))
-            self._log_w_R = jnp.asarray(
-                trapz_log_weights(self._r_ang_grid))
-            fprint(f"r_ang grid: [{float(self._r_ang_grid[0]):.4f}, "
-                   f"{float(self._r_ang_grid[-1]):.4f}] mas")
+            self._R_phys_grid = R_phys_grid
+            r_ang_est = R_phys_grid / (D_A_est * PC_PER_MAS_MPC)
+            fprint(f"r_ang grid (at D_A_est): "
+                   f"[{float(r_ang_est[0]):.4f}, "
+                   f"{float(r_ang_est[-1]):.4f}] mas")
 
         mode = "r+phi" if self.marginalise_r else "phi only"
         fprint(f"loaded {self.n_spots} maser spots "
@@ -593,8 +593,8 @@ class MaserDiskModel(ModelBase):
         fprint(f"phi grids: HV half={len(phi_half)}, "
                f"sys={len(phi_sys)}")
         if self.marginalise_r:
-            fprint(f"r_ang grid: {len(self._r_ang_grid)} log-spaced, "
-                   f"R_phys in [{R_min:.3f}, {R_max:.3f}] pc")
+            fprint(f"R_phys grid: {len(self._R_phys_grid)} points, "
+                   f"[{R_min:.3f}, {R_max:.3f}] pc")
         fprint(f"use_selection = {self.use_selection}")
         fprint(f"phi_prior = {self.phi_prior}")
 
@@ -604,29 +604,14 @@ class MaserDiskModel(ModelBase):
         from candel.model.utils import VolumePrior
 
         p = self.priors.get("D")
-        if isinstance(p, dict) and p.get("type") == "reference_uniform":
-            D_ref = data.get("D_ref")
-            e_D_ref = data.get("e_D_ref")
-            if D_ref is None or e_D_ref is None:
-                raise ValueError(
-                    "D prior is 'reference_uniform' but data is missing "
-                    "'D_ref' and/or 'e_D_ref'. Add them to the per-galaxy "
-                    "config.")
-            n_sigma = data.get("n_sigma", p["n_sigma"])
-            hw = n_sigma * e_D_ref
-            lo = max(D_ref - hw, 1.0)
-            hi = D_ref + hw
-            self.priors["D"] = Uniform(lo, hi)
-            fprint(f"D prior: U({lo:.1f}, {hi:.1f}) "
-                   f"[{n_sigma:.0f}σ around D_ref={D_ref:.1f}]")
-        elif isinstance(p, dict) and p.get("type") == "data_estimate_uniform":
-            hw = p["half_width"]
+        if isinstance(p, dict) and p.get("type") == "data_estimate_uniform":
+            hw = data.get("D_half_width", p.get("half_width", 50.0))
             lo = max(D_c_est - hw, 1.0)
             hi = D_c_est + hw
             self.priors["D"] = Uniform(lo, hi)
             fprint(f"D prior: U({lo:.1f}, {hi:.1f})")
         elif isinstance(p, dict) and p.get("type") == "data_estimate_volume":
-            hw = p["half_width"]
+            hw = data.get("D_half_width", p.get("half_width", 50.0))
             lo = max(D_c_est - hw, 1.0)
             hi = D_c_est + hw
             self.priors["D"] = VolumePrior(lo, hi)
@@ -1113,12 +1098,15 @@ class MaserDiskModel(ModelBase):
                 sigma_a_floor2)
 
         if self.marginalise_r:
+            r_ang_grid = self._R_phys_grid / (D_A * PC_PER_MAS_MPC)
+            log_w_r = trapz_log_weights(r_ang_grid)
             r_all = jnp.broadcast_to(
-                self._r_ang_grid[None, :],
-                (self.n_spots, len(self._r_ang_grid)))
+                r_ang_grid[None, :],
+                (self.n_spots, len(r_ang_grid)))
 
             ll_per_spot = self._eval_marginal_phi(
-                r_all, *args, log_w_r=self._log_w_R, **phi_kw, **ecc_kw)
+                r_all, *args, log_w_r=log_w_r,
+                **phi_kw, **ecc_kw)
             ll_disk = jnp.sum(ll_per_spot)
 
         else:

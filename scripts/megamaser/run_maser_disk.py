@@ -54,7 +54,10 @@ from candel.model.model_H0_maser import MaserDiskModel
 from candel.pvdata.megamaser_data import load_megamaser_spots
 from candel.util import fprint, fsection, plot_corner
 
-print(f"JAX platform: {jax.default_backend()}, devices: {jax.devices()}", flush=True)
+_devs = jax.devices()
+_dev_names = ", ".join(d.device_kind for d in _devs)
+print(f"JAX platform: {jax.default_backend()}, devices: {_devs} ({_dev_names})",
+      flush=True)
 
 # ---- Load master config ----
 with open("scripts/megamaser/config_maser.toml", "rb") as f:
@@ -77,6 +80,8 @@ parser.add_argument("--n-live", type=int, default=None)
 parser.add_argument("--num-mcmc-steps", type=int, default=None)
 parser.add_argument("--num-delete", type=int, default=None)
 parser.add_argument("--termination", type=float, default=None)
+parser.add_argument("--grid-factor", type=float, default=1.0,
+                    help="Multiply all grid sizes by this factor")
 args = parser.parse_args()
 
 galaxy = args.galaxy
@@ -91,6 +96,8 @@ _D_TAG = {
 }
 _d_prior_dist = master_cfg["model"]["priors"]["D"].get("dist", "unknown")
 dist_tag = _D_TAG.get(_d_prior_dist, _d_prior_dist.replace("_", ""))
+if args.grid_factor != 1.0:
+    dist_tag += f"_gf{args.grid_factor:g}"
 
 # ---- Validate galaxy ----
 galaxies = master_cfg["model"]["galaxies"]
@@ -106,12 +113,9 @@ v_sys_obs = gcfg["v_sys_obs"]
 fsection(f"Loading {galaxy} data")
 data = load_megamaser_spots("data/Megamaser", galaxy, v_sys_obs=v_sys_obs)
 
-# Pass reference distance to data dict (for reference_uniform D prior)
-if "D_ref" in gcfg:
-    data["D_ref"] = float(gcfg["D_ref"])
-    data["e_D_ref"] = float(gcfg["e_D_ref"])
-if "n_sigma" in gcfg:
-    data["n_sigma"] = float(gcfg["n_sigma"])
+# Pass per-galaxy D half-width to data dict
+if "D_half_width" in gcfg:
+    data["D_half_width"] = float(gcfg["D_half_width"])
 
 # ---- Build model config from master config ----
 use_phi_prior = args.phi_prior or master_cfg["model"].get("phi_prior", False)
@@ -140,6 +144,18 @@ config = {
 }
 # Ensure phi_prior flag is set
 config["model"]["phi_prior"] = use_phi_prior
+
+# Grid resolution multiplier
+if args.grid_factor != 1.0:
+    gf = args.grid_factor
+    m = config["model"]
+    m["G_phi_half"] = int(m.get("G_phi_half", 202) * gf)
+    m["n_inner_sys"] = int(m.get("n_inner_sys", 202) * gf)
+    m["n_wing_sys"] = int(m.get("n_wing_sys", 100) * gf)
+    m["n_r"] = int(m.get("n_r", 502) * gf)
+    fprint(f"grid-factor={gf:g}: G_phi_half={m['G_phi_half']}, "
+           f"n_inner_sys={m['n_inner_sys']}, "
+           f"n_wing_sys={m['n_wing_sys']}, n_r={m['n_r']}")
 
 tmp = tempfile.NamedTemporaryFile(mode="wb", suffix=".toml", delete=False)
 tomli_w.dump(config, tmp)

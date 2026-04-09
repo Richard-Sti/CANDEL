@@ -267,9 +267,8 @@ def load_priors(config_priors):
         "vector_radialmag_uniform": lambda p: {"type": "vector_radialmag_uniform", "nval": len(p["rknot"]), "low": p["low"], "high": p["high"]},  # noqa
         "quadrupole": lambda p: {"type": "quadrupole", "low": p["low"], "high": p["high"]},  # noqa
         "octupole": lambda p: {"type": "octupole", "low": p["low"], "high": p["high"]},  # noqa
-        "data_estimate_uniform": lambda p: {"type": "data_estimate_uniform", "half_width": p["half_width"]},  # noqa
-        "data_estimate_volume": lambda p: {"type": "data_estimate_volume", "half_width": p["half_width"]},  # noqa
-        "reference_uniform": lambda p: {"type": "reference_uniform", "n_sigma": p.get("n_sigma", 5.0)},  # noqa
+        "data_estimate_uniform": lambda p: {"type": "data_estimate_uniform", "half_width": p.get("half_width", 50.0)},  # noqa
+        "data_estimate_volume": lambda p: {"type": "data_estimate_volume", "half_width": p.get("half_width", 50.0)},  # noqa
         "data_estimate_truncated_normal": lambda p: {"type": "data_estimate_truncated_normal", "scale": p["scale"], "low": p.get("low", None), "high": p.get("high", None)},  # noqa
     }
     priors = {}

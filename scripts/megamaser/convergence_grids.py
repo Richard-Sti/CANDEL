@@ -143,8 +143,11 @@ fprint(f"Spot counts: {len(idx_sys)} sys, {len(idx_red)} red, {len(idx_blue)} bl
 
 
 def eval_integrals(m):
-    r_ang   = m._r_ang_grid[None, :].repeat(n_spots, axis=0)
-    log_w_r = jnp.asarray(trapz_log_weights(np.asarray(m._r_ang_grid)))
+    from candel.model.integration import trapz_log_weights
+    from candel.model.model_H0_maser import PC_PER_MAS_MPC
+    r_ang_grid = m._R_phys_grid / (D_A * PC_PER_MAS_MPC)
+    r_ang   = r_ang_grid[None, :].repeat(n_spots, axis=0)
+    log_w_r = trapz_log_weights(r_ang_grid)
     ll = m._eval_marginal_phi(
         r_ang, x0, y0, D_A, M_BH, v_sys,
         m._r_ang_ref, i0, di_dr, Omega0, dOmega_dr,

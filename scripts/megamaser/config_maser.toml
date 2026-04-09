@@ -53,8 +53,9 @@ dist = "delta"
 value = 250
 
 [model.priors.D]
-dist = "reference_uniform"
-n_sigma = 5.0
+# D_ref = 112.2, e_D_ref = 5.4  (Pesce+2020, NGC5765b)
+dist = "data_estimate_uniform"
+half_width = 50.0
 
 [model.priors.log_MBH]
 dist = "data_estimate_truncated_normal"
@@ -69,7 +70,7 @@ half_width = 1.0
 [model.priors.R_phys]
 dist = "uniform"
 low = 0.01
-high = 3.0
+high = 2.0
 
 [model.priors.dv_sys]
 dist = "normal"
@@ -139,7 +140,7 @@ dist = "truncated_normal"
 mean = 0.1
 scale = 0.2
 low = 0.0
-high = 0.3
+high = 0.75
 
 [model.priors.phi_mu_red]
 dist = "uniform"
@@ -215,31 +216,30 @@ root = "data/Megamaser"
 
 [model.galaxies."CGCG074-064"]
 v_sys_obs = 6908.9
-D_ref = 87.6
-e_D_ref = 5.8
+D_half_width = 30.0
+# D_ref = 87.6, e_D_ref = 5.8 (Pesce+2020)
 
 [model.galaxies."NGC4258"]
 v_sys_obs = 472.0
-D_ref = 7.58
-e_D_ref = 0.11
-n_sigma = 10.0
+D_half_width = 2.0
+# D_ref = 7.58, e_D_ref = 0.11 (Reid+2019)
 
 [model.galaxies."NGC5765b"]
 v_sys_obs = 8327.6
-D_ref = 112.2
-e_D_ref = 5.4
+D_half_width = 40.0
+# D_ref = 112.2, e_D_ref = 5.4 (Pesce+2020)
 
 [model.galaxies."NGC6264"]
 v_sys_obs = 10131.3
-D_ref = 132.1
-e_D_ref = 11.9
+D_half_width = 50.0
+# D_ref = 132.1, e_D_ref = 11.9 (Pesce+2020)
 
 [model.galaxies."NGC6323"]
 v_sys_obs = 7838.5
-D_ref = 109.4
-e_D_ref = 15.3
+D_half_width = 40.0
+# D_ref = 109.4, e_D_ref = 15.3 (Pesce+2020)
 
 [model.galaxies."UGC3789"]
 v_sys_obs = 2905.4
-D_ref = 51.5
-e_D_ref = 4.5
+D_half_width = 30.0
+# D_ref = 51.5, e_D_ref = 4.5 (Pesce+2020)

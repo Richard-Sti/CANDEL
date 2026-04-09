@@ -29,6 +29,7 @@ python scripts/megamaser/run_maser_disk.py <galaxy> [--sampler nuts|nss] [option
 | `--num-mcmc-steps` | 0 (=ndim) | NSS slice steps |
 | `--num-delete` | 250 | NSS contraction batch |
 | `--termination` | -3 | NSS stopping criterion |
+| `--grid-factor` | 1 | Multiply all grid sizes by 1/2/3 |
 
 CLI args override config values.
 

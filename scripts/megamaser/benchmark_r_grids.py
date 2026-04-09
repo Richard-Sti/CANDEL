@@ -125,12 +125,14 @@ def evall(m, r_grid, log_w_r):
 # ── Build reference model (n_r=1001, log-uniform) ────────────────────────────
 fsection("Building reference model (n_r=1001)")
 m_ref = build_model(1001)
-r_lo = float(m_ref._r_ang_grid[0])
-r_hi = float(m_ref._r_ang_grid[-1])
+r_lo = float(m_ref._r_ang_lo)
+r_hi = float(m_ref._r_ang_hi)
 fprint(f"r_ang grid: [{r_lo:.5f}, {r_hi:.5f}] mas")
 
-r_ref = np.asarray(m_ref._r_ang_grid)
-log_w_ref = np.asarray(trapz_log_weights(r_ref))
+from candel.model.integration import trapz_log_weights
+from candel.model.model_H0_maser import PC_PER_MAS_MPC
+r_ref = np.asarray(m_ref._R_phys_grid / (D_A * PC_PER_MAS_MPC))
+log_w_ref = np.asarray(trapz_log_weights(jnp.asarray(r_ref)))
 ll_ref = evall(m_ref, r_ref, log_w_ref)
 fprint(f"Reference logL: sys={ll_ref[0]:.4f}, red={ll_ref[1]:.4f}, blue={ll_ref[2]:.4f}")
 
