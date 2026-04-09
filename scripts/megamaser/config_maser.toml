@@ -56,14 +56,14 @@ value = 250
 # The runner reads these and sets a Uniform(D_lo, D_hi) prior.
 
 [model.priors.log_MBH]
-dist = "data_estimate_truncated_normal"
-scale = 0.5
+dist = "uniform"
 low = 6.0
 high = 9.0
 
 [model.priors.eta]
-dist = "data_estimate_uniform"
-half_width = 1.0
+dist = "uniform"
+low = 3.0
+high = 9.0
 
 [model.priors.R_phys]
 dist = "uniform"
@@ -73,17 +73,17 @@ high = 2.0
 [model.priors.dv_sys]
 dist = "normal"
 loc = 0.0
-scale = 25.0
+scale = 300.0
 
 [model.priors.x0]
 dist = "normal"
 loc = 0.0
-scale = 150.0
+scale = 500.0
 
 [model.priors.y0]
 dist = "normal"
 loc = 0.0
-scale = 150.0
+scale = 500.0
 
 [model.priors.i0]
 dist = "sine_angle"
@@ -97,8 +97,8 @@ high = 360.0
 
 [model.priors.dOmega_dr]
 dist = "uniform"
-low = -20.0
-high = 20.0
+low = -30.0
+high = 30.0
 
 [model.priors.di_dr]
 dist = "uniform"
@@ -122,21 +122,21 @@ high = 100.0
 [model.priors.sigma_v_sys]
 dist = "truncated_normal"
 mean = 2.0
-scale = 5.0
+scale = 1.0
 low = 0.0
 high = 100.0
 
 [model.priors.sigma_v_hv]
 dist = "truncated_normal"
 mean = 2.0
-scale = 5.0
+scale = 1.0
 low = 0.0
 high = 100.0
 
 [model.priors.sigma_a_floor]
 dist = "truncated_normal"
-mean = 0.1
-scale = 0.2
+mean = 0.3
+scale = 0.15
 low = 0.0
 high = 0.75
 
@@ -221,25 +221,25 @@ D_hi = 126.0
 [model.galaxies."NGC4258"]
 v_sys_obs = 472.0
 D_lo = 4.0
-D_hi = 8.0
+D_hi = 10.0
 # D_ref = 7.58, e_D_ref = 0.11 (Reid+2019)
 
 [model.galaxies."NGC5765b"]
 v_sys_obs = 8327.6
-D_lo = 77.0
-D_hi = 157.0
+D_lo = 85.0
+D_hi = 175.0
 # D_ref = 112.2, e_D_ref = 5.4 (Pesce+2020)
 
 [model.galaxies."NGC6264"]
 v_sys_obs = 10131.3
-D_lo = 92.0
-D_hi = 192.0
+D_lo = 70.0
+D_hi = 250.0
 # D_ref = 132.1, e_D_ref = 11.9 (Pesce+2020)
 
 [model.galaxies."NGC6323"]
 v_sys_obs = 7838.5
-D_lo = 35.0
-D_hi = 185.0
+D_lo = 60.0
+D_hi = 300.0
 # D_ref = 109.4, e_D_ref = 30 (Pesce+2020)
 
 [model.galaxies."UGC3789"]

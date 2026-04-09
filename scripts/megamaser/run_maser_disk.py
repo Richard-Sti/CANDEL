@@ -92,8 +92,6 @@ seed = args.seed or inf_cfg.get("seed", 42)
 
 # Distance-prior tag for output filenames
 _D_TAG = {
-    "data_estimate_uniform": "Dflat",
-    "data_estimate_volume":  "Dvol",
     "uniform":               "Dflat",
 }
 _D_prior = master_cfg["model"]["priors"].get("D", {})
@@ -122,8 +120,6 @@ data = load_megamaser_spots("data/Megamaser", galaxy, v_sys_obs=v_sys_obs)
 if "D_lo" in gcfg and "D_hi" in gcfg:
     data["D_lo"] = float(gcfg["D_lo"])
     data["D_hi"] = float(gcfg["D_hi"])
-elif "D_half_width" in gcfg:
-    data["D_half_width"] = float(gcfg["D_half_width"])
 
 # ---- Build model config from master config ----
 use_phi_prior = args.phi_prior or master_cfg["model"].get("phi_prior", False)

@@ -399,10 +399,9 @@ class MaserDiskModel(ModelBase):
         fsection("Maser Disk Model")
         self._load_and_set_priors()
 
-        # Resolve data-estimate priors using spot data
-        D_c_est, log_MBH_est = estimate_from_data(data)
-        self._resolve_data_estimate_priors(
-            D_c_est, log_MBH_est, data["v_sys_obs"], data)
+        # Per-galaxy D prior from data dict
+        estimate_from_data(data)  # diagnostic print only
+        self._resolve_per_galaxy_priors(data)
 
         self.n_spots = data["n_spots"]
         self.is_highvel = jnp.asarray(data["is_highvel"])
@@ -615,48 +614,12 @@ class MaserDiskModel(ModelBase):
         t = _np.linspace(t_lo, t_hi, self._n_r)
         return _np.exp(self._r_logr_c + _np.sinh(t) * self._r_scale)
 
-    def _resolve_data_estimate_priors(self, D_c_est, log_MBH_est,
-                                      v_sys_obs, data):
-        """Replace data-estimate prior sentinels with concrete dists."""
-        from candel.model.utils import VolumePrior
-
-        p = self.priors.get("D")
-        # Explicit per-galaxy bounds override data-estimate logic.
+    def _resolve_per_galaxy_priors(self, data):
+        """Set per-galaxy D prior from data dict."""
         if "D_lo" in data and "D_hi" in data:
             lo, hi = float(data["D_lo"]), float(data["D_hi"])
             self.priors["D"] = Uniform(lo, hi)
             fprint(f"D prior: U({lo:.1f}, {hi:.1f})")
-        elif isinstance(p, dict) and p.get("type") == "data_estimate_uniform":
-            hw = data.get("D_half_width", p.get("half_width", 50.0))
-            lo = max(D_c_est - hw, 1.0)
-            hi = D_c_est + hw
-            self.priors["D"] = Uniform(lo, hi)
-            fprint(f"D prior: U({lo:.1f}, {hi:.1f})")
-        elif isinstance(p, dict) and p.get("type") == "data_estimate_volume":
-            hw = data.get("D_half_width", p.get("half_width", 50.0))
-            lo = max(D_c_est - hw, 1.0)
-            hi = D_c_est + hw
-            self.priors["D"] = VolumePrior(lo, hi)
-            fprint(f"D prior: Volume({lo:.1f}, {hi:.1f})")
-
-        p = self.priors.get("log_MBH")
-        if isinstance(p, dict) and p.get("type") == "data_estimate_truncated_normal":  # noqa
-            self.priors["log_MBH"] = TruncatedNormal(
-                log_MBH_est, p["scale"], low=p["low"], high=p["high"])
-            fprint(f"log_MBH prior: TruncatedNormal("
-                   f"{log_MBH_est:.2f}, {p['scale']}, "
-                   f"[{p['low']}, {p['high']}])")
-
-        p = self.priors.get("eta")
-        if isinstance(p, dict) and p.get("type") == "data_estimate_uniform":
-            z_est = v_sys_obs / SPEED_OF_LIGHT
-            D_A_est = D_c_est / (1 + z_est)
-            log_mod_est = log_MBH_est - _np.log10(D_A_est)
-            hw = p["half_width"]
-            self.priors["eta"] = Uniform(
-                log_mod_est - hw, log_mod_est + hw)
-            fprint(f"eta prior: U({log_mod_est - hw:.3f}, "
-                   f"{log_mod_est + hw:.3f})  (est={log_mod_est:.3f})")
 
     def _eval_marginal_phi(self, r_ang, x0, y0, D_A, M_BH, v_sys,
                            r_ang_ref, i0, di_dr, Omega0, dOmega_dr,
