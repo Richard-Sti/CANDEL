@@ -33,6 +33,13 @@ from .pv_utils import (lp_galaxy_bias, octupole_radial, quadrupole_radial,
                        rsample, sigmoid_monopole_radial)
 from .utils import load_priors, log_prob_integrand_sel, predict_cz
 
+# ICRS equatorial → Galactic Cartesian rotation matrix.
+# Computed via astropy: SkyCoord(basis, frame='icrs').galactic.
+_R_ICRS_TO_GAL = np.array([
+    [-0.05487565771259163, -0.87343705195561590, -0.48383507361671546],
+    [+0.49410943719272680, -0.44482972122329520, +0.74698218398666760],
+    [-0.86766613755965760, -0.19807633727300053, +0.45598381368730160]])
+
 
 def make_adaptive_grid(r_min, r_max, delta_mu, dr_max):
     """Adaptive radial grid: log-like spacing at small r (constant step in
@@ -188,6 +195,12 @@ class ModelBase(ABC):
                         f"{ra_key} must be 1D or 2D, got {ra.ndim}D")
                 setattr(self, attr, _normalize_rows(rhat))
                 attrs_set.append(attr)
+
+                # Galactic unit vectors for anisotropic sigma_v.
+                gal_attr = attr + "_gal"
+                rhat_gal = (np.asarray(rhat) @ _R_ICRS_TO_GAL.T)
+                setattr(self, gal_attr, jnp.asarray(rhat_gal))
+                attrs_set.append(gal_attr)
 
         fprint("set the following attributes: "
                f"{', '.join(attrs_set)}")
@@ -409,6 +422,8 @@ class ModelBase(ABC):
                              sin_theta * np.sin(phi),
                              cos_theta], axis=1)
             self.rhat_rand_los = jnp.asarray(rhat)
+            self.rhat_rand_los_gal = jnp.asarray(
+                rhat @ _R_ICRS_TO_GAL.T)
             self.rand_los_RA = None
             self.rand_los_dec = None
 
@@ -554,6 +569,22 @@ class H0ModelBase(ModelBase):
             fprint(f"use_Vext_octupole set to True "
                    f"(mag range: {self.Vext_oct_mag_range})")
         self.apply_sel = self.which_selection is not None
+
+        # Robust velocity-error modelling options
+        self.cz_likelihood = get_nested(
+            config, "model/cz_likelihood", "gaussian")
+        if self.cz_likelihood not in ("gaussian", "student_t"):
+            raise ValueError(
+                f"Invalid cz_likelihood: '{self.cz_likelihood}'. "
+                "Expected 'gaussian' or 'student_t'.")
+        if self.cz_likelihood != "gaussian":
+            fprint(f"cz_likelihood set to {self.cz_likelihood}")
+
+        self.anisotropic_sigma_v = get_nested(
+            config, "model/anisotropic_sigma_v", False)
+        if self.anisotropic_sigma_v:
+            fprint("anisotropic_sigma_v enabled "
+                   "(sigma_v_x, sigma_v_y, sigma_v_z in Galactic frame)")
 
     def _load_selection_thresholds(self, active_map, spec):
         config = self.config

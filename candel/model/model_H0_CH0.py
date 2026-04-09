@@ -26,7 +26,7 @@ from .pv_utils import (lp_galaxy_bias, octupole_radial, quadrupole_radial,
                        rsample, sample_galaxy_bias, sample_octupole,
                        sample_quadrupole, sigmoid_monopole_radial)
 from .utils import (log_prob_integrand_sel, logmeanexp, mvn_logpdf_cholesky,
-                    normal_logpdf_var, predict_cz)
+                    normal_logpdf_var, predict_cz, student_t_logpdf_var)
 
 ###############################################################################
 #                          Base CH0 model                                     #
@@ -63,6 +63,21 @@ class CH0Model(H0ModelBase):
 
         if not use_PV_covmat_scaling:
             replace_prior_with_delta(config, "A_covmat", 1.0)
+
+        # Student-t: nu_cz only needed when enabled.
+        if get_nested(config, "model/cz_likelihood", "gaussian") \
+                != "student_t":
+            replace_prior_with_delta(
+                config, "nu_cz", 30.0, verbose=False)
+
+        # Anisotropic sigma_v: replace unused components.
+        if get_nested(config, "model/anisotropic_sigma_v", False):
+            replace_prior_with_delta(
+                config, "sigma_v", 150.0, verbose=False)
+        else:
+            for ax in ("sigma_v_x", "sigma_v_y", "sigma_v_z"):
+                replace_prior_with_delta(
+                    config, ax, 150.0, verbose=False)
 
         return config
 
@@ -162,6 +177,18 @@ class CH0Model(H0ModelBase):
             raise ValueError(
                 "`use_density_dependent_sigma_v` requires "
                 "`use_reconstruction` to be set to True.")
+
+        if self.anisotropic_sigma_v and self.use_density_dependent_sigma_v:
+            raise ValueError(
+                "`anisotropic_sigma_v` and `use_density_dependent_sigma_v` "
+                "are mutually exclusive.")
+
+        if (self.cz_likelihood == "student_t"
+                and self.use_fiducial_Cepheid_host_PV_covariance):
+            raise ValueError(
+                "`cz_likelihood='student_t'` is incompatible with "
+                "`use_fiducial_Cepheid_host_PV_covariance=True` "
+                "(PV covariance path requires multivariate Gaussian).")
 
         if self.use_density_dependent_sigma_v:
             required = ["sigma_v_low", "sigma_v_high",
@@ -308,7 +335,13 @@ class CH0Model(H0ModelBase):
             Vext_mono_angle = rsample(
                 "Vext_mono_angle", self.priors["Vext_mono_angle"])
             Vext_mono = (Vext_mono_left, Vext_mono_rt, Vext_mono_angle)
-        if self.use_density_dependent_sigma_v:
+        if self.anisotropic_sigma_v:
+            sigma_v_x = rsample("sigma_v_x", self.priors["sigma_v_x"])
+            sigma_v_y = rsample("sigma_v_y", self.priors["sigma_v_y"])
+            sigma_v_z = rsample("sigma_v_z", self.priors["sigma_v_z"])
+            sigma_v_vec = jnp.array([sigma_v_x, sigma_v_y, sigma_v_z])
+            sigma_v_base = jnp.sqrt(jnp.mean(sigma_v_vec**2))
+        elif self.use_density_dependent_sigma_v:
             sigma_v_low = rsample("sigma_v_low", self.priors["sigma_v_low"])
             sigma_v_high = rsample("sigma_v_high", self.priors["sigma_v_high"])
             log_sigma_v_rho_t = rsample(
@@ -318,6 +351,12 @@ class CH0Model(H0ModelBase):
         else:
             sigma_v = rsample("sigma_v", self.priors["sigma_v"])
             sigma_v_base = sigma_v
+
+        # Student-t degrees of freedom.
+        nu_cz = None
+        if self.cz_likelihood == "student_t":
+            nu_cz = rsample("nu_cz", self.priors["nu_cz"])
+
         A_covmat = rsample("A_covmat", self.priors["A_covmat"])
         beta = rsample("beta", self.priors["beta"])
 
@@ -428,6 +467,16 @@ class CH0Model(H0ModelBase):
                     jnp.zeros((1, self.num_rand_los,
                                self.r_sel_range.size)))
 
+        # Override selection sigma_v for anisotropic model: project onto
+        # each random LOS direction.
+        if self.anisotropic_sigma_v and self.apply_sel:
+            # rhat_rand_los_gal is (n_rand_los, 3) or (n_sims, n_rand, 3).
+            # [..., None] gives (..., n_rand, 1) for correct broadcast
+            # to (..., n_rand, n_grid) in log_S_cz.
+            sg_rand = self.rhat_rand_los_gal
+            sigma_v_selection = jnp.sqrt(
+                jnp.sum(sigma_v_vec**2 * sg_rand**2, axis=-1))[..., None]
+
         # SN magnitude likelihood (shared by SN_magnitude* selections)
         if self.which_selection in ["SN_magnitude", "SN_magnitude_redshift"]:
             mag_SN = (self.L_SN_unique_Cepheid_host_dist @ mu_host_all) + M_B
@@ -520,13 +569,31 @@ class CH0Model(H0ModelBase):
 
         if self.use_Cepheid_host_redshift:
             z_cosmo = self.distmod2redshift(mu_host, h=h)
-            if self.use_reconstruction:
+
+            # Effective velocity variance per host.
+            if self.anisotropic_sigma_v:
+                sg = self.rhat_host_gal       # (n_hosts, 3)
+                sigma_v2_eff = jnp.sum(sigma_v_vec**2 * sg**2, axis=-1)
+                if self.use_reconstruction:
+                    e2_cz = (self.e2_czcmb_cepheid_host[None, :]
+                             + sigma_v2_eff[None, :])
+                else:
+                    e2_cz = self.e2_czcmb_cepheid_host + sigma_v2_eff
+            elif self.use_reconstruction:
                 e2_cz = (
                     self.e2_czcmb_cepheid_host[None, :] + sigma_v_host**2)
             else:
                 e2_cz = self.e2_czcmb_cepheid_host + sigma_v_host[0]**2
 
+            # Choose cz likelihood kernel.
+            if nu_cz is not None:
+                def ll_cz_fn(obs, pred, var):
+                    return student_t_logpdf_var(obs, pred, var, nu_cz)
+            else:
+                ll_cz_fn = normal_logpdf_var
+
             if self.use_fiducial_Cepheid_host_PV_covariance:
+                # PV covariance path: remains multivariate Gaussian.
                 cz_pred = predict_cz(z_cosmo, Vext_rad_host)
                 C = A_covmat * self.PV_covmat_cepheid_host
                 C = C.at[jnp.diag_indices(len(e2_cz))].add(e2_cz)
@@ -540,7 +607,7 @@ class CH0Model(H0ModelBase):
                 if self.track_host_velocity:
                     deterministic("Vpec_host_skipZ", Vpec)
 
-                ll_reconstruction += normal_logpdf_var(
+                ll_reconstruction += ll_cz_fn(
                     self.czcmb_cepheid_host[None, :], cz_pred, e2_cz)
 
                 ll_reconstruction = logmeanexp(ll_reconstruction, axis=0)
@@ -548,5 +615,5 @@ class CH0Model(H0ModelBase):
             else:
                 cz_pred = predict_cz(z_cosmo, Vext_rad_host)
                 factor("cz_pred",
-                       normal_logpdf_var(self.czcmb_cepheid_host,
-                                         cz_pred, e2_cz).sum())
+                       ll_cz_fn(self.czcmb_cepheid_host,
+                                cz_pred, e2_cz).sum())

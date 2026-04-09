@@ -23,10 +23,11 @@ import jax.numpy as jnp
 import numpy as np
 from jax import random
 from jax.scipy.linalg import solve_triangular
-from jax.scipy.special import gammainc, gammaln, logsumexp
+from jax.scipy.special import betainc, gammainc, gammaln, logsumexp
 from jax.scipy.stats import norm as norm_jax
-from numpyro.distributions import (Delta, Distribution, LogUniform, Normal,
-                                   TruncatedNormal, Uniform, constraints)
+from numpyro.distributions import (Delta, Distribution, Gamma, LogUniform,
+                                   Normal, TruncatedNormal, Uniform,
+                                   constraints)
 
 from ..util import SPEED_OF_LIGHT
 
@@ -76,6 +77,28 @@ def normal_logpdf_var(x, mean, var):
     """Log-pdf of a normal distribution parameterized by variance."""
     d = x - mean
     return -0.5 * (jnp.log(2 * jnp.pi * var) + d * d / var)
+
+
+def student_t_logpdf_var(x, mean, var, nu):
+    """Log-pdf of a Student-t parameterized by variance (=scale^2).
+
+    `var` is the scale parameter squared, not the distribution
+    variance (which is var * nu / (nu - 2) for nu > 2).
+    """
+    d = x - mean
+    return (gammaln((nu + 1) / 2) - gammaln(nu / 2)
+            - 0.5 * jnp.log(nu * jnp.pi * var)
+            - (nu + 1) / 2 * jnp.log1p(d * d / (nu * var)))
+
+
+def student_t_logcdf(t, nu):
+    """Log-CDF of a standardized Student-t distribution (loc=0, scale=1)."""
+    t2 = t * t
+    w = nu / (nu + t2)
+    Ix = betainc(nu / 2, 0.5, w)
+    return jnp.where(t < 0,
+                     jnp.log(0.5) + jnp.log(Ix),
+                     jnp.log1p(-0.5 * Ix))
 
 
 ###############################################################################
@@ -257,6 +280,7 @@ def load_priors(config_priors):
         "delta": lambda p: Delta(p["value"]),
         "jeffreys": lambda p: JeffreysPrior(p["low"], p["high"]),
         "volume": lambda p: VolumePrior(p["low"], p["high"]),
+        "gamma": lambda p: Gamma(p["concentration"], p["rate"]),
         "maxwell": lambda p: Maxwell(p["scale"]),
         "sine_angle": lambda p: SineAngle(
             p.get("low", 0.0), p.get("high", 180.0)),
@@ -302,6 +326,10 @@ def log_integral_gauss_pdf_times_cdf(mu, sigma, t, w):
 
 
 def log_prob_integrand_sel(x, e_x, lim, lim_width):
+    # Always uses Gaussian CDF, even when the per-galaxy likelihood uses
+    # Student-t. JAX's betainc is not differentiable w.r.t. its first
+    # argument, so student_t_logcdf cannot be differentiated w.r.t. nu.
+    # The Gaussian approximation is adequate for population-level selection.
     if lim_width is None:
         return norm_jax.logcdf((lim - x) / e_x)
     else:
