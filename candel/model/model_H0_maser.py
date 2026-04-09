@@ -53,30 +53,6 @@ LOG_2PI = 1.8378770664093453  # jnp.log(2 * pi), precomputed
 # -----------------------------------------------------------------------
 
 
-def estimate_from_data(data, H0=73.0):
-    """Estimate D_c and log10(M_BH) from spot data.
-
-    D_c from Hubble flow with second-order correction.
-    log_MBH from per-spot Keplerian relation (biased low by sin^2(i)).
-    """
-    v_sys_obs = data["v_sys_obs"]
-    is_hv = data["is_highvel"]
-
-    z_est = v_sys_obs / SPEED_OF_LIGHT
-    q0 = -0.5275
-    D_c = float(SPEED_OF_LIGHT * z_est / H0
-                * (1 + 0.5 * (1 - q0) * z_est))
-    D_A = D_c / (1 + z_est)
-
-    r_ang_hv = _np.sqrt(data["x"][is_hv]**2 + data["y"][is_hv]**2)
-    dv_hv = _np.abs(data["velocity"][is_hv] - v_sys_obs)
-    M_per_spot = dv_hv**2 * r_ang_hv * D_A / C_v**2
-    log_MBH = float(_np.log10(max(float(_np.median(M_per_spot)), 1.0)))
-
-    fprint(f"data estimates: D_c = {D_c:.1f} Mpc, "
-           f"log_MBH = {log_MBH:.2f}")
-    return D_c, log_MBH
-
 
 # -----------------------------------------------------------------------
 # Grid construction (pure numpy, called once at init)
@@ -399,8 +375,6 @@ class MaserDiskModel(ModelBase):
         fsection("Maser Disk Model")
         self._load_and_set_priors()
 
-        # Per-galaxy D prior from data dict
-        estimate_from_data(data)  # diagnostic print only
         self._resolve_per_galaxy_priors(data)
 
         self.n_spots = data["n_spots"]
