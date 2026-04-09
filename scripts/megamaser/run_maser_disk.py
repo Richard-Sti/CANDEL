@@ -80,6 +80,8 @@ parser.add_argument("--n-live", type=int, default=None)
 parser.add_argument("--num-mcmc-steps", type=int, default=None)
 parser.add_argument("--num-delete", type=int, default=None)
 parser.add_argument("--termination", type=float, default=None)
+parser.add_argument("--sample-r", action="store_true",
+                    help="Sample r_ang explicitly instead of marginalising")
 parser.add_argument("--grid-factor", type=float, default=1.0,
                     help="Multiply all grid sizes by this factor")
 args = parser.parse_args()
@@ -144,6 +146,8 @@ config = {
 }
 # Ensure phi_prior flag is set
 config["model"]["phi_prior"] = use_phi_prior
+if args.sample_r:
+    config["model"]["marginalise_r"] = False
 
 # Grid resolution multiplier
 if args.grid_factor != 1.0:

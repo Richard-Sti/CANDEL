@@ -72,13 +72,13 @@ def _prior_bounds(dist, sobol_n_sigma=5):
     try:
         mu = float(dist.mean)
         sigma = float(dist.variance ** 0.5)
-    except (NotImplementedError, AttributeError):
+    except (NotImplementedError, AttributeError, TypeError):
         base = getattr(dist, "base_dist", None)
         if base is not None:
             try:
                 mu = float(base.mean)
                 sigma = float(base.variance ** 0.5)
-            except (NotImplementedError, AttributeError):
+            except (NotImplementedError, AttributeError, TypeError):
                 return lb, ub
         else:
             return lb, ub
