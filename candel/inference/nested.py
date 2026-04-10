@@ -152,8 +152,10 @@ def decompose_model(model, model_args=(), model_kwargs=None, seed=42):
         # not log_prior for acceptance. Without this, the sampler explores
         # outside the prior support, biasing the evidence by ~O(d) nats.
         ll = jnp.where(_in_support(x), ll, -jnp.inf)
-        # Clamp +inf from numerical overflow (e.g. phi prior weight
-        # log_Z underflow). Must preserve -inf for out-of-support.
+        # Clamp NaN from numerical overflow (e.g. extreme eta → huge M_BH)
+        # and +inf from log_Z underflow. Must preserve -inf for
+        # out-of-support.
+        ll = jnp.where(jnp.isnan(ll), -jnp.inf, ll)
         max_ll = jnp.finfo(ll.dtype).max / 2
         return jnp.where(ll == jnp.inf, max_ll, ll)
 
