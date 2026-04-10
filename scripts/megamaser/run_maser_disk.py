@@ -70,7 +70,6 @@ parser = argparse.ArgumentParser()
 parser.add_argument("galaxy", type=str)
 parser.add_argument("--sampler", type=str, default=None,
                     choices=["nuts", "nss"])
-parser.add_argument("--phi-prior", action="store_true")
 parser.add_argument("--seed", type=int, default=None)
 # NUTS
 parser.add_argument("--num-warmup", type=int, default=None)
@@ -122,8 +121,6 @@ if "D_lo" in gcfg and "D_hi" in gcfg:
     data["D_hi"] = float(gcfg["D_hi"])
 
 # ---- Build model config from master config ----
-use_phi_prior = args.phi_prior or master_cfg["model"].get("phi_prior", False)
-
 dense_mass_blocks = inf_cfg.get("dense_mass_blocks", [
     ["D_c", "eta", "dv_sys"],
     ["i0", "di_dr", "Omega0", "dOmega_dr"],
@@ -146,8 +143,6 @@ config = {
     "io": master_cfg["io"],
     "optimise": master_cfg.get("optimise", {}),
 }
-# Ensure phi_prior flag is set
-config["model"]["phi_prior"] = use_phi_prior
 if args.sample_r:
     config["model"]["marginalise_r"] = False
 
@@ -176,14 +171,14 @@ if sampler == "nss" and args.sample_r:
     sys.exit(1)
 
 n_spots = data["n_spots"]
-phi_mode = "phi prior" if use_phi_prior else "no phi prior"
 
 if sampler == "nuts":
     num_warmup = args.num_warmup or inf_cfg.get("num_warmup", 1000)
     num_samples = args.num_samples or inf_cfg.get("num_samples", 1000)
 
-    fsection(f"Running NUTS ({galaxy}, {n_spots} spots, {phi_mode})")
-    init_method = inf_cfg.get("init_method", "median")
+    fsection(f"Running NUTS ({galaxy}, {n_spots} spots)")
+    init_cfg = gcfg.get("init", {})
+    init_method = inf_cfg.get("init_method", "config")
     if init_method == "sobol_adam":
         from candel.inference.optimise import find_MAP
         init_params = find_MAP(model, model_kwargs={}, seed=seed)
@@ -194,9 +189,19 @@ if sampler == "nuts":
                 fprint(f"  {k:20s} = {float(v):12.4f}")
             else:
                 fprint(f"  {k:20s} = [{len(v)} values]")
+    elif init_cfg and init_method == "config":
+        init_params = {k: jnp.asarray(v) for k, v in init_cfg.items()}
+        init_strategy = init_to_value(values=init_params)
+        fprint(f"NUTS init from config ({len(init_params)} params):")
+        for k, v in sorted(init_params.items()):
+            v = jnp.asarray(v)
+            if v.ndim == 0:
+                fprint(f"  {k:20s} = {float(v):12.4f}")
+            else:
+                fprint(f"  {k:20s} = [{len(v)} values]")
     else:
         init_strategy = init_to_median(num_samples=20)
-        fprint(f"NUTS init: {init_method}")
+        fprint(f"NUTS init: median")
     t0 = time.time()
     kernel = NUTS(model, max_tree_depth=inf_cfg.get("max_tree_depth", 10),
                   target_accept_prob=0.8,
@@ -221,7 +226,7 @@ elif sampler == "nss":
     if num_mcmc_steps == 0:
         num_mcmc_steps = None  # run_nss will use ndim
 
-    fsection(f"Running NSS ({galaxy}, {n_spots} spots, {phi_mode})")
+    fsection(f"Running NSS ({galaxy}, {n_spots} spots)")
     fprint(f"n_live={n_live}, mcmc_steps={num_mcmc_steps}, "
            f"num_delete={num_delete}")
     t0 = time.time()
@@ -247,10 +252,6 @@ param_keys = ['D_c', 'log_MBH', 'i0', 'di_dr', 'Omega0', 'dOmega_dr',
               'sigma_x_floor', 'sigma_y_floor',
               'sigma_v_sys', 'sigma_v_hv',
               'sigma_a_floor']
-if use_phi_prior:
-    param_keys += ['phi_mu_red', 'phi_sigma_red',
-                   'phi_mu_blue', 'phi_sigma_blue',
-                   'phi_mu_sys', 'phi_sigma_sys']
 for k in param_keys:
     if k in samples:
         s = np.asarray(samples[k])

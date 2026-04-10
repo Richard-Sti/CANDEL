@@ -461,4 +461,27 @@ def load_megamaser_spots(root, galaxy="CGCG074-064", v_sys_obs=None):
     fprint(f"classified spots: {n_sys} systemic, {n_blue} blue, "
            f"{n_red} red ({method}).")
 
+    # Acceleration weights: 1/N for N spots sharing the same (a, sigma_a).
+    # Spots sharing a clump-averaged acceleration should collectively
+    # contribute one independent measurement, not N redundant copies.
+    accel_weight = np.ones(n)
+    am = data["accel_measured"]
+    if am.any():
+        a_vals = data["a"][am]
+        sa_vals = data["sigma_a"][am]
+        idx_meas = np.where(am)[0]
+        # Round to avoid floating-point near-misses
+        keys = np.round(a_vals, 8) + 1j * np.round(sa_vals, 8)
+        unique_keys, counts = np.unique(keys, return_counts=True)
+        n_shared = 0
+        for uk, cnt in zip(unique_keys, counts):
+            if cnt > 1:
+                mask = keys == uk
+                accel_weight[idx_meas[mask]] = 1.0 / cnt
+                n_shared += cnt
+        if n_shared > 0:
+            fprint(f"accel_weight: {n_shared} spots share clump-averaged "
+                   f"accelerations (weights < 1).")
+    data["accel_weight"] = accel_weight
+
     return data

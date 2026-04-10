@@ -450,12 +450,6 @@ def name2label(name):
         "sigma_v_sys": r"$\sigma_{v,\mathrm{sys}}$",
         "sigma_v_hv": r"$\sigma_{v,\mathrm{hv}}$",
         "sigma_a_floor": r"$\sigma_{a,\mathrm{fl}}$",
-        "phi_mu_red": r"$\mu_{\phi,\mathrm{red}}$",
-        "phi_sigma_red": r"$\sigma_{\phi,\mathrm{red}}$",
-        "phi_mu_blue": r"$\mu_{\phi,\mathrm{blue}}$",
-        "phi_sigma_blue": r"$\sigma_{\phi,\mathrm{blue}}$",
-        "phi_mu_sys": r"$\mu_{\phi,\mathrm{sys}}$",
-        "phi_sigma_sys": r"$\sigma_{\phi,\mathrm{sys}}$",
         "sigma_pec": r"$\sigma_{\rm pec}~[\mathrm{km/s}]$",
     }
 
