@@ -19,7 +19,7 @@ Reuses physics functions from candel.model.model_H0_maser.
 import numpy as np
 
 from ..cosmo.cosmography import Distance2Redshift
-from ..model.model_H0_maser import (PC_PER_MAS_MPC, predict_acceleration_los,
+from ..model.model_H0_maser import (predict_acceleration_los,
                                     predict_position, predict_velocity_los,
                                     warp_geometry)
 from ..util import SPEED_OF_LIGHT, fprint
@@ -29,12 +29,15 @@ DEFAULT_TRUE_PARAMS = {
     "sigma_pec": 250.0,
     "D_c": 90.0,            # Mpc (comoving distance)
     "M_BH": 2.42e7,         # solar masses
+    "dv_sys": -50.0,         # km/s (systemic velocity offset)
     "x0": 0.0013,           # mas
     "y0": 0.0075,           # mas
     "i0": 90.8,             # degrees
     "Omega0": 99.6,         # degrees
     "dOmega_dr": 2.0,       # degrees/mas
     "di_dr": 0.0,           # degrees/mas (no inclination warp)
+    "r_ang_lo": 1.0,        # mas (spot radius lower bound)
+    "r_ang_hi": 8.0,        # mas (spot radius upper bound)
     "sigma_x_floor": 0.002,       # mas
     "sigma_y_floor": 0.017,       # mas
     "sigma_v_sys": 4.8,           # km/s
@@ -58,9 +61,9 @@ def _draw_spot_types(n_spots, rng):
     return types
 
 
-def _draw_radii_phys(n_spots, rng, R_min=0.01, R_max=1.5):
-    """Draw physical orbital radii from uniform distribution in pc."""
-    return rng.uniform(R_min, R_max, n_spots)
+def _draw_r_ang(n_spots, rng, r_ang_lo, r_ang_hi):
+    """Draw angular radii uniformly in [r_ang_lo, r_ang_hi] (mas)."""
+    return rng.uniform(r_ang_lo, r_ang_hi, n_spots)
 
 
 def _draw_phi(spot_types, rng):
@@ -142,10 +145,12 @@ def gen_maser_disk_mock(seed, true_params=None, n_spots=50, Om0=0.315,
                f"z_cosmo = {z_cosmo:.6f}")
         fprint(f"v_pec = {v_pec:.1f} km/s, v_sys_cmb = {v_sys_cmb:.1f} km/s")
 
+    dv_sys = tp["dv_sys"]
+    v_sys = v_sys_cmb + dv_sys
+
     # ---- Generate maser spots ----
     spot_types = _draw_spot_types(n_spots, rng)
-    R_phys_true = _draw_radii_phys(n_spots, rng)
-    r_ang_true = R_phys_true / (D_A * PC_PER_MAS_MPC)
+    r_ang_true = _draw_r_ang(n_spots, rng, tp["r_ang_lo"], tp["r_ang_hi"])
     phi_true = _draw_phi(spot_types, rng)
 
     # Warped geometry at each spot (using angular radius)
@@ -159,7 +164,7 @@ def gen_maser_disk_mock(seed, true_params=None, n_spots=50, Om0=0.315,
     X_true, Y_true = np.array(predict_position(
         r_ang_true, phi_true, x0, y0, i_k, Omega_k))
     V_true = np.array(predict_velocity_los(
-        r_ang_true, phi_true, D_A, M_BH, v_sys_cmb, i_k))
+        r_ang_true, phi_true, D_A, M_BH, v_sys, i_k))
     A_true = np.array(predict_acceleration_los(
         r_ang_true, phi_true, D_A, M_BH, i_k))
 
@@ -207,12 +212,10 @@ def gen_maser_disk_mock(seed, true_params=None, n_spots=50, Om0=0.315,
     true_params_expanded = {
         **tp,
         "D_A": D_A,
-        "log_MBH": np.log10(M_BH),
-        "v_sys": v_sys_cmb,
-        "dv_sys": 0.0,
+        "log_MBH": np.log10(M_BH) + 7,  # log10(M_BH / M_sun)
+        "v_sys": v_sys,
         "v_pec": v_pec,
         "z_cosmo": z_cosmo,
-        "R_phys_true": R_phys_true,
         "r_ang_true": r_ang_true,
         "phi_true": phi_true,
         "X_true": X_true,
