@@ -349,7 +349,8 @@ def load_NGC4258_spots(root, v_sys_obs=472.0, flux_snr_cut=3.0):
     }
 
 
-def load_megamaser_spots(root, galaxy="CGCG074-064", v_sys_obs=None):
+def load_megamaser_spots(root, galaxy="CGCG074-064", v_sys_obs=None,
+                         clump_galaxies=None):
     """Load individual maser spot data for a megamaser galaxy.
 
     Parameters
@@ -466,12 +467,15 @@ def load_megamaser_spots(root, galaxy="CGCG074-064", v_sys_obs=None):
     # dv_tol km/s of each other (to exclude coincidental rounding).
     # Only apply to galaxies with confirmed clump-averaged accelerations:
     # NGC5765b (Gao+2016), NGC6264 (Kuo+2013), NGC6323 (Kuo+2015).
-    _clump_galaxies = {"NGC5765b", "NGC6264", "NGC6323"}
+    if clump_galaxies is None:
+        clump_galaxies = {"NGC5765b", "NGC6264", "NGC6323"}
+    else:
+        clump_galaxies = set(clump_galaxies)
     dv_tol = 5.0  # km/s
     accel_weight = np.ones(n)
     am = data["accel_measured"]
     gname = data.get("galaxy_name", "")
-    if am.any() and gname in _clump_galaxies:
+    if am.any() and gname in clump_galaxies:
         a_vals = data["a"][am]
         sa_vals = data["sigma_a"][am]
         v_vals = data["velocity"][am]
