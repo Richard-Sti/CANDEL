@@ -35,9 +35,8 @@ from scipy.linalg import cholesky
 from ..cosmo.cosmography import Redshift2Distance
 from ..model.integration import simpson_log_weights
 from ..model.interp import LOSInterpolator
-from ..util import (SPEED_OF_LIGHT, fprint, fsection, get_nested,
-                    load_config, radec_to_cartesian,
-                    radec_to_galactic)
+from ..util import (SPEED_OF_LIGHT, fprint, fsection, get_nested, load_config,
+                    radec_to_cartesian, radec_to_galactic)
 from .dust import read_dustmap
 
 ###############################################################################

@@ -17,10 +17,12 @@ PV-specific sampling utilities: vector sampling, galaxy bias, external
 velocity, distance priors, and TFR/SN helpers.
 """
 import jax.numpy as jnp
+import numpy as np
 from interpax import interp1d
 from jax import vmap
 from jax.lax import cond
 from jax.scipy.stats.norm import cdf as jax_norm_cdf
+from numpy.polynomial.hermite import hermgauss
 from numpyro import deterministic, plate, sample
 from numpyro.distributions import Delta, Normal, Uniform
 
@@ -337,7 +339,6 @@ def gauss_hermite_log_weights(n):
 
         int f(x) N(x;mu,s) dx ~ sum_i exp(lw_i) * f(mu + sqrt(2)*s*x_i)
     """
-    from numpy.polynomial.hermite import hermgauss
     x, w = hermgauss(n)
     log_w = jnp.log(jnp.asarray(w, dtype=jnp.float32)) - 0.5 * jnp.log(jnp.pi)
     return jnp.asarray(x, dtype=jnp.float32), log_w
@@ -387,9 +388,8 @@ def sample_galaxy_bias(priors, galaxy_bias, shared_params=None, **kwargs):
         bias_params = [b1, b2]
     elif galaxy_bias == "spline":
         knots_delta = kwargs["spline_bias_knots_delta"]
-        import numpy as _np
         knots_log1pd = jnp.log(1 + jnp.array(knots_delta))
-        pin_idx = int(_np.argmin(_np.abs(_np.array(knots_delta))))
+        pin_idx = int(np.argmin(np.abs(np.array(knots_delta))))
         n_knots = len(knots_delta)
         # Sample N-1 free amplitudes, insert 0 at pinned knot
         amps = []

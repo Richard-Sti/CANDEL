@@ -37,6 +37,7 @@ from h5py import File
 from interpax import interp1d
 from jax import vmap
 from matplotlib.ticker import FuncFormatter
+from scipy.interpolate import CubicSpline
 
 SPEED_OF_LIGHT = 299_792.458  # km / s
 
@@ -1072,8 +1073,6 @@ def plot_spline_bias(samples, knots_delta, show_fig=True, filename=None,
     linear_b1_samples : array-like or None
         If provided, overlay log(1 + b1*delta) band from a linear bias run.
     """
-    from scipy.interpolate import CubicSpline
-
     knots_delta = np.array(sorted(knots_delta))
     knots_log1pd = np.log(1 + knots_delta)
     n_knots = len(knots_delta)

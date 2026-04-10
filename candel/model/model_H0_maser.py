@@ -31,7 +31,7 @@ import numpy as _np
 from jax.scipy.special import logsumexp
 from jax.scipy.stats import norm as jax_norm
 from numpyro import deterministic, factor, handlers, plate, sample
-from numpyro.distributions import TruncatedNormal, Uniform
+from numpyro.distributions import Uniform
 
 from ..util import SPEED_OF_LIGHT, fprint, fsection, get_nested
 from .base_model import ModelBase
@@ -54,7 +54,6 @@ LOG_2PI = 1.8378770664093453  # jnp.log(2 * pi), precomputed
 # -----------------------------------------------------------------------
 # Spot classification and disk PA estimation
 # -----------------------------------------------------------------------
-
 
 
 # -----------------------------------------------------------------------
@@ -761,7 +760,7 @@ class MaserDiskModel(ModelBase):
                 da = a_d[dpad] - A
                 chi2_a = da * da * inv_va
                 lnorm_xyv = _lnorm_3(sx2[dpad], sy2[dpad], sv2[dpad],
-                                      sv_floor2)
+                                     sv_floor2)
                 lnorm_a = -0.5 * (LOG_2PI + jnp.log(va))
                 w = aw[dpad]
                 ll = (lnorm_xyv + w * lnorm_a
@@ -814,7 +813,7 @@ class MaserDiskModel(ModelBase):
                 chi2_a2 = da2 * da2 * inv_va
                 w = aw[dpad]
                 lnorm_xyv = _lnorm_3(sx2[dpad], sy2[dpad], sv2[dpad],
-                                      sv_floor2)
+                                     sv_floor2)
                 lnorm_a = -0.5 * (LOG_2PI + jnp.log(va))
                 lnorm = lnorm_xyv + w * lnorm_a
                 ll = (lnorm - 0.5 * chi2_v
@@ -859,7 +858,7 @@ class MaserDiskModel(ModelBase):
                 da = a_d[dpad] - A
                 chi2_a = da * da * inv_va
                 lnorm_xyv = _lnorm_3(sx2[dpad], sy2[dpad], sv2[dpad],
-                                      sv_floor2)
+                                     sv_floor2)
                 lnorm_a = -0.5 * (LOG_2PI + jnp.log(va))
                 w = aw[dpad]
                 ll = (lnorm_xyv + w * lnorm_a
@@ -905,7 +904,7 @@ class MaserDiskModel(ModelBase):
                 chi2_a2 = da2 * da2 * inv_va
                 w = aw[dpad]
                 lnorm_xyv = _lnorm_3(sx2[dpad], sy2[dpad], sv2[dpad],
-                                      sv_floor2)
+                                     sv_floor2)
                 lnorm_a = -0.5 * (LOG_2PI + jnp.log(va))
                 lnorm = lnorm_xyv + w * lnorm_a
                 ll = lnorm + jnp.logaddexp(

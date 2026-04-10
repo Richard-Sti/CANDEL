@@ -33,6 +33,7 @@ from typing import NamedTuple
 import jax
 import jax.numpy as jnp
 import numpy as np
+import tqdm
 from numpyro import handlers
 from numpyro.distributions import Delta, Unit
 from numpyro.infer.initialization import init_to_median
@@ -578,8 +579,6 @@ def run_nss(model, model_args=(), model_kwargs=None,
         Same format as MCMC: ``{name: array(n_eff,)}`` for scalars.
         Contains ``__nested__`` key with metadata (log_Z, log_Z_err, n_eff).
     """
-    import tqdm
-
     if model_kwargs is None:
         model_kwargs = {}
 

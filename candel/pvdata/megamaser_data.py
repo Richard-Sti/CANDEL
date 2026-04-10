@@ -16,6 +16,7 @@
 from os.path import join
 
 import numpy as np
+from scipy.cluster.vq import kmeans2
 
 from ..util import fprint
 
@@ -431,7 +432,6 @@ def load_megamaser_spots(root, galaxy="CGCG074-064", v_sys_obs=None,
         labels = np.array([{"b": 0, "s": 1, "r": 2}[t] for t in st])
         method = "spot_type"
     else:
-        from scipy.cluster.vq import kmeans2
         centroids, lab = kmeans2(
             data["velocity"].astype(np.float64), 3, minit="++")
         order = np.argsort(centroids)

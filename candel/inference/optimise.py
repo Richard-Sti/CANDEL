@@ -31,14 +31,9 @@ import jax.numpy as jnp
 import numpy as np
 import optax
 from numpyro import handlers
-from numpyro.distributions import Delta
 from numpyro.infer.initialization import init_to_median
-from numpyro.infer.util import (
-    constrain_fn,
-    log_density,
-    potential_energy,
-    unconstrain_fn,
-)
+from numpyro.infer.util import (constrain_fn, log_density, potential_energy,
+                                unconstrain_fn)
 from scipy.stats.qmc import Sobol
 from tqdm import trange
 
@@ -168,7 +163,6 @@ def _build_neg_potential_flat(model, model_args, model_kwargs, names, sizes):
     return neg_U
 
 
-
 def _constrained_to_flat(params, names, sizes):
     """Pack a param dict into a flat array (constrained space)."""
     parts = []
@@ -252,7 +246,7 @@ def _select_distinct(points, logp_vals, M, min_dist_frac=0.01):
 
 
 def _cluster_modes(points, logp_vals, names, sizes, negU_vals=None,
-                    scale=None, tol=0.02):
+                   scale=None, tol=0.02):
     """Cluster final optimizer points into modes.
 
     Two points belong to the same mode if their L-inf distance
@@ -570,10 +564,13 @@ def sobol_optimize(model, model_args=(), model_kwargs=None,
         model, model_args, model_kwargs, names, sizes)
 
     # Vectorized constrained <-> unconstrained transforms
-    _to_unconst = lambda x: _unconstrain_flat(
-        x, model, model_args, model_kwargs, names, sizes)
-    _to_const = lambda z: _constrain_flat(
-        z, model, model_args, model_kwargs, names, sizes)
+    def _to_unconst(x):
+        return _unconstrain_flat(
+            x, model, model_args, model_kwargs, names, sizes)
+
+    def _to_const(z):
+        return _constrain_flat(
+            z, model, model_args, model_kwargs, names, sizes)
     to_unconst_batch = jax.jit(jax.vmap(_to_unconst))
     to_const_batch = jax.jit(jax.vmap(_to_const))
 
@@ -667,8 +664,6 @@ def sobol_optimize(model, model_args=(), model_kwargs=None,
     }
 
     return best_params, best_logp, all_results
-
-
 
 
 # -----------------------------------------------------------------------

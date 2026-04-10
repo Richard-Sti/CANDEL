@@ -29,6 +29,7 @@ from numpyro.distributions.transforms import biject_to
 from numpyro.infer import MCMC, NUTS
 from numpyro.infer.initialization import init_to_median, init_to_value
 from numpyro.infer.util import log_density
+from scipy.optimize import minimize as sp_minimize
 from tqdm import trange
 
 from ..util import (fprint, fsection, galactic_to_radec, plot_corner,
@@ -121,8 +122,6 @@ def find_initial_point(model, model_kwargs, maxiter=100, seed=42):
     scipy L-BFGS-B with JAX autodiff gradients, then maps back to
     constrained space. Returns None if the optimisation fails.
     """
-    from scipy.optimize import minimize as sp_minimize
-
     # Trace at the prior median to get transforms and a reasonable start
     substituted_model = handlers.substitute(
         handlers.seed(model, rng_seed=seed),
@@ -465,7 +464,7 @@ def run_H0_inference(model, model_kwargs=None, print_summary=True,
     init_method = kwargs.get("init_method", "lbfgs")
 
     if init_method == "sobol_adam":
-        from .optimise import find_MAP, _use_de
+        from .optimise import _use_de, find_MAP
         init_params = find_MAP(model, model_kwargs, seed=kwargs["seed"])
         method = "DE" if _use_de(model) else "Sobol+Adam"
         fprint(f"initialising NUTS from {method} MAP.")

@@ -19,6 +19,8 @@ from scipy.stats import norm
 from ...cosmo.cosmography import Distance2Distmod, Distance2Redshift
 from ...util import SPEED_OF_LIGHT, radec_to_cartesian
 from .._field_utils import field_xyz_to_radec, smoothclip
+from ..field import interpolate_los_density_velocity
+from ..field.field_interp import build_regular_interpolator
 
 DEFAULT_TRUE_PARAMS = {
     "H0": 73.0,
@@ -129,9 +131,6 @@ def _gen_field_path(nsamples, h, b1, beta, rmin, rmax, e_mag, e_eta,
                     eta_min_sel, eta_max_sel,
                     field_loader, r2mu, r2z, gen, verbose):
     """Field-based (inhomogeneous Malmquist) distance sampling path."""
-    from ..field import interpolate_los_density_velocity
-    from ..field.field_interp import build_regular_interpolator
-
     # LOS grid in Mpc/h (field coordinates), matching model convention:
     # model queries at rh_grid = r_model * h (Mpc/h).
     r_los_grid = np.linspace(0.1, rmax * h, 301)
