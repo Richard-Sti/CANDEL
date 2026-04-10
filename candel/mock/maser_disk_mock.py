@@ -36,8 +36,8 @@ DEFAULT_TRUE_PARAMS = {
     "Omega0": 99.6,         # degrees
     "dOmega_dr": 2.0,       # degrees/mas
     "di_dr": 0.0,           # degrees/mas (no inclination warp)
-    "r_ang_lo": 1.0,        # mas (spot radius lower bound)
-    "r_ang_hi": 8.0,        # mas (spot radius upper bound)
+    "r_ang_lo": 0.23,       # mas (~0.1 pc at D_A ~ 88 Mpc)
+    "r_ang_hi": 2.34,       # mas (~1.0 pc at D_A ~ 88 Mpc)
     "sigma_x_floor": 0.002,       # mas
     "sigma_y_floor": 0.017,       # mas
     "sigma_v_sys": 4.8,           # km/s
