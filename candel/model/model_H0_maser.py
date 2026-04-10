@@ -37,14 +37,17 @@ from ..util import SPEED_OF_LIGHT, fprint, fsection, get_nested
 from .base_model import ModelBase
 from .integration import ln_trapz_precomputed, trapz_log_weights
 from .pv_utils import rsample
+from .utils import normal_logpdf_var
 
 # -----------------------------------------------------------------------
 # Disk physics constants
 # -----------------------------------------------------------------------
 
-C_v = 0.9420       # km/s: sqrt(GM_sun / (1 mas * 1 Mpc)) * 1e-3
-C_a = 1.872e-4     # km/s/yr: GM_sun * yr / ((1 mas * 1 Mpc)^2 * 1e3)
-C_g = 1.974e-11    # dimensionless: 2*GM_sun / (c^2 * 1 mas * 1 Mpc)
+# Internal units: M_BH in 1e7 M_sun, angular positions in mas, D in Mpc.
+M_BH_UNIT = 1e7
+C_v = 2978.8656    # km/s: sqrt(G * 1e7 M_sun / (1 mas * 1 Mpc))
+C_a = 1.872e3      # km/s/yr: 1e7 M_sun * G * yr / (1 mas * 1 Mpc)^2
+C_g = 1.974e-4     # dimensionless: 2*G * 1e7 M_sun / (c^2 * 1 mas * 1 Mpc)
 LOG_2PI = 1.8378770664093453  # jnp.log(2 * pi), precomputed
 
 
@@ -192,7 +195,7 @@ def predict_velocity_los(r_ang, phi, D, M_BH, v_sys, i, ecc=0.0, omega=0.0):
     r_ang : orbital radius in mas
     phi : azimuthal angle in radians
     D : angular-diameter distance in Mpc
-    M_BH : black hole mass in M_sun
+    M_BH : black hole mass in 1e7 M_sun
     v_sys : systemic velocity in km/s
     i : inclination in radians
     ecc : orbital eccentricity
@@ -236,7 +239,7 @@ def predict_acceleration_los(r_ang, phi, D, M_BH, i):
     r_ang : orbital radius in mas
     phi : azimuthal angle in radians
     D : angular-diameter distance in Mpc
-    M_BH : black hole mass in M_sun
+    M_BH : black hole mass in 1e7 M_sun
     i : inclination in radians
 
     Returns
@@ -597,12 +600,12 @@ class MaserDiskModel(ModelBase):
     def build_r_ang_grid(self, D_A):
         """Build spot-aware sinh-spaced r_ang grid at a given D_A."""
         conv = D_A * PC_PER_MAS_MPC
-        logr_lo = _np.log(self._R_phys_lo / conv)
-        logr_hi = _np.log(self._R_phys_hi / conv)
-        t_lo = _np.arcsinh((logr_lo - self._r_logr_c) / self._r_scale)
-        t_hi = _np.arcsinh((logr_hi - self._r_logr_c) / self._r_scale)
-        t = _np.linspace(t_lo, t_hi, self._n_r)
-        return _np.exp(self._r_logr_c + _np.sinh(t) * self._r_scale)
+        logr_lo = jnp.log(self._R_phys_lo / conv)
+        logr_hi = jnp.log(self._R_phys_hi / conv)
+        t_lo = jnp.arcsinh((logr_lo - self._r_logr_c) / self._r_scale)
+        t_hi = jnp.arcsinh((logr_hi - self._r_logr_c) / self._r_scale)
+        t = jnp.linspace(t_lo, t_hi, self._n_r)
+        return jnp.exp(self._r_logr_c + jnp.sinh(t) * self._r_scale)
 
     def _resolve_per_galaxy_priors(self, data):
         """Set per-galaxy D prior from data dict."""
@@ -1006,13 +1009,12 @@ class MaserDiskModel(ModelBase):
         sigma_pec = shared_params["sigma_pec"]
         cz_cosmo = SPEED_OF_LIGHT * z_cosmo
         factor("ll_redshift",
-               -0.5 * ((cz_cosmo - self.v_sys_obs) / sigma_pec)**2)
+               normal_logpdf_var(cz_cosmo, self.v_sys_obs, sigma_pec**2))
 
         eta = rsample("eta", self.priors["eta"],
                       shared_params)
-        log_MBH = deterministic("log_MBH",
-                                eta + jnp.log10(D_A))
-        M_BH = 10.0**log_MBH
+        log_MBH = deterministic("log_MBH", eta + jnp.log10(D_A))
+        M_BH = 10.0**(log_MBH - 7.0)  # in units of 1e7 M_sun
         # x0, y0 sampled in uas, converted to mas for physics
         x0 = rsample("x0", self.priors["x0"], shared_params) * 1e-3
         y0 = rsample("y0", self.priors["y0"], shared_params) * 1e-3
@@ -1074,17 +1076,7 @@ class MaserDiskModel(ModelBase):
                 sigma_a_floor2)
 
         if self.marginalise_r:
-            # Build spot-aware sinh r_ang grid at current D_A
-            conv = D_A * PC_PER_MAS_MPC
-            logr_lo = jnp.log(self._R_phys_lo / conv)
-            logr_hi = jnp.log(self._R_phys_hi / conv)
-            t_lo = jnp.arcsinh(
-                (logr_lo - self._r_logr_c) / self._r_scale)
-            t_hi = jnp.arcsinh(
-                (logr_hi - self._r_logr_c) / self._r_scale)
-            t = jnp.linspace(t_lo, t_hi, self._n_r)
-            r_ang_grid = jnp.exp(
-                self._r_logr_c + jnp.sinh(t) * self._r_scale)
+            r_ang_grid = self.build_r_ang_grid(D_A)
             log_w_r = trapz_log_weights(r_ang_grid)
             r_all = jnp.broadcast_to(
                 r_ang_grid[None, :],
