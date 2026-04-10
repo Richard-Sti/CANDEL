@@ -33,3 +33,4 @@ local_config.toml
 *.png
 *.pdf
 CLAUDE.md
+background_papers/
