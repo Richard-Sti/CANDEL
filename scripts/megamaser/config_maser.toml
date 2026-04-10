@@ -33,7 +33,8 @@ Om = 0.315
 galaxy = "NGC5765b"
 
 use_selection = false
-use_clump_weight = false
+use_clump_weight = true
+clump_galaxies = ["NGC5765b", "NGC6264", "NGC6323"]
 marginalise_r = true
 D_c_prior = "volume"  # "uniform" or "volume" (p(D_c) ∝ D_c²)
 
