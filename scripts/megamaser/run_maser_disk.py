@@ -125,7 +125,8 @@ v_sys_obs = gcfg["v_sys_obs"]
 
 # ---- Load data ----
 fsection(f"Loading {galaxy} data")
-data = load_megamaser_spots("data/Megamaser", galaxy, v_sys_obs=v_sys_obs)
+data = load_megamaser_spots("data/Megamaser", galaxy, v_sys_obs=v_sys_obs,
+                           clump_galaxies=_mcfg.get("clump_galaxies"))
 
 # Pass per-galaxy D bounds to data dict
 if "D_lo" in gcfg and "D_hi" in gcfg:
