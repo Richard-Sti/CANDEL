@@ -117,8 +117,6 @@ dense_mass_blocks = [
 ]
 ```
 
-When `phi_prior = true`, a fourth block is added for the phi prior params.
-
 ## Output
 
 - **HDF5:** `results/Maser/<galaxy>_<sampler>_Dflat.hdf5`
