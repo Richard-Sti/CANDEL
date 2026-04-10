@@ -115,7 +115,7 @@ def gen_maser_disk_mock(seed, true_params=None, n_spots=50, Om0=0.315,
     H0 = tp["H0"]
     sigma_pec = tp["sigma_pec"]
     D_c = tp["D_c"]
-    M_BH = tp["M_BH"]
+    M_BH = tp["M_BH"] / 1e7  # convert to internal units (1e7 M_sun)
     x0 = tp["x0"]
     y0 = tp["y0"]
 
