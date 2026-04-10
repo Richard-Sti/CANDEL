@@ -234,6 +234,7 @@ if __name__ == "__main__":
             galaxy = get_nested(config, "model/galaxy", "CGCG074-064")
             all_galaxies = get_nested(config, "model/galaxies", {})
 
+            _clump_gals = config["model"].get("clump_galaxies")
             if galaxy == "joint":
                 galaxy_names = list(all_galaxies.keys())
                 fprint(f"selected joint maser disk model "
@@ -242,7 +243,8 @@ if __name__ == "__main__":
                 data_list = [
                     candel.pvdata.load_megamaser_spots(
                         root, g,
-                        v_sys_obs=all_galaxies[g]["v_sys_obs"])
+                        v_sys_obs=all_galaxies[g]["v_sys_obs"],
+                        clump_galaxies=_clump_gals)
                     for g in galaxy_names]
                 if args.max_spots is not None:
                     data_list = [downsample_spots(d, args.max_spots)
@@ -280,7 +282,8 @@ if __name__ == "__main__":
                 tmp.close()
                 data = candel.pvdata.load_megamaser_spots(
                     root, galaxy,
-                    v_sys_obs=gal_cfg["v_sys_obs"])
+                    v_sys_obs=gal_cfg["v_sys_obs"],
+                    clump_galaxies=_clump_gals)
                 if args.max_spots is not None:
                     data = downsample_spots(data, args.max_spots)
                 model = candel.model.MaserDiskModel(tmp.name, data)
