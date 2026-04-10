@@ -83,6 +83,8 @@ parser.add_argument("--sample-r", action="store_true",
                     help="Sample r_ang explicitly instead of marginalising")
 parser.add_argument("--grid-factor", type=float, default=1.0,
                     help="Multiply all grid sizes by this factor")
+parser.add_argument("--map-only", action="store_true",
+                    help="Run DE optimizer only, skip sampling")
 args = parser.parse_args()
 
 galaxy = args.galaxy
@@ -189,9 +191,12 @@ if sampler == "nuts":
     fsection(f"Running NUTS ({galaxy}, {n_spots} spots)")
     init_cfg = gcfg.get("init", {})
     init_method = inf_cfg.get("init_method", "config")
-    if init_method == "sobol_adam":
+    if init_method == "sobol_adam" or args.map_only:
         from candel.inference.optimise import find_MAP
         init_params = find_MAP(model, model_kwargs={}, seed=seed)
+        if args.map_only:
+            fprint("MAP-only run (--map-only), done.")
+            sys.exit(0)
         init_strategy = init_to_value(values=init_params)
         fprint("NUTS init from Sobol+Adam MAP:")
         for k, v in init_params.items():
