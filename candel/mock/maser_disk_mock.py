@@ -123,6 +123,8 @@ def gen_maser_disk_mock(seed, true_params=None, n_spots=50, Om0=0.315,
     di_dr_rad = np.deg2rad(tp["di_dr"])
     Omega0_rad = np.deg2rad(tp["Omega0"])
     dOmega_dr_rad = np.deg2rad(tp["dOmega_dr"])
+    d2i_dr2_rad = np.deg2rad(tp.get("d2i_dr2", 0.0))
+    d2Omega_dr2_rad = np.deg2rad(tp.get("d2Omega_dr2", 0.0))
 
     # ---- Cosmological redshift from D_c and H0 ----
     h = H0 / 100.0
@@ -150,7 +152,8 @@ def gen_maser_disk_mock(seed, true_params=None, n_spots=50, Om0=0.315,
     r_ang_ref = float(np.median(r_ang_true))
     i_k, Omega_k = np.array(warp_geometry(
         r_ang_true, r_ang_ref, i0_rad, di_dr_rad,
-        Omega0_rad, dOmega_dr_rad))
+        Omega0_rad, dOmega_dr_rad,
+        d2i_dr2_rad, d2Omega_dr2_rad))
 
     # True observables (using angular radius and D_A)
     X_true, Y_true = np.array(predict_position(

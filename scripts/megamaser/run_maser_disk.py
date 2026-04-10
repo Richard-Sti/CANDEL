@@ -89,17 +89,27 @@ galaxy = args.galaxy
 sampler = args.sampler or inf_cfg.get("sampler", "nss")
 seed = args.seed or inf_cfg.get("seed", 42)
 
-# Distance-prior tag for output filenames
-_D_TAG = {
-    "uniform":               "Dflat",
-}
-_D_prior = master_cfg["model"]["priors"].get("D", {})
-_d_prior_dist = _D_prior.get("dist", "uniform") if _D_prior else "uniform"
-dist_tag = _D_TAG.get(_d_prior_dist, _d_prior_dist.replace("_", ""))
+# Build descriptive output tag
+_mcfg = master_cfg["model"]
+_tags = []
+
+# Distance prior
+_dc_prior = _mcfg.get("D_c_prior", "uniform")
+_tags.append("Dvol" if _dc_prior == "volume" else "Dflat")
+
+# Clump weighting
+if not _mcfg.get("use_clump_weight", True):
+    _tags.append("noclump")
+
+# Mode: marginalise r vs sample r
 if args.sample_r:
-    dist_tag += "_sampleR"
+    _tags.append("sampleR")
+
+# Grid factor
 if args.grid_factor != 1.0:
-    dist_tag += f"_gf{args.grid_factor:g}"
+    _tags.append(f"gf{args.grid_factor:g}")
+
+dist_tag = "_".join(_tags)
 
 # ---- Validate galaxy ----
 galaxies = master_cfg["model"]["galaxies"]

@@ -461,27 +461,56 @@ def load_megamaser_spots(root, galaxy="CGCG074-064", v_sys_obs=None):
     fprint(f"classified spots: {n_sys} systemic, {n_blue} blue, "
            f"{n_red} red ({method}).")
 
-    # Acceleration weights: 1/N for N spots sharing the same (a, sigma_a).
-    # Spots sharing a clump-averaged acceleration should collectively
-    # contribute one independent measurement, not N redundant copies.
+    # Acceleration weights: 1/N for N spots sharing a clump-averaged
+    # acceleration. Criteria: identical (a, sigma_a) AND velocity within
+    # dv_tol km/s of each other (to exclude coincidental rounding).
+    # Only apply to galaxies with confirmed clump-averaged accelerations:
+    # NGC5765b (Gao+2016), NGC6264 (Kuo+2013), NGC6323 (Kuo+2015).
+    _clump_galaxies = {"NGC5765b", "NGC6264", "NGC6323"}
+    dv_tol = 5.0  # km/s
     accel_weight = np.ones(n)
     am = data["accel_measured"]
-    if am.any():
+    gname = data.get("galaxy_name", "")
+    if am.any() and gname in _clump_galaxies:
         a_vals = data["a"][am]
         sa_vals = data["sigma_a"][am]
+        v_vals = data["velocity"][am]
         idx_meas = np.where(am)[0]
-        # Round to avoid floating-point near-misses
+        # Group by identical (a, sigma_a)
         keys = np.round(a_vals, 8) + 1j * np.round(sa_vals, 8)
         unique_keys, counts = np.unique(keys, return_counts=True)
         n_shared = 0
         for uk, cnt in zip(unique_keys, counts):
-            if cnt > 1:
-                mask = keys == uk
-                accel_weight[idx_meas[mask]] = 1.0 / cnt
-                n_shared += cnt
+            if cnt < 2:
+                continue
+            group_mask = keys == uk
+            group_v = v_vals[group_mask]
+            group_idx = idx_meas[group_mask]
+            # Split into velocity-connected sub-clumps
+            order = np.argsort(group_v)
+            group_v = group_v[order]
+            group_idx = group_idx[order]
+            gaps = np.diff(group_v) > dv_tol
+            clump_ids = np.concatenate([[0], np.cumsum(gaps)])
+            for cid in range(clump_ids[-1] + 1):
+                cmask = clump_ids == cid
+                nc = int(cmask.sum())
+                if nc < 2:
+                    continue
+                accel_weight[group_idx[cmask]] = 1.0 / nc
+                v_lo = group_v[cmask].min()
+                v_hi = group_v[cmask].max()
+                fprint(f"  clump: a={uk.real:+.4f}, sigma_a={uk.imag:.4f}, "
+                       f"N={nc}, v=[{v_lo:.1f}, {v_hi:.1f}] km/s, "
+                       f"w=1/{nc}")
+                n_shared += nc
+        n_accel = int(am.sum())
         if n_shared > 0:
-            fprint(f"accel_weight: {n_shared} spots share clump-averaged "
-                   f"accelerations (weights < 1).")
+            fprint(f"accel_weight: {n_shared}/{n_accel} accelerated spots "
+                   f"in clumps, {n_accel - n_shared} unique "
+                   f"(dv_tol={dv_tol} km/s).")
+        else:
+            fprint(f"accel_weight: all {n_accel} accelerated spots unique.")
     data["accel_weight"] = accel_weight
 
     return data

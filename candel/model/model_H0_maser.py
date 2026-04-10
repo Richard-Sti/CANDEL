@@ -125,12 +125,14 @@ PC_PER_MAS_MPC = 4.848e-3
 
 
 def warp_geometry(r_ang, r_ang_ref, i0_rad, di_dr_rad,
-                  Omega0_rad, dOmega_dr_rad):
+                  Omega0_rad, dOmega_dr_rad,
+                  d2i_dr2_rad=0.0, d2Omega_dr2_rad=0.0):
     """Evaluate warped inclination and position angle at angular radius.
 
     The expansion is about r_ang_ref (in mas), so i0 and Omega0 are
     the values at that angular radius. The warp rates di/dr and
-    dOmega/dr are in radians per mas.
+    dOmega/dr are in radians per mas. Optional quadratic terms
+    d2i/dr2 and d2Omega/dr2 are in radians per mas^2.
 
     Parameters
     ----------
@@ -139,14 +141,17 @@ def warp_geometry(r_ang, r_ang_ref, i0_rad, di_dr_rad,
     i0_rad, di_dr_rad : inclination at r_ang_ref and warp rate (rad/mas)
     Omega0_rad, dOmega_dr_rad : position angle at r_ang_ref and
         warp rate (rad/mas)
+    d2i_dr2_rad, d2Omega_dr2_rad : quadratic warp rates (rad/mas^2),
+        default 0 (linear warp only)
 
     Returns
     -------
     i, Omega : inclination and position angle at r_ang, in radians
     """
     dr = r_ang - r_ang_ref
-    i = i0_rad + di_dr_rad * dr
-    Omega = Omega0_rad + dOmega_dr_rad * dr
+    dr2 = dr * dr
+    i = i0_rad + di_dr_rad * dr + 0.5 * d2i_dr2_rad * dr2
+    Omega = Omega0_rad + dOmega_dr_rad * dr + 0.5 * d2Omega_dr2_rad * dr2
     return i, Omega
 
 
@@ -413,8 +418,14 @@ class MaserDiskModel(ModelBase):
         # Spots without acceleration get a 3-obs chi² (no A computed).
         accel_meas = _np.asarray(data.get(
             "accel_measured", self.sigma_a < 1e4))
-        accel_w = jnp.asarray(data.get(
-            "accel_weight", _np.ones(self.n_spots)))
+        use_clump_weight = get_nested(
+            self.config, "model/use_clump_weight", True)
+        if use_clump_weight:
+            accel_w = jnp.asarray(data.get(
+                "accel_weight", _np.ones(self.n_spots)))
+        else:
+            accel_w = jnp.ones(self.n_spots)
+            fprint("clump weighting disabled (use_clump_weight = false)")
         for label, idx_arr in [("sys", self._idx_sys),
                                ("red", self._idx_red),
                                ("blue", self._idx_blue)]:
@@ -490,6 +501,10 @@ class MaserDiskModel(ModelBase):
 
         self.use_ecc = get_nested(self.config, "model/use_ecc", False)
         fprint(f"use_ecc = {self.use_ecc}")
+
+        self.use_quadratic_warp = get_nested(
+            self.config, "model/use_quadratic_warp", False)
+        fprint(f"use_quadratic_warp = {self.use_quadratic_warp}")
 
         # Inverse permutation for concat+gather (replaces .at[idx].set).
         # Order: sys_a, sys_noa, red_a, red_noa, blue_a, blue_noa
@@ -607,7 +622,8 @@ class MaserDiskModel(ModelBase):
                            var_v_sys, var_v_hv,
                            sigma_a_floor2,
                            log_w_r=None,
-                           ecc=None, sin_omega=None, cos_omega=None):
+                           ecc=None, sin_omega=None, cos_omega=None,
+                           d2i_dr2=0.0, d2Omega_dr2=0.0):
         """Evaluate per-spot log-likelihood marginalised over phi [and r].
 
         Mode 1 (sample r_ang): r_ang is (N,), log_w_r is None.
@@ -627,7 +643,8 @@ class MaserDiskModel(ModelBase):
         # Precompute ALL r-dependent quantities on the (N,) or (N, N_r)
         # grid. The phi loop then only does multiply-add + logsumexp.
         i_r, Omega_r = warp_geometry(
-            r_ang, r_ang_ref, i0, di_dr, Omega0, dOmega_dr)
+            r_ang, r_ang_ref, i0, di_dr, Omega0, dOmega_dr,
+            d2i_dr2, d2Omega_dr2)
         sin_i = jnp.sin(i_r)
         cos_i = jnp.cos(i_r)
         sin_O = jnp.sin(Omega_r)
@@ -985,6 +1002,12 @@ class MaserDiskModel(ModelBase):
             jnp.atleast_1d(D_c), h=h).squeeze()
         D_A = D_c / (1 + z_cosmo)
 
+        # Redshift likelihood: cz_cosmo vs v_sys_obs with sigma_pec scatter
+        sigma_pec = shared_params["sigma_pec"]
+        cz_cosmo = SPEED_OF_LIGHT * z_cosmo
+        factor("ll_redshift",
+               -0.5 * ((cz_cosmo - self.v_sys_obs) / sigma_pec)**2)
+
         eta = rsample("eta", self.priors["eta"],
                       shared_params)
         log_MBH = deterministic("log_MBH",
@@ -1035,6 +1058,16 @@ class MaserDiskModel(ModelBase):
             cos_omega = jnp.cos(omega_disk)
             ecc_kw = dict(ecc=ecc, sin_omega=sin_omega, cos_omega=cos_omega)
 
+        # Quadratic warp terms (optional)
+        quad_kw = {}
+        if self.use_quadratic_warp:
+            d2i_dr2_deg = rsample(
+                "d2i_dr2", self.priors["d2i_dr2"], shared_params)
+            d2Omega_dr2_deg = rsample(
+                "d2Omega_dr2", self.priors["d2Omega_dr2"], shared_params)
+            quad_kw = dict(d2i_dr2=jnp.deg2rad(d2i_dr2_deg),
+                           d2Omega_dr2=jnp.deg2rad(d2Omega_dr2_deg))
+
         args = (x0, y0, D_A, M_BH, v_sys,
                 self._r_ang_ref, i0, di_dr, Omega0, dOmega_dr,
                 sigma_x_floor2, sigma_y_floor2, var_v_sys, var_v_hv,
@@ -1058,7 +1091,7 @@ class MaserDiskModel(ModelBase):
                 (self.n_spots, len(r_ang_grid)))
 
             ll_per_spot = self._eval_marginal_phi(
-                r_all, *args, log_w_r=log_w_r, **ecc_kw)
+                r_all, *args, log_w_r=log_w_r, **ecc_kw, **quad_kw)
             ll_disk = jnp.sum(ll_per_spot)
 
         else:
@@ -1067,7 +1100,7 @@ class MaserDiskModel(ModelBase):
                     "r_ang", Uniform(self._r_ang_lo, self._r_ang_hi))
 
             ll_per_spot = self._eval_marginal_phi(
-                r_spots, *args, **ecc_kw)
+                r_spots, *args, **ecc_kw, **quad_kw)
             ll_disk = jnp.sum(ll_per_spot)
 
         factor("ll_disk", ll_disk)

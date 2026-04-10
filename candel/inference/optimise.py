@@ -742,6 +742,11 @@ def de_optimize(model, model_args=(), model_kwargs=None,
     """
     from evosax.algorithms import DifferentialEvolution
 
+    if not getattr(model, "marginalise_r", False):
+        raise ValueError(
+            "DE optimizer requires marginalise_r=True. "
+            "Set model/marginalise_r = true in the config.")
+
     if model_kwargs is None:
         model_kwargs = {}
 
