@@ -15,21 +15,18 @@ from scipy.stats import kstest, norm
 
 import jax
 jax.config.update("jax_platform_name", "cpu")
-import jax.numpy as jnp
 from jax import random
 from numpyro.infer import MCMC, NUTS
-from numpyro.infer.initialization import init_to_value
+from numpyro.infer.initialization import init_to_median
 
 import candel
 from candel.mock.maser_disk_mock import gen_maser_disk_mock
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-BASE_CONFIG = os.path.join(REPO_ROOT, "scripts", "runs", "config_maser.toml")
+BASE_CONFIG = os.path.join(REPO_ROOT, "scripts", "megamaser", "config_maser.toml")
 
-TRACKED_PARAMS = ["H0", "D_c", "log_M_BH", "i0", "Omega0", "dOmega_dr",
-                  "sigma_pec", "sigma_v_sys", "sigma_v_hv",
-                  "sigma_a_floor",
-                  "A_thr", "sigma_det"]
+TRACKED_PARAMS = ["D_c", "eta", "i0", "Omega0", "di_dr", "dOmega_dr",
+                  "dv_sys"]
 
 
 def _write_tmp_config(config):
@@ -53,29 +50,10 @@ def run_one_mock(seed, num_warmup=1000, num_samples=500, quiet=True):
     data["v_sys_obs"] = tp["v_sys"]
     tmp = _write_tmp_config(config)
 
-    # Init near truth for faster convergence.
     # D in mock is angular-diameter distance; convert to comoving.
     D_c_true = tp['D'] * (1 + tp['z_cosmo'])
 
-    init_values = {
-        'H0': jnp.array(tp['H0']),
-        'sigma_pec': jnp.array(tp['sigma_pec']),
-        'D_c': jnp.array(D_c_true),
-        'log_M_BH': jnp.array(jnp.log10(tp['M_BH'])),
-        'x0': jnp.array(tp['x0']),
-        'y0': jnp.array(tp['y0']),
-        'i0': jnp.array(tp['i0']),
-        'Omega0': jnp.array(tp['Omega0']),
-        'dOmega_dr': jnp.array(tp['dOmega_dr']),
-        'di_dr': jnp.array(tp['di_dr']),
-        'sigma_x_floor': jnp.array(tp['sigma_x_floor']),
-        'sigma_y_floor': jnp.array(tp['sigma_y_floor']),
-        'sigma_v_sys': jnp.array(tp['sigma_v_sys']),
-        'sigma_v_hv': jnp.array(tp['sigma_v_hv']),
-        'sigma_a_floor': jnp.array(tp['sigma_a_floor']),
-        'A_thr': jnp.array(tp['A_thr']),
-        'sigma_det': jnp.array(tp['sigma_det']),
-    }
+    init_strategy = init_to_median(num_samples=15)
 
     try:
         if quiet:
@@ -84,7 +62,7 @@ def run_one_mock(seed, num_warmup=1000, num_samples=500, quiet=True):
                 model = MaserDiskModel(tmp, data)
                 kernel = NUTS(model, max_tree_depth=8,
                               target_accept_prob=0.8,
-                              init_strategy=init_to_value(values=init_values))
+                              init_strategy=init_strategy)
                 mcmc = MCMC(kernel, num_warmup=num_warmup,
                             num_samples=num_samples,
                             num_chains=1, progress_bar=False)
@@ -95,7 +73,7 @@ def run_one_mock(seed, num_warmup=1000, num_samples=500, quiet=True):
             model = MaserDiskModel(tmp, data)
             kernel = NUTS(model, max_tree_depth=8,
                           target_accept_prob=0.8,
-                          init_strategy=init_to_value(values=init_values))
+                          init_strategy=init_strategy)
             mcmc = MCMC(kernel, num_warmup=num_warmup,
                         num_samples=num_samples,
                         num_chains=1, progress_bar=True)
@@ -162,7 +140,7 @@ def main():
             dt = time.time() - t1
             elapsed = time.time() - t0
             b_str = "  ".join(f"{p}={biases.get(p, float('nan')):+.2f}"
-                              for p in ["H0", "D", "log_M_BH"])
+                              for p in ["D_c", "eta", "i0"])
             print(f"[{i+1}/{args.n_mocks}] seed={seed} {dt:.0f}s "
                   f"(total {elapsed:.0f}s) div={n_div}  {b_str}",
                   flush=True)
@@ -197,7 +175,7 @@ def main():
     print(f"Saved to {outfile}")
 
     # Plot
-    params = [p for p in ["H0", "D", "log_M_BH"] if all_biases[p]]
+    params = [p for p in ["D_c", "eta", "i0"] if all_biases[p]]
     fig, axes = plt.subplots(1, len(params), figsize=(5 * len(params), 4))
     if len(params) == 1:
         axes = [axes]

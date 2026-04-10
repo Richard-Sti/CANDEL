@@ -23,29 +23,6 @@ _MRT_FILES = {
     "CGCG074-064": "CGCG074-064_Pesce2020_mrt.txt",
 }
 
-# Kuo+2011 Table 3 fixed-width column byte ranges (1-indexed, inclusive).
-_KUO2011_COLUMNS = {
-    "name":     (1, 8),
-    "velocity": (10, 17),
-    "x":        (19, 24),
-    "sigma_x":  (26, 30),
-    "y":        (32, 37),
-    "sigma_y":  (39, 43),
-    "flux":     (45, 48),
-    "e_flux":   (50, 52),
-}
-
-# Gao+2016 Table 6 column byte ranges (1-indexed, inclusive).
-_GAO2016_COLUMNS = {
-    "velocity":  (1, 7),
-    "x":         (9, 15),
-    "sigma_x":   (17, 22),
-    "y":         (24, 30),
-    "sigma_y":   (32, 37),
-    "a":         (39, 44),
-    "sigma_a":   (46, 50),
-}
-
 # Column byte ranges (1-indexed, inclusive) from the MRT header.
 _MRT_COLUMNS = {
     "spot_type":      (1, 1),

@@ -35,7 +35,7 @@ base_config = {
                   "init_maxiter": 0, "max_tree_depth": 5},
     "model": {
         "which_run": "maser_disk", "Om": 0.315,
-        "use_selection": False, "fit_di_dr": True,
+        "use_selection": False,
         "marginalise_r": True,
         "priors": {
             "H0": {"dist": "delta", "value": 73.0},
@@ -113,8 +113,9 @@ fsection("Grid resolution comparison (CPU)")
 
 # Reference: full grids (defaults for non-marginalise_r mode)
 cfg_ref = {**base_config}
-cfg_ref["model"]["n_phi_hv_half"] = 251
-cfg_ref["model"]["n_phi_sys"] = 501
+cfg_ref["model"]["G_phi_half"] = 251
+cfg_ref["model"]["n_inner_sys"] = 251
+cfg_ref["model"]["n_wing_sys"] = 125
 cfg_ref["model"]["n_r"] = 251
 pe_ref, _, _ = time_model(cfg_ref, "251r × 252phi × 503phi")
 
@@ -130,8 +131,9 @@ for n_r, n_phi_hv, n_phi_sys in [
     (31, 31, 61),
 ]:
     cfg = {**base_config}
-    cfg["model"]["n_phi_hv_half"] = n_phi_hv
-    cfg["model"]["n_phi_sys"] = n_phi_sys
+    cfg["model"]["G_phi_half"] = n_phi_hv
+    cfg["model"]["n_inner_sys"] = n_phi_hv
+    cfg["model"]["n_wing_sys"] = (n_phi_sys - n_phi_hv) // 2
     cfg["model"]["n_r"] = n_r
     pe, _, _ = time_model(cfg, f"{n_r}r × {n_phi_hv+1}phi × {n_phi_sys+2}phi")
     print(f"    ΔPE = {pe - pe_ref:+.4f}")

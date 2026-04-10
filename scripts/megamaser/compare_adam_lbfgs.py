@@ -24,7 +24,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import optax
-import tomli
 import tomli_w
 from scipy.stats.qmc import Sobol
 from tqdm import trange

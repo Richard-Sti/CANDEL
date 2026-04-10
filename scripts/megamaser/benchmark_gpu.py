@@ -23,7 +23,7 @@ config = {
                   "init_maxiter": 0, "max_tree_depth": 5},
     "model": {
         "which_run": "maser_disk", "Om": 0.315,
-        "use_selection": False, "fit_di_dr": True,
+        "use_selection": False,
         "marginalise_r": True,
         "priors": {
             "H0": {"dist": "delta", "value": 73.0},

@@ -38,12 +38,12 @@ marginalise_r = true
 phi_prior = false
 
 # -----------------------------------------------------------------------
-# PSO optimizer / Sobol seeding settings
+# DE optimizer / Sobol seeding settings
 # -----------------------------------------------------------------------
 
 [optimise]
 # H0 used ONLY to convert v_sys_obs -> D_estimate for narrowing the Sobol
-# survey range of D_c. Does NOT affect inference or the PSO search bounds.
+# survey range of D_c. Does NOT affect inference or the DE search bounds.
 H0_for_D_estimate = 70.0
 # Peculiar velocity scatter (km/s) for Sobol D_c range: D ± n_sigma * sigma_v / H0
 D_sobol_sigma_v = 500.0

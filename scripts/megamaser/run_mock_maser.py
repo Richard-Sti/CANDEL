@@ -96,7 +96,6 @@ config = {
         "which_run": "maser_disk",
         "Om": 0.315,
         "use_selection": False,
-        "fit_di_dr": True,
         "marginalise_r": args.marginalise_r,
         "priors": {
             "H0": _delta(tp["H0"]),
