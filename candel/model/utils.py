@@ -25,11 +25,19 @@ from jax import random
 from jax.scipy.linalg import solve_triangular
 from jax.scipy.special import betainc, gammainc, gammaln, logsumexp
 from jax.scipy.stats import norm as norm_jax
+from numpy.polynomial.hermite import hermgauss as _hermgauss
 from numpyro.distributions import (Delta, Distribution, Gamma, LogUniform,
                                    Normal, TruncatedNormal, Uniform,
                                    constraints)
 
 from ..util import SPEED_OF_LIGHT
+
+# Gauss-Hermite nodes for Student-t selection integrals via log-space
+# saddle-point quadrature. int f(x) exp(-x^2) dx ~ sum_i w_i f(x_i).
+_N_GH_SEL = 16
+_GH_SEL_NODES_NP, _GH_SEL_WEIGHTS_NP = _hermgauss(_N_GH_SEL)
+_GH_SEL_NODES = jnp.asarray(_GH_SEL_NODES_NP)
+_GH_SEL_LOG_WEIGHTS = jnp.log(jnp.asarray(_GH_SEL_WEIGHTS_NP))
 
 ###############################################################################
 #                         Configuration file checks                           #
@@ -322,15 +330,44 @@ def log_integral_gauss_pdf_times_cdf(mu, sigma, t, w):
     return norm_jax.logcdf((t - mu) / jnp.sqrt(sigma**2 + w**2))
 
 
-def log_prob_integrand_sel(x, e_x, lim, lim_width):
-    # Always uses Gaussian CDF, even when the per-galaxy likelihood uses
-    # Student-t. JAX's betainc is not differentiable w.r.t. its first
-    # argument, so student_t_logcdf cannot be differentiated w.r.t. nu.
-    # The Gaussian approximation is adequate for population-level selection.
-    if lim_width is None:
-        return norm_jax.logcdf((lim - x) / e_x)
+def _student_t_sel_gh_weights(nu):
+    """GH quadrature nodes (tau) and log-weights for Student-t selection.
+
+    The Student-t is a Gaussian scale mixture: t_nu = int N(0,1/tau)
+    Gamma(tau|a,a) dtau with a=nu/2. Substituting s=log(tau) and expanding
+    around the saddle point (s=0, curvature a) gives a GH quadrature.
+    Fully differentiable w.r.t. nu.
+    """
+    a = nu / 2
+    sigma_s = 1.0 / jnp.sqrt(a)
+    s = jnp.sqrt(2.0) * sigma_s * _GH_SEL_NODES
+    tau = jnp.exp(s)
+
+    # log [Gamma(exp(s)|a,a) * exp(s)] = a*log(a) - gammaln(a) + a*s - a*exp(s)
+    log_gamma_s = a * jnp.log(a) - gammaln(a) + a * s - a * tau
+
+    # GH: int h(s) ds = sigma*sqrt(2) * sum_i w_i * h(s_i) * exp(x_i^2)
+    log_w = (_GH_SEL_LOG_WEIGHTS + _GH_SEL_NODES**2
+             + jnp.log(jnp.sqrt(2.0) * sigma_s) + log_gamma_s)
+    return tau, log_w
+
+
+def log_prob_integrand_sel(x, e_x, lim, lim_width, nu_cz=None):
+    if nu_cz is None:
+        if lim_width is None:
+            return norm_jax.logcdf((lim - x) / e_x)
+        else:
+            return log_integral_gauss_pdf_times_cdf(x, e_x, lim, lim_width)
     else:
-        return log_integral_gauss_pdf_times_cdf(x, e_x, lim, lim_width)
+        tau, log_w = _student_t_sel_gh_weights(nu_cz)
+        if lim_width is None:
+            log_cdf = norm_jax.logcdf(
+                (lim - x)[..., None] / e_x[..., None] * jnp.sqrt(tau))
+        else:
+            var_eff = e_x[..., None]**2 / tau + lim_width**2
+            log_cdf = norm_jax.logcdf(
+                (lim - x[..., None]) / jnp.sqrt(var_eff))
+        return logsumexp(log_w + log_cdf, axis=-1)
 
 
 def logmeanexp(x, axis=None, denom=None):

@@ -149,7 +149,8 @@ class CCHPTRGBSelectionComputation:
     def __init__(self, ctx):
         self.ctx = ctx
 
-    def log_S_cz(self, lp_r, Vpec, H0, sigma_v, cz_lim, cz_width):
+    def log_S_cz(self, lp_r, Vpec, H0, sigma_v, cz_lim, cz_width,
+                 nu_cz=None):
         """Probability of detection term if redshift-truncated."""
         ctx = self.ctx
         zcosmo = ctx.distance2redshift(ctx.r_host_range, h=H0 / 100)
@@ -160,7 +161,8 @@ class CCHPTRGBSelectionComputation:
             sigma_v = sigma_v[..., None]
         sigma_v = jnp.broadcast_to(sigma_v, cz_r.shape)
 
-        log_prob = log_prob_integrand_sel(cz_r, sigma_v, cz_lim, cz_width)
+        log_prob = log_prob_integrand_sel(
+            cz_r, sigma_v, cz_lim, cz_width, nu_cz=nu_cz)
         return ln_simpson(
             lp_r + log_prob, x=ctx.r_host_range[None, None, :], axis=-1)
 

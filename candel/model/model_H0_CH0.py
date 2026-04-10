@@ -259,11 +259,6 @@ class CH0Model(H0ModelBase):
     #  Selection functions
     # ------------------------------------------------------------------
 
-    def log_S_cz(self, lp_r, Vpec, H0, sigma_v, cz_lim, cz_width):
-        """Probability of detection term if redshift-truncated."""
-        return super().log_S_cz(
-            lp_r, Vpec, H0, sigma_v, cz_lim, cz_width)
-
     def log_S_SN_mag(self, lp_r, M_SN, H0, mag_lim, mag_width):
         """Probability of detection term if supernova magnitude-truncated."""
         return self.log_S_mag(
@@ -272,7 +267,8 @@ class CH0Model(H0ModelBase):
             mag_lim, mag_width)
 
     def log_S_SN_mag_cz(self, lp_r, Vpec, M_SN, H0, sigma_v,
-                        mag_lim, mag_width, cz_lim, cz_width):
+                        mag_lim, mag_width, cz_lim, cz_width,
+                        nu_cz=None):
         """
         Probability of detection term if supernova magnitude and
         redshift-truncated.
@@ -290,7 +286,7 @@ class CH0Model(H0ModelBase):
             mag[None, None, :], self.mean_std_mag_SN_unique_Cepheid_host,
             mag_lim, mag_width)
         log_prob += log_prob_integrand_sel(
-            cz_r, sigma_v, cz_lim, cz_width)
+            cz_r, sigma_v, cz_lim, cz_width, nu_cz=nu_cz)
         return ln_simpson_precomputed(
             lp_r + log_prob, self._simpson_log_w_sel, axis=-1)
 
@@ -501,7 +497,8 @@ class CH0Model(H0ModelBase):
                 Vpec_sel = Vpec_sel + Vext_mono_sel[None, None, :]
             log_S = self.log_S_cz(
                 lp_rand_dist_grid, Vpec_sel,
-                H0, sigma_v_selection, cz_lim, cz_width)
+                H0, sigma_v_selection, cz_lim, cz_width,
+                nu_cz=nu_cz)
 
             if self.weight_selection_by_covmat_Neff:
                 log_S *= self.Neff_PV_covmat_cepheid_host / self.num_hosts
@@ -539,7 +536,8 @@ class CH0Model(H0ModelBase):
             log_S = self.log_S_SN_mag_cz(
                 lp_rand_dist_grid, Vpec_sel,
                 M_B, H0, sigma_v_selection,
-                mag_lim, mag_width, cz_lim, cz_width)
+                mag_lim, mag_width, cz_lim, cz_width,
+                nu_cz=nu_cz)
 
             if self.weight_selection_by_covmat_Neff:
                 log_S *= self.Neff_PV_covmat_cepheid_host / self.num_hosts

@@ -24,7 +24,18 @@ mkdir -p "$DEST_DIR"
 
 echo "[INFO] Fetching ${REMOTE_PATH} -> ${DEST_DIR}/"
 rsync -avh --progress -e "ssh -i $SSH_KEY" \
-    "$SRC_USER@$SRC_HOST:$REMOTE_PATH" \
-    "$DEST_DIR/"
+    "${SRC_USER}@${SRC_HOST}:${REMOTE_PATH}" \
+    "$DEST_DIR/" | tee "$TMPDIR/sfg_out.txt"
 
-echo "[INFO] Saved to ${DEST_DIR}/$(basename "$REMOTE_PATH")"
+# Count transferred files from rsync --itemize-changes style output.
+# Keep only lines that look like relative file paths (no spaces at start,
+# no summary lines, no directories).
+FILES=$(awk '/^[^ ]/ && !/\/$/ && !/^(sending|receiving|sent |total |Transfer|created|$)/' \
+    "$TMPDIR/sfg_out.txt" || true)
+NFILES=$(printf '%s\n' "$FILES" | grep -c . || true)
+
+echo "[INFO] ${NFILES} file(s) transferred."
+if [[ $NFILES -gt 0 && $NFILES -le 100 ]]; then
+    echo "$FILES" | while read -r f; do echo "${DEST_DIR}/${f}"; done
+fi
+rm -f "$TMPDIR/sfg_out.txt"

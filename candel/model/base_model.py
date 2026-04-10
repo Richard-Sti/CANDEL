@@ -450,7 +450,7 @@ class ModelBase(ABC):
         return 2 * jnp.log(r)
 
     def log_S_cz(self, lp_r, Vpec, H0, sigma_v,
-                 cz_lim, cz_width):
+                 cz_lim, cz_width, nu_cz=None):
         """Selection correction for a redshift-truncated sample."""
         zcosmo = self.distance2redshift(
             self.r_sel_range, h=H0 / 100)
@@ -460,7 +460,7 @@ class ModelBase(ABC):
             sigma_v = sigma_v[None, ...]
         sigma_v = jnp.broadcast_to(sigma_v, cz_r.shape)
         log_prob = log_prob_integrand_sel(
-            cz_r, sigma_v, cz_lim, cz_width)
+            cz_r, sigma_v, cz_lim, cz_width, nu_cz=nu_cz)
         return ln_simpson_precomputed(
             lp_r + log_prob, self._simpson_log_w_sel, axis=-1)
 

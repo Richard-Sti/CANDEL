@@ -345,7 +345,8 @@ class TRGBModel(H0ModelBase):
                 sigma_v_sel = sigma_v
             log_S = logmeanexp(self.log_S_cz(
                 lp_rand_dist_sel, Vpec_sel,
-                H0, sigma_v_sel, cz_lim, cz_width), axis=-1)
+                H0, sigma_v_sel, cz_lim, cz_width,
+                nu_cz=nu_cz), axis=-1)
 
         elif self.which_selection == "SN_magnitude":
             M_B = rsample("M_B", self.priors["M_B"])
