@@ -85,6 +85,9 @@ parser.add_argument("--grid-factor", type=float, default=1.0,
                     help="Multiply all grid sizes by this factor")
 parser.add_argument("--map-only", action="store_true",
                     help="Run DE optimizer only, skip sampling")
+parser.add_argument("--D-c-prior", type=str, default=None,
+                    choices=["uniform", "volume"],
+                    help="Override D_c prior (default: from config)")
 args = parser.parse_args()
 
 galaxy = args.galaxy
@@ -93,6 +96,8 @@ seed = args.seed or inf_cfg.get("seed", 42)
 
 # Build descriptive output tag
 _mcfg = master_cfg["model"]
+if args.D_c_prior is not None:
+    _mcfg["D_c_prior"] = args.D_c_prior
 _tags = []
 
 # Distance prior
