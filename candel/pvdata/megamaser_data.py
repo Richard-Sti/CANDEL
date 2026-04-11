@@ -254,85 +254,84 @@ def load_UGC3789_spots(root, v_sys_obs=None):
         v_sys_obs=v_sys_obs)
 
 
-def load_NGC4258_spots(root, v_sys_obs=472.0, flux_snr_cut=3.0):
-    """Load maser spot data for NGC 4258 from Argon+2007 Table 5.
+def load_NGC4258_spots(root, v_sys_obs=472.0):
+    """Load maser spot data for NGC 4258 from Reid (private comm.).
 
-    The table has 14291 rows from 18 VLBI epochs (A–R). For each unique
-    (RefVel, Chan) pair the epoch with highest flux is kept. Spots are
-    classified by RefVel: ≥800 km/s → red HV, ≤-100 km/s → blue HV,
-    400–650 km/s → systemic; other RefVel values are skipped.
+    Reads ``N4258_disk_data_MarkReid.final``. Comment lines start with ``!``.
+    Columns: ID, Vlsr, e_Vlsr, dX, e_dX, dY, e_dY, Acc, e_Acc.
+    Missing accelerations are flagged by negative e_Acc.
 
-    The e_Flux column in the file is in mJy; it is converted to Jy here.
-    No accelerations are available, so ``a=0`` and ``sigma_a=999`` are set.
+    Error floors from the file header (added in quadrature):
+    X=0.02 mas, Y=0.03 mas, Acc=0.3 km/s/yr.
+
+    Spot classification by Vlsr: <300 → blue HV, 300–700 → systemic, >700 →
+    red HV.
 
     Parameters
     ----------
     root
-        Directory containing ``NGC4258_Argon2007_table5.dat``.
+        Directory containing ``N4258_disk_data_MarkReid.final``.
     v_sys_obs
         Observed CMB-frame recession velocity in km/s.
-    flux_snr_cut
-        Minimum Flux/e_Flux required to keep a spot.
 
     Returns
     -------
     dict with the same keys as ``load_megamaser_spots``.
     """
-    fpath = join(root, "NGC4258_Argon2007_table5.dat")
+    fpath = join(root, "N4258_disk_data_MarkReid.final")
     fprint(f"loading maser spots from '{fpath}'.")
 
-    # best[key] = (flux, e_flux, cz, ewoff, e_ewoff, nsoff, e_nsoff, refvel)
-    best = {}
+    # Error floors from the file header.
+    floor_x, floor_y, floor_a = 0.02, 0.03, 0.3
+
+    velocity, x, sigma_x, y, sigma_y = [], [], [], [], []
+    a_vals, sigma_a_vals, has_accel, spot_type = [], [], [], []
+
     with open(fpath) as f:
         for line in f:
-            if not line.strip() or line.startswith("#"):
+            if line.startswith("!") or not line.strip():
                 continue
-            chan = int(line[2:5].strip())
-            flux = float(line[26:33].strip())
-            e_flux = float(line[34:43].strip()) / 1000.0  # mJy -> Jy
-            refvel = float(line[113:121].strip())
-            key = (refvel, chan)
-            if key not in best or flux > best[key][0]:
-                cz = float(line[6:15].strip())
-                ewoff = float(line[44:51].strip())
-                e_ewoff = float(line[52:59].strip())
-                nsoff = float(line[60:67].strip())
-                e_nsoff = float(line[68:75].strip())
-                best[key] = (flux, e_flux, cz, ewoff, e_ewoff, nsoff, e_nsoff,
-                             refvel)
+            parts = line.split()
+            vlsr = float(parts[1])
+            dx = float(parts[3])
+            e_dx = float(parts[4])
+            dy = float(parts[5])
+            e_dy = float(parts[6])
+            acc = float(parts[7])
+            e_acc = float(parts[8])
 
-    velocity, x, sigma_x, y, sigma_y, spot_type = [], [], [], [], [], []
-    n_skip_snr = n_skip_band = 0
-    for (refvel, _chan), (flux, e_flux, cz, ew, e_ew, ns, e_ns, _rv) in \
-            best.items():
-        # S/N cut
-        if e_flux <= 0 or flux / e_flux < flux_snr_cut:
-            n_skip_snr += 1
-            continue
-        # Band classification
-        if refvel >= 800:
-            st = "r"
-        elif refvel <= -100:
-            st = "b"
-        elif 400 <= refvel <= 650:
-            st = "s"
-        else:
-            n_skip_band += 1
-            continue
-        velocity.append(cz)
-        x.append(ew)
-        sigma_x.append(max(e_ew, 0.001))
-        y.append(ns)
-        sigma_y.append(max(e_ns, 0.001))
-        spot_type.append(st)
+            # Classification
+            if vlsr < 300:
+                st = "b"
+            elif vlsr > 700:
+                st = "r"
+            else:
+                st = "s"
+
+            velocity.append(vlsr)
+            x.append(dx)
+            sigma_x.append(np.sqrt(e_dx**2 + floor_x**2))
+            y.append(dy)
+            sigma_y.append(np.sqrt(e_dy**2 + floor_y**2))
+            spot_type.append(st)
+
+            if e_acc > 0:
+                a_vals.append(acc)
+                sigma_a_vals.append(np.sqrt(e_acc**2 + floor_a**2))
+                has_accel.append(True)
+            else:
+                a_vals.append(0.0)
+                sigma_a_vals.append(999.0)
+                has_accel.append(False)
 
     n = len(velocity)
     n_r = spot_type.count("r")
     n_b = spot_type.count("b")
     n_s = spot_type.count("s")
+    n_accel = sum(has_accel)
     fprint(f"loaded {n} maser spots for NGC4258 "
            f"({n_r} red, {n_b} blue, {n_s} systemic; "
-           f"dropped {n_skip_snr} low-SNR, {n_skip_band} ambiguous-band).")
+           f"{n_accel} with measured acceleration).")
 
     return {
         "velocity":        np.array(velocity),
@@ -340,9 +339,9 @@ def load_NGC4258_spots(root, v_sys_obs=472.0, flux_snr_cut=3.0):
         "sigma_x":         np.array(sigma_x),
         "y":               np.array(y),
         "sigma_y":         np.array(sigma_y),
-        "a":               np.zeros(n),
-        "sigma_a":         np.full(n, 999.0),
-        "accel_measured":  np.zeros(n, dtype=bool),
+        "a":               np.array(a_vals),
+        "sigma_a":         np.array(sigma_a_vals),
+        "accel_measured":  np.array(has_accel, dtype=bool),
         "spot_type":       spot_type,
         "n_spots":         n,
         "galaxy_name":     "NGC4258",
