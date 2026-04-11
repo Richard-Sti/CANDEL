@@ -50,7 +50,7 @@ from numpyro.infer.initialization import init_to_median, init_to_value
 
 from candel.inference.inference import print_clean_summary
 from candel.inference.nested import print_nested_summary, run_nss
-from candel.model.model_H0_maser import MaserDiskModel
+from candel.model.model_H0_maser import JointMaserModel, MaserDiskModel
 from candel.pvdata.megamaser_data import load_megamaser_spots
 from candel.util import fprint, fsection, plot_corner
 
@@ -120,23 +120,40 @@ dist_tag = "_".join(_tags)
 
 # ---- Validate galaxy ----
 galaxies = master_cfg["model"]["galaxies"]
-if galaxy not in galaxies:
+is_joint = (galaxy == "joint")
+
+if not is_joint and galaxy not in galaxies:
     print(f"Unknown galaxy '{galaxy}'. "
-          f"Available: {list(galaxies.keys())}", flush=True)
+          f"Available: {list(galaxies.keys())} + ['joint']", flush=True)
     sys.exit(1)
 
-gcfg = galaxies[galaxy]
-v_sys_obs = gcfg["v_sys_obs"]
-
 # ---- Load data ----
-fsection(f"Loading {galaxy} data")
-data = load_megamaser_spots("data/Megamaser", galaxy, v_sys_obs=v_sys_obs,
-                           clump_galaxies=_mcfg.get("clump_galaxies"))
+_clump_gals = _mcfg.get("clump_galaxies")
 
-# Pass per-galaxy D bounds to data dict
-if "D_lo" in gcfg and "D_hi" in gcfg:
-    data["D_lo"] = float(gcfg["D_lo"])
-    data["D_hi"] = float(gcfg["D_hi"])
+if is_joint:
+    # Exclude NGC4258 (geometric parallax, not in the MCP sample)
+    galaxy_names = [g for g in galaxies if g != "NGC4258"]
+    fsection(f"Loading joint data ({len(galaxy_names)} galaxies)")
+    data_list = []
+    for gname in galaxy_names:
+        gcfg_g = galaxies[gname]
+        d = load_megamaser_spots("data/Megamaser", gname,
+                                v_sys_obs=gcfg_g["v_sys_obs"],
+                                clump_galaxies=_clump_gals)
+        if "D_lo" in gcfg_g and "D_hi" in gcfg_g:
+            d["D_lo"] = float(gcfg_g["D_lo"])
+            d["D_hi"] = float(gcfg_g["D_hi"])
+        data_list.append(d)
+    n_spots = sum(d["n_spots"] for d in data_list)
+else:
+    gcfg = galaxies[galaxy]
+    v_sys_obs = gcfg["v_sys_obs"]
+    fsection(f"Loading {galaxy} data")
+    data = load_megamaser_spots("data/Megamaser", galaxy, v_sys_obs=v_sys_obs,
+                               clump_galaxies=_clump_gals)
+    if "D_lo" in gcfg and "D_hi" in gcfg:
+        data["D_lo"] = float(gcfg["D_lo"])
+        data["D_hi"] = float(gcfg["D_hi"])
 
 # ---- Build model config from master config ----
 dense_mass_blocks = inf_cfg.get("dense_mass_blocks", [
@@ -176,10 +193,20 @@ if args.grid_factor != 1.0:
            f"n_inner_sys={m['n_inner_sys']}, "
            f"n_wing_sys={m['n_wing_sys']}, n_r={m['n_r']}")
 
+# Joint: apply prior overrides from [joint.priors] config section
+if is_joint:
+    joint_priors = master_cfg.get("joint", {}).get("priors", {})
+    for pname, pval in joint_priors.items():
+        config["model"]["priors"][pname] = pval
+        fprint(f"joint override: {pname} -> {pval}")
+
 tmp = tempfile.NamedTemporaryFile(mode="wb", suffix=".toml", delete=False)
 tomli_w.dump(config, tmp)
 tmp.close()
-model = MaserDiskModel(tmp.name, data)
+if is_joint:
+    model = JointMaserModel(tmp.name, data_list)
+else:
+    model = MaserDiskModel(tmp.name, data)
 os.unlink(tmp.name)
 
 # ---- Run sampler ----
@@ -188,44 +215,66 @@ if sampler == "nss" and args.sample_r:
           "(remove --sample-r)", flush=True)
     sys.exit(1)
 
-n_spots = data["n_spots"]
+if sampler == "nss" and is_joint:
+    print("ERROR: nested sampling is impractical for the joint model "
+          "(~80 params). Use --sampler nuts.", flush=True)
+    sys.exit(1)
+
+if not is_joint:
+    n_spots = data["n_spots"]
 
 if sampler == "nuts":
     num_warmup = args.num_warmup or inf_cfg.get("num_warmup", 1000)
     num_samples = args.num_samples or inf_cfg.get("num_samples", 1000)
 
-    fsection(f"Running NUTS ({galaxy}, {n_spots} spots)")
-    init_cfg = gcfg.get("init", {})
-    init_method = inf_cfg.get("init_method", "config")
-    if init_method == "sobol_adam" or args.map_only:
-        from candel.inference.optimise import find_MAP
-        init_params = find_MAP(model, model_kwargs={}, seed=seed)
-        if args.map_only:
-            fprint("MAP-only run (--map-only), done.")
-            sys.exit(0)
-        init_strategy = init_to_value(values=init_params)
-        fprint("NUTS init from Sobol+Adam MAP:")
-        for k, v in init_params.items():
-            if v.ndim == 0:
-                fprint(f"  {k:20s} = {float(v):12.4f}")
-            else:
-                fprint(f"  {k:20s} = [{len(v)} values]")
-    elif init_cfg and init_method == "config":
-        init_params = {k: jnp.asarray(v) for k, v in init_cfg.items()}
-        init_strategy = init_to_value(values=init_params)
-        fprint(f"NUTS init from config ({len(init_params)} params):")
-        for k, v in sorted(init_params.items()):
-            v = jnp.asarray(v)
-            if v.ndim == 0:
-                fprint(f"  {k:20s} = {float(v):12.4f}")
-            else:
-                fprint(f"  {k:20s} = [{len(v)} values]")
+    if is_joint:
+        fsection(f"Running NUTS (joint, {n_spots} spots)")
+        # Build init from per-galaxy config init sections
+        init_params = {}
+        for gname in galaxy_names:
+            ginit = galaxies[gname].get("init", {})
+            for k, v in ginit.items():
+                init_params[f"{gname}/{k}"] = jnp.asarray(v)
+        if init_params:
+            init_strategy = init_to_value(values=init_params)
+            fprint(f"NUTS init from config ({len(init_params)} params)")
+        else:
+            init_strategy = init_to_median(num_samples=100)
+            fprint("NUTS init: median (no config init found)")
     else:
-        init_strategy = init_to_median(num_samples=20)
-        fprint(f"NUTS init: median")
+        fsection(f"Running NUTS ({galaxy}, {n_spots} spots)")
+        init_cfg = gcfg.get("init", {})
+        init_method = inf_cfg.get("init_method", "config")
+        if init_method == "sobol_adam" or args.map_only:
+            from candel.inference.optimise import find_MAP
+            init_params = find_MAP(model, model_kwargs={}, seed=seed)
+            if args.map_only:
+                fprint("MAP-only run (--map-only), done.")
+                sys.exit(0)
+            init_strategy = init_to_value(values=init_params)
+            fprint("NUTS init from Sobol+Adam MAP:")
+            for k, v in init_params.items():
+                if v.ndim == 0:
+                    fprint(f"  {k:20s} = {float(v):12.4f}")
+                else:
+                    fprint(f"  {k:20s} = [{len(v)} values]")
+        elif init_cfg and init_method == "config":
+            init_params = {k: jnp.asarray(v) for k, v in init_cfg.items()}
+            init_strategy = init_to_value(values=init_params)
+            fprint(f"NUTS init from config ({len(init_params)} params):")
+            for k, v in sorted(init_params.items()):
+                v = jnp.asarray(v)
+                if v.ndim == 0:
+                    fprint(f"  {k:20s} = {float(v):12.4f}")
+                else:
+                    fprint(f"  {k:20s} = [{len(v)} values]")
+        else:
+            init_strategy = init_to_median(num_samples=20)
+            fprint("NUTS init: median")
     t0 = time.time()
     kernel = NUTS(model, max_tree_depth=inf_cfg.get("max_tree_depth", 10),
                   target_accept_prob=0.8,
+                  dense_mass=True if is_joint else False,
                   init_strategy=init_strategy)
     mcmc = MCMC(kernel, num_warmup=num_warmup, num_samples=num_samples,
                 num_chains=1, progress_bar=True)
@@ -247,7 +296,8 @@ elif sampler == "nss":
     if num_mcmc_steps == 0:
         num_mcmc_steps = None  # run_nss will use ndim
 
-    fsection(f"Running NSS ({galaxy}, {n_spots} spots)")
+    _label = "joint" if is_joint else galaxy
+    fsection(f"Running NSS ({_label}, {n_spots} spots)")
     fprint(f"n_live={n_live}, mcmc_steps={num_mcmc_steps}, "
            f"num_delete={num_delete}")
     t0 = time.time()
@@ -268,26 +318,43 @@ elif sampler == "nss":
 
 # ---- Print results ----
 fsection("Results")
-param_keys = ['D_c', 'log_MBH', 'i0', 'di_dr', 'Omega0', 'dOmega_dr',
-              'x0', 'y0', 'dv_sys',
-              'sigma_x_floor', 'sigma_y_floor',
-              'sigma_v_sys', 'sigma_v_hv',
-              'sigma_a_floor']
-for k in param_keys:
-    if k in samples:
-        s = np.asarray(samples[k])
-        print(f"  {k:20s} = {s.mean():10.3f} +/- {s.std():8.3f}", flush=True)
-
-D_c = np.asarray(samples['D_c'])
-z_cosmo = D_c * 73.0 / 299792.458
-D_A = D_c / (1 + z_cosmo)
-if 'log_MBH' in samples:
-    log_MBH = np.asarray(samples['log_MBH'])
+if is_joint:
+    # Print shared params
+    for k in ["H0", "sigma_pec", "D_lim", "D_width"]:
+        if k in samples:
+            s = np.asarray(samples[k])
+            print(f"  {k:20s} = {s.mean():10.3f} +/- {s.std():8.3f}",
+                  flush=True)
+    # Print per-galaxy D_c
+    for gname in galaxy_names:
+        k = f"{gname}/D_c"
+        if k in samples:
+            s = np.asarray(samples[k])
+            print(f"  {k:20s} = {s.mean():10.3f} +/- {s.std():8.3f}",
+                  flush=True)
 else:
-    log_MBH = np.asarray(samples['eta']) + np.log10(D_A)
-M_BH = 10**log_MBH
-print(f"\n  D_A = {D_A.mean():.1f} +/- {D_A.std():.1f} Mpc", flush=True)
-print(f"  M_BH = {M_BH.mean():.2e} +/- {M_BH.std():.2e} M_sun", flush=True)
+    param_keys = ['D_c', 'log_MBH', 'i0', 'di_dr', 'Omega0', 'dOmega_dr',
+                  'x0', 'y0', 'dv_sys',
+                  'sigma_x_floor', 'sigma_y_floor',
+                  'sigma_v_sys', 'sigma_v_hv',
+                  'sigma_a_floor']
+    for k in param_keys:
+        if k in samples:
+            s = np.asarray(samples[k])
+            print(f"  {k:20s} = {s.mean():10.3f} +/- {s.std():8.3f}",
+                  flush=True)
+
+    D_c = np.asarray(samples['D_c'])
+    z_cosmo = D_c * 73.0 / 299792.458
+    D_A = D_c / (1 + z_cosmo)
+    if 'log_MBH' in samples:
+        log_MBH = np.asarray(samples['log_MBH'])
+    else:
+        log_MBH = np.asarray(samples['eta']) + np.log10(D_A)
+    M_BH = 10**log_MBH
+    print(f"\n  D_A = {D_A.mean():.1f} +/- {D_A.std():.1f} Mpc", flush=True)
+    print(f"  M_BH = {M_BH.mean():.2e} +/- {M_BH.std():.2e} M_sun",
+          flush=True)
 
 # Summary table
 fsection("Summary")
@@ -296,50 +363,59 @@ if sampler == "nuts":
 else:
     print_nested_summary(samples, meta=meta)
 
-# Spot classification plot
+# ---- Output ----
 outdir = os.path.abspath(master_cfg["io"].get("root_output", "results/Maser"))
 os.makedirs(outdir, exist_ok=True)
+_out_name = "joint" if is_joint else galaxy
 
-_cls = np.where(~data["is_highvel"], "systemic",
-                np.where(data["is_blue"], "blue HV", "red HV"))
-fig, axes = plt.subplots(1, 2, figsize=(10, 4))
-for cls, col in [("systemic", "forestgreen"), ("blue HV", "royalblue"),
-                 ("red HV", "tomato")]:
-    m = _cls == cls
-    axes[0].scatter(data["x"][m], data["y"][m], c=col, s=12, alpha=0.7,
-                    label=f"{cls} ({m.sum()})")
-    axes[1].scatter(data["x"][m],
-                    data["velocity"][m] - data["v_sys_obs"],
-                    c=col, s=12, alpha=0.7)
-axes[0].set_xlabel(r"$\Delta x$ (mas)")
-axes[0].set_ylabel(r"$\Delta y$ (mas)")
-axes[0].legend(fontsize=8)
-axes[0].invert_xaxis()
-axes[1].set_xlabel(r"$\Delta x$ (mas)")
-axes[1].set_ylabel(r"$v - v_\mathrm{sys}$ (km s$^{-1}$)")
-fig.tight_layout()
-fname_spots = os.path.join(outdir, f"{galaxy}_{suffix}_spots.png")
-fig.savefig(fname_spots, dpi=150, bbox_inches="tight")
-plt.close(fig)
-print(f"Spot classification plot saved to {fname_spots}", flush=True)
+# Spot classification plot (single-galaxy only)
+if not is_joint:
+    _cls = np.where(~data["is_highvel"], "systemic",
+                    np.where(data["is_blue"], "blue HV", "red HV"))
+    fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+    for cls, col in [("systemic", "forestgreen"), ("blue HV", "royalblue"),
+                     ("red HV", "tomato")]:
+        m = _cls == cls
+        axes[0].scatter(data["x"][m], data["y"][m], c=col, s=12, alpha=0.7,
+                        label=f"{cls} ({m.sum()})")
+        axes[1].scatter(data["x"][m],
+                        data["velocity"][m] - data["v_sys_obs"],
+                        c=col, s=12, alpha=0.7)
+    axes[0].set_xlabel(r"$\Delta x$ (mas)")
+    axes[0].set_ylabel(r"$\Delta y$ (mas)")
+    axes[0].legend(fontsize=8)
+    axes[0].invert_xaxis()
+    axes[1].set_xlabel(r"$\Delta x$ (mas)")
+    axes[1].set_ylabel(r"$v - v_\mathrm{sys}$ (km s$^{-1}$)")
+    fig.tight_layout()
+    fname_spots = os.path.join(outdir, f"{_out_name}_{suffix}_spots.png")
+    fig.savefig(fname_spots, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Spot classification plot saved to {fname_spots}", flush=True)
 
-outpath = os.path.abspath(os.path.join(outdir, f"{galaxy}_{suffix}.hdf5"))
+# Save HDF5
+outpath = os.path.abspath(
+    os.path.join(outdir, f"{_out_name}_{suffix}.hdf5"))
 with H5File(outpath, 'w') as f:
     grp = f.create_group("samples")
     for k, v in samples.items():
         if k == 'r_ang':
             continue
         grp.create_dataset(k, data=np.asarray(v), dtype=np.float32)
-    f.create_dataset("D_A", data=D_A.astype(np.float32))
-    f.create_dataset("M_BH", data=M_BH.astype(np.float32))
+    if not is_joint:
+        f.create_dataset("D_A", data=D_A.astype(np.float32))
+        f.create_dataset("M_BH", data=M_BH.astype(np.float32))
     if meta is not None:
         f.attrs["log_Z"] = meta['log_Z']
         f.attrs["log_Z_err"] = meta['log_Z_err']
         f.attrs["n_eff"] = meta['n_eff']
 fprint(f"saved samples to {outpath}")
 
-# Corner plots (smoothed and unsmoothed)
-fname_corner = os.path.join(outdir, f"{galaxy}_{suffix}_corner.png")
-plot_corner(samples, show_fig=False, filename=fname_corner)
-fname_corner_raw = os.path.join(outdir, f"{galaxy}_{suffix}_corner_raw.png")
-plot_corner(samples, show_fig=False, filename=fname_corner_raw, smooth=False)
+# Corner plots (skip for joint — too many params)
+if not is_joint:
+    fname_corner = os.path.join(outdir, f"{_out_name}_{suffix}_corner.png")
+    plot_corner(samples, show_fig=False, filename=fname_corner)
+    fname_corner_raw = os.path.join(
+        outdir, f"{_out_name}_{suffix}_corner_raw.png")
+    plot_corner(samples, show_fig=False, filename=fname_corner_raw,
+                smooth=False)

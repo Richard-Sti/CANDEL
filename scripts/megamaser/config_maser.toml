@@ -178,6 +178,14 @@ dist = "uniform"
 low = 5.0
 high = 100.0
 
+# -----------------------------------------------------------------------
+# Joint-model prior overrides (applied when galaxy = "joint")
+# -----------------------------------------------------------------------
+
+[joint.priors.sigma_pec]
+dist = "maxwell"
+scale = 156.7  # mean = scale * 2*sqrt(2/pi) ≈ 250 km/s
+
 [io]
 root_output = "results/Megamaser"
 
