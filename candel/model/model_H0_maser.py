@@ -340,29 +340,6 @@ def _chi2_3obs(x_obs, X, inv_var_x, y_obs, Y, inv_var_y,
             + dv * dv * inv_var_v)
 
 
-def _ecc_vel_factor(sin_phi, cos_phi, ecc, sin_omega, cos_omega):
-    """Velocity scaling factor for eccentric Keplerian orbit.
-
-    For disk azimuthal angle phi and orbital eccentricity (ecc, omega_disk):
-        v_z_ecc = v_kep * _ecc_vel_factor(...) * sin_i
-    where the circular result has factor = sin_phi.
-
-    Parameters
-    ----------
-    sin_phi, cos_phi : sin and cos of the disk azimuthal angle phi
-    ecc : orbital eccentricity, scalar in [0, 1)
-    sin_omega, cos_omega : sin and cos of omega_disk (argument of periapsis)
-
-    Returns
-    -------
-    factor : (sin_phi + ecc*sin_omega) / sqrt(1 + ecc*cos(phi - omega))
-    """
-    # cos(phi - omega) = cos_phi*cos_omega + sin_phi*sin_omega
-    cos_f = cos_phi * cos_omega + sin_phi * sin_omega
-    numerator = sin_phi + ecc * sin_omega
-    denominator = jnp.sqrt(1.0 + ecc * cos_f)
-    return numerator / denominator
-
 
 # -----------------------------------------------------------------------
 # Model classes
@@ -389,8 +366,10 @@ class MaserDiskModel(ModelBase):
 
         # Default per-spot velocity measurement error if not provided
         if "sigma_v" not in data:
-            data["sigma_v"] = _np.ones(data["n_spots"])
-            fprint("sigma_v not in data, defaulting to 1 km/s.")
+            sv_default = float(get_nested(
+                self.config, "model/sigma_v_default", 0.25))
+            data["sigma_v"] = sv_default * _np.ones(data["n_spots"])
+            fprint(f"sigma_v not in data, defaulting to {sv_default} km/s.")
 
         self._set_data_arrays(
             data, skip_keys=("accel_measured", "is_highvel", "is_systemic",
@@ -501,11 +480,16 @@ class MaserDiskModel(ModelBase):
         self._log_w_phi_hv = jnp.asarray(trapz_log_weights(phi_half))
         self._log_w_phi_sys = jnp.asarray(trapz_log_weights(phi_sys))
 
-        self.use_ecc = get_nested(self.config, "model/use_ecc", False)
-        fprint(f"use_ecc = {self.use_ecc}")
+        use_ecc = get_nested(self.config, "model/use_ecc", False)
+        use_qw = get_nested(self.config, "model/use_quadratic_warp", False)
 
-        self.use_quadratic_warp = get_nested(
-            self.config, "model/use_quadratic_warp", False)
+        # Per-galaxy overrides
+        gname = data.get("galaxy_name", "")
+        gal_cfg = get_nested(self.config, f"model/galaxies/{gname}", {})
+        self.use_ecc = gal_cfg.get("use_ecc", use_ecc)
+        self.use_quadratic_warp = gal_cfg.get(
+            "use_quadratic_warp", use_qw)
+        fprint(f"use_ecc = {self.use_ecc}")
         fprint(f"use_quadratic_warp = {self.use_quadratic_warp}")
 
         # Inverse permutation for concat+gather (replaces .at[idx].set).
@@ -549,13 +533,19 @@ class MaserDiskModel(ModelBase):
         # di_dr is always sampled (inclination warp).
 
         # Reference angular radius for warp expansion (mas).
-        # Pivot at median projected HV-spot radius to decorrelate i0/di_dr.
-        x_hv = _np.asarray(data["x"])[is_hv_np]
-        y_hv = _np.asarray(data["y"])[is_hv_np]
-        r_ang_hv = _np.sqrt(x_hv**2 + y_hv**2)
-        self._r_ang_ref = float(_np.median(r_ang_hv))
-        fprint(f"warp pivot r_ang_ref = {self._r_ang_ref:.3f} mas "
-               f"(median projected radius of {len(r_ang_hv)} HV spots)")
+        # Per-galaxy override or median projected HV-spot radius.
+        r_ang_ref_cfg = gal_cfg.get("r_ang_ref", None)
+        if r_ang_ref_cfg is not None:
+            self._r_ang_ref = float(r_ang_ref_cfg)
+            fprint(f"warp pivot r_ang_ref = {self._r_ang_ref:.3f} mas "
+                   f"(from config)")
+        else:
+            x_hv = _np.asarray(data["x"])[is_hv_np]
+            y_hv = _np.asarray(data["y"])[is_hv_np]
+            r_ang_hv = _np.sqrt(x_hv**2 + y_hv**2)
+            self._r_ang_ref = float(_np.median(r_ang_hv))
+            fprint(f"warp pivot r_ang_ref = {self._r_ang_ref:.3f} mas "
+                   f"(median projected radius of {len(r_ang_hv)} HV spots)")
 
         # Fixed r_ang bounds for Mode 1 (estimated from v_sys_obs).
         # Uses cosmographic D_A to convert R_phys bounds to angular.
@@ -624,7 +614,7 @@ class MaserDiskModel(ModelBase):
                            var_v_sys, var_v_hv,
                            sigma_a_floor2,
                            log_w_r=None,
-                           ecc=None, sin_omega=None, cos_omega=None,
+                           ecc=None, periapsis0=None, dperiapsis_dr=0.0,
                            d2i_dr2=0.0, d2Omega_dr2=0.0):
         """Evaluate per-spot log-likelihood marginalised over phi [and r].
 
@@ -655,6 +645,12 @@ class MaserDiskModel(ModelBase):
             _precompute_r_quantities(r_ang, D_A, M_BH,
                                      sin_i, cos_i, sin_O, cos_O)
 
+        # Periapsis angle warp: omega(r) = periapsis0 + dperiapsis_dr*(r-r_ref)
+        if ecc is not None:
+            omega_r = periapsis0 + dperiapsis_dr * (r_ang - r_ang_ref)
+            sin_omega = jnp.sin(omega_r)
+            cos_omega = jnp.cos(omega_r)
+
         def _r_precomp(idx):
             """Slice precomputed r-quantities for a spot subset.
 
@@ -682,12 +678,14 @@ class MaserDiskModel(ModelBase):
         def _obs_4_ecc(idx, sp, cp):
             """X, Y, V (eccentric), A from precomputed r-quantities."""
             (si, r_sub, vk, _, zg, am, pa, pb, pc, pd) = _r_precomp(idx)
+            sw = sin_omega[idx][rpad]
+            cw = cos_omega[idx][rpad]
             X = x0 + r_sub * (sp * pa - cp * pb)
             Y = y0 + r_sub * (sp * pc + cp * pd)
 
             # Velocity components
-            cos_f = cp * cos_omega + sp * sin_omega
-            ecc_fac = (sp + ecc * sin_omega) / jnp.sqrt(1.0 + ecc * cos_f)
+            cos_f = cp * cw + sp * sw
+            ecc_fac = (sp + ecc * sw) / jnp.sqrt(1.0 + ecc * cos_f)
             v_z = vk * ecc_fac * si
 
             # Precise Lorentz factor for eccentric orbit
@@ -707,11 +705,13 @@ class MaserDiskModel(ModelBase):
         def _obs_3_ecc(idx, sp, cp):
             """X, Y, V (eccentric) only — no acceleration."""
             (si, r_sub, vk, _, zg, _, pa, pb, pc, pd) = _r_precomp(idx)
+            sw = sin_omega[idx][rpad]
+            cw = cos_omega[idx][rpad]
             X = x0 + r_sub * (sp * pa - cp * pb)
             Y = y0 + r_sub * (sp * pc + cp * pd)
 
-            cos_f = cp * cos_omega + sp * sin_omega
-            ecc_fac = (sp + ecc * sin_omega) / jnp.sqrt(1.0 + ecc * cos_f)
+            cos_f = cp * cw + sp * sw
+            ecc_fac = (sp + ecc * sw) / jnp.sqrt(1.0 + ecc * cos_f)
             v_z = vk * ecc_fac * si
 
             beta_c2 = (vk / SPEED_OF_LIGHT)**2
@@ -1052,12 +1052,15 @@ class MaserDiskModel(ModelBase):
         ecc_kw = {}
         if self.use_ecc:
             ecc = rsample("ecc", self.priors["ecc"], shared_params)
-            omega_disk_deg = rsample(
-                "omega_disk", self.priors["omega_disk"], shared_params)
-            omega_disk = jnp.deg2rad(omega_disk_deg)
-            sin_omega = jnp.sin(omega_disk)
-            cos_omega = jnp.cos(omega_disk)
-            ecc_kw = dict(ecc=ecc, sin_omega=sin_omega, cos_omega=cos_omega)
+            periapsis_deg = rsample(
+                "periapsis", self.priors["periapsis"], shared_params)
+            periapsis0 = jnp.deg2rad(periapsis_deg)
+            dperiapsis_dr_deg = rsample(
+                "dperiapsis_dr", self.priors["dperiapsis_dr"],
+                shared_params)
+            dperiapsis_dr = jnp.deg2rad(dperiapsis_dr_deg)
+            ecc_kw = dict(ecc=ecc, periapsis0=periapsis0,
+                          dperiapsis_dr=dperiapsis_dr)
 
         # Quadratic warp terms (optional)
         quad_kw = {}

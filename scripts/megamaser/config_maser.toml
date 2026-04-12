@@ -36,6 +36,7 @@ use_selection = false
 use_clump_weight = false
 clump_galaxies = ["NGC5765b", "NGC6264", "NGC6323"]
 marginalise_r = true
+sigma_v_default = 0.25  # km/s, used when data file has no velocity errors
 D_c_prior = "volume"  # "uniform" or "volume" (p(D_c) ∝ D_c²)
 
 # Physical radius integration bounds [pc] for r marginalization
@@ -53,6 +54,7 @@ H0_for_D_estimate = 70.0
 # Peculiar velocity scatter (km/s) for Sobol D_c range: D ± n_sigma * sigma_v / H0
 D_sobol_sigma_v = 500.0
 D_sobol_n_sigma = 5
+max_generations = 5000
 
 # -----------------------------------------------------------------------
 # Shared priors (apply to all galaxies unless overridden)
@@ -163,10 +165,15 @@ dist = "uniform"
 low = 0.0
 high = 0.5
 
-[model.priors.omega_disk]
+[model.priors.periapsis]
 dist = "uniform"
 low = 0.0
 high = 360.0
+
+[model.priors.dperiapsis_dr]
+dist = "uniform"
+low = -180.0
+high = 180.0
 
 [model.priors.D_lim]
 dist = "uniform"
@@ -212,21 +219,21 @@ D_hi = 150.0
 # D_ref = 87.6, e_D_ref = 5.8 (Pesce+2020)
 
 [model.galaxies."CGCG074-064".init]
-H0 = 80.03
-D_c = 89.15
-eta = 5.441
-x0 = 1.354
-y0 = 6.058
-i0 = 90.52
-Omega0 = 101.44
-dOmega_dr = 4.822
-di_dr = -2.227
-sigma_x_floor = 0.245
-sigma_y_floor = 14.26
-sigma_v_sys = 1.818
-sigma_v_hv = 1.920
-sigma_a_floor = 0.229
-dv_sys = -265.42
+H0 = 81.51
+D_c = 88.22
+eta = 5.44
+x0 = 1.11
+y0 = 6.16
+i0 = 90.58
+Omega0 = 101.41
+dOmega_dr = 5.92
+di_dr = 4.46
+sigma_x_floor = 0.85
+sigma_y_floor = 14.95
+sigma_v_sys = 1.80
+sigma_v_hv = 2.14
+sigma_a_floor = 0.23
+dv_sys = -265.27
 
 [model.galaxies."NGC4258"]
 ra = 184.74009
@@ -234,7 +241,27 @@ dec = 47.30372
 v_sys_obs = 667
 D_lo = 4.0
 D_hi = 10.0
+use_ecc = true
+use_quadratic_warp = true
+r_ang_ref = 6.1  # Reid+2019: average maser radius
 # D_ref = 7.58, e_D_ref = 0.11 (Reid+2019)
+
+[model.galaxies."NGC4258".init]
+H0 = 114.80
+D_c = 5.982
+eta = 6.720
+x0 = -179.50
+y0 = 555.70
+i0 = 94.27
+Omega0 = 87.96
+dOmega_dr = 2.117
+di_dr = -2.073
+sigma_x_floor = 28.12
+sigma_y_floor = 1.929
+sigma_v_sys = 0.805
+sigma_v_hv = 4.959
+sigma_a_floor = 0.070
+dv_sys = -196.00
 
 [model.galaxies."NGC5765b"]
 ra = 222.71461
@@ -245,21 +272,21 @@ D_hi = 200.0
 # D_ref = 112.2, e_D_ref = 5.4 (Pesce+2020)
 
 [model.galaxies."NGC5765b".init]
-H0 = 66.44
-D_c = 126.60
-eta = 5.573
-x0 = -45.27
-y0 = -98.69
-i0 = 84.97
-Omega0 = 146.82
-dOmega_dr = -3.225
-di_dr = 11.74
-sigma_x_floor = 10.36
-sigma_y_floor = 3.322
-sigma_v_sys = 1.890
-sigma_v_hv = 2.275
-sigma_a_floor = 0.078
-dv_sys = -130.79
+H0 = 68.29
+D_c = 123.66
+eta = 5.57
+x0 = -45.04
+y0 = -99.09
+i0 = 84.91
+Omega0 = 146.85
+dOmega_dr = -3.38
+di_dr = 11.39
+sigma_x_floor = 10.99
+sigma_y_floor = 3.80
+sigma_v_sys = 2.03
+sigma_v_hv = 2.77
+sigma_a_floor = 0.08
+dv_sys = -131.13
 
 [model.galaxies."NGC6264"]
 ra = 254.31720
@@ -270,21 +297,21 @@ D_hi = 250.0
 # D_ref = 132.1, e_D_ref = 11.9 (Pesce+2020)
 
 [model.galaxies."NGC6264".init]
-H0 = 65.54
-D_c = 153.67
-eta = 5.323
-x0 = 3.844
-y0 = 7.154
-i0 = 90.43
+H0 = 62.95
+D_c = 164.16
+eta = 5.32
+x0 = 4.29
+y0 = 6.95
+i0 = 90.39
 Omega0 = 94.21
-dOmega_dr = 18.36
-di_dr = -1.263
-sigma_x_floor = 0.416
-sigma_y_floor = 5.492
-sigma_v_sys = 1.633
-sigma_v_hv = 2.521
-sigma_a_floor = 0.138
-dv_sys = 66.25
+dOmega_dr = 18.48
+di_dr = -1.39
+sigma_x_floor = 1.74
+sigma_y_floor = 6.39
+sigma_v_sys = 1.80
+sigma_v_hv = 2.94
+sigma_a_floor = 0.15
+dv_sys = 66.30
 
 [model.galaxies."NGC6323"]
 ra = 258.32519
@@ -295,21 +322,21 @@ D_hi = 350.0
 # D_ref = 109.4, e_D_ref = 30 (Pesce+2020)
 
 [model.galaxies."NGC6323".init]
-H0 = 50.18
-D_c = 151.82
-eta = 4.968
-x0 = 14.56
-y0 = 3.391
-i0 = 91.85
-Omega0 = 189.60
-dOmega_dr = 13.82
-di_dr = -1.182
-sigma_x_floor = 3.932
-sigma_y_floor = 2.531
-sigma_v_sys = 1.842
-sigma_v_hv = 1.732
-sigma_a_floor = 0.141
-dv_sys = 190.42
+H0 = 55.24
+D_c = 148.58
+eta = 4.97
+x0 = 14.74
+y0 = 4.03
+i0 = 91.96
+Omega0 = 189.58
+dOmega_dr = 13.60
+di_dr = -6.44
+sigma_x_floor = 4.19
+sigma_y_floor = 4.63
+sigma_v_sys = 2.05
+sigma_v_hv = 1.91
+sigma_a_floor = 0.14
+dv_sys = 190.56
 
 [model.galaxies."UGC3789"]
 ra = 109.87872
@@ -320,19 +347,19 @@ D_hi = 100.0
 # D_ref = 51.5, e_D_ref = 4.5 (Pesce+2020)
 
 [model.galaxies."UGC3789".init]
-H0 = 59.14
-D_c = 54.75
-eta = 5.364
-x0 = -402.54
-y0 = -461.35
-i0 = 85.66
-Omega0 = 222.97
-dOmega_dr = -3.289
-di_dr = 8.539
-sigma_x_floor = 4.562
-sigma_y_floor = 8.109
-sigma_v_sys = 1.623
-sigma_v_hv = 1.848
-sigma_a_floor = 0.229
-dv_sys = 15.41
+H0 = 59.24
+D_c = 55.18
+eta = 5.36
+x0 = -402.59
+y0 = -461.32
+i0 = 85.64
+Omega0 = 223.00
+dOmega_dr = -3.33
+di_dr = 8.65
+sigma_x_floor = 4.89
+sigma_y_floor = 8.35
+sigma_v_sys = 1.74
+sigma_v_hv = 2.18
+sigma_a_floor = 0.23
+dv_sys = 15.62
 

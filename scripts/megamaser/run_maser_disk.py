@@ -88,6 +88,11 @@ parser.add_argument("--map-only", action="store_true",
 parser.add_argument("--D-c-prior", type=str, default=None,
                     choices=["uniform", "volume"],
                     help="Override D_c prior (default: from config)")
+parser.add_argument("--log2-N", type=int, default=None,
+                    help="Override Sobol log2_N for DE/Sobol optimizer")
+parser.add_argument("--init-method", type=str, default=None,
+                    choices=["config", "sobol_adam", "median"],
+                    help="Override NUTS init method")
 args = parser.parse_args()
 
 galaxy = args.galaxy
@@ -98,6 +103,8 @@ seed = args.seed or inf_cfg.get("seed", 42)
 _mcfg = master_cfg["model"]
 if args.D_c_prior is not None:
     _mcfg["D_c_prior"] = args.D_c_prior
+if args.log2_N is not None:
+    master_cfg.setdefault("optimise", {})["log2_N"] = args.log2_N
 _tags = []
 
 # Distance prior
@@ -223,6 +230,18 @@ if sampler == "nss" and is_joint:
 if not is_joint:
     n_spots = data["n_spots"]
 
+# MAP-only mode: run DE optimizer and exit, regardless of sampler setting.
+if args.map_only:
+    if is_joint:
+        print("ERROR: --map-only is not supported for joint mode.",
+              flush=True)
+        sys.exit(1)
+    from candel.inference.optimise import find_MAP
+    fsection(f"Running DE MAP ({galaxy}, {n_spots} spots)")
+    init_params = find_MAP(model, model_kwargs={}, seed=seed)
+    fprint("MAP-only run (--map-only), done.")
+    sys.exit(0)
+
 if sampler == "nuts":
     num_warmup = args.num_warmup or inf_cfg.get("num_warmup", 1000)
     num_samples = args.num_samples or inf_cfg.get("num_samples", 1000)
@@ -244,13 +263,10 @@ if sampler == "nuts":
     else:
         fsection(f"Running NUTS ({galaxy}, {n_spots} spots)")
         init_cfg = gcfg.get("init", {})
-        init_method = inf_cfg.get("init_method", "config")
-        if init_method == "sobol_adam" or args.map_only:
+        init_method = args.init_method or inf_cfg.get("init_method", "config")
+        if init_method == "sobol_adam":
             from candel.inference.optimise import find_MAP
             init_params = find_MAP(model, model_kwargs={}, seed=seed)
-            if args.map_only:
-                fprint("MAP-only run (--map-only), done.")
-                sys.exit(0)
             init_strategy = init_to_value(values=init_params)
             fprint("NUTS init from Sobol+Adam MAP:")
             for k, v in init_params.items():

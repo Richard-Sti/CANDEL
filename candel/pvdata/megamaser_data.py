@@ -261,11 +261,10 @@ def load_NGC4258_spots(root, v_sys_obs=472.0):
     Columns: ID, Vlsr, e_Vlsr, dX, e_dX, dY, e_dY, Acc, e_Acc.
     Missing accelerations are flagged by negative e_Acc.
 
-    Error floors from the file header (added in quadrature):
-    X=0.02 mas, Y=0.03 mas, Acc=0.3 km/s/yr.
-
     Spot classification by Vlsr: <300 → blue HV, 300–700 → systemic, >700 →
     red HV.
+
+    Returns raw measurement errors (no floors applied).
 
     Parameters
     ----------
@@ -281,10 +280,7 @@ def load_NGC4258_spots(root, v_sys_obs=472.0):
     fpath = join(root, "N4258_disk_data_MarkReid.final")
     fprint(f"loading maser spots from '{fpath}'.")
 
-    # Error floors from the file header.
-    floor_x, floor_y, floor_a = 0.02, 0.03, 0.3
-
-    velocity, x, sigma_x, y, sigma_y = [], [], [], [], []
+    velocity, sigma_v, x, sigma_x, y, sigma_y = [], [], [], [], [], []
     a_vals, sigma_a_vals, has_accel, spot_type = [], [], [], []
 
     with open(fpath) as f:
@@ -293,6 +289,7 @@ def load_NGC4258_spots(root, v_sys_obs=472.0):
                 continue
             parts = line.split()
             vlsr = float(parts[1])
+            e_vlsr = float(parts[2])
             dx = float(parts[3])
             e_dx = float(parts[4])
             dy = float(parts[5])
@@ -309,15 +306,16 @@ def load_NGC4258_spots(root, v_sys_obs=472.0):
                 st = "s"
 
             velocity.append(vlsr)
+            sigma_v.append(e_vlsr)
             x.append(dx)
-            sigma_x.append(np.sqrt(e_dx**2 + floor_x**2))
+            sigma_x.append(e_dx)
             y.append(dy)
-            sigma_y.append(np.sqrt(e_dy**2 + floor_y**2))
+            sigma_y.append(e_dy)
             spot_type.append(st)
 
             if e_acc > 0:
                 a_vals.append(acc)
-                sigma_a_vals.append(np.sqrt(e_acc**2 + floor_a**2))
+                sigma_a_vals.append(e_acc)
                 has_accel.append(True)
             else:
                 a_vals.append(0.0)
@@ -335,6 +333,7 @@ def load_NGC4258_spots(root, v_sys_obs=472.0):
 
     return {
         "velocity":        np.array(velocity),
+        "sigma_v":         np.array(sigma_v),
         "x":               np.array(x),
         "sigma_x":         np.array(sigma_x),
         "y":               np.array(y),

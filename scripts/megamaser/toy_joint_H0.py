@@ -58,11 +58,11 @@ CONFIG_PATH = "scripts/megamaser/config_maser.toml"
 
 # Hard-coded NSS result files per galaxy
 NSS_FILES = {
-    "CGCG074-064": f"{RESULT_ROOT}/CGCG074-064_nss_Dvol_noclump.hdf5",
-    "NGC5765b": f"{RESULT_ROOT}/NGC5765b_nss_Dvol_noclump.hdf5",
-    "NGC6264": f"{RESULT_ROOT}/NGC6264_nss_Dvol_noclump.hdf5",
-    "NGC6323": f"{RESULT_ROOT}/NGC6323_nss_Dvol_noclump.hdf5",
-    "UGC3789": f"{RESULT_ROOT}/UGC3789_nss_Dvol_noclump.hdf5",
+    "CGCG074-064": f"{RESULT_ROOT}/CGCG074-064_nss_Dflat_noclump.hdf5",
+    "NGC5765b": f"{RESULT_ROOT}/NGC5765b_nss_Dflat_noclump.hdf5",
+    "NGC6264": f"{RESULT_ROOT}/NGC6264_nss_Dflat_noclump.hdf5",
+    "NGC6323": f"{RESULT_ROOT}/NGC6323_nss_Dflat_noclump.hdf5",
+    "UGC3789": f"{RESULT_ROOT}/UGC3789_nss_Dflat_noclump.hdf5",
 }
 
 # Load v_sys_obs, D_lo, D_hi from config
@@ -100,14 +100,13 @@ PARAM_LABELS = {
 def build_log_distance_likelihood(kde, D_lo, D_hi, n_grid=1024):
     """Build a tabulated log-likelihood of D_c from the NSS posterior.
 
-    The NSS posterior includes the D^2 volumetric prior, so we divide it
-    out: log L(D) = log KDE(D) - 2 log D + const.
+    The NSS posterior used a flat prior on D_c, so the posterior IS the
+    likelihood: log L(D) = log KDE(D) + const.
 
     Returns (D_grid, log_L_grid) as jnp arrays.
     """
     D_grid = np.linspace(D_lo, D_hi, n_grid)
-    log_kde = kde.logpdf(D_grid)
-    log_L = log_kde - 2.0 * np.log(D_grid)
+    log_L = kde.logpdf(D_grid)
     log_L -= log_L.max()
     return jnp.asarray(D_grid), jnp.asarray(log_L)
 
