@@ -198,19 +198,99 @@ width ~0.1-3%. A 251-point global grid cannot resolve 358 independent narrow
 spikes. The other galaxies have 5-10x larger fractional errors → broader peaks
 → no grid issues.
 
-**Possible fixes (not yet implemented):**
-- Per-spot adaptive r grid: center a small local grid on each spot's projected
-  radius. Each spot needs only ~20-30 points to resolve its own spike.
-- Laplace approximation in r: if per-spot integrand is nearly Gaussian,
-  find r_max analytically and integrate the Gaussian.
-- Brute force: n_r=5000+ (expensive, O(n_spots × n_r × n_phi)).
+### Per-spot adaptive r-grid (2026-04-12/13)
+**Implemented:** `model/adaptive_r = true` in config. Each spot gets its own
+sinh-spaced r grid centred on a physics-based r estimate, then delegates
+to `_eval_marginal_phi` with per-spot trapezoidal weights.
+
+**Architecture:**
+- `_eval_adaptive_phi_r()` builds per-spot (N, n_local) grids and (N, n_local)
+  trapz weights, calls `_eval_marginal_phi` which handles all phi integration.
+- `_eval_marginal_phi` extended: `log_w_r` can be (n_r,) or (N, n_r).
+  When (N, n_r), 2D weights are (N, n_r, n_phi) and indexed per group.
+- Config: `n_r_local` (default 151), `K_sigma` (default 5.0).
+- Stored arrays: `_all_x`, `_all_y`, `_all_sigma_x2`, `_all_sigma_y2`,
+  `_all_v`, `_all_a`, `_all_sigma_a`, `_all_has_accel` (all in original data order).
+
+**Per-spot centering** (velocity/acceleration-based):
+- HV spots: `r_vel = M·(C_v·sin_i)² / (D·dv²)`, scale floor 0.05.
+  Assumes sin(φ)≈1; overestimates r by ~10-30% for φ<π/2 — within grid.
+- Systemic with good accel (S/N≥2): `r_acc = sqrt(C_a·M·sin_i / (D²·|a|))`, scale 0.1.
+  Assumes cos(φ)≈1; exact for dominant φ of systemic spots.
+  S/N = |a|/sqrt(σ_a² + σ_a_floor²). Low-S/N spots have noise-dominated
+  |a| → r_acc unreliable (CGCG outlier: S/N=1.7, offset 1.34 in log-r).
+- Unconstrained (sys-no-accel or sys with accel S/N<2): geometric midpoint
+  of [r_min, r_max], scale = 0.25×log(r_max/r_min) ≈ 1.32 (nearly uniform
+  grid in log-r, density varies only ~2× from center to edge).
+  Affected spots: CGCG 3, NGC5765b 6, UGC3789 20, NGC6323 1, NGC6264 0.
+  NGC4258: 92 systemic-without-accel + any low-S/N systemics.
+
+**Centering accuracy** (verified via 10001² brute-force peaks):
+  r_vel for HV:      max |log(r_est/r_peak)| < 0.14 across all galaxies.
+  r_acc for sys S/N≥2: max |log(r_est/r_peak)| < 0.22 across all galaxies.
+  Unconstrained: centering offset up to 1.2, but peaks are broad (σ_logr
+  0.3–0.5) so the nearly-uniform grid covers them — no convergence impact.
+
+**Convergence results** (Δ nats vs 10001×10001 brute-force reference):
+
+  Simpson's HV phi (O(h⁴)) + trapezoidal systemic:
+  n=51:   NGC5765b +0.29, UGC3789 +0.96, CGCG -0.36, NGC6264 -1.64, NGC6323 +0.30
+  n=101:  NGC5765b -0.47, UGC3789 +0.24, CGCG -1.45, NGC6264 +0.11, NGC6323 +0.04
+  n=151:  NGC5765b -0.62, UGC3789 +0.12, CGCG -1.60, NGC6264 +0.04, NGC6323 -0.02
+  n=251:  NGC5765b -0.69, UGC3789 +0.04, CGCG -1.67, NGC6264 -0.004,NGC6323 -0.04
+
+  Phi sweep (adaptive r=151):
+  phi=101: NGC5765b -0.66, UGC3789 -0.15, CGCG -1.97, NGC6264 +0.12, NGC6323 -0.01
+  phi=201: NGC5765b -0.62, UGC3789 +0.12, CGCG -1.60, NGC6264 +0.04, NGC6323 -0.02
+  phi=401: NGC5765b -0.62, UGC3789 +0.11, CGCG -1.61, NGC6264 +0.04, NGC6323 -0.02
+  phi=801: NGC5765b -0.62, UGC3789 +0.11, CGCG -1.61, NGC6264 +0.04, NGC6323 -0.02
+
+  Phi fully converged at 201 points (Simpson's). Remaining errors:
+  - NGC5765b: -0.62 is the r-integration floor (not phi).
+  - CGCG: -1.6 nats is a systematic from the systemic grid covering only
+    [-π/2, π/2] — back-of-disk contributions (phi near π) are missed.
+    Not a grid resolution issue; needs model change to extend systemic range.
+  - UGC3789, NGC6264, NGC6323: < 0.15 nats, fully converged.
+
+**Test scripts:**
+- `scripts/megamaser/convergence_grids.py`: unified convergence benchmark
+  with batched 10001² brute-force reference. Processes spots in batches of
+  8 to fit in GPU memory. CLI: `--galaxies NGC5765b UGC3789`.
+- `scripts/megamaser/find_r_peaks.py`: numerically finds true r-peaks on
+  10001² grid, compares analytical centering estimates.
+- `scripts/megamaser/test_gh_r_integration.py`: documents the failed GH
+  quadrature investigation (kept for reference).
+
+### Phi integration overhaul (2026-04-13)
+See `notes_phi_integration.md` and `notes_n4258_phi_plan.md` for reasoning.
+
+**HV: Simpson's rule on arccos grid** (committed)
+- Fix: `c_min=0` so `arccos(0)=π/2` naturally. Max panel ratio = 1.056.
+- Simpson's O(h⁴) at 201 points: full phi convergence, same runtime cost.
+- GL quadrature tested and rejected (4× worse per point than arccos).
+
+**Systemic: two-cluster grid on [-π, π]** (committed)
+- Old grid [-π/2, π/2] missed back-of-disk (φ~π) for low accel-S/N spots.
+- New grid: front 401 pts + back 201 pts (arcsin). Total ~600 pts.
+- All 5 galaxies within 0.08 nats of 10001² reference.
+
+**NGC4258: Mode 1 + per-spot adaptive phi** (committed)
+- NGC4258's position errors (~0.003 mas) create σ_φ ≈ 0.001 rad peaks that
+  shared grids cannot resolve. Mode 2 is blocked for this galaxy.
+- Mode 1: sample r_ang per spot (NUTS), marginalize φ with 51-pt adaptive
+  sinh grid centered on φ* from 2×2 position solve (exact at sampled r).
+- `_eval_adaptive_phi_mode1()` in MaserDiskModel.
+- Config: `adaptive_phi = true` in NGC4258 galaxy section.
+- 100K² brute-force reference saved: `results/Maser/NGC4258_ll_ref_100k.npy`
+- Diagnostic scripts: `diagnose_residuals.py`, `diagnose_residuals_n4258.py`,
+  `test_mode1_adaptive_phi.py`, `investigate_r_centering.py`
 
 ### Next steps
-- **Fix NGC4258 r-grid convergence** (blocking for NGC4258 inference).
-- Run NGC4258 with NUTS/NSS to check if D_A ~ 7.58 Mpc is recovered.
-- Run full NUTS inference for all galaxies using DE-initialized MAP.
-- Consider reparameterisation (log(M/D), log(M/D²)) to reduce leapfrog steps.
-- Test quadratic warp with NUTS on NGC5765b to see if d2i_dr2 is constrained.
+1. **Convergence sweep** for 5 galaxies with new Mode 2 grids.
+2. **MAP + NUTS** for all 5 galaxies with new grids.
+3. **NGC4258 Mode 1 NUTS**: test with Reid+2019 init, check D_A ~ 7.58 Mpc.
+4. **Clean up**: remove unused `_adaptive_r_integrate`, old test scripts.
+5. Consider reparameterisation (log(M/D), log(M/D²)) to reduce leapfrog steps.
 
 
 Basics
