@@ -276,8 +276,8 @@ if sampler == "nuts":
                     fprint(f"  {k:20s} = [{len(v)} values]")
         elif init_cfg and init_method == "config":
             init_params = {k: jnp.asarray(v) for k, v in init_cfg.items()}
-            # Mode 1: compute r_ang init from acceleration if not provided
-            if args.sample_r and "r_ang" not in init_params:
+            # Mode 1: compute log_r_ang init from acceleration
+            if args.sample_r and "log_r_ang" not in init_params:
                 from candel.model.model_H0_maser import C_v, C_a
                 _D_A = float(init_params["D_c"]) / 1.002
                 _M = 10.0**(float(init_params["eta"])
@@ -297,9 +297,9 @@ if sampler == "nuts":
                 _r_init = np.where(_good, _r_acc, _r_mid)
                 _r_init = np.clip(_r_init, float(model._r_ang_lo) * 1.01,
                                   float(model._r_ang_hi) * 0.99)
-                init_params["r_ang"] = jnp.asarray(_r_init)
-                fprint(f"  r_ang init from accel: [{_r_init.min():.3f}, "
-                       f"{_r_init.max():.3f}] mas")
+                init_params["log_r_ang"] = jnp.asarray(np.log(_r_init))
+                fprint(f"  log_r_ang init from accel: "
+                       f"r=[{_r_init.min():.3f}, {_r_init.max():.3f}] mas")
             init_strategy = init_to_value(values=init_params)
             fprint(f"NUTS init from config ({len(init_params)} params):")
             for k, v in sorted(init_params.items()):

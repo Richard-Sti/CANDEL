@@ -1581,9 +1581,18 @@ class MaserDiskModel(ModelBase):
             ll_disk = jnp.sum(ll_per_spot)
 
         else:
+            # Sample in log-r for better NUTS geometry, but retain
+            # uniform prior on r_ang via Jacobian: p(r) = const →
+            # p(log r) ∝ r → factor(log r) corrects uniform-in-log to
+            # uniform-in-r.
+            log_r_lo = jnp.log(self._r_ang_lo)
+            log_r_hi = jnp.log(self._r_ang_hi)
             with plate("spots", self.n_spots):
-                r_spots = sample(
-                    "r_ang", Uniform(self._r_ang_lo, self._r_ang_hi))
+                log_r = sample(
+                    "log_r_ang", Uniform(log_r_lo, log_r_hi))
+            r_spots = deterministic("r_ang", jnp.exp(log_r))
+            # Jacobian: uniform in r ↔ p(log r) ∝ r = exp(log r)
+            factor("ll_r_jacobian", jnp.sum(log_r))
 
             if self.adaptive_phi:
                 ll_per_spot = self._eval_adaptive_phi_mode1(
