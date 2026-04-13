@@ -312,10 +312,109 @@ if sampler == "nuts":
             init_strategy = init_to_median(num_samples=20)
             fprint("NUTS init: median")
     t0 = time.time()
-    kernel = NUTS(model, max_tree_depth=inf_cfg.get("max_tree_depth", 10),
-                  target_accept_prob=0.8,
-                  dense_mass=True if is_joint else False,
-                  init_strategy=init_strategy)
+    nuts_kernel = NUTS(model,
+                       max_tree_depth=inf_cfg.get("max_tree_depth", 10),
+                       target_accept_prob=0.8,
+                       dense_mass=True if is_joint else False,
+                       init_strategy=init_strategy)
+
+    # For Mode 1 (--sample-r) with adaptive phi: use HMCGibbs to
+    # decouple the 358 log_r_ang from the ~20 global params. NUTS
+    # handles globals; vectorized MH handles log_r_ang.
+    if args.sample_r and model.adaptive_phi:
+        from numpyro.infer import HMCGibbs
+
+        # Proposal width for log_r_ang MH: position-derived sigma
+        _sigma_pos = np.sqrt(np.asarray(model._all_sigma_x2)
+                             + np.asarray(model._all_sigma_y2))
+        # r_est from init
+        _r_est = np.exp(np.asarray(init_params.get(
+            "log_r_ang",
+            np.log(np.ones(model.n_spots) * 4.0))))
+        _mh_sigma = jnp.asarray(
+            np.clip(_sigma_pos / (_r_est + 1e-30), 0.0001, 0.1))
+        fprint(f"Gibbs MH sigma(log_r): [{float(_mh_sigma.min()):.5f}, "
+               f"{float(_mh_sigma.max()):.5f}]")
+
+        def gibbs_fn(rng_key, gibbs_sites, hmc_sites):
+            """Per-spot MH for log_r_ang conditioned on globals.
+
+            Each spot's r_ang is updated independently with a Gaussian
+            proposal in log-r. Accept/reject per spot using the
+            per-spot phi-marginalised logL from adaptive phi.
+            """
+            log_r_cur = gibbs_sites["log_r_ang"]
+            r_cur = jnp.exp(log_r_cur)
+
+            # Propose: Gaussian in log-r, per spot
+            key1, key2 = jax.random.split(rng_key)
+            log_r_prop = log_r_cur + _mh_sigma * jax.random.normal(
+                key1, shape=log_r_cur.shape)
+            log_r_lo = jnp.log(model._r_ang_lo)
+            log_r_hi = jnp.log(model._r_ang_hi)
+            log_r_prop = jnp.clip(log_r_prop, log_r_lo, log_r_hi)
+            r_prop = jnp.exp(log_r_prop)
+
+            # Extract global params from hmc_sites
+            D_c = hmc_sites["D_c"]
+            h = hmc_sites["H0"] / 100.0
+            z = model.distance2redshift(
+                jnp.atleast_1d(D_c), h=h).squeeze()
+            D_A = D_c / (1 + z)
+            eta = hmc_sites["eta"]
+            M_BH = 10.0**(eta + jnp.log10(D_A) - 7.0)
+            x0 = hmc_sites["x0"] * 1e-3
+            y0 = hmc_sites["y0"] * 1e-3
+            v_sys = model.v_sys_obs + hmc_sites["dv_sys"]
+            i0 = jnp.deg2rad(hmc_sites["i0"])
+            di_dr = jnp.deg2rad(hmc_sites["di_dr"])
+            Omega0 = jnp.deg2rad(hmc_sites["Omega0"])
+            dOmega_dr = jnp.deg2rad(hmc_sites["dOmega_dr"])
+            sx2 = (hmc_sites["sigma_x_floor"] * 1e-3)**2
+            sy2 = (hmc_sites["sigma_y_floor"] * 1e-3)**2
+            vvs = hmc_sites["sigma_v_sys"]**2
+            vvh = hmc_sites["sigma_v_hv"]**2
+            sa2 = hmc_sites["sigma_a_floor"]**2
+
+            ecc_kw = {}
+            if model.use_ecc:
+                ecc_kw["ecc"] = hmc_sites["ecc"]
+                ecc_kw["periapsis0"] = jnp.deg2rad(hmc_sites["periapsis"])
+                ecc_kw["dperiapsis_dr"] = jnp.deg2rad(
+                    hmc_sites["dperiapsis_dr"])
+            quad_kw = {}
+            if model.use_quadratic_warp:
+                quad_kw["d2i_dr2"] = jnp.deg2rad(hmc_sites["d2i_dr2"])
+                quad_kw["d2Omega_dr2"] = jnp.deg2rad(
+                    hmc_sites["d2Omega_dr2"])
+
+            common = (x0, y0, D_A, M_BH, v_sys,
+                      model._r_ang_ref, i0, di_dr, Omega0, dOmega_dr,
+                      sx2, sy2, vvs, vvh, sa2)
+
+            # Per-spot logL at current and proposed r
+            ll_cur = model._eval_adaptive_phi_mode1(
+                r_cur, *common, **ecc_kw, **quad_kw)
+            ll_prop = model._eval_adaptive_phi_mode1(
+                r_prop, *common, **ecc_kw, **quad_kw)
+
+            # Jacobian: uniform prior on r → factor(log_r)
+            ll_cur = ll_cur + log_r_cur
+            ll_prop = ll_prop + log_r_prop
+
+            # Per-spot accept/reject
+            log_alpha = ll_prop - ll_cur
+            u = jnp.log(jax.random.uniform(key2, shape=log_r_cur.shape))
+            accept = u < log_alpha
+            log_r_new = jnp.where(accept, log_r_prop, log_r_cur)
+            return {"log_r_ang": log_r_new}
+
+        kernel = HMCGibbs(nuts_kernel, gibbs_fn=gibbs_fn,
+                          gibbs_sites=["log_r_ang"])
+        fprint("Using HMCGibbs: NUTS(globals) + MH(log_r_ang)")
+    else:
+        kernel = nuts_kernel
+
     mcmc = MCMC(kernel, num_warmup=num_warmup, num_samples=num_samples,
                 num_chains=1, progress_bar=True)
     mcmc.run(random.PRNGKey(seed))
