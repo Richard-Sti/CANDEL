@@ -13,7 +13,7 @@
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PYTHON="$ROOT/venv_gpu_candel/bin/python"
 
-QUEUE="gpulong"
+QUEUE="optgpu"
 WARMUP=2000
 SAMPLES=2000
 while [[ $# -gt 0 ]]; do
