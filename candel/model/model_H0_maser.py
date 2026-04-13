@@ -35,7 +35,8 @@ from numpyro.distributions import Uniform
 
 from ..util import SPEED_OF_LIGHT, fprint, fsection, get_nested
 from .base_model import ModelBase
-from .integration import ln_trapz_precomputed, trapz_log_weights
+from .integration import (ln_trapz_precomputed, trapz_log_weights,
+                          simpson_log_weights)
 from .pv_utils import rsample
 from .utils import normal_logpdf_var
 
@@ -61,42 +62,55 @@ LOG_2PI = 1.8378770664093453  # jnp.log(2 * pi), precomputed
 # -----------------------------------------------------------------------
 
 
-def _build_phi_half_grid_hv(G_half=251, c_min=0.0001, c_max=0.9999,
-                            n_patch=8):
+def _build_phi_half_grid_hv(G=201, n_patch=8):
     """Arccos-spaced half-grid on [0, pi/2] for HV spots.
 
     Uniform in cos(phi) gives density proportional to sin(phi) — dense
     near phi=pi/2 where high-velocity masers sit (maximum LOS velocity),
     sparse near phi=0.  The sparse low-phi tail is patched with a short
     linear segment to avoid a coarse gap there.
+
+    G must be odd (for Simpson's rule).  n_patch must be even so the
+    patch–arccos junction sits on a Simpson panel boundary.
+    Setting c_min=0 makes the last point arccos(0) = pi/2 exactly,
+    avoiding the tiny spacing that an appended endpoint would create.
     """
-    c = _np.linspace(c_max, c_min, G_half)   # cos(phi): 1 -> 0
-    phi = _np.arccos(c)                        # phi: 0 -> pi/2
+    if G % 2 == 0:
+        G += 1
+    c = _np.linspace(0.9999, 0.0, G)      # cos(phi): ~1 -> 0
+    phi = _np.arccos(c)                     # phi: ~0 -> pi/2
     # Near phi=0 arccos is sparse; replace first n_patch with linear spacing
     phi_cut = phi[n_patch]
     phi[:n_patch] = _np.linspace(phi[0], phi_cut, n_patch + 2)[1:-1]
-    phi = _np.append(phi, _np.pi / 2)
     return phi
 
 
-def _build_phi_grid_sys(n_inner=31, inner_deg=5.0, n_wing=10):
-    """Two-zone grid on [-pi/2, pi/2] for systemic spots.
+def _build_phi_grid_sys(n_inner=201, inner_deg=30.0, n_wing=100,
+                        n_back_inner=101, n_back_wing=50):
+    """Two-cluster grid on [-pi, pi] for systemic spots.
 
-    Inner zone: arcsin-spaced on [-inner_deg, +inner_deg] (dense near phi=0
-    where systemic masers cluster).
-    Wings: linear from ±inner_deg to ±pi/2 (sparse coverage for outliers).
-    Total points: 2*n_wing + n_inner (includes ±pi/2 endpoints).
+    Front cluster (phi~0): arcsin-spaced, dense at phi=0.
+    Back cluster (phi~pi): arcsin-spaced, dense at phi=pi. Coarser than
+    front — only needed for spots with poorly constrained acceleration.
+    Linear wings connect the two clusters.
     """
     inner_rad = _np.deg2rad(inner_deg)
-    # Inner: arcsin spacing, dense at phi=0
-    s = _np.linspace(-0.999, 0.999, n_inner)
-    phi_inner = _np.arcsin(s) * (inner_rad / (_np.pi / 2))
 
-    # Wings: linear from inner boundary to ±pi/2
-    phi_lo = _np.linspace(-_np.pi / 2, -inner_rad, n_wing + 1)[:-1]
-    phi_hi = _np.linspace(inner_rad, _np.pi / 2, n_wing + 1)[1:]
+    def _cluster(center, n_in, n_w):
+        s = _np.linspace(-0.999, 0.999, n_in)
+        phi_in = center + _np.arcsin(s) * (inner_rad / (_np.pi / 2))
+        lo = _np.linspace(center - _np.pi / 2, center - inner_rad,
+                          n_w + 1)[:-1]
+        hi = _np.linspace(center + inner_rad, center + _np.pi / 2,
+                          n_w + 1)[1:]
+        return _np.concatenate([lo, phi_in, hi])
 
-    return _np.concatenate([phi_lo, phi_inner, phi_hi])
+    front = _cluster(0.0, n_inner, n_wing)
+    back = _cluster(_np.pi, n_back_inner, n_back_wing)
+    # Wrap back from [pi/2, 3pi/2] to [-pi, pi]
+    back = _np.where(back > _np.pi, back - 2 * _np.pi, back)
+
+    return _np.unique(_np.concatenate([front, back]))
 
 
 def _build_r_grid(r_min, r_max, n_r=101, scale=0.3):
@@ -342,6 +356,164 @@ def _chi2_3obs(x_obs, X, inv_var_x, y_obs, Y, inv_var_y,
 
 
 # -----------------------------------------------------------------------
+# Per-spot adaptive r-integration
+# -----------------------------------------------------------------------
+
+
+def _adaptive_r_integrate(
+        sin_phi, cos_phi,
+        x_d, y_d, v_d, a_d,
+        var_x, var_y, var_v, var_a, accel_w,
+        has_accel,
+        x0, y0, D_A, M_BH, v_sys,
+        r_ang_ref, i0, di_dr, Omega0, dOmega_dr,
+        d2i_dr2, d2Omega_dr2,
+        r_min, r_max, n_local, K_sigma,
+        ecc=None, periapsis0=None, dperiapsis_dr=0.0):
+    """Per-spot adaptive r-integration for one phi solution.
+
+    For each (spot, phi), finds the integrand peak in r via Fisher
+    information, builds a local trapezoidal grid, and integrates.
+    Supports circular and eccentric orbits.
+
+    Returns log_I of shape (N, n_phi).
+    """
+    eps = 1e-30
+    inv_vx = 1.0 / var_x
+    inv_vy = 1.0 / var_y
+    inv_vv = 1.0 / var_v
+
+    dx = (x_d - x0)[:, None]
+    dy = (y_d - y0)[:, None]
+    dv = (v_d - v_sys)[:, None]
+    dv2 = dv * dv + eps
+
+    sp = sin_phi[None, :]
+    cp = cos_phi[None, :]
+
+    # ---- Centering: iterative Fisher-optimal r_peak ----
+    def _center(si, ci, sO, cO):
+        fX = sp * sO - cp * cO * ci
+        fY = sp * cO + cp * sO * ci
+        b_pos = fX * fX * inv_vx[:, None] + fY * fY * inv_vy[:, None]
+        a_pos = dx * fX * inv_vx[:, None] + dy * fY * inv_vy[:, None]
+        r_pos = a_pos / (b_pos + eps)
+        b_pos = jnp.where(
+            (r_pos < r_min) | (r_pos > r_max), 0.0, b_pos)
+        r_pos = jnp.clip(r_pos, r_min, r_max)
+
+        r_vel = jnp.clip(
+            M_BH * (C_v * jnp.abs(sp) * si) ** 2 / (D_A * dv2),
+            r_min, r_max)
+        b_vel = dv2 / (4 * r_vel * r_vel + eps) * inv_vv[:, None]
+        b_vel = jnp.where(r_vel >= r_max * 0.99, 0.0, b_vel)
+
+        b_tot = b_pos + b_vel
+        r_c = jnp.where(
+            b_tot > eps,
+            (b_pos * r_pos + b_vel * r_vel) / (b_tot + eps),
+            r_vel)
+        return jnp.clip(r_c, r_min, r_max), b_pos, b_vel
+
+    i_ref, Om_ref = warp_geometry(
+        r_ang_ref, r_ang_ref, i0, di_dr, Omega0, dOmega_dr,
+        d2i_dr2, d2Omega_dr2)
+    r_c, b_pos, b_vel = _center(
+        jnp.sin(i_ref), jnp.cos(i_ref),
+        jnp.sin(Om_ref), jnp.cos(Om_ref))
+
+    for _ in range(3):
+        i_r, Om_r = warp_geometry(
+            r_c, r_ang_ref, i0, di_dr, Omega0, dOmega_dr,
+            d2i_dr2, d2Omega_dr2)
+        r_c, b_pos, b_vel = _center(
+            jnp.sin(i_r), jnp.cos(i_r),
+            jnp.sin(Om_r), jnp.cos(Om_r))
+
+    # Use the WIDER of position/velocity sigmas for grid width.
+    # Combined sigma is too tight — non-Gaussian tails of the weaker
+    # constraint extend beyond the combined Gaussian envelope.
+    b_min = (4.0 / (r_max - r_min)) ** 2
+    sigma_pos = 1.0 / jnp.sqrt(jnp.maximum(b_pos, b_min))
+    sigma_vel = 1.0 / jnp.sqrt(jnp.maximum(b_vel, b_min))
+    sigma_r = jnp.maximum(sigma_pos, sigma_vel)
+    sigma_r = jnp.minimum(sigma_r, (r_max - r_min) / 4)
+
+    # ---- Local grid: uniform (N, n_phi, n_local) ----
+    t = jnp.linspace(-K_sigma, K_sigma, n_local)
+    r_loc_raw = r_c[:, :, None] + sigma_r[:, :, None] * t[None, None, :]
+    # Mask out-of-range points instead of clipping to avoid boundary
+    # pile-up that biases the trapezoidal weights.
+    valid = (r_loc_raw >= r_min) & (r_loc_raw <= r_max)
+    r_loc = jnp.clip(r_loc_raw, r_min, r_max)
+
+    h = sigma_r * (2.0 * K_sigma / (n_local - 1))
+    w_end = jnp.ones(n_local).at[0].set(0.5).at[-1].set(0.5)
+    log_w = jnp.log(h)[:, :, None] + jnp.log(w_end)[None, None, :]
+
+    # ---- Observables at r_loc ----
+    i_r, Om_r = warp_geometry(
+        r_loc, r_ang_ref, i0, di_dr, Omega0, dOmega_dr,
+        d2i_dr2, d2Omega_dr2)
+    sin_i = jnp.sin(i_r)
+    cos_i = jnp.cos(i_r)
+    sin_O = jnp.sin(Om_r)
+    cos_O = jnp.cos(Om_r)
+
+    sp3 = sin_phi[None, :, None]
+    cp3 = cos_phi[None, :, None]
+
+    X = x0 + r_loc * (sp3 * sin_O - cp3 * cos_O * cos_i)
+    Y = y0 + r_loc * (sp3 * cos_O + cp3 * sin_O * cos_i)
+
+    rD = r_loc * D_A
+    v_kep = C_v * jnp.sqrt(M_BH / rD)
+
+    if ecc is not None:
+        omega_r = periapsis0 + dperiapsis_dr * (r_loc - r_ang_ref)
+        sin_om = jnp.sin(omega_r)
+        cos_om = jnp.cos(omega_r)
+        cos_f = cp3 * cos_om + sp3 * sin_om
+        ecc_fac = (sp3 + ecc * sin_om) / jnp.sqrt(1.0 + ecc * cos_f)
+        v_z = v_kep * ecc_fac * sin_i
+        beta_c2 = (v_kep / SPEED_OF_LIGHT) ** 2
+        beta_e2 = (beta_c2 * (1.0 + ecc ** 2 + 2.0 * ecc * cos_f)
+                   / (1.0 + ecc * cos_f))
+        gamma = 1.0 / jnp.sqrt(1.0 - beta_e2)
+    else:
+        v_z = v_kep * sp3 * sin_i
+        beta = v_kep / SPEED_OF_LIGHT
+        gamma = 1.0 / jnp.sqrt(1.0 - beta * beta)
+
+    zpg = 1.0 / jnp.sqrt(1.0 - C_g * M_BH / rD)
+    V = SPEED_OF_LIGHT * (
+        gamma * (1.0 + v_z / SPEED_OF_LIGHT) * zpg
+        * (1.0 + v_sys / SPEED_OF_LIGHT) - 1.0)
+
+    # ---- chi² ----
+    chi2 = ((x_d[:, None, None] - X) ** 2 * inv_vx[:, None, None]
+            + (y_d[:, None, None] - Y) ** 2 * inv_vy[:, None, None]
+            + (v_d[:, None, None] - V) ** 2 * inv_vv[:, None, None])
+
+    if has_accel:
+        A = C_a * M_BH / (r_loc ** 2 * D_A ** 2) * cp3 * sin_i
+        inv_va = 1.0 / var_a
+        chi2 = chi2 + ((a_d[:, None, None] - A) ** 2
+                       * inv_va[:, None, None] * accel_w[:, None, None])
+
+    # ---- lnorm + integrate ----
+    lnorm = -0.5 * (3 * LOG_2PI + jnp.log(var_x) + jnp.log(var_y)
+                     + jnp.log(var_v))
+    if has_accel:
+        lnorm = lnorm - 0.5 * (LOG_2PI + jnp.log(var_a)) * accel_w
+
+    log_f = lnorm[:, None, None] - 0.5 * chi2
+    # Mask out-of-range grid points so they don't contribute
+    log_f = jnp.where(valid, log_f, -jnp.inf)
+    return logsumexp(log_f + log_w, axis=-1)
+
+
+# -----------------------------------------------------------------------
 # Model classes
 # -----------------------------------------------------------------------
 
@@ -441,13 +613,23 @@ class MaserDiskModel(ModelBase):
         n_noa = sum(getattr(self, f"_n_{lb}_noa") for lb in _labels)
         fprint(f"accel split: {n_a} with, {n_noa} without.")
 
+        # All-spot arrays in original data order (for adaptive r grids)
+        self._all_x = jnp.asarray(data["x"])
+        self._all_y = jnp.asarray(data["y"])
+        self._all_sigma_x2 = jnp.asarray(data["sigma_x"])**2
+        self._all_sigma_y2 = jnp.asarray(data["sigma_y"])**2
+        self._all_v = jnp.asarray(self.velocity)
+        self._all_a = jnp.asarray(self.a)
+        self._all_sigma_a = jnp.asarray(self.sigma_a)
+        self._all_has_accel = jnp.asarray(accel_meas)
+
         # ---- Phi grids and precomputed trig ----
-        G_half = int(get_nested(self.config, "model/G_phi_half", 202))
-        n_inner_sys = int(get_nested(self.config, "model/n_inner_sys", 202))
+        G_half = int(get_nested(self.config, "model/G_phi_half", 201))
+        n_inner_sys = int(get_nested(self.config, "model/n_inner_sys", 201))
         inner_deg_sys = float(get_nested(
             self.config, "model/inner_deg_sys", 30.0))
         n_wing_sys = int(get_nested(self.config, "model/n_wing_sys", 100))
-        phi_half = _build_phi_half_grid_hv(G_half=G_half)
+        phi_half = _build_phi_half_grid_hv(G=G_half)
         phi_sys = _build_phi_grid_sys(n_inner=n_inner_sys,
                                       inner_deg=inner_deg_sys,
                                       n_wing=n_wing_sys)
@@ -477,7 +659,8 @@ class MaserDiskModel(ModelBase):
         self._sin_phi2_blue = -sin_half
         self._cos_phi2_blue = cos_half
 
-        self._log_w_phi_hv = jnp.asarray(trapz_log_weights(phi_half))
+        # Simpson's rule for HV (O(h^4)), trapezoidal for systemic
+        self._log_w_phi_hv = jnp.asarray(simpson_log_weights(phi_half))
         self._log_w_phi_sys = jnp.asarray(trapz_log_weights(phi_sys))
 
         use_ecc = get_nested(self.config, "model/use_ecc", False)
@@ -503,6 +686,8 @@ class MaserDiskModel(ModelBase):
         # ---- Radius grid setup (for Mode 2) ----
         self.marginalise_r = get_nested(
             self.config, "model/marginalise_r", False)
+        self._adaptive_r = get_nested(
+            self.config, "model/adaptive_r", False)
         if self.marginalise_r:
             self._R_phys_lo = float(get_nested(
                 self.config, "model/R_phys_lo", 0.01))
@@ -520,6 +705,13 @@ class MaserDiskModel(ModelBase):
             fprint(f"r grid: spot-aware sinh, logr_c={self._r_logr_c:.3f} "
                    f"(r={_np.exp(self._r_logr_c):.3f} mas), "
                    f"scale={self._r_scale:.3f}")
+            if self._adaptive_r:
+                self._n_r_local = int(get_nested(
+                    self.config, "model/n_r_local", 151))
+                self._K_sigma = float(get_nested(
+                    self.config, "model/K_sigma", 5.0))
+                fprint(f"adaptive r: {self._n_r_local} local points, "
+                       f"K={self._K_sigma}")
 
         # ---- Selection function grid ----
         D_min = float(get_nested(self.config, "model/priors/D/low", 10.0))
@@ -573,7 +765,12 @@ class MaserDiskModel(ModelBase):
             fprint(f"r_ang grid (at D_A_est): "
                    f"[{r_lo_est:.4f}, {r_hi_est:.4f}] mas")
 
-        mode = "r+phi" if self.marginalise_r else "phi only"
+        if self._adaptive_r and self.marginalise_r:
+            mode = "r+phi (adaptive)"
+        elif self.marginalise_r:
+            mode = "r+phi"
+        else:
+            mode = "phi only"
         fprint(f"loaded {self.n_spots} maser spots "
                f"({self._n_sys} systemic, {self._n_red} red, "
                f"{self._n_blue} blue).")
@@ -737,8 +934,15 @@ class MaserDiskModel(ModelBase):
 
         # Combined phi[+r] weights for fused 2D logsumexp in Mode 2.
         if log_w_r is not None:
-            log_w_2d_sys = log_w_r[:, None] + self._log_w_phi_sys[None, :]
-            log_w_2d_hv = log_w_r[:, None] + self._log_w_phi_hv[None, :]
+            if log_w_r.ndim == 2:
+                # Per-spot weights: (N, n_r) -> (N, n_r, n_phi)
+                log_w_2d_sys = (log_w_r[:, :, None]
+                                + self._log_w_phi_sys[None, None, :])
+                log_w_2d_hv = (log_w_r[:, :, None]
+                               + self._log_w_phi_hv[None, None, :])
+            else:
+                log_w_2d_sys = log_w_r[:, None] + self._log_w_phi_sys[None, :]
+                log_w_2d_hv = log_w_r[:, None] + self._log_w_phi_hv[None, :]
 
         # ---- Systemic spots ----
         def _sys_block(idx_attr, log_w_r, log_w_2d,
@@ -775,7 +979,8 @@ class MaserDiskModel(ModelBase):
                                  sv_floor2)
                 ll = lnorm - 0.5 * chi2
             if log_w_r is not None:
-                return logsumexp(ll + log_w_2d, axis=(-2, -1))
+                w2d = log_w_2d[idx] if log_w_2d.ndim == 3 else log_w_2d
+                return logsumexp(ll + w2d, axis=(-2, -1))
             return ln_trapz_precomputed(ll, self._log_w_phi_sys, axis=-1)
 
         def _hv_block(idx_attr, sp1, cp1, sp2, cp2,
@@ -836,7 +1041,8 @@ class MaserDiskModel(ModelBase):
                 ll = (lnorm - 0.5 * chi2_v
                       + jnp.logaddexp(-0.5 * chi2_1, -0.5 * chi2_2))
             if log_w_r is not None:
-                return logsumexp(ll + log_w_2d, axis=(-2, -1))
+                w2d = log_w_2d[idx] if log_w_2d.ndim == 3 else log_w_2d
+                return logsumexp(ll + w2d, axis=(-2, -1))
             return ln_trapz_precomputed(ll, self._log_w_phi_hv, axis=-1)
 
         def _sys_block_ecc(idx_attr, log_w_r, log_w_2d,
@@ -873,7 +1079,8 @@ class MaserDiskModel(ModelBase):
                                  sv_floor2)
                 ll = lnorm - 0.5 * chi2
             if log_w_r is not None:
-                return logsumexp(ll + log_w_2d, axis=(-2, -1))
+                w2d = log_w_2d[idx] if log_w_2d.ndim == 3 else log_w_2d
+                return logsumexp(ll + w2d, axis=(-2, -1))
             return ln_trapz_precomputed(ll, self._log_w_phi_sys, axis=-1)
 
         def _hv_block_ecc(idx_attr, sp1, cp1, sp2, cp2,
@@ -923,7 +1130,8 @@ class MaserDiskModel(ModelBase):
                                  sv_floor2)
                 ll = lnorm + jnp.logaddexp(-0.5 * chi2_1, -0.5 * chi2_2)
             if log_w_r is not None:
-                return logsumexp(ll + log_w_2d, axis=(-2, -1))
+                w2d = log_w_2d[idx] if log_w_2d.ndim == 3 else log_w_2d
+                return logsumexp(ll + w2d, axis=(-2, -1))
             return ln_trapz_precomputed(ll, self._log_w_phi_hv, axis=-1)
 
         results = []
@@ -985,6 +1193,112 @@ class MaserDiskModel(ModelBase):
 
         # Concat + gather replaces .at[idx].set() scatter ops
         return jnp.concatenate(results, axis=0)[self._inv_order]
+
+    def _eval_adaptive_phi_r(self, x0, y0, D_A, M_BH, v_sys,
+                              r_ang_ref, i0, di_dr, Omega0, dOmega_dr,
+                              sigma_x_floor2, sigma_y_floor2,
+                              var_v_sys, var_v_hv,
+                              sigma_a_floor2,
+                              ecc=None, periapsis0=None,
+                              dperiapsis_dr=0.0,
+                              d2i_dr2=0.0, d2Omega_dr2=0.0):
+        """Per-spot adaptive r + phi integration.
+
+        Each spot gets a sinh-spaced r grid centered on its projected
+        radius, then delegates to _eval_marginal_phi for phi integration.
+        """
+        conv = D_A * PC_PER_MAS_MPC
+        r_min = self._R_phys_lo / conv
+        r_max = self._R_phys_hi / conv
+        n_local = self._n_r_local
+
+        # Per-spot r centering using the observable that best constrains
+        # r for each spot type:
+        #   HV:    velocity → r_vel = M*(C_v*sin_i)^2 / (D*dv^2)
+        #   sys+a: acceleration → r_acc = sqrt(C_a*M*sin_i / (D^2*|a|))
+        #   sys-a: median HV r_vel (fallback, broad peak)
+        sin_i = jnp.abs(jnp.sin(i0))
+        eps = 1e-30
+
+        # Velocity-based (assumes sin(phi)≈1 for HV)
+        dv = self._all_v - v_sys
+        r_vel = M_BH * (C_v * sin_i) ** 2 / (D_A * (dv ** 2 + eps))
+        r_vel = jnp.clip(r_vel, r_min, r_max)
+
+        # Acceleration-based (assumes cos(phi)≈1 for systemic)
+        r_acc = jnp.sqrt(
+            C_a * M_BH * sin_i / (D_A ** 2 * (jnp.abs(self._all_a) + eps)))
+        r_acc = jnp.clip(r_acc, r_min, r_max)
+
+        # Acceleration S/N: use total sigma (per-spot + floor)
+        sigma_a_total = jnp.sqrt(self._all_sigma_a**2 + sigma_a_floor2)
+        accel_snr = jnp.abs(self._all_a) / (sigma_a_total + eps)
+        # Only trust acceleration-based r if S/N >= 2
+        accel_good = self._all_has_accel & (accel_snr >= 2.0)
+
+        # Fallback for unconstrained spots: geometric midpoint of r range
+        # with large scale → nearly uniform grid in log-r. The centering
+        # location doesn't matter much because the large scale distributes
+        # points approximately uniformly across the full range.
+        logr_mid = 0.5 * (jnp.log(r_min) + jnp.log(r_max))
+        r_fallback = jnp.exp(logr_mid)
+        # scale = quarter of total log-range → density varies only ~2x
+        # from center to edge, effectively covering the full range
+        scale_broad = 0.25 * (jnp.log(r_max) - jnp.log(r_min))
+
+        # Assemble: HV→r_vel, sys+good_accel→r_acc, unconstrained→midpoint
+        r_est = jnp.where(
+            self.is_highvel, r_vel,
+            jnp.where(accel_good, r_acc, r_fallback))
+        r_est = jnp.clip(r_est, r_min * 1.01, r_max * 0.99)
+        logr_c = jnp.log(r_est)
+
+        # Per-spot scale in log-r:
+        #   HV:    from dr/dv: σ(log r) ≈ 2σ_v/|dv|, floor 0.05
+        #   sys+a: from dr/da: σ(log r) ≈ σ_a/(2|a|), floor 0.1
+        #   unconstrained: scale_broad (nearly uniform over full range)
+        sigma_v_eff = jnp.sqrt(var_v_hv)
+        sigma_a_eff = jnp.sqrt(sigma_a_floor2)
+        sigma_log_vel = 2.0 * sigma_v_eff / (jnp.abs(dv) + eps)
+        sigma_log_acc = sigma_a_eff / (2.0 * jnp.abs(self._all_a) + eps)
+        scale = jnp.where(
+            self.is_highvel,
+            jnp.maximum(sigma_log_vel, 0.05),
+            jnp.where(accel_good,
+                       jnp.maximum(sigma_log_acc, 0.1),
+                       scale_broad))
+
+        # Per-spot sinh grid in log-r space
+        logr_lo = jnp.log(r_min)
+        logr_hi = jnp.log(r_max)
+        t_lo = jnp.arcsinh((logr_lo - logr_c) / scale)
+        t_hi = jnp.arcsinh((logr_hi - logr_c) / scale)
+        u = jnp.linspace(0.0, 1.0, n_local)
+        t_grid = t_lo[:, None] + (t_hi - t_lo)[:, None] * u[None, :]
+        r_all = jnp.exp(logr_c[:, None] + jnp.sinh(t_grid) * scale[:, None])
+
+        # Per-spot trapezoidal weights (with floor to avoid log(0))
+        h = jnp.diff(r_all, axis=-1)
+        h_left = jnp.concatenate(
+            [jnp.zeros((self.n_spots, 1)), h], axis=-1)
+        h_right = jnp.concatenate(
+            [h, jnp.zeros((self.n_spots, 1))], axis=-1)
+        w = (h_left + h_right) / 2
+        log_w_r = jnp.log(jnp.maximum(w, 1e-30))
+
+        # Delegate to existing phi integration
+        ecc_kw = {}
+        if ecc is not None:
+            ecc_kw = dict(ecc=ecc, periapsis0=periapsis0,
+                          dperiapsis_dr=dperiapsis_dr)
+        return self._eval_marginal_phi(
+            r_all, x0, y0, D_A, M_BH, v_sys,
+            r_ang_ref, i0, di_dr, Omega0, dOmega_dr,
+            sigma_x_floor2, sigma_y_floor2,
+            var_v_sys, var_v_hv, sigma_a_floor2,
+            log_w_r=log_w_r,
+            d2i_dr2=d2i_dr2, d2Omega_dr2=d2Omega_dr2,
+            **ecc_kw)
 
     def _sample_galaxy(self, shared_params, h):
         """Sample all per-galaxy parameters and accumulate log-likelihood.
@@ -1078,14 +1392,17 @@ class MaserDiskModel(ModelBase):
                 sigma_a_floor2)
 
         if self.marginalise_r:
-            r_ang_grid = self.build_r_ang_grid(D_A)
-            log_w_r = trapz_log_weights(r_ang_grid)
-            r_all = jnp.broadcast_to(
-                r_ang_grid[None, :],
-                (self.n_spots, len(r_ang_grid)))
-
-            ll_per_spot = self._eval_marginal_phi(
-                r_all, *args, log_w_r=log_w_r, **ecc_kw, **quad_kw)
+            if self._adaptive_r:
+                ll_per_spot = self._eval_adaptive_phi_r(
+                    *args, **ecc_kw, **quad_kw)
+            else:
+                r_ang_grid = self.build_r_ang_grid(D_A)
+                log_w_r = trapz_log_weights(r_ang_grid)
+                r_all = jnp.broadcast_to(
+                    r_ang_grid[None, :],
+                    (self.n_spots, len(r_ang_grid)))
+                ll_per_spot = self._eval_marginal_phi(
+                    r_all, *args, log_w_r=log_w_r, **ecc_kw, **quad_kw)
             ll_disk = jnp.sum(ll_per_spot)
 
         else:
