@@ -698,7 +698,7 @@ class MaserDiskModel(ModelBase):
         self.adaptive_phi = gal_cfg.get("adaptive_phi", False)
         if self.adaptive_phi:
             self._n_phi_adaptive = int(get_nested(
-                self.config, "model/n_phi_adaptive", 501))
+                self.config, "model/n_phi_adaptive", 1001))
             self._K_sigma_phi = float(get_nested(
                 self.config, "model/K_sigma_phi", 20.0))
             fprint(f"adaptive_phi = True, n_phi={self._n_phi_adaptive}, "
