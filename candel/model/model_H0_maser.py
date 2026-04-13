@@ -622,6 +622,26 @@ class MaserDiskModel(ModelBase):
         self._all_a = jnp.asarray(self.a)
         self._all_sigma_a = jnp.asarray(self.sigma_a)
         self._all_has_accel = jnp.asarray(accel_meas)
+        self._all_sigma_a2 = self._all_sigma_a**2
+
+        # Per-spot velocity variance and acceleration weight (for adaptive phi)
+        all_sigma_v2 = _np.zeros(self.n_spots)
+        all_accel_w = _np.zeros(self.n_spots)
+        for prefix in ("sys", "red", "blue"):
+            for suffix in ("_a", "_noa"):
+                attr = f"_idx_{prefix}{suffix}"
+                if not hasattr(self, attr):
+                    continue
+                idx = getattr(self, attr)
+                if len(idx) == 0:
+                    continue
+                all_sigma_v2[_np.asarray(idx)] = _np.asarray(
+                    getattr(self, f"_sigma_v2_{prefix}{suffix}"))
+                if suffix == "_a":
+                    all_accel_w[_np.asarray(idx)] = _np.asarray(
+                        getattr(self, f"_accel_w_{prefix}_a"))
+        self._all_sigma_v2 = jnp.asarray(all_sigma_v2)
+        self._all_accel_w = jnp.asarray(all_accel_w)
 
         # ---- Phi grids and precomputed trig ----
         G_half = int(get_nested(self.config, "model/G_phi_half", 201))
@@ -674,6 +694,16 @@ class MaserDiskModel(ModelBase):
             "use_quadratic_warp", use_qw)
         fprint(f"use_ecc = {self.use_ecc}")
         fprint(f"use_quadratic_warp = {self.use_quadratic_warp}")
+
+        self.adaptive_phi = gal_cfg.get("adaptive_phi", False)
+        if self.adaptive_phi:
+            self._n_phi_adaptive = int(get_nested(
+                self.config, "model/n_phi_adaptive", 51))
+            self._K_sigma_phi = float(get_nested(
+                self.config, "model/K_sigma_phi", 5.0))
+            fprint(f"adaptive_phi = True, n_phi={self._n_phi_adaptive}, "
+                   f"K_sigma={self._K_sigma_phi}")
+        fprint(f"adaptive_phi = {self.adaptive_phi}")
 
         # Inverse permutation for concat+gather (replaces .at[idx].set).
         # Order: sys_a, sys_noa, red_a, red_noa, blue_a, blue_noa
@@ -1300,6 +1330,145 @@ class MaserDiskModel(ModelBase):
             d2i_dr2=d2i_dr2, d2Omega_dr2=d2Omega_dr2,
             **ecc_kw)
 
+    def _eval_adaptive_phi_mode1(
+            self, r_ang, x0, y0, D_A, M_BH, v_sys,
+            r_ang_ref, i0, di_dr, Omega0, dOmega_dr,
+            sigma_x_floor2, sigma_y_floor2,
+            var_v_sys, var_v_hv, sigma_a_floor2,
+            ecc=None, periapsis0=None, dperiapsis_dr=0.0,
+            d2i_dr2=0.0, d2Omega_dr2=0.0):
+        """Mode 1 per-spot log-likelihood with adaptive phi grid.
+
+        At each spot's sampled r_ang, finds phi_peak via the 2x2 position
+        solve (exact when s*^2+c*^2=1 at the correct r), builds a local
+        sinh-spaced phi grid, and integrates numerically.
+
+        Parameters
+        ----------
+        r_ang : (N,) sampled angular radii per spot
+
+        Returns
+        -------
+        (N,) per-spot phi-marginalised log-likelihood
+        """
+        eps = 1e-30
+        n_phi = self._n_phi_adaptive
+        K = self._K_sigma_phi
+        N = r_ang.shape[0]
+
+        # Warp at each spot's sampled r
+        i_r, Om_r = warp_geometry(
+            r_ang, r_ang_ref, i0, di_dr, Omega0, dOmega_dr,
+            d2i_dr2, d2Omega_dr2)
+        sin_i = jnp.sin(i_r)
+        cos_i = jnp.cos(i_r)
+        sin_O = jnp.sin(Om_r)
+        cos_O = jnp.cos(Om_r)
+
+        # Position coefficients: (N,)
+        a1 = sin_O
+        a2 = -cos_O * cos_i
+        b1 = cos_O
+        b2 = sin_O * cos_i
+        det = a1 * b2 - a2 * b1  # cos(i(r))
+
+        # 2x2 solve for phi* at each spot's r
+        dx = self._all_x - x0
+        dy = self._all_y - y0
+        rhs_x = dx / (r_ang + eps)
+        rhs_y = dy / (r_ang + eps)
+        safe_det = jnp.where(jnp.abs(det) > eps, det, eps)
+        s_star = (rhs_x * b2 - rhs_y * a2) / safe_det
+        c_star = (rhs_y * a1 - rhs_x * b1) / safe_det
+        phi_star = jnp.arctan2(s_star, c_star)
+
+        # sigma_phi from position Hessian
+        sf = jnp.sin(phi_star)
+        cf = jnp.cos(phi_star)
+        dXdphi = r_ang * (a1 * cf - a2 * sf)
+        dYdphi = r_ang * (b1 * cf - b2 * sf)
+        var_x = self._all_sigma_x2 + sigma_x_floor2
+        var_y = self._all_sigma_y2 + sigma_y_floor2
+        H = dXdphi**2 / var_x + dYdphi**2 / var_y
+        sigma_phi = jnp.clip(1.0 / jnp.sqrt(H + eps), 1e-6, jnp.pi / 2)
+
+        # Per-spot sinh grid: (N, n_phi)
+        u = jnp.linspace(0.0, 1.0, n_phi)
+        t_lo = jnp.arcsinh(-K * jnp.ones(N))
+        t_hi = jnp.arcsinh(K * jnp.ones(N))
+        t = t_lo[:, None] + (t_hi - t_lo)[:, None] * u[None, :]
+        phi_grid = phi_star[:, None] + jnp.sinh(t) * sigma_phi[:, None]
+
+        sin_phi = jnp.sin(phi_grid)
+        cos_phi = jnp.cos(phi_grid)
+
+        # Trapezoidal weights
+        h = jnp.diff(phi_grid, axis=-1)
+        h_l = jnp.concatenate([jnp.zeros((N, 1)), h], axis=-1)
+        h_r = jnp.concatenate([h, jnp.zeros((N, 1))], axis=-1)
+        log_w_phi = jnp.log(jnp.maximum((h_l + h_r) / 2, 1e-30))
+
+        # Observables at (r_ang[i], phi_grid[i, k])
+        r = r_ang[:, None]  # (N, 1)
+        si = sin_i[:, None]
+        ci = cos_i[:, None]
+        sO = sin_O[:, None]
+        cO = cos_O[:, None]
+
+        X = x0 + r * (sin_phi * sO - cos_phi * cO * ci)
+        Y = y0 + r * (sin_phi * cO + cos_phi * sO * ci)
+
+        rD = r * D_A
+        v_kep = C_v * jnp.sqrt(M_BH / rD)
+        beta = v_kep / SPEED_OF_LIGHT
+        gamma = 1.0 / jnp.sqrt(1.0 - beta * beta)
+        zpg = 1.0 / jnp.sqrt(1.0 - C_g * M_BH / rD)
+
+        if ecc is not None:
+            omega_r = periapsis0 + dperiapsis_dr * (r_ang - r_ang_ref)
+            sw = jnp.sin(omega_r)[:, None]
+            cw = jnp.cos(omega_r)[:, None]
+            cos_f = cos_phi * cw + sin_phi * sw
+            ecc_fac = ((sin_phi + ecc * sw)
+                       / jnp.sqrt(1.0 + ecc * cos_f))
+            v_z = v_kep * ecc_fac * si
+            beta_c2 = (v_kep / SPEED_OF_LIGHT)**2
+            beta_e2 = (beta_c2 * (1.0 + ecc**2 + 2.0 * ecc * cos_f)
+                       / (1.0 + ecc * cos_f))
+            gamma = 1.0 / jnp.sqrt(1.0 - beta_e2)
+        else:
+            v_z = v_kep * sin_phi * si
+
+        V = SPEED_OF_LIGHT * (
+            gamma * (1.0 + v_z / SPEED_OF_LIGHT) * zpg
+            * (1.0 + v_sys / SPEED_OF_LIGHT) - 1.0)
+
+        # Per-spot variances broadcast to (N, n_phi)
+        var_v = self._all_sigma_v2 + jnp.where(
+            self.is_highvel, var_v_hv, var_v_sys)
+
+        chi2 = ((self._all_x[:, None] - X)**2 / var_x[:, None]
+                + (self._all_y[:, None] - Y)**2 / var_y[:, None]
+                + (self._all_v[:, None] - V)**2 / var_v[:, None])
+
+        # Acceleration
+        A = C_a * M_BH / (r**2 * D_A**2) * cos_phi * si
+        var_a = self._all_sigma_a2 + sigma_a_floor2
+        chi2_a = ((self._all_a[:, None] - A)**2
+                  / var_a[:, None]
+                  * self._all_accel_w[:, None])
+        chi2 = chi2 + chi2_a * self._all_has_accel[:, None]
+
+        # Log-normalization
+        lnorm = -0.5 * (3 * LOG_2PI + jnp.log(var_x)
+                         + jnp.log(var_y) + jnp.log(var_v))
+        lnorm_a = (-0.5 * (LOG_2PI + jnp.log(var_a))
+                   * self._all_accel_w
+                   * self._all_has_accel)
+
+        ll = lnorm[:, None] + lnorm_a[:, None] - 0.5 * chi2
+        return logsumexp(ll + log_w_phi, axis=-1)
+
     def _sample_galaxy(self, shared_params, h):
         """Sample all per-galaxy parameters and accumulate log-likelihood.
 
@@ -1391,6 +1560,12 @@ class MaserDiskModel(ModelBase):
                 sigma_x_floor2, sigma_y_floor2, var_v_sys, var_v_hv,
                 sigma_a_floor2)
 
+        if self.adaptive_phi and self.marginalise_r:
+            raise ValueError(
+                "adaptive_phi=True requires Mode 1 (marginalise_r=False). "
+                "NGC4258's tight position constraints need per-spot r "
+                "sampling with adaptive phi marginalization.")
+
         if self.marginalise_r:
             if self._adaptive_r:
                 ll_per_spot = self._eval_adaptive_phi_r(
@@ -1410,8 +1585,12 @@ class MaserDiskModel(ModelBase):
                 r_spots = sample(
                     "r_ang", Uniform(self._r_ang_lo, self._r_ang_hi))
 
-            ll_per_spot = self._eval_marginal_phi(
-                r_spots, *args, **ecc_kw, **quad_kw)
+            if self.adaptive_phi:
+                ll_per_spot = self._eval_adaptive_phi_mode1(
+                    r_spots, *args, **ecc_kw, **quad_kw)
+            else:
+                ll_per_spot = self._eval_marginal_phi(
+                    r_spots, *args, **ecc_kw, **quad_kw)
             ll_disk = jnp.sum(ll_per_spot)
 
         factor("ll_disk", ll_disk)

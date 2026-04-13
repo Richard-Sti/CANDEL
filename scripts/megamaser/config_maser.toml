@@ -243,25 +243,33 @@ D_lo = 4.0
 D_hi = 10.0
 use_ecc = true
 use_quadratic_warp = true
+adaptive_phi = true
 r_ang_ref = 6.1  # Reid+2019: average maser radius
 # D_ref = 7.58, e_D_ref = 0.11 (Reid+2019)
 
+# Reid+2019 (1908.05625) Table 2 best-fit values.
+# Geometry evaluated at r_ang_ref = 6.1 mas.
 [model.galaxies."NGC4258".init]
-H0 = 114.80
-D_c = 5.982
+H0 = 73.0
+D_c = 7.593
 eta = 6.720
-x0 = -179.50
-y0 = 555.70
-i0 = 94.27
-Omega0 = 87.96
-dOmega_dr = 2.117
-di_dr = -2.073
-sigma_x_floor = 28.12
-sigma_y_floor = 1.929
-sigma_v_sys = 0.805
-sigma_v_hv = 4.959
-sigma_a_floor = 0.070
-dv_sys = -196.00
+x0 = -152.0
+y0 = 556.0
+i0 = 87.05
+di_dr = 2.59
+d2i_dr2 = 0.041
+Omega0 = 88.43
+dOmega_dr = 2.21
+d2Omega_dr2 = -0.13
+ecc = 0.007
+periapsis = 318.0
+dperiapsis_dr = 123.0
+sigma_x_floor = 1.6
+sigma_y_floor = 4.1
+sigma_v_sys = 0.31
+sigma_v_hv = 2.25
+sigma_a_floor = 0.46
+dv_sys = -193.7
 
 [model.galaxies."NGC5765b"]
 ra = 222.71461
