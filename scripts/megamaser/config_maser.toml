@@ -243,7 +243,8 @@ D_lo = 4.0
 D_hi = 10.0
 use_ecc = true
 use_quadratic_warp = true
-adaptive_phi = true
+phi_method = "bruteforce"
+n_phi_bruteforce = 30001
 r_ang_ref = 6.1  # Reid+2019: average maser radius
 # D_ref = 7.58, e_D_ref = 0.11 (Reid+2019)
 

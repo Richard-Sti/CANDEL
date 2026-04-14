@@ -701,15 +701,28 @@ class MaserDiskModel(ModelBase):
         fprint(f"use_ecc = {self.use_ecc}")
         fprint(f"use_quadratic_warp = {self.use_quadratic_warp}")
 
-        self.adaptive_phi = gal_cfg.get("adaptive_phi", False)
-        if self.adaptive_phi:
+        # Phi method: "default" (arccos/two-cluster grids),
+        # "adaptive" (per-spot sinh), "bruteforce" (uniform grid).
+        # Legacy: adaptive_phi=True maps to "adaptive".
+        legacy_adaptive = gal_cfg.get("adaptive_phi", False)
+        self.phi_method = gal_cfg.get(
+            "phi_method", "adaptive" if legacy_adaptive else "default")
+        if self.phi_method == "adaptive":
             self._n_phi_adaptive = int(get_nested(
                 self.config, "model/n_phi_adaptive", 1001))
             self._K_sigma_phi = float(get_nested(
                 self.config, "model/K_sigma_phi", 20.0))
-            fprint(f"adaptive_phi = True, n_phi={self._n_phi_adaptive}, "
+            fprint(f"phi_method = adaptive, n_phi={self._n_phi_adaptive}, "
                    f"K_sigma={self._K_sigma_phi}")
-        fprint(f"adaptive_phi = {self.adaptive_phi}")
+        elif self.phi_method == "bruteforce":
+            self._n_phi_bruteforce = int(gal_cfg.get(
+                "n_phi_bruteforce", 30001))
+            fprint(f"phi_method = bruteforce, "
+                   f"n_phi={self._n_phi_bruteforce}")
+        else:
+            fprint(f"phi_method = default")
+        # Backward compat
+        self.adaptive_phi = self.phi_method == "adaptive"
 
         # Inverse permutation for concat+gather (replaces .at[idx].set).
         # Order: sys_a, sys_noa, red_a, red_noa, blue_a, blue_noa
@@ -1340,6 +1353,36 @@ class MaserDiskModel(ModelBase):
             d2i_dr2=d2i_dr2, d2Omega_dr2=d2Omega_dr2,
             **ecc_kw)
 
+    def _eval_bruteforce_phi(self, r_ang, x0, y0, D_A, M_BH, v_sys,
+                             r_ang_ref, i0, di_dr, Omega0, dOmega_dr,
+                             sigma_x_floor2, sigma_y_floor2,
+                             var_v_sys, var_v_hv, sigma_a_floor2,
+                             d2i_dr2=0.0, d2Omega_dr2=0.0):
+        """Mode 1 phi-marginal via uniform brute-force grid.
+
+        Integrates over phi on a uniform [0, 2pi] grid using the core
+        _phi_integrand. No specialized grids or adaptive centering.
+
+        Parameters
+        ----------
+        r_ang : (N,) sampled angular radii per spot
+
+        Returns
+        -------
+        (N,) per-spot phi-marginalised log-likelihood
+        """
+        n_phi = self._n_phi_bruteforce
+        phi = jnp.linspace(0.0, 2 * jnp.pi, n_phi)
+        log_w = trapz_log_weights(phi)
+        ll = self._phi_integrand(
+            r_ang, jnp.sin(phi), jnp.cos(phi),
+            x0, y0, D_A, M_BH, v_sys,
+            r_ang_ref, i0, di_dr, Omega0, dOmega_dr,
+            sigma_x_floor2, sigma_y_floor2,
+            var_v_sys, var_v_hv, sigma_a_floor2,
+            d2i_dr2=d2i_dr2, d2Omega_dr2=d2Omega_dr2)
+        return logsumexp(ll + log_w[None, :], axis=-1)
+
     def _phi_integrand(self, r_ang, sin_phi, cos_phi,
                        x0, y0, D_A, M_BH, v_sys,
                        r_ang_ref, i0, di_dr, Omega0, dOmega_dr,
@@ -1584,11 +1627,10 @@ class MaserDiskModel(ModelBase):
                 sigma_x_floor2, sigma_y_floor2, var_v_sys, var_v_hv,
                 sigma_a_floor2)
 
-        if self.adaptive_phi and self.marginalise_r:
+        if self.phi_method != "default" and self.marginalise_r:
             raise ValueError(
-                "adaptive_phi=True requires Mode 1 (marginalise_r=False). "
-                "NGC4258's tight position constraints need per-spot r "
-                "sampling with adaptive phi marginalization.")
+                f"phi_method='{self.phi_method}' requires Mode 1 "
+                f"(marginalise_r=False).")
 
         if self.marginalise_r:
             if self._adaptive_r:
@@ -1618,9 +1660,12 @@ class MaserDiskModel(ModelBase):
             # Jacobian: uniform in r ↔ p(log r) ∝ r = exp(log r)
             factor("ll_r_jacobian", jnp.sum(log_r))
 
-            if self.adaptive_phi:
+            if self.phi_method == "adaptive":
                 ll_per_spot = self._eval_adaptive_phi_mode1(
                     r_spots, *args, **ecc_kw, **quad_kw)
+            elif self.phi_method == "bruteforce":
+                ll_per_spot = self._eval_bruteforce_phi(
+                    r_spots, *args, **quad_kw)
             else:
                 ll_per_spot = self._eval_marginal_phi(
                     r_spots, *args, **ecc_kw, **quad_kw)
