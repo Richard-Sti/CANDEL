@@ -29,16 +29,16 @@ DEFAULT_TRUE_PARAMS = {
     "D_c": 90.0,            # Mpc (comoving distance)
     "M_BH": 2.42e7,         # solar masses
     "dv_sys": -50.0,         # km/s (systemic velocity offset)
-    "x0": 0.0013,           # mas
-    "y0": 0.0075,           # mas
+    "x0": 1.3,              # μas
+    "y0": 7.5,              # μas
     "i0": 90.8,             # degrees
     "Omega0": 99.6,         # degrees
     "dOmega_dr": 2.0,       # degrees/mas
     "di_dr": 0.0,           # degrees/mas (no inclination warp)
     "r_ang_lo": 0.23,       # mas (~0.1 pc at D_A ~ 88 Mpc)
     "r_ang_hi": 2.34,       # mas (~1.0 pc at D_A ~ 88 Mpc)
-    "sigma_x_floor": 0.002,       # mas
-    "sigma_y_floor": 0.017,       # mas
+    "sigma_x_floor": 2.0,         # μas
+    "sigma_y_floor": 17.0,        # μas
     "sigma_v_sys": 4.8,           # km/s
     "sigma_v_hv": 4.3,            # km/s
     "sigma_a_floor": 0.43,         # km/s/yr

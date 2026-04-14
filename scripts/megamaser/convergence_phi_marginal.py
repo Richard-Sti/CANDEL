@@ -29,8 +29,8 @@ CONFIG_PATH = "scripts/megamaser/config_maser.toml"
 ALL_GALAXIES = ["NGC5765b", "UGC3789", "CGCG074-064", "NGC6264", "NGC6323",
                 "NGC4258"]
 
-N_PHI_REF = 100001
-N_PHI_TEST = [101, 201, 501, 1001, 5001, 10001, 50001]
+N_PHI_REF = 200001
+N_PHI_TEST = [101, 201, 501, 1001, 5001, 10001, 50001, 100001]
 R_SCALES = [0.5, 1.0, 2.0]
 
 
@@ -67,8 +67,8 @@ def extract_phys(galaxy, galaxies_cfg, model):
         jnp.atleast_1d(D_c), h=h).squeeze())
     D_A = D_c / (1.0 + z_cosmo)
     M_BH = 10.0**(eta + np.log10(D_A) - 7.0)
-    x0 = float(init["x0"]) * 1e-3
-    y0 = float(init["y0"]) * 1e-3
+    x0 = float(init["x0"])
+    y0 = float(init["y0"])
     v_sys = model.v_sys_obs + float(init.get("dv_sys", 0.0))
     return dict(
         D_A=D_A, M_BH=M_BH, x0=x0, y0=y0, v_sys=v_sys,
@@ -76,8 +76,8 @@ def extract_phys(galaxy, galaxies_cfg, model):
         di_dr=np.deg2rad(float(init["di_dr"])),
         Omega0=np.deg2rad(float(init["Omega0"])),
         dOmega_dr=np.deg2rad(float(init["dOmega_dr"])),
-        sigma_x_floor2=(float(init["sigma_x_floor"]) * 1e-3) ** 2,
-        sigma_y_floor2=(float(init["sigma_y_floor"]) * 1e-3) ** 2,
+        sigma_x_floor2=float(init["sigma_x_floor"]) ** 2,
+        sigma_y_floor2=float(init["sigma_y_floor"]) ** 2,
         var_v_sys=float(init["sigma_v_sys"]) ** 2,
         var_v_hv=float(init["sigma_v_hv"]) ** 2,
         sigma_a_floor2=float(init["sigma_a_floor"]) ** 2)
@@ -140,22 +140,29 @@ def eval_phi_ll(model, phys, r_ang, n_phi):
 # -----------------------------------------------------------------------
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--galaxies", nargs="+", default=ALL_GALAXIES)
+    parser.add_argument("--float64", action="store_true",
+                        help="Use float64 precision (default: float32)")
+    args = parser.parse_args()
+
     jax.config.update("jax_platform_name", "gpu")
-    print(f"JAX platform: {jax.default_backend()}", flush=True)
+    if args.float64:
+        jax.config.update("jax_enable_x64", True)
+    dtype = "float64" if args.float64 else "float32"
+    print(f"JAX platform: {jax.default_backend()}, dtype: {dtype}",
+          flush=True)
 
     with open(CONFIG_PATH, "rb") as f:
         master_cfg = tomli.load(f)
     galaxies_cfg = master_cfg["model"]["galaxies"]
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--galaxies", nargs="+", default=ALL_GALAXIES)
-    args = parser.parse_args()
 
     print("=" * 70)
     print("Phi-marginal convergence (uniform brute-force grids)")
     print(f"Reference: {N_PHI_REF} points on [0, 2π]")
     print(f"Test grids: {N_PHI_TEST}")
     print(f"r_ang scales: {R_SCALES}")
+    print(f"Precision: {dtype}")
     print("=" * 70)
 
     n_fail = 0
@@ -175,6 +182,8 @@ def main():
             print(f"\n  r_ang scale = {scale:.1f}x  "
                   f"(median = {float(jnp.median(r_ang)):.4f} mas)")
 
+            print(f"  Reference: n_phi={N_PHI_REF}, "
+                  f"test: {N_PHI_TEST}")
             ll_ref = eval_phi_ll(model, phys, r_ang, N_PHI_REF)
             print(f"  Reference logL = {ll_ref:.4f}")
 

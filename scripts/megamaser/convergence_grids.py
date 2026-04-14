@@ -38,7 +38,8 @@ ALL_GALAXIES = ["NGC5765b", "UGC3789", "CGCG074-064", "NGC6264", "NGC6323"]
 # Reference grid
 N_R_REF = 20001
 N_PHI_REF = 20001
-BATCH_SIZE = 4
+BATCH_SIZE_F32 = 4
+BATCH_SIZE_F64 = 1
 
 
 # -----------------------------------------------------------------------
@@ -141,8 +142,8 @@ def extract_phys(galaxy, galaxies_cfg, model):
         jnp.atleast_1d(D_c), h=h).squeeze())
     D_A = D_c / (1.0 + z_cosmo)
     M_BH = 10.0**(eta + np.log10(D_A) - 7.0)
-    x0 = float(init["x0"]) * 1e-3
-    y0 = float(init["y0"]) * 1e-3
+    x0 = float(init["x0"])
+    y0 = float(init["y0"])
     v_sys = model.v_sys_obs + float(init.get("dv_sys", 0.0))
     return dict(
         D_A=D_A, M_BH=M_BH, x0=x0, y0=y0, v_sys=v_sys,
@@ -150,8 +151,8 @@ def extract_phys(galaxy, galaxies_cfg, model):
         di_dr=np.deg2rad(float(init["di_dr"])),
         Omega0=np.deg2rad(float(init["Omega0"])),
         dOmega_dr=np.deg2rad(float(init["dOmega_dr"])),
-        sigma_x_floor2=(float(init["sigma_x_floor"]) * 1e-3) ** 2,
-        sigma_y_floor2=(float(init["sigma_y_floor"]) * 1e-3) ** 2,
+        sigma_x_floor2=float(init["sigma_x_floor"]) ** 2,
+        sigma_y_floor2=float(init["sigma_y_floor"]) ** 2,
         var_v_sys=float(init["sigma_v_sys"]) ** 2,
         var_v_hv=float(init["sigma_v_hv"]) ** 2,
         sigma_a_floor2=float(init["sigma_a_floor"]) ** 2)
@@ -173,7 +174,8 @@ def _model_args(model, phys):
 # Evaluation functions
 # -----------------------------------------------------------------------
 
-def bruteforce_ll(model, phys, n_r=N_R_REF, n_phi=N_PHI_REF):
+def bruteforce_ll(model, phys, n_r=N_R_REF, n_phi=N_PHI_REF,
+                  batch_size=BATCH_SIZE_F32):
     """Reference logL via batched brute-force on uniform r × phi grid."""
     conv = phys["D_A"] * PC_PER_MAS_MPC
     r_min = model._R_phys_lo / conv
@@ -202,8 +204,8 @@ def bruteforce_ll(model, phys, n_r=N_R_REF, n_phi=N_PHI_REF):
         idx = np.where(mask)[0]
         if len(idx) == 0:
             continue
-        for start in range(0, len(idx), BATCH_SIZE):
-            b = idx[start:min(start + BATCH_SIZE, len(idx))]
+        for start in range(0, len(idx), batch_size):
+            b = idx[start:min(start + batch_size, len(idx))]
             ll_batch = _bruteforce_batch(
                 model._all_x[b], model._all_y[b], model._all_v[b],
                 var_x[b], var_y[b], var_v[b],
@@ -224,26 +226,35 @@ def adaptive_ll(model, phys):
 # -----------------------------------------------------------------------
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--galaxies", nargs="+", default=ALL_GALAXIES)
+    parser.add_argument("--float64", action="store_true",
+                        help="Use float64 precision (default: float32)")
+    args = parser.parse_args()
+
     jax.config.update("jax_platform_name", "gpu")
-    print(f"JAX platform: {jax.default_backend()}", flush=True)
+    if args.float64:
+        jax.config.update("jax_enable_x64", True)
+    dtype = "float64" if args.float64 else "float32"
+    print(f"JAX platform: {jax.default_backend()}, dtype: {dtype}",
+          flush=True)
 
     with open(CONFIG_PATH, "rb") as f:
         master_cfg = tomli.load(f)
     galaxies_cfg = master_cfg["model"]["galaxies"]
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--galaxies", nargs="+", default=ALL_GALAXIES)
-    args = parser.parse_args()
 
     if "NGC4258" in args.galaxies:
         raise ValueError(
             "NGC4258 is not supported by this script. Its position errors "
             "are too small for the 20001² reference grid.")
 
+    batch_size = BATCH_SIZE_F64 if args.float64 else BATCH_SIZE_F32
+
     print("=" * 70)
     print("Grid convergence benchmark")
     print(f"Reference: {N_R_REF} r (log-uniform) × {N_PHI_REF} phi (uniform)")
-    print(f"Batch size: {BATCH_SIZE} spots")
+    print(f"Batch size: {batch_size} spots")
+    print(f"Precision: {dtype}")
     print("=" * 70)
 
     n_fail = 0
@@ -258,7 +269,7 @@ def main():
 
         # ---- Reference ----
         print("  Computing brute-force reference...", flush=True)
-        ll_ref = bruteforce_ll(model0, phys)
+        ll_ref = bruteforce_ll(model0, phys, batch_size=batch_size)
         print(f"  Reference logL = {ll_ref:.4f}")
 
         # ---- Adaptive r at default phi ----
