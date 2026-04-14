@@ -297,7 +297,7 @@ See `notes_phi_integration.md` and `notes_n4258_phi_plan.md` for reasoning.
 - Per-galaxy `marginalise_r` override (NGC4258=false).
 - Seeded k-means (seed=42) for reproducible spot classification.
 - Grid defaults: n_r_local=201, G_phi_half=251, adaptive_r=True.
-- See `instructions/maser_numerical_accuracy.md` for full convergence tables.
+- See `docs/maser_numerical_accuracy.md` for full convergence tables.
 
 ### Next steps
 1. **NGC4258 Mode 1 NUTS**: test with Reid+2019 init, check D_A ~ 7.58 Mpc.

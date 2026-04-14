@@ -86,7 +86,7 @@ addqueue -q cmbgpu -s -m 16 --gpus 1 \
 
 ## Grid sizes and numerical accuracy
 
-See [`instructions/maser_numerical_accuracy.md`](maser_numerical_accuracy.md)
+See [`docs/maser_numerical_accuracy.md`](../docs/maser_numerical_accuracy.md)
 for full convergence test results and the φ-integrand analysis.
 
 **Mode 2 defaults** (MCP galaxies: NGC5765b, UGC3789, CGCG074-064,

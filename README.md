@@ -49,7 +49,7 @@ CANDEL includes a warped Keplerian disk model (`MaserDiskModel`) for fitting VLB
 
 Supported galaxies: NGC 5765b, NGC 6264, NGC 6323, UGC 3789, CGCG 074-064, NGC 4258. In addition to the full disk model, CANDEL can also use published distance posteriors directly (e.g. from Pesce+2020) via `MegamaserModel` for a simpler analysis that bypasses spot-level fitting.
 
-For grid convergence tests and numerical accuracy details, see [`instructions/maser_numerical_accuracy.md`](instructions/maser_numerical_accuracy.md). For running maser disk inference jobs, see [`instructions/maser_disk_jobs.md`](instructions/maser_disk_jobs.md).
+For grid convergence tests and numerical accuracy details, see [`docs/maser_numerical_accuracy.md`](docs/maser_numerical_accuracy.md). For running maser disk inference jobs, see [`instructions/maser_disk_jobs.md`](instructions/maser_disk_jobs.md).
 
 ## Package structure
 
