@@ -734,6 +734,7 @@ class MaserDiskModel(ModelBase):
             # scale from data spread with conservative floor of 0.3.
             r_proj = _np.sqrt(
                 _np.asarray(data["x"])**2 + _np.asarray(data["y"])**2)
+            r_proj = r_proj / 1e3  # μas → mas
             r_proj = r_proj[r_proj > 1e-3]
             self._r_logr_c = float(_np.median(_np.log(r_proj)))
             self._r_scale = float(
@@ -768,9 +769,9 @@ class MaserDiskModel(ModelBase):
             fprint(f"warp pivot r_ang_ref = {self._r_ang_ref:.3f} mas "
                    f"(from config)")
         else:
-            x_hv = _np.asarray(data["x"])[is_hv_np]
+            x_hv = _np.asarray(data["x"])[is_hv_np]  # μas
             y_hv = _np.asarray(data["y"])[is_hv_np]
-            r_ang_hv = _np.sqrt(x_hv**2 + y_hv**2)
+            r_ang_hv = _np.sqrt(x_hv**2 + y_hv**2) / 1e3  # μas → mas
             self._r_ang_ref = float(_np.median(r_ang_hv))
             fprint(f"warp pivot r_ang_ref = {self._r_ang_ref:.3f} mas "
                    f"(median projected radius of {len(r_ang_hv)} HV spots)")
