@@ -42,8 +42,8 @@ DEFAULT_TRUE_PARAMS = {
     "sigma_v_sys": 4.8,           # km/s
     "sigma_v_hv": 4.3,            # km/s
     "sigma_a_floor": 0.43,         # km/s/yr
-    "sigma_x": 0.05,             # mas (per-spot measurement)
-    "sigma_y": 0.05,             # mas (per-spot measurement)
+    "sigma_x": 50.0,             # μas (per-spot measurement)
+    "sigma_y": 50.0,             # μas (per-spot measurement)
     "sigma_v": 1.0,              # km/s (per-spot velocity measurement)
     "sigma_a": 0.5,              # km/s/yr (per-spot measurement)
 }
@@ -228,7 +228,7 @@ def gen_maser_disk_mock(seed, true_params=None, n_spots=50, Om0=0.315,
         fprint(f"  systemic: {is_systemic.sum()}, "
                f"high-vel: {is_highvel.sum()}")
         fprint(f"  v range: [{v_obs.min():.0f}, {v_obs.max():.0f}] km/s")
-        fprint(f"  x range: [{x_obs.min():.4f}, {x_obs.max():.4f}] mas")
-        fprint(f"  y range: [{y_obs.min():.4f}, {y_obs.max():.4f}] mas")
+        fprint(f"  x range: [{x_obs.min():.1f}, {x_obs.max():.1f}] μas")
+        fprint(f"  y range: [{y_obs.min():.1f}, {y_obs.max():.1f}] μas")
 
     return data, true_params_expanded
