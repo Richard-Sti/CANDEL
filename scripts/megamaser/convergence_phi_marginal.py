@@ -132,10 +132,7 @@ def eval_phi_ll(model, phys, r_ang, n_phi):
 
     ll = model._phi_integrand(
         r_ang, sin_phi, cos_phi, *_model_args(model, phys))
-    # Per-spot logsumexp + cross-spot sum in float64 for precision
-    per_spot = logsumexp(
-        (ll + log_w[None, :]).astype(jnp.float64), axis=-1)
-    return float(jnp.sum(per_spot))
+    return float(jnp.sum(logsumexp(ll + log_w[None, :], axis=-1)))
 
 
 # -----------------------------------------------------------------------
@@ -150,7 +147,7 @@ def main():
     args = parser.parse_args()
 
     jax.config.update("jax_platform_name", "gpu")
-    # x64 always needed: _phi_integrand uses float64 for position residuals
+    # x64 needed: _phi_integrand uses float64 for position residuals
     jax.config.update("jax_enable_x64", True)
     dtype = "float64" if args.float64 else "float32 (mixed)"
     print(f"JAX platform: {jax.default_backend()}, dtype: {dtype}",

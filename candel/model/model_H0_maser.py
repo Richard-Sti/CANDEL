@@ -1385,7 +1385,7 @@ class MaserDiskModel(ModelBase):
         var_a = self._all_sigma_a2 + sigma_a_floor2
 
         # Position residuals in float64 to avoid catastrophic cancellation
-        # for NGC4258 (x~4000 μas, σ_x~3 μas → subtraction loses digits).
+        # (NGC4258: x~4000 μas, σ_x~3 μas → 4 sig. digits in float32).
         f64 = jnp.float64
         dx = self._all_x[:, None].astype(f64) - X.astype(f64)
         dy = self._all_y[:, None].astype(f64) - Y.astype(f64)
