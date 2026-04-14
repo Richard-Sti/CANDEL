@@ -90,8 +90,12 @@ Reference: 200001 uniform points on [0, 2π].
 | 1.0× | −4306 | −42 | −0.27 | ~0 | 0.00 |
 | 2.0× | −7996 | −129 | −3.4 | ~0 | 0.00 |
 
-**Production setting:** `n_phi_bruteforce = 30001`. At the physical
-r_ang, this is within ~0.3 nats of the 200001-point reference.
+**Production setting:** per-type grids with restricted φ ranges:
+systemic n=50001 on [-90°, 90°] (max|Δ|=0.00004),
+red n=30001 on [0°, 180°] (exact),
+blue n=20001 on [180°, 360°] (exact).
+The trapezoidal rule converges exponentially for these Gaussian-like
+integrands, so even the systemic grid is well into the converged regime.
 
 ## Why the φ peak narrows away from the correct r
 
@@ -121,8 +125,9 @@ spot data. Callers differ only in their grid choice and integration:
 - **`_eval_marginal_phi`** (Mode 2, MCP galaxies): optimised HV reflection
   symmetry, arccos grids for HV spots, two-cluster grid for systemic spots.
   Simpson's rule for HV, trapezoidal for systemic.
-- **`_eval_bruteforce_phi`** (Mode 1, NGC4258): uniform [0, 2π] grid,
-  trapezoidal rule. Simple and robust, no grid tuning needed.
+- **`_eval_bruteforce_phi`** (Mode 1, NGC4258): per-type uniform grids
+  (systemic [-90°, 90°], red [0°, 180°], blue [180°, 360°]),
+  trapezoidal rule. Grid sizes configurable per type.
 - **`_eval_adaptive_phi_mode1`** (Mode 1, legacy): per-spot adaptive sinh
   grids centred on the φ peak from a 2×2 position solve. Superseded by
   the brute-force approach for NGC4258.
