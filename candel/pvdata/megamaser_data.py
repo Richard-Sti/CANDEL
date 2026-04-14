@@ -431,7 +431,7 @@ def load_megamaser_spots(root, galaxy="CGCG074-064", v_sys_obs=None,
         method = "spot_type"
     else:
         centroids, lab = kmeans2(
-            data["velocity"].astype(np.float64), 3, minit="++")
+            data["velocity"].astype(np.float64), 3, minit="++", seed=42)
         order = np.argsort(centroids)
         remap = np.empty(3, dtype=int)
         remap[order] = np.arange(3)

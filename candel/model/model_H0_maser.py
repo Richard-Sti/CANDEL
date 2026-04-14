@@ -644,7 +644,7 @@ class MaserDiskModel(ModelBase):
         self._all_accel_w = jnp.asarray(all_accel_w)
 
         # ---- Phi grids and precomputed trig ----
-        G_half = int(get_nested(self.config, "model/G_phi_half", 201))
+        G_half = int(get_nested(self.config, "model/G_phi_half", 251))
         n_inner_sys = int(get_nested(self.config, "model/n_inner_sys", 201))
         inner_deg_sys = float(get_nested(
             self.config, "model/inner_deg_sys", 30.0))
@@ -717,7 +717,7 @@ class MaserDiskModel(ModelBase):
         self.marginalise_r = get_nested(
             self.config, "model/marginalise_r", False)
         self._adaptive_r = get_nested(
-            self.config, "model/adaptive_r", False)
+            self.config, "model/adaptive_r", True)
         if self.marginalise_r:
             self._R_phys_lo = float(get_nested(
                 self.config, "model/R_phys_lo", 0.01))
@@ -737,7 +737,7 @@ class MaserDiskModel(ModelBase):
                    f"scale={self._r_scale:.3f}")
             if self._adaptive_r:
                 self._n_r_local = int(get_nested(
-                    self.config, "model/n_r_local", 151))
+                    self.config, "model/n_r_local", 201))
                 self._K_sigma = float(get_nested(
                     self.config, "model/K_sigma", 5.0))
                 fprint(f"adaptive r: {self._n_r_local} local points, "
@@ -1330,6 +1330,67 @@ class MaserDiskModel(ModelBase):
             d2i_dr2=d2i_dr2, d2Omega_dr2=d2Omega_dr2,
             **ecc_kw)
 
+    def _phi_integrand(self, r_ang, sin_phi, cos_phi,
+                       x0, y0, D_A, M_BH, v_sys,
+                       r_ang_ref, i0, di_dr, Omega0, dOmega_dr,
+                       sigma_x_floor2, sigma_y_floor2,
+                       var_v_sys, var_v_hv, sigma_a_floor2,
+                       d2i_dr2=0.0, d2Omega_dr2=0.0):
+        """Per-spot log-likelihood integrand at given (r, phi) points.
+
+        Core physics: geometry → observables → chi2 → log-integrand.
+        Uses model's stored spot data arrays. No integration — callers
+        combine with quadrature weights and logsumexp.
+
+        Parameters
+        ----------
+        r_ang : (N,) per-spot angular radius
+        sin_phi, cos_phi : (n_phi,) shared or (N, n_phi) per-spot
+
+        Returns
+        -------
+        (N, n_phi) log f(r_i, phi_j | data_i, theta)
+        """
+        i_r, Om_r = warp_geometry(
+            r_ang, r_ang_ref, i0, di_dr, Omega0, dOmega_dr,
+            d2i_dr2, d2Omega_dr2)
+        sin_i = jnp.sin(i_r)
+        cos_i = jnp.cos(i_r)
+        sin_O = jnp.sin(Om_r)
+        cos_O = jnp.cos(Om_r)
+        v_kep, gamma, z_g, a_mag, pA, pB, pC, pD = \
+            _precompute_r_quantities(
+                r_ang, D_A, M_BH, sin_i, cos_i, sin_O, cos_O)
+
+        X, Y, V, A = _observables_from_precomputed(
+            sin_phi, cos_phi, x0, y0, v_sys,
+            sin_i[:, None], r_ang[:, None],
+            v_kep[:, None], gamma[:, None], z_g[:, None], a_mag[:, None],
+            pA[:, None], pB[:, None], pC[:, None], pD[:, None])
+
+        var_x = self._all_sigma_x2 + sigma_x_floor2
+        var_y = self._all_sigma_y2 + sigma_y_floor2
+        var_v = self._all_sigma_v2 + jnp.where(
+            self.is_highvel, var_v_hv, var_v_sys)
+        var_a = self._all_sigma_a2 + sigma_a_floor2
+
+        chi2 = ((self._all_x[:, None] - X) ** 2 / var_x[:, None]
+                + (self._all_y[:, None] - Y) ** 2 / var_y[:, None]
+                + (self._all_v[:, None] - V) ** 2 / var_v[:, None])
+
+        chi2_a = ((self._all_a[:, None] - A) ** 2
+                  / var_a[:, None]
+                  * self._all_accel_w[:, None])
+        chi2 = chi2 + chi2_a * self._all_has_accel[:, None]
+
+        lnorm = -0.5 * (3 * LOG_2PI + jnp.log(var_x)
+                         + jnp.log(var_y) + jnp.log(var_v))
+        lnorm_a = (-0.5 * (LOG_2PI + jnp.log(var_a))
+                   * self._all_accel_w
+                   * self._all_has_accel)
+
+        return (lnorm + lnorm_a)[:, None] - 0.5 * chi2
+
     def _eval_adaptive_phi_mode1(
             self, r_ang, x0, y0, D_A, M_BH, v_sys,
             r_ang_ref, i0, di_dr, Omega0, dOmega_dr,
@@ -1360,7 +1421,6 @@ class MaserDiskModel(ModelBase):
         i_r, Om_r = warp_geometry(
             r_ang, r_ang_ref, i0, di_dr, Omega0, dOmega_dr,
             d2i_dr2, d2Omega_dr2)
-        sin_i = jnp.sin(i_r)
         cos_i = jnp.cos(i_r)
         sin_O = jnp.sin(Om_r)
         cos_O = jnp.cos(Om_r)
@@ -1370,13 +1430,13 @@ class MaserDiskModel(ModelBase):
         a2 = -cos_O * cos_i
         b1 = cos_O
         b2 = sin_O * cos_i
-        det = a1 * b2 - a2 * b1  # cos(i(r))
 
         # 2x2 solve for phi* at each spot's r
         dx = self._all_x - x0
         dy = self._all_y - y0
         rhs_x = dx / (r_ang + eps)
         rhs_y = dy / (r_ang + eps)
+        det = a1 * b2 - a2 * b1
         safe_det = jnp.where(jnp.abs(det) > eps, det, eps)
         s_star = (rhs_x * b2 - rhs_y * a2) / safe_det
         c_star = (rhs_y * a1 - rhs_x * b1) / safe_det
@@ -1408,65 +1468,14 @@ class MaserDiskModel(ModelBase):
         h_r = jnp.concatenate([h, jnp.zeros((N, 1))], axis=-1)
         log_w_phi = jnp.log(jnp.maximum((h_l + h_r) / 2, 1e-30))
 
-        # Observables at (r_ang[i], phi_grid[i, k])
-        r = r_ang[:, None]  # (N, 1)
-        si = sin_i[:, None]
-        ci = cos_i[:, None]
-        sO = sin_O[:, None]
-        cO = cos_O[:, None]
+        ll = self._phi_integrand(
+            r_ang, sin_phi, cos_phi,
+            x0, y0, D_A, M_BH, v_sys,
+            r_ang_ref, i0, di_dr, Omega0, dOmega_dr,
+            sigma_x_floor2, sigma_y_floor2,
+            var_v_sys, var_v_hv, sigma_a_floor2,
+            d2i_dr2=d2i_dr2, d2Omega_dr2=d2Omega_dr2)
 
-        X = x0 + r * (sin_phi * sO - cos_phi * cO * ci)
-        Y = y0 + r * (sin_phi * cO + cos_phi * sO * ci)
-
-        rD = r * D_A
-        v_kep = C_v * jnp.sqrt(M_BH / rD)
-        beta = v_kep / SPEED_OF_LIGHT
-        gamma = 1.0 / jnp.sqrt(1.0 - beta * beta)
-        zpg = 1.0 / jnp.sqrt(1.0 - C_g * M_BH / rD)
-
-        if ecc is not None:
-            omega_r = periapsis0 + dperiapsis_dr * (r_ang - r_ang_ref)
-            sw = jnp.sin(omega_r)[:, None]
-            cw = jnp.cos(omega_r)[:, None]
-            cos_f = cos_phi * cw + sin_phi * sw
-            ecc_fac = ((sin_phi + ecc * sw)
-                       / jnp.sqrt(1.0 + ecc * cos_f))
-            v_z = v_kep * ecc_fac * si
-            beta_c2 = (v_kep / SPEED_OF_LIGHT)**2
-            beta_e2 = (beta_c2 * (1.0 + ecc**2 + 2.0 * ecc * cos_f)
-                       / (1.0 + ecc * cos_f))
-            gamma = 1.0 / jnp.sqrt(1.0 - beta_e2)
-        else:
-            v_z = v_kep * sin_phi * si
-
-        V = SPEED_OF_LIGHT * (
-            gamma * (1.0 + v_z / SPEED_OF_LIGHT) * zpg
-            * (1.0 + v_sys / SPEED_OF_LIGHT) - 1.0)
-
-        # Per-spot variances broadcast to (N, n_phi)
-        var_v = self._all_sigma_v2 + jnp.where(
-            self.is_highvel, var_v_hv, var_v_sys)
-
-        chi2 = ((self._all_x[:, None] - X)**2 / var_x[:, None]
-                + (self._all_y[:, None] - Y)**2 / var_y[:, None]
-                + (self._all_v[:, None] - V)**2 / var_v[:, None])
-
-        # Acceleration
-        A = C_a * M_BH / (r**2 * D_A**2) * cos_phi * si
-        var_a = self._all_sigma_a2 + sigma_a_floor2
-        chi2_a = ((self._all_a[:, None] - A)**2
-                  / var_a[:, None]
-                  * self._all_accel_w[:, None])
-        chi2 = chi2 + chi2_a * self._all_has_accel[:, None]
-
-        # Log-normalization
-        lnorm = -0.5 * (3 * LOG_2PI + jnp.log(var_x)
-                         + jnp.log(var_y) + jnp.log(var_v))
-        lnorm_a = (-0.5 * (LOG_2PI + jnp.log(var_a))
-                   * self._all_accel_w
-                   * self._all_has_accel)
-
-        ll = lnorm[:, None] + lnorm_a[:, None] - 0.5 * chi2
         return logsumexp(ll + log_w_phi, axis=-1)
 
     def _sample_galaxy(self, shared_params, h):
