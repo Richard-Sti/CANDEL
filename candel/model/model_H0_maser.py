@@ -1401,7 +1401,7 @@ class MaserDiskModel(ModelBase):
                           var_v_sys, var_v_hv, sigma_a_floor2)
         integrand_kw = dict(d2i_dr2=d2i_dr2, d2Omega_dr2=d2Omega_dr2)
 
-        result = jnp.full(self.n_spots, -jnp.inf)
+        result = jnp.zeros(self.n_spots)
 
         for idx_attr, bf_key in [
                 ("_idx_sys", "sys"),
@@ -1414,10 +1414,10 @@ class MaserDiskModel(ModelBase):
             phi = jnp.linspace(phi_range[0], phi_range[1], n_phi)
             log_w = trapz_log_weights(phi)
             ll = self._phi_integrand(
-                r_ang, jnp.sin(phi), jnp.cos(phi),
-                *integrand_args, **integrand_kw)
+                r_ang[idx], jnp.sin(phi), jnp.cos(phi),
+                *integrand_args, idx=idx, **integrand_kw)
             ps = logsumexp(ll + log_w[None, :], axis=-1)
-            result = result.at[idx].set(ps[idx])
+            result = result.at[idx].set(ps)
 
         return result
 
@@ -1426,7 +1426,8 @@ class MaserDiskModel(ModelBase):
                        r_ang_ref, i0, di_dr, Omega0, dOmega_dr,
                        sigma_x_floor2, sigma_y_floor2,
                        var_v_sys, var_v_hv, sigma_a_floor2,
-                       d2i_dr2=0.0, d2Omega_dr2=0.0):
+                       d2i_dr2=0.0, d2Omega_dr2=0.0,
+                       idx=None):
         """Per-spot log-likelihood integrand at given (r, phi) points.
 
         Core physics: geometry → observables → chi2 → log-integrand.
@@ -1435,13 +1436,41 @@ class MaserDiskModel(ModelBase):
 
         Parameters
         ----------
-        r_ang : (N,) per-spot angular radius
+        r_ang : (N,) per-spot angular radius (N = n_spots or len(idx))
         sin_phi, cos_phi : (n_phi,) shared or (N, n_phi) per-spot
+        idx : optional index array to select a subset of spots.
+            When provided, r_ang should have len(idx) elements and
+            data arrays are sliced accordingly.
 
         Returns
         -------
         (N, n_phi) log f(r_i, phi_j | data_i, theta)
         """
+        if idx is not None:
+            all_x = self._all_x[idx]
+            all_y = self._all_y[idx]
+            all_v = self._all_v[idx]
+            all_a = self._all_a[idx]
+            all_sigma_x2 = self._all_sigma_x2[idx]
+            all_sigma_y2 = self._all_sigma_y2[idx]
+            all_sigma_v2 = self._all_sigma_v2[idx]
+            all_sigma_a2 = self._all_sigma_a2[idx]
+            all_accel_w = self._all_accel_w[idx]
+            all_has_accel = self._all_has_accel[idx]
+            is_highvel = self.is_highvel[idx]
+        else:
+            all_x = self._all_x
+            all_y = self._all_y
+            all_v = self._all_v
+            all_a = self._all_a
+            all_sigma_x2 = self._all_sigma_x2
+            all_sigma_y2 = self._all_sigma_y2
+            all_sigma_v2 = self._all_sigma_v2
+            all_sigma_a2 = self._all_sigma_a2
+            all_accel_w = self._all_accel_w
+            all_has_accel = self._all_has_accel
+            is_highvel = self.is_highvel
+
         i_r, Om_r = warp_geometry(
             r_ang, r_ang_ref, i0, di_dr, Omega0, dOmega_dr,
             d2i_dr2, d2Omega_dr2)
@@ -1459,26 +1488,25 @@ class MaserDiskModel(ModelBase):
             v_kep[:, None], gamma[:, None], z_g[:, None], a_mag[:, None],
             pA[:, None], pB[:, None], pC[:, None], pD[:, None])
 
-        var_x = self._all_sigma_x2 + sigma_x_floor2
-        var_y = self._all_sigma_y2 + sigma_y_floor2
-        var_v = self._all_sigma_v2 + jnp.where(
-            self.is_highvel, var_v_hv, var_v_sys)
-        var_a = self._all_sigma_a2 + sigma_a_floor2
+        var_x = all_sigma_x2 + sigma_x_floor2
+        var_y = all_sigma_y2 + sigma_y_floor2
+        var_v = all_sigma_v2 + jnp.where(is_highvel, var_v_hv, var_v_sys)
+        var_a = all_sigma_a2 + sigma_a_floor2
 
-        chi2 = ((self._all_x[:, None] - X) ** 2 / var_x[:, None]
-                + (self._all_y[:, None] - Y) ** 2 / var_y[:, None]
-                + (self._all_v[:, None] - V) ** 2 / var_v[:, None])
+        chi2 = ((all_x[:, None] - X) ** 2 / var_x[:, None]
+                + (all_y[:, None] - Y) ** 2 / var_y[:, None]
+                + (all_v[:, None] - V) ** 2 / var_v[:, None])
 
-        chi2_a = ((self._all_a[:, None] - A) ** 2
+        chi2_a = ((all_a[:, None] - A) ** 2
                   / var_a[:, None]
-                  * self._all_accel_w[:, None])
-        chi2 = chi2 + chi2_a * self._all_has_accel[:, None]
+                  * all_accel_w[:, None])
+        chi2 = chi2 + chi2_a * all_has_accel[:, None]
 
         lnorm = -0.5 * (3 * LOG_2PI + jnp.log(var_x)
                          + jnp.log(var_y) + jnp.log(var_v))
         lnorm_a = (-0.5 * (LOG_2PI + jnp.log(var_a))
-                   * self._all_accel_w
-                   * self._all_has_accel)
+                   * all_accel_w
+                   * all_has_accel)
 
         return (lnorm + lnorm_a)[:, None] - 0.5 * chi2
 

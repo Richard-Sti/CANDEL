@@ -147,9 +147,9 @@ def main():
     args = parser.parse_args()
 
     jax.config.update("jax_platform_name", "gpu")
-    # x64 needed: _phi_integrand uses float64 for position residuals
+    # x64 for precise reference comparisons
     jax.config.update("jax_enable_x64", True)
-    dtype = "float64" if args.float64 else "float32 (mixed)"
+    dtype = "float64" if args.float64 else "float64 (convergence test)"
     print(f"JAX platform: {jax.default_backend()}, dtype: {dtype}",
           flush=True)
 
