@@ -396,8 +396,10 @@ def _adaptive_r_integrate(
 
     # ---- Centering: iterative Fisher-optimal r_peak ----
     def _center(si, ci, sO, cO):
-        fX = sp * sO - cp * cO * ci
-        fY = sp * cO + cp * sO * ci
+        # fX, fY are projection factors: X_μas = x0 + r_mas * 1e3 * fX
+        # Scale by 1e3 so centering gives r_pos in mas.
+        fX = 1e3 * (sp * sO - cp * cO * ci)
+        fY = 1e3 * (sp * cO + cp * sO * ci)
         b_pos = fX * fX * inv_vx[:, None] + fY * fY * inv_vy[:, None]
         a_pos = dx * fX * inv_vx[:, None] + dy * fY * inv_vy[:, None]
         r_pos = a_pos / (b_pos + eps)
@@ -1381,8 +1383,14 @@ class MaserDiskModel(ModelBase):
             self.is_highvel, var_v_hv, var_v_sys)
         var_a = self._all_sigma_a2 + sigma_a_floor2
 
-        chi2 = ((self._all_x[:, None] - X) ** 2 / var_x[:, None]
-                + (self._all_y[:, None] - Y) ** 2 / var_y[:, None]
+        # Position residuals in float64 to avoid catastrophic cancellation
+        # for NGC4258 (x~4000 μas, σ_x~3 μas → subtraction loses digits).
+        f64 = jnp.float64
+        dx = self._all_x[:, None].astype(f64) - X.astype(f64)
+        dy = self._all_y[:, None].astype(f64) - Y.astype(f64)
+        chi2_pos = (dx * dx / var_x[:, None].astype(f64)
+                    + dy * dy / var_y[:, None].astype(f64))
+        chi2 = (chi2_pos.astype(X.dtype)
                 + (self._all_v[:, None] - V) ** 2 / var_v[:, None])
 
         chi2_a = ((self._all_a[:, None] - A) ** 2

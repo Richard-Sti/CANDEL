@@ -38,8 +38,9 @@ ALL_GALAXIES = ["NGC5765b", "UGC3789", "CGCG074-064", "NGC6264", "NGC6323"]
 # Reference grid
 N_R_REF = 20001
 N_PHI_REF = 20001
-BATCH_SIZE_F32 = 4
-BATCH_SIZE_F64 = 1
+# Batch size 1: x64 always on (for position residual precision),
+# so arrays are float64 → 1 spot × 20001² × 8 bytes ≈ 3.2 GB.
+BATCH_SIZE = 1
 
 
 # -----------------------------------------------------------------------
@@ -175,7 +176,7 @@ def _model_args(model, phys):
 # -----------------------------------------------------------------------
 
 def bruteforce_ll(model, phys, n_r=N_R_REF, n_phi=N_PHI_REF,
-                  batch_size=BATCH_SIZE_F32):
+                  batch_size=BATCH_SIZE):
     """Reference logL via batched brute-force on uniform r × phi grid."""
     conv = phys["D_A"] * PC_PER_MAS_MPC
     r_min = model._R_phys_lo / conv
@@ -233,9 +234,9 @@ def main():
     args = parser.parse_args()
 
     jax.config.update("jax_platform_name", "gpu")
-    if args.float64:
-        jax.config.update("jax_enable_x64", True)
-    dtype = "float64" if args.float64 else "float32"
+    # x64 needed: _phi_integrand uses float64 for position residuals
+    jax.config.update("jax_enable_x64", True)
+    dtype = "float64" if args.float64 else "float32 (mixed)"
     print(f"JAX platform: {jax.default_backend()}, dtype: {dtype}",
           flush=True)
 
@@ -248,7 +249,7 @@ def main():
             "NGC4258 is not supported by this script. Its position errors "
             "are too small for the 20001² reference grid.")
 
-    batch_size = BATCH_SIZE_F64 if args.float64 else BATCH_SIZE_F32
+    batch_size = BATCH_SIZE
 
     print("=" * 70)
     print("Grid convergence benchmark")
