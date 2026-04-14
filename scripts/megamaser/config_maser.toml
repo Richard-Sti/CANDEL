@@ -1,29 +1,35 @@
-# Megamaser disk H0 model configuration.
-#
-# Set galaxy = "CGCG074-064" (or any galaxy name) for a single-galaxy run.
-# Set galaxy = "joint" to fit all galaxies simultaneously with shared H0.
-# Per-galaxy settings override the shared defaults below.
-
 [inference]
-sampler = "nss"  # "nuts" or "nss"
+sampler = "nss"
 seed = 42
-
-# NUTS settings
 num_warmup = 1000
 num_samples = 1000
 num_chains = 1
 chain_method = "sequential"
 dense_mass_blocks = [
-    ["H0", "D_c", "eta", "dv_sys", "i0", "di_dr", "Omega0", "dOmega_dr", "x0", "y0"],
-    ["sigma_v_sys", "sigma_y_floor", "sigma_a_floor", "sigma_x_floor"],
+    [
+        "H0",
+        "D_c",
+        "eta",
+        "dv_sys",
+        "i0",
+        "di_dr",
+        "Omega0",
+        "dOmega_dr",
+        "x0",
+        "y0",
+    ],
+    [
+        "sigma_v_sys",
+        "sigma_y_floor",
+        "sigma_a_floor",
+        "sigma_x_floor",
+    ],
 ]
 init_maxiter = 0
 init_method = "config"
 max_tree_depth = 10
-
-# NSS settings 
 n_live = 5000
-num_mcmc_steps = 0  # 0 = use ndim (p=d recommendation)
+num_mcmc_steps = 0
 num_delete = 250
 termination = -3
 
@@ -31,34 +37,18 @@ termination = -3
 which_run = "maser_disk"
 Om = 0.315
 galaxy = "NGC5765b"
-
 use_selection = false
 use_clump_weight = false
-clump_galaxies = ["NGC5765b", "NGC6264", "NGC6323"]
+clump_galaxies = [
+    "NGC5765b",
+    "NGC6264",
+    "NGC6323",
+]
 marginalise_r = true
-sigma_v_default = 0.25  # km/s, used when data file has no velocity errors
-D_c_prior = "volume"  # "uniform" or "volume" (p(D_c) ∝ D_c²)
-
-# Physical radius integration bounds [pc] for r marginalization
+sigma_v_default = 0.25
+D_c_prior = "volume"
 R_phys_lo = 0.01
 R_phys_hi = 2.0
-
-# -----------------------------------------------------------------------
-# DE optimizer / Sobol seeding settings
-# -----------------------------------------------------------------------
-
-[optimise]
-# H0 used ONLY to convert v_sys_obs -> D_estimate for narrowing the Sobol
-# survey range of D_c. Does NOT affect inference or the DE search bounds.
-H0_for_D_estimate = 70.0
-# Peculiar velocity scatter (km/s) for Sobol D_c range: D ± n_sigma * sigma_v / H0
-D_sobol_sigma_v = 500.0
-D_sobol_n_sigma = 5
-max_generations = 5000
-
-# -----------------------------------------------------------------------
-# Shared priors (apply to all galaxies unless overridden)
-# -----------------------------------------------------------------------
 
 [model.priors.H0]
 dist = "uniform"
@@ -68,10 +58,6 @@ high = 200.0
 [model.priors.sigma_pec]
 dist = "delta"
 value = 300
-
-# D prior: set D_lo, D_hi per galaxy below.
-# The runner reads these and sets a Uniform(D_lo, D_hi) prior.
-
 
 [model.priors.eta]
 dist = "uniform"
@@ -113,7 +99,6 @@ dist = "uniform"
 low = -30.0
 high = 30.0
 
-# Quadratic warp priors (only used when model/use_quadratic_warp = true)
 [model.priors.d2i_dr2]
 dist = "uniform"
 low = -30.0
@@ -159,7 +144,6 @@ scale = 0.15
 low = 0.0
 high = 0.75
 
-# Eccentricity priors (only used when model/use_ecc = true)
 [model.priors.ecc]
 dist = "uniform"
 low = 0.0
@@ -185,57 +169,31 @@ dist = "uniform"
 low = 5.0
 high = 100.0
 
-# -----------------------------------------------------------------------
-# Joint-model prior overrides (applied when galaxy = "joint")
-# -----------------------------------------------------------------------
-
-[joint.priors.sigma_pec]
-dist = "maxwell"
-scale = 156.7  # mean = scale * 2*sqrt(2/pi) ≈ 250 km/s
-
-[io]
-root_output = "results/Megamaser"
-
-[io.maser_data]
-root = "data/Megamaser"
-
-# -----------------------------------------------------------------------
-# Per-galaxy settings
-# -----------------------------------------------------------------------
-
-# D_ref, e_D_ref: reference distance [Mpc] and 1σ uncertainty.
-# Sources: Pesce+2020 (MCP XIII) for megamaser galaxies,
-#          Reid+2019 for NGC4258 (geometric parallax).
-# e_D_ref = max(|+err|, |-err|) from asymmetric uncertainties.
-# RA, Dec: J2000 equatorial coordinates [deg] from NED.
-# v_sys_obs: CMB-frame maser systemic velocity [km/s] from NED.
-
-[model.galaxies."CGCG074-064"]
-ra=210.768491
-dec=8.947582
+[model.galaxies.CGCG074-064]
+ra = 210.768491
+dec = 8.947582
 v_sys_obs = 7175
 D_lo = 66.0
 D_hi = 150.0
-# D_ref = 87.6, e_D_ref = 5.8 (Pesce+2020)
 
-[model.galaxies."CGCG074-064".init]
-H0 = 81.51
-D_c = 88.22
-eta = 5.44
-x0 = 1.11
-y0 = 6.16
-i0 = 90.58
-Omega0 = 101.41
-dOmega_dr = 5.92
-di_dr = 4.46
-sigma_x_floor = 0.85
-sigma_y_floor = 14.95
-sigma_v_sys = 1.80
-sigma_v_hv = 2.14
-sigma_a_floor = 0.23
-dv_sys = -265.27
+[model.galaxies.CGCG074-064.init]
+H0 = 79.8946
+D_c = 89.2701
+eta = 5.4411
+x0 = 1.3965
+y0 = 6.4031
+i0 = 90.6023
+Omega0 = 101.468
+dOmega_dr = 4.7988
+di_dr = -1.8697
+sigma_x_floor = 0.35
+sigma_y_floor = 14.2729
+sigma_v_sys = 1.8223
+sigma_v_hv = 2.0683
+sigma_a_floor = 0.2378
+dv_sys = -265.5389
 
-[model.galaxies."NGC4258"]
+[model.galaxies.NGC4258]
 ra = 184.74009
 dec = 47.30372
 v_sys_obs = 667
@@ -243,18 +201,20 @@ D_lo = 4.0
 D_hi = 10.0
 use_ecc = true
 use_quadratic_warp = true
-marginalise_r = false  # Mode 1: sample r_ang per spot
+marginalise_r = false
 phi_method = "bruteforce"
-n_phi_bruteforce = 30001
-r_ang_ref = 6.1  # Reid+2019: average maser radius
-# D_ref = 7.58, e_D_ref = 0.11 (Reid+2019)
+n_phi_sys = 50001
+n_phi_red = 30001
+n_phi_blue = 20001
+phi_range_sys_deg = [-90, 90]
+phi_range_red_deg = [0, 180]
+phi_range_blue_deg = [180, 360]
+r_ang_ref = 6.1
 
-# Reid+2019 (1908.05625) Table 2 best-fit values.
-# Geometry evaluated at r_ang_ref = 6.1 mas.
-[model.galaxies."NGC4258".init]
+[model.galaxies.NGC4258.init]
 H0 = 73.0
 D_c = 7.593
-eta = 6.720
+eta = 6.72
 x0 = -152.0
 y0 = 556.0
 i0 = 87.05
@@ -273,103 +233,114 @@ sigma_v_hv = 2.25
 sigma_a_floor = 0.46
 dv_sys = -193.7
 
-[model.galaxies."NGC5765b"]
+[model.galaxies.NGC5765b]
 ra = 222.71461
 dec = 5.11449
 v_sys_obs = 8465
 D_lo = 85.0
 D_hi = 200.0
-# D_ref = 112.2, e_D_ref = 5.4 (Pesce+2020)
 
-[model.galaxies."NGC5765b".init]
-H0 = 68.29
-D_c = 123.66
-eta = 5.57
-x0 = -45.04
-y0 = -99.09
-i0 = 84.91
-Omega0 = 146.85
-dOmega_dr = -3.38
-di_dr = 11.39
-sigma_x_floor = 10.99
-sigma_y_floor = 3.80
-sigma_v_sys = 2.03
-sigma_v_hv = 2.77
-sigma_a_floor = 0.08
-dv_sys = -131.13
+[model.galaxies.NGC5765b.init]
+H0 = 68.1294
+D_c = 123.4795
+eta = 5.5729
+x0 = -44.8896
+y0 = -99.1145
+i0 = 84.9224
+Omega0 = 146.83
+dOmega_dr = -3.2848
+di_dr = 11.6208
+sigma_x_floor = 10.1172
+sigma_y_floor = 3.4971
+sigma_v_sys = 1.8661
+sigma_v_hv = 2.8261
+sigma_a_floor = 0.0798
+dv_sys = -131.1467
 
-[model.galaxies."NGC6264"]
-ra = 254.31720
-dec = 27.84960
+[model.galaxies.NGC6264]
+ra = 254.3172
+dec = 27.8496
 v_sys_obs = 10145
 D_lo = 70.0
 D_hi = 250.0
-# D_ref = 132.1, e_D_ref = 11.9 (Pesce+2020)
 
-[model.galaxies."NGC6264".init]
-H0 = 62.95
-D_c = 164.16
-eta = 5.32
-x0 = 4.29
-y0 = 6.95
-i0 = 90.39
-Omega0 = 94.21
-dOmega_dr = 18.48
-di_dr = -1.39
-sigma_x_floor = 1.74
-sigma_y_floor = 6.39
-sigma_v_sys = 1.80
-sigma_v_hv = 2.94
-sigma_a_floor = 0.15
-dv_sys = 66.30
+[model.galaxies.NGC6264.init]
+H0 = 62.6426
+D_c = 160.7498
+eta = 5.3226
+x0 = 4.166
+y0 = 6.9749
+i0 = 90.3963
+Omega0 = 94.2117
+dOmega_dr = 18.4692
+di_dr = -1.2975
+sigma_x_floor = 0.6085
+sigma_y_floor = 5.4471
+sigma_v_sys = 1.6202
+sigma_v_hv = 2.9953
+sigma_a_floor = 0.1373
+dv_sys = 66.4503
 
-[model.galaxies."NGC6323"]
+[model.galaxies.NGC6323]
 ra = 258.32519
 dec = 43.78244
 v_sys_obs = 7662
 D_lo = 60.0
 D_hi = 350.0
-# D_ref = 109.4, e_D_ref = 30 (Pesce+2020)
 
-[model.galaxies."NGC6323".init]
-H0 = 55.24
-D_c = 148.58
-eta = 4.97
-x0 = 14.74
-y0 = 4.03
-i0 = 91.96
-Omega0 = 189.58
-dOmega_dr = 13.60
-di_dr = -6.44
-sigma_x_floor = 4.19
-sigma_y_floor = 4.63
-sigma_v_sys = 2.05
-sigma_v_hv = 1.91
-sigma_a_floor = 0.14
-dv_sys = 190.56
+[model.galaxies.NGC6323.init]
+H0 = 50.4354
+D_c = 151.1639
+eta = 4.9678
+x0 = 14.5012
+y0 = 3.3823
+i0 = 91.8349
+Omega0 = 189.5905
+dOmega_dr = 13.8031
+di_dr = -1.1693
+sigma_x_floor = 3.978
+sigma_y_floor = 2.4919
+sigma_v_sys = 1.8041
+sigma_v_hv = 1.698
+sigma_a_floor = 0.1486
+dv_sys = 190.3925
 
-[model.galaxies."UGC3789"]
+[model.galaxies.UGC3789]
 ra = 109.87872
 dec = 59.35513
 v_sys_obs = 3245
 D_lo = 10.0
 D_hi = 100.0
-# D_ref = 51.5, e_D_ref = 4.5 (Pesce+2020)
 
-[model.galaxies."UGC3789".init]
-H0 = 59.24
-D_c = 55.18
-eta = 5.36
-x0 = -402.59
-y0 = -461.32
-i0 = 85.64
-Omega0 = 223.00
-dOmega_dr = -3.33
-di_dr = 8.65
-sigma_x_floor = 4.89
-sigma_y_floor = 8.35
-sigma_v_sys = 1.74
-sigma_v_hv = 2.18
-sigma_a_floor = 0.23
-dv_sys = 15.62
+[model.galaxies.UGC3789.init]
+H0 = 64.5287
+D_c = 50.7209
+eta = 5.3635
+x0 = -402.2705
+y0 = -461.1638
+i0 = 85.6441
+Omega0 = 222.9669
+dOmega_dr = -3.2655
+di_dr = 8.1005
+sigma_x_floor = 4.6195
+sigma_y_floor = 7.5683
+sigma_v_sys = 0.0175
+sigma_v_hv = 2.0618
+sigma_a_floor = 0.279
+dv_sys = 15.2498
 
+[optimise]
+H0_for_D_estimate = 70.0
+D_sobol_sigma_v = 500.0
+D_sobol_n_sigma = 5
+max_generations = 5000
+
+[joint.priors.sigma_pec]
+dist = "maxwell"
+scale = 156.7
+
+[io]
+root_output = "results/Megamaser"
+
+[io.maser_data]
+root = "data/Megamaser"
