@@ -57,8 +57,9 @@ from candel.util import fprint, fsection
 
 _devs = jax.devices()
 _dev_names = ", ".join(d.device_kind for d in _devs)
-print(f"JAX platform: {jax.default_backend()}, devices: {_devs} ({_dev_names})",
-      flush=True)
+_precision = "float64" if jax.config.jax_enable_x64 else "float32"
+print(f"JAX platform: {jax.default_backend()}, devices: {_devs} "
+      f"({_dev_names}), precision: {_precision}", flush=True)
 
 # ---- Load master config ----
 with open("scripts/megamaser/config_maser.toml", "rb") as f:
