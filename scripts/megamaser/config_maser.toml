@@ -243,6 +243,7 @@ D_lo = 4.0
 D_hi = 10.0
 use_ecc = true
 use_quadratic_warp = true
+marginalise_r = false  # Mode 1: sample r_ang per spot
 phi_method = "bruteforce"
 n_phi_bruteforce = 30001
 r_ang_ref = 6.1  # Reid+2019: average maser radius

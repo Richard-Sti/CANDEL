@@ -733,8 +733,10 @@ class MaserDiskModel(ModelBase):
         self._inv_order = jnp.argsort(order)
 
         # ---- Radius grid setup (for Mode 2) ----
-        self.marginalise_r = get_nested(
+        marginalise_r_global = get_nested(
             self.config, "model/marginalise_r", False)
+        self.marginalise_r = gal_cfg.get(
+            "marginalise_r", marginalise_r_global)
         self._adaptive_r = get_nested(
             self.config, "model/adaptive_r", True)
         if self.marginalise_r:
