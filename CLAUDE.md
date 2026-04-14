@@ -285,12 +285,24 @@ See `notes_phi_integration.md` and `notes_n4258_phi_plan.md` for reasoning.
 - Diagnostic scripts: `diagnose_residuals.py`, `diagnose_residuals_n4258.py`,
   `test_mode1_adaptive_phi.py`, `investigate_r_centering.py`
 
+### Position units and numerical precision (2026-04-14)
+- Internal positions in μas (×1000 on data load). r_ang stays in mas.
+  Bridge factor `r_ang * 1e3` in all position predictions.
+- Mixed precision: float64 position residuals in `_phi_integrand` for
+  NGC4258 (4000 μas positions, 3 μas errors). Verified identical to
+  full float64.
+- `_phi_integrand`: core physics function, used by all φ methods.
+- `_eval_bruteforce_phi`: NGC4258 Mode 1 with 30001-pt uniform φ grid.
+- `phi_method` config: "default"/"adaptive"/"bruteforce", per-galaxy.
+- Per-galaxy `marginalise_r` override (NGC4258=false).
+- Seeded k-means (seed=42) for reproducible spot classification.
+- Grid defaults: n_r_local=201, G_phi_half=251, adaptive_r=True.
+- See `instructions/maser_numerical_accuracy.md` for full convergence tables.
+
 ### Next steps
-1. **Convergence sweep** for 5 galaxies with new Mode 2 grids.
-2. **MAP + NUTS** for all 5 galaxies with new grids.
-3. **NGC4258 Mode 1 NUTS**: test with Reid+2019 init, check D_A ~ 7.58 Mpc.
-4. **Clean up**: remove unused `_adaptive_r_integrate`, old test scripts.
-5. Consider reparameterisation (log(M/D), log(M/D²)) to reduce leapfrog steps.
+1. **NGC4258 Mode 1 NUTS**: test with Reid+2019 init, check D_A ~ 7.58 Mpc.
+2. **MAP + NUTS** for all 5 MCP galaxies with new grids.
+3. Consider reparameterisation (log(M/D), log(M/D²)) to reduce leapfrog steps.
 
 
 Basics

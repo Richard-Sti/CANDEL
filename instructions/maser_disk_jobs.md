@@ -84,26 +84,26 @@ addqueue -q cmbgpu -s -m 16 --gpus 1 \
     --sampler nuts --num-warmup 2000 --num-samples 2000
 ```
 
-## Grid sizes (numerical marginalisation)
+## Grid sizes and numerical accuracy
 
-The per-spot likelihood is marginalised over orbital radius and azimuth
-on non-uniform grids. Defaults (set in `model_H0_maser.py`):
+See [`instructions/maser_numerical_accuracy.md`](maser_numerical_accuracy.md)
+for full convergence test results and the φ-integrand analysis.
+
+**Mode 2 defaults** (MCP galaxies: NGC5765b, UGC3789, CGCG074-064,
+NGC6264, NGC6323):
 
 | Grid | Points | Spacing | Config key |
 |------|--------|---------|------------|
-| HV half (phi) | 102 | arccos (dense near pi/2) | `model/G_phi_half = 101` |
-| Systemic (phi) | 201 | two-zone: 101 arcsin inner +/- 30 deg, 50 linear wings/side | `model/n_inner_sys`, `inner_deg_sys`, `n_wing_sys` |
-| Radius | 101 | sinh in log-space | `model/n_r = 101` |
+| HV half (φ) | 251 | arccos (dense near π/2) | `model/G_phi_half` |
+| Systemic (φ) | ~600 | two-cluster: 201 arcsin front + 100 arcsin back | `model/n_inner_sys`, `n_wing_sys` |
+| Radius | 201 | adaptive per-spot sinh in log-space | `model/n_r_local` |
 
-Override in config:
-```toml
-[model]
-G_phi_half = 101
-n_inner_sys = 101
-inner_deg_sys = 30.0
-n_wing_sys = 50
-n_r = 101
-```
+**Mode 1** (NGC4258): samples r_ang per spot via NUTS, marginalises φ on
+a uniform brute-force grid of 30001 points (`phi_method = "bruteforce"`).
+
+Internal positions are in **μas** (micro-arcseconds) for float32
+stability. Angular radii remain in mas. Mixed precision (float64 position
+residuals) is used for NGC4258.
 
 ## Dense mass blocks (NUTS)
 
