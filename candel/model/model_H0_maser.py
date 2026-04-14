@@ -1465,14 +1465,8 @@ class MaserDiskModel(ModelBase):
             self.is_highvel, var_v_hv, var_v_sys)
         var_a = self._all_sigma_a2 + sigma_a_floor2
 
-        # Position residuals in float64 to avoid catastrophic cancellation
-        # (NGC4258: x~4000 μas, σ_x~3 μas → 4 sig. digits in float32).
-        f64 = jnp.float64
-        dx = self._all_x[:, None].astype(f64) - X.astype(f64)
-        dy = self._all_y[:, None].astype(f64) - Y.astype(f64)
-        chi2_pos = (dx * dx / var_x[:, None].astype(f64)
-                    + dy * dy / var_y[:, None].astype(f64))
-        chi2 = (chi2_pos.astype(X.dtype)
+        chi2 = ((self._all_x[:, None] - X) ** 2 / var_x[:, None]
+                + (self._all_y[:, None] - Y) ** 2 / var_y[:, None]
                 + (self._all_v[:, None] - V) ** 2 / var_v[:, None])
 
         chi2_a = ((self._all_a[:, None] - A) ** 2
