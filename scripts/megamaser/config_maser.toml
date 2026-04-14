@@ -201,6 +201,7 @@ D_lo = 4.0
 D_hi = 10.0
 use_ecc = true
 use_quadratic_warp = true
+use_float64 = true
 marginalise_r = false
 phi_method = "bruteforce"
 n_phi_sys = 50001

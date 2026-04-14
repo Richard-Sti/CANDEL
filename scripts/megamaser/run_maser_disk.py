@@ -37,11 +37,22 @@ import argparse
 import tempfile
 import time
 
+import tomli
+
+# Check per-galaxy use_float64 before importing JAX (must be set pre-init)
+with open("scripts/megamaser/config_maser.toml", "rb") as _f:
+    _pre_cfg = tomli.load(_f)
+_galaxy_arg = sys.argv[1] if len(sys.argv) > 1 else ""
+_gal_cfg = _pre_cfg.get("model", {}).get("galaxies", {}).get(_galaxy_arg, {})
+if _gal_cfg.get("use_float64", False):
+    import jax
+    jax.config.update("jax_enable_x64", True)
+    print(f"float64 enabled for {_galaxy_arg}", flush=True)
+
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
-import tomli
 import tomli_w
 from h5py import File as H5File
 from jax import random
