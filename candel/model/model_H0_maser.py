@@ -749,6 +749,11 @@ class MaserDiskModel(ModelBase):
             self.config, "model/marginalise_r", False)
         self.marginalise_r = gal_cfg.get(
             "marginalise_r", marginalise_r_global)
+        if self.phi_method != "default" and self.marginalise_r:
+            raise ValueError(
+                f"phi_method='{self.phi_method}' is incompatible with "
+                f"marginalise_r=True (Mode 2). Set marginalise_r=false "
+                f"in the galaxy config or use --sample-r.")
         self._adaptive_r = get_nested(
             self.config, "model/adaptive_r", True)
         if self.marginalise_r:
@@ -1659,11 +1664,6 @@ class MaserDiskModel(ModelBase):
                 self._r_ang_ref, i0, di_dr, Omega0, dOmega_dr,
                 sigma_x_floor2, sigma_y_floor2, var_v_sys, var_v_hv,
                 sigma_a_floor2)
-
-        if self.phi_method != "default" and self.marginalise_r:
-            raise ValueError(
-                f"phi_method='{self.phi_method}' requires Mode 1 "
-                f"(marginalise_r=False).")
 
         if self.marginalise_r:
             if self._adaptive_r:
