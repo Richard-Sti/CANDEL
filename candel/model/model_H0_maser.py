@@ -44,7 +44,7 @@ from .utils import normal_logpdf_var
 # Disk physics constants
 # -----------------------------------------------------------------------
 
-# Internal units: M_BH in 1e7 M_sun, angular positions in mas, D in Mpc.
+# Internal units: M_BH in 1e7 M_sun, sky positions in μas, r_ang in mas, D in Mpc.
 M_BH_UNIT = 1e7
 C_v = 2978.8656    # km/s: sqrt(G * 1e7 M_sun / (1 mas * 1 Mpc))
 C_a = 1.872e3      # km/s/yr: 1e7 M_sun * G * yr / (1 mas * 1 Mpc)^2
@@ -189,8 +189,9 @@ def predict_position(r_ang, phi, x0, y0, i, Omega):
     cos_O = jnp.cos(Omega)
     cos_i = jnp.cos(i)
 
-    X = x0 + r_ang * (sin_phi * sin_O - cos_phi * cos_O * cos_i)
-    Y = y0 + r_ang * (sin_phi * cos_O + cos_phi * sin_O * cos_i)
+    R = r_ang * 1e3  # mas → μas for position projection
+    X = x0 + R * (sin_phi * sin_O - cos_phi * cos_O * cos_i)
+    Y = y0 + R * (sin_phi * cos_O + cos_phi * sin_O * cos_i)
     return X, Y
 
 
@@ -302,8 +303,9 @@ def _observables_from_precomputed(sin_phi, cos_phi, x0, y0, v_sys,
 
     Only multiply-add operations — no sqrt, no division.
     """
-    X = x0 + r_ang * (sin_phi * pA - cos_phi * pB)
-    Y = y0 + r_ang * (sin_phi * pC + cos_phi * pD)
+    R = r_ang * 1e3
+    X = x0 + R * (sin_phi * pA - cos_phi * pB)
+    Y = y0 + R * (sin_phi * pC + cos_phi * pD)
 
     v_z = v_kep * sin_phi * sin_i
     one_plus_z_D = gamma * (1.0 + v_z / SPEED_OF_LIGHT)
@@ -321,8 +323,9 @@ def _observables_no_accel(sin_phi, cos_phi, x0, y0, v_sys,
                           pA, pB, pC, pD):
     """Position + velocity only. Skips acceleration entirely for spots
     without measured acceleration."""
-    X = x0 + r_ang * (sin_phi * pA - cos_phi * pB)
-    Y = y0 + r_ang * (sin_phi * pC + cos_phi * pD)
+    R = r_ang * 1e3
+    X = x0 + R * (sin_phi * pA - cos_phi * pB)
+    Y = y0 + R * (sin_phi * pC + cos_phi * pD)
 
     v_z = v_kep * sin_phi * sin_i
     one_plus_z_D = gamma * (1.0 + v_z / SPEED_OF_LIGHT)
@@ -463,8 +466,9 @@ def _adaptive_r_integrate(
     sp3 = sin_phi[None, :, None]
     cp3 = cos_phi[None, :, None]
 
-    X = x0 + r_loc * (sp3 * sin_O - cp3 * cos_O * cos_i)
-    Y = y0 + r_loc * (sp3 * cos_O + cp3 * sin_O * cos_i)
+    R_loc = r_loc * 1e3
+    X = x0 + R_loc * (sp3 * sin_O - cp3 * cos_O * cos_i)
+    Y = y0 + R_loc * (sp3 * cos_O + cp3 * sin_O * cos_i)
 
     rD = r_loc * D_A
     v_kep = C_v * jnp.sqrt(M_BH / rD)
@@ -907,8 +911,9 @@ class MaserDiskModel(ModelBase):
             (si, r_sub, vk, _, zg, am, pa, pb, pc, pd) = _r_precomp(idx)
             sw = sin_omega[idx][rpad]
             cw = cos_omega[idx][rpad]
-            X = x0 + r_sub * (sp * pa - cp * pb)
-            Y = y0 + r_sub * (sp * pc + cp * pd)
+            R_sub = r_sub * 1e3
+            X = x0 + R_sub * (sp * pa - cp * pb)
+            Y = y0 + R_sub * (sp * pc + cp * pd)
 
             # Velocity components
             cos_f = cp * cw + sp * sw
@@ -934,8 +939,9 @@ class MaserDiskModel(ModelBase):
             (si, r_sub, vk, _, zg, _, pa, pb, pc, pd) = _r_precomp(idx)
             sw = sin_omega[idx][rpad]
             cw = cos_omega[idx][rpad]
-            X = x0 + r_sub * (sp * pa - cp * pb)
-            Y = y0 + r_sub * (sp * pc + cp * pd)
+            R_sub = r_sub * 1e3
+            X = x0 + R_sub * (sp * pa - cp * pb)
+            Y = y0 + R_sub * (sp * pc + cp * pd)
 
             cos_f = cp * cw + sp * sw
             ecc_fac = (sp + ecc * sw) / jnp.sqrt(1.0 + ecc * cos_f)
@@ -1024,6 +1030,7 @@ class MaserDiskModel(ModelBase):
             inv_vx, inv_vy, inv_vv = 1.0 / vx, 1.0 / vy, 1.0 / vv
             idx = getattr(self, idx_attr)
             r_sub = r_ang[idx][rpad]
+            R_sub = r_sub * 1e3
             pa_s, pb_s = pA[idx][rpad], pB[idx][rpad]
             pc_s, pd_s = pC[idx][rpad], pD[idx][rpad]
 
@@ -1031,8 +1038,8 @@ class MaserDiskModel(ModelBase):
                 va = sa2[dpad] + sa_floor2
                 inv_va = 1.0 / va
                 X1, Y1, V, A1 = _obs_4(idx, sp1, cp1)
-                X2 = x0 + r_sub * (sp2 * pa_s - cp2 * pb_s)
-                Y2 = y0 + r_sub * (sp2 * pc_s + cp2 * pd_s)
+                X2 = x0 + R_sub * (sp2 * pa_s - cp2 * pb_s)
+                Y2 = y0 + R_sub * (sp2 * pc_s + cp2 * pd_s)
                 A2 = -A1
                 chi2_v = (v_d[dpad] - V) ** 2 * inv_vv
                 # x,y chi² per solution (no v, no a)
@@ -1057,8 +1064,8 @@ class MaserDiskModel(ModelBase):
                           -0.5 * (chi2_xy2 + w * chi2_a2)))
             else:
                 X1, Y1, V = _obs_3(idx, sp1, cp1)
-                X2 = x0 + r_sub * (sp2 * pa_s - cp2 * pb_s)
-                Y2 = y0 + r_sub * (sp2 * pc_s + cp2 * pd_s)
+                X2 = x0 + R_sub * (sp2 * pa_s - cp2 * pb_s)
+                Y2 = y0 + R_sub * (sp2 * pc_s + cp2 * pd_s)
                 chi2_v = (v_d[dpad] - V) ** 2 * inv_vv
                 chi2_1 = (_chi2_3obs(
                     x_d[dpad], X1, inv_vx, y_d[dpad], Y1, inv_vy,
@@ -1434,8 +1441,9 @@ class MaserDiskModel(ModelBase):
         # 2x2 solve for phi* at each spot's r
         dx = self._all_x - x0
         dy = self._all_y - y0
-        rhs_x = dx / (r_ang + eps)
-        rhs_y = dy / (r_ang + eps)
+        R_ang = r_ang * 1e3  # mas → μas for position solve
+        rhs_x = dx / (R_ang + eps)
+        rhs_y = dy / (R_ang + eps)
         det = a1 * b2 - a2 * b1
         safe_det = jnp.where(jnp.abs(det) > eps, det, eps)
         s_star = (rhs_x * b2 - rhs_y * a2) / safe_det
@@ -1445,8 +1453,8 @@ class MaserDiskModel(ModelBase):
         # sigma_phi from position Hessian
         sf = jnp.sin(phi_star)
         cf = jnp.cos(phi_star)
-        dXdphi = r_ang * (a1 * cf - a2 * sf)
-        dYdphi = r_ang * (b1 * cf - b2 * sf)
+        dXdphi = R_ang * (a1 * cf - a2 * sf)
+        dYdphi = R_ang * (b1 * cf - b2 * sf)
         var_x = self._all_sigma_x2 + sigma_x_floor2
         var_y = self._all_sigma_y2 + sigma_y_floor2
         H = dXdphi**2 / var_x + dYdphi**2 / var_y
@@ -1506,9 +1514,8 @@ class MaserDiskModel(ModelBase):
                       shared_params)
         log_MBH = deterministic("log_MBH", eta + jnp.log10(D_A))
         M_BH = 10.0**(log_MBH - 7.0)  # in units of 1e7 M_sun
-        # x0, y0 sampled in uas, converted to mas for physics
-        x0 = rsample("x0", self.priors["x0"], shared_params) * 1e-3
-        y0 = rsample("y0", self.priors["y0"], shared_params) * 1e-3
+        x0 = rsample("x0", self.priors["x0"], shared_params)  # μas
+        y0 = rsample("y0", self.priors["y0"], shared_params)  # μas
 
         i0_deg = rsample("i0", self.priors["i0"], shared_params)
         Omega0_deg = rsample("Omega0", self.priors["Omega0"], shared_params)
@@ -1522,13 +1529,12 @@ class MaserDiskModel(ModelBase):
         di_dr_deg = rsample("di_dr", self.priors["di_dr"], shared_params)
         di_dr = jnp.deg2rad(di_dr_deg)
 
-        # sigma floors sampled in uas, converted to mas^2
-        sigma_x_floor2 = (rsample(
+        sigma_x_floor2 = rsample(
             "sigma_x_floor", self.priors["sigma_x_floor"],
-            shared_params) * 1e-3)**2
-        sigma_y_floor2 = (rsample(
+            shared_params)**2  # μas²
+        sigma_y_floor2 = rsample(
             "sigma_y_floor", self.priors["sigma_y_floor"],
-            shared_params) * 1e-3)**2
+            shared_params)**2  # μas²
         var_v_sys = rsample(
             "sigma_v_sys", self.priors["sigma_v_sys"], shared_params)**2
         var_v_hv = rsample(

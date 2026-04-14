@@ -116,6 +116,11 @@ def load_NGC5765b_spots(root, v_sys_obs=None):
         "v_sys_obs": float(v_sys_obs),
     }
 
+    # Convert positions from mas to μas for float32 precision
+    for key in ("x", "y", "sigma_x", "sigma_y"):
+        if key in data:
+            data[key] = data[key] * 1000.0
+
     n_accel = int(accel_measured.sum())
     fprint(f"loaded {n} maser spots for NGC5765b "
            f"({n_accel} with measured acceleration).")
@@ -227,6 +232,11 @@ def _load_kuo_table2(root, fname, galaxy_label, v_sys_obs=None):
         "v_sys_obs": float(v_sys_obs),
     }
 
+    # Convert positions from mas to μas for float32 precision
+    for key in ("x", "y", "sigma_x", "sigma_y"):
+        if key in data:
+            data[key] = data[key] * 1000.0
+
     n_accel = int(accel_measured.sum())
     fprint(f"loaded {n} maser spots for {galaxy_label} "
            f"({n_accel} with measured acceleration).")
@@ -331,7 +341,7 @@ def load_NGC4258_spots(root, v_sys_obs=472.0):
            f"({n_r} red, {n_b} blue, {n_s} systemic; "
            f"{n_accel} with measured acceleration).")
 
-    return {
+    data = {
         "velocity":        np.array(velocity),
         "sigma_v":         np.array(sigma_v),
         "x":               np.array(x),
@@ -346,6 +356,11 @@ def load_NGC4258_spots(root, v_sys_obs=472.0):
         "galaxy_name":     "NGC4258",
         "v_sys_obs":       float(v_sys_obs),
     }
+    # Convert positions from mas to μas for float32 precision
+    for key in ("x", "y", "sigma_x", "sigma_y"):
+        if key in data:
+            data[key] = data[key] * 1000.0
+    return data
 
 
 def load_megamaser_spots(root, galaxy="CGCG074-064", v_sys_obs=None,
@@ -422,6 +437,11 @@ def load_megamaser_spots(root, galaxy="CGCG074-064", v_sys_obs=None,
         n_accel = int(data["accel_measured"].sum())
         fprint(f"loaded {n} maser spots for {galaxy} "
                f"({n_accel} with measured acceleration).")
+
+        # Convert positions from mas to μas for float32 precision
+        for key in ("x", "y", "sigma_x", "sigma_y"):
+            if key in data:
+                data[key] = data[key] * 1000.0
 
     # Classify spots: use spot_type from data if available, else k-means
     n = data["n_spots"]
