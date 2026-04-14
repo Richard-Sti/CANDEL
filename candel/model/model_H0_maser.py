@@ -1376,7 +1376,9 @@ class MaserDiskModel(ModelBase):
                              r_ang_ref, i0, di_dr, Omega0, dOmega_dr,
                              sigma_x_floor2, sigma_y_floor2,
                              var_v_sys, var_v_hv, sigma_a_floor2,
-                             d2i_dr2=0.0, d2Omega_dr2=0.0):
+                             d2i_dr2=0.0, d2Omega_dr2=0.0,
+                             ecc=None, periapsis0=None,
+                             dperiapsis_dr=0.0):
         """Mode 1 phi-marginal via per-type uniform brute-force grids.
 
         Each spot type gets its own phi range (systemic near 0,
@@ -1399,7 +1401,9 @@ class MaserDiskModel(ModelBase):
                           r_ang_ref, i0, di_dr, Omega0, dOmega_dr,
                           sigma_x_floor2, sigma_y_floor2,
                           var_v_sys, var_v_hv, sigma_a_floor2)
-        integrand_kw = dict(d2i_dr2=d2i_dr2, d2Omega_dr2=d2Omega_dr2)
+        integrand_kw = dict(d2i_dr2=d2i_dr2, d2Omega_dr2=d2Omega_dr2,
+                            ecc=ecc, periapsis0=periapsis0,
+                            dperiapsis_dr=dperiapsis_dr)
 
         result = jnp.zeros(self.n_spots)
 
@@ -1427,6 +1431,7 @@ class MaserDiskModel(ModelBase):
                        sigma_x_floor2, sigma_y_floor2,
                        var_v_sys, var_v_hv, sigma_a_floor2,
                        d2i_dr2=0.0, d2Omega_dr2=0.0,
+                       ecc=None, periapsis0=None, dperiapsis_dr=0.0,
                        idx=None):
         """Per-spot log-likelihood integrand at given (r, phi) points.
 
@@ -1487,6 +1492,22 @@ class MaserDiskModel(ModelBase):
             sin_i[:, None], r_ang[:, None],
             v_kep[:, None], gamma[:, None], z_g[:, None], a_mag[:, None],
             pA[:, None], pB[:, None], pC[:, None], pD[:, None])
+
+        if ecc is not None:
+            omega_r = periapsis0 + dperiapsis_dr * (r_ang - r_ang_ref)
+            sw = jnp.sin(omega_r)[:, None]
+            cw = jnp.cos(omega_r)[:, None]
+            cos_f = cos_phi * cw + sin_phi * sw
+            ecc_fac = (sin_phi + ecc * sw) / jnp.sqrt(1.0 + ecc * cos_f)
+            v_z = v_kep[:, None] * ecc_fac * sin_i[:, None]
+            beta_c2 = (v_kep[:, None] / SPEED_OF_LIGHT)**2
+            beta_e2 = (beta_c2 * (1.0 + ecc**2 + 2.0 * ecc * cos_f)
+                       / (1.0 + ecc * cos_f))
+            gamma_e = 1.0 / jnp.sqrt(1.0 - beta_e2)
+            one_plus_z_D = gamma_e * (1.0 + v_z / SPEED_OF_LIGHT)
+            V = SPEED_OF_LIGHT * (
+                one_plus_z_D * z_g[:, None]
+                * (1.0 + v_sys / SPEED_OF_LIGHT) - 1.0)
 
         var_x = all_sigma_x2 + sigma_x_floor2
         var_y = all_sigma_y2 + sigma_y_floor2
@@ -1594,7 +1615,9 @@ class MaserDiskModel(ModelBase):
             r_ang_ref, i0, di_dr, Omega0, dOmega_dr,
             sigma_x_floor2, sigma_y_floor2,
             var_v_sys, var_v_hv, sigma_a_floor2,
-            d2i_dr2=d2i_dr2, d2Omega_dr2=d2Omega_dr2)
+            d2i_dr2=d2i_dr2, d2Omega_dr2=d2Omega_dr2,
+            ecc=ecc, periapsis0=periapsis0,
+            dperiapsis_dr=dperiapsis_dr)
 
         return logsumexp(ll + log_w_phi, axis=-1)
 
@@ -1702,25 +1725,16 @@ class MaserDiskModel(ModelBase):
             ll_disk = jnp.sum(ll_per_spot)
 
         else:
-            # Sample in log-r for better NUTS geometry, but retain
-            # uniform prior on r_ang via Jacobian: p(r) = const →
-            # p(log r) ∝ r → factor(log r) corrects uniform-in-log to
-            # uniform-in-r.
-            log_r_lo = jnp.log(self._r_ang_lo)
-            log_r_hi = jnp.log(self._r_ang_hi)
             with plate("spots", self.n_spots):
-                log_r = sample(
-                    "log_r_ang", Uniform(log_r_lo, log_r_hi))
-            r_spots = deterministic("r_ang", jnp.exp(log_r))
-            # Jacobian: uniform in r ↔ p(log r) ∝ r = exp(log r)
-            factor("ll_r_jacobian", jnp.sum(log_r))
+                r_spots = sample(
+                    "r_ang", Uniform(self._r_ang_lo, self._r_ang_hi))
 
             if self.phi_method == "adaptive":
                 ll_per_spot = self._eval_adaptive_phi_mode1(
                     r_spots, *args, **ecc_kw, **quad_kw)
             elif self.phi_method == "bruteforce":
                 ll_per_spot = self._eval_bruteforce_phi(
-                    r_spots, *args, **quad_kw)
+                    r_spots, *args, **ecc_kw, **quad_kw)
             else:
                 ll_per_spot = self._eval_marginal_phi(
                     r_spots, *args, **ecc_kw, **quad_kw)

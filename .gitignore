@@ -24,6 +24,7 @@ scripts/mocks/logs/
 
 modules_arc.sh
 python.sh
+bash.sh
 *.out
 CLAUDE.md
 GEMINI.md
