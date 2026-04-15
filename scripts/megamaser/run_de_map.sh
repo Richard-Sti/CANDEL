@@ -14,6 +14,13 @@ GALAXIES=()
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        -h|--help)
+            echo "Usage: bash $0 [-q QUEUE] [GALAXY ...]"
+            echo ""
+            echo "Options:"
+            echo "  -q QUEUE      GPU queue (default: gpulong)"
+            echo "  GALAXY ...    Galaxy names (default: all 5 MCP galaxies)"
+            exit 0 ;;
         -q) QUEUE="$2"; shift 2 ;;
         *)  GALAXIES+=("$1"); shift ;;
     esac

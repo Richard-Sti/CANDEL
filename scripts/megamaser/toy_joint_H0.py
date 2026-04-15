@@ -28,6 +28,7 @@ Usage:
     python scripts/megamaser/toy_joint_H0.py [--num-warmup 1000] [--num-samples 4000]
 """
 import argparse
+import logging
 import os
 
 from h5py import File as H5File
@@ -42,7 +43,8 @@ from jax import random
 from numpyro import factor
 from numpyro.infer import MCMC, NUTS
 from numpyro.infer.initialization import init_to_median
-from scipy.stats import gaussian_kde
+import seaborn as sns
+from scipy.stats import gaussian_kde, norm
 
 from candel.cosmo.cosmography import Distance2Redshift
 from candel.model.integration import ln_simpson
@@ -120,7 +122,8 @@ _D_SEL = jnp.linspace(1.0, 400.0, 1001)
 _LOG_D2_SEL = 2.0 * jnp.log(_D_SEL)
 
 
-def model(galaxy_data, distance2redshift, use_selection, priors):
+def model(galaxy_data, distance2redshift, use_selection, priors,
+          flat_dist=False):
     H0 = numpyro.sample("H0", priors["H0"])
     sigma_pec = numpyro.sample("sigma_pec", priors["sigma_pec"])
     h = H0 / 100.0
@@ -129,10 +132,11 @@ def model(galaxy_data, distance2redshift, use_selection, priors):
         D_lim = numpyro.sample("D_lim", priors["D_lim"])
         D_width = numpyro.sample("D_width", priors["D_width"])
 
-        # Selection normalisation: int Phi((D_lim - D)/D_width) * D^2 dD
+        # Selection normalisation
         log_sel_grid = jax.scipy.stats.norm.logcdf(
             (D_lim - _D_SEL) / D_width)
-        log_Z_sel = ln_simpson(log_sel_grid + _LOG_D2_SEL, _D_SEL)
+        log_vol = _LOG_D2_SEL if not flat_dist else 0.0
+        log_Z_sel = ln_simpson(log_sel_grid + log_vol, _D_SEL)
 
     for gd in galaxy_data:
         name = gd["name"]
@@ -141,8 +145,9 @@ def model(galaxy_data, distance2redshift, use_selection, priors):
 
         D_c = numpyro.sample(f"{name}_D_c", dist.Uniform(D_lo, D_hi))
 
-        # Volumetric D^2 prior
-        factor(f"{name}_Dvol", 2.0 * jnp.log(D_c))
+        # Volumetric D^2 prior (skip for flat distance prior)
+        if not flat_dist:
+            factor(f"{name}_Dvol", 2.0 * jnp.log(D_c))
 
         # Distance likelihood via interpolation on precomputed grid
         log_L_D = jnp.interp(D_c, gd["D_grid"], gd["log_L_grid"],
@@ -166,14 +171,14 @@ def model(galaxy_data, distance2redshift, use_selection, priors):
 # Plotting
 # -----------------------------------------------------------------------
 
-def _build_mcsample(samples, keys, label, settings=None):
+def _build_mcsample(samples, keys, label):
     """Build a GetDist MCSamples from a dict of numpy arrays."""
     names, param_labels, columns = [], [], []
     for k in keys:
         if k not in samples:
             continue
         v = samples[k]
-        if np.ptp(v) == 0:
+        if v.max() - v.min() == 0:
             continue
         names.append(k)
         param_labels.append(PARAM_LABELS.get(k, k))
@@ -181,11 +186,17 @@ def _build_mcsample(samples, keys, label, settings=None):
 
     data = np.column_stack(columns)
     return MCSamples(samples=data, names=names, labels=param_labels,
-                     label=label, settings=settings)
+                     label=label,
+                     settings={"smooth_scale_2D": 0.35,
+                               "smooth_scale_1D": 0.3})
 
 
 def make_corner(samples_nosel, samples_sel, fpath):
     """Overlay both posteriors on a single GetDist triangle plot."""
+    # Suppress getdist bandwidth/binning warnings — the fallback bandwidth
+    # and default fine_bins are adequate, just noisy for correlated params.
+    logging.getLogger("root").setLevel(logging.ERROR)
+
     try:
         import scienceplots  # noqa
         style = "science"
@@ -197,13 +208,8 @@ def make_corner(samples_nosel, samples_sel, fpath):
             + [f"{n}_D_c" for n in GALAXIES]
             + ["D_lim", "D_width"])
 
-    kde_settings = {"fine_bins_2D": 512, "fine_bins": 1024,
-                    "num_bins_2D": 80, "num_bins": 100,
-                    "smooth_scale_2D": -1, "smooth_scale_1D": -1}
-    gd_nosel = _build_mcsample(samples_nosel, keys, "No selection",
-                                kde_settings)
-    gd_sel = _build_mcsample(samples_sel, keys, "With selection",
-                              kde_settings)
+    gd_nosel = _build_mcsample(samples_nosel, keys, "No selection")
+    gd_sel = _build_mcsample(samples_sel, keys, "With selection")
 
     # Legend labels with H0 summary
     H0_nosel = samples_nosel["H0"]
@@ -239,15 +245,74 @@ def make_corner(samples_nosel, samples_sel, fpath):
     print(f"Saved corner plot to {os.path.abspath(fpath)}")
 
 
+def make_H0_1d(samples_nosel, samples_sel, fpath):
+    """1D H0 posterior comparison with Planck and SH0ES."""
+    try:
+        import scienceplots  # noqa
+        style = "science"
+    except ImportError:
+        style = "default"
+
+    H0_nosel = samples_nosel["H0"]
+    H0_sel = samples_sel["H0"]
+
+    cols = ["#87193d", "#1e42b9", "#d42a29", "#05dd6b", "#ee35d5"]
+    bw = 2.0
+
+    # MNRAS one-column width: 84 mm ≈ 3.307 in
+    with plt.style.context(style):
+        fig, ax = plt.subplots(figsize=(3.307, 2.5))
+
+        sns.kdeplot(H0_nosel, ax=ax, fill=True, label="No selection",
+                    color=cols[0], bw_adjust=bw)
+        sns.kdeplot(H0_sel, ax=ax, fill=True, label="With selection",
+                    color=cols[3], bw_adjust=bw)
+
+        # SH0ES and Planck ±1σ bands
+        ax.axvspan(73.04 - 1.04, 73.04 + 1.04,
+                   alpha=0.25, color=cols[2], label="SH0ES", zorder=-1)
+        ax.axvspan(67.4 - 0.5, 67.4 + 0.5,
+                   alpha=0.25, color=cols[1], label="Planck", zorder=-1)
+
+        ax.set_xlabel(
+            r"$H_0 ~ [\mathrm{km}\,\mathrm{s}^{-1}\,\mathrm{Mpc}^{-1}]$")
+        ax.set_ylabel("Normalized PDF")
+        ax.set_xlim(57, 83)
+
+        # Split legend above figure: posteriors left, references right
+        handles, labels_all = ax.get_legend_handles_labels()
+        main_h, main_l, ref_h, ref_l = [], [], [], []
+        for h, l in zip(handles, labels_all):
+            if l in ["SH0ES", "Planck"]:
+                ref_h.append(h)
+                ref_l.append(l)
+            else:
+                main_h.append(h)
+                main_l.append(l)
+
+        fig.tight_layout()
+        leg1 = ax.legend(main_h, main_l, loc="lower left",
+                         bbox_to_anchor=(0.0, 1.01), ncol=1, frameon=False)
+        ax.add_artist(leg1)
+        ax.legend(ref_h, ref_l, loc="lower right",
+                  bbox_to_anchor=(1.0, 1.01), ncol=1, frameon=False)
+
+        fig.savefig(fpath, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved H0 1D plot to {os.path.abspath(fpath)}")
+
+
 # -----------------------------------------------------------------------
 # Main
 # -----------------------------------------------------------------------
 
 def run_nuts(galaxy_data, d2z, use_selection, priors,
-             num_warmup, num_samples, num_chains, seed):
+             num_warmup, num_samples, num_chains, seed,
+             flat_dist=False):
     """Run NUTS for one configuration, return samples dict."""
-    tag = "with selection" if use_selection else "no selection"
-    fsection(f"NUTS ({tag})")
+    dist_tag = "flat" if flat_dist else "volume"
+    sel_tag = "with selection" if use_selection else "no selection"
+    fsection(f"NUTS ({sel_tag}, {dist_tag} D prior)")
 
     kernel = NUTS(model, dense_mass=True,
                   init_strategy=init_to_median(num_samples=100))
@@ -256,7 +321,8 @@ def run_nuts(galaxy_data, d2z, use_selection, priors,
                 num_samples=num_samples,
                 num_chains=num_chains,
                 chain_method="vectorized")
-    mcmc.run(random.PRNGKey(seed), galaxy_data, d2z, use_selection, priors)
+    mcmc.run(random.PRNGKey(seed), galaxy_data, d2z, use_selection, priors,
+             flat_dist)
     mcmc.print_summary()
 
     samples = {k: np.asarray(v) for k, v in mcmc.get_samples().items()}
@@ -279,8 +345,9 @@ def run_nuts(galaxy_data, d2z, use_selection, priors,
         print(f"  {name:15s}: D_c = {D.mean():.1f} +/- {D.std():.1f}")
 
     # Save to HDF5
-    suffix = "sel" if use_selection else "nosel"
-    fpath = f"{RESULT_ROOT}/toy_joint_H0_{suffix}.hdf5"
+    sel_suffix = "sel" if use_selection else "nosel"
+    dist_suffix = "Dflat" if flat_dist else "Dvol"
+    fpath = f"{RESULT_ROOT}/toy_joint_H0_{sel_suffix}_{dist_suffix}.hdf5"
     with H5File(fpath, "w") as f:
         grp = f.create_group("samples")
         for k, v in samples.items():
@@ -297,6 +364,8 @@ def main():
     parser.add_argument("--num-chains", type=int, default=4)
     parser.add_argument("--n-grid", type=int, default=1024)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--flat-dist", action="store_true",
+                        help="Use flat D prior instead of volumetric D^2")
     args = parser.parse_args()
 
     print(f"JAX devices: {jax.devices()}", flush=True)
@@ -331,23 +400,33 @@ def main():
 
     d2z = Distance2Redshift(Om0=0.315)
 
+    if args.flat_dist:
+        print("Using FLAT distance prior (p(D) = const)")
+    else:
+        print("Using VOLUMETRIC distance prior (p(D) ∝ D²)")
+
     # ---- Run both configurations ----
     samples_nosel = run_nuts(galaxy_data, d2z, use_selection=False,
                              priors=priors,
                              num_warmup=args.num_warmup,
                              num_samples=args.num_samples,
                              num_chains=args.num_chains,
-                             seed=args.seed)
+                             seed=args.seed,
+                             flat_dist=args.flat_dist)
     samples_sel = run_nuts(galaxy_data, d2z, use_selection=True,
                            priors=priors,
                            num_warmup=args.num_warmup,
                            num_samples=args.num_samples,
                            num_chains=args.num_chains,
-                           seed=args.seed + 1)
+                           seed=args.seed + 1,
+                           flat_dist=args.flat_dist)
 
-    # ---- Corner plot ----
-    fpath = f"{RESULT_ROOT}/toy_joint_H0_corner.png"
-    make_corner(samples_nosel, samples_sel, fpath)
+    # ---- Plots ----
+    dist_suffix = "Dflat" if args.flat_dist else "Dvol"
+    make_corner(samples_nosel, samples_sel,
+                f"{RESULT_ROOT}/toy_joint_H0_corner_{dist_suffix}.png")
+    make_H0_1d(samples_nosel, samples_sel,
+               f"{RESULT_ROOT}/toy_joint_H0_1d_{dist_suffix}.png")
 
 
 if __name__ == "__main__":

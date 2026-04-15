@@ -9,8 +9,10 @@
 #   bash scripts/megamaser/submit_ngc4258.sh                   # defaults
 #   bash scripts/megamaser/submit_ngc4258.sh -q cmbgpu         # different queue
 #   bash scripts/megamaser/submit_ngc4258.sh --warmup 5000     # more warmup
-#   bash scripts/megamaser/submit_ngc4258.sh --init sobol_adam  # Sobol+Adam init
-#   bash scripts/megamaser/submit_ngc4258.sh --init-r-only     # config globals + r_ang golden-section, no sampling
+#   bash scripts/megamaser/submit_ngc4258.sh --init config_ropt   # config globals + r_ang optimised (default)
+#   bash scripts/megamaser/submit_ngc4258.sh --init config_rrand  # config globals + r_ang random from prior
+#   bash scripts/megamaser/submit_ngc4258.sh --init sobol_adam    # Sobol+Adam MAP init
+#   bash scripts/megamaser/submit_ngc4258.sh --init-r-only        # r_ang golden-section only, no sampling
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PYTHON="$ROOT/venv_gpu_candel/bin/python"
@@ -22,6 +24,20 @@ INIT=""
 INIT_R_ONLY=false
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        -h|--help)
+            echo "Usage: bash $0 [-q QUEUE] [--warmup N] [--samples N] [--init METHOD] [--init-r-only]"
+            echo ""
+            echo "Options:"
+            echo "  -q QUEUE        GPU queue (default: optgpu)"
+            echo "  --warmup N      Number of warmup iterations (default: 2000)"
+            echo "  --samples N     Number of samples (default: 2000)"
+            echo "  --init METHOD   Initialization method:"
+            echo "                    config/config_ropt  config globals + r_ang optimised (default)"
+            echo "                    config_rrand        config globals + r_ang random from prior"
+            echo "                    sobol_adam           DE/Sobol MAP"
+            echo "                    median               numpyro median"
+            echo "  --init-r-only   Config globals + r_ang golden-section, no sampling"
+            exit 0 ;;
         -q) QUEUE="$2"; shift 2 ;;
         --warmup) WARMUP="$2"; shift 2 ;;
         --samples) SAMPLES="$2"; shift 2 ;;
