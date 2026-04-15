@@ -16,7 +16,13 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+NUM_WARMUP=1000
+NUM_SAMPLES=4000
+NUM_CHAINS=8
+CHAIN_METHOD="vectorized"
+
 echo "Submitting toy joint H0 -> $QUEUE"
+echo "  warmup=$NUM_WARMUP, samples=$NUM_SAMPLES, chains=$NUM_CHAINS, method=$CHAIN_METHOD"
 addqueue -q "$QUEUE" -s -m 16 --gpus 1 \
     $PYTHON -u "$ROOT/scripts/megamaser/toy_joint_H0.py" \
-    --num-warmup 1000 --num-samples 4000 --num-chains 8
+    --num-warmup $NUM_WARMUP --num-samples $NUM_SAMPLES --num-chains $NUM_CHAINS
