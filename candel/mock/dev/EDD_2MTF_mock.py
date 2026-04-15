@@ -17,10 +17,10 @@ import numpy as np
 from scipy.stats import norm
 
 from ...cosmo.cosmography import Distance2Distmod, Distance2Redshift
-from ...util import SPEED_OF_LIGHT, radec_to_cartesian
-from .._field_utils import field_xyz_to_radec, smoothclip
 from ...field import interpolate_los_density_velocity
 from ...field.field_interp import build_regular_interpolator
+from ...util import SPEED_OF_LIGHT, radec_to_cartesian
+from .._field_utils import field_xyz_to_radec, smoothclip
 
 DEFAULT_TRUE_PARAMS = {
     "H0": 73.0,

@@ -1,4 +1,6 @@
 #!/bin/bash -l
+# Grid convergence benchmark: compare maser log-likelihood at various
+# (n_r, n_phi) grid sizes against a 10001^2 brute-force reference.
 
 if [[ "$1" == "-h" || "$1" == "--help" ]]; then
     echo "Usage: bash $0 [ARGS...]"

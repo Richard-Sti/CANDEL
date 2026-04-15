@@ -1,4 +1,6 @@
 #!/bin/bash -l
+# Phi-marginal convergence test: sweep phi grid sizes and compare
+# marginalised log-likelihood against a high-resolution reference.
 
 if [[ "$1" == "-h" || "$1" == "--help" ]]; then
     echo "Usage: bash $0 [ARGS...]"
