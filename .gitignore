@@ -35,3 +35,4 @@ local_config.toml
 *.pdf
 CLAUDE.md
 background_papers/
+docs/plans/
