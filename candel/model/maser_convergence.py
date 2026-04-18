@@ -173,3 +173,40 @@ def bruteforce_ll_mode2(model, phys_args, phys_kw, ref_cfg):
             ll = logsumexp(jnp.stack(partials, axis=0), axis=0)
             total += float(jnp.sum(ll))
     return total
+
+
+def bruteforce_ll_mode1(model, phys_args, phys_kw, r_ang, ref_cfg):
+    """Per-type full-2pi phi brute force at a fixed r_ang vector.
+
+    r_ang: shape (n_spots,) in mas.
+    ref_cfg: dict with keys n_phi, spot_batch, dtype (dtype accepted for
+        symmetry; this kernel runs at the model's working precision since
+        the per-spot peaks are narrow).
+    Returns dict with keys 'sys', 'red', 'blue', 'total'.
+    """
+    n_phi = int(ref_cfg["n_phi"])
+    spot_batch = int(ref_cfg["spot_batch"])
+
+    phi = jnp.linspace(0.0, 2 * jnp.pi, n_phi)
+    sin_phi = jnp.sin(phi)
+    cos_phi = jnp.cos(phi)
+    log_w = trapz_log_weights(phi)
+
+    r_ang = jnp.asarray(r_ang)
+    out = {}
+    for key, idx in [("sys", model._idx_sys),
+                     ("red", model._idx_red),
+                     ("blue", model._idx_blue)]:
+        n = int(idx.shape[0])
+        if n == 0:
+            out[key] = 0.0
+            continue
+        parts = []
+        for s in range(0, n, spot_batch):
+            b = idx[s:s + spot_batch]
+            log_f = model._phi_integrand(
+                r_ang[b], sin_phi, cos_phi, b, *phys_args, **phys_kw)
+            parts.append(logsumexp(log_f + log_w, axis=-1))
+        out[key] = float(jnp.sum(jnp.concatenate(parts)))
+    out["total"] = out["sys"] + out["red"] + out["blue"]
+    return out
