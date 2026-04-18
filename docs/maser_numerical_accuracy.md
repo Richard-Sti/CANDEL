@@ -135,3 +135,63 @@ spot data. Callers differ only in their grid choice and integration:
 The convergence scripts (`convergence_grids.py`, `convergence_phi_marginal.py`)
 also call `_phi_integrand` directly for the brute-force references,
 ensuring the reference and the model use identical physics.
+
+## 2026-04-18 GPU refactor
+
+The φ integrand evaluation was split into two methods:
+
+- **`_r_precompute(r_ang, idx, ...)`** gathers per-spot data and computes
+  all r-only quantities (`warp_geometry`, Keplerian v_kep/γ/z_g, projection
+  coefficients pA..pD, per-spot variances, log-normalisations, and ecc
+  r-only precomputes).
+- **`_phi_eval(r_pre, sin_phi, cos_phi)`** consumes the precomputed dict
+  and computes (r, φ)-dependent observables + χ² + the returned log_f.
+
+`_phi_integrand` remains as a thin backward-compat wrapper for
+`bruteforce_ll_mode1` and Mode 0 sampling. Production Mode 1/2 paths
+(`_eval_phi_marginal`) now call `_r_precompute` **once per group batch**
+instead of once per sub-range, eliminating 2-3× redundant r-only work
+and data gathers.
+
+Additionally, `_eval_phi_marginal` now evaluates each group's φ marginal
+over a single **concatenated** (sin_phi, cos_phi, log-weight) grid
+(precomputed in `_build_phi_subranges` as `self._phi_concat`) via a
+single `logsumexp`. This eliminates the staged
+`logsumexp(jnp.stack(sub_lps))` combine step. Trapezoidal weights on
+disjoint sub-ranges concatenate cleanly (each endpoint keeps its h/2
+weight), so the integral is exactly preserved. Reduction-order change
+introduces |Δ log L| ≤ 1e-12 on float64 (verified against the pinned
+baseline in `scripts/megamaser/baseline_gpu_refactor.npz`).
+
+For Mode 2 sys-without-accel spots (`_n_sys_uncons > 0`), the r grid is
+now tagged `shared_r = True` in `_build_r_grids_mode2` and passes a
+`(n_r,)`-shaped grid (no broadcast to `(N, n_r)`). `_phi_eval_shared_r`
+evaluates X/Y/V/A at `(n_r, n_phi)` and only broadcasts to
+`(N, n_r, n_phi)` at the residual step. The current production data
+(CGCG, NGC5765b, NGC6264, NGC6323, UGC3789) have 0 sys-uncons spots, so
+this code path is dormant — ready for future datasets.
+
+Circular V is only evaluated when `ecc is None` (previously the circular
+V computed in `_observables_from_precomputed` was always run, then
+overwritten under eccentricity). The χ² term for acceleration is gated
+on a static `has_any_accel` Python flag per group, computed once in
+`_build_spot_indices` as `self._group_has_accel`.
+
+**Benchmarks** (`scripts/megamaser/bench_gpu_refactor.py`, CPU, float64,
+n_iter=30 × 3 trials, mean):
+
+| Galaxy      | Mode | fwd before | fwd after | grad before | grad after |
+|-------------|------|-----------:|----------:|------------:|-----------:|
+| CGCG074-064 | 2    | 309 ms     | 299 ms    | 1878 ms     | 1856 ms    |
+| NGC4258     | 1    | 24.1 ms    | 5.3 ms    | 127 ms      | 76 ms      |
+
+Mode 2 CPU is neutral-to-slightly-faster (noise-dominated at this
+scale). Mode 1 CPU shows a ~4.3× forward and ~1.7× gradient speedup
+because NGC4258 has 3 HV sub-ranges and 2 sys sub-ranges per
+evaluation — the hoisted r-precompute avoids repeating that work per
+sub-range. GPU speedups are expected to be larger for Mode 2 (concat
+reduces kernel-launch count and backward-pass memory traffic).
+
+**Numerical guarantee:** all six production galaxies (5 MCP + NGC4258)
+agree with the pre-refactor baseline log-L to |Δ| ≤ 1e-12 nats. See
+`scripts/megamaser/test_gpu_refactor.py` for the regression harness.
