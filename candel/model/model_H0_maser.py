@@ -716,32 +716,30 @@ class MaserDiskModel(ModelBase):
             r = jnp.exp(logr_c[:, None] + jnp.sinh(t) * s[:, None])
             return r, _trapz_log_w_per_spot(r)
 
-        def _loguniform_grid(n_spots, n_r):
+        def _loguniform_grid_shared(n_r):
+            # Shared across all spots in the group: no broadcast to (N, n_r).
             logr = jnp.linspace(jnp.log(r_min), jnp.log(r_max), n_r)
             r1 = jnp.exp(logr)
             w1 = trapz_log_weights(r1)
-            # Broadcast to per-spot to match the (N, n_r) shape convention.
-            r = jnp.broadcast_to(r1[None, :], (n_spots, n_r))
-            lw = jnp.broadcast_to(w1[None, :], (n_spots, n_r))
-            return r, lw
+            return r1, w1
 
         groups = []
-        # Systemic with accel → sinh centred on r_acc.
+        # Systemic with accel → sinh centred on r_acc (per-spot).
         if self._n_sys_cons > 0:
             r, lw = _sinh_grid(self._idx_sys_cons, self._n_r_local)
-            groups.append(("sys", self._idx_sys_cons, r, lw))
-        # Systemic without accel → log-uniform brute.
+            groups.append(("sys", self._idx_sys_cons, r, lw, False))
+        # Systemic without accel → log-uniform brute (shared r).
         if self._n_sys_uncons > 0:
-            r, lw = _loguniform_grid(self._n_sys_uncons, self._n_r_brute)
-            groups.append(("sys", self._idx_sys_uncons, r, lw))
-        # Red HV → sinh centred on r_vel.
+            r1, w1 = _loguniform_grid_shared(self._n_r_brute)
+            groups.append(("sys", self._idx_sys_uncons, r1, w1, True))
+        # Red HV → sinh centred on r_vel (per-spot).
         if self._n_red > 0:
             r, lw = _sinh_grid(self._idx_red, self._n_r_local)
-            groups.append(("red", self._idx_red, r, lw))
-        # Blue HV → sinh centred on r_vel.
+            groups.append(("red", self._idx_red, r, lw, False))
+        # Blue HV → sinh centred on r_vel (per-spot).
         if self._n_blue > 0:
             r, lw = _sinh_grid(self._idx_blue, self._n_r_local)
-            groups.append(("blue", self._idx_blue, r, lw))
+            groups.append(("blue", self._idx_blue, r, lw, False))
         return groups
 
     # ---- unified φ integrand (1-D or 2-D r_ang) ----
@@ -861,6 +859,54 @@ class MaserDiskModel(ModelBase):
 
         return (r_pre["lnorm"] + r_pre["lnorm_a"])[dpad] - 0.5 * chi2
 
+    def _phi_eval_shared_r(self, r_pre, sin_phi, cos_phi):
+        """Shared-r variant of _phi_eval (sys-uncons).
+
+        r_pre is built from a (n_r,)-shaped r_ang (no spot axis).
+        Predictions X, Y, V, A are computed at (n_r, n_phi); the
+        (N, n_r, n_phi) cost appears only at the residual step.
+        Returns log_f of shape (N, n_r, n_phi).
+        """
+        sin_i = r_pre["sin_i"]                             # (n_r,)
+        v_kep = r_pre["v_kep"]                             # (n_r,)
+        X, Y, V, A = _observables_from_precomputed(
+            sin_phi, cos_phi, r_pre["x0"], r_pre["y0"], r_pre["v_sys"],
+            sin_i[:, None], r_pre["r_ang"][:, None],
+            v_kep[:, None], r_pre["gamma"][:, None],
+            r_pre["z_g"][:, None], r_pre["a_mag"][:, None],
+            r_pre["pA"][:, None], r_pre["pB"][:, None],
+            r_pre["pC"][:, None], r_pre["pD"][:, None])
+        # X, Y, V, A: (n_r, n_phi).
+
+        ecc_pre = r_pre["ecc_pre"]
+        if ecc_pre is not None:
+            ecc = ecc_pre["ecc"]
+            sw = ecc_pre["sw"][:, None]
+            cw = ecc_pre["cw"][:, None]
+            beta_c2 = ecc_pre["beta_c2"][:, None]
+            cos_d = cos_phi * cw + sin_phi * sw
+            ecc_fac = (sin_phi + ecc * sw) / jnp.sqrt(1.0 + ecc * cos_d)
+            v_z = v_kep[:, None] * ecc_fac * sin_i[:, None]
+            beta_e2 = (beta_c2 * (1.0 + ecc ** 2 + 2.0 * ecc * cos_d)
+                       / (1.0 + ecc * cos_d))
+            gamma_e = 1.0 / jnp.sqrt(1.0 - beta_e2)
+            one_plus_z_D = gamma_e * (1.0 + v_z / SPEED_OF_LIGHT)
+            V = SPEED_OF_LIGHT * (
+                one_plus_z_D * r_pre["z_g"][:, None]
+                * (1.0 + r_pre["v_sys"] / SPEED_OF_LIGHT) - 1.0)
+
+        # Broadcast to (N, n_r, n_phi) at the residual step.
+        dx = r_pre["all_x"][:, None, None] - X[None]
+        dy = r_pre["all_y"][:, None, None] - Y[None]
+        dv = r_pre["all_v"][:, None, None] - V[None]
+        da = r_pre["all_a"][:, None, None] - A[None]
+        chi2 = (dx * dx / r_pre["var_x"][:, None, None]
+                + dy * dy / r_pre["var_y"][:, None, None]
+                + dv * dv / r_pre["var_v"][:, None, None])
+        chi2 = chi2 + (da * da / r_pre["var_a"][:, None, None]
+                       * r_pre["has_a"][:, None, None])
+        return (r_pre["lnorm"] + r_pre["lnorm_a"])[:, None, None] - 0.5 * chi2
+
     def _phi_integrand(self, r_ang, sin_phi, cos_phi, idx,
                        x0, y0, D_A, M_BH, v_sys,
                        r_ang_ref_i, r_ang_ref_Omega, r_ang_ref_periapsis,
@@ -907,7 +953,13 @@ class MaserDiskModel(ModelBase):
             phys_kw = {}
         result = jnp.zeros(self.n_spots)
 
-        for type_key, idx, r_ang, log_w_r in spot_groups:
+        for group in spot_groups:
+            # Accept legacy 4-tuples (no shared_r flag, default False).
+            if len(group) == 5:
+                type_key, idx, r_ang, log_w_r, shared_r = group
+            else:
+                type_key, idx, r_ang, log_w_r = group
+                shared_r = False
             n_idx = int(idx.shape[0])
             if n_idx == 0:
                 continue
@@ -919,21 +971,31 @@ class MaserDiskModel(ModelBase):
             for s in range(0, n_idx, batch):
                 sl = slice(s, s + batch)
                 b_idx = idx[sl]
-                r_b = r_ang[sl]
-                lwr_b = None if log_w_r is None else log_w_r[sl]
 
-                # Hoisted: r-only precompute + data gather once per batch.
-                r_pre = self._r_precompute(
-                    r_b, b_idx, *phys_args, **phys_kw)
-
-                # Single phi evaluation over concatenated sub-ranges.
-                log_f = self._phi_eval(r_pre, pc["sin_phi"], pc["cos_phi"])
-                if lwr_b is None:
-                    ps_b = logsumexp(log_f + pc["log_w_phi"], axis=-1)
-                else:
-                    w2d = (lwr_b[:, :, None]
+                if shared_r:
+                    # r_ang shape (n_r,); weights shape (n_r,).
+                    r_b = r_ang
+                    lwr_b = log_w_r
+                    r_pre = self._r_precompute(
+                        r_b, b_idx, *phys_args, **phys_kw)
+                    log_f = self._phi_eval_shared_r(
+                        r_pre, pc["sin_phi"], pc["cos_phi"])
+                    w2d = (lwr_b[None, :, None]
                            + pc["log_w_phi"][None, None, :])
                     ps_b = logsumexp(log_f + w2d, axis=(-2, -1))
+                else:
+                    r_b = r_ang[sl]
+                    lwr_b = None if log_w_r is None else log_w_r[sl]
+                    r_pre = self._r_precompute(
+                        r_b, b_idx, *phys_args, **phys_kw)
+                    log_f = self._phi_eval(
+                        r_pre, pc["sin_phi"], pc["cos_phi"])
+                    if lwr_b is None:
+                        ps_b = logsumexp(log_f + pc["log_w_phi"], axis=-1)
+                    else:
+                        w2d = (lwr_b[:, :, None]
+                               + pc["log_w_phi"][None, None, :])
+                        ps_b = logsumexp(log_f + w2d, axis=(-2, -1))
                 ps_parts.append(ps_b)
 
             ps = (ps_parts[0] if len(ps_parts) == 1
