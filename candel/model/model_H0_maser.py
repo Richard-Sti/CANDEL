@@ -904,6 +904,10 @@ class MaserDiskModel(ModelBase):
                 r_b = r_ang[sl]
                 lwr_b = None if log_w_r is None else log_w_r[sl]
 
+                # Hoisted: r-only precompute + data gather once per batch.
+                r_pre = self._r_precompute(
+                    r_b, b_idx, *phys_args, **phys_kw)
+
                 sub_lps = []
                 for lo, hi, n_phi in subranges:
                     phi = jnp.linspace(lo, hi, n_phi)
@@ -911,9 +915,7 @@ class MaserDiskModel(ModelBase):
                     cos_phi = jnp.cos(phi)
                     log_w_phi = trapz_log_weights(phi)
 
-                    log_f = self._phi_integrand(
-                        r_b, sin_phi, cos_phi, b_idx,
-                        *phys_args, **phys_kw)
+                    log_f = self._phi_eval(r_pre, sin_phi, cos_phi)
 
                     if lwr_b is None:
                         # Mode 1: sum over φ only.
