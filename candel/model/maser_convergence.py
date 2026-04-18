@@ -210,3 +210,133 @@ def bruteforce_ll_mode1(model, phys_args, phys_kw, r_ang, ref_cfg):
         out[key] = float(jnp.sum(jnp.concatenate(parts)))
     out["total"] = out["sys"] + out["red"] + out["blue"]
     return out
+
+
+def _production_ll_mode2(model, phys_args, phys_kw):
+    """Total ll_disk under the production Mode 2 phi/r marginal."""
+    D_A = phys_args[2]; M_BH = phys_args[3]; v_sys = phys_args[4]
+    i0 = phys_args[8]; var_v_hv = phys_args[15]; sigma_a_floor2 = phys_args[16]
+    groups = model._build_r_grids_mode2(
+        D_A, M_BH, v_sys, sigma_a_floor2, i0, var_v_hv)
+    ll = model._eval_phi_marginal(groups, phys_args, phys_kw)
+    return float(jnp.sum(ll))
+
+
+def _production_ll_mode1(model, phys_args, phys_kw, r_ang):
+    """Per-type total ll_disk under the production Mode 1 phi marginal."""
+    groups = []
+    if model._n_sys > 0:
+        groups.append(("sys", model._idx_sys, r_ang[model._idx_sys], None))
+    if model._n_red > 0:
+        groups.append(("red", model._idx_red, r_ang[model._idx_red], None))
+    if model._n_blue > 0:
+        groups.append(("blue", model._idx_blue, r_ang[model._idx_blue], None))
+    ll = model._eval_phi_marginal(groups, phys_args, phys_kw)
+    return dict(
+        sys=float(jnp.sum(ll[model._idx_sys])),
+        red=float(jnp.sum(ll[model._idx_red])),
+        blue=float(jnp.sum(ll[model._idx_blue])),
+        total=float(jnp.sum(ll)))
+
+
+def _select_draws(samples, n_draws, seed):
+    """Pick `n_draws` random indices into the posterior. Returns (idx_list,
+    list-of-per-draw-sample-dicts) where each per-draw dict has no leading
+    draw axis."""
+    some_key = next(iter(samples))
+    n_total = int(np.asarray(samples[some_key]).shape[0])
+    rng = np.random.default_rng(seed)
+    idx = rng.choice(n_total, size=min(n_draws, n_total), replace=False)
+    idx = np.sort(idx)
+    draws = []
+    for i in idx:
+        d = {k: np.asarray(v)[i] for k, v in samples.items()}
+        draws.append(d)
+    return idx.tolist(), draws
+
+
+def check_convergence(model, samples, conv_cfg):
+    """Compare production vs brute-force at `n_draws` posterior samples.
+
+    Parameters
+    ----------
+    model : MaserDiskModel (built at the production grids).
+    samples : dict from NUTS/NSS, each value with a leading draw axis.
+    conv_cfg : the [convergence] config dict.
+
+    Returns a dict with fields:
+        mode, n_draws, draw_idx, deltas, mean, std,
+        ll_prod, ll_ref, per_type (mode1 only), ref_cfg, wall_seconds.
+    """
+    import time
+    n_draws = int(conv_cfg.get("n_draws", 8))
+    seed = int(conv_cfg.get("seed", 0))
+    idx, draws = _select_draws(samples, n_draws, seed)
+
+    mode = model.mode
+    t0 = time.time()
+    if mode == "mode2":
+        ref_cfg = conv_cfg["mode2_reference"]
+        ll_prod, ll_ref, deltas = [], [], []
+        for d in draws:
+            pa, pk, _ = model.phys_from_sample(d)
+            p = _production_ll_mode2(model, pa, pk)
+            r = bruteforce_ll_mode2(model, pa, pk, ref_cfg)
+            ll_prod.append(p); ll_ref.append(r); deltas.append(p - r)
+        result = dict(
+            mode=mode, n_draws=len(draws), draw_idx=idx,
+            ll_prod=ll_prod, ll_ref=ll_ref, deltas=deltas,
+            mean=float(np.mean(deltas)),
+            std=float(np.std(deltas, ddof=1)) if len(deltas) > 1 else 0.0,
+            ref_cfg=dict(ref_cfg),
+        )
+    elif mode == "mode1":
+        ref_cfg = conv_cfg["mode1_reference"]
+        if "r_ang" not in samples:
+            raise KeyError(
+                "Mode 1 convergence check expects 'r_ang' in samples.")
+        r_ang_all = np.asarray(samples["r_ang"])
+        per_type = dict(sys=[], red=[], blue=[], total=[])
+        for i, d in zip(idx, draws):
+            pa, pk, _ = model.phys_from_sample(d)
+            r_ang = jnp.asarray(r_ang_all[i])
+            prod = _production_ll_mode1(model, pa, pk, r_ang)
+            ref = bruteforce_ll_mode1(model, pa, pk, r_ang, ref_cfg)
+            for k in ("sys", "red", "blue", "total"):
+                per_type[k].append(prod[k] - ref[k])
+        deltas = per_type["total"]
+        result = dict(
+            mode=mode, n_draws=len(draws), draw_idx=idx,
+            deltas=deltas,
+            mean=float(np.mean(deltas)),
+            std=float(np.std(deltas, ddof=1)) if len(deltas) > 1 else 0.0,
+            per_type={k: dict(
+                mean=float(np.mean(v)),
+                std=float(np.std(v, ddof=1)) if len(v) > 1 else 0.0,
+                values=v) for k, v in per_type.items()},
+            ref_cfg=dict(ref_cfg),
+        )
+    else:
+        raise ValueError(f"Unsupported mode for convergence check: {mode}")
+
+    result["wall_seconds"] = time.time() - t0
+    return result
+
+
+def summarize(result):
+    """Print a human-readable block to stdout."""
+    mode = result["mode"]
+    print("=" * 70)
+    print(f"Convergence check - {mode}, {result['n_draws']} draws "
+          f"({result['wall_seconds']:.1f}s)")
+    print(f"  draw indices: {result['draw_idx']}")
+    deltas = result["deltas"]
+    print("  delta per draw [nats]: "
+          + "  ".join(f"{d:+.3f}" for d in deltas))
+    print(f"  mean +/- std: {result['mean']:+.3f} +/- {result['std']:.3f} nats")
+    if mode == "mode1":
+        for k in ("sys", "red", "blue"):
+            m = result["per_type"][k]["mean"]
+            s = result["per_type"][k]["std"]
+            print(f"    {k:>4}: {m:+.3f} +/- {s:.3f} nats")
+    print("=" * 70, flush=True)
