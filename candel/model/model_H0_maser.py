@@ -1744,6 +1744,60 @@ class MaserDiskModel(ModelBase):
 
         return D_c
 
+    def phys_from_sample(self, sample):
+        """Reconstruct (phys_args, phys_kw, diag) from a single posterior draw.
+
+        `sample` is a dict mapping param name -> scalar or small array.
+        For Mode 1, `sample["r_ang"]` has shape (n_spots,) and should be
+        used by the caller directly; this helper does NOT consume it.
+        """
+        def g(key, default=None):
+            if key in sample:
+                return float(_np.asarray(sample[key]))
+            if default is not None:
+                return default
+            raise KeyError(f"missing '{key}' in posterior sample")
+
+        H0_ref = float(get_nested(self.config, "model/H0_ref", 73.0))
+        h = g("H0", H0_ref) / 100.0
+
+        D_c = g("D_c")
+        eta = g("eta")
+        z_cosmo = float(self.distance2redshift(
+            jnp.atleast_1d(D_c), h=h).squeeze())
+        D_A = D_c / (1.0 + z_cosmo)
+        M_BH = 10.0 ** (eta + _np.log10(D_A) - 7.0)
+
+        v_sys = self.v_sys_obs + g("dv_sys", 0.0)
+
+        phys_args = (
+            g("x0"), g("y0"),
+            D_A, M_BH, v_sys,
+            self._r_ang_ref_i, self._r_ang_ref_Omega,
+            self._r_ang_ref_periapsis,
+            _np.deg2rad(g("i0")),
+            _np.deg2rad(g("di_dr")),
+            _np.deg2rad(g("Omega0")),
+            _np.deg2rad(g("dOmega_dr")),
+            g("sigma_x_floor") ** 2,
+            g("sigma_y_floor") ** 2,
+            g("sigma_v_sys") ** 2,
+            g("sigma_v_hv") ** 2,
+            g("sigma_a_floor") ** 2,
+        )
+
+        phys_kw = {}
+        if self.use_quadratic_warp:
+            phys_kw["d2i_dr2"] = _np.deg2rad(g("d2i_dr2"))
+            phys_kw["d2Omega_dr2"] = _np.deg2rad(g("d2Omega_dr2"))
+        if self.use_ecc:
+            phys_kw["ecc"] = g("ecc")
+            phys_kw["periapsis0"] = _np.deg2rad(g("periapsis"))
+            phys_kw["dperiapsis_dr"] = _np.deg2rad(g("dperiapsis_dr", 0.0))
+
+        diag = dict(D_A=D_A, M_BH=M_BH, v_sys=v_sys)
+        return phys_args, phys_kw, diag
+
     def __call__(self):
         if self.use_selection:
             raise RuntimeError(
