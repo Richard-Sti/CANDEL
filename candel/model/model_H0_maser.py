@@ -1791,8 +1791,18 @@ class MaserDiskModel(ModelBase):
             phys_kw["d2i_dr2"] = _np.deg2rad(g("d2i_dr2"))
             phys_kw["d2Omega_dr2"] = _np.deg2rad(g("d2Omega_dr2"))
         if self.use_ecc:
-            phys_kw["ecc"] = g("ecc")
-            phys_kw["periapsis0"] = _np.deg2rad(g("periapsis"))
+            if "ecc" in sample and "periapsis" in sample:
+                phys_kw["ecc"] = g("ecc")
+                phys_kw["periapsis0"] = _np.deg2rad(g("periapsis"))
+            elif "e_x" in sample and "e_y" in sample:
+                e_x = g("e_x")
+                e_y = g("e_y")
+                phys_kw["ecc"] = float(_np.sqrt(e_x * e_x + e_y * e_y))
+                phys_kw["periapsis0"] = float(_np.arctan2(e_y, e_x))
+            else:
+                raise KeyError(
+                    "use_ecc=True but neither 'ecc'/'periapsis' nor "
+                    "'e_x'/'e_y' present in sample")
             phys_kw["dperiapsis_dr"] = _np.deg2rad(g("dperiapsis_dr", 0.0))
 
         diag = dict(D_A=D_A, M_BH=M_BH, v_sys=v_sys)
