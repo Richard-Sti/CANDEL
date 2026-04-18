@@ -728,29 +728,20 @@ class MaserDiskModel(ModelBase):
 
     # ---- unified φ integrand (1-D or 2-D r_ang) ----
 
-    def _phi_integrand(self, r_ang, sin_phi, cos_phi, idx,
-                       x0, y0, D_A, M_BH, v_sys,
-                       r_ang_ref_i, r_ang_ref_Omega, r_ang_ref_periapsis,
-                       i0, di_dr, Omega0, dOmega_dr,
-                       sigma_x_floor2, sigma_y_floor2,
-                       var_v_sys, var_v_hv, sigma_a_floor2,
-                       d2i_dr2=0.0, d2Omega_dr2=0.0,
-                       ecc=None, periapsis0=None, dperiapsis_dr=0.0):
-        """Per-spot log-integrand at (r, φ) grid points.
+    def _r_precompute(self, r_ang, idx,
+                      x0, y0, D_A, M_BH, v_sys,
+                      r_ang_ref_i, r_ang_ref_Omega, r_ang_ref_periapsis,
+                      i0, di_dr, Omega0, dOmega_dr,
+                      sigma_x_floor2, sigma_y_floor2,
+                      var_v_sys, var_v_hv, sigma_a_floor2,
+                      d2i_dr2=0.0, d2Omega_dr2=0.0,
+                      ecc=None, periapsis0=None, dperiapsis_dr=0.0):
+        """Precompute r-only quantities and gather per-spot data.
 
-        r_ang : (N,) [Mode 1] or (N, n_r) [Mode 2]
-        sin_phi, cos_phi : (n_phi,)
-        idx : (N,) absolute spot indices used to gather data arrays.
-
-        Returns log f with shape (N, n_phi) [Mode 1] or
-        (N, n_r, n_phi) [Mode 2].
+        Returned pytree is consumed by _phi_eval (or _phi_eval_shared_r).
+        r_ang accepts (N,) [Mode 1], (N, n_r) [Mode 2 per-spot], or
+        (n_r,) [Mode 2 shared-r, sys-uncons only].
         """
-        # rpad: trailing None for φ broadcasting on r-shaped arrays.
-        rpad = (slice(None),) * r_ang.ndim + (None,)
-        # dpad: trailing (r.ndim) Nones for 1-D data arrays (broadcast
-        # into (N, [n_r,] n_phi)).
-        dpad = (slice(None),) + (None,) * r_ang.ndim
-
         all_x = self._all_x[idx]
         all_y = self._all_y[idx]
         all_v = self._all_v[idx]
@@ -774,47 +765,107 @@ class MaserDiskModel(ModelBase):
             _precompute_r_quantities(
                 r_ang, D_A, M_BH, sin_i, cos_i, sin_O, cos_O)
 
-        X, Y, V, A = _observables_from_precomputed(
-            sin_phi, cos_phi, x0, y0, v_sys,
-            sin_i[rpad], r_ang[rpad],
-            v_kep[rpad], gamma[rpad], z_g[rpad], a_mag[rpad],
-            pA[rpad], pB[rpad], pC[rpad], pD[rpad])
+        var_x = sx2 + sigma_x_floor2
+        var_y = sy2 + sigma_y_floor2
+        var_v = sv2 + jnp.where(is_hv, var_v_hv, var_v_sys)
+        var_a = sa2 + sigma_a_floor2
+        lnorm = -0.5 * (3 * LOG_2PI + jnp.log(var_x) +
+                        jnp.log(var_y) + jnp.log(var_v))
+        lnorm_a = -0.5 * (LOG_2PI + jnp.log(var_a)) * has_a
 
+        ecc_pre = None
         if ecc is not None:
             omega_r = (periapsis0
                        + dperiapsis_dr * (r_ang - r_ang_ref_periapsis))
-            sw = jnp.sin(omega_r)[rpad]
-            cw = jnp.cos(omega_r)[rpad]
+            sw = jnp.sin(omega_r)
+            cw = jnp.cos(omega_r)
+            beta_c2 = (v_kep / SPEED_OF_LIGHT) ** 2
+            ecc_pre = dict(ecc=ecc, sw=sw, cw=cw, beta_c2=beta_c2)
+
+        return dict(
+            r_ang=r_ang, sin_i=sin_i,
+            v_kep=v_kep, gamma=gamma, z_g=z_g, a_mag=a_mag,
+            pA=pA, pB=pB, pC=pC, pD=pD,
+            all_x=all_x, all_y=all_y, all_v=all_v, all_a=all_a,
+            var_x=var_x, var_y=var_y, var_v=var_v, var_a=var_a,
+            has_a=has_a, lnorm=lnorm, lnorm_a=lnorm_a,
+            ecc_pre=ecc_pre,
+            x0=x0, y0=y0, v_sys=v_sys,
+        )
+
+    def _phi_eval(self, r_pre, sin_phi, cos_phi):
+        """Evaluate log-integrand at (r, phi) grid points (per-spot r).
+
+        r_pre   : dict from _r_precompute with per-spot r-prefix shape
+                  (N,) [Mode 1] or (N, n_r) [Mode 2 per-spot].
+        sin_phi, cos_phi : shape (n_phi,).
+        Returns log_f shape (N, [n_r,] n_phi).
+        """
+        r_ang = r_pre["r_ang"]
+        rpad = (slice(None),) * r_ang.ndim + (None,)
+        dpad = (slice(None),) + (None,) * r_ang.ndim
+
+        sin_i = r_pre["sin_i"]
+        v_kep = r_pre["v_kep"]
+        X, Y, V, A = _observables_from_precomputed(
+            sin_phi, cos_phi, r_pre["x0"], r_pre["y0"], r_pre["v_sys"],
+            sin_i[rpad], r_ang[rpad],
+            v_kep[rpad], r_pre["gamma"][rpad],
+            r_pre["z_g"][rpad], r_pre["a_mag"][rpad],
+            r_pre["pA"][rpad], r_pre["pB"][rpad],
+            r_pre["pC"][rpad], r_pre["pD"][rpad])
+
+        ecc_pre = r_pre["ecc_pre"]
+        if ecc_pre is not None:
+            ecc = ecc_pre["ecc"]
+            sw = ecc_pre["sw"][rpad]
+            cw = ecc_pre["cw"][rpad]
+            beta_c2 = ecc_pre["beta_c2"][rpad]
             cos_d = cos_phi * cw + sin_phi * sw
             ecc_fac = (sin_phi + ecc * sw) / jnp.sqrt(1.0 + ecc * cos_d)
             v_z = v_kep[rpad] * ecc_fac * sin_i[rpad]
-            beta_c2 = (v_kep[rpad] / SPEED_OF_LIGHT) ** 2
             beta_e2 = (beta_c2 * (1.0 + ecc ** 2 + 2.0 * ecc * cos_d)
                        / (1.0 + ecc * cos_d))
             gamma_e = 1.0 / jnp.sqrt(1.0 - beta_e2)
             one_plus_z_D = gamma_e * (1.0 + v_z / SPEED_OF_LIGHT)
             V = SPEED_OF_LIGHT * (
-                one_plus_z_D * z_g[rpad]
-                * (1.0 + v_sys / SPEED_OF_LIGHT) - 1.0)
+                one_plus_z_D * r_pre["z_g"][rpad]
+                * (1.0 + r_pre["v_sys"] / SPEED_OF_LIGHT) - 1.0)
 
-        var_x = sx2 + sigma_x_floor2
-        var_y = sy2 + sigma_y_floor2
-        var_v = sv2 + jnp.where(is_hv, var_v_hv, var_v_sys)
-        var_a = sa2 + sigma_a_floor2
+        dx = r_pre["all_x"][dpad] - X
+        dy = r_pre["all_y"][dpad] - Y
+        dv = r_pre["all_v"][dpad] - V
+        chi2 = (dx * dx / r_pre["var_x"][dpad]
+                + dy * dy / r_pre["var_y"][dpad]
+                + dv * dv / r_pre["var_v"][dpad])
+        da = r_pre["all_a"][dpad] - A
+        chi2 = chi2 + (da * da / r_pre["var_a"][dpad]) * r_pre["has_a"][dpad]
 
-        dx = all_x[dpad] - X
-        dy = all_y[dpad] - Y
-        dv = all_v[dpad] - V
-        chi2 = (dx * dx / var_x[dpad]
-                + dy * dy / var_y[dpad]
-                + dv * dv / var_v[dpad])
-        da = all_a[dpad] - A
-        chi2 = chi2 + (da * da / var_a[dpad]) * has_a[dpad]
+        return (r_pre["lnorm"] + r_pre["lnorm_a"])[dpad] - 0.5 * chi2
 
-        lnorm = -0.5 * (3 * LOG_2PI + jnp.log(var_x) +
-                        jnp.log(var_y) + jnp.log(var_v))
-        lnorm_a = -0.5 * (LOG_2PI + jnp.log(var_a)) * has_a
-        return (lnorm + lnorm_a)[dpad] - 0.5 * chi2
+    def _phi_integrand(self, r_ang, sin_phi, cos_phi, idx,
+                       x0, y0, D_A, M_BH, v_sys,
+                       r_ang_ref_i, r_ang_ref_Omega, r_ang_ref_periapsis,
+                       i0, di_dr, Omega0, dOmega_dr,
+                       sigma_x_floor2, sigma_y_floor2,
+                       var_v_sys, var_v_hv, sigma_a_floor2,
+                       d2i_dr2=0.0, d2Omega_dr2=0.0,
+                       ecc=None, periapsis0=None, dperiapsis_dr=0.0):
+        """Backward-compat wrapper: precompute then evaluate.
+
+        Production Mode 1/2 paths call _r_precompute and _phi_eval
+        directly; this wrapper is kept for bruteforce_ll_mode1 and
+        Mode 0 sampling.
+        """
+        r_pre = self._r_precompute(
+            r_ang, idx, x0, y0, D_A, M_BH, v_sys,
+            r_ang_ref_i, r_ang_ref_Omega, r_ang_ref_periapsis,
+            i0, di_dr, Omega0, dOmega_dr,
+            sigma_x_floor2, sigma_y_floor2,
+            var_v_sys, var_v_hv, sigma_a_floor2,
+            d2i_dr2=d2i_dr2, d2Omega_dr2=d2Omega_dr2,
+            ecc=ecc, periapsis0=periapsis0, dperiapsis_dr=dperiapsis_dr)
+        return self._phi_eval(r_pre, sin_phi, cos_phi)
 
     # ---- unified φ [+ r] marginal ----
 
