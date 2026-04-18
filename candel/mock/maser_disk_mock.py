@@ -66,14 +66,18 @@ def _draw_r_ang(n_spots, rng, r_ang_lo, r_ang_hi):
 
 
 def _draw_phi(spot_types, rng):
-    """Draw azimuthal angles from type-dependent uniform priors."""
+    """Draw azimuthal angles from type-dependent uniform priors.
+
+    Reid+2019 phi convention: red HV near phi=+pi/2, blue HV near
+    phi=-pi/2, systemic near phi=0 (front) or phi=pi (back).
+    """
     phi = np.empty(len(spot_types))
     for i, stype in enumerate(spot_types):
         if stype == "r":
-            phi[i] = rng.uniform(0, np.pi)
+            phi[i] = rng.uniform(0.0, np.pi)
         elif stype == "b":
-            phi[i] = rng.uniform(np.pi, 2 * np.pi)
-        else:  # systemic
+            phi[i] = rng.uniform(-np.pi, 0.0)
+        else:  # systemic (front side, near phi=0)
             phi[i] = rng.uniform(-np.pi / 2, np.pi / 2)
     return phi
 
@@ -152,11 +156,12 @@ def gen_maser_disk_mock(seed, true_params=None, n_spots=50, Om0=0.315,
     r_ang_true = _draw_r_ang(n_spots, rng, tp["r_ang_lo"], tp["r_ang_hi"])
     phi_true = _draw_phi(spot_types, rng)
 
-    # Warped geometry at each spot (using angular radius)
+    # Warped geometry at each spot (using angular radius).
+    # The mock uses a single shared pivot for i and Omega.
     r_ang_ref = float(np.median(r_ang_true))
     i_k, Omega_k = np.array(warp_geometry(
-        r_ang_true, r_ang_ref, i0_rad, di_dr_rad,
-        Omega0_rad, dOmega_dr_rad,
+        r_ang_true, r_ang_ref, r_ang_ref,
+        i0_rad, di_dr_rad, Omega0_rad, dOmega_dr_rad,
         d2i_dr2_rad, d2Omega_dr2_rad))
 
     # True observables (using angular radius and D_A)

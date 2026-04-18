@@ -15,12 +15,11 @@ import numpy as np
 from jax.scipy.special import logsumexp
 
 from candel.model.integration import trapz_log_weights
-from candel.model.model_H0_maser import (
-    LOG_2PI, PC_PER_MAS_MPC, SPEED_OF_LIGHT,
-    _observables_from_precomputed, _precompute_r_quantities,
-    warp_geometry,
-)
-
+from candel.model.model_H0_maser import (LOG_2PI, PC_PER_MAS_MPC,
+                                         SPEED_OF_LIGHT,
+                                         _observables_from_precomputed,
+                                         _precompute_r_quantities,
+                                         warp_geometry)
 
 _DTYPES = {"float32": jnp.float32, "float64": jnp.float64}
 
@@ -36,7 +35,8 @@ def _bruteforce_rchunk(
         r_chunk, log_w_r_chunk, n_phi, dt):
     """Partial brute-force integral over one r-chunk x full phi grid.
     Casts to `dt` (jnp.float32 or jnp.float64)."""
-    f = lambda z: jnp.asarray(z, dtype=dt)
+    def f(z):
+        return jnp.asarray(z, dtype=dt)
     x_obs, y_obs, v_obs = f(x_obs), f(y_obs), f(v_obs)
     var_x, var_y, var_v = f(var_x), f(var_y), f(var_v)
     a_obs, var_a = f(a_obs), f(var_a)
@@ -56,8 +56,10 @@ def _bruteforce_rchunk(
     i_r, Om_r = warp_geometry(
         r_chunk, r_ang_ref_i, r_ang_ref_Omega,
         i0, di_dr, Omega0, dOmega_dr, d2i_dr2, d2Omega_dr2)
-    sin_i = jnp.sin(i_r); cos_i = jnp.cos(i_r)
-    sin_O = jnp.sin(Om_r); cos_O = jnp.cos(Om_r)
+    sin_i = jnp.sin(i_r)
+    cos_i = jnp.cos(i_r)
+    sin_O = jnp.sin(Om_r)
+    cos_O = jnp.cos(Om_r)
     v_kep, gamma, z_g, a_mag, pA, pB, pC, pD = _precompute_r_quantities(
         r_chunk, D_A, M_BH, sin_i, cos_i, sin_O, cos_O)
 
@@ -96,8 +98,8 @@ def _bruteforce_rchunk(
         chi2 = chi2 + ((a_obs[:, None, None] - A[None]) ** 2
                        * (1.0 / var_a)[:, None, None])
 
-    lnorm = -0.5 * (3 * LOG_2PI + jnp.log(var_x) + jnp.log(var_y)
-                     + jnp.log(var_v))
+    lnorm = -0.5 * (3 * LOG_2PI + jnp.log(var_x) + jnp.log(var_y) +
+                    jnp.log(var_v))
     if has_accel:
         lnorm = lnorm - 0.5 * (LOG_2PI + jnp.log(var_a))
 
@@ -214,8 +216,12 @@ def bruteforce_ll_mode1(model, phys_args, phys_kw, r_ang, ref_cfg):
 
 def _production_ll_mode2(model, phys_args, phys_kw):
     """Total ll_disk under the production Mode 2 phi/r marginal."""
-    D_A = phys_args[2]; M_BH = phys_args[3]; v_sys = phys_args[4]
-    i0 = phys_args[8]; var_v_hv = phys_args[15]; sigma_a_floor2 = phys_args[16]
+    D_A = phys_args[2]
+    M_BH = phys_args[3]
+    v_sys = phys_args[4]
+    i0 = phys_args[8]
+    var_v_hv = phys_args[15]
+    sigma_a_floor2 = phys_args[16]
     groups = model._build_r_grids_mode2(
         D_A, M_BH, v_sys, sigma_a_floor2, i0, var_v_hv)
     ll = model._eval_phi_marginal(groups, phys_args, phys_kw)
@@ -282,7 +288,9 @@ def check_convergence(model, samples, conv_cfg):
             pa, pk, _ = model.phys_from_sample(d)
             p = _production_ll_mode2(model, pa, pk)
             r = bruteforce_ll_mode2(model, pa, pk, ref_cfg)
-            ll_prod.append(p); ll_ref.append(r); deltas.append(p - r)
+            ll_prod.append(p)
+            ll_ref.append(r)
+            deltas.append(p - r)
         result = dict(
             mode=mode, n_draws=len(draws), draw_idx=idx,
             ll_prod=ll_prod, ll_ref=ll_ref, deltas=deltas,
@@ -331,9 +339,11 @@ def summarize(result):
           f"({result['wall_seconds']:.1f}s)")
     print(f"  draw indices: {result['draw_idx']}")
     deltas = result["deltas"]
-    print("  delta per draw [nats]: "
-          + "  ".join(f"{d:+.3f}" for d in deltas))
-    print(f"  mean +/- std: {result['mean']:+.3f} +/- {result['std']:.3f} nats")
+    delta_str = "  ".join(f"{d:+.3f}" for d in deltas)
+    print(f"  delta per draw [nats]: {delta_str}")
+    mean = result['mean']
+    std = result['std']
+    print(f"  mean +/- std: {mean:+.3f} +/- {std:.3f} nats")
     if mode == "mode1":
         for k in ("sys", "red", "blue"):
             m = result["per_type"][k]["mean"]
@@ -360,7 +370,9 @@ def build_model(galaxy, master_cfg, **overrides):
     """
     import os
     import tempfile
+
     import tomli_w
+
     from candel.pvdata.megamaser_data import load_megamaser_spots
 
     cfg = {k: (v.copy() if isinstance(v, dict) else v)

@@ -17,26 +17,43 @@
 Implements the warped Keplerian disk model from Pesce et al. (2020),
 arXiv:2001.04581. All JAX functions are JIT-compilable and auto-differentiable.
 
-Per-spot phi is always marginalised numerically on an arcsin-spaced
-grid. For high-velocity spots, a reflection trick exploits
-the V(phi) = V(pi - phi) symmetry to halve the velocity evaluations.
-Optionally, r can also be marginalised on a log-spaced grid, eliminating
-all per-spot latent variables. See candel/model/phi_marginalisation.md.
+Phi integration (identical for Mode 1 and Mode 2):
+  - Red HV (φ=+π/2 peak): 3 uniform sub-ranges around +π/2
+        (N_low, N_high, N_low points). Trapezoidal in each.
+  - Blue HV (φ=-π/2 peak): mirror of red, centred on -π/2.
+  - Systemic (φ=0 and φ=π): configurable list of uniform sub-ranges
+        (default [[-45°, 45°], [135°, 225°]], N_sys points each).
+  - Sub-ranges within a type are disjoint → combined in log-space via
+    logsumexp over sub-integrals.
+  Knobs in [model] config: phi_hv_inner_deg, phi_hv_outer_deg,
+    n_phi_hv_high, n_phi_hv_low, phi_sys_ranges_deg, n_phi_sys.
 
-All operations are fully batched over spots — no vmap or lax.scan.
-All angles are in RADIANS inside physics functions.
+R integration (Mode 2 only):
+  - HV and systemic-with-accel-measurement: per-spot sinh-spaced grid in
+    log-r centred on a physics-based r estimate; N_r_local points.
+  - Systemic-without-accel-measurement: log-uniform r grid spanning the
+    full [R_phys_lo, R_phys_hi] range with N_r_brute points.
+  Knobs: n_r_local, n_r_brute, K_sigma.
+
+Phi convention (Reid+2019): phi=+pi/2 at the redshifted HV locus,
+phi=-pi/2 at the blueshifted HV locus, phi=0 and phi=pi at systemic
+(front and back of disk along LOS). Argument of periapsis omega is in
+the same convention. LOS velocity v_z ∝ sin(phi)·sin(i); LOS
+acceleration A ∝ cos(phi)·sin(i).
+
+All operations fully batched over spots — no vmap or lax.scan.
+All angles in RADIANS inside physics functions.
 """
 import jax.numpy as jnp
 import numpy as _np
 from jax.scipy.special import logsumexp
 from jax.scipy.stats import norm as jax_norm
 from numpyro import deterministic, factor, handlers, plate, sample
-from numpyro.distributions import Uniform
+from numpyro.distributions import Uniform, VonMises
 
 from ..util import SPEED_OF_LIGHT, fprint, fsection, get_nested
 from .base_model import ModelBase
-from .integration import (ln_trapz_precomputed, trapz_log_weights,
-                          simpson_log_weights)
+from .integration import ln_trapz_precomputed, trapz_log_weights
 from .pv_utils import rsample
 from .utils import normal_logpdf_var
 
@@ -44,145 +61,43 @@ from .utils import normal_logpdf_var
 # Disk physics constants
 # -----------------------------------------------------------------------
 
-# Internal units: M_BH in 1e7 M_sun, sky positions in μas, r_ang in mas, D in Mpc.
-M_BH_UNIT = 1e7
+# Internal units: M_BH in 1e7 M_sun, sky positions in μas,
+# r_ang in mas, D in Mpc.
 C_v = 2978.8656    # km/s: sqrt(G * 1e7 M_sun / (1 mas * 1 Mpc))
 C_a = 1.872e3      # km/s/yr: 1e7 M_sun * G * yr / (1 mas * 1 Mpc)^2
 C_g = 1.974e-4     # dimensionless: 2*G * 1e7 M_sun / (c^2 * 1 mas * 1 Mpc)
 LOG_2PI = 1.8378770664093453  # jnp.log(2 * pi), precomputed
 
-
-# -----------------------------------------------------------------------
-# Spot classification and disk PA estimation
-# -----------------------------------------------------------------------
-
-
-# -----------------------------------------------------------------------
-# Grid construction (pure numpy, called once at init)
-# -----------------------------------------------------------------------
-
-
-def _build_phi_half_grid_hv(G=201, n_patch=8):
-    """Arccos-spaced half-grid on [0, pi/2] for HV spots.
-
-    Uniform in cos(phi) gives density proportional to sin(phi) — dense
-    near phi=pi/2 where high-velocity masers sit (maximum LOS velocity),
-    sparse near phi=0.  The sparse low-phi tail is patched with a short
-    linear segment to avoid a coarse gap there.
-
-    G must be odd (for Simpson's rule).  n_patch must be even so the
-    patch–arccos junction sits on a Simpson panel boundary.
-    Setting c_min=0 makes the last point arccos(0) = pi/2 exactly,
-    avoiding the tiny spacing that an appended endpoint would create.
-    """
-    if G % 2 == 0:
-        G += 1
-    c = _np.linspace(0.9999, 0.0, G)      # cos(phi): ~1 -> 0
-    phi = _np.arccos(c)                     # phi: ~0 -> pi/2
-    # Near phi=0 arccos is sparse; replace first n_patch with linear spacing
-    phi_cut = phi[n_patch]
-    phi[:n_patch] = _np.linspace(phi[0], phi_cut, n_patch + 2)[1:-1]
-    return phi
-
-
-def _build_phi_grid_sys(n_inner=201, inner_deg=30.0, n_wing=100,
-                        n_back_inner=101, n_back_wing=50):
-    """Two-cluster grid on [-pi, pi] for systemic spots.
-
-    Front cluster (phi~0): arcsin-spaced, dense at phi=0.
-    Back cluster (phi~pi): arcsin-spaced, dense at phi=pi. Coarser than
-    front — only needed for spots with poorly constrained acceleration.
-    Linear wings connect the two clusters.
-    """
-    inner_rad = _np.deg2rad(inner_deg)
-
-    def _cluster(center, n_in, n_w):
-        s = _np.linspace(-0.999, 0.999, n_in)
-        phi_in = center + _np.arcsin(s) * (inner_rad / (_np.pi / 2))
-        lo = _np.linspace(center - _np.pi / 2, center - inner_rad,
-                          n_w + 1)[:-1]
-        hi = _np.linspace(center + inner_rad, center + _np.pi / 2,
-                          n_w + 1)[1:]
-        return _np.concatenate([lo, phi_in, hi])
-
-    front = _cluster(0.0, n_inner, n_wing)
-    back = _cluster(_np.pi, n_back_inner, n_back_wing)
-    # Wrap back from [pi/2, 3pi/2] to [-pi, pi]
-    back = _np.where(back > _np.pi, back - 2 * _np.pi, back)
-
-    return _np.unique(_np.concatenate([front, back]))
-
-
-def _build_r_grid(r_min, r_max, n_r=101, scale=0.3):
-    """Sinh-spaced radius grid in [r_min, r_max].
-
-    Parameterisation: log(r) = log(r_center) + sinh(t)*scale, t uniform,
-    where r_center = sqrt(r_min*r_max) is the geometric centre of the range.
-    This makes the grid densest at the centre of [r_min, r_max] in log-space,
-    independent of the galaxy's absolute angular radius scale.
-    Benchmarks show |ΔlogL| < 0.001 nats vs a 1001-point reference at
-    n_r=101; see convergence_grids.py.
-    """
-    logr_lo = _np.log(r_min)
-    logr_hi = _np.log(r_max)
-    logr_c = 0.5 * (logr_lo + logr_hi)  # geometric centre
-    t_lo = _np.arcsinh((logr_lo - logr_c) / scale)
-    t_hi = _np.arcsinh((logr_hi - logr_c) / scale)
-    t = _np.linspace(t_lo, t_hi, n_r)
-    return _np.exp(logr_c + _np.sinh(t) * scale)
+# Conversion: 1 mas at 1 Mpc = 4.848e-3 pc
+PC_PER_MAS_MPC = 4.848e-3
 
 
 # -----------------------------------------------------------------------
 # Disk physics functions
 # -----------------------------------------------------------------------
 
-# Conversion: 1 mas at 1 Mpc = 4.848e-3 pc
-PC_PER_MAS_MPC = 4.848e-3
 
-
-def warp_geometry(r_ang, r_ang_ref, i0_rad, di_dr_rad,
+def warp_geometry(r_ang, r_ang_ref_i, r_ang_ref_Omega,
+                  i0_rad, di_dr_rad,
                   Omega0_rad, dOmega_dr_rad,
                   d2i_dr2_rad=0.0, d2Omega_dr2_rad=0.0):
     """Evaluate warped inclination and position angle at angular radius.
 
-    The expansion is about r_ang_ref (in mas), so i0 and Omega0 are
-    the values at that angular radius. The warp rates di/dr and
-    dOmega/dr are in radians per mas. Optional quadratic terms
-    d2i/dr2 and d2Omega/dr2 are in radians per mas^2.
-
-    Parameters
-    ----------
-    r_ang : angular radius in mas
-    r_ang_ref : reference angular radius in mas (expansion centre)
-    i0_rad, di_dr_rad : inclination at r_ang_ref and warp rate (rad/mas)
-    Omega0_rad, dOmega_dr_rad : position angle at r_ang_ref and
-        warp rate (rad/mas)
-    d2i_dr2_rad, d2Omega_dr2_rad : quadratic warp rates (rad/mas^2),
-        default 0 (linear warp only)
-
-    Returns
-    -------
-    i, Omega : inclination and position angle at r_ang, in radians
+    Each warp has its own pivot radius: i is expanded about
+    ``r_ang_ref_i`` and Omega about ``r_ang_ref_Omega`` (both in mas).
+    The warp rates di/dr and dOmega/dr are in radians per mas; the
+    optional quadratic terms are in radians per mas^2.
     """
-    dr = r_ang - r_ang_ref
-    dr2 = dr * dr
-    i = i0_rad + di_dr_rad * dr + 0.5 * d2i_dr2_rad * dr2
-    Omega = Omega0_rad + dOmega_dr_rad * dr + 0.5 * d2Omega_dr2_rad * dr2
+    dr_i = r_ang - r_ang_ref_i
+    dr_O = r_ang - r_ang_ref_Omega
+    i = i0_rad + di_dr_rad * dr_i + d2i_dr2_rad * (dr_i * dr_i)
+    Omega = (Omega0_rad + dOmega_dr_rad * dr_O
+             + d2Omega_dr2_rad * (dr_O * dr_O))
     return i, Omega
 
 
 def predict_position(r_ang, phi, x0, y0, i, Omega):
-    """Predict sky-plane position of maser spots.
-
-    Note: used by the mock generator. The inference hot path uses
-    the fused ``_compute_observables`` instead.
-
-    All angles (phi, i, Omega) in radians. Positions in mas.
-
-    Returns
-    -------
-    X, Y : predicted sky-plane coordinates in mas
-    """
+    """Predict sky-plane position of maser spots. Mock-generator use."""
     sin_phi = jnp.sin(phi)
     cos_phi = jnp.cos(phi)
     sin_O = jnp.sin(Omega)
@@ -196,99 +111,48 @@ def predict_position(r_ang, phi, x0, y0, i, Omega):
 
 
 def predict_velocity_los(r_ang, phi, D, M_BH, v_sys, i, ecc=0.0, omega=0.0):
-    """Predict line-of-sight velocity of maser spots (optical convention).
-
-    Note: used by the mock generator. The inference hot path uses
-    the fused ``_compute_observables`` instead.
-
-    Includes Keplerian orbital velocity, relativistic Doppler, gravitational
-    redshift, and systemic redshift. Supports eccentric orbits.
-
-    Parameters
-    ----------
-    r_ang : orbital radius in mas
-    phi : azimuthal angle in radians
-    D : angular-diameter distance in Mpc
-    M_BH : black hole mass in 1e7 M_sun
-    v_sys : systemic velocity in km/s
-    i : inclination in radians
-    ecc : orbital eccentricity
-    omega : argument of periapsis (phi of periapsis) in radians
-
-    Returns
-    -------
-    V_obs : observed velocity in km/s (optical convention)
-    """
+    """Predict line-of-sight velocity (optical convention). Mock use."""
     v_kep = C_v * jnp.sqrt(M_BH / (r_ang * D))
 
-    cos_f = jnp.cos(phi - omega)
-    ecc_fac = ((jnp.sin(phi) + ecc * jnp.sin(omega))
-               / jnp.sqrt(1.0 + ecc * cos_f))
-    v_z = v_kep * ecc_fac * jnp.sin(i)
+    cos_d = jnp.cos(phi - omega)
+    sin_d = jnp.sin(phi - omega)
+    E = jnp.sqrt(1.0 + ecc * cos_d)
+    v_r = v_kep * ecc * sin_d / E
+    v_t = v_kep * E
+    v_z = jnp.sin(i) * (v_t * jnp.sin(phi) - v_r * jnp.cos(phi))
 
     beta_c2 = (v_kep / SPEED_OF_LIGHT)**2
-    beta_e2 = (beta_c2 * (1.0 + ecc**2 + 2.0 * ecc * cos_f)
-               / (1.0 + ecc * cos_f))
+    beta_e2 = (beta_c2 * (1.0 + ecc**2 + 2.0 * ecc * cos_d)
+               / (1.0 + ecc * cos_d))
     gamma = 1.0 / jnp.sqrt(1.0 - beta_e2)
 
     one_plus_z_D = gamma * (1.0 + v_z / SPEED_OF_LIGHT)
-
     one_plus_z_g = 1.0 / jnp.sqrt(1.0 - C_g * M_BH / (r_ang * D))
-
     z_0 = v_sys / SPEED_OF_LIGHT
 
-    V_obs = SPEED_OF_LIGHT * (
-        one_plus_z_D * one_plus_z_g * (1.0 + z_0) - 1.0)
-    return V_obs
+    return SPEED_OF_LIGHT * (one_plus_z_D * one_plus_z_g * (1.0 + z_0) - 1.0)
 
 
 def predict_acceleration_los(r_ang, phi, D, M_BH, i):
-    """Predict line-of-sight centripetal acceleration.
-
-    Note: used by the mock generator. The inference hot path uses
-    the fused ``_compute_observables`` instead.
-
-    Parameters
-    ----------
-    r_ang : orbital radius in mas
-    phi : azimuthal angle in radians
-    D : angular-diameter distance in Mpc
-    M_BH : black hole mass in 1e7 M_sun
-    i : inclination in radians
-
-    Returns
-    -------
-    A_z : line-of-sight acceleration in km/s/yr
-    """
+    """Predict LOS centripetal acceleration. Mock use."""
     a_mag = C_a * M_BH / (r_ang**2 * D**2)
-    A_z = a_mag * jnp.cos(phi) * jnp.sin(i)
-    return A_z
+    return a_mag * jnp.cos(phi) * jnp.sin(i)
 
 
 def _precompute_r_quantities(r_ang, D, M_BH, sin_i, cos_i, sin_O, cos_O):
-    """Precompute r-dependent quantities for the phi integration.
-
-    Returns quantities that depend only on r (not phi), to be
-    broadcast into the phi dimension by the caller. This avoids
-    3 expensive sqrt calls per (r, phi) grid point.
-
-    All inputs/outputs have shape (..., N_r) or broadcastable.
-    """
+    """Precompute r-dependent quantities for the phi integration."""
     rD = r_ang * D
-    v_kep = C_v * jnp.sqrt(M_BH / rD)  # 1 sqrt
-
+    v_kep = C_v * jnp.sqrt(M_BH / rD)
     beta = v_kep / SPEED_OF_LIGHT
-    gamma = 1.0 / jnp.sqrt(1.0 - beta * beta)  # 1 sqrt
-
-    one_plus_z_g = 1.0 / jnp.sqrt(1.0 - C_g * M_BH / rD)  # 1 sqrt
-
+    gamma = 1.0 / jnp.sqrt(1.0 - beta * beta)
+    one_plus_z_g = 1.0 / jnp.sqrt(1.0 - C_g * M_BH / rD)
     a_mag = v_kep * v_kep / rD * (C_a / (C_v * C_v))
 
-    # Precompute position projection coefficients (multiply-add only).
-    # X = x0 + r * (sin_phi * pA - cos_phi * pB)
-    # Y = y0 + r * (sin_phi * pC + cos_phi * pD)
+    # Position projection coefficients (Reid phi convention):
+    # X = x0 + R·(sin_phi·pA + cos_phi·pB),
+    # Y = y0 + R·(sin_phi·pC + cos_phi·pD).
     pA = sin_O
-    pB = cos_O * cos_i
+    pB = -cos_O * cos_i
     pC = cos_O
     pD = sin_O * cos_i
 
@@ -299,12 +163,9 @@ def _observables_from_precomputed(sin_phi, cos_phi, x0, y0, v_sys,
                                   sin_i, r_ang,
                                   v_kep, gamma, one_plus_z_g, a_mag,
                                   pA, pB, pC, pD):
-    """Compute observables using precomputed r-dependent quantities.
-
-    Only multiply-add operations — no sqrt, no division.
-    """
+    """Compute observables using precomputed r-dependent quantities."""
     R = r_ang * 1e3
-    X = x0 + R * (sin_phi * pA - cos_phi * pB)
+    X = x0 + R * (sin_phi * pA + cos_phi * pB)
     Y = y0 + R * (sin_phi * pC + cos_phi * pD)
 
     v_z = v_kep * sin_phi * sin_i
@@ -318,231 +179,33 @@ def _observables_from_precomputed(sin_phi, cos_phi, x0, y0, v_sys,
     return X, Y, V, A
 
 
-def _observables_no_accel(sin_phi, cos_phi, x0, y0, v_sys,
-                          sin_i, r_ang, v_kep, gamma, one_plus_z_g,
-                          pA, pB, pC, pD):
-    """Position + velocity only. Skips acceleration entirely for spots
-    without measured acceleration."""
-    R = r_ang * 1e3
-    X = x0 + R * (sin_phi * pA - cos_phi * pB)
-    Y = y0 + R * (sin_phi * pC + cos_phi * pD)
-
-    v_z = v_kep * sin_phi * sin_i
-    one_plus_z_D = gamma * (1.0 + v_z / SPEED_OF_LIGHT)
-    V = SPEED_OF_LIGHT * (
-        one_plus_z_D * one_plus_z_g * (1.0 + v_sys / SPEED_OF_LIGHT)
-        - 1.0)
-
-    return X, Y, V
-
-
-def _chi2_4obs(x_obs, X, inv_var_x, y_obs, Y, inv_var_y,
-               v_obs, V, inv_var_v, a_obs, A, inv_var_a):
-    """Sum of 4 chi-squared terms. No log(var) — that's added per-spot."""
-    dx = x_obs - X
-    dy = y_obs - Y
-    dv = v_obs - V
-    da = a_obs - A
-    return (dx * dx * inv_var_x + dy * dy * inv_var_y
-            + dv * dv * inv_var_v + da * da * inv_var_a)
-
-
-def _chi2_3obs(x_obs, X, inv_var_x, y_obs, Y, inv_var_y,
-               v_obs, V, inv_var_v):
-    """Sum of 3 chi-squared terms (no acceleration)."""
-    dx = x_obs - X
-    dy = y_obs - Y
-    dv = v_obs - V
-    return (dx * dx * inv_var_x + dy * dy * inv_var_y
-            + dv * dv * inv_var_v)
-
-
-
 # -----------------------------------------------------------------------
-# Per-spot adaptive r-integration
-# -----------------------------------------------------------------------
-
-
-def _adaptive_r_integrate(
-        sin_phi, cos_phi,
-        x_d, y_d, v_d, a_d,
-        var_x, var_y, var_v, var_a, accel_w,
-        has_accel,
-        x0, y0, D_A, M_BH, v_sys,
-        r_ang_ref, i0, di_dr, Omega0, dOmega_dr,
-        d2i_dr2, d2Omega_dr2,
-        r_min, r_max, n_local, K_sigma,
-        ecc=None, periapsis0=None, dperiapsis_dr=0.0):
-    """Per-spot adaptive r-integration for one phi solution.
-
-    For each (spot, phi), finds the integrand peak in r via Fisher
-    information, builds a local trapezoidal grid, and integrates.
-    Supports circular and eccentric orbits.
-
-    Returns log_I of shape (N, n_phi).
-    """
-    eps = 1e-30
-    inv_vx = 1.0 / var_x
-    inv_vy = 1.0 / var_y
-    inv_vv = 1.0 / var_v
-
-    dx = (x_d - x0)[:, None]
-    dy = (y_d - y0)[:, None]
-    dv = (v_d - v_sys)[:, None]
-    dv2 = dv * dv + eps
-
-    sp = sin_phi[None, :]
-    cp = cos_phi[None, :]
-
-    # ---- Centering: iterative Fisher-optimal r_peak ----
-    def _center(si, ci, sO, cO):
-        # fX, fY are projection factors: X_μas = x0 + r_mas * 1e3 * fX
-        # Scale by 1e3 so centering gives r_pos in mas.
-        fX = 1e3 * (sp * sO - cp * cO * ci)
-        fY = 1e3 * (sp * cO + cp * sO * ci)
-        b_pos = fX * fX * inv_vx[:, None] + fY * fY * inv_vy[:, None]
-        a_pos = dx * fX * inv_vx[:, None] + dy * fY * inv_vy[:, None]
-        r_pos = a_pos / (b_pos + eps)
-        b_pos = jnp.where(
-            (r_pos < r_min) | (r_pos > r_max), 0.0, b_pos)
-        r_pos = jnp.clip(r_pos, r_min, r_max)
-
-        r_vel = jnp.clip(
-            M_BH * (C_v * jnp.abs(sp) * si) ** 2 / (D_A * dv2),
-            r_min, r_max)
-        b_vel = dv2 / (4 * r_vel * r_vel + eps) * inv_vv[:, None]
-        b_vel = jnp.where(r_vel >= r_max * 0.99, 0.0, b_vel)
-
-        b_tot = b_pos + b_vel
-        r_c = jnp.where(
-            b_tot > eps,
-            (b_pos * r_pos + b_vel * r_vel) / (b_tot + eps),
-            r_vel)
-        return jnp.clip(r_c, r_min, r_max), b_pos, b_vel
-
-    i_ref, Om_ref = warp_geometry(
-        r_ang_ref, r_ang_ref, i0, di_dr, Omega0, dOmega_dr,
-        d2i_dr2, d2Omega_dr2)
-    r_c, b_pos, b_vel = _center(
-        jnp.sin(i_ref), jnp.cos(i_ref),
-        jnp.sin(Om_ref), jnp.cos(Om_ref))
-
-    for _ in range(3):
-        i_r, Om_r = warp_geometry(
-            r_c, r_ang_ref, i0, di_dr, Omega0, dOmega_dr,
-            d2i_dr2, d2Omega_dr2)
-        r_c, b_pos, b_vel = _center(
-            jnp.sin(i_r), jnp.cos(i_r),
-            jnp.sin(Om_r), jnp.cos(Om_r))
-
-    # Use the WIDER of position/velocity sigmas for grid width.
-    # Combined sigma is too tight — non-Gaussian tails of the weaker
-    # constraint extend beyond the combined Gaussian envelope.
-    b_min = (4.0 / (r_max - r_min)) ** 2
-    sigma_pos = 1.0 / jnp.sqrt(jnp.maximum(b_pos, b_min))
-    sigma_vel = 1.0 / jnp.sqrt(jnp.maximum(b_vel, b_min))
-    sigma_r = jnp.maximum(sigma_pos, sigma_vel)
-    sigma_r = jnp.minimum(sigma_r, (r_max - r_min) / 4)
-
-    # ---- Local grid: uniform (N, n_phi, n_local) ----
-    t = jnp.linspace(-K_sigma, K_sigma, n_local)
-    r_loc_raw = r_c[:, :, None] + sigma_r[:, :, None] * t[None, None, :]
-    # Mask out-of-range points instead of clipping to avoid boundary
-    # pile-up that biases the trapezoidal weights.
-    valid = (r_loc_raw >= r_min) & (r_loc_raw <= r_max)
-    r_loc = jnp.clip(r_loc_raw, r_min, r_max)
-
-    h = sigma_r * (2.0 * K_sigma / (n_local - 1))
-    w_end = jnp.ones(n_local).at[0].set(0.5).at[-1].set(0.5)
-    log_w = jnp.log(h)[:, :, None] + jnp.log(w_end)[None, None, :]
-
-    # ---- Observables at r_loc ----
-    i_r, Om_r = warp_geometry(
-        r_loc, r_ang_ref, i0, di_dr, Omega0, dOmega_dr,
-        d2i_dr2, d2Omega_dr2)
-    sin_i = jnp.sin(i_r)
-    cos_i = jnp.cos(i_r)
-    sin_O = jnp.sin(Om_r)
-    cos_O = jnp.cos(Om_r)
-
-    sp3 = sin_phi[None, :, None]
-    cp3 = cos_phi[None, :, None]
-
-    R_loc = r_loc * 1e3
-    X = x0 + R_loc * (sp3 * sin_O - cp3 * cos_O * cos_i)
-    Y = y0 + R_loc * (sp3 * cos_O + cp3 * sin_O * cos_i)
-
-    rD = r_loc * D_A
-    v_kep = C_v * jnp.sqrt(M_BH / rD)
-
-    if ecc is not None:
-        omega_r = periapsis0 + dperiapsis_dr * (r_loc - r_ang_ref)
-        sin_om = jnp.sin(omega_r)
-        cos_om = jnp.cos(omega_r)
-        cos_f = cp3 * cos_om + sp3 * sin_om
-        ecc_fac = (sp3 + ecc * sin_om) / jnp.sqrt(1.0 + ecc * cos_f)
-        v_z = v_kep * ecc_fac * sin_i
-        beta_c2 = (v_kep / SPEED_OF_LIGHT) ** 2
-        beta_e2 = (beta_c2 * (1.0 + ecc ** 2 + 2.0 * ecc * cos_f)
-                   / (1.0 + ecc * cos_f))
-        gamma = 1.0 / jnp.sqrt(1.0 - beta_e2)
-    else:
-        v_z = v_kep * sp3 * sin_i
-        beta = v_kep / SPEED_OF_LIGHT
-        gamma = 1.0 / jnp.sqrt(1.0 - beta * beta)
-
-    zpg = 1.0 / jnp.sqrt(1.0 - C_g * M_BH / rD)
-    V = SPEED_OF_LIGHT * (
-        gamma * (1.0 + v_z / SPEED_OF_LIGHT) * zpg
-        * (1.0 + v_sys / SPEED_OF_LIGHT) - 1.0)
-
-    # ---- chi² ----
-    chi2 = ((x_d[:, None, None] - X) ** 2 * inv_vx[:, None, None]
-            + (y_d[:, None, None] - Y) ** 2 * inv_vy[:, None, None]
-            + (v_d[:, None, None] - V) ** 2 * inv_vv[:, None, None])
-
-    if has_accel:
-        A = C_a * M_BH / (r_loc ** 2 * D_A ** 2) * cp3 * sin_i
-        inv_va = 1.0 / var_a
-        chi2 = chi2 + ((a_d[:, None, None] - A) ** 2
-                       * inv_va[:, None, None] * accel_w[:, None, None])
-
-    # ---- lnorm + integrate ----
-    lnorm = -0.5 * (3 * LOG_2PI + jnp.log(var_x) + jnp.log(var_y)
-                     + jnp.log(var_v))
-    if has_accel:
-        lnorm = lnorm - 0.5 * (LOG_2PI + jnp.log(var_a)) * accel_w
-
-    log_f = lnorm[:, None, None] - 0.5 * chi2
-    # Mask out-of-range grid points so they don't contribute
-    log_f = jnp.where(valid, log_f, -jnp.inf)
-    return logsumexp(log_f + log_w, axis=-1)
-
-
-# -----------------------------------------------------------------------
-# Model classes
+# Model class
 # -----------------------------------------------------------------------
 
 
 class MaserDiskModel(ModelBase):
-    """Megamaser disk H0 model with marginalised per-spot nuisance params.
+    """Megamaser disk H0 model with phi [+ r] marginalisation.
 
-    Phi is always marginalised on an arcsin-spaced grid.
-    If marginalise_r is True, r is also marginalised on a log grid,
-    leaving only ~16 global parameters for NUTS.
+    Mode 1 (marginalise_r=False): sample per-spot r_ang; marginalise φ
+      with uniform trapezoidal grids per sub-range.
+    Mode 2 (marginalise_r=True): marginalise both r and φ. HV and
+      sys-with-accel spots use sinh r-grids of n_r_local points; sys
+      spots without accel measurement use a log-uniform r-grid of
+      n_r_brute points.
+    The φ grid structure (sub-ranges and point counts) is identical
+    between the two modes — only the r step differs.
     """
 
     def __init__(self, config_path, data):
         super().__init__(config_path)
         fsection("Maser Disk Model")
         self._load_and_set_priors()
-
         self._resolve_per_galaxy_priors(data)
 
         self.n_spots = data["n_spots"]
         self.is_highvel = jnp.asarray(data["is_highvel"])
 
-        # Default per-spot velocity measurement error if not provided
         if "sigma_v" not in data:
             sv_default = float(get_nested(
                 self.config, "model/sigma_v_default", 0.25))
@@ -561,306 +224,14 @@ class MaserDiskModel(ModelBase):
                 "velocity in km/s).")
         self.v_sys_obs = float(data["v_sys_obs"])
 
-        # Spot index arrays for systemic / red / blue subsets
-        is_hv_np = _np.asarray(data["is_highvel"])
-        is_blue_np = _np.asarray(data.get("is_blue", _np.zeros(
-            self.n_spots, dtype=bool)))
-        is_red_np = is_hv_np & ~is_blue_np
-        self._idx_sys = jnp.where(~self.is_highvel)[0]
-        self._idx_red = jnp.where(jnp.asarray(is_red_np))[0]
-        self._idx_blue = jnp.where(jnp.asarray(is_blue_np))[0]
-        self._n_sys = int((~is_hv_np).sum())
-        self._n_red = int(is_red_np.sum())
-        self._n_blue = int(is_blue_np.sum())
+        accel_meas = self._build_spot_indices(data)
+        self._build_allspot_arrays(data, accel_meas)
+        gal_cfg = self._configure_galaxy(data)
+        self._build_phi_subranges(gal_cfg)
+        self._build_r_config(data, gal_cfg)
+        self._print_summary()
 
-        # Split each type into with-accel and without-accel sub-groups.
-        # Spots without acceleration get a 3-obs chi² (no A computed).
-        accel_meas = _np.asarray(data.get(
-            "accel_measured", self.sigma_a < 1e4))
-        use_clump_weight = get_nested(
-            self.config, "model/use_clump_weight", True)
-        if use_clump_weight:
-            accel_w = jnp.asarray(data.get(
-                "accel_weight", _np.ones(self.n_spots)))
-        else:
-            accel_w = jnp.ones(self.n_spots)
-            fprint("clump weighting disabled (use_clump_weight = false)")
-        for label, idx_arr in [("sys", self._idx_sys),
-                               ("red", self._idx_red),
-                               ("blue", self._idx_blue)]:
-            idx_np = _np.asarray(idx_arr)
-            has_a = accel_meas[idx_np]
-            setattr(self, f"_idx_{label}_a",
-                    jnp.asarray(idx_np[has_a]))
-            setattr(self, f"_idx_{label}_noa",
-                    jnp.asarray(idx_np[~has_a]))
-            setattr(self, f"_n_{label}_a", int(has_a.sum()))
-            setattr(self, f"_n_{label}_noa", int((~has_a).sum()))
-            # Pre-masked data for each sub-group
-            for key in ("x", "y", "velocity"):
-                arr = getattr(self, key)
-                setattr(self, f"_{key}_{label}_a", arr[idx_np[has_a]])
-                setattr(self, f"_{key}_{label}_noa", arr[idx_np[~has_a]])
-            setattr(self, f"_a_{label}_a",
-                    self.a[idx_np[has_a]])
-            for key in ("sigma_x", "sigma_y", "sigma_v"):
-                arr = getattr(self, key)
-                setattr(self, f"_{key}2_{label}_a",
-                        arr[idx_np[has_a]]**2)
-                setattr(self, f"_{key}2_{label}_noa",
-                        arr[idx_np[~has_a]]**2)
-            setattr(self, f"_sigma_a2_{label}_a",
-                    self.sigma_a[idx_np[has_a]]**2)
-            setattr(self, f"_accel_w_{label}_a",
-                    accel_w[idx_np[has_a]])
-
-        _labels = ("sys", "red", "blue")
-        n_a = sum(getattr(self, f"_n_{lb}_a") for lb in _labels)
-        n_noa = sum(getattr(self, f"_n_{lb}_noa") for lb in _labels)
-        fprint(f"accel split: {n_a} with, {n_noa} without.")
-
-        # All-spot arrays in original data order (for adaptive r grids)
-        self._all_x = jnp.asarray(data["x"])
-        self._all_y = jnp.asarray(data["y"])
-        self._all_sigma_x2 = jnp.asarray(data["sigma_x"])**2
-        self._all_sigma_y2 = jnp.asarray(data["sigma_y"])**2
-        self._all_v = jnp.asarray(self.velocity)
-        self._all_a = jnp.asarray(self.a)
-        self._all_sigma_a = jnp.asarray(self.sigma_a)
-        self._all_has_accel = jnp.asarray(accel_meas)
-        self._all_sigma_a2 = self._all_sigma_a**2
-
-        # Per-spot velocity variance and acceleration weight (for adaptive phi)
-        all_sigma_v2 = _np.zeros(self.n_spots)
-        all_accel_w = _np.zeros(self.n_spots)
-        for prefix in ("sys", "red", "blue"):
-            for suffix in ("_a", "_noa"):
-                attr = f"_idx_{prefix}{suffix}"
-                if not hasattr(self, attr):
-                    continue
-                idx = getattr(self, attr)
-                if len(idx) == 0:
-                    continue
-                all_sigma_v2[_np.asarray(idx)] = _np.asarray(
-                    getattr(self, f"_sigma_v2_{prefix}{suffix}"))
-                if suffix == "_a":
-                    all_accel_w[_np.asarray(idx)] = _np.asarray(
-                        getattr(self, f"_accel_w_{prefix}_a"))
-        self._all_sigma_v2 = jnp.asarray(all_sigma_v2)
-        self._all_accel_w = jnp.asarray(all_accel_w)
-
-        # ---- Phi grids and precomputed trig ----
-        G_half = int(get_nested(self.config, "model/G_phi_half", 251))
-        n_inner_sys = int(get_nested(self.config, "model/n_inner_sys", 201))
-        inner_deg_sys = float(get_nested(
-            self.config, "model/inner_deg_sys", 30.0))
-        n_wing_sys = int(get_nested(self.config, "model/n_wing_sys", 100))
-        phi_half = _build_phi_half_grid_hv(G=G_half)
-        phi_sys = _build_phi_grid_sys(n_inner=n_inner_sys,
-                                      inner_deg=inner_deg_sys,
-                                      n_wing=n_wing_sys)
-
-        # Store phi grids for phi prior computation
-        self._phi_half = jnp.asarray(phi_half)
-        self._phi_sys = jnp.asarray(phi_sys)
-
-        # Systemic: trig of full grid
-        self._sin_phi_sys = jnp.sin(jnp.asarray(phi_sys))
-        self._cos_phi_sys = jnp.cos(jnp.asarray(phi_sys))
-
-        # HV: trig of half-grid and reflected grids
-        sin_half = jnp.sin(jnp.asarray(phi_half))
-        cos_half = jnp.cos(jnp.asarray(phi_half))
-        # Red: phi1 = phi_half, phi2 = pi - phi_half
-        # sin(pi-x) = sin(x), cos(pi-x) = -cos(x)
-        self._sin_phi1_red = sin_half
-        self._cos_phi1_red = cos_half
-        self._sin_phi2_red = sin_half
-        self._cos_phi2_red = -cos_half
-        # Blue: phi1 = pi + phi_half, phi2 = 2*pi - phi_half
-        # sin(pi+x) = -sin(x), cos(pi+x) = -cos(x)
-        # sin(2*pi-x) = -sin(x), cos(2*pi-x) = cos(x)
-        self._sin_phi1_blue = -sin_half
-        self._cos_phi1_blue = -cos_half
-        self._sin_phi2_blue = -sin_half
-        self._cos_phi2_blue = cos_half
-
-        # Simpson's rule for HV (O(h^4)), trapezoidal for systemic
-        self._log_w_phi_hv = jnp.asarray(simpson_log_weights(phi_half))
-        self._log_w_phi_sys = jnp.asarray(trapz_log_weights(phi_sys))
-
-        use_ecc = get_nested(self.config, "model/use_ecc", False)
-        use_qw = get_nested(self.config, "model/use_quadratic_warp", False)
-
-        # Per-galaxy overrides
-        gname = data.get("galaxy_name", "")
-        gal_cfg = get_nested(self.config, f"model/galaxies/{gname}", {})
-        self.use_ecc = gal_cfg.get("use_ecc", use_ecc)
-        self.use_quadratic_warp = gal_cfg.get(
-            "use_quadratic_warp", use_qw)
-        fprint(f"use_ecc = {self.use_ecc}")
-        fprint(f"use_quadratic_warp = {self.use_quadratic_warp}")
-
-        # Phi method: "default" (arccos/two-cluster grids),
-        # "adaptive" (per-spot sinh), "bruteforce" (uniform grid).
-        # Legacy: adaptive_phi=True maps to "adaptive".
-        legacy_adaptive = gal_cfg.get("adaptive_phi", False)
-        self.phi_method = gal_cfg.get(
-            "phi_method", "adaptive" if legacy_adaptive else "default")
-        if self.phi_method == "adaptive":
-            self._n_phi_adaptive = int(get_nested(
-                self.config, "model/n_phi_adaptive", 1001))
-            self._K_sigma_phi = float(get_nested(
-                self.config, "model/K_sigma_phi", 20.0))
-            fprint(f"phi_method = adaptive, n_phi={self._n_phi_adaptive}, "
-                   f"K_sigma={self._K_sigma_phi}")
-        elif self.phi_method == "bruteforce":
-            # Per-type phi ranges (degrees) and grid sizes.
-            def _phi_range(key, default):
-                r = gal_cfg.get(key, default)
-                return (jnp.deg2rad(r[0]), jnp.deg2rad(r[1]))
-            self._bf_phi = {
-                "sys": (_phi_range("phi_range_sys_deg", [-90, 90]),
-                        int(gal_cfg.get("n_phi_sys", 50001))),
-                "red": (_phi_range("phi_range_red_deg", [0, 180]),
-                        int(gal_cfg.get("n_phi_red", 30001))),
-                "blue": (_phi_range("phi_range_blue_deg", [180, 360]),
-                         int(gal_cfg.get("n_phi_blue", 20001))),
-            }
-            for t, (rng, n) in self._bf_phi.items():
-                fprint(f"  bruteforce {t}: n={n}, "
-                       f"range=[{float(jnp.rad2deg(rng[0])):.0f}, "
-                       f"{float(jnp.rad2deg(rng[1])):.0f}] deg")
-        else:
-            fprint(f"phi_method = default")
-        # Backward compat
-        self.adaptive_phi = self.phi_method == "adaptive"
-
-        # Inverse permutation for concat+gather (replaces .at[idx].set).
-        # Order: sys_a, sys_noa, red_a, red_noa, blue_a, blue_noa
-        order = jnp.concatenate([
-            self._idx_sys_a, self._idx_sys_noa,
-            self._idx_red_a, self._idx_red_noa,
-            self._idx_blue_a, self._idx_blue_noa])
-        self._inv_order = jnp.argsort(order)
-
-        # ---- Radius grid setup (for Mode 2) ----
-        marginalise_r_global = get_nested(
-            self.config, "model/marginalise_r", False)
-        self.marginalise_r = gal_cfg.get(
-            "marginalise_r", marginalise_r_global)
-        if self.phi_method != "default" and self.marginalise_r:
-            raise ValueError(
-                f"phi_method='{self.phi_method}' is incompatible with "
-                f"marginalise_r=True (Mode 2). Set marginalise_r=false "
-                f"in the galaxy config or use --sample-r.")
-        self._adaptive_r = get_nested(
-            self.config, "model/adaptive_r", True)
-        if self.marginalise_r:
-            self._R_phys_lo = float(get_nested(
-                self.config, "model/R_phys_lo", 0.01))
-            self._R_phys_hi = float(get_nested(
-                self.config, "model/R_phys_hi", 2.0))
-            self._n_r = int(get_nested(self.config, "model/n_r", 251))
-            # Spot-aware sinh grid: center on median log(r_proj),
-            # scale from data spread with conservative floor of 0.3.
-            r_proj = _np.sqrt(
-                _np.asarray(data["x"])**2 + _np.asarray(data["y"])**2)
-            r_proj = r_proj / 1e3  # μas → mas
-            r_proj = r_proj[r_proj > 1e-3]
-            self._r_logr_c = float(_np.median(_np.log(r_proj)))
-            self._r_scale = float(
-                max(0.5 * _np.std(_np.log(r_proj)), 0.3))
-            fprint(f"r grid: spot-aware sinh, logr_c={self._r_logr_c:.3f} "
-                   f"(r={_np.exp(self._r_logr_c):.3f} mas), "
-                   f"scale={self._r_scale:.3f}")
-            if self._adaptive_r:
-                self._n_r_local = int(get_nested(
-                    self.config, "model/n_r_local", 201))
-                self._K_sigma = float(get_nested(
-                    self.config, "model/K_sigma", 5.0))
-                fprint(f"adaptive r: {self._n_r_local} local points, "
-                       f"K={self._K_sigma}")
-
-        # ---- Selection function grid ----
-        D_min = float(get_nested(self.config, "model/priors/D/low", 10.0))
-        D_max = float(get_nested(self.config, "model/priors/D/high", 200.0))
-        self._sel_D_grid = jnp.linspace(D_min, D_max, 501)
-        self._sel_log_w = jnp.asarray(trapz_log_weights(self._sel_D_grid))
-        self._sel_lp_vol = 2.0 * jnp.log(self._sel_D_grid)
-        self.use_selection = get_nested(
-            self.config, "model/use_selection", False)
-
-        # di_dr is always sampled (inclination warp).
-
-        # Reference angular radius for warp expansion (mas).
-        # Per-galaxy override or median projected HV-spot radius.
-        r_ang_ref_cfg = gal_cfg.get("r_ang_ref", None)
-        if r_ang_ref_cfg is not None:
-            self._r_ang_ref = float(r_ang_ref_cfg)
-            fprint(f"warp pivot r_ang_ref = {self._r_ang_ref:.3f} mas "
-                   f"(from config)")
-        else:
-            x_hv = _np.asarray(data["x"])[is_hv_np]  # μas
-            y_hv = _np.asarray(data["y"])[is_hv_np]
-            r_ang_hv = _np.sqrt(x_hv**2 + y_hv**2) / 1e3  # μas → mas
-            self._r_ang_ref = float(_np.median(r_ang_hv))
-            fprint(f"warp pivot r_ang_ref = {self._r_ang_ref:.3f} mas "
-                   f"(median projected radius of {len(r_ang_hv)} HV spots)")
-
-        # Fixed r_ang bounds for Mode 1 (estimated from v_sys_obs).
-        # Uses cosmographic D_A to convert R_phys bounds to angular.
-        z_est = self.v_sys_obs / SPEED_OF_LIGHT
-        q0 = -0.55
-        D_c_est = (SPEED_OF_LIGHT * z_est / 73.0
-                   * (1 + 0.5 * (1 - q0) * z_est))
-        D_A_est = D_c_est / (1 + z_est)
-        R_lo = float(get_nested(
-            self.config, "model/R_phys_lo", 0.01))
-        R_hi = float(get_nested(
-            self.config, "model/R_phys_hi", 2.0))
-        self._r_ang_lo = R_lo / (D_A_est * PC_PER_MAS_MPC)
-        self._r_ang_hi = R_hi / (D_A_est * PC_PER_MAS_MPC)
-        fprint(f"r_ang bounds: [{self._r_ang_lo:.3f}, "
-               f"{self._r_ang_hi:.3f}] mas "
-               f"(D_A_est = {D_A_est:.1f} Mpc)")
-
-        # At each likelihood evaluation, the r_ang grid is built
-        # directly in r_ang space from sinh(t) (precomputed) shifted
-        # to the current D_A. Trapezoid weights in r_ang space.
-        if self.marginalise_r:
-            r_lo_est = self._R_phys_lo / (D_A_est * PC_PER_MAS_MPC)
-            r_hi_est = self._R_phys_hi / (D_A_est * PC_PER_MAS_MPC)
-            fprint(f"r_ang grid (at D_A_est): "
-                   f"[{r_lo_est:.4f}, {r_hi_est:.4f}] mas")
-
-        if self._adaptive_r and self.marginalise_r:
-            mode = "r+phi (adaptive)"
-        elif self.marginalise_r:
-            mode = "r+phi"
-        else:
-            mode = "phi only"
-        fprint(f"loaded {self.n_spots} maser spots "
-               f"({self._n_sys} systemic, {self._n_red} red, "
-               f"{self._n_blue} blue).")
-        fprint(f"marginalisation mode: {mode}")
-        fprint(f"phi grids: HV half={len(phi_half)}, "
-               f"sys={len(phi_sys)}")
-        if self.marginalise_r:
-            fprint(f"r grid: {self._n_r} points, "
-                   f"R_phys in [{self._R_phys_lo:.3f}, "
-                   f"{self._R_phys_hi:.3f}] pc")
-        fprint(f"use_selection = {self.use_selection}")
-
-    def build_r_ang_grid(self, D_A):
-        """Build spot-aware sinh-spaced r_ang grid at a given D_A."""
-        conv = D_A * PC_PER_MAS_MPC
-        logr_lo = jnp.log(self._R_phys_lo / conv)
-        logr_hi = jnp.log(self._R_phys_hi / conv)
-        t_lo = jnp.arcsinh((logr_lo - self._r_logr_c) / self._r_scale)
-        t_hi = jnp.arcsinh((logr_hi - self._r_logr_c) / self._r_scale)
-        t = jnp.linspace(t_lo, t_hi, self._n_r)
-        return jnp.exp(self._r_logr_c + jnp.sinh(t) * self._r_scale)
+    # ---- priors / per-galaxy ----
 
     def _resolve_per_galaxy_priors(self, data):
         """Set per-galaxy D prior from data dict."""
@@ -874,461 +245,423 @@ class MaserDiskModel(ModelBase):
             fprint(f"D prior: {'volume' if self._D_c_volume else 'uniform'}"
                    f"({lo:.1f}, {hi:.1f})")
 
-    def _eval_marginal_phi(self, r_ang, x0, y0, D_A, M_BH, v_sys,
-                           r_ang_ref, i0, di_dr, Omega0, dOmega_dr,
-                           sigma_x_floor2, sigma_y_floor2,
-                           var_v_sys, var_v_hv,
-                           sigma_a_floor2,
-                           log_w_r=None,
-                           ecc=None, periapsis0=None, dperiapsis_dr=0.0,
-                           d2i_dr2=0.0, d2Omega_dr2=0.0):
-        """Evaluate per-spot log-likelihood marginalised over phi [and r].
+    # ---- spot indexing ----
 
-        Mode 1 (sample r_ang): r_ang is (N,), log_w_r is None.
-            Returns (N,) per-spot marginalised-phi log-likelihood.
-        Mode 2 (marginalise r): r_ang is (N, n_r), log_w_r is (n_r,).
-            Fuses the phi and r logsumexp into a single 2D reduction,
-            returning (N,) per-spot fully-marginalised log-likelihood.
+    def _build_spot_indices(self, data):
+        """Build spot type index arrays.
 
-        All sigma/var arguments are pre-squared.
+        Returns the accel_measured numpy array. Also populates:
+            _idx_sys, _idx_red, _idx_blue      — per type
+            _idx_sys_cons    — sys WITH accel (sinh r-grid)
+            _idx_sys_uncons  — sys WITHOUT accel (brute r-grid)
         """
-        # rpad: adds trailing dim for phi broadcasting on r_ang
-        # dpad: adds dims so 1D data arrays broadcast with r_ang + phi
-        rpad = (slice(None),) * r_ang.ndim + (None,)
-        n_extra = r_ang.ndim
-        dpad = (slice(None),) + (None,) * n_extra
+        is_hv_np = _np.asarray(data["is_highvel"])
+        is_blue_np = _np.asarray(data.get("is_blue", _np.zeros(
+            self.n_spots, dtype=bool)))
+        is_red_np = is_hv_np & ~is_blue_np
+        is_sys_np = ~is_hv_np
 
-        # Precompute ALL r-dependent quantities on the (N,) or (N, N_r)
-        # grid. The phi loop then only does multiply-add + logsumexp.
-        i_r, Omega_r = warp_geometry(
-            r_ang, r_ang_ref, i0, di_dr, Omega0, dOmega_dr,
-            d2i_dr2, d2Omega_dr2)
-        sin_i = jnp.sin(i_r)
-        cos_i = jnp.cos(i_r)
-        sin_O = jnp.sin(Omega_r)
-        cos_O = jnp.cos(Omega_r)
-        v_kep, gamma, z_g_factor, a_mag, pA, pB, pC, pD = \
-            _precompute_r_quantities(r_ang, D_A, M_BH,
-                                     sin_i, cos_i, sin_O, cos_O)
+        accel_meas = _np.asarray(data.get(
+            "accel_measured", self.sigma_a < 1e4))
 
-        # Periapsis angle warp: omega(r) = periapsis0 + dperiapsis_dr*(r-r_ref)
-        if ecc is not None:
-            omega_r = periapsis0 + dperiapsis_dr * (r_ang - r_ang_ref)
-            sin_omega = jnp.sin(omega_r)
-            cos_omega = jnp.cos(omega_r)
+        self._idx_sys = jnp.where(jnp.asarray(is_sys_np))[0]
+        self._idx_red = jnp.where(jnp.asarray(is_red_np))[0]
+        self._idx_blue = jnp.where(jnp.asarray(is_blue_np))[0]
+        self._idx_sys_cons = jnp.where(
+            jnp.asarray(is_sys_np & accel_meas))[0]
+        self._idx_sys_uncons = jnp.where(
+            jnp.asarray(is_sys_np & ~accel_meas))[0]
 
-        def _r_precomp(idx):
-            """Slice precomputed r-quantities for a spot subset.
+        self._n_sys = int(is_sys_np.sum())
+        self._n_red = int(is_red_np.sum())
+        self._n_blue = int(is_blue_np.sum())
+        self._n_sys_cons = int((is_sys_np & accel_meas).sum())
+        self._n_sys_uncons = int((is_sys_np & ~accel_meas).sum())
 
-            Return order matches _observables_from_precomputed args
-            after (sin_phi, cos_phi, x0, y0, v_sys).
-            """
-            return (sin_i[idx][rpad], r_ang[idx][rpad],
-                    v_kep[idx][rpad], gamma[idx][rpad],
-                    z_g_factor[idx][rpad], a_mag[idx][rpad],
-                    pA[idx][rpad], pB[idx][rpad],
-                    pC[idx][rpad], pD[idx][rpad])
+        fprint(
+            f"spot split: {self._n_sys} sys "
+            f"({self._n_sys_cons} w/accel, {self._n_sys_uncons} w/o), "
+            f"{self._n_red} red, {self._n_blue} blue.")
+        return accel_meas
 
-        def _obs_4(idx, sp, cp):
-            """X, Y, V, A from precomputed r-quantities."""
-            return _observables_from_precomputed(
-                sp, cp, x0, y0, v_sys, *_r_precomp(idx))
+    def _build_allspot_arrays(self, data, accel_meas):
+        """Build all-spot arrays in original data order."""
+        self._all_x = jnp.asarray(data["x"])
+        self._all_y = jnp.asarray(data["y"])
+        self._all_sigma_x2 = jnp.asarray(data["sigma_x"])**2
+        self._all_sigma_y2 = jnp.asarray(data["sigma_y"])**2
+        self._all_v = jnp.asarray(self.velocity)
+        self._all_a = jnp.asarray(self.a)
+        self._all_sigma_a = jnp.asarray(self.sigma_a)
+        self._all_has_accel = jnp.asarray(accel_meas)
+        self._all_sigma_a2 = self._all_sigma_a**2
+        self._all_sigma_v2 = jnp.asarray(self.sigma_v)**2
 
-        def _obs_3(idx, sp, cp):
-            """X, Y, V only — no acceleration computed."""
-            (si, r_sub, vk, gm, zg, _, pa, pb, pc, pd) = _r_precomp(idx)
-            return _observables_no_accel(
-                sp, cp, x0, y0, v_sys, si, r_sub, vk, gm, zg,
-                pa, pb, pc, pd)
+    # ---- galaxy / feature config ----
 
-        def _obs_4_ecc(idx, sp, cp):
-            """X, Y, V (eccentric), A from precomputed r-quantities."""
-            (si, r_sub, vk, _, zg, am, pa, pb, pc, pd) = _r_precomp(idx)
-            sw = sin_omega[idx][rpad]
-            cw = cos_omega[idx][rpad]
-            R_sub = r_sub * 1e3
-            X = x0 + R_sub * (sp * pa - cp * pb)
-            Y = y0 + R_sub * (sp * pc + cp * pd)
+    def _configure_galaxy(self, data):
+        """Configure per-galaxy feature flags and warp pivots.
 
-            # Velocity components
-            cos_f = cp * cw + sp * sw
-            ecc_fac = (sp + ecc * sw) / jnp.sqrt(1.0 + ecc * cos_f)
-            v_z = vk * ecc_fac * si
+        Returns the galaxy config dict.
+        """
+        gname = data.get("galaxy_name", "")
+        gal_cfg = get_nested(self.config, f"model/galaxies/{gname}", {})
+        self._reject_legacy_keys(gal_cfg)
+        self._configure_features(gal_cfg)
+        self._configure_mode(gal_cfg)
+        self._configure_warp_pivots(data, gal_cfg)
+        return gal_cfg
 
-            # Precise Lorentz factor for eccentric orbit
-            beta_c2 = (vk / SPEED_OF_LIGHT)**2
-            beta_e2 = (beta_c2
-                       * (1.0 + ecc**2 + 2.0 * ecc * cos_f)
-                       / (1.0 + ecc * cos_f))
-            gm_e = 1.0 / jnp.sqrt(1.0 - beta_e2)
+    @staticmethod
+    def _reject_legacy_keys(gal_cfg):
+        legacy = {
+            "adaptive_phi": "removed (Mode 1 uses the same unified φ grid "
+                            "as Mode 2).",
+            "phi_method": "removed (single unified φ method).",
+            "n_phi_red": "replaced by n_phi_hv_high / n_phi_hv_low.",
+            "n_phi_blue": "replaced by n_phi_hv_high / n_phi_hv_low.",
+            "phi_range_red_deg": "replaced by phi_hv_inner_deg / "
+                                 "phi_hv_outer_deg.",
+            "phi_range_blue_deg": "replaced by phi_hv_inner_deg / "
+                                  "phi_hv_outer_deg.",
+            "phi_range_sys_deg": "renamed to phi_sys_ranges_deg.",
+            "adaptive_r": "removed — adaptive sinh is always used for "
+                          "spots with a constrained r (HV and sys+accel).",
+            "G_phi_half": "removed — HV grid is now 3 uniform sub-ranges.",
+            "n_inner_sys": "removed — systemic grid uses n_phi_sys per "
+                           "sub-range from phi_sys_ranges_deg.",
+            "n_wing_sys": "removed.",
+            "inner_deg_sys": "removed.",
+            "n_r": "removed — Mode 2 r-grid is per-spot (n_r_local, "
+                   "n_r_brute).",
+            "marginalise_r": "replaced by `mode = 'mode0' | 'mode1' | "
+                             "'mode2'`.",
+        }
+        for key, msg in legacy.items():
+            if key in gal_cfg:
+                raise ValueError(f"legacy config key '{key}': {msg}")
 
-            one_plus_z_D = gm_e * (1.0 + v_z / SPEED_OF_LIGHT)
-            V = SPEED_OF_LIGHT * (
-                one_plus_z_D * zg
-                * (1.0 + v_sys / SPEED_OF_LIGHT) - 1.0)
-            A = am * cp * si
-            return X, Y, V, A
+    def _configure_features(self, gal_cfg):
+        use_ecc = get_nested(self.config, "model/use_ecc", False)
+        use_qw = get_nested(self.config, "model/use_quadratic_warp", False)
+        self.use_ecc = gal_cfg.get("use_ecc", use_ecc)
+        self.ecc_cartesian = gal_cfg.get("ecc_cartesian", True)
+        self.use_quadratic_warp = gal_cfg.get("use_quadratic_warp", use_qw)
+        flags = []
+        if self.use_ecc:
+            flags.append("ecc" + ("(cart)" if self.ecc_cartesian else ""))
+        if self.use_quadratic_warp:
+            flags.append("quad_warp")
+        fprint("features: " + (", ".join(flags) if flags else "none"))
 
-        def _obs_3_ecc(idx, sp, cp):
-            """X, Y, V (eccentric) only — no acceleration."""
-            (si, r_sub, vk, _, zg, _, pa, pb, pc, pd) = _r_precomp(idx)
-            sw = sin_omega[idx][rpad]
-            cw = cos_omega[idx][rpad]
-            R_sub = r_sub * 1e3
-            X = x0 + R_sub * (sp * pa - cp * pb)
-            Y = y0 + R_sub * (sp * pc + cp * pd)
+    def _configure_mode(self, gal_cfg):
+        """Resolve the sampling mode for this galaxy.
 
-            cos_f = cp * cw + sp * sw
-            ecc_fac = (sp + ecc * sw) / jnp.sqrt(1.0 + ecc * cos_f)
-            v_z = vk * ecc_fac * si
+        mode = "mode0": sample per-spot r AND phi (no marginalisation).
+        mode = "mode1": sample per-spot r, marginalise phi numerically.
+        mode = "mode2": marginalise both r and phi numerically.
+        """
+        valid = ("mode0", "mode1", "mode2")
+        mode_global = get_nested(self.config, "model/mode", "mode2")
+        mode = gal_cfg.get("mode", mode_global)
+        if mode not in valid:
+            raise ValueError(
+                f"Invalid mode '{mode}'; expected one of {valid}.")
+        if mode == "mode2" and gal_cfg.get("forbid_marginalise_r", False):
+            raise ValueError(
+                "This galaxy has `forbid_marginalise_r = true`; mode2 is "
+                "not supported. Set mode = 'mode0' or 'mode1'.")
+        self.mode = mode
+        self.marginalise_r = (mode == "mode2")
+        self.marginalise_phi = (mode in ("mode1", "mode2"))
 
-            beta_c2 = (vk / SPEED_OF_LIGHT)**2
-            beta_e2 = (beta_c2
-                       * (1.0 + ecc**2 + 2.0 * ecc * cos_f)
-                       / (1.0 + ecc * cos_f))
-            gm_e = 1.0 / jnp.sqrt(1.0 - beta_e2)
+    def _configure_warp_pivots(self, data, gal_cfg):
+        is_hv_np = _np.asarray(data["is_highvel"])
+        x_hv = _np.asarray(data["x"])[is_hv_np]
+        y_hv = _np.asarray(data["y"])[is_hv_np]
+        r_ang_hv = _np.sqrt(x_hv**2 + y_hv**2) / 1e3  # μas → mas
+        r_data = float(_np.median(r_ang_hv))
+        r_common = gal_cfg.get("r_ang_ref", None)
+        r_base = float(r_common) if r_common is not None else r_data
+        base_src = (
+            "config" if r_common is not None
+            else f"median projected radius of {len(r_ang_hv)} HV spots")
 
-            one_plus_z_D = gm_e * (1.0 + v_z / SPEED_OF_LIGHT)
-            V = SPEED_OF_LIGHT * (
-                one_plus_z_D * zg
-                * (1.0 + v_sys / SPEED_OF_LIGHT) - 1.0)
-            return X, Y, V
+        self._r_ang_ref_i = float(gal_cfg.get("r_ang_ref_i", r_base))
+        self._r_ang_ref_Omega = float(gal_cfg.get("r_ang_ref_Omega", r_base))
+        self._r_ang_ref_periapsis = float(
+            gal_cfg.get("r_ang_ref_periapsis", r_base))
+        self._r_ang_ref = r_base
 
-        def _lnorm_3(sx2, sy2, sv2, sv_floor2):
-            return -0.5 * (3 * LOG_2PI + jnp.log(sx2 + sigma_x_floor2)
-                           + jnp.log(sy2 + sigma_y_floor2)
-                           + jnp.log(sv2 + sv_floor2))
+        overrides = [k for k in ("r_ang_ref_i", "r_ang_ref_Omega",
+                                 "r_ang_ref_periapsis") if k in gal_cfg]
+        if overrides:
+            extras = " ".join(
+                f"{k}={float(gal_cfg[k]):.3f}" for k in overrides)
+            fprint(f"r_ang_ref = {r_base:.3f} mas ({base_src}); "
+                   f"overrides: {extras}")
+        else:
+            fprint(f"r_ang_ref = {r_base:.3f} mas ({base_src})")
 
-        def _lnorm_4(sx2, sy2, sv2, sv_floor2, sa2, sa_floor2):
-            return (_lnorm_3(sx2, sy2, sv2, sv_floor2)
-                    - 0.5 * (LOG_2PI + jnp.log(sa2 + sa_floor2)))
+    # ---- phi sub-ranges (single source of truth for both modes) ----
 
-        # Combined phi[+r] weights for fused 2D logsumexp in Mode 2.
-        if log_w_r is not None:
-            if log_w_r.ndim == 2:
-                # Per-spot weights: (N, n_r) -> (N, n_r, n_phi)
-                log_w_2d_sys = (log_w_r[:, :, None]
-                                + self._log_w_phi_sys[None, None, :])
-                log_w_2d_hv = (log_w_r[:, :, None]
-                               + self._log_w_phi_hv[None, None, :])
+    def _build_phi_subranges(self, gal_cfg):
+        """Parse per-type φ sub-ranges from config.
+
+        Stores self._phi_subranges as a dict mapping spot-type ("red",
+        "blue", "sys") to a list of (lo_rad, hi_rad, n_phi) triplets.
+        Each sub-range is evaluated with a uniform linspace and
+        trapezoidal weights; disjoint sub-ranges for the same spot type
+        are combined in log-space via logsumexp.
+        """
+        mode_suffix = "mode2" if self.marginalise_r else "mode1"
+
+        def _get(key, default):
+            if key in gal_cfg:
+                return gal_cfg[key]
+            # Mode-specific global (e.g. n_phi_hv_high_mode1) takes
+            # precedence over the generic key when set.
+            mode_val = get_nested(
+                self.config, f"model/{key}_{mode_suffix}", None)
+            if mode_val is not None:
+                return mode_val
+            return get_nested(self.config, f"model/{key}", default)
+
+        hv_inner_deg = float(_get("phi_hv_inner_deg", 45.0))
+        hv_outer_deg = float(_get("phi_hv_outer_deg", 90.0))
+        n_high = int(_get("n_phi_hv_high", 401))
+        n_low = int(_get("n_phi_hv_low", 101))
+
+        if not (0 < hv_inner_deg < hv_outer_deg <= 180.0):
+            raise ValueError(
+                "Require 0 < phi_hv_inner_deg < phi_hv_outer_deg <= 180°; "
+                f"got inner={hv_inner_deg}, outer={hv_outer_deg}.")
+        if min(n_high, n_low) < 3:
+            raise ValueError(
+                "n_phi_hv_high and n_phi_hv_low must be >= 3.")
+
+        i_rad = _np.deg2rad(hv_inner_deg)
+        o_rad = _np.deg2rad(hv_outer_deg)
+        pi = _np.pi
+        pi2 = pi / 2.0
+
+        # Red (peak at φ=+π/2)
+        red = [
+            (pi2 - o_rad, pi2 - i_rad, n_low),
+            (pi2 - i_rad, pi2 + i_rad, n_high),
+            (pi2 + i_rad, pi2 + o_rad, n_low),
+        ]
+        # Blue (peak at φ=-π/2)
+        blue = [
+            (-pi2 - o_rad, -pi2 - i_rad, n_low),
+            (-pi2 - i_rad, -pi2 + i_rad, n_high),
+            (-pi2 + i_rad, -pi2 + o_rad, n_low),
+        ]
+
+        sys_ranges_deg = _get(
+            "phi_sys_ranges_deg", [[-45.0, 45.0], [135.0, 225.0]])
+        n_sys = int(_get("n_phi_sys", 2001))
+        if n_sys < 3:
+            raise ValueError("n_phi_sys must be >= 3.")
+        sys_rng = []
+        for lo, hi in sys_ranges_deg:
+            lo, hi = float(lo), float(hi)
+            if hi <= lo:
+                raise ValueError(
+                    f"phi_sys_ranges_deg sub-range [{lo}, {hi}] must be "
+                    "strictly increasing.")
+            sys_rng.append((_np.deg2rad(lo), _np.deg2rad(hi), n_sys))
+
+        self._phi_subranges = {"red": red, "blue": blue, "sys": sys_rng}
+
+        # Save for summary/printing
+        self._phi_hv_inner_deg = hv_inner_deg
+        self._phi_hv_outer_deg = hv_outer_deg
+        self._n_phi_hv_high = n_high
+        self._n_phi_hv_low = n_low
+        self._phi_sys_ranges_deg = sys_ranges_deg
+        self._n_phi_sys = n_sys
+
+        # Per-spot phi-prior bounds for Mode 0. Each spot has up to two
+        # disjoint sub-ranges (lo0..hi0) and (lo1..hi1); for spots with
+        # only one allowed range (red/blue), the second has zero width.
+        # An auxiliary u ∈ [0, 1] is mapped to phi deterministically via
+        # _phi_from_u, yielding a uniform prior on the union.
+        pi = _np.pi
+        lo0 = _np.zeros(self.n_spots)
+        hi0 = _np.zeros(self.n_spots)
+        lo1 = _np.zeros(self.n_spots)
+        hi1 = _np.zeros(self.n_spots)
+        # Red: contiguous [-outer, outer] (the 3 integration sub-ranges
+        # union cleanly into one interval). For single-range spots we
+        # set lo1 = hi1 = hi0 so that _phi_from_u at u=1 (which falls
+        # into the second branch by a zero-width margin) returns hi0
+        # rather than 0.
+        if self._n_red > 0:
+            idx_red = _np.asarray(self._idx_red)
+            lo0[idx_red] = pi2 - o_rad
+            hi0[idx_red] = pi2 + o_rad
+            lo1[idx_red] = pi2 + o_rad
+            hi1[idx_red] = pi2 + o_rad
+        if self._n_blue > 0:
+            idx_blue = _np.asarray(self._idx_blue)
+            lo0[idx_blue] = -pi2 - o_rad
+            hi0[idx_blue] = -pi2 + o_rad
+            lo1[idx_blue] = -pi2 + o_rad
+            hi1[idx_blue] = -pi2 + o_rad
+        if self._n_sys > 0:
+            if len(sys_rng) == 1:
+                (s_lo, s_hi, _) = sys_rng[0]
+                idx_sys = _np.asarray(self._idx_sys)
+                lo0[idx_sys] = s_lo
+                hi0[idx_sys] = s_hi
+            elif len(sys_rng) == 2:
+                (s0_lo, s0_hi, _), (s1_lo, s1_hi, _) = sys_rng
+                idx_sys = _np.asarray(self._idx_sys)
+                lo0[idx_sys] = s0_lo
+                hi0[idx_sys] = s0_hi
+                lo1[idx_sys] = s1_lo
+                hi1[idx_sys] = s1_hi
             else:
-                log_w_2d_sys = log_w_r[:, None] + self._log_w_phi_sys[None, :]
-                log_w_2d_hv = log_w_r[:, None] + self._log_w_phi_hv[None, :]
+                raise ValueError(
+                    "Mode 0 supports at most 2 systemic phi sub-ranges; "
+                    f"got {len(sys_rng)}.")
+        self._phi_spot_lo0 = jnp.asarray(lo0)
+        self._phi_spot_hi0 = jnp.asarray(hi0)
+        self._phi_spot_lo1 = jnp.asarray(lo1)
+        self._phi_spot_hi1 = jnp.asarray(hi1)
 
-        # ---- Systemic spots ----
-        def _sys_block(idx_attr, log_w_r, log_w_2d,
-                       x_d, y_d, v_d, a_d,
-                       sx2, sy2, sv2, sv_floor2, sa2, has_accel,
-                       sa_floor2, aw=None):
-            vx = sx2[dpad] + sigma_x_floor2
-            vy = sy2[dpad] + sigma_y_floor2
-            vv = sv2[dpad] + sv_floor2
-            idx = getattr(self, idx_attr)
-            if has_accel:
-                va = sa2[dpad] + sa_floor2
-                inv_va = 1.0 / va
-                X, Y, V, A = _obs_4(
-                    idx, self._sin_phi_sys, self._cos_phi_sys)
-                chi2_xyv = _chi2_3obs(
-                    x_d[dpad], X, 1.0 / vx, y_d[dpad], Y, 1.0 / vy,
-                    v_d[dpad], V, 1.0 / vv)
-                da = a_d[dpad] - A
-                chi2_a = da * da * inv_va
-                lnorm_xyv = _lnorm_3(sx2[dpad], sy2[dpad], sv2[dpad],
-                                     sv_floor2)
-                lnorm_a = -0.5 * (LOG_2PI + jnp.log(va))
-                w = aw[dpad]
-                ll = (lnorm_xyv + w * lnorm_a
-                      - 0.5 * chi2_xyv - 0.5 * w * chi2_a)
-            else:
-                X, Y, V = _obs_3(
-                    idx, self._sin_phi_sys, self._cos_phi_sys)
-                chi2 = _chi2_3obs(
-                    x_d[dpad], X, 1.0 / vx, y_d[dpad], Y, 1.0 / vy,
-                    v_d[dpad], V, 1.0 / vv)
-                lnorm = _lnorm_3(sx2[dpad], sy2[dpad], sv2[dpad],
-                                 sv_floor2)
-                ll = lnorm - 0.5 * chi2
-            if log_w_r is not None:
-                w2d = log_w_2d[idx] if log_w_2d.ndim == 3 else log_w_2d
-                return logsumexp(ll + w2d, axis=(-2, -1))
-            return ln_trapz_precomputed(ll, self._log_w_phi_sys, axis=-1)
+    def _phi_from_u(self, u):
+        """Map per-spot auxiliary u ∈ [0, 1] to phi_i respecting the
+        same sub-range union used by the Mode 1/2 integrator."""
+        w0 = self._phi_spot_hi0 - self._phi_spot_lo0
+        w1 = self._phi_spot_hi1 - self._phi_spot_lo1
+        total = w0 + w1
+        s = u * total
+        in_first = s < w0
+        return jnp.where(
+            in_first,
+            self._phi_spot_lo0 + s,
+            self._phi_spot_lo1 + (s - w0))
 
-        def _hv_block(idx_attr, sp1, cp1, sp2, cp2,
-                      log_w_r, log_w_2d,
-                      x_d, y_d, v_d, a_d,
-                      sx2, sy2, sv2, sv_floor2, sa2, has_accel,
-                      sa_floor2, aw=None):
-            vx = sx2[dpad] + sigma_x_floor2
-            vy = sy2[dpad] + sigma_y_floor2
-            vv = sv2[dpad] + sv_floor2
-            inv_vx, inv_vy, inv_vv = 1.0 / vx, 1.0 / vy, 1.0 / vv
-            idx = getattr(self, idx_attr)
-            r_sub = r_ang[idx][rpad]
-            R_sub = r_sub * 1e3
-            pa_s, pb_s = pA[idx][rpad], pB[idx][rpad]
-            pc_s, pd_s = pC[idx][rpad], pD[idx][rpad]
+    # ---- r config (Mode 2 grids + Mode 1 r_ang bounds) ----
 
-            if has_accel:
-                va = sa2[dpad] + sa_floor2
-                inv_va = 1.0 / va
-                X1, Y1, V, A1 = _obs_4(idx, sp1, cp1)
-                X2 = x0 + R_sub * (sp2 * pa_s - cp2 * pb_s)
-                Y2 = y0 + R_sub * (sp2 * pc_s + cp2 * pd_s)
-                A2 = -A1
-                chi2_v = (v_d[dpad] - V) ** 2 * inv_vv
-                # x,y chi² per solution (no v, no a)
-                dx1 = x_d[dpad] - X1
-                dy1 = y_d[dpad] - Y1
-                chi2_xy1 = dx1 * dx1 * inv_vx + dy1 * dy1 * inv_vy
-                dx2 = x_d[dpad] - X2
-                dy2 = y_d[dpad] - Y2
-                chi2_xy2 = dx2 * dx2 * inv_vx + dy2 * dy2 * inv_vy
-                da1 = a_d[dpad] - A1
-                da2 = a_d[dpad] - A2
-                chi2_a1 = da1 * da1 * inv_va
-                chi2_a2 = da2 * da2 * inv_va
-                w = aw[dpad]
-                lnorm_xyv = _lnorm_3(sx2[dpad], sy2[dpad], sv2[dpad],
-                                     sv_floor2)
-                lnorm_a = -0.5 * (LOG_2PI + jnp.log(va))
-                lnorm = lnorm_xyv + w * lnorm_a
-                ll = (lnorm - 0.5 * chi2_v
-                      + jnp.logaddexp(
-                          -0.5 * (chi2_xy1 + w * chi2_a1),
-                          -0.5 * (chi2_xy2 + w * chi2_a2)))
-            else:
-                X1, Y1, V = _obs_3(idx, sp1, cp1)
-                X2 = x0 + R_sub * (sp2 * pa_s - cp2 * pb_s)
-                Y2 = y0 + R_sub * (sp2 * pc_s + cp2 * pd_s)
-                chi2_v = (v_d[dpad] - V) ** 2 * inv_vv
-                chi2_1 = (_chi2_3obs(
-                    x_d[dpad], X1, inv_vx, y_d[dpad], Y1, inv_vy,
-                    v_d[dpad], V, inv_vv) - chi2_v)
-                chi2_2 = (_chi2_3obs(
-                    x_d[dpad], X2, inv_vx, y_d[dpad], Y2, inv_vy,
-                    v_d[dpad], V, inv_vv) - chi2_v)
-                lnorm = _lnorm_3(sx2[dpad], sy2[dpad], sv2[dpad],
-                                 sv_floor2)
-                ll = (lnorm - 0.5 * chi2_v
-                      + jnp.logaddexp(-0.5 * chi2_1, -0.5 * chi2_2))
-            if log_w_r is not None:
-                w2d = log_w_2d[idx] if log_w_2d.ndim == 3 else log_w_2d
-                return logsumexp(ll + w2d, axis=(-2, -1))
-            return ln_trapz_precomputed(ll, self._log_w_phi_hv, axis=-1)
+    def _build_r_config(self, data, gal_cfg):
+        """Set r-grid constants and Mode 1 r_ang prior bounds."""
+        def _get(key, default):
+            if key in gal_cfg:
+                return gal_cfg[key]
+            return get_nested(self.config, f"model/{key}", default)
 
-        def _sys_block_ecc(idx_attr, log_w_r, log_w_2d,
-                           x_d, y_d, v_d, a_d,
-                           sx2, sy2, sv2, sv_floor2, sa2, has_accel,
-                           sa_floor2, aw=None):
-            vx = sx2[dpad] + sigma_x_floor2
-            vy = sy2[dpad] + sigma_y_floor2
-            vv = sv2[dpad] + sv_floor2
-            idx = getattr(self, idx_attr)
-            if has_accel:
-                va = sa2[dpad] + sa_floor2
-                inv_va = 1.0 / va
-                X, Y, V, A = _obs_4_ecc(
-                    idx, self._sin_phi_sys, self._cos_phi_sys)
-                chi2_xyv = _chi2_3obs(
-                    x_d[dpad], X, 1.0 / vx, y_d[dpad], Y, 1.0 / vy,
-                    v_d[dpad], V, 1.0 / vv)
-                da = a_d[dpad] - A
-                chi2_a = da * da * inv_va
-                lnorm_xyv = _lnorm_3(sx2[dpad], sy2[dpad], sv2[dpad],
-                                     sv_floor2)
-                lnorm_a = -0.5 * (LOG_2PI + jnp.log(va))
-                w = aw[dpad]
-                ll = (lnorm_xyv + w * lnorm_a
-                      - 0.5 * chi2_xyv - 0.5 * w * chi2_a)
-            else:
-                X, Y, V = _obs_3_ecc(
-                    idx, self._sin_phi_sys, self._cos_phi_sys)
-                chi2 = _chi2_3obs(
-                    x_d[dpad], X, 1.0 / vx, y_d[dpad], Y, 1.0 / vy,
-                    v_d[dpad], V, 1.0 / vv)
-                lnorm = _lnorm_3(sx2[dpad], sy2[dpad], sv2[dpad],
-                                 sv_floor2)
-                ll = lnorm - 0.5 * chi2
-            if log_w_r is not None:
-                w2d = log_w_2d[idx] if log_w_2d.ndim == 3 else log_w_2d
-                return logsumexp(ll + w2d, axis=(-2, -1))
-            return ln_trapz_precomputed(ll, self._log_w_phi_sys, axis=-1)
+        _R_lo = float(_get("R_phys_lo", 0.01))
+        _R_hi = float(_get("R_phys_hi", 2.0))
+        self._R_phys_lo = _R_lo
+        self._R_phys_hi = _R_hi
 
-        def _hv_block_ecc(idx_attr, sp1, cp1, sp2, cp2,
-                          log_w_r, log_w_2d,
-                          x_d, y_d, v_d, a_d,
-                          sx2, sy2, sv2, sv_floor2, sa2, has_accel,
-                          sa_floor2, aw=None):
-            """HV block with eccentricity: V1 != V2, no reflection shortcut."""
-            vx = sx2[dpad] + sigma_x_floor2
-            vy = sy2[dpad] + sigma_y_floor2
-            vv = sv2[dpad] + sv_floor2
-            inv_vx, inv_vy, inv_vv = 1.0 / vx, 1.0 / vy, 1.0 / vv
-            idx = getattr(self, idx_attr)
-            if has_accel:
-                va = sa2[dpad] + sa_floor2
-                inv_va = 1.0 / va
-                X1, Y1, V1, A1 = _obs_4_ecc(idx, sp1, cp1)
-                X2, Y2, V2, A2 = _obs_4_ecc(idx, sp2, cp2)
-                chi2_xyv1 = _chi2_3obs(
-                    x_d[dpad], X1, inv_vx, y_d[dpad], Y1, inv_vy,
-                    v_d[dpad], V1, inv_vv)
-                chi2_xyv2 = _chi2_3obs(
-                    x_d[dpad], X2, inv_vx, y_d[dpad], Y2, inv_vy,
-                    v_d[dpad], V2, inv_vv)
-                da1 = a_d[dpad] - A1
-                da2 = a_d[dpad] - A2
-                chi2_a1 = da1 * da1 * inv_va
-                chi2_a2 = da2 * da2 * inv_va
-                w = aw[dpad]
-                lnorm_xyv = _lnorm_3(sx2[dpad], sy2[dpad], sv2[dpad],
-                                     sv_floor2)
-                lnorm_a = -0.5 * (LOG_2PI + jnp.log(va))
-                lnorm = lnorm_xyv + w * lnorm_a
-                ll = lnorm + jnp.logaddexp(
-                    -0.5 * (chi2_xyv1 + w * chi2_a1),
-                    -0.5 * (chi2_xyv2 + w * chi2_a2))
-            else:
-                X1, Y1, V1 = _obs_3_ecc(idx, sp1, cp1)
-                X2, Y2, V2 = _obs_3_ecc(idx, sp2, cp2)
-                chi2_1 = _chi2_3obs(
-                    x_d[dpad], X1, inv_vx, y_d[dpad], Y1, inv_vy,
-                    v_d[dpad], V1, inv_vv)
-                chi2_2 = _chi2_3obs(
-                    x_d[dpad], X2, inv_vx, y_d[dpad], Y2, inv_vy,
-                    v_d[dpad], V2, inv_vv)
-                lnorm = _lnorm_3(sx2[dpad], sy2[dpad], sv2[dpad],
-                                 sv_floor2)
-                ll = lnorm + jnp.logaddexp(-0.5 * chi2_1, -0.5 * chi2_2)
-            if log_w_r is not None:
-                w2d = log_w_2d[idx] if log_w_2d.ndim == 3 else log_w_2d
-                return logsumexp(ll + w2d, axis=(-2, -1))
-            return ln_trapz_precomputed(ll, self._log_w_phi_hv, axis=-1)
+        # Mode 2 r-grid knobs.
+        self._n_r_local = int(_get("n_r_local", 101))
+        self._n_r_brute = int(_get("n_r_brute", 501))
+        self._K_sigma = float(_get("K_sigma", 5.0))
+        if self._n_r_local < 3 or self._n_r_brute < 3:
+            raise ValueError("n_r_local and n_r_brute must be >= 3.")
 
-        results = []
+        # Selection function grid (same for all modes/galaxies).
+        D_min = float(get_nested(self.config, "model/priors/D/low", 10.0))
+        D_max = float(get_nested(self.config, "model/priors/D/high", 200.0))
+        self._sel_D_grid = jnp.linspace(D_min, D_max, 501)
+        self._sel_log_w = jnp.asarray(trapz_log_weights(self._sel_D_grid))
+        self._sel_lp_vol = 2.0 * jnp.log(self._sel_D_grid)
+        self.use_selection = get_nested(
+            self.config, "model/use_selection", False)
 
-        # ---- Systemic: with accel, then without ----
-        for suffix, has_a in [("_a", True), ("_noa", False)]:
-            n = getattr(self, f"_n_sys{suffix}")
-            if n > 0:
-                kw = dict(
-                    log_w_r=log_w_r,
-                    log_w_2d=log_w_2d_sys if log_w_r is not None else None,
-                    x_d=getattr(self, f"_x_sys{suffix}"),
-                    y_d=getattr(self, f"_y_sys{suffix}"),
-                    v_d=getattr(self, f"_velocity_sys{suffix}"),
-                    a_d=getattr(self, "_a_sys_a", None) if has_a else None,
-                    sx2=getattr(self, f"_sigma_x2_sys{suffix}"),
-                    sy2=getattr(self, f"_sigma_y2_sys{suffix}"),
-                    sv2=getattr(self, f"_sigma_v2_sys{suffix}"),
-                    sv_floor2=var_v_sys,
-                    sa2=(getattr(self, "_sigma_a2_sys_a", None)
-                         if has_a else None),
-                    has_accel=has_a,
-                    sa_floor2=sigma_a_floor2,
-                    aw=(getattr(self, "_accel_w_sys_a", None)
-                        if has_a else None))
-                sys_fn = _sys_block_ecc if ecc is not None else _sys_block
-                results.append(sys_fn(f"_idx_sys{suffix}", **kw))
+        # Fixed r_ang bounds for Mode 1 prior (cosmographic D_A at z_sys).
+        z_est = self.v_sys_obs / SPEED_OF_LIGHT
+        q0 = -0.55
+        D_c_est = (SPEED_OF_LIGHT * z_est / 73.0
+                   * (1 + 0.5 * (1 - q0) * z_est))
+        D_A_est = D_c_est / (1 + z_est)
+        self._r_ang_lo = self._R_phys_lo / (D_A_est * PC_PER_MAS_MPC)
+        self._r_ang_hi = self._R_phys_hi / (D_A_est * PC_PER_MAS_MPC)
 
-        # ---- Red and Blue HV: with accel, then without ----
-        for color in ["red", "blue"]:
-            for suffix, has_a in [("_a", True), ("_noa", False)]:
-                if getattr(self, f"_n_{color}{suffix}") == 0:
-                    continue
-                kw = dict(
-                    sp1=getattr(self, f"_sin_phi1_{color}"),
-                    cp1=getattr(self, f"_cos_phi1_{color}"),
-                    sp2=getattr(self, f"_sin_phi2_{color}"),
-                    cp2=getattr(self, f"_cos_phi2_{color}"),
-                    log_w_r=log_w_r,
-                    log_w_2d=(log_w_2d_hv if log_w_r is not None
-                              else None),
-                    x_d=getattr(self, f"_x_{color}{suffix}"),
-                    y_d=getattr(self, f"_y_{color}{suffix}"),
-                    v_d=getattr(self, f"_velocity_{color}{suffix}"),
-                    a_d=(getattr(self, f"_a_{color}_a", None)
-                         if has_a else None),
-                    sx2=getattr(self, f"_sigma_x2_{color}{suffix}"),
-                    sy2=getattr(self, f"_sigma_y2_{color}{suffix}"),
-                    sv2=getattr(self, f"_sigma_v2_{color}{suffix}"),
-                    sv_floor2=var_v_hv,
-                    sa2=(getattr(self, f"_sigma_a2_{color}_a", None)
-                         if has_a else None),
-                    has_accel=has_a,
-                    sa_floor2=sigma_a_floor2,
-                    aw=(getattr(self, f"_accel_w_{color}_a", None)
-                        if has_a else None))
-                hv_fn = _hv_block_ecc if ecc is not None else _hv_block
-                results.append(hv_fn(f"_idx_{color}{suffix}", **kw))
+        # Mode 1 per-spot r_ang init distribution.
+        r_prior_cfg = gal_cfg.get("r_ang_prior", None)
+        if r_prior_cfg is not None:
+            self._r_ang_init_dist = {
+                "loc": float(r_prior_cfg["loc"]),
+                "scale": float(r_prior_cfg["scale"]),
+                "low": float(r_prior_cfg["low"]),
+                "high": float(r_prior_cfg["high"]),
+            }
+        else:
+            self._r_ang_init_dist = None
 
-        # Concat + gather replaces .at[idx].set() scatter ops
-        return jnp.concatenate(results, axis=0)[self._inv_order]
+    # ---- summary ----
 
-    def _eval_adaptive_phi_r(self, x0, y0, D_A, M_BH, v_sys,
-                              r_ang_ref, i0, di_dr, Omega0, dOmega_dr,
-                              sigma_x_floor2, sigma_y_floor2,
-                              var_v_sys, var_v_hv,
-                              sigma_a_floor2,
-                              ecc=None, periapsis0=None,
-                              dperiapsis_dr=0.0,
-                              d2i_dr2=0.0, d2Omega_dr2=0.0):
-        """Per-spot adaptive r + phi integration.
+    def _print_summary(self):
+        mode_desc = {
+            "mode0": "sample r, sample φ",
+            "mode1": "sample r, marginalise φ",
+            "mode2": "marginalise r+φ",
+        }[self.mode]
+        fprint(f"mode: {self.mode} ({mode_desc})")
+        if self.marginalise_phi:
+            fprint(
+                f"φ HV: inner ±{self._phi_hv_inner_deg:.0f}° "
+                f"(n={self._n_phi_hv_high}), outer wings to "
+                f"±{self._phi_hv_outer_deg:.0f}° "
+                f"(n={self._n_phi_hv_low} per wing)")
+            rng_str = " ∪ ".join(
+                f"[{lo:.0f}°, {hi:.0f}°]"
+                for lo, hi in self._phi_sys_ranges_deg)
+            fprint(f"φ sys: {rng_str}, n={self._n_phi_sys} per sub-range")
+        if self.marginalise_r:
+            fprint(
+                f"r grid: n_r_local={self._n_r_local} (sinh), "
+                f"n_r_brute={self._n_r_brute} (log-uniform, "
+                f"{self._n_sys_uncons} sys-no-accel spots), "
+                f"K={self._K_sigma}")
+        else:
+            fprint(
+                f"r_ang prior bounds: "
+                f"[{self._r_ang_lo:.3f}, {self._r_ang_hi:.3f}] mas")
+            if self._r_ang_init_dist is not None:
+                d = self._r_ang_init_dist
+                fprint(f"r_ang init: TruncNormal({d['loc']}, {d['scale']}, "
+                       f"[{d['low']}, {d['high']}])")
 
-        Each spot gets a sinh-spaced r grid centered on its projected
-        radius, then delegates to _eval_marginal_phi for phi integration.
+    # ---- r estimation (per-spot physics-based centre + scale) ----
+
+    def _estimate_adaptive_r(self, D_A, M_BH, v_sys, sigma_a_floor2,
+                             i0, var_v_hv):
+        """Per-spot r_ang centre and sinh-grid scale.
+
+        HV:    velocity → r_vel = M·(C_v·sin_i)² / (D·Δv²)
+        sys+a: acceleration → r_acc = √(C_a·M·sin_i / (D²·|a|))
+        sys-a: (unused here — sys-without-accel go through the brute grid)
+        Returns (r_est, scale) with broadcasting to all spots.
         """
         conv = D_A * PC_PER_MAS_MPC
         r_min = self._R_phys_lo / conv
         r_max = self._R_phys_hi / conv
-        n_local = self._n_r_local
 
-        # Per-spot r centering using the observable that best constrains
-        # r for each spot type:
-        #   HV:    velocity → r_vel = M*(C_v*sin_i)^2 / (D*dv^2)
-        #   sys+a: acceleration → r_acc = sqrt(C_a*M*sin_i / (D^2*|a|))
-        #   sys-a: median HV r_vel (fallback, broad peak)
         sin_i = jnp.abs(jnp.sin(i0))
         eps = 1e-30
 
-        # Velocity-based (assumes sin(phi)≈1 for HV)
         dv = self._all_v - v_sys
         r_vel = M_BH * (C_v * sin_i) ** 2 / (D_A * (dv ** 2 + eps))
         r_vel = jnp.clip(r_vel, r_min, r_max)
 
-        # Acceleration-based (assumes cos(phi)≈1 for systemic)
         r_acc = jnp.sqrt(
             C_a * M_BH * sin_i / (D_A ** 2 * (jnp.abs(self._all_a) + eps)))
         r_acc = jnp.clip(r_acc, r_min, r_max)
 
-        # Acceleration S/N: use total sigma (per-spot + floor)
-        sigma_a_total = jnp.sqrt(self._all_sigma_a**2 + sigma_a_floor2)
-        accel_snr = jnp.abs(self._all_a) / (sigma_a_total + eps)
-        # Only trust acceleration-based r if S/N >= 2
-        accel_good = self._all_has_accel & (accel_snr >= 2.0)
-
-        # Fallback for unconstrained spots: geometric midpoint of r range
-        # with large scale → nearly uniform grid in log-r. The centering
-        # location doesn't matter much because the large scale distributes
-        # points approximately uniformly across the full range.
-        logr_mid = 0.5 * (jnp.log(r_min) + jnp.log(r_max))
-        r_fallback = jnp.exp(logr_mid)
-        # scale = quarter of total log-range → density varies only ~2x
-        # from center to edge, effectively covering the full range
-        scale_broad = 0.25 * (jnp.log(r_max) - jnp.log(r_min))
-
-        # Assemble: HV→r_vel, sys+good_accel→r_acc, unconstrained→midpoint
-        r_est = jnp.where(
-            self.is_highvel, r_vel,
-            jnp.where(accel_good, r_acc, r_fallback))
+        # Centering: HV → r_vel, sys → r_acc (only sys+accel goes through
+        # this path; sys-no-accel uses the brute-force log-uniform grid).
+        r_est = jnp.where(self.is_highvel, r_vel, r_acc)
         r_est = jnp.clip(r_est, r_min * 1.01, r_max * 0.99)
-        logr_c = jnp.log(r_est)
 
-        # Per-spot scale in log-r:
-        #   HV:    from dr/dv: σ(log r) ≈ 2σ_v/|dv|, floor 0.05
-        #   sys+a: from dr/da: σ(log r) ≈ σ_a/(2|a|), floor 0.1
-        #   unconstrained: scale_broad (nearly uniform over full range)
+        # Scale: set half-width in log-r to the propagated measurement
+        # error, floored to avoid pathologically narrow grids.
         sigma_v_eff = jnp.sqrt(var_v_hv)
         sigma_a_eff = jnp.sqrt(sigma_a_floor2)
         sigma_log_vel = 2.0 * sigma_v_eff / (jnp.abs(dv) + eps)
@@ -1336,148 +669,102 @@ class MaserDiskModel(ModelBase):
         scale = jnp.where(
             self.is_highvel,
             jnp.maximum(sigma_log_vel, 0.05),
-            jnp.where(accel_good,
-                       jnp.maximum(sigma_log_acc, 0.1),
-                       scale_broad))
+            jnp.maximum(sigma_log_acc, 0.1))
+        return r_est, scale, r_min, r_max
 
-        # Per-spot sinh grid in log-r space
-        logr_lo = jnp.log(r_min)
-        logr_hi = jnp.log(r_max)
-        t_lo = jnp.arcsinh((logr_lo - logr_c) / scale)
-        t_hi = jnp.arcsinh((logr_hi - logr_c) / scale)
-        u = jnp.linspace(0.0, 1.0, n_local)
-        t_grid = t_lo[:, None] + (t_hi - t_lo)[:, None] * u[None, :]
-        r_all = jnp.exp(logr_c[:, None] + jnp.sinh(t_grid) * scale[:, None])
+    # ---- r grids for Mode 2 ----
 
-        # Per-spot trapezoidal weights (with floor to avoid log(0))
-        h = jnp.diff(r_all, axis=-1)
-        h_left = jnp.concatenate(
-            [jnp.zeros((self.n_spots, 1)), h], axis=-1)
-        h_right = jnp.concatenate(
-            [h, jnp.zeros((self.n_spots, 1))], axis=-1)
-        w = (h_left + h_right) / 2
-        log_w_r = jnp.log(jnp.maximum(w, 1e-30))
-
-        # Delegate to existing phi integration
-        ecc_kw = {}
-        if ecc is not None:
-            ecc_kw = dict(ecc=ecc, periapsis0=periapsis0,
-                          dperiapsis_dr=dperiapsis_dr)
-        return self._eval_marginal_phi(
-            r_all, x0, y0, D_A, M_BH, v_sys,
-            r_ang_ref, i0, di_dr, Omega0, dOmega_dr,
-            sigma_x_floor2, sigma_y_floor2,
-            var_v_sys, var_v_hv, sigma_a_floor2,
-            log_w_r=log_w_r,
-            d2i_dr2=d2i_dr2, d2Omega_dr2=d2Omega_dr2,
-            **ecc_kw)
-
-    def _eval_bruteforce_phi(self, r_ang, x0, y0, D_A, M_BH, v_sys,
-                             r_ang_ref, i0, di_dr, Omega0, dOmega_dr,
-                             sigma_x_floor2, sigma_y_floor2,
-                             var_v_sys, var_v_hv, sigma_a_floor2,
-                             d2i_dr2=0.0, d2Omega_dr2=0.0,
-                             ecc=None, periapsis0=None,
-                             dperiapsis_dr=0.0):
-        """Mode 1 phi-marginal via per-type uniform brute-force grids.
-
-        Each spot type gets its own phi range (systemic near 0,
-        red/blue in opposite halves). Evaluates _phi_integrand for all
-        spots on each type's grid, picks the relevant per-spot results.
-
-        Same total FLOPS as a single full-circle grid at n_phi per type,
-        but ~40× better accuracy because each type's grid resolves only
-        its own phi peaks.
-
-        Parameters
-        ----------
-        r_ang : (N,) sampled angular radii per spot
-
-        Returns
-        -------
-        (N,) per-spot phi-marginalised log-likelihood
+    def _build_r_grids_mode2(self, D_A, M_BH, v_sys, sigma_a_floor2,
+                             i0, var_v_hv):
+        """Return list of (type_key, idx, r_ang, log_w_r) for all spot
+        groups. Constrained spots (HV, sys+accel) get per-spot sinh grids
+        with n_r_local points centred on their physics-based r_est; sys
+        spots without accel measurement get a log-uniform r grid with
+        n_r_brute points spanning the full [R_phys_lo, R_phys_hi] range.
         """
-        integrand_args = (x0, y0, D_A, M_BH, v_sys,
-                          r_ang_ref, i0, di_dr, Omega0, dOmega_dr,
-                          sigma_x_floor2, sigma_y_floor2,
-                          var_v_sys, var_v_hv, sigma_a_floor2)
-        integrand_kw = dict(d2i_dr2=d2i_dr2, d2Omega_dr2=d2Omega_dr2,
-                            ecc=ecc, periapsis0=periapsis0,
-                            dperiapsis_dr=dperiapsis_dr)
+        r_est, scale, r_min, r_max = self._estimate_adaptive_r(
+            D_A, M_BH, v_sys, sigma_a_floor2, i0, var_v_hv)
 
-        result = jnp.zeros(self.n_spots)
+        def _sinh_grid(idx, n_r):
+            r_c = r_est[idx]
+            s = scale[idx]
+            logr_c = jnp.log(r_c)
+            logr_lo = jnp.log(r_min)
+            logr_hi = jnp.log(r_max)
+            t_lo = jnp.arcsinh((logr_lo - logr_c) / s)
+            t_hi = jnp.arcsinh((logr_hi - logr_c) / s)
+            u = jnp.linspace(0.0, 1.0, n_r)
+            t = t_lo[:, None] + (t_hi - t_lo)[:, None] * u[None, :]
+            r = jnp.exp(logr_c[:, None] + jnp.sinh(t) * s[:, None])
+            return r, _trapz_log_w_per_spot(r)
 
-        for idx_attr, bf_key in [
-                ("_idx_sys", "sys"),
-                ("_idx_red", "red"),
-                ("_idx_blue", "blue")]:
-            idx = getattr(self, idx_attr)
-            if len(idx) == 0:
-                continue
-            phi_range, n_phi = self._bf_phi[bf_key]
-            phi = jnp.linspace(phi_range[0], phi_range[1], n_phi)
-            log_w = trapz_log_weights(phi)
-            ll = self._phi_integrand(
-                r_ang[idx], jnp.sin(phi), jnp.cos(phi),
-                *integrand_args, idx=idx, **integrand_kw)
-            ps = logsumexp(ll + log_w[None, :], axis=-1)
-            result = result.at[idx].set(ps)
+        def _loguniform_grid(n_spots, n_r):
+            logr = jnp.linspace(jnp.log(r_min), jnp.log(r_max), n_r)
+            r1 = jnp.exp(logr)
+            w1 = trapz_log_weights(r1)
+            # Broadcast to per-spot to match the (N, n_r) shape convention.
+            r = jnp.broadcast_to(r1[None, :], (n_spots, n_r))
+            lw = jnp.broadcast_to(w1[None, :], (n_spots, n_r))
+            return r, lw
 
-        return result
+        groups = []
+        # Systemic with accel → sinh centred on r_acc.
+        if self._n_sys_cons > 0:
+            r, lw = _sinh_grid(self._idx_sys_cons, self._n_r_local)
+            groups.append(("sys", self._idx_sys_cons, r, lw))
+        # Systemic without accel → log-uniform brute.
+        if self._n_sys_uncons > 0:
+            r, lw = _loguniform_grid(self._n_sys_uncons, self._n_r_brute)
+            groups.append(("sys", self._idx_sys_uncons, r, lw))
+        # Red HV → sinh centred on r_vel.
+        if self._n_red > 0:
+            r, lw = _sinh_grid(self._idx_red, self._n_r_local)
+            groups.append(("red", self._idx_red, r, lw))
+        # Blue HV → sinh centred on r_vel.
+        if self._n_blue > 0:
+            r, lw = _sinh_grid(self._idx_blue, self._n_r_local)
+            groups.append(("blue", self._idx_blue, r, lw))
+        return groups
 
-    def _phi_integrand(self, r_ang, sin_phi, cos_phi,
+    # ---- unified φ integrand (1-D or 2-D r_ang) ----
+
+    def _phi_integrand(self, r_ang, sin_phi, cos_phi, idx,
                        x0, y0, D_A, M_BH, v_sys,
-                       r_ang_ref, i0, di_dr, Omega0, dOmega_dr,
+                       r_ang_ref_i, r_ang_ref_Omega, r_ang_ref_periapsis,
+                       i0, di_dr, Omega0, dOmega_dr,
                        sigma_x_floor2, sigma_y_floor2,
                        var_v_sys, var_v_hv, sigma_a_floor2,
                        d2i_dr2=0.0, d2Omega_dr2=0.0,
-                       ecc=None, periapsis0=None, dperiapsis_dr=0.0,
-                       idx=None):
-        """Per-spot log-likelihood integrand at given (r, phi) points.
+                       ecc=None, periapsis0=None, dperiapsis_dr=0.0):
+        """Per-spot log-integrand at (r, φ) grid points.
 
-        Core physics: geometry → observables → chi2 → log-integrand.
-        Uses model's stored spot data arrays. No integration — callers
-        combine with quadrature weights and logsumexp.
+        r_ang : (N,) [Mode 1] or (N, n_r) [Mode 2]
+        sin_phi, cos_phi : (n_phi,)
+        idx : (N,) absolute spot indices used to gather data arrays.
 
-        Parameters
-        ----------
-        r_ang : (N,) per-spot angular radius (N = n_spots or len(idx))
-        sin_phi, cos_phi : (n_phi,) shared or (N, n_phi) per-spot
-        idx : optional index array to select a subset of spots.
-            When provided, r_ang should have len(idx) elements and
-            data arrays are sliced accordingly.
-
-        Returns
-        -------
-        (N, n_phi) log f(r_i, phi_j | data_i, theta)
+        Returns log f with shape (N, n_phi) [Mode 1] or
+        (N, n_r, n_phi) [Mode 2].
         """
-        if idx is not None:
-            all_x = self._all_x[idx]
-            all_y = self._all_y[idx]
-            all_v = self._all_v[idx]
-            all_a = self._all_a[idx]
-            all_sigma_x2 = self._all_sigma_x2[idx]
-            all_sigma_y2 = self._all_sigma_y2[idx]
-            all_sigma_v2 = self._all_sigma_v2[idx]
-            all_sigma_a2 = self._all_sigma_a2[idx]
-            all_accel_w = self._all_accel_w[idx]
-            all_has_accel = self._all_has_accel[idx]
-            is_highvel = self.is_highvel[idx]
-        else:
-            all_x = self._all_x
-            all_y = self._all_y
-            all_v = self._all_v
-            all_a = self._all_a
-            all_sigma_x2 = self._all_sigma_x2
-            all_sigma_y2 = self._all_sigma_y2
-            all_sigma_v2 = self._all_sigma_v2
-            all_sigma_a2 = self._all_sigma_a2
-            all_accel_w = self._all_accel_w
-            all_has_accel = self._all_has_accel
-            is_highvel = self.is_highvel
+        # rpad: trailing None for φ broadcasting on r-shaped arrays.
+        rpad = (slice(None),) * r_ang.ndim + (None,)
+        # dpad: trailing (r.ndim) Nones for 1-D data arrays (broadcast
+        # into (N, [n_r,] n_phi)).
+        dpad = (slice(None),) + (None,) * r_ang.ndim
+
+        all_x = self._all_x[idx]
+        all_y = self._all_y[idx]
+        all_v = self._all_v[idx]
+        all_a = self._all_a[idx]
+        sx2 = self._all_sigma_x2[idx]
+        sy2 = self._all_sigma_y2[idx]
+        sv2 = self._all_sigma_v2[idx]
+        sa2 = self._all_sigma_a2[idx]
+        has_a = self._all_has_accel[idx].astype(r_ang.dtype)
+        is_hv = self.is_highvel[idx]
 
         i_r, Om_r = warp_geometry(
-            r_ang, r_ang_ref, i0, di_dr, Omega0, dOmega_dr,
+            r_ang, r_ang_ref_i, r_ang_ref_Omega,
+            i0, di_dr, Omega0, dOmega_dr,
             d2i_dr2, d2Omega_dr2)
         sin_i = jnp.sin(i_r)
         cos_i = jnp.cos(i_r)
@@ -1489,148 +776,118 @@ class MaserDiskModel(ModelBase):
 
         X, Y, V, A = _observables_from_precomputed(
             sin_phi, cos_phi, x0, y0, v_sys,
-            sin_i[:, None], r_ang[:, None],
-            v_kep[:, None], gamma[:, None], z_g[:, None], a_mag[:, None],
-            pA[:, None], pB[:, None], pC[:, None], pD[:, None])
+            sin_i[rpad], r_ang[rpad],
+            v_kep[rpad], gamma[rpad], z_g[rpad], a_mag[rpad],
+            pA[rpad], pB[rpad], pC[rpad], pD[rpad])
 
         if ecc is not None:
-            omega_r = periapsis0 + dperiapsis_dr * (r_ang - r_ang_ref)
-            sw = jnp.sin(omega_r)[:, None]
-            cw = jnp.cos(omega_r)[:, None]
-            cos_f = cos_phi * cw + sin_phi * sw
-            ecc_fac = (sin_phi + ecc * sw) / jnp.sqrt(1.0 + ecc * cos_f)
-            v_z = v_kep[:, None] * ecc_fac * sin_i[:, None]
-            beta_c2 = (v_kep[:, None] / SPEED_OF_LIGHT)**2
-            beta_e2 = (beta_c2 * (1.0 + ecc**2 + 2.0 * ecc * cos_f)
-                       / (1.0 + ecc * cos_f))
+            omega_r = (periapsis0
+                       + dperiapsis_dr * (r_ang - r_ang_ref_periapsis))
+            sw = jnp.sin(omega_r)[rpad]
+            cw = jnp.cos(omega_r)[rpad]
+            cos_d = cos_phi * cw + sin_phi * sw
+            ecc_fac = (sin_phi + ecc * sw) / jnp.sqrt(1.0 + ecc * cos_d)
+            v_z = v_kep[rpad] * ecc_fac * sin_i[rpad]
+            beta_c2 = (v_kep[rpad] / SPEED_OF_LIGHT) ** 2
+            beta_e2 = (beta_c2 * (1.0 + ecc ** 2 + 2.0 * ecc * cos_d)
+                       / (1.0 + ecc * cos_d))
             gamma_e = 1.0 / jnp.sqrt(1.0 - beta_e2)
             one_plus_z_D = gamma_e * (1.0 + v_z / SPEED_OF_LIGHT)
             V = SPEED_OF_LIGHT * (
-                one_plus_z_D * z_g[:, None]
+                one_plus_z_D * z_g[rpad]
                 * (1.0 + v_sys / SPEED_OF_LIGHT) - 1.0)
 
-        var_x = all_sigma_x2 + sigma_x_floor2
-        var_y = all_sigma_y2 + sigma_y_floor2
-        var_v = all_sigma_v2 + jnp.where(is_highvel, var_v_hv, var_v_sys)
-        var_a = all_sigma_a2 + sigma_a_floor2
+        var_x = sx2 + sigma_x_floor2
+        var_y = sy2 + sigma_y_floor2
+        var_v = sv2 + jnp.where(is_hv, var_v_hv, var_v_sys)
+        var_a = sa2 + sigma_a_floor2
 
-        chi2 = ((all_x[:, None] - X) ** 2 / var_x[:, None]
-                + (all_y[:, None] - Y) ** 2 / var_y[:, None]
-                + (all_v[:, None] - V) ** 2 / var_v[:, None])
+        dx = all_x[dpad] - X
+        dy = all_y[dpad] - Y
+        dv = all_v[dpad] - V
+        chi2 = (dx * dx / var_x[dpad]
+                + dy * dy / var_y[dpad]
+                + dv * dv / var_v[dpad])
+        da = all_a[dpad] - A
+        chi2 = chi2 + (da * da / var_a[dpad]) * has_a[dpad]
 
-        chi2_a = ((all_a[:, None] - A) ** 2
-                  / var_a[:, None]
-                  * all_accel_w[:, None])
-        chi2 = chi2 + chi2_a * all_has_accel[:, None]
+        lnorm = -0.5 * (3 * LOG_2PI + jnp.log(var_x) +
+                        jnp.log(var_y) + jnp.log(var_v))
+        lnorm_a = -0.5 * (LOG_2PI + jnp.log(var_a)) * has_a
+        return (lnorm + lnorm_a)[dpad] - 0.5 * chi2
 
-        lnorm = -0.5 * (3 * LOG_2PI + jnp.log(var_x)
-                         + jnp.log(var_y) + jnp.log(var_v))
-        lnorm_a = (-0.5 * (LOG_2PI + jnp.log(var_a))
-                   * all_accel_w
-                   * all_has_accel)
+    # ---- unified φ [+ r] marginal ----
 
-        return (lnorm + lnorm_a)[:, None] - 0.5 * chi2
+    def _eval_phi_marginal(self, spot_groups, phys_args, phys_kw=None,
+                           spot_batch=None):
+        """Compute per-spot log-marginal.
 
-    def _eval_adaptive_phi_mode1(
-            self, r_ang, x0, y0, D_A, M_BH, v_sys,
-            r_ang_ref, i0, di_dr, Omega0, dOmega_dr,
-            sigma_x_floor2, sigma_y_floor2,
-            var_v_sys, var_v_hv, sigma_a_floor2,
-            ecc=None, periapsis0=None, dperiapsis_dr=0.0,
-            d2i_dr2=0.0, d2Omega_dr2=0.0):
-        """Mode 1 per-spot log-likelihood with adaptive phi grid.
+        spot_groups : list of (type_key, idx, r_ang, log_w_r)
+            type_key : "red", "blue", or "sys"
+            idx      : absolute spot indices, shape (N_group,)
+            r_ang    : (N_group,) for Mode 1, (N_group, n_r) for Mode 2
+            log_w_r  : None (Mode 1) or (N_group, n_r) (Mode 2)
 
-        At each spot's sampled r_ang, finds phi_peak via the 2x2 position
-        solve (exact when s*^2+c*^2=1 at the correct r), builds a local
-        sinh-spaced phi grid, and integrates numerically.
+        The same φ sub-range structure stored in self._phi_subranges is
+        used for every group, regardless of mode.
 
-        Parameters
-        ----------
-        r_ang : (N,) sampled angular radii per spot
-
-        Returns
-        -------
-        (N,) per-spot phi-marginalised log-likelihood
+        spot_batch : optional int cap on the (N_batch, [n_r,] n_phi)
+            intermediates, for running convergence tests on a small GPU.
         """
-        eps = 1e-30
-        n_phi = self._n_phi_adaptive
-        K = self._K_sigma_phi
-        N = r_ang.shape[0]
+        if phys_kw is None:
+            phys_kw = {}
+        result = jnp.zeros(self.n_spots)
 
-        # Warp at each spot's sampled r
-        i_r, Om_r = warp_geometry(
-            r_ang, r_ang_ref, i0, di_dr, Omega0, dOmega_dr,
-            d2i_dr2, d2Omega_dr2)
-        cos_i = jnp.cos(i_r)
-        sin_O = jnp.sin(Om_r)
-        cos_O = jnp.cos(Om_r)
+        for type_key, idx, r_ang, log_w_r in spot_groups:
+            n_idx = int(idx.shape[0])
+            if n_idx == 0:
+                continue
+            subranges = self._phi_subranges[type_key]
+            batch = (n_idx if spot_batch is None
+                     else min(int(spot_batch), n_idx))
 
-        # Position coefficients: (N,)
-        a1 = sin_O
-        a2 = -cos_O * cos_i
-        b1 = cos_O
-        b2 = sin_O * cos_i
+            ps_parts = []
+            for s in range(0, n_idx, batch):
+                sl = slice(s, s + batch)
+                b_idx = idx[sl]
+                r_b = r_ang[sl]
+                lwr_b = None if log_w_r is None else log_w_r[sl]
 
-        # 2x2 solve for phi* at each spot's r
-        dx = self._all_x - x0
-        dy = self._all_y - y0
-        R_ang = r_ang * 1e3  # mas → μas for position solve
-        rhs_x = dx / (R_ang + eps)
-        rhs_y = dy / (R_ang + eps)
-        det = a1 * b2 - a2 * b1
-        safe_det = jnp.where(jnp.abs(det) > eps, det, eps)
-        s_star = (rhs_x * b2 - rhs_y * a2) / safe_det
-        c_star = (rhs_y * a1 - rhs_x * b1) / safe_det
-        phi_star = jnp.arctan2(s_star, c_star)
+                sub_lps = []
+                for lo, hi, n_phi in subranges:
+                    phi = jnp.linspace(lo, hi, n_phi)
+                    sin_phi = jnp.sin(phi)
+                    cos_phi = jnp.cos(phi)
+                    log_w_phi = trapz_log_weights(phi)
 
-        # sigma_phi from position Hessian
-        sf = jnp.sin(phi_star)
-        cf = jnp.cos(phi_star)
-        dXdphi = R_ang * (a1 * cf - a2 * sf)
-        dYdphi = R_ang * (b1 * cf - b2 * sf)
-        var_x = self._all_sigma_x2 + sigma_x_floor2
-        var_y = self._all_sigma_y2 + sigma_y_floor2
-        H = dXdphi**2 / var_x + dYdphi**2 / var_y
-        sigma_phi = jnp.clip(1.0 / jnp.sqrt(H + eps), 1e-6, jnp.pi / 2)
+                    log_f = self._phi_integrand(
+                        r_b, sin_phi, cos_phi, b_idx,
+                        *phys_args, **phys_kw)
 
-        # Per-spot sinh grid: (N, n_phi)
-        u = jnp.linspace(0.0, 1.0, n_phi)
-        t_lo = jnp.arcsinh(-K * jnp.ones(N))
-        t_hi = jnp.arcsinh(K * jnp.ones(N))
-        t = t_lo[:, None] + (t_hi - t_lo)[:, None] * u[None, :]
-        phi_grid = phi_star[:, None] + jnp.sinh(t) * sigma_phi[:, None]
+                    if lwr_b is None:
+                        # Mode 1: sum over φ only.
+                        ps_sub = logsumexp(log_f + log_w_phi, axis=-1)
+                    else:
+                        # Mode 2: fused (r, φ) sum.
+                        w2d = (lwr_b[:, :, None]
+                               + log_w_phi[None, None, :])
+                        ps_sub = logsumexp(log_f + w2d, axis=(-2, -1))
+                    sub_lps.append(ps_sub)
 
-        sin_phi = jnp.sin(phi_grid)
-        cos_phi = jnp.cos(phi_grid)
+                ps_b = (sub_lps[0] if len(sub_lps) == 1
+                        else logsumexp(jnp.stack(sub_lps, axis=0), axis=0))
+                ps_parts.append(ps_b)
 
-        # Trapezoidal weights
-        h = jnp.diff(phi_grid, axis=-1)
-        h_l = jnp.concatenate([jnp.zeros((N, 1)), h], axis=-1)
-        h_r = jnp.concatenate([h, jnp.zeros((N, 1))], axis=-1)
-        log_w_phi = jnp.log(jnp.maximum((h_l + h_r) / 2, 1e-30))
+            ps = (ps_parts[0] if len(ps_parts) == 1
+                  else jnp.concatenate(ps_parts, axis=0))
+            result = result.at[idx].set(ps)
 
-        ll = self._phi_integrand(
-            r_ang, sin_phi, cos_phi,
-            x0, y0, D_A, M_BH, v_sys,
-            r_ang_ref, i0, di_dr, Omega0, dOmega_dr,
-            sigma_x_floor2, sigma_y_floor2,
-            var_v_sys, var_v_hv, sigma_a_floor2,
-            d2i_dr2=d2i_dr2, d2Omega_dr2=d2Omega_dr2,
-            ecc=ecc, periapsis0=periapsis0,
-            dperiapsis_dr=dperiapsis_dr)
+        return result
 
-        return logsumexp(ll + log_w_phi, axis=-1)
+    # ---- numpyro sample + log-likelihood ----
 
     def _sample_galaxy(self, shared_params, h):
-        """Sample all per-galaxy parameters and accumulate log-likelihood.
-
-        Parameters
-        ----------
-        shared_params : dict
-            Shared parameters (H0, sigma_pec, and optionally D_lim, D_width)
-            passed through to rsample.
-        h : reduced Hubble constant (H0 / 100)
-        """
+        """Sample galaxy-local parameters and add ll_disk factor."""
         D_c = rsample("D_c", self.priors["D"], shared_params)
         if self._D_c_volume:
             factor("D_c_volume", 2 * jnp.log(D_c))
@@ -1639,37 +896,38 @@ class MaserDiskModel(ModelBase):
             jnp.atleast_1d(D_c), h=h).squeeze()
         D_A = D_c / (1 + z_cosmo)
 
-        # Redshift likelihood: cz_cosmo vs v_sys_obs with sigma_pec scatter
-        sigma_pec = shared_params["sigma_pec"]
-        cz_cosmo = SPEED_OF_LIGHT * z_cosmo
-        factor("ll_redshift",
-               normal_logpdf_var(cz_cosmo, self.v_sys_obs, sigma_pec**2))
+        if "sigma_pec" in shared_params:
+            sigma_pec = shared_params["sigma_pec"]
+            cz_cosmo = SPEED_OF_LIGHT * z_cosmo
+            factor("ll_redshift",
+                   normal_logpdf_var(
+                       cz_cosmo, self.v_sys_obs, sigma_pec**2))
 
-        eta = rsample("eta", self.priors["eta"],
-                      shared_params)
+        eta = rsample("eta", self.priors["eta"], shared_params)
         log_MBH = deterministic("log_MBH", eta + jnp.log10(D_A))
-        M_BH = 10.0**(log_MBH - 7.0)  # in units of 1e7 M_sun
-        x0 = rsample("x0", self.priors["x0"], shared_params)  # μas
-        y0 = rsample("y0", self.priors["y0"], shared_params)  # μas
+        M_BH = 10.0**(log_MBH - 7.0)
+        x0 = rsample("x0", self.priors["x0"], shared_params)
+        y0 = rsample("y0", self.priors["y0"], shared_params)
 
         i0_deg = rsample("i0", self.priors["i0"], shared_params)
-        Omega0_deg = rsample("Omega0", self.priors["Omega0"], shared_params)
+        Omega0_deg = rsample(
+            "Omega0", self.priors["Omega0"], shared_params)
         dOmega_dr_deg = rsample(
             "dOmega_dr", self.priors["dOmega_dr"], shared_params)
+        di_dr_deg = rsample(
+            "di_dr", self.priors["di_dr"], shared_params)
 
         i0 = jnp.deg2rad(i0_deg)
         Omega0 = jnp.deg2rad(Omega0_deg)
         dOmega_dr = jnp.deg2rad(dOmega_dr_deg)
-
-        di_dr_deg = rsample("di_dr", self.priors["di_dr"], shared_params)
         di_dr = jnp.deg2rad(di_dr_deg)
 
         sigma_x_floor2 = rsample(
             "sigma_x_floor", self.priors["sigma_x_floor"],
-            shared_params)**2  # μas²
+            shared_params)**2
         sigma_y_floor2 = rsample(
             "sigma_y_floor", self.priors["sigma_y_floor"],
-            shared_params)**2  # μas²
+            shared_params)**2
         var_v_sys = rsample(
             "sigma_v_sys", self.priors["sigma_v_sys"], shared_params)**2
         var_v_hv = rsample(
@@ -1681,21 +939,32 @@ class MaserDiskModel(ModelBase):
         dv_sys = rsample("dv_sys", self.priors["dv_sys"], shared_params)
         v_sys = self.v_sys_obs + dv_sys
 
-        # Eccentricity parameters (optional)
+        # Eccentricity.
         ecc_kw = {}
         if self.use_ecc:
-            ecc = rsample("ecc", self.priors["ecc"], shared_params)
-            periapsis_deg = rsample(
-                "periapsis", self.priors["periapsis"], shared_params)
+            if self.ecc_cartesian:
+                e_x = rsample("e_x", self.priors["e_x"], shared_params)
+                e_y = rsample("e_y", self.priors["e_y"], shared_params)
+                r2 = e_x**2 + e_y**2
+                factor("ecc_cartesian_jac",
+                       jnp.log(4.0 / jnp.pi) - 0.5 * jnp.log(r2 + 1e-6))
+                ecc = deterministic("ecc", jnp.sqrt(r2))
+                periapsis_deg = deterministic(
+                    "periapsis",
+                    jnp.rad2deg(jnp.arctan2(e_y, e_x)) % 360.0)
+            else:
+                ecc = rsample("ecc", self.priors["ecc"], shared_params)
+                periapsis_rad = rsample(
+                    "periapsis_rad", VonMises(0.0, 0.0), shared_params)
+                periapsis_deg = deterministic(
+                    "periapsis", jnp.rad2deg(periapsis_rad) % 360.0)
             periapsis0 = jnp.deg2rad(periapsis_deg)
-            dperiapsis_dr_deg = rsample(
+            dperiapsis_dr = jnp.deg2rad(rsample(
                 "dperiapsis_dr", self.priors["dperiapsis_dr"],
-                shared_params)
-            dperiapsis_dr = jnp.deg2rad(dperiapsis_dr_deg)
+                shared_params))
             ecc_kw = dict(ecc=ecc, periapsis0=periapsis0,
                           dperiapsis_dr=dperiapsis_dr)
 
-        # Quadratic warp terms (optional)
         quad_kw = {}
         if self.use_quadratic_warp:
             d2i_dr2_deg = rsample(
@@ -1705,42 +974,56 @@ class MaserDiskModel(ModelBase):
             quad_kw = dict(d2i_dr2=jnp.deg2rad(d2i_dr2_deg),
                            d2Omega_dr2=jnp.deg2rad(d2Omega_dr2_deg))
 
-        args = (x0, y0, D_A, M_BH, v_sys,
-                self._r_ang_ref, i0, di_dr, Omega0, dOmega_dr,
-                sigma_x_floor2, sigma_y_floor2, var_v_sys, var_v_hv,
-                sigma_a_floor2)
+        phys_args = (x0, y0, D_A, M_BH, v_sys,
+                     self._r_ang_ref_i, self._r_ang_ref_Omega,
+                     self._r_ang_ref_periapsis,
+                     i0, di_dr, Omega0, dOmega_dr,
+                     sigma_x_floor2, sigma_y_floor2, var_v_sys, var_v_hv,
+                     sigma_a_floor2)
+        phys_kw = {**ecc_kw, **quad_kw}
+
+        if self.mode == "mode0":
+            with plate("spots", self.n_spots):
+                r_spots = sample(
+                    "r_ang",
+                    Uniform(self._r_ang_lo, self._r_ang_hi))
+                phi_u = sample("phi_u", Uniform(0.0, 1.0))
+            phi_spots = self._phi_from_u(phi_u)
+            idx_all = jnp.arange(self.n_spots)
+            sin_phi = jnp.sin(phi_spots)[:, None]
+            cos_phi = jnp.cos(phi_spots)[:, None]
+            log_f = self._phi_integrand(
+                r_spots, sin_phi, cos_phi, idx_all,
+                *phys_args, **phys_kw)
+            ll_per_spot = log_f[:, 0]
+            factor("ll_disk", jnp.sum(ll_per_spot))
+            return D_c
 
         if self.marginalise_r:
-            if self._adaptive_r:
-                ll_per_spot = self._eval_adaptive_phi_r(
-                    *args, **ecc_kw, **quad_kw)
-            else:
-                r_ang_grid = self.build_r_ang_grid(D_A)
-                log_w_r = trapz_log_weights(r_ang_grid)
-                r_all = jnp.broadcast_to(
-                    r_ang_grid[None, :],
-                    (self.n_spots, len(r_ang_grid)))
-                ll_per_spot = self._eval_marginal_phi(
-                    r_all, *args, log_w_r=log_w_r, **ecc_kw, **quad_kw)
-            ll_disk = jnp.sum(ll_per_spot)
-
+            spot_groups = self._build_r_grids_mode2(
+                D_A, M_BH, v_sys, sigma_a_floor2, i0, var_v_hv)
         else:
             with plate("spots", self.n_spots):
                 r_spots = sample(
-                    "r_ang", Uniform(self._r_ang_lo, self._r_ang_hi))
+                    "r_ang",
+                    Uniform(self._r_ang_lo, self._r_ang_hi))
+            spot_groups = []
+            if self._n_sys > 0:
+                spot_groups.append(
+                    ("sys", self._idx_sys,
+                     r_spots[self._idx_sys], None))
+            if self._n_red > 0:
+                spot_groups.append(
+                    ("red", self._idx_red,
+                     r_spots[self._idx_red], None))
+            if self._n_blue > 0:
+                spot_groups.append(
+                    ("blue", self._idx_blue,
+                     r_spots[self._idx_blue], None))
 
-            if self.phi_method == "adaptive":
-                ll_per_spot = self._eval_adaptive_phi_mode1(
-                    r_spots, *args, **ecc_kw, **quad_kw)
-            elif self.phi_method == "bruteforce":
-                ll_per_spot = self._eval_bruteforce_phi(
-                    r_spots, *args, **ecc_kw, **quad_kw)
-            else:
-                ll_per_spot = self._eval_marginal_phi(
-                    r_spots, *args, **ecc_kw, **quad_kw)
-            ll_disk = jnp.sum(ll_per_spot)
-
-        factor("ll_disk", ll_disk)
+        ll_per_spot = self._eval_phi_marginal(
+            spot_groups, phys_args, phys_kw)
+        factor("ll_disk", jnp.sum(ll_per_spot))
 
         return D_c
 
@@ -1813,11 +1096,24 @@ class MaserDiskModel(ModelBase):
             raise RuntimeError(
                 "Selection function must be applied in JointMaserModel, "
                 "not MaserDiskModel.")
+        H0_ref = float(get_nested(
+            self.config, "model/H0_ref", 73.0))
+        self._sample_galaxy({}, H0_ref / 100.0)
 
-        H0 = rsample("H0", self.priors["H0"])
-        sigma_pec = rsample("sigma_pec", self.priors["sigma_pec"])
-        shared = {"H0": H0, "sigma_pec": sigma_pec}
-        self._sample_galaxy(shared, H0 / 100.0)
+
+# -----------------------------------------------------------------------
+# Helpers
+# -----------------------------------------------------------------------
+
+
+def _trapz_log_w_per_spot(r):
+    """Per-spot trapezoidal log-weights for non-uniform (N, n_r) r-grids."""
+    h = jnp.diff(r, axis=-1)
+    N = r.shape[0]
+    h_left = jnp.concatenate([jnp.zeros((N, 1)), h], axis=-1)
+    h_right = jnp.concatenate([h, jnp.zeros((N, 1))], axis=-1)
+    w = (h_left + h_right) / 2
+    return jnp.log(jnp.maximum(w, 1e-30))
 
 
 class JointMaserModel(ModelBase):
@@ -1851,7 +1147,6 @@ class JointMaserModel(ModelBase):
             shared["D_lim"] = D_lim
             shared["D_width"] = D_width
 
-            # Selection normalisation (same for all galaxies)
             m0 = self.models[0]
             log_sel_grid = jax_norm.logcdf(
                 (D_lim - m0._sel_D_grid) / D_width)
