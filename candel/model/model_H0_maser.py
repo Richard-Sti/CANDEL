@@ -474,6 +474,24 @@ class MaserDiskModel(ModelBase):
 
         self._phi_subranges = {"red": red, "blue": blue, "sys": sys_rng}
 
+        # Precompute concatenated (sin, cos, log-trapz-weights) per type
+        # so _eval_phi_marginal can do one _phi_eval + one logsumexp per
+        # group. Disjoint sub-range trapezoidal weights concatenate
+        # cleanly: each endpoint retains its h/2 weight, interior h.
+        self._phi_concat = {}
+        for key, subs in self._phi_subranges.items():
+            sin_parts, cos_parts, w_parts = [], [], []
+            for lo, hi, n in subs:
+                phi = jnp.linspace(lo, hi, n)
+                sin_parts.append(jnp.sin(phi))
+                cos_parts.append(jnp.cos(phi))
+                w_parts.append(trapz_log_weights(phi))
+            self._phi_concat[key] = dict(
+                sin_phi=jnp.concatenate(sin_parts),
+                cos_phi=jnp.concatenate(cos_parts),
+                log_w_phi=jnp.concatenate(w_parts),
+            )
+
         # Save for summary/printing
         self._phi_hv_inner_deg = hv_inner_deg
         self._phi_hv_outer_deg = hv_outer_deg
@@ -893,7 +911,7 @@ class MaserDiskModel(ModelBase):
             n_idx = int(idx.shape[0])
             if n_idx == 0:
                 continue
-            subranges = self._phi_subranges[type_key]
+            pc = self._phi_concat[type_key]
             batch = (n_idx if spot_batch is None
                      else min(int(spot_batch), n_idx))
 
@@ -908,27 +926,14 @@ class MaserDiskModel(ModelBase):
                 r_pre = self._r_precompute(
                     r_b, b_idx, *phys_args, **phys_kw)
 
-                sub_lps = []
-                for lo, hi, n_phi in subranges:
-                    phi = jnp.linspace(lo, hi, n_phi)
-                    sin_phi = jnp.sin(phi)
-                    cos_phi = jnp.cos(phi)
-                    log_w_phi = trapz_log_weights(phi)
-
-                    log_f = self._phi_eval(r_pre, sin_phi, cos_phi)
-
-                    if lwr_b is None:
-                        # Mode 1: sum over φ only.
-                        ps_sub = logsumexp(log_f + log_w_phi, axis=-1)
-                    else:
-                        # Mode 2: fused (r, φ) sum.
-                        w2d = (lwr_b[:, :, None]
-                               + log_w_phi[None, None, :])
-                        ps_sub = logsumexp(log_f + w2d, axis=(-2, -1))
-                    sub_lps.append(ps_sub)
-
-                ps_b = (sub_lps[0] if len(sub_lps) == 1
-                        else logsumexp(jnp.stack(sub_lps, axis=0), axis=0))
+                # Single phi evaluation over concatenated sub-ranges.
+                log_f = self._phi_eval(r_pre, pc["sin_phi"], pc["cos_phi"])
+                if lwr_b is None:
+                    ps_b = logsumexp(log_f + pc["log_w_phi"], axis=-1)
+                else:
+                    w2d = (lwr_b[:, :, None]
+                           + pc["log_w_phi"][None, None, :])
+                    ps_b = logsumexp(log_f + w2d, axis=(-2, -1))
                 ps_parts.append(ps_b)
 
             ps = (ps_parts[0] if len(ps_parts) == 1
