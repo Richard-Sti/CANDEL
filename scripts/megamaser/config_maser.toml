@@ -345,3 +345,25 @@ root_output = "results/Megamaser"
 
 [io.maser_data]
 root = "data/Megamaser"
+
+[convergence]
+# Auto-run after NUTS/NSS finishes. Compares the production phi/r marginal
+# against a dense brute-force reference at `n_draws` posterior samples.
+auto_check = true
+n_draws = 8
+seed = 0
+save_json = true
+
+[convergence.mode2_reference]
+# Full-2pi phi x log-r brute force. dtype="float32" keeps memory down.
+n_r = 50000
+n_phi = 50001
+r_chunk = 2000
+spot_batch = 1
+dtype = "float32"
+
+[convergence.mode1_reference]
+# Per-type full-2pi phi brute force at the sampled r_ang.
+n_phi = 200001
+spot_batch = 200
+dtype = "float64"
