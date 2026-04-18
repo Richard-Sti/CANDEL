@@ -278,6 +278,20 @@ class MaserDiskModel(ModelBase):
         self._n_sys_cons = int((is_sys_np & accel_meas).sum())
         self._n_sys_uncons = int((is_sys_np & ~accel_meas).sum())
 
+        # Static (Python-side) flag: does any spot in this group have an
+        # accel measurement? Used to gate da*da/var_a in _phi_eval so the
+        # zero contribution never enters the JIT-compiled kernel.
+        #   - sys (Mode 1 combines cons+uncons): any sys spot w/ accel
+        #   - sys_cons: True by construction (accel_measured=True)
+        #   - sys_uncons: False by construction
+        self._group_has_accel = {
+            "sys": bool((is_sys_np & accel_meas).any()),
+            "sys_cons": True if self._n_sys_cons > 0 else False,
+            "sys_uncons": False,
+            "red": bool((is_red_np & accel_meas).any()),
+            "blue": bool((is_blue_np & accel_meas).any()),
+        }
+
         fprint(
             f"spot split: {self._n_sys} sys "
             f"({self._n_sys_cons} w/accel, {self._n_sys_uncons} w/o), "
@@ -751,7 +765,8 @@ class MaserDiskModel(ModelBase):
                       sigma_x_floor2, sigma_y_floor2,
                       var_v_sys, var_v_hv, sigma_a_floor2,
                       d2i_dr2=0.0, d2Omega_dr2=0.0,
-                      ecc=None, periapsis0=None, dperiapsis_dr=0.0):
+                      ecc=None, periapsis0=None, dperiapsis_dr=0.0,
+                      has_any_accel=True):
         """Precompute r-only quantities and gather per-spot data.
 
         Returned pytree is consumed by _phi_eval (or _phi_eval_shared_r).
@@ -784,10 +799,14 @@ class MaserDiskModel(ModelBase):
         var_x = sx2 + sigma_x_floor2
         var_y = sy2 + sigma_y_floor2
         var_v = sv2 + jnp.where(is_hv, var_v_hv, var_v_sys)
-        var_a = sa2 + sigma_a_floor2
         lnorm = -0.5 * (3 * LOG_2PI + jnp.log(var_x) +
                         jnp.log(var_y) + jnp.log(var_v))
-        lnorm_a = -0.5 * (LOG_2PI + jnp.log(var_a)) * has_a
+        if has_any_accel:
+            var_a = sa2 + sigma_a_floor2
+            lnorm_a = -0.5 * (LOG_2PI + jnp.log(var_a)) * has_a
+        else:
+            var_a = None
+            lnorm_a = jnp.zeros_like(lnorm)
 
         ecc_pre = None
         if ecc is not None:
@@ -807,6 +826,7 @@ class MaserDiskModel(ModelBase):
             has_a=has_a, lnorm=lnorm, lnorm_a=lnorm_a,
             ecc_pre=ecc_pre,
             x0=x0, y0=y0, v_sys=v_sys,
+            has_any_accel=has_any_accel,
         )
 
     def _phi_eval(self, r_pre, sin_phi, cos_phi):
@@ -861,8 +881,10 @@ class MaserDiskModel(ModelBase):
         chi2 = (dx * dx / r_pre["var_x"][dpad]
                 + dy * dy / r_pre["var_y"][dpad]
                 + dv * dv / r_pre["var_v"][dpad])
-        da = r_pre["all_a"][dpad] - A
-        chi2 = chi2 + (da * da / r_pre["var_a"][dpad]) * r_pre["has_a"][dpad]
+        if r_pre["has_any_accel"]:
+            da = r_pre["all_a"][dpad] - A
+            chi2 = chi2 + (da * da / r_pre["var_a"][dpad]
+                           * r_pre["has_a"][dpad])
 
         return (r_pre["lnorm"] + r_pre["lnorm_a"])[dpad] - 0.5 * chi2
 
@@ -911,12 +933,13 @@ class MaserDiskModel(ModelBase):
         dx = r_pre["all_x"][:, None, None] - X[None]
         dy = r_pre["all_y"][:, None, None] - Y[None]
         dv = r_pre["all_v"][:, None, None] - V[None]
-        da = r_pre["all_a"][:, None, None] - A[None]
         chi2 = (dx * dx / r_pre["var_x"][:, None, None]
                 + dy * dy / r_pre["var_y"][:, None, None]
                 + dv * dv / r_pre["var_v"][:, None, None])
-        chi2 = chi2 + (da * da / r_pre["var_a"][:, None, None]
-                       * r_pre["has_a"][:, None, None])
+        if r_pre["has_any_accel"]:
+            da = r_pre["all_a"][:, None, None] - A[None]
+            chi2 = chi2 + (da * da / r_pre["var_a"][:, None, None]
+                           * r_pre["has_a"][:, None, None])
         return (r_pre["lnorm"] + r_pre["lnorm_a"])[:, None, None] - 0.5 * chi2
 
     def _phi_integrand(self, r_ang, sin_phi, cos_phi, idx,
@@ -979,6 +1002,18 @@ class MaserDiskModel(ModelBase):
             batch = (n_idx if spot_batch is None
                      else min(int(spot_batch), n_idx))
 
+            # Resolve per-group accel flag. Mode 1 sys merges cons+uncons
+            # into idx_sys so use the broader "sys" key; Mode 2 splits
+            # them into shared_r (sys_uncons, never has accel) vs
+            # per-spot (sys_cons, always has accel).
+            if type_key == "sys":
+                accel_key = ("sys_uncons" if shared_r
+                             else "sys_cons" if self._n_sys_uncons == 0
+                             else "sys")
+            else:
+                accel_key = type_key
+            has_any_accel = self._group_has_accel[accel_key]
+
             ps_parts = []
             for s in range(0, n_idx, batch):
                 sl = slice(s, s + batch)
@@ -989,7 +1024,8 @@ class MaserDiskModel(ModelBase):
                     r_b = r_ang
                     lwr_b = log_w_r
                     r_pre = self._r_precompute(
-                        r_b, b_idx, *phys_args, **phys_kw)
+                        r_b, b_idx, *phys_args, **phys_kw,
+                        has_any_accel=has_any_accel)
                     log_f = self._phi_eval_shared_r(
                         r_pre, pc["sin_phi"], pc["cos_phi"])
                     w2d = (lwr_b[None, :, None]
@@ -999,7 +1035,8 @@ class MaserDiskModel(ModelBase):
                     r_b = r_ang[sl]
                     lwr_b = None if log_w_r is None else log_w_r[sl]
                     r_pre = self._r_precompute(
-                        r_b, b_idx, *phys_args, **phys_kw)
+                        r_b, b_idx, *phys_args, **phys_kw,
+                        has_any_accel=has_any_accel)
                     log_f = self._phi_eval(
                         r_pre, pc["sin_phi"], pc["cos_phi"])
                     if lwr_b is None:
