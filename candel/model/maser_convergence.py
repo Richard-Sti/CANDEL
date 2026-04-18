@@ -340,3 +340,71 @@ def summarize(result):
             s = result["per_type"][k]["std"]
             print(f"    {k:>4}: {m:+.3f} +/- {s:.3f} nats")
     print("=" * 70, flush=True)
+
+
+# -----------------------------------------------------------------------
+# Test-harness helpers (used by the sweep scripts in scripts/megamaser/).
+# They build a MaserDiskModel with per-call grid overrides so the sweep
+# can vary phi/r grid sizes while holding all other config constant.
+# -----------------------------------------------------------------------
+
+def build_model(galaxy, master_cfg, **overrides):
+    """Build a MaserDiskModel with global [model] keys overridden.
+
+    Any recognised [model] key may be passed (n_phi_hv_high, n_phi_hv_low,
+    n_phi_sys, phi_hv_inner_deg, phi_hv_outer_deg, phi_sys_ranges_deg,
+    n_r_local, n_r_brute, K_sigma, mode, ...).  Per-galaxy settings in
+    the config normally override globals; for the convergence tests we
+    want the GLOBAL values to win, so we temporarily strip the galaxy's
+    Mode-1 phi keys from the config copy passed to the model.
+    """
+    import os
+    import tempfile
+    import tomli_w
+    from candel.pvdata.megamaser_data import load_megamaser_spots
+
+    cfg = {k: (v.copy() if isinstance(v, dict) else v)
+           for k, v in master_cfg.items()}
+    cfg["model"] = dict(master_cfg["model"])
+    cfg["model"]["galaxies"] = {
+        g: dict(blk) for g, blk in master_cfg["model"]["galaxies"].items()}
+    gblk = cfg["model"]["galaxies"][galaxy]
+
+    for key in ("n_phi_hv_high", "n_phi_hv_low", "n_phi_sys",
+                "phi_hv_inner_deg", "phi_hv_outer_deg",
+                "phi_sys_ranges_deg",
+                "n_r_local", "n_r_brute", "K_sigma",
+                "mode"):
+        gblk.pop(key, None)
+        for suffix in ("_mode1", "_mode2"):
+            cfg["model"].pop(key + suffix, None)
+
+    for k, v in overrides.items():
+        cfg["model"][k] = v
+
+    data = load_megamaser_spots(
+        master_cfg["io"]["maser_data"]["root"], galaxy=galaxy,
+        v_sys_obs=master_cfg["model"]["galaxies"][galaxy]["v_sys_obs"])
+    for key in ("D_lo", "D_hi"):
+        if key in master_cfg["model"]["galaxies"][galaxy]:
+            data[key] = float(master_cfg["model"]["galaxies"][galaxy][key])
+    tmp = tempfile.NamedTemporaryFile(
+        mode="wb", suffix=".toml", delete=False)
+    tomli_w.dump(cfg, tmp)
+    tmp.close()
+    from candel.model.model_H0_maser import MaserDiskModel
+    model = MaserDiskModel(tmp.name, data)
+    os.unlink(tmp.name)
+    return model
+
+
+def get_default_grid(master_cfg):
+    """Return the current global [model] phi/r grid defaults as a dict."""
+    m = master_cfg["model"]
+    return dict(
+        n_hv_high=int(m["n_phi_hv_high"]),
+        n_hv_low=int(m["n_phi_hv_low"]),
+        n_sys=int(m["n_phi_sys"]),
+        n_r_local=int(m["n_r_local"]),
+        n_r_brute=int(m["n_r_brute"]),
+    )
