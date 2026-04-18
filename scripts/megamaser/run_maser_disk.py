@@ -519,6 +519,27 @@ outdir = os.path.abspath(master_cfg["io"].get("root_output", "results/Maser"))
 os.makedirs(outdir, exist_ok=True)
 _out_name = "joint" if is_joint else galaxy
 
+# ---- Automatic convergence check ----
+_conv_cfg = master_cfg.get("convergence", {})
+if _conv_cfg.get("auto_check", False) and not is_joint:
+    from candel.model.maser_convergence import check_convergence, summarize
+    fsection("Convergence check")
+    try:
+        _conv_res = check_convergence(model, samples, _conv_cfg)
+        summarize(_conv_res)
+        if _conv_cfg.get("save_json", True):
+            import json
+            _conv_path = os.path.join(
+                outdir, f"{_out_name}_{suffix}_convergence.json")
+            with open(_conv_path, "w") as _f:
+                json.dump(_conv_res, _f, indent=2)
+            fprint(f"Saved convergence report to {_conv_path}")
+    except Exception as e:
+        fprint(f"[WARN] Convergence check failed: {type(e).__name__}: {e}")
+elif _conv_cfg.get("auto_check", False) and is_joint:
+    fprint("Convergence auto-check skipped: joint mode not supported.")
+
+
 # Spot classification plot (single-galaxy only)
 if not is_joint:
     _cls = np.where(~data["is_highvel"], "systemic",
