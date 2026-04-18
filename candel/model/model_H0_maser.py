@@ -823,16 +823,23 @@ class MaserDiskModel(ModelBase):
 
         sin_i = r_pre["sin_i"]
         v_kep = r_pre["v_kep"]
-        X, Y, V, A = _observables_from_precomputed(
-            sin_phi, cos_phi, r_pre["x0"], r_pre["y0"], r_pre["v_sys"],
-            sin_i[rpad], r_ang[rpad],
-            v_kep[rpad], r_pre["gamma"][rpad],
-            r_pre["z_g"][rpad], r_pre["a_mag"][rpad],
-            r_pre["pA"][rpad], r_pre["pB"][rpad],
-            r_pre["pC"][rpad], r_pre["pD"][rpad])
-
         ecc_pre = r_pre["ecc_pre"]
-        if ecc_pre is not None:
+
+        # Position + acceleration are r-and-phi dependent but do not
+        # differ between circular and eccentric orbits in this model.
+        R = r_ang[rpad] * 1e3
+        X = r_pre["x0"] + R * (sin_phi * r_pre["pA"][rpad]
+                               + cos_phi * r_pre["pB"][rpad])
+        Y = r_pre["y0"] + R * (sin_phi * r_pre["pC"][rpad]
+                               + cos_phi * r_pre["pD"][rpad])
+        A = r_pre["a_mag"][rpad] * cos_phi * sin_i[rpad]
+
+        # V branch: compute exactly once (circular OR eccentric).
+        if ecc_pre is None:
+            v_z = v_kep[rpad] * sin_phi * sin_i[rpad]
+            one_plus_z_D = r_pre["gamma"][rpad] * (
+                1.0 + v_z / SPEED_OF_LIGHT)
+        else:
             ecc = ecc_pre["ecc"]
             sw = ecc_pre["sw"][rpad]
             cw = ecc_pre["cw"][rpad]
@@ -844,9 +851,9 @@ class MaserDiskModel(ModelBase):
                        / (1.0 + ecc * cos_d))
             gamma_e = 1.0 / jnp.sqrt(1.0 - beta_e2)
             one_plus_z_D = gamma_e * (1.0 + v_z / SPEED_OF_LIGHT)
-            V = SPEED_OF_LIGHT * (
-                one_plus_z_D * r_pre["z_g"][rpad]
-                * (1.0 + r_pre["v_sys"] / SPEED_OF_LIGHT) - 1.0)
+        V = SPEED_OF_LIGHT * (
+            one_plus_z_D * r_pre["z_g"][rpad]
+            * (1.0 + r_pre["v_sys"] / SPEED_OF_LIGHT) - 1.0)
 
         dx = r_pre["all_x"][dpad] - X
         dy = r_pre["all_y"][dpad] - Y
@@ -869,17 +876,22 @@ class MaserDiskModel(ModelBase):
         """
         sin_i = r_pre["sin_i"]                             # (n_r,)
         v_kep = r_pre["v_kep"]                             # (n_r,)
-        X, Y, V, A = _observables_from_precomputed(
-            sin_phi, cos_phi, r_pre["x0"], r_pre["y0"], r_pre["v_sys"],
-            sin_i[:, None], r_pre["r_ang"][:, None],
-            v_kep[:, None], r_pre["gamma"][:, None],
-            r_pre["z_g"][:, None], r_pre["a_mag"][:, None],
-            r_pre["pA"][:, None], r_pre["pB"][:, None],
-            r_pre["pC"][:, None], r_pre["pD"][:, None])
-        # X, Y, V, A: (n_r, n_phi).
-
         ecc_pre = r_pre["ecc_pre"]
-        if ecc_pre is not None:
+
+        # X, Y, A are the same under circular and eccentric orbits.
+        R = r_pre["r_ang"][:, None] * 1e3                  # (n_r, 1)
+        X = r_pre["x0"] + R * (sin_phi * r_pre["pA"][:, None]
+                               + cos_phi * r_pre["pB"][:, None])
+        Y = r_pre["y0"] + R * (sin_phi * r_pre["pC"][:, None]
+                               + cos_phi * r_pre["pD"][:, None])
+        A = r_pre["a_mag"][:, None] * cos_phi * sin_i[:, None]
+        # X, Y, A: (n_r, n_phi).
+
+        if ecc_pre is None:
+            v_z = v_kep[:, None] * sin_phi * sin_i[:, None]
+            one_plus_z_D = r_pre["gamma"][:, None] * (
+                1.0 + v_z / SPEED_OF_LIGHT)
+        else:
             ecc = ecc_pre["ecc"]
             sw = ecc_pre["sw"][:, None]
             cw = ecc_pre["cw"][:, None]
@@ -891,9 +903,9 @@ class MaserDiskModel(ModelBase):
                        / (1.0 + ecc * cos_d))
             gamma_e = 1.0 / jnp.sqrt(1.0 - beta_e2)
             one_plus_z_D = gamma_e * (1.0 + v_z / SPEED_OF_LIGHT)
-            V = SPEED_OF_LIGHT * (
-                one_plus_z_D * r_pre["z_g"][:, None]
-                * (1.0 + r_pre["v_sys"] / SPEED_OF_LIGHT) - 1.0)
+        V = SPEED_OF_LIGHT * (
+            one_plus_z_D * r_pre["z_g"][:, None]
+            * (1.0 + r_pre["v_sys"] / SPEED_OF_LIGHT) - 1.0)
 
         # Broadcast to (N, n_r, n_phi) at the residual step.
         dx = r_pre["all_x"][:, None, None] - X[None]
