@@ -135,6 +135,11 @@ parser.add_argument("--mode", type=str, default=None,
                          "mode2 marginalises both (default: from config)")
 parser.add_argument("--grid-factor", type=float, default=1.0,
                     help="Multiply all grid sizes by this factor")
+parser.add_argument("--f-grid", type=float, default=1.0,
+                    help="Scale every integer phi/r grid size by this "
+                         "factor; results are rounded to the nearest "
+                         "odd int (min 3). Applies to global [model] "
+                         "keys and per-galaxy overrides.")
 parser.add_argument("--map-only", action="store_true",
                     help="Run DE optimizer only, skip sampling")
 parser.add_argument("--D-c-prior", type=str, default=None,
@@ -175,6 +180,9 @@ if args.mode is not None and args.mode != "mode2":
 # Grid factor
 if args.grid_factor != 1.0:
     _tags.append(f"gf{args.grid_factor:g}")
+
+if args.f_grid != 1.0:
+    _tags.append(f"fg{args.f_grid:g}")
 
 # Model feature overrides
 if args.no_ecc:
@@ -270,6 +278,19 @@ if is_joint:
     for pname, pval in joint_priors.items():
         config["model"]["priors"][pname] = pval
         fprint(f"joint override: {pname} -> {pval}")
+
+if args.f_grid != 1.0:
+    _apply_fgrid(config, args.f_grid)
+    m = config["model"]
+    fprint(f"f-grid={args.f_grid:g}: "
+           f"n_phi_hv_high={m.get('n_phi_hv_high')}, "
+           f"n_phi_hv_low={m.get('n_phi_hv_low')}, "
+           f"n_phi_sys={m.get('n_phi_sys')}, "
+           f"n_phi_hv_high_mode1={m.get('n_phi_hv_high_mode1')}, "
+           f"n_phi_hv_low_mode1={m.get('n_phi_hv_low_mode1')}, "
+           f"n_phi_sys_mode1={m.get('n_phi_sys_mode1')}, "
+           f"n_r_local={m.get('n_r_local')}, "
+           f"n_r_brute={m.get('n_r_brute')}")
 
 tmp = tempfile.NamedTemporaryFile(mode="wb", suffix=".toml", delete=False)
 tomli_w.dump(config, tmp)
