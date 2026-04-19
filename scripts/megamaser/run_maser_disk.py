@@ -77,6 +77,27 @@ with open("scripts/megamaser/config_maser.toml", "rb") as f:
 
 inf_cfg = master_cfg["inference"]
 
+# >>> f-grid helpers
+_FGRID_KEYS = (
+    "n_phi_hv_high",
+    "n_phi_hv_low",
+    "n_phi_sys",
+    "n_phi_hv_high_mode1",
+    "n_phi_hv_low_mode1",
+    "n_phi_sys_mode1",
+    "n_r_local",
+    "n_r_brute",
+)
+
+
+def _round_to_odd(n, f):
+    """Scale n by f, round to the nearest odd int, floor at 3."""
+    m = max(3, int(round(n * f)))
+    if m % 2 == 0:
+        m += 1
+    return m
+# <<< f-grid helpers
+
 # ---- Parse args (CLI overrides config) ----
 parser = argparse.ArgumentParser()
 parser.add_argument("galaxy", type=str)
