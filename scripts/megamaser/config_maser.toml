@@ -34,9 +34,7 @@ num_delete = 250
 termination = -3
 
 [model]
-which_run = "maser_disk"
 Om = 0.315
-galaxy = "NGC5765b"
 use_selection = false
 mode = "mode2"
 sigma_v_default = 0.25

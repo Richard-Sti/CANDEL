@@ -1,7 +1,7 @@
 #!/bin/bash -l
 # Submit NGC4258 NUTS job to GPU queue.
 #
-# NGC4258 uses Mode 1 (mode=mode1 pinned in config) with per-type bruteforce phi grids.
+# NGC4258 defaults to Mode 1 with per-type bruteforce phi grids.
 # NUTS is the only supported sampler (NSS can't handle 358 r_ang params,
 # DE optimizer doesn't support Mode 1).
 #
@@ -21,12 +21,13 @@ QUEUE="optgpu"
 WARMUP=2000
 SAMPLES=2000
 INIT="config"
+MODE="mode1"
 NO_ECC=false
 NO_QW=false
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -h|--help)
-            echo "Usage: bash $0 [-q QUEUE] [--warmup N] [--samples N] [--init METHOD] [--no-ecc] [--no-quadratic-warp]"
+            echo "Usage: bash $0 [-q QUEUE] [--warmup N] [--samples N] [--init METHOD] [--mode MODE] [--no-ecc] [--no-quadratic-warp]"
             echo ""
             echo "Options:"
             echo "  -q QUEUE              GPU queue (default: optgpu)"
@@ -36,6 +37,7 @@ while [[ $# -gt 0 ]]; do
             echo "                          config       config globals + r_ang from TruncatedNormal prior (default)"
             echo "                          sobol_adam   DE/Sobol MAP"
             echo "                          median       numpyro median"
+            echo "  --mode MODE           Sampling mode (default: mode1)"
             echo "  --no-ecc              Disable eccentricity model"
             echo "  --no-quadratic-warp   Disable quadratic warp (use linear only)"
             exit 0 ;;
@@ -43,6 +45,7 @@ while [[ $# -gt 0 ]]; do
         --warmup) WARMUP="$2"; shift 2 ;;
         --samples) SAMPLES="$2"; shift 2 ;;
         --init) INIT="$2"; shift 2 ;;
+        --mode) MODE="$2"; shift 2 ;;
         --no-ecc) NO_ECC=true; shift ;;
         --no-quadratic-warp) NO_QW=true; shift ;;
         *)  echo "Unknown arg: $1"; exit 1 ;;
@@ -60,11 +63,11 @@ if [[ "$NO_QW" == true ]]; then
     EXTRA_ARGS="$EXTRA_ARGS --no-quadratic-warp"
 fi
 
-DESC="Mode 1, $WARMUP warmup + $SAMPLES samples, init=$INIT"
+DESC="$MODE, $WARMUP warmup + $SAMPLES samples, init=$INIT"
 [[ "$NO_ECC" == true ]] && DESC="$DESC, no-ecc"
 [[ "$NO_QW" == true ]] && DESC="$DESC, no-qw"
 echo "Submitting NGC4258 NUTS ($DESC) -> $QUEUE"
 addqueue -q "$QUEUE" -s -m 16 --gpus 1 \
     $PYTHON -u "$ROOT/scripts/megamaser/run_maser_disk.py" NGC4258 \
-    --sampler nuts \
+    --sampler nuts --mode "$MODE" \
     --num-warmup "$WARMUP" --num-samples "$SAMPLES" $EXTRA_ARGS
