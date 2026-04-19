@@ -96,6 +96,22 @@ def _round_to_odd(n, f):
     if m % 2 == 0:
         m += 1
     return m
+
+
+def _apply_fgrid(cfg, f):
+    """In-place scale of grid-size keys in cfg['model'] and every
+    cfg['model']['galaxies'][*] sub-dict. Only keys in _FGRID_KEYS are
+    touched; every other value is left alone."""
+    m = cfg["model"]
+    for k in _FGRID_KEYS:
+        if k in m:
+            m[k] = _round_to_odd(int(m[k]), f)
+    for g in m.get("galaxies", {}).values():
+        if not isinstance(g, dict):
+            continue
+        for k in _FGRID_KEYS:
+            if k in g:
+                g[k] = _round_to_odd(int(g[k]), f)
 # <<< f-grid helpers
 
 # ---- Parse args (CLI overrides config) ----

@@ -82,3 +82,89 @@ def test_fgrid_keys_match_config():
         "n_r_local",
         "n_r_brute",
     }
+
+
+def _load_apply_fgrid():
+    with open(_RUNNER) as f:
+        src = f.read()
+    ns = {}
+    start = src.index("# >>> f-grid helpers")
+    end = src.index("# <<< f-grid helpers", start)
+    exec(src[start:end], ns)
+    return ns["_apply_fgrid"]
+
+
+def _sample_cfg():
+    return {
+        "model": {
+            "Om": 0.315,
+            "n_phi_hv_high": 1001,
+            "n_phi_hv_low": 301,
+            "n_phi_sys": 3001,
+            "n_phi_hv_high_mode1": 2001,
+            "n_phi_hv_low_mode1": 501,
+            "n_phi_sys_mode1": 3001,
+            "n_r_local": 251,
+            "n_r_brute": 501,
+            "K_sigma": 5.0,
+            "galaxies": {
+                "NGC4258": {
+                    "ra": 184.74,
+                    "n_phi_hv_high": 20001,
+                    "n_phi_hv_low": 4001,
+                    "n_phi_sys": 20001,
+                    "init": {"D_c": 7.593},
+                },
+                "NGC5765b": {
+                    "v_sys_obs": 8465,
+                },
+            },
+        }
+    }
+
+
+def test_apply_fgrid_identity():
+    apply = _load_apply_fgrid()
+    cfg = _sample_cfg()
+    apply(cfg, 1.0)
+    assert cfg["model"]["n_phi_hv_high"] == 1001
+    assert cfg["model"]["n_r_local"] == 251
+    assert cfg["model"]["galaxies"]["NGC4258"]["n_phi_hv_high"] == 20001
+
+
+def test_apply_fgrid_half():
+    apply = _load_apply_fgrid()
+    cfg = _sample_cfg()
+    apply(cfg, 0.5)
+    m = cfg["model"]
+    assert m["n_phi_hv_high"] == 501      # 500.5 -> 500 -> 501
+    assert m["n_phi_hv_low"] == 151       # 150.5 -> 150 or 151 -> 151
+    assert m["n_phi_sys"] == 1501         # 1500.5 -> 1500 -> 1501
+    assert m["n_phi_hv_high_mode1"] == 1001
+    assert m["n_phi_hv_low_mode1"] == 251 # 250.5 -> 250 -> 251
+    assert m["n_phi_sys_mode1"] == 1501
+    assert m["n_r_local"] == 127          # 125.5 -> 126 -> 127
+    assert m["n_r_brute"] == 251          # 250.5 -> 250 -> 251
+    g = m["galaxies"]["NGC4258"]
+    assert g["n_phi_hv_high"] == 10001    # 10000.5 -> 10000 -> 10001
+    assert g["n_phi_hv_low"] == 2001      # 2000.5 -> 2000 -> 2001
+    assert g["n_phi_sys"] == 10001
+    assert m["Om"] == 0.315
+    assert m["K_sigma"] == 5.0
+    assert g["ra"] == 184.74
+    assert g["init"] == {"D_c": 7.593}
+    assert m["galaxies"]["NGC5765b"] == {"v_sys_obs": 8465}
+
+
+def test_apply_fgrid_tiny_factor_floors_at_three():
+    apply = _load_apply_fgrid()
+    cfg = _sample_cfg()
+    apply(cfg, 0.0001)
+    m = cfg["model"]
+    for k in [
+        "n_phi_hv_high", "n_phi_hv_low", "n_phi_sys",
+        "n_phi_hv_high_mode1", "n_phi_hv_low_mode1", "n_phi_sys_mode1",
+        "n_r_local", "n_r_brute",
+    ]:
+        assert m[k] == 3, (k, m[k])
+    assert m["galaxies"]["NGC4258"]["n_phi_hv_high"] == 3
