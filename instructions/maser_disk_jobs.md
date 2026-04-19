@@ -29,7 +29,7 @@ python scripts/megamaser/run_maser_disk.py <galaxy> [--sampler nuts|nss] [option
 | `--num-mcmc-steps` | 0 (=ndim) | NSS slice steps |
 | `--num-delete` | 250 | NSS contraction batch |
 | `--termination` | -3 | NSS stopping criterion |
-| `--grid-factor` | 1 | Multiply all grid sizes by 1/2/3 |
+| `--f-grid` | 1.0 | Scale every phi/r grid size (`n_phi_hv_high`, `n_phi_hv_low`, `n_phi_sys`, their `_mode1` variants, `n_r_local`, `n_r_brute`) by this factor; results rounded to nearest odd integer, min 3. Applies to global `[model]` keys and per-galaxy overrides. |
 | `--no-ecc` | off | Disable eccentricity model |
 | `--no-quadratic-warp` | off | Disable quadratic disk warp |
 | `--save-map`, `--load-map` | — | Dump/load MAP init to TOML |
