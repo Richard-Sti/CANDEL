@@ -25,7 +25,7 @@ while [[ $# -gt 0 ]]; do
             echo "  -q QUEUE      GPU queue (default: gpulong)"
             echo ""
             echo "Remaining args are passed to convergence_grids.py. For Python help:"
-            echo "  python scripts/megamaser/convergence_grids.py --help"
+            echo "  python scripts/megamaser/convergence/convergence_grids.py --help"
             exit 0
             ;;
         -q) QUEUE="$2"; shift 2 ;;
@@ -33,9 +33,9 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 PYTHON="$ROOT_DIR/venv_gpu_candel/bin/python"
 
 echo "Submitting convergence_grids -> $QUEUE"
 addqueue -q "$QUEUE" -s -m 16 --gpus 1 \
-    $PYTHON -u "$ROOT_DIR/scripts/megamaser/convergence_grids.py" "${PASS_ARGS[@]}"
+    $PYTHON -u "$ROOT_DIR/scripts/megamaser/convergence/convergence_grids.py" "${PASS_ARGS[@]}"

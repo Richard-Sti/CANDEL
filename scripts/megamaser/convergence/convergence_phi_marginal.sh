@@ -26,7 +26,7 @@ while [[ $# -gt 0 ]]; do
             echo "  -q QUEUE      GPU queue (default: gpulong)"
             echo ""
             echo "Remaining args are passed to convergence_phi_marginal.py. For Python help:"
-            echo "  python scripts/megamaser/convergence_phi_marginal.py --help"
+            echo "  python scripts/megamaser/convergence/convergence_phi_marginal.py --help"
             exit 0
             ;;
         -q) QUEUE="$2"; shift 2 ;;
@@ -34,7 +34,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 PYTHON="$ROOT_DIR/venv_gpu_candel/bin/python"
 
 # Default: test all six galaxies, including NGC4258 (Mode 1 production case).
@@ -51,5 +51,5 @@ echo "Submitting convergence_phi_marginal -> $QUEUE"
 echo "Galaxies/args: ${SCRIPT_ARGS[*]}"
 
 addqueue -q "$QUEUE" -s -m 16 --gpus 1 \
-    $PYTHON -u "$ROOT_DIR/scripts/megamaser/convergence_phi_marginal.py" \
+    $PYTHON -u "$ROOT_DIR/scripts/megamaser/convergence/convergence_phi_marginal.py" \
     "${SCRIPT_ARGS[@]}"

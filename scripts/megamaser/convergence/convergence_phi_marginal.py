@@ -105,10 +105,24 @@ def main():
     print("=" * 80)
 
     summary = []
+    galaxy_grids_map = {}
     for galaxy in args.galaxies:
         print(f"\n{'─' * 70}")
         print(f"Galaxy: {galaxy}")
         print(f"{'─' * 70}")
+
+        # Include galaxy-specific phi overrides from the config (e.g. NGC4258
+        # uses 20001/4001/20001, well above the global EXTRA_GRIDS ceiling).
+        gblk = galaxies_cfg[galaxy]
+        gkeys = ("n_phi_hv_high", "n_phi_hv_low", "n_phi_sys")
+        if all(k in gblk for k in gkeys):
+            galaxy_cfg_grid = tuple(int(gblk[k]) for k in gkeys)
+            galaxy_grids = sorted(
+                set(test_grids) | {galaxy_cfg_grid},
+                key=lambda g: (g[0], g[2], g[1]))
+        else:
+            galaxy_grids = test_grids
+        galaxy_grids_map[galaxy] = galaxy_grids
 
         # Build model once with Mode 1 forced on. Defaults used; we
         # override per-iteration via rebuild for the test grids.
@@ -143,7 +157,7 @@ def main():
                   f"{'Δ total':>11}  {'Δ sys':>9}  {'Δ red':>9}  "
                   f"{'Δ blue':>9}")
             grid_results = {}
-            for n_high, n_low, n_sys in test_grids:
+            for n_high, n_low, n_sys in galaxy_grids:
                 m_t = build_model(
                     galaxy, master_cfg, mode="mode1",
                     n_phi_hv_high=n_high, n_phi_hv_low=n_low,
@@ -182,8 +196,8 @@ def main():
                     d_blue=d_blue))
 
             # Check for self-convergence between last two grids.
-            g1 = test_grids[-2]
-            g2 = test_grids[-1]
+            g1 = galaxy_grids[-2]
+            g2 = galaxy_grids[-1]
             d_conv = abs(grid_results[g2]["total"]
                          - grid_results[g1]["total"])
             print(f"    |Δ(last two grids)| = {d_conv:.4f} nats")
@@ -218,14 +232,15 @@ def main():
             key = (row["n_high"], row["n_low"], row["n_sys"])
             grids.setdefault(key, []).append(abs(row["d_total"]))
         worst = {k: max(v) for k, v in grids.items()}
-        # test_grids is ordered ascending; find smallest passing.
+        # galaxy_grids_map[g] is ordered ascending; find smallest passing.
+        gg = galaxy_grids_map[g]
         best = None
-        for gk in test_grids:
+        for gk in gg:
             if worst.get(gk, float("inf")) <= 0.5:
                 best = (gk, worst[gk])
                 break
         if best is None:
-            best = (test_grids[-1], worst[test_grids[-1]])
+            best = (gg[-1], worst[gg[-1]])
             tag = "(none within 0.5)"
         else:
             tag = ""
