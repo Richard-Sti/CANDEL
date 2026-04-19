@@ -66,7 +66,7 @@ COS_PHI = jnp.cos(PHI_GRID)
 # -----------------------------------------------------------------------
 
 def phi_marginal(r_ang, x_obs, y_obs, var_x, var_y,
-                 v_obs, var_v, a_obs, var_a, accel_w,
+                 v_obs, var_v, a_obs, var_a, has_accel,
                  x0, y0, D_A, M_BH, v_sys,
                  r_ang_ref, i0_rad, di_dr_rad, Omega0_rad, dOmega_dr_rad):
     """Phi-marginalized logL for all spots. Returns (n_spots,)."""
@@ -100,13 +100,14 @@ def phi_marginal(r_ang, x_obs, y_obs, var_x, var_y,
             + (y_obs[:, None] - Y) ** 2 / var_y[:, None]
             + (v_obs[:, None] - V) ** 2 / var_v[:, None])
 
-    # Acceleration (accel_w=0 for no-accel spots, so this term vanishes)
+    # Acceleration: masked by has_accel (1 for spots with a measurement)
     A = C_a * M_BH / (r ** 2 * D_A ** 2) * cp * sin_i
-    chi2 = chi2 + (a_obs[:, None] - A) ** 2 / var_a[:, None] * accel_w[:, None]
+    chi2 = chi2 + ((a_obs[:, None] - A) ** 2 / var_a[:, None]
+                   * has_accel[:, None])
 
     lnorm = -0.5 * (3 * LOG_2PI + jnp.log(var_x) + jnp.log(var_y)
                      + jnp.log(var_v))
-    lnorm = lnorm - 0.5 * (LOG_2PI + jnp.log(var_a)) * accel_w
+    lnorm = lnorm - 0.5 * (LOG_2PI + jnp.log(var_a)) * has_accel
 
     log_integrand = lnorm[:, None] - 0.5 * chi2
     return logsumexp(log_integrand + LOG_W_PHI[None, :], axis=1)
@@ -141,10 +142,6 @@ def load_data():
     # Extract arrays
     has_accel = np.asarray(model._all_has_accel)
 
-    # For no-accel spots: set var_a huge and accel_w=0 so the term vanishes
-    accel_w = np.array(model._all_accel_w, dtype=np.float64, copy=True)
-    accel_w[~has_accel] = 0.0
-
     sigma_a2 = np.array(model._all_sigma_a2, dtype=np.float64, copy=True)
     sigma_a2[~has_accel] = 1e30  # huge so chi2_a ≈ 0
 
@@ -161,7 +158,7 @@ def load_data():
         sigma_v2=jnp.array(model._all_sigma_v2),
         a_obs=jnp.array(model._all_a),
         sigma_a2=jnp.array(sigma_a2),
-        accel_w=jnp.array(accel_w),
+        has_accel=jnp.array(has_accel),
         is_hv=jnp.array(model.is_highvel),
         n_spots=model.n_spots,
         v_sys_obs=float(gcfg["v_sys_obs"]),
@@ -234,7 +231,7 @@ def maser_model(data):
     # --- Phi-marginalized likelihood ---
     ll = phi_marginal(
         r_ang, data["x_obs"], data["y_obs"], var_x, var_y,
-        data["v_obs"], var_v, data["a_obs"], var_a, data["accel_w"],
+        data["v_obs"], var_v, data["a_obs"], var_a, data["has_accel"],
         x0, y0, D_A, M_BH, v_sys,
         data["r_ang_ref"], i0_rad, di_dr_rad, Omega0_rad, dOmega_dr_rad)
 

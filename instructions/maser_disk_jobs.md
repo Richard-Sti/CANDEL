@@ -21,7 +21,7 @@ python scripts/megamaser/run_maser_disk.py <galaxy> [--sampler nuts|nss] [option
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--sampler` | from config (`nss`) | `nuts` or `nss` |
-| `--phi-prior` | off | Enable truncated Gaussian phi prior |
+| `--mode` | from config | `mode0` / `mode1` / `mode2` — see "Sampling modes" |
 | `--seed` | 42 | RNG seed |
 | `--num-warmup` | 1000 | NUTS warmup steps |
 | `--num-samples` | 1000 | NUTS sample count |
@@ -30,8 +30,34 @@ python scripts/megamaser/run_maser_disk.py <galaxy> [--sampler nuts|nss] [option
 | `--num-delete` | 250 | NSS contraction batch |
 | `--termination` | -3 | NSS stopping criterion |
 | `--grid-factor` | 1 | Multiply all grid sizes by 1/2/3 |
+| `--no-ecc` | off | Disable eccentricity model |
+| `--no-quadratic-warp` | off | Disable quadratic disk warp |
+| `--save-map`, `--load-map` | — | Dump/load MAP init to TOML |
 
 CLI args override config values.
+
+## Sampling modes
+
+A single config key `model/mode` (with optional per-galaxy override)
+selects how per-spot angular radius `r_ang` and azimuth `φ` are handled:
+
+| Mode | `r_ang` | `φ` | Sample sites | Typical use |
+|------|---------|-----|--------------|-------------|
+| `mode0` | sampled | sampled | `r_ang`, `phi_u` | full joint; useful as a reference against the analytic marginals |
+| `mode1` | sampled | marginalised | `r_ang` | required when position errors are too small for a practical Mode-2 r-grid (NGC4258) |
+| `mode2` | marginalised | marginalised | none per-spot | default for the five MCP galaxies; compatible with nested sampling |
+
+**Mode 0 details.** Each spot gets two latent parameters: `r_ang_i ~ Uniform(r_lo, r_hi)` and an auxiliary `phi_u_i ~ Uniform(0, 1)` which is deterministically mapped to `φ_i` over the same allowed support used by the Mode 1/2 integrator (red: `[-outer, outer]`; blue: `[π-outer, π+outer]`; sys: `[-135°, -45°] ∪ [45°, 135°]`). This yields an exact uniform prior on the per-spot allowed φ union, consistent with the Mode 1/2 marginals (`∫ Mode 0 p(r, φ(u)) du = Mode 1 marginal / π` to float64 precision).
+
+**Mode 1 details.** Samples `r_ang_i` per spot; φ is marginalised analytically via trapezoidal integration over the configured sub-ranges. Required for any galaxy with `forbid_marginalise_r = true`.
+
+**Mode 2 details.** Both `r_ang_i` and φ are marginalised: per-spot adaptive sinh r-grid (HV + sys-with-accel) and log-uniform brute grid (sys-without-accel), folded with the unified φ grid. No per-spot NUTS dimensions — lowest-dimensional mode; required by nested sampling.
+
+**Per-galaxy override.** Set `mode = "mode1"` (or other) in a
+`[model.galaxies.<NAME>]` block to pin that galaxy regardless of the
+global default. NGC4258 is pinned to `mode1` with `forbid_marginalise_r = true` guarding against `mode2`.
+
+**CLI override.** `--mode mode0|mode1|mode2` overrides the global default (but *not* per-galaxy overrides).
 
 ## Available galaxies
 
@@ -76,12 +102,17 @@ bash scripts/megamaser/submit_nuts_ngc5765b.sh
 # NGC5765b with NSS
 bash scripts/megamaser/submit_nss_ngc5765b.sh
 
-# Custom: any galaxy, any sampler
+# Custom: any galaxy, any sampler, any mode
 ROOT=/mnt/users/$USER/CANDEL
 PYTHON=$ROOT/venv_gpu_candel/bin/python
 addqueue -q cmbgpu -s -m 16 --gpus 1 \
     $PYTHON -u $ROOT/scripts/megamaser/run_maser_disk.py NGC6264 \
-    --sampler nuts --num-warmup 2000 --num-samples 2000
+    --sampler nuts --num-warmup 2000 --num-samples 2000 --mode mode2
+
+# Mode 0 reference run (large per-spot NUTS dimension — use optgpu)
+addqueue -q optgpu -s -m 16 --gpus 1 \
+    $PYTHON -u $ROOT/scripts/megamaser/run_maser_disk.py NGC5765b \
+    --sampler nuts --mode mode0
 ```
 
 ## Grid sizes and numerical accuracy
@@ -89,21 +120,45 @@ addqueue -q cmbgpu -s -m 16 --gpus 1 \
 See [`docs/maser_numerical_accuracy.md`](../docs/maser_numerical_accuracy.md)
 for full convergence test results and the φ-integrand analysis.
 
-**Mode 2 defaults** (MCP galaxies: NGC5765b, UGC3789, CGCG074-064,
-NGC6264, NGC6323):
+**Mode 2 globals** (MCP galaxies: NGC5765b, UGC3789, CGCG074-064,
+NGC6264, NGC6323). Derived from the 2026-04-18 convergence sweep
+(|Δ ll_disk| ≤ 0.12 nats across all five):
 
-| Grid | Points | Spacing | Config key |
+| Grid | Points | Purpose | Config key |
 |------|--------|---------|------------|
-| HV half (φ) | 251 | arccos (dense near π/2) | `model/G_phi_half` |
-| Systemic (φ) | ~600 | two-cluster: 201 arcsin front + 100 arcsin back | `model/n_inner_sys`, `n_wing_sys` |
-| Radius | 201 | adaptive per-spot sinh in log-space | `model/n_r_local` |
+| HV inner wedge (φ) | 1001 | ±45° dense band | `model/n_phi_hv_high` |
+| HV outer wings (φ) | 301 / wing | ±45°→±90° per wing | `model/n_phi_hv_low` |
+| Systemic (φ) | 1501 / sub-range | `[-135°,-45°]` and `[45°,135°]` | `model/n_phi_sys` |
+| Radius (HV + sys-w/accel) | 251 | adaptive per-spot sinh | `model/n_r_local` |
+| Radius (sys-no-accel) | 501 | log-uniform brute grid | `model/n_r_brute` |
 
-**Mode 1** (NGC4258): samples r_ang per spot via NUTS, marginalises φ on
-a uniform brute-force grid of 30001 points (`phi_method = "bruteforce"`).
+**Mode 1 globals** (`n_phi_*_mode1` override the Mode 2 defaults when
+`mode = "mode1"` so per-spot φ peaks are resolved):
+
+| Grid | Points | Config key |
+|------|--------|------------|
+| HV inner wedge (φ) | 2001 | `model/n_phi_hv_high_mode1` |
+| HV outer wings (φ) | 501 / wing | `model/n_phi_hv_low_mode1` |
+| Systemic (φ) | 3001 / sub-range | `model/n_phi_sys_mode1` |
+
+**NGC4258 per-galaxy override** (`[model.galaxies.NGC4258]`): Mode 1 with
+`n_phi_hv_high = 10001`, `n_phi_hv_low = 2001`, `n_phi_sys = 10001`
+(tighter grids needed because position errors of ~3 μas produce
+sub-milliradian per-spot φ peaks).
+
+**Mode 0** uses no φ or r grids — per-spot likelihood is evaluated
+pointwise at the sampled `(r_ang_i, φ_i)`. The `n_phi_*` and `n_r_*`
+keys have no effect when `mode = "mode0"`.
 
 Internal positions are in **μas** (micro-arcseconds) for float32
 stability. Angular radii remain in mas. Mixed precision (float64 position
 residuals) is used for NGC4258.
+
+## Dense-mass handling
+
+- **Joint fit** (`galaxy = "joint"`): full dense mass across all sampled parameters.
+- **Single-galaxy, `dense_mass_globals = true`**: one dense block over the global scalars (`D_c, eta, x0, y0, i0, Omega0, dOmega_dr, di_dr, σ-floors, dv_sys, ecc params, quad-warp params`). Per-spot sites (`r_ang`, `phi_u`) stay diagonal — this is what Mode 0 in particular needs for reasonable mixing.
+- **Otherwise**: `dense_mass_blocks` from `[inference]`.
 
 ## Dense mass blocks (NUTS)
 

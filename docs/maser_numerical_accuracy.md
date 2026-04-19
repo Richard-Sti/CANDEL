@@ -128,9 +128,6 @@ spot data. Callers differ only in their grid choice and integration:
 - **`_eval_bruteforce_phi`** (Mode 1, NGC4258): per-type uniform grids
   (systemic [-90°, 90°], red [0°, 180°], blue [180°, 360°]),
   trapezoidal rule. Grid sizes configurable per type.
-- **`_eval_adaptive_phi_mode1`** (Mode 1, legacy): per-spot adaptive sinh
-  grids centred on the φ peak from a 2×2 position solve. Superseded by
-  the brute-force approach for NGC4258.
 
 The convergence scripts (`convergence_grids.py`, `convergence_phi_marginal.py`)
 also call `_phi_integrand` directly for the brute-force references,

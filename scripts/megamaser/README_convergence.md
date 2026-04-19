@@ -27,23 +27,22 @@ these galaxies (position errors ~0.03 mas → ~50 pts per peak).
 ## Mode 1: NGC4258
 
 NGC4258 has ~10× tighter position errors (~0.003 mas), creating razor-thin
-peaks in (r, φ). Mode 2 cannot resolve them. Mode 1 (sample r, adaptive
-phi) handles this by centering the phi grid at the sampled r where the 2×2
-solve is exact.
+peaks in (r, φ). Mode 2 cannot resolve them. Mode 1 now means: sample
+`r_ang` explicitly and marginalize φ on dense per-type brute-force grids.
 
-### Test 1: Per-spot phi accuracy at fixed r
+### Test 1: Mode 1 phi convergence at fixed r
 
-Compare 51-pt adaptive phi vs 100K uniform phi at the MAP r of each spot.
-This tests whether the adaptive phi grid resolves the peak when r is correct.
+Compare the configured Mode 1 brute-force grids against a denser reference at
+the MAP r of each spot.
 
 ```bash
 addqueue -q gpulong -s -m 16 --gpus 1 \
     /mnt/users/$USER/CANDEL/venv_gpu_candel/bin/python -u \
-    scripts/megamaser/test_mode1_adaptive_phi.py
+    scripts/megamaser/convergence_phi_marginal.py --galaxies NGC4258
 ```
 
 The MAP r is found by sweeping 2001 r × 10K phi per spot (~10 min on GPU).
-Then evaluates adaptive (51 pts) and reference (100K pts) at that r.
+Then evaluates the production brute-force grids and denser references at that r.
 
 **Note:** the MAP r search grid (2001 pts) is coarser than the position
 peak (σ_logr ~ 0.0008). For spots where the found r is slightly off, both
@@ -94,9 +93,7 @@ two-cluster systemic.
 - Systemic spots: -4206 nats (99.7%)
 - HV spots: -12 nats (negligible)
 - Root cause: position peaks σ_φ ~ 0.001 rad, grid spacing ~0.005 rad.
-  Per-(spot,r) adaptive phi reduces to -1000 nats but saturates due to
-  r-grid ridge-tracking error.
+  Shared φ grids cannot track the per-spot ridges well enough.
 
-**NGC4258 Mode 1:** per-spot adaptive phi at sampled r is exact (2×2 solve
-gives s*²+c*² = 1). Phi is unimodal (front/back solutions 133σ apart).
-51 pts suffice. NUTS handles the r exploration via gradients.
+**NGC4258 Mode 1:** brute-force per-type φ grids converge to the dense
+reference when `r_ang` is sampled explicitly. NUTS handles the r exploration.

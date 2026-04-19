@@ -59,11 +59,11 @@ from jax import random
 from numpyro.infer import MCMC, NUTS
 from numpyro.infer.initialization import init_to_median, init_to_value
 
-from candel.inference.inference import print_clean_summary
+from candel.inference.inference import print_clean_summary, _setup_dense_mass
 from candel.inference.nested import print_nested_summary, run_nss
 from candel.model.model_H0_maser import JointMaserModel, MaserDiskModel
 from candel.pvdata.megamaser_data import load_megamaser_spots
-from candel.util import fprint, fsection, plot_corner
+from candel.util import fprint, fsection, get_nested, plot_corner
 
 _devs = jax.devices()
 _dev_names = ", ".join(d.device_kind for d in _devs)
@@ -91,8 +91,11 @@ parser.add_argument("--n-live", type=int, default=None)
 parser.add_argument("--num-mcmc-steps", type=int, default=None)
 parser.add_argument("--num-delete", type=int, default=None)
 parser.add_argument("--termination", type=float, default=None)
-parser.add_argument("--sample-r", action="store_true",
-                    help="Sample r_ang explicitly instead of marginalising")
+parser.add_argument("--mode", type=str, default=None,
+                    choices=["mode0", "mode1", "mode2"],
+                    help="Sampling mode: mode0 samples r AND phi per spot, "
+                         "mode1 samples r and marginalises phi, "
+                         "mode2 marginalises both (default: from config)")
 parser.add_argument("--grid-factor", type=float, default=1.0,
                     help="Multiply all grid sizes by this factor")
 parser.add_argument("--map-only", action="store_true",
@@ -104,7 +107,12 @@ parser.add_argument("--log2-N", type=int, default=None,
                     help="Override Sobol log2_N for DE/Sobol optimizer")
 parser.add_argument("--init-method", type=str, default=None,
                     choices=["config", "sobol_adam", "median"],
-                    help="Override NUTS init method")
+                    help="NUTS init: config (globals from config, "
+                         "r_ang from prior), sobol_adam, median")
+parser.add_argument("--no-ecc", action="store_true",
+                    help="Disable eccentricity model (override config)")
+parser.add_argument("--no-quadratic-warp", action="store_true",
+                    help="Disable quadratic warp (override config)")
 args = parser.parse_args()
 
 galaxy = args.galaxy
@@ -123,17 +131,19 @@ _tags = []
 _dc_prior = _mcfg.get("D_c_prior", "uniform")
 _tags.append("Dvol" if _dc_prior == "volume" else "Dflat")
 
-# Clump weighting
-if not _mcfg.get("use_clump_weight", True):
-    _tags.append("noclump")
-
-# Mode: marginalise r vs sample r
-if args.sample_r:
-    _tags.append("sampleR")
+# Mode tag (omit for default mode2).
+if args.mode is not None and args.mode != "mode2":
+    _tags.append(args.mode)
 
 # Grid factor
 if args.grid_factor != 1.0:
     _tags.append(f"gf{args.grid_factor:g}")
+
+# Model feature overrides
+if args.no_ecc:
+    _tags.append("noecc")
+if args.no_quadratic_warp:
+    _tags.append("noqw")
 
 dist_tag = "_".join(_tags)
 
@@ -147,8 +157,6 @@ if not is_joint and galaxy not in galaxies:
     sys.exit(1)
 
 # ---- Load data ----
-_clump_gals = _mcfg.get("clump_galaxies")
-
 if is_joint:
     # Exclude NGC4258 (geometric parallax, not in the MCP sample)
     galaxy_names = [g for g in galaxies if g != "NGC4258"]
@@ -157,8 +165,7 @@ if is_joint:
     for gname in galaxy_names:
         gcfg_g = galaxies[gname]
         d = load_megamaser_spots("data/Megamaser", gname,
-                                v_sys_obs=gcfg_g["v_sys_obs"],
-                                clump_galaxies=_clump_gals)
+                                 v_sys_obs=gcfg_g["v_sys_obs"])
         if "D_lo" in gcfg_g and "D_hi" in gcfg_g:
             d["D_lo"] = float(gcfg_g["D_lo"])
             d["D_hi"] = float(gcfg_g["D_hi"])
@@ -168,8 +175,7 @@ else:
     gcfg = galaxies[galaxy]
     v_sys_obs = gcfg["v_sys_obs"]
     fsection(f"Loading {galaxy} data")
-    data = load_megamaser_spots("data/Megamaser", galaxy, v_sys_obs=v_sys_obs,
-                               clump_galaxies=_clump_gals)
+    data = load_megamaser_spots("data/Megamaser", galaxy, v_sys_obs=v_sys_obs)
     if "D_lo" in gcfg and "D_hi" in gcfg:
         data["D_lo"] = float(gcfg["D_lo"])
         data["D_hi"] = float(gcfg["D_hi"])
@@ -197,8 +203,17 @@ config = {
     "io": master_cfg["io"],
     "optimise": master_cfg.get("optimise", {}),
 }
-if args.sample_r:
-    config["model"]["marginalise_r"] = False
+if args.mode is not None:
+    config["model"]["mode"] = args.mode
+if args.no_ecc or args.no_quadratic_warp:
+    gals = config["model"].setdefault("galaxies", {})
+    gcfg_ov = gals.setdefault(galaxy if not is_joint else "", {})
+    if args.no_ecc:
+        gcfg_ov["use_ecc"] = False
+        fprint("CLI override: use_ecc = False")
+    if args.no_quadratic_warp:
+        gcfg_ov["use_quadratic_warp"] = False
+        fprint("CLI override: use_quadratic_warp = False")
 
 # Grid resolution multiplier
 if args.grid_factor != 1.0:
@@ -229,9 +244,9 @@ else:
 os.unlink(tmp.name)
 
 # ---- Run sampler ----
-if sampler == "nss" and args.sample_r:
-    print("ERROR: nested sampling requires marginalising r "
-          "(remove --sample-r)", flush=True)
+if sampler == "nss" and model.mode != "mode2":
+    print("ERROR: nested sampling requires mode2 "
+          f"(current mode: {model.mode})", flush=True)
     sys.exit(1)
 
 if sampler == "nss" and is_joint:
@@ -276,44 +291,73 @@ if sampler == "nuts":
         fsection(f"Running NUTS ({galaxy}, {n_spots} spots)")
         init_cfg = gcfg.get("init", {})
         init_method = args.init_method or inf_cfg.get("init_method", "config")
+
+        _init_desc = {
+            "sobol_adam": "Sobol+Adam MAP",
+            "config": "config globals + r_ang from prior",
+            "median": "numpyro median",
+        }
+        fprint(f"Initialisation: {init_method} "
+               f"({_init_desc.get(init_method, '?')})")
+
         if init_method == "sobol_adam":
             from candel.inference.optimise import find_MAP
             init_params = find_MAP(model, model_kwargs={}, seed=seed)
             init_strategy = init_to_value(values=init_params)
-            fprint("NUTS init from Sobol+Adam MAP:")
             for k, v in init_params.items():
                 if v.ndim == 0:
                     fprint(f"  {k:20s} = {float(v):12.4f}")
                 else:
                     fprint(f"  {k:20s} = [{len(v)} values]")
-        elif init_cfg and init_method == "config":
+        elif init_method == "config":
+            if not init_cfg:
+                print("ERROR: no [init] section for", galaxy, flush=True)
+                sys.exit(1)
             init_params = {k: jnp.asarray(v) for k, v in init_cfg.items()}
-            # Mode 1: compute log_r_ang init from acceleration
-            if args.sample_r and "log_r_ang" not in init_params:
-                from candel.model.model_H0_maser import C_v, C_a
-                _D_A = float(init_params["D_c"]) / 1.002
-                _M = 10.0**(float(init_params["eta"])
-                            + np.log10(_D_A) - 7.0)
-                _si = abs(np.sin(np.deg2rad(float(init_params["i0"]))))
-                _sa2 = float(init_params["sigma_a_floor"])**2
-                _sa_tot = np.sqrt(np.asarray(model._all_sigma_a)**2
-                                  + _sa2)
-                _snr = np.abs(np.asarray(model._all_a)) / (_sa_tot + 1e-30)
-                _r_acc = np.sqrt(
-                    C_a * _M * _si
-                    / (_D_A**2
-                       * (np.abs(np.asarray(model._all_a)) + 1e-30)))
-                _r_mid = np.exp(0.5 * (np.log(float(model._r_ang_lo))
-                                       + np.log(float(model._r_ang_hi))))
-                _good = np.asarray(model._all_has_accel) & (_snr >= 2.0)
-                _r_init = np.where(_good, _r_acc, _r_mid)
-                _r_init = np.clip(_r_init, float(model._r_ang_lo) * 1.01,
-                                  float(model._r_ang_hi) * 0.99)
-                init_params["log_r_ang"] = jnp.asarray(np.log(_r_init))
-                fprint(f"  log_r_ang init from accel: "
-                       f"r=[{_r_init.min():.3f}, {_r_init.max():.3f}] mas")
+
+            # Remove params that aren't sampled.
+            if not is_joint:
+                init_params.pop("H0", None)
+                init_params.pop("sigma_pec", None)
+            if not model.use_ecc:
+                for _k in ("e_x", "e_y", "ecc", "periapsis",
+                           "dperiapsis_dr"):
+                    init_params.pop(_k, None)
+            if not model.use_quadratic_warp:
+                for _k in ("d2i_dr2", "d2Omega_dr2"):
+                    init_params.pop(_k, None)
+
+            # Mode 0/1: model samples r_ang, so init needs r_ang.
+            # Mode 0 also samples phi_u (aux ∈ [0,1] mapped to phi).
+            if model.mode in ("mode0", "mode1") and "r_ang" not in init_params:
+                rng = np.random.default_rng(seed)
+                if model._r_ang_init_dist is not None:
+                    from scipy.stats import truncnorm
+                    d = model._r_ang_init_dist
+                    a = (d["low"] - d["loc"]) / d["scale"]
+                    b = (d["high"] - d["loc"]) / d["scale"]
+                    _r = truncnorm.rvs(
+                        a, b, loc=d["loc"], scale=d["scale"],
+                        size=model.n_spots, random_state=rng)
+                    fprint(f"  r_ang: TruncatedNormal init, "
+                           f"[{_r.min():.3f}, {_r.max():.3f}] mas")
+                else:
+                    _r = rng.uniform(
+                        float(model._r_ang_lo),
+                        float(model._r_ang_hi),
+                        model.n_spots)
+                    fprint(f"  r_ang: uniform random in r_ang, "
+                           f"[{_r.min():.3f}, {_r.max():.3f}] mas")
+                init_params["r_ang"] = jnp.asarray(_r)
+
+            # Mode 0: also init phi_u (uniform aux mapped to spot-type
+            # phi range). Default 0.5 places each spot at the centre
+            # of its allowed region.
+            if model.mode == "mode0" and "phi_u" not in init_params:
+                init_params["phi_u"] = jnp.full(model.n_spots, 0.5)
+                fprint("  phi_u: default 0.5 (centre of allowed phi)")
+
             init_strategy = init_to_value(values=init_params)
-            fprint(f"NUTS init from config ({len(init_params)} params):")
             for k, v in sorted(init_params.items()):
                 v = jnp.asarray(v)
                 if v.ndim == 0:
@@ -322,112 +366,47 @@ if sampler == "nuts":
                     fprint(f"  {k:20s} = [{len(v)} values]")
         else:
             init_strategy = init_to_median(num_samples=20)
-            fprint("NUTS init: median")
+    # Dense mass matrix: joint uses full dense; single-galaxy uses
+    # per-galaxy dense_mass_globals flag for a globals-only block.
     t0 = time.time()
+    if is_joint:
+        _dense_mass = True
+        fprint("Dense mass: full dense (joint mode)")
+    elif not is_joint and gcfg.get("dense_mass_globals", False):
+        # Collect all scalar (non-r_ang) param names from init config,
+        # excluding params that aren't sampled in single-galaxy mode
+        # or that are disabled by CLI overrides.
+        _skip = {"r_ang", "phi_u", "H0", "sigma_pec"}
+        if not model.use_ecc:
+            _skip |= {"e_x", "e_y", "ecc", "periapsis", "dperiapsis_dr"}
+        if not model.use_quadratic_warp:
+            _skip |= {"d2i_dr2", "d2Omega_dr2"}
+        _global_names = [k for k in init_cfg if k not in _skip]
+        _dense_mass = [tuple(_global_names)]
+        fprint(f"Dense mass: 1 block with {len(_global_names)} globals: "
+               f"{_global_names}")
+    else:
+        _dense_mass = _setup_dense_mass(
+            config["inference"], None, model, model_kwargs={})
+        if isinstance(_dense_mass, list):
+            fprint(f"Dense mass: {len(_dense_mass)} blocks")
+            for i, block in enumerate(_dense_mass):
+                fprint(f"  block {i}: {list(block)}")
+        elif isinstance(_dense_mass, bool):
+            fprint(f"Dense mass: {'full dense' if _dense_mass else 'diagonal'}")
+
+    if is_joint:
+        _tap = float(inf_cfg.get("target_accept_prob", 0.8))
+    else:
+        _tap = float(gcfg.get("target_accept_prob",
+                              inf_cfg.get("target_accept_prob", 0.8)))
     nuts_kernel = NUTS(model,
                        max_tree_depth=inf_cfg.get("max_tree_depth", 10),
-                       target_accept_prob=0.8,
-                       dense_mass=True if is_joint else False,
+                       target_accept_prob=_tap,
+                       dense_mass=_dense_mass,
                        init_strategy=init_strategy)
 
-    # For Mode 1 (--sample-r) with adaptive phi: use HMCGibbs to
-    # decouple the 358 log_r_ang from the ~20 global params. NUTS
-    # handles globals; vectorized MH handles log_r_ang.
-    if args.sample_r and model.adaptive_phi:
-        from numpyro.infer import HMCGibbs
-
-        # Proposal width for log_r_ang MH: position-derived sigma
-        _sigma_pos = np.sqrt(np.asarray(model._all_sigma_x2)
-                             + np.asarray(model._all_sigma_y2))
-        # r_est from init
-        _r_est = np.exp(np.asarray(init_params.get(
-            "log_r_ang",
-            np.log(np.ones(model.n_spots) * 4.0))))
-        _mh_sigma = jnp.asarray(
-            np.clip(_sigma_pos / (_r_est + 1e-30), 0.0001, 0.1))
-        fprint(f"Gibbs MH sigma(log_r): [{float(_mh_sigma.min()):.5f}, "
-               f"{float(_mh_sigma.max()):.5f}]")
-
-        def gibbs_fn(rng_key, gibbs_sites, hmc_sites):
-            """Per-spot MH for log_r_ang conditioned on globals.
-
-            Each spot's r_ang is updated independently with a Gaussian
-            proposal in log-r. Accept/reject per spot using the
-            per-spot phi-marginalised logL from adaptive phi.
-            """
-            log_r_cur = gibbs_sites["log_r_ang"]
-            r_cur = jnp.exp(log_r_cur)
-
-            # Propose: Gaussian in log-r, per spot
-            key1, key2 = jax.random.split(rng_key)
-            log_r_prop = log_r_cur + _mh_sigma * jax.random.normal(
-                key1, shape=log_r_cur.shape)
-            log_r_lo = jnp.log(model._r_ang_lo)
-            log_r_hi = jnp.log(model._r_ang_hi)
-            log_r_prop = jnp.clip(log_r_prop, log_r_lo, log_r_hi)
-            r_prop = jnp.exp(log_r_prop)
-
-            # Extract global params from hmc_sites
-            D_c = hmc_sites["D_c"]
-            h = hmc_sites["H0"] / 100.0
-            z = model.distance2redshift(
-                jnp.atleast_1d(D_c), h=h).squeeze()
-            D_A = D_c / (1 + z)
-            eta = hmc_sites["eta"]
-            M_BH = 10.0**(eta + jnp.log10(D_A) - 7.0)
-            x0 = hmc_sites["x0"]
-            y0 = hmc_sites["y0"]
-            v_sys = model.v_sys_obs + hmc_sites["dv_sys"]
-            i0 = jnp.deg2rad(hmc_sites["i0"])
-            di_dr = jnp.deg2rad(hmc_sites["di_dr"])
-            Omega0 = jnp.deg2rad(hmc_sites["Omega0"])
-            dOmega_dr = jnp.deg2rad(hmc_sites["dOmega_dr"])
-            sx2 = hmc_sites["sigma_x_floor"]**2
-            sy2 = hmc_sites["sigma_y_floor"]**2
-            vvs = hmc_sites["sigma_v_sys"]**2
-            vvh = hmc_sites["sigma_v_hv"]**2
-            sa2 = hmc_sites["sigma_a_floor"]**2
-
-            ecc_kw = {}
-            if model.use_ecc:
-                ecc_kw["ecc"] = hmc_sites["ecc"]
-                ecc_kw["periapsis0"] = jnp.deg2rad(hmc_sites["periapsis"])
-                ecc_kw["dperiapsis_dr"] = jnp.deg2rad(
-                    hmc_sites["dperiapsis_dr"])
-            quad_kw = {}
-            if model.use_quadratic_warp:
-                quad_kw["d2i_dr2"] = jnp.deg2rad(hmc_sites["d2i_dr2"])
-                quad_kw["d2Omega_dr2"] = jnp.deg2rad(
-                    hmc_sites["d2Omega_dr2"])
-
-            common = (x0, y0, D_A, M_BH, v_sys,
-                      model._r_ang_ref, i0, di_dr, Omega0, dOmega_dr,
-                      sx2, sy2, vvs, vvh, sa2)
-
-            # Per-spot logL at current and proposed r
-            ll_cur = model._eval_adaptive_phi_mode1(
-                r_cur, *common, **ecc_kw, **quad_kw)
-            ll_prop = model._eval_adaptive_phi_mode1(
-                r_prop, *common, **ecc_kw, **quad_kw)
-
-            # Jacobian: uniform prior on r → factor(log_r)
-            ll_cur = ll_cur + log_r_cur
-            ll_prop = ll_prop + log_r_prop
-
-            # Per-spot accept/reject
-            log_alpha = ll_prop - ll_cur
-            u = jnp.log(jax.random.uniform(key2, shape=log_r_cur.shape))
-            accept = u < log_alpha
-            log_r_new = jnp.where(accept, log_r_prop, log_r_cur)
-            return {"log_r_ang": log_r_new}
-
-        kernel = HMCGibbs(nuts_kernel, gibbs_fn=gibbs_fn,
-                          gibbs_sites=["log_r_ang"])
-        fprint("Using HMCGibbs: NUTS(globals) + MH(log_r_ang)")
-    else:
-        kernel = nuts_kernel
-
-    mcmc = MCMC(kernel, num_warmup=num_warmup, num_samples=num_samples,
+    mcmc = MCMC(nuts_kernel, num_warmup=num_warmup, num_samples=num_samples,
                 num_chains=1, progress_bar=True)
     mcmc.run(random.PRNGKey(seed))
     dt = time.time() - t0
@@ -496,7 +475,8 @@ else:
                   flush=True)
 
     D_c = np.asarray(samples['D_c'])
-    z_cosmo = D_c * 73.0 / 299792.458
+    H0_ref = float(get_nested(master_cfg, "model/H0_ref", 73.0))
+    z_cosmo = D_c * H0_ref / 299792.458
     D_A = D_c / (1 + z_cosmo)
     if 'log_MBH' in samples:
         log_MBH = np.asarray(samples['log_MBH'])
@@ -506,6 +486,12 @@ else:
     print(f"\n  D_A = {D_A.mean():.1f} +/- {D_A.std():.1f} Mpc", flush=True)
     print(f"  M_BH = {M_BH.mean():.2e} +/- {M_BH.std():.2e} M_sun",
           flush=True)
+
+    # Implied H0 from Hubble law (no peculiar velocity correction)
+    v_sys_obs = float(gcfg["v_sys_obs"])
+    H0_implied = v_sys_obs / D_c
+    print(f"  H0 (v_sys/D_c) = {H0_implied.mean():.1f} "
+          f"+/- {H0_implied.std():.1f} km/s/Mpc", flush=True)
 
 # Summary table
 fsection("Summary")
@@ -538,7 +524,6 @@ if _conv_cfg.get("auto_check", False) and not is_joint:
         fprint(f"[WARN] Convergence check failed: {type(e).__name__}: {e}")
 elif _conv_cfg.get("auto_check", False) and is_joint:
     fprint("Convergence auto-check skipped: joint mode not supported.")
-
 
 # Spot classification plot (single-galaxy only)
 if not is_joint:

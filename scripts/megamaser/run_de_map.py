@@ -87,8 +87,7 @@ v_sys_obs = gcfg["v_sys_obs"]
 # ---- Load data ----
 fsection(f"Loading {galaxy} data")
 _mcfg = master_cfg["model"]
-data = load_megamaser_spots("data/Megamaser", galaxy, v_sys_obs=v_sys_obs,
-                           clump_galaxies=_mcfg.get("clump_galaxies"))
+data = load_megamaser_spots("data/Megamaser", galaxy, v_sys_obs=v_sys_obs)
 
 if "D_lo" in gcfg and "D_hi" in gcfg:
     data["D_lo"] = float(gcfg["D_lo"])

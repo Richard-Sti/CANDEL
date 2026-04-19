@@ -1,7 +1,7 @@
 #!/bin/bash -l
 # Submit NGC4258 NUTS job to GPU queue.
 #
-# NGC4258 uses Mode 1 (--sample-r) with per-spot adaptive phi.
+# NGC4258 uses Mode 1 (mode=mode1 pinned in config) with per-type bruteforce phi grids.
 # NUTS is the only supported sampler (NSS can't handle 358 r_ang params,
 # DE optimizer doesn't support Mode 1).
 #
@@ -9,10 +9,10 @@
 #   bash scripts/megamaser/submit_ngc4258.sh                   # defaults
 #   bash scripts/megamaser/submit_ngc4258.sh -q cmbgpu         # different queue
 #   bash scripts/megamaser/submit_ngc4258.sh --warmup 5000     # more warmup
-#   bash scripts/megamaser/submit_ngc4258.sh --init config_ropt   # config globals + r_ang optimised (default)
-#   bash scripts/megamaser/submit_ngc4258.sh --init config_rrand  # config globals + r_ang random from prior
-#   bash scripts/megamaser/submit_ngc4258.sh --init sobol_adam    # Sobol+Adam MAP init
-#   bash scripts/megamaser/submit_ngc4258.sh --init-r-only        # r_ang golden-section only, no sampling
+#   bash scripts/megamaser/submit_ngc4258.sh --init sobol_adam  # Sobol+Adam MAP init
+#   bash scripts/megamaser/submit_ngc4258.sh --no-ecc             # disable eccentricity model
+#   bash scripts/megamaser/submit_ngc4258.sh --no-quadratic-warp  # disable quadratic warp
+#   bash scripts/megamaser/submit_ngc4258.sh --no-ecc --no-quadratic-warp  # circular + linear warp
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PYTHON="$ROOT/venv_gpu_candel/bin/python"
@@ -20,29 +20,31 @@ PYTHON="$ROOT/venv_gpu_candel/bin/python"
 QUEUE="optgpu"
 WARMUP=2000
 SAMPLES=2000
-INIT=""
-INIT_R_ONLY=false
+INIT="config"
+NO_ECC=false
+NO_QW=false
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -h|--help)
-            echo "Usage: bash $0 [-q QUEUE] [--warmup N] [--samples N] [--init METHOD] [--init-r-only]"
+            echo "Usage: bash $0 [-q QUEUE] [--warmup N] [--samples N] [--init METHOD] [--no-ecc] [--no-quadratic-warp]"
             echo ""
             echo "Options:"
-            echo "  -q QUEUE        GPU queue (default: optgpu)"
-            echo "  --warmup N      Number of warmup iterations (default: 2000)"
-            echo "  --samples N     Number of samples (default: 2000)"
-            echo "  --init METHOD   Initialization method:"
-            echo "                    config/config_ropt  config globals + r_ang optimised (default)"
-            echo "                    config_rrand        config globals + r_ang random from prior"
-            echo "                    sobol_adam           DE/Sobol MAP"
-            echo "                    median               numpyro median"
-            echo "  --init-r-only   Config globals + r_ang golden-section, no sampling"
+            echo "  -q QUEUE              GPU queue (default: optgpu)"
+            echo "  --warmup N            Number of warmup iterations (default: 2000)"
+            echo "  --samples N           Number of samples (default: 2000)"
+            echo "  --init METHOD         Initialization method:"
+            echo "                          config       config globals + r_ang from TruncatedNormal prior (default)"
+            echo "                          sobol_adam   DE/Sobol MAP"
+            echo "                          median       numpyro median"
+            echo "  --no-ecc              Disable eccentricity model"
+            echo "  --no-quadratic-warp   Disable quadratic warp (use linear only)"
             exit 0 ;;
         -q) QUEUE="$2"; shift 2 ;;
         --warmup) WARMUP="$2"; shift 2 ;;
         --samples) SAMPLES="$2"; shift 2 ;;
         --init) INIT="$2"; shift 2 ;;
-        --init-r-only) INIT_R_ONLY=true; shift ;;
+        --no-ecc) NO_ECC=true; shift ;;
+        --no-quadratic-warp) NO_QW=true; shift ;;
         *)  echo "Unknown arg: $1"; exit 1 ;;
     esac
 done
@@ -51,16 +53,18 @@ EXTRA_ARGS=""
 if [[ -n "$INIT" ]]; then
     EXTRA_ARGS="--init-method $INIT"
 fi
-
-if [[ "$INIT_R_ONLY" == true ]]; then
-    echo "Submitting NGC4258 init-r-only (config globals + r_ang optimisation) -> $QUEUE"
-    addqueue -q "$QUEUE" -s -m 16 --gpus 1 \
-        $PYTHON -u "$ROOT/scripts/megamaser/run_maser_disk.py" NGC4258 \
-        --sampler nuts --sample-r --init-r-only
-else
-    echo "Submitting NGC4258 NUTS (Mode 1, $WARMUP warmup + $SAMPLES samples, init=${INIT:-config}) -> $QUEUE"
-    addqueue -q "$QUEUE" -s -m 16 --gpus 1 \
-        $PYTHON -u "$ROOT/scripts/megamaser/run_maser_disk.py" NGC4258 \
-        --sampler nuts --sample-r \
-        --num-warmup "$WARMUP" --num-samples "$SAMPLES" $EXTRA_ARGS
+if [[ "$NO_ECC" == true ]]; then
+    EXTRA_ARGS="$EXTRA_ARGS --no-ecc"
 fi
+if [[ "$NO_QW" == true ]]; then
+    EXTRA_ARGS="$EXTRA_ARGS --no-quadratic-warp"
+fi
+
+DESC="Mode 1, $WARMUP warmup + $SAMPLES samples, init=$INIT"
+[[ "$NO_ECC" == true ]] && DESC="$DESC, no-ecc"
+[[ "$NO_QW" == true ]] && DESC="$DESC, no-qw"
+echo "Submitting NGC4258 NUTS ($DESC) -> $QUEUE"
+addqueue -q "$QUEUE" -s -m 16 --gpus 1 \
+    $PYTHON -u "$ROOT/scripts/megamaser/run_maser_disk.py" NGC4258 \
+    --sampler nuts \
+    --num-warmup "$WARMUP" --num-samples "$SAMPLES" $EXTRA_ARGS

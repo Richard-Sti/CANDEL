@@ -12,7 +12,8 @@ parser.add_argument("--n-spots", type=int, default=100)
 parser.add_argument("--num-warmup", type=int, default=500)
 parser.add_argument("--num-samples", type=int, default=2500)
 parser.add_argument("--seed", type=int, default=42)
-parser.add_argument("--marginalise-r", action="store_true")
+parser.add_argument("--mode", type=str, default="mode2",
+                    choices=["mode0", "mode1", "mode2"])
 args = parser.parse_args()
 
 if args.host_devices > 1:
@@ -96,7 +97,7 @@ config = {
         "which_run": "maser_disk",
         "Om": 0.315,
         "use_selection": False,
-        "marginalise_r": args.marginalise_r,
+        "mode": args.mode,
         "priors": {
             "H0": _delta(tp["H0"]),
             "sigma_pec": _delta(tp["sigma_pec"]),
