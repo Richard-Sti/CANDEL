@@ -67,6 +67,7 @@ C_v = 2978.8656    # km/s: sqrt(G * 1e7 M_sun / (1 mas * 1 Mpc))
 C_a = 1.872e3      # km/s/yr: 1e7 M_sun * G * yr / (1 mas * 1 Mpc)^2
 C_g = 1.974e-4     # dimensionless: 2*G * 1e7 M_sun / (c^2 * 1 mas * 1 Mpc)
 LOG_2PI = 1.8378770664093453  # jnp.log(2 * pi), precomputed
+_LOG_UNDERFLOW_FLOOR = -1e4   # clamp per-spot logL; exp(-1e4)~0 but not -inf
 
 # Conversion: 1 mas at 1 Mpc = 4.848e-3 pc
 PC_PER_MAS_MPC = 4.848e-3
@@ -1031,6 +1032,7 @@ class MaserDiskModel(ModelBase):
                     w2d = (lwr_b[None, :, None]
                            + pc["log_w_phi"][None, None, :])
                     ps_b = logsumexp(log_f + w2d, axis=(-2, -1))
+                    ps_b = jnp.maximum(ps_b, _LOG_UNDERFLOW_FLOOR)
                 else:
                     r_b = r_ang[sl]
                     lwr_b = None if log_w_r is None else log_w_r[sl]
@@ -1045,6 +1047,7 @@ class MaserDiskModel(ModelBase):
                         w2d = (lwr_b[:, :, None]
                                + pc["log_w_phi"][None, None, :])
                         ps_b = logsumexp(log_f + w2d, axis=(-2, -1))
+                    ps_b = jnp.maximum(ps_b, _LOG_UNDERFLOW_FLOOR)
                 ps_parts.append(ps_b)
 
             ps = (ps_parts[0] if len(ps_parts) == 1
