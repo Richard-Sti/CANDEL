@@ -19,7 +19,7 @@ usage() {
     echo "  --sampler nss|nuts     Inference method"
     echo ""
     echo "Options:"
-    echo "  --galaxy GAL           Submit a single galaxy (nss only; default: all five)"
+    echo "  --galaxy GAL           Single galaxy to submit (nss: default all five; nuts: default joint)"
     echo "                         Choices: $ALL_GALS"
     echo "  --mode MODE            Sampling mode: mode0, mode1, mode2"
     echo "                         NSS only supports mode2 (default for NSS)."
@@ -58,10 +58,6 @@ if [[ "$SAMPLER" == "nss" && ("$NUM_WARMUP" != "2000" || "$NUM_SAMPLES" != "2000
     echo "Warning: --num-warmup and --num-samples are ignored for NSS."
 fi
 
-if [[ -n "$GALAXY" && "$SAMPLER" != "nss" ]]; then
-    echo "Error: --galaxy is only supported for NSS (NUTS runs joint)."; exit 1
-fi
-
 if [[ -n "$GALAXY" ]] && ! echo "$ALL_GALS" | grep -qw "$GALAXY"; then
     echo "Error: unknown galaxy '$GALAXY'. Choices: $ALL_GALS"; exit 1
 fi
@@ -85,8 +81,9 @@ if [[ "$SAMPLER" == "nss" ]]; then
     done
 else
     [[ -z "$QUEUE" ]] && QUEUE="optgpu"
-    echo "Submitting joint NUTS run ($QUEUE)..."
+    TARGET="${GALAXY:-joint}"
+    echo "Submitting NUTS run for $TARGET ($QUEUE)..."
     addqueue -q "$QUEUE" -s -m 16 --gpus 1 \
-        $PYTHON -u $RUNNER joint \
+        $PYTHON -u $RUNNER "$TARGET" \
         --sampler nuts --num-warmup $NUM_WARMUP --num-samples $NUM_SAMPLES $EXTRA_ARGS
 fi
