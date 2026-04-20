@@ -128,7 +128,9 @@ def predict_velocity_los(r_ang, phi, D, M_BH, v_sys, i, ecc=0.0, omega=0.0):
     gamma = 1.0 / jnp.sqrt(1.0 - beta_e2)
 
     one_plus_z_D = gamma * (1.0 + v_z / SPEED_OF_LIGHT)
-    one_plus_z_g = 1.0 / jnp.sqrt(1.0 - C_g * M_BH / (r_ang * D))
+    # Floor prevents sqrt(negative) for sub-Schwarzschild radii; the resulting
+    # large velocity residual is caught by _LOG_UNDERFLOW_FLOOR in the logL.
+    one_plus_z_g = 1.0 / jnp.sqrt(jnp.maximum(1.0 - C_g * M_BH / (r_ang * D), 1e-6))
     z_0 = v_sys / SPEED_OF_LIGHT
 
     return SPEED_OF_LIGHT * (one_plus_z_D * one_plus_z_g * (1.0 + z_0) - 1.0)
@@ -146,7 +148,8 @@ def _precompute_r_quantities(r_ang, D, M_BH, sin_i, cos_i, sin_O, cos_O):
     v_kep = C_v * jnp.sqrt(M_BH / rD)
     beta = v_kep / SPEED_OF_LIGHT
     gamma = 1.0 / jnp.sqrt(1.0 - beta * beta)
-    one_plus_z_g = 1.0 / jnp.sqrt(1.0 - C_g * M_BH / rD)
+    # Same floor as in predict_velocity_los; large residual caught downstream.
+    one_plus_z_g = 1.0 / jnp.sqrt(jnp.maximum(1.0 - C_g * M_BH / rD, 1e-6))
     a_mag = v_kep * v_kep / rD * (C_a / (C_v * C_v))
 
     # Position projection coefficients (Reid phi convention):

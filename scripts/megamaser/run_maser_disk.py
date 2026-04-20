@@ -628,9 +628,12 @@ fprint(f"saved samples to {outpath}")
 
 # Corner plots (skip for joint — too many params)
 if not is_joint:
-    fname_corner = os.path.join(outdir, f"{_out_name}_{suffix}_corner.png")
-    plot_corner(samples, show_fig=False, filename=fname_corner)
-    fname_corner_raw = os.path.join(
-        outdir, f"{_out_name}_{suffix}_corner_raw.png")
-    plot_corner(samples, show_fig=False, filename=fname_corner_raw,
-                smooth=False)
+    if meta is not None and meta.get("n_eff", 2) < 2:
+        fprint(f"skipping corner plots: n_eff={meta['n_eff']}")
+    else:
+        fname_corner = os.path.join(outdir, f"{_out_name}_{suffix}_corner.png")
+        plot_corner(samples, show_fig=False, filename=fname_corner)
+        fname_corner_raw = os.path.join(
+            outdir, f"{_out_name}_{suffix}_corner_raw.png")
+        plot_corner(samples, show_fig=False, filename=fname_corner_raw,
+                    smooth=False)

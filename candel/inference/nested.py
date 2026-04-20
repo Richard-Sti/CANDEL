@@ -667,7 +667,6 @@ def run_nss(model, model_args=(), model_kwargs=None,
                     pos = state.particles.position[idx]
                     print(f"  idx={int(idx)}: logL={float(ll_live[idx]):.4f}"
                           f"  params={np.asarray(pos)}", flush=True)
-                break
             if not jnp.all(jnp.isfinite(ll_dead)):
                 n_bad = int((~jnp.isfinite(ll_dead)).sum())
                 print(f"\n*** WARNING: {n_bad} non-finite dead "
@@ -677,7 +676,6 @@ def run_nss(model, model_args=(), model_kwargs=None,
                     pos = dead_info.particles.position[idx]
                     print(f"  idx={int(idx)}: logL={float(ll_dead[idx]):.4f}"
                           f"  params={np.asarray(pos)}", flush=True)
-                break
             if not jnp.isfinite(logZ):
                 print(f"\n*** WARNING: logZ={logZ} at {n_dead} dead "
                       f"but all logL finite! ***", flush=True)

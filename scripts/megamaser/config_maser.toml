@@ -30,7 +30,7 @@ init_method = "config"
 max_tree_depth = 10
 n_live = 5000
 num_mcmc_steps = 0
-num_delete = 250
+num_delete = 25
 termination = -3
 
 [model]
