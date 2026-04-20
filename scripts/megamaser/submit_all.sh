@@ -6,9 +6,9 @@ SAMPLER="nss"
 MODE=""
 QUEUE=""
 F_GRID=""
-NUM_WARMUP=2000
-NUM_SAMPLES=2000
+NUM_CHAINS=1
 GALAXY=""
+INIT_METHOD=""
 
 ALL_GALS="CGCG074-064 NGC5765b NGC6264 NGC6323 UGC3789"
 
@@ -24,10 +24,14 @@ usage() {
     echo "  --mode MODE            Sampling mode: mode0, mode1, mode2"
     echo "                         NSS only supports mode2 (default for NSS)."
     echo "                         NUTS defaults to config value."
-    echo "  -q, --queue QUEUE      addqueue queue (default: gpulong for nss, optgpu for nuts)"
-    echo "  --f-grid F             Grid scaling factor (passed to run_maser_disk.py)"
-    echo "  --num-warmup N         NUTS warmup steps (default: 2000, nuts only)"
-    echo "  --num-samples N        NUTS sample steps (default: 2000, nuts only)"
+    echo "  -q, --queue QUEUE      addqueue queue (default: gpulong)"
+    echo "  --f-grid F             Grid scaling factor (default: 1)"
+    echo "  --num-chains N         Number of NUTS chains, always vectorised (default: 1)"
+    echo "  --init-method METHOD   NUTS initialisation method (default: config)"
+    echo "                           config:      globals from config, r_ang data-driven from sky positions / accelerations"
+    echo "                           sobol_adam:  Sobol+Adam MAP optimisation"
+    echo "                           median:      numpyro median over prior samples"
+    echo "                           sample:      each chain draws independently from the prior"
     echo "  -h, --help             Show this help and exit"
 }
 
@@ -37,8 +41,8 @@ while [[ $# -gt 0 ]]; do
         --mode) MODE="$2"; shift 2 ;;
         -q|--queue) QUEUE="$2"; shift 2 ;;
         --f-grid) F_GRID="$2"; shift 2 ;;
-        --num-warmup) NUM_WARMUP="$2"; shift 2 ;;
-        --num-samples) NUM_SAMPLES="$2"; shift 2 ;;
+        --num-chains) NUM_CHAINS="$2"; shift 2 ;;
+        --init-method) INIT_METHOD="$2"; shift 2 ;;
         --galaxy) GALAXY="$2"; shift 2 ;;
         -h|--help) usage; exit 0 ;;
         *) echo "Unknown option: $1"; exit 1 ;;
@@ -54,10 +58,6 @@ if [[ "$SAMPLER" == "nss" && -n "$MODE" && "$MODE" != "mode2" ]]; then
     exit 1
 fi
 
-if [[ "$SAMPLER" == "nss" && ("$NUM_WARMUP" != "2000" || "$NUM_SAMPLES" != "2000") ]]; then
-    echo "Warning: --num-warmup and --num-samples are ignored for NSS."
-fi
-
 if [[ -n "$GALAXY" ]] && ! echo "$ALL_GALS" | grep -qw "$GALAXY"; then
     echo "Error: unknown galaxy '$GALAXY'. Choices: $ALL_GALS"; exit 1
 fi
@@ -67,12 +67,11 @@ PYTHON="$ROOT/venv_gpu_candel/bin/python"
 RUNNER="$ROOT/scripts/megamaser/run_maser_disk.py"
 
 EXTRA_ARGS=""
-[[ -n "$MODE" ]]   && EXTRA_ARGS="$EXTRA_ARGS --mode $MODE"
-[[ -n "$F_GRID" ]] && EXTRA_ARGS="$EXTRA_ARGS --f-grid $F_GRID"
+[[ -n "$MODE" ]]        && EXTRA_ARGS="$EXTRA_ARGS --mode $MODE"
+[[ -n "$F_GRID" ]]      && EXTRA_ARGS="$EXTRA_ARGS --f-grid $F_GRID"
+[[ -n "$INIT_METHOD" ]] && EXTRA_ARGS="$EXTRA_ARGS --init-method $INIT_METHOD"
 
-DEFAULT_QUEUE="gpulong"
-[[ "$SAMPLER" == "nuts" ]] && DEFAULT_QUEUE="optgpu"
-[[ -z "$QUEUE" ]] && QUEUE="$DEFAULT_QUEUE"
+[[ -z "$QUEUE" ]] && QUEUE="gpulong"
 
 GALS="${GALAXY:-$ALL_GALS}"
 for GAL in $GALS; do
@@ -80,10 +79,10 @@ for GAL in $GALS; do
     if [[ "$SAMPLER" == "nss" ]]; then
         addqueue -q "$QUEUE" -s -m 16 --gpus 1 \
             $PYTHON -u $RUNNER $GAL \
-            --sampler nss --D-c-prior uniform $EXTRA_ARGS
+            --sampler nss $EXTRA_ARGS
     else
         addqueue -q "$QUEUE" -s -m 16 --gpus 1 \
             $PYTHON -u $RUNNER $GAL \
-            --sampler nuts --num-warmup $NUM_WARMUP --num-samples $NUM_SAMPLES $EXTRA_ARGS
+            --sampler nuts --num-chains $NUM_CHAINS $EXTRA_ARGS
     fi
 done

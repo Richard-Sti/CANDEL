@@ -57,11 +57,11 @@ import tomli_w
 from h5py import File as H5File
 from jax import random
 from numpyro.infer import MCMC, NUTS
-from numpyro.infer.initialization import init_to_median, init_to_value
+from numpyro.infer.initialization import init_to_median, init_to_sample, init_to_value
 
 from candel.inference.inference import print_clean_summary, _setup_dense_mass
 from candel.inference.nested import print_nested_summary, run_nss
-from candel.model.model_H0_maser import JointMaserModel, MaserDiskModel
+from candel.model.model_H0_maser import C_a as _C_a, JointMaserModel, MaserDiskModel
 from candel.pvdata.megamaser_data import load_megamaser_spots
 from candel.util import fprint, fsection, get_nested, plot_corner
 
@@ -121,8 +121,9 @@ parser.add_argument("--sampler", type=str, default=None,
                     choices=["nuts", "nss"])
 parser.add_argument("--seed", type=int, default=None)
 # NUTS
-parser.add_argument("--num-warmup", type=int, default=None)
-parser.add_argument("--num-samples", type=int, default=None)
+parser.add_argument("--num-chains", type=int, default=None,
+                    help="Number of NUTS chains (default: from config); "
+                         "chains always run vectorised")
 # NSS
 parser.add_argument("--n-live", type=int, default=None)
 parser.add_argument("--num-mcmc-steps", type=int, default=None)
@@ -142,15 +143,11 @@ parser.add_argument("--f-grid", type=float, default=1.0,
                          "keys and per-galaxy overrides.")
 parser.add_argument("--map-only", action="store_true",
                     help="Run DE optimizer only, skip sampling")
-parser.add_argument("--D-c-prior", type=str, default=None,
-                    choices=["uniform", "volume"],
-                    help="Override D_c prior (default: from config)")
 parser.add_argument("--log2-N", type=int, default=None,
                     help="Override Sobol log2_N for DE/Sobol optimizer")
 parser.add_argument("--init-method", type=str, default=None,
-                    choices=["config", "sobol_adam", "median"],
-                    help="NUTS init: config (globals from config, "
-                         "r_ang from prior), sobol_adam, median")
+                    choices=["config", "sobol_adam", "median", "sample"],
+                    help="NUTS init method (default: config)")
 parser.add_argument("--no-ecc", action="store_true",
                     help="Disable eccentricity model (override config)")
 parser.add_argument("--no-quadratic-warp", action="store_true",
@@ -163,8 +160,6 @@ seed = args.seed or inf_cfg.get("seed", 42)
 
 # Build descriptive output tag
 _mcfg = master_cfg["model"]
-if args.D_c_prior is not None:
-    _mcfg["D_c_prior"] = args.D_c_prior
 if args.log2_N is not None:
     master_cfg.setdefault("optimise", {})["log2_N"] = args.log2_N
 _tags = []
@@ -173,9 +168,11 @@ _tags = []
 _dc_prior = _mcfg.get("D_c_prior", "uniform")
 _tags.append("Dvol" if _dc_prior == "volume" else "Dflat")
 
-# Mode tag (omit for default mode2).
-if args.mode is not None and args.mode != "mode2":
-    _tags.append(args.mode)
+# Mode tag: always included so filenames are unambiguous.
+# Resolve in priority order: CLI → per-galaxy config → global config.
+_gal_mode = _mcfg.get("galaxies", {}).get(args.galaxy, {}).get("mode", None)
+_mode_tag = args.mode or _gal_mode or _mcfg.get("mode", "mode2")
+_tags.append(_mode_tag)
 
 # Grid factor
 if args.grid_factor != 1.0:
@@ -234,10 +231,10 @@ dense_mass_blocks = inf_cfg.get("dense_mass_blocks", [
 
 config = {
     "inference": {
-        "num_warmup": args.num_warmup or inf_cfg.get("num_warmup", 1000),
-        "num_samples": args.num_samples or inf_cfg.get("num_samples", 1000),
-        "num_chains": inf_cfg.get("num_chains", 1),
-        "chain_method": inf_cfg.get("chain_method", "sequential"),
+        "num_warmup": inf_cfg.get("num_warmup", 2000),
+        "num_samples": inf_cfg.get("num_samples", 2000),
+        "num_chains": args.num_chains or inf_cfg.get("num_chains", 1),
+        "chain_method": "vectorized",
         "seed": seed,
         "dense_mass_blocks": dense_mass_blocks,
         "init_maxiter": inf_cfg.get("init_maxiter", 0),
@@ -328,8 +325,9 @@ if args.map_only:
     sys.exit(0)
 
 if sampler == "nuts":
-    num_warmup = args.num_warmup or inf_cfg.get("num_warmup", 1000)
-    num_samples = args.num_samples or inf_cfg.get("num_samples", 1000)
+    num_warmup = inf_cfg.get("num_warmup", 2000)
+    num_samples = inf_cfg.get("num_samples", 2000)
+    num_chains = args.num_chains or inf_cfg.get("num_chains", 1)
 
     if is_joint:
         fsection(f"Running NUTS (joint, {n_spots} spots)")
@@ -351,9 +349,10 @@ if sampler == "nuts":
         init_method = args.init_method or inf_cfg.get("init_method", "config")
 
         _init_desc = {
+            "config":     "globals from config, r_ang data-driven",
             "sobol_adam": "Sobol+Adam MAP",
-            "config": "config globals + r_ang from prior",
-            "median": "numpyro median",
+            "median":     "numpyro median over prior samples",
+            "sample":     "numpyro sample from prior",
         }
         fprint(f"Initialisation: {init_method} "
                f"({_init_desc.get(init_method, '?')})")
@@ -389,23 +388,66 @@ if sampler == "nuts":
             # Mode 0 also samples phi_u (aux ∈ [0,1] mapped to phi).
             if model.mode in ("mode0", "mode1") and "r_ang" not in init_params:
                 rng = np.random.default_rng(seed)
-                if model._r_ang_init_dist is not None:
-                    from scipy.stats import truncnorm
-                    d = model._r_ang_init_dist
-                    a = (d["low"] - d["loc"]) / d["scale"]
-                    b = (d["high"] - d["loc"]) / d["scale"]
-                    _r = truncnorm.rvs(
-                        a, b, loc=d["loc"], scale=d["scale"],
-                        size=model.n_spots, random_state=rng)
-                    fprint(f"  r_ang: TruncatedNormal init, "
-                           f"[{_r.min():.3f}, {_r.max():.3f}] mas")
+                # Data-driven init: HV from projected sky radii,
+                # systemic from Keplerian inversion of accelerations.
+                # Sampling prior remains Uniform(r_lo, r_hi) — untouched.
+                from scipy.stats import truncnorm as _truncnorm
+                r_lo = float(model._r_ang_lo)
+                r_hi = float(model._r_ang_hi)
+
+                D_c = float(init_params["D_c"])
+                eta = float(init_params["eta"])
+                x0 = float(init_params["x0"])   # μas
+                y0 = float(init_params["y0"])   # μas
+                i0_rad = np.deg2rad(float(init_params["i0"]))
+                sin_i = abs(np.sin(i0_rad))
+                z_gal = model.v_sys_obs / 299792.458
+                D_A = D_c / (1.0 + z_gal)
+                M_BH = 10.0 ** (eta + np.log10(D_A) - 7.0)  # 1e7 Msun
+
+                is_hv = np.asarray(model.is_highvel, dtype=bool)
+                has_accel = np.asarray(model._all_has_accel, dtype=bool)
+
+                # HV: group mean/sd from projected sky radii.
+                # Both _all_x/_all_y and x0/y0 are in μas; divide by 1e3 → mas.
+                x_hv = np.asarray(model._all_x)[is_hv]  # μas
+                y_hv = np.asarray(model._all_y)[is_hv]  # μas
+                r_hv = np.clip(np.sqrt((x_hv - x0)**2 + (y_hv - y0)**2) / 1e3,
+                               r_lo * 1.01, r_hi * 0.99)
+                mu_hv = float(np.mean(r_hv))
+                sd_hv = max(float(np.std(r_hv)), 0.1 * mu_hv)
+
+                # Systemic: group mean/sd from spots with accel measurements.
+                sys_accel = (~is_hv) & has_accel
+                if sys_accel.any():
+                    a_sys = np.abs(np.asarray(model._all_a)[sys_accel])
+                    r_sys = np.sqrt(
+                        _C_a * M_BH * sin_i / (D_A**2 * (a_sys + 1e-30)))
+                    r_sys = np.clip(r_sys, r_lo * 1.01, r_hi * 0.99)
+                    mu_sys = float(np.mean(r_sys))
+                    sd_sys = max(float(np.std(r_sys)), 0.1 * mu_sys)
                 else:
-                    _r = rng.uniform(
-                        float(model._r_ang_lo),
-                        float(model._r_ang_hi),
-                        model.n_spots)
-                    fprint(f"  r_ang: uniform random in r_ang, "
-                           f"[{_r.min():.3f}, {_r.max():.3f}] mas")
+                    mu_sys, sd_sys = mu_hv, sd_hv
+                    fprint("  r_ang: no systemic accel, "
+                           "using HV distribution for systemic spots")
+
+                _r = np.empty(model.n_spots)
+                for mask, mu, sd, label in [
+                    (is_hv, mu_hv, sd_hv, "HV"),
+                    (~is_hv, mu_sys, sd_sys, "sys"),
+                ]:
+                    n = int(mask.sum())
+                    if n == 0:
+                        continue
+                    a = (r_lo - mu) / sd
+                    b = (r_hi - mu) / sd
+                    _r[mask] = _truncnorm.rvs(
+                        a, b, loc=mu, scale=sd,
+                        size=n, random_state=rng)
+                    fprint(f"  r_ang {label}: n={n}, "
+                           f"mu={mu:.3f}, sd={sd:.3f} mas")
+                fprint(f"  r_ang: data-driven init "
+                       f"[{_r.min():.3f}, {_r.max():.3f}] mas")
                 init_params["r_ang"] = jnp.asarray(_r)
 
             # Mode 0: also init phi_u (uniform aux mapped to spot-type
@@ -422,6 +464,9 @@ if sampler == "nuts":
                     fprint(f"  {k:20s} = {float(v):12.4f}")
                 else:
                     fprint(f"  {k:20s} = [{len(v)} values]")
+        elif init_method == "sample":
+            init_strategy = init_to_sample()
+            fprint("  init_to_sample: each chain draws from the prior")
         else:
             init_strategy = init_to_median(num_samples=20)
     # Dense mass matrix: joint uses full dense; single-galaxy uses
@@ -465,7 +510,8 @@ if sampler == "nuts":
                        init_strategy=init_strategy)
 
     mcmc = MCMC(nuts_kernel, num_warmup=num_warmup, num_samples=num_samples,
-                num_chains=1, progress_bar=True)
+                num_chains=num_chains, chain_method="vectorized",
+                progress_bar=True)
     mcmc.run(random.PRNGKey(seed))
     dt = time.time() - t0
 

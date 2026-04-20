@@ -192,3 +192,57 @@ reduces kernel-launch count and backward-pass memory traffic).
 **Numerical guarantee:** all six production galaxies (5 MCP + NGC4258)
 agree with the pre-refactor baseline log-L to |Δ| ≤ 1e-12 nats. See
 `scripts/megamaser/test_gpu_refactor.py` for the regression harness.
+
+## 2026-04-20 Numerical stability refactor
+
+### Unphysical-proposal sqrt guards
+
+Four `jnp.maximum(..., 1e-6)` guards were added to clamp denominators
+before taking square roots in the relativistic factors and the eccentric
+orbit denominator:
+
+- `gamma = 1/sqrt(max(1 - beta^2, 1e-6))` in `_precompute_r_quantities`
+- `one_plus_z_g = 1/sqrt(max(1 - C_g*M_BH/rD, 1e-6))` (gravitational redshift)
+- `denom = max(1 + ecc*cos_d, 1e-6)` in the eccentric branches of
+  `_phi_eval` and `_phi_eval_shared_r`
+- `gamma_e = 1/sqrt(max(1 - beta_e2, 1e-6))` in the eccentric branch
+
+Without these guards, an unphysical proposal (e.g. nearly relativistic
+orbital speed, or eccentricity approaching 1 with periapsis facing the
+observer) produces `sqrt(0) = 0 → 1/0 = +inf → V = +inf → dv = -inf →
+chi2 = +inf → log_f = -inf`. JAX's `logsumexp` treats an all-(-inf) input
+as `-inf` (not NaN), which poisons the NUTS gradient. The clamp threshold
+1e-6 is well below the prior support for any physical disk configuration,
+so it has no effect on posterior inference.
+
+### lnorm / chi2 split in `_phi_eval`
+
+Previously `_phi_eval` returned `lnorm - 0.5*chi2` (the full
+log-integrand). It now returns only `-0.5*chi2`, and `_eval_phi_marginal`
+adds `lnorm` back *after* the `logsumexp`:
+
+```python
+ps_b = lnorm_b + logsumexp(neg_half_chi2 + log_w, ...)
+```
+
+This uses the identity `logsumexp(c + a_i) = c + logsumexp(a_i)` for a
+constant `c` (here `lnorm` depends only on per-spot variances and is
+constant over the φ grid). The formulation is algebraically identical to
+the previous one.
+
+The precision benefit matters in float32 when chi2 is large. In the old
+formulation the values entering `logsumexp` had magnitude ~lnorm ~
+-chi2/2; for chi2 ~ 10^4 this is ~5000, and float32 machine epsilon gives
+an absolute error of ε×5000 ≈ 6×10⁻⁴ nats per spot. In the new
+formulation the values entering `logsumexp` are `-chi2/2 + log_w`, which
+are bounded from above by `log_w_max ≈ -7` regardless of chi2. The
+max-subtraction in logsumexp therefore operates on values near 0, giving
+float32 absolute errors of ε×7 ≈ 8×10⁻⁷ nats — roughly three orders of
+magnitude better for large chi2.
+
+`_phi_integrand` (the backward-compat wrapper) still assembles the full
+`log_f = lnorm + neg_half_chi2`, so Mode 0 sampling and the brute-force
+convergence reference are unaffected.
+
+These changes are purely numerical: the log-likelihood is identical to
+prior results to within float32 rounding.

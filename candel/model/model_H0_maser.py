@@ -44,6 +44,7 @@ acceleration A ∝ cos(phi)·sin(i).
 All operations fully batched over spots — no vmap or lax.scan.
 All angles in RADIANS inside physics functions.
 """
+import jax
 import jax.numpy as jnp
 import numpy as _np
 from jax.scipy.special import logsumexp
@@ -67,7 +68,6 @@ C_v = 2978.8656    # km/s: sqrt(G * 1e7 M_sun / (1 mas * 1 Mpc))
 C_a = 1.872e3      # km/s/yr: 1e7 M_sun * G * yr / (1 mas * 1 Mpc)^2
 C_g = 1.974e-4     # dimensionless: 2*G * 1e7 M_sun / (c^2 * 1 mas * 1 Mpc)
 LOG_2PI = 1.8378770664093453  # jnp.log(2 * pi), precomputed
-_LOG_UNDERFLOW_FLOOR = -1e4   # clamp per-spot logL; exp(-1e4)~0 but not -inf
 
 # Conversion: 1 mas at 1 Mpc = 4.848e-3 pc
 PC_PER_MAS_MPC = 4.848e-3
@@ -128,8 +128,8 @@ def predict_velocity_los(r_ang, phi, D, M_BH, v_sys, i, ecc=0.0, omega=0.0):
     gamma = 1.0 / jnp.sqrt(1.0 - beta_e2)
 
     one_plus_z_D = gamma * (1.0 + v_z / SPEED_OF_LIGHT)
-    # Floor prevents sqrt(negative) for sub-Schwarzschild radii; the resulting
-    # large velocity residual is caught by _LOG_UNDERFLOW_FLOOR in the logL.
+    # Floor prevents 1/sqrt(0)=inf for sub-Schwarzschild radii; the resulting
+    # large velocity residual drives chi2 → ∞, correctly down-weighting the spot.
     one_plus_z_g = 1.0 / jnp.sqrt(jnp.maximum(1.0 - C_g * M_BH / (r_ang * D), 1e-6))
     z_0 = v_sys / SPEED_OF_LIGHT
 
@@ -147,8 +147,11 @@ def _precompute_r_quantities(r_ang, D, M_BH, sin_i, cos_i, sin_O, cos_O):
     rD = r_ang * D
     v_kep = C_v * jnp.sqrt(M_BH / rD)
     beta = v_kep / SPEED_OF_LIGHT
-    gamma = 1.0 / jnp.sqrt(1.0 - beta * beta)
-    # Same floor as in predict_velocity_los; large residual caught downstream.
+    # Unphysical-proposal guards: clamp sqrt arguments to prevent 1/sqrt(0)=inf
+    # cascading to chi2=inf and log_f=-inf in the phi marginal.  The physical
+    # regimes where these clip (sub-Schwarzschild r, v_kep → c) are well below
+    # the prior lower bound; NUTS never stays there.
+    gamma = 1.0 / jnp.sqrt(jnp.maximum(1.0 - beta * beta, 1e-6))
     one_plus_z_g = 1.0 / jnp.sqrt(jnp.maximum(1.0 - C_g * M_BH / rD, 1e-6))
     a_mag = v_kep * v_kep / rD * (C_a / (C_v * C_v))
 
@@ -408,7 +411,7 @@ class MaserDiskModel(ModelBase):
         self._r_ang_ref_i = float(gal_cfg.get("r_ang_ref_i", r_base))
         self._r_ang_ref_Omega = float(gal_cfg.get("r_ang_ref_Omega", r_base))
         self._r_ang_ref_periapsis = float(
-            gal_cfg.get("r_ang_ref_periapsis", r_base))
+            gal_cfg.get("r_ang_ref_periapsis", r_base / 2.0))
         self._r_ang_ref = r_base
 
         overrides = [k for k in ("r_ang_ref_i", "r_ang_ref_Omega",
@@ -619,17 +622,6 @@ class MaserDiskModel(ModelBase):
         self._r_ang_lo = self._R_phys_lo / (D_A_est * PC_PER_MAS_MPC)
         self._r_ang_hi = self._R_phys_hi / (D_A_est * PC_PER_MAS_MPC)
 
-        # Mode 1 per-spot r_ang init distribution.
-        r_prior_cfg = gal_cfg.get("r_ang_prior", None)
-        if r_prior_cfg is not None:
-            self._r_ang_init_dist = {
-                "loc": float(r_prior_cfg["loc"]),
-                "scale": float(r_prior_cfg["scale"]),
-                "low": float(r_prior_cfg["low"]),
-                "high": float(r_prior_cfg["high"]),
-            }
-        else:
-            self._r_ang_init_dist = None
 
     # ---- summary ----
 
@@ -660,10 +652,6 @@ class MaserDiskModel(ModelBase):
             fprint(
                 f"r_ang prior bounds: "
                 f"[{self._r_ang_lo:.3f}, {self._r_ang_hi:.3f}] mas")
-            if self._r_ang_init_dist is not None:
-                d = self._r_ang_init_dist
-                fprint(f"r_ang init: TruncNormal({d['loc']}, {d['scale']}, "
-                       f"[{d['low']}, {d['high']}])")
 
     # ---- r estimation (per-spot physics-based centre + scale) ----
 
@@ -741,22 +729,29 @@ class MaserDiskModel(ModelBase):
             w1 = trapz_log_weights(r1)
             return r1, w1
 
+        # Grid positions are a numerical quadrature tool, not part of the
+        # model — stop_gradient prevents NaN gradients from flowing back
+        # through the adaptive grid construction (r_acc path overflows in
+        # float32 for spots with a=0).  Integrand gradients are unaffected.
+        def _sg(r, lw):
+            return jax.lax.stop_gradient(r), jax.lax.stop_gradient(lw)
+
         groups = []
         # Systemic with accel → sinh centred on r_acc (per-spot).
         if self._n_sys_cons > 0:
-            r, lw = _sinh_grid(self._idx_sys_cons, self._n_r_local)
+            r, lw = _sg(*_sinh_grid(self._idx_sys_cons, self._n_r_local))
             groups.append(("sys", self._idx_sys_cons, r, lw, False))
         # Systemic without accel → log-uniform brute (shared r).
         if self._n_sys_uncons > 0:
-            r1, w1 = _loguniform_grid_shared(self._n_r_brute)
+            r1, w1 = _sg(*_loguniform_grid_shared(self._n_r_brute))
             groups.append(("sys", self._idx_sys_uncons, r1, w1, True))
         # Red HV → sinh centred on r_vel (per-spot).
         if self._n_red > 0:
-            r, lw = _sinh_grid(self._idx_red, self._n_r_local)
+            r, lw = _sg(*_sinh_grid(self._idx_red, self._n_r_local))
             groups.append(("red", self._idx_red, r, lw, False))
         # Blue HV → sinh centred on r_vel (per-spot).
         if self._n_blue > 0:
-            r, lw = _sinh_grid(self._idx_blue, self._n_r_local)
+            r, lw = _sg(*_sinh_grid(self._idx_blue, self._n_r_local))
             groups.append(("blue", self._idx_blue, r, lw, False))
         return groups
 
@@ -869,11 +864,13 @@ class MaserDiskModel(ModelBase):
             cw = ecc_pre["cw"][rpad]
             beta_c2 = ecc_pre["beta_c2"][rpad]
             cos_d = cos_phi * cw + sin_phi * sw
-            ecc_fac = (sin_phi + ecc * sw) / jnp.sqrt(1.0 + ecc * cos_d)
+            # Same guard class: ecc→1 sends denom→0 at anti-periapsis,
+            # and beta_e2 can exceed 1 if ecc is sampled out of bounds.
+            denom = jnp.maximum(1.0 + ecc * cos_d, 1e-6)
+            ecc_fac = (sin_phi + ecc * sw) / jnp.sqrt(denom)
             v_z = v_kep[rpad] * ecc_fac * sin_i[rpad]
-            beta_e2 = (beta_c2 * (1.0 + ecc ** 2 + 2.0 * ecc * cos_d)
-                       / (1.0 + ecc * cos_d))
-            gamma_e = 1.0 / jnp.sqrt(1.0 - beta_e2)
+            beta_e2 = (beta_c2 * (1.0 + ecc ** 2 + 2.0 * ecc * cos_d) / denom)
+            gamma_e = 1.0 / jnp.sqrt(jnp.maximum(1.0 - beta_e2, 1e-6))
             one_plus_z_D = gamma_e * (1.0 + v_z / SPEED_OF_LIGHT)
         V = SPEED_OF_LIGHT * (
             one_plus_z_D * r_pre["z_g"][rpad]
@@ -890,7 +887,7 @@ class MaserDiskModel(ModelBase):
             chi2 = chi2 + (da * da / r_pre["var_a"][dpad]
                            * r_pre["has_a"][dpad])
 
-        return (r_pre["lnorm"] + r_pre["lnorm_a"])[dpad] - 0.5 * chi2
+        return -0.5 * chi2
 
     def _phi_eval_shared_r(self, r_pre, sin_phi, cos_phi):
         """Shared-r variant of _phi_eval (sys-uncons).
@@ -923,11 +920,13 @@ class MaserDiskModel(ModelBase):
             cw = ecc_pre["cw"][:, None]
             beta_c2 = ecc_pre["beta_c2"][:, None]
             cos_d = cos_phi * cw + sin_phi * sw
-            ecc_fac = (sin_phi + ecc * sw) / jnp.sqrt(1.0 + ecc * cos_d)
+            # Same guard class: ecc→1 sends denom→0 at anti-periapsis,
+            # and beta_e2 can exceed 1 if ecc is sampled out of bounds.
+            denom = jnp.maximum(1.0 + ecc * cos_d, 1e-6)
+            ecc_fac = (sin_phi + ecc * sw) / jnp.sqrt(denom)
             v_z = v_kep[:, None] * ecc_fac * sin_i[:, None]
-            beta_e2 = (beta_c2 * (1.0 + ecc ** 2 + 2.0 * ecc * cos_d)
-                       / (1.0 + ecc * cos_d))
-            gamma_e = 1.0 / jnp.sqrt(1.0 - beta_e2)
+            beta_e2 = (beta_c2 * (1.0 + ecc ** 2 + 2.0 * ecc * cos_d) / denom)
+            gamma_e = 1.0 / jnp.sqrt(jnp.maximum(1.0 - beta_e2, 1e-6))
             one_plus_z_D = gamma_e * (1.0 + v_z / SPEED_OF_LIGHT)
         V = SPEED_OF_LIGHT * (
             one_plus_z_D * r_pre["z_g"][:, None]
@@ -944,7 +943,7 @@ class MaserDiskModel(ModelBase):
             da = r_pre["all_a"][:, None, None] - A[None]
             chi2 = chi2 + (da * da / r_pre["var_a"][:, None, None]
                            * r_pre["has_a"][:, None, None])
-        return (r_pre["lnorm"] + r_pre["lnorm_a"])[:, None, None] - 0.5 * chi2
+        return -0.5 * chi2
 
     def _phi_integrand(self, r_ang, sin_phi, cos_phi, idx,
                        x0, y0, D_A, M_BH, v_sys,
@@ -959,6 +958,10 @@ class MaserDiskModel(ModelBase):
         Production Mode 1/2 paths call _r_precompute and _phi_eval
         directly; this wrapper is kept for bruteforce_ll_mode1 and
         Mode 0 sampling.
+
+        r_ang must be 1-D, shape (N,).  lnorm from _r_precompute has
+        shape (N,), and rpad = (:, None) appends the phi axis correctly.
+        Mode 2 callers with 2-D r_ang use _eval_phi_marginal directly.
         """
         r_pre = self._r_precompute(
             r_ang, idx, x0, y0, D_A, M_BH, v_sys,
@@ -968,7 +971,9 @@ class MaserDiskModel(ModelBase):
             var_v_sys, var_v_hv, sigma_a_floor2,
             d2i_dr2=d2i_dr2, d2Omega_dr2=d2Omega_dr2,
             ecc=ecc, periapsis0=periapsis0, dperiapsis_dr=dperiapsis_dr)
-        return self._phi_eval(r_pre, sin_phi, cos_phi)
+        neg_half_chi2 = self._phi_eval(r_pre, sin_phi, cos_phi)
+        rpad = (slice(None),) * r_ang.ndim + (None,)
+        return (r_pre["lnorm"] + r_pre["lnorm_a"])[rpad] + neg_half_chi2
 
     # ---- unified φ [+ r] marginal ----
 
@@ -1030,27 +1035,33 @@ class MaserDiskModel(ModelBase):
                     r_pre = self._r_precompute(
                         r_b, b_idx, *phys_args, **phys_kw,
                         has_any_accel=has_any_accel)
-                    log_f = self._phi_eval_shared_r(
+                    # _phi_eval_shared_r returns -0.5*chi2; lnorm added after
+                    # logsumexp so float32 max-subtraction operates on chi2
+                    # differences only (bounded near 0), not on lnorm+chi2.
+                    neg_half_chi2 = self._phi_eval_shared_r(
                         r_pre, pc["sin_phi"], pc["cos_phi"])
                     w2d = (lwr_b[None, :, None]
                            + pc["log_w_phi"][None, None, :])
-                    ps_b = logsumexp(log_f + w2d, axis=(-2, -1))
-                    ps_b = jnp.maximum(ps_b, _LOG_UNDERFLOW_FLOOR)
+                    lnorm_b = r_pre["lnorm"] + r_pre["lnorm_a"]
+                    ps_b = lnorm_b + logsumexp(neg_half_chi2 + w2d, axis=(-2, -1))
                 else:
                     r_b = r_ang[sl]
                     lwr_b = None if log_w_r is None else log_w_r[sl]
                     r_pre = self._r_precompute(
                         r_b, b_idx, *phys_args, **phys_kw,
                         has_any_accel=has_any_accel)
-                    log_f = self._phi_eval(
+                    # Same separation: _phi_eval returns -0.5*chi2 only.
+                    neg_half_chi2 = self._phi_eval(
                         r_pre, pc["sin_phi"], pc["cos_phi"])
+                    lnorm_b = r_pre["lnorm"] + r_pre["lnorm_a"]
                     if lwr_b is None:
-                        ps_b = logsumexp(log_f + pc["log_w_phi"], axis=-1)
+                        ps_b = lnorm_b + logsumexp(
+                            neg_half_chi2 + pc["log_w_phi"], axis=-1)
                     else:
                         w2d = (lwr_b[:, :, None]
                                + pc["log_w_phi"][None, None, :])
-                        ps_b = logsumexp(log_f + w2d, axis=(-2, -1))
-                    ps_b = jnp.maximum(ps_b, _LOG_UNDERFLOW_FLOOR)
+                        ps_b = lnorm_b + logsumexp(
+                            neg_half_chi2 + w2d, axis=(-2, -1))
                 ps_parts.append(ps_b)
 
             ps = (ps_parts[0] if len(ps_parts) == 1
