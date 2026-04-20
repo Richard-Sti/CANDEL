@@ -8,14 +8,19 @@ QUEUE=""
 F_GRID=""
 NUM_WARMUP=2000
 NUM_SAMPLES=2000
+GALAXY=""
+
+ALL_GALS="CGCG074-064 NGC5765b NGC6264 NGC6323 UGC3789"
 
 usage() {
-    echo "Usage: bash $0 --sampler SAMPLER [options]"
+    echo "Usage: $0 --sampler SAMPLER [options]"
     echo ""
     echo "Required:"
     echo "  --sampler nss|nuts     Inference method"
     echo ""
     echo "Options:"
+    echo "  --galaxy GAL           Submit a single galaxy (nss only; default: all five)"
+    echo "                         Choices: $ALL_GALS"
     echo "  --mode MODE            Sampling mode: mode0, mode1, mode2"
     echo "                         NSS only supports mode2 (default for NSS)."
     echo "                         NUTS defaults to config value."
@@ -34,6 +39,7 @@ while [[ $# -gt 0 ]]; do
         --f-grid) F_GRID="$2"; shift 2 ;;
         --num-warmup) NUM_WARMUP="$2"; shift 2 ;;
         --num-samples) NUM_SAMPLES="$2"; shift 2 ;;
+        --galaxy) GALAXY="$2"; shift 2 ;;
         -h|--help) usage; exit 0 ;;
         *) echo "Unknown option: $1"; exit 1 ;;
     esac
@@ -52,6 +58,14 @@ if [[ "$SAMPLER" == "nss" && ("$NUM_WARMUP" != "2000" || "$NUM_SAMPLES" != "2000
     echo "Warning: --num-warmup and --num-samples are ignored for NSS."
 fi
 
+if [[ -n "$GALAXY" && "$SAMPLER" != "nss" ]]; then
+    echo "Error: --galaxy is only supported for NSS (NUTS runs joint)."; exit 1
+fi
+
+if [[ -n "$GALAXY" ]] && ! echo "$ALL_GALS" | grep -qw "$GALAXY"; then
+    echo "Error: unknown galaxy '$GALAXY'. Choices: $ALL_GALS"; exit 1
+fi
+
 ROOT="/mnt/users/rstiskalek/CANDEL"
 PYTHON="$ROOT/venv_gpu_candel/bin/python"
 RUNNER="$ROOT/scripts/megamaser/run_maser_disk.py"
@@ -62,7 +76,8 @@ EXTRA_ARGS=""
 
 if [[ "$SAMPLER" == "nss" ]]; then
     [[ -z "$QUEUE" ]] && QUEUE="gpulong"
-    for GAL in CGCG074-064 NGC5765b NGC6264 NGC6323 UGC3789; do
+    GALS="${GALAXY:-$ALL_GALS}"
+    for GAL in $GALS; do
         echo "Submitting $GAL (nss, $QUEUE)..."
         addqueue -q "$QUEUE" -s -m 16 --gpus 1 \
             $PYTHON -u $RUNNER $GAL \
