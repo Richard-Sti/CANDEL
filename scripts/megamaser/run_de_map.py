@@ -122,21 +122,14 @@ for k, v in sorted(init_params.items()):
     else:
         fprint(f"  {k:20s} = [{len(v)} values]")
 
-# ---- Save to config_maser.toml under [model.galaxies.<galaxy>.init] ----
-cfg_path = os.path.join(os.path.dirname(__file__), "config_maser.toml")
-with open(cfg_path, "rb") as f:
-    cfg_data = tomli.load(f)
-
-init_section = {}
-for k, v in init_params.items():
+# ---- Print init values as TOML snippet (do NOT write back to config) ----
+lines = [f"\n[model.galaxies.{galaxy}.init]"]
+for k, v in sorted(init_params.items()):
     v = np.asarray(v)
     if v.ndim == 0:
-        init_section[k] = round(float(v), 4)
+        lines.append(f"{k} = {round(float(v), 4)}")
     else:
-        init_section[k] = [round(float(x), 4) for x in v]
-cfg_data["model"]["galaxies"][galaxy]["init"] = init_section
-
-with open(cfg_path, "wb") as f:
-    tomli_w.dump(cfg_data, f)
-
-fprint(f"Saved MAP init to {cfg_path} under [model.galaxies.{galaxy}.init]")
+        vals = ", ".join(str(round(float(x), 4)) for x in v)
+        lines.append(f"{k} = [{vals}]")
+fprint("MAP init (copy into config_maser.toml manually if desired):")
+print("\n".join(lines))

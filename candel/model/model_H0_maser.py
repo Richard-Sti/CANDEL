@@ -50,7 +50,8 @@ import numpy as _np
 from jax.scipy.special import logsumexp
 from jax.scipy.stats import norm as jax_norm
 from numpyro import deterministic, factor, handlers, plate, sample
-from numpyro.distributions import Uniform, VonMises
+from numpyro.distributions import ImproperUniform, Uniform, VonMises
+from numpyro.distributions import constraints as dist_constraints
 
 from ..util import SPEED_OF_LIGHT, fprint, fsection, get_nested
 from .base_model import ModelBase
@@ -1172,7 +1173,7 @@ class MaserDiskModel(ModelBase):
             with plate("spots", self.n_spots):
                 r_spots = sample(
                     "r_ang",
-                    Uniform(self._r_ang_lo, self._r_ang_hi))
+                    ImproperUniform(dist_constraints.positive, (), ()))
                 phi_u = sample("phi_u", Uniform(0.0, 1.0))
             phi_spots = self._phi_from_u(phi_u)
             idx_all = jnp.arange(self.n_spots)
@@ -1192,7 +1193,7 @@ class MaserDiskModel(ModelBase):
             with plate("spots", self.n_spots):
                 r_spots = sample(
                     "r_ang",
-                    Uniform(self._r_ang_lo, self._r_ang_hi))
+                    ImproperUniform(dist_constraints.positive, (), ()))
             spot_groups = []
             if self._n_sys > 0:
                 spot_groups.append(
@@ -1290,6 +1291,53 @@ class MaserDiskModel(ModelBase):
 # -----------------------------------------------------------------------
 # Helpers
 # -----------------------------------------------------------------------
+
+
+def remap_warp_to_r0(samples, r_ang_ref_i, r_ang_ref_Omega):
+    """Re-express warp parameters as if the pivot were r = 0.
+
+    Parameters
+    ----------
+    samples : dict
+        Posterior samples dict with keys ``i0``, ``di_dr``, ``Omega0``,
+        ``dOmega_dr`` (all in degrees / degrees per mas).  Optionally also
+        ``d2i_dr2`` and ``d2Omega_dr2`` (degrees per mas^2) for quadratic
+        warps.
+    r_ang_ref_i, r_ang_ref_Omega : float
+        Pivot radii in mas used during sampling (``model._r_ang_ref_i`` and
+        ``model._r_ang_ref_Omega``).
+
+    Returns
+    -------
+    dict with keys ``i0_r0``, ``Omega0_r0``, ``di_dr_r0``, ``dOmega_dr_r0``
+    (same units as input).
+    """
+    i0        = _np.asarray(samples["i0"])
+    di_dr     = _np.asarray(samples["di_dr"])
+    Om0       = _np.asarray(samples["Omega0"])
+    dOm_dr    = _np.asarray(samples["dOmega_dr"])
+
+    d2i       = _np.asarray(samples["d2i_dr2"])     if "d2i_dr2"     in samples else None
+    d2Om      = _np.asarray(samples["d2Omega_dr2"]) if "d2Omega_dr2" in samples else None
+
+    ri, rO = float(r_ang_ref_i), float(r_ang_ref_Omega)
+
+    if d2i is not None:
+        i0_r0    = i0  - di_dr  * ri + d2i  * ri**2
+        di_dr_r0 = di_dr  - 2.0 * d2i  * ri
+    else:
+        i0_r0    = i0  - di_dr  * ri
+        di_dr_r0 = di_dr
+
+    if d2Om is not None:
+        Om0_r0    = Om0 - dOm_dr * rO + d2Om * rO**2
+        dOm_dr_r0 = dOm_dr - 2.0 * d2Om * rO
+    else:
+        Om0_r0    = Om0 - dOm_dr * rO
+        dOm_dr_r0 = dOm_dr
+
+    return dict(i0_r0=i0_r0, Omega0_r0=Om0_r0,
+                di_dr_r0=di_dr_r0, dOmega_dr_r0=dOm_dr_r0)
 
 
 def _trapz_log_w_per_spot(r):

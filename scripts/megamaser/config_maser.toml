@@ -377,6 +377,7 @@ H0_for_D_estimate = 70.0
 D_sobol_sigma_v = 500.0
 D_sobol_n_sigma = 5
 max_generations = 5000
+eval_chunk = 25
 
 [joint.priors.sigma_pec]
 dist = "maxwell"

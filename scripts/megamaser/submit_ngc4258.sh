@@ -9,7 +9,6 @@
 #   bash scripts/megamaser/submit_ngc4258.sh                   # defaults
 #   bash scripts/megamaser/submit_ngc4258.sh -q cmbgpu         # different queue
 #   bash scripts/megamaser/submit_ngc4258.sh --warmup 5000     # more warmup
-#   bash scripts/megamaser/submit_ngc4258.sh --init sobol_adam  # Sobol+Adam MAP init
 #   bash scripts/megamaser/submit_ngc4258.sh --no-ecc             # disable eccentricity model
 #   bash scripts/megamaser/submit_ngc4258.sh --no-quadratic-warp  # disable quadratic warp
 #   bash scripts/megamaser/submit_ngc4258.sh --no-ecc --no-quadratic-warp  # circular + linear warp
@@ -34,9 +33,9 @@ while [[ $# -gt 0 ]]; do
             echo "  --warmup N            Number of warmup iterations (default: 2000)"
             echo "  --samples N           Number of samples (default: 2000)"
             echo "  --init METHOD         Initialization method:"
-            echo "                          config       config globals + r_ang from TruncatedNormal prior (default)"
-            echo "                          sobol_adam   DE/Sobol MAP"
-            echo "                          median       numpyro median"
+            echo "                          config   globals from config, r_ang data-driven (default)"
+            echo "                          median   median of N prior draws, r_ang data-driven"
+            echo "                          sample   globals from prior, r_ang data-driven"
             echo "  --mode MODE           Sampling mode (default: mode1)"
             echo "  --no-ecc              Disable eccentricity model"
             echo "  --no-quadratic-warp   Disable quadratic warp (use linear only)"

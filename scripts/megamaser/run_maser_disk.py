@@ -33,6 +33,11 @@ if needed:
     os.environ["LD_LIBRARY_PATH"] = ":".join(needed) + (f":{ld}" if ld else "")
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
+# Disable JAX's 75% GPU pre-allocation so memory is allocated on demand.
+# Without this, the BFC allocator exhausts the pre-allocated pool on
+# galaxies with many spots (e.g. UGC3789: 156 spots).
+os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
+
 import argparse
 import tempfile
 import time
@@ -57,11 +62,13 @@ import tomli_w
 from h5py import File as H5File
 from jax import random
 from numpyro.infer import MCMC, NUTS
-from numpyro.infer.initialization import init_to_median, init_to_sample, init_to_value
+from numpyro.infer.initialization import init_to_value
 
 from candel.inference.inference import print_clean_summary, _setup_dense_mass
 from candel.inference.nested import print_nested_summary, run_nss
-from candel.model.model_H0_maser import C_a as _C_a, JointMaserModel, MaserDiskModel
+from candel.model.model_H0_maser import (C_a as _C_a, JointMaserModel,
+                                          MaserDiskModel, PC_PER_MAS_MPC,
+                                          remap_warp_to_r0)
 from candel.pvdata.megamaser_data import load_megamaser_spots
 from candel.util import fprint, fsection, get_nested, plot_corner
 
@@ -141,13 +148,12 @@ parser.add_argument("--f-grid", type=float, default=1.0,
                          "factor; results are rounded to the nearest "
                          "odd int (min 3). Applies to global [model] "
                          "keys and per-galaxy overrides.")
-parser.add_argument("--map-only", action="store_true",
-                    help="Run DE optimizer only, skip sampling")
-parser.add_argument("--log2-N", type=int, default=None,
-                    help="Override Sobol log2_N for DE/Sobol optimizer")
 parser.add_argument("--init-method", type=str, default=None,
-                    choices=["config", "sobol_adam", "median", "sample"],
-                    help="NUTS init method (default: config)")
+                    choices=["config", "median", "sample"],
+                    help="NUTS initialisation method (default: config)  "
+                         "config:  globals from config, r_ang data-driven from sky positions / accelerations  "
+                         "median:  median of N prior draws for globals, r_ang data-driven  "
+                         "sample:  globals sampled from priors, r_ang data-driven")
 parser.add_argument("--no-ecc", action="store_true",
                     help="Disable eccentricity model (override config)")
 parser.add_argument("--no-quadratic-warp", action="store_true",
@@ -160,8 +166,7 @@ seed = args.seed or inf_cfg.get("seed", 42)
 
 # Build descriptive output tag
 _mcfg = master_cfg["model"]
-if args.log2_N is not None:
-    master_cfg.setdefault("optimise", {})["log2_N"] = args.log2_N
+
 _tags = []
 
 # Distance prior
@@ -237,13 +242,10 @@ config = {
         "chain_method": "vectorized",
         "seed": seed,
         "dense_mass_blocks": dense_mass_blocks,
-        "init_maxiter": inf_cfg.get("init_maxiter", 0),
-        "init_method": inf_cfg.get("init_method", "lbfgs"),
         "max_tree_depth": inf_cfg.get("max_tree_depth", 10),
     },
     "model": master_cfg["model"],
     "io": master_cfg["io"],
-    "optimise": master_cfg.get("optimise", {}),
 }
 if args.mode is not None:
     config["model"]["mode"] = args.mode
@@ -312,17 +314,6 @@ if sampler == "nss" and is_joint:
 if not is_joint:
     n_spots = data["n_spots"]
 
-# MAP-only mode: run DE optimizer and exit, regardless of sampler setting.
-if args.map_only:
-    if is_joint:
-        print("ERROR: --map-only is not supported for joint mode.",
-              flush=True)
-        sys.exit(1)
-    from candel.inference.optimise import find_MAP
-    fsection(f"Running DE MAP ({galaxy}, {n_spots} spots)")
-    init_params = find_MAP(model, model_kwargs={}, seed=seed)
-    fprint("MAP-only run (--map-only), done.")
-    sys.exit(0)
 
 if sampler == "nuts":
     num_warmup = inf_cfg.get("num_warmup", 2000)
@@ -341,32 +332,23 @@ if sampler == "nuts":
             init_strategy = init_to_value(values=init_params)
             fprint(f"NUTS init from config ({len(init_params)} params)")
         else:
-            init_strategy = init_to_median(num_samples=100)
-            fprint("NUTS init: median (no config init found)")
+            raise ValueError(
+                "Joint NUTS requires per-galaxy [init] sections in config. "
+                f"None found for: {galaxy_names}")
     else:
         fsection(f"Running NUTS ({galaxy}, {n_spots} spots)")
         init_cfg = gcfg.get("init", {})
         init_method = args.init_method or inf_cfg.get("init_method", "config")
 
         _init_desc = {
-            "config":     "globals from config, r_ang data-driven",
-            "sobol_adam": "Sobol+Adam MAP",
-            "median":     "numpyro median over prior samples",
-            "sample":     "numpyro sample from prior",
+            "config": "globals from config, r_ang data-driven",
+            "median": "median of N prior draws, r_ang data-driven",
+            "sample": "globals from prior, r_ang data-driven",
         }
         fprint(f"Initialisation: {init_method} "
                f"({_init_desc.get(init_method, '?')})")
 
-        if init_method == "sobol_adam":
-            from candel.inference.optimise import find_MAP
-            init_params = find_MAP(model, model_kwargs={}, seed=seed)
-            init_strategy = init_to_value(values=init_params)
-            for k, v in init_params.items():
-                if v.ndim == 0:
-                    fprint(f"  {k:20s} = {float(v):12.4f}")
-                else:
-                    fprint(f"  {k:20s} = [{len(v)} values]")
-        elif init_method == "config":
+        if init_method == "config":
             if not init_cfg:
                 print("ERROR: no [init] section for", galaxy, flush=True)
                 sys.exit(1)
@@ -388,21 +370,21 @@ if sampler == "nuts":
             # Mode 0 also samples phi_u (aux ∈ [0,1] mapped to phi).
             if model.mode in ("mode0", "mode1") and "r_ang" not in init_params:
                 rng = np.random.default_rng(seed)
-                # Data-driven init: HV from projected sky radii,
-                # systemic from Keplerian inversion of accelerations.
-                # Sampling prior remains Uniform(r_lo, r_hi) — untouched.
                 from scipy.stats import truncnorm as _truncnorm
-                r_lo = float(model._r_ang_lo)
-                r_hi = float(model._r_ang_hi)
-
                 D_c = float(init_params["D_c"])
+                H0_ref = float(get_nested(model.config, "model/H0_ref", 73.0))
+                z_cosmo = float(model.distance2redshift(
+                    jnp.atleast_1d(jnp.asarray(D_c)),
+                    h=H0_ref / 100.0).squeeze())
+                D_A = D_c / (1.0 + z_cosmo)
+                r_lo = float(model._R_phys_lo / (D_A * PC_PER_MAS_MPC))
+                r_hi = float(model._R_phys_hi / (D_A * PC_PER_MAS_MPC))
+
                 eta = float(init_params["eta"])
                 x0 = float(init_params["x0"])   # μas
                 y0 = float(init_params["y0"])   # μas
                 i0_rad = np.deg2rad(float(init_params["i0"]))
                 sin_i = abs(np.sin(i0_rad))
-                z_gal = model.v_sys_obs / 299792.458
-                D_A = D_c / (1.0 + z_gal)
                 M_BH = 10.0 ** (eta + np.log10(D_A) - 7.0)  # 1e7 Msun
 
                 is_hv = np.asarray(model.is_highvel, dtype=bool)
@@ -447,15 +429,12 @@ if sampler == "nuts":
                     fprint(f"  r_ang {label}: n={n}, "
                            f"mu={mu:.3f}, sd={sd:.3f} mas")
                 fprint(f"  r_ang: data-driven init "
-                       f"[{_r.min():.3f}, {_r.max():.3f}] mas")
+                       f"[{_r.min():.3f}, {_r.max():.3f}] mas "
+                       f"| D_c={D_c:.1f} Mpc")
                 init_params["r_ang"] = jnp.asarray(_r)
 
-            # Mode 0: also init phi_u (uniform aux mapped to spot-type
-            # phi range). Default 0.5 places each spot at the centre
-            # of its allowed region.
             if model.mode == "mode0" and "phi_u" not in init_params:
                 init_params["phi_u"] = jnp.full(model.n_spots, 0.5)
-                fprint("  phi_u: default 0.5 (centre of allowed phi)")
 
             init_strategy = init_to_value(values=init_params)
             for k, v in sorted(init_params.items()):
@@ -465,10 +444,213 @@ if sampler == "nuts":
                 else:
                     fprint(f"  {k:20s} = [{len(v)} values]")
         elif init_method == "sample":
-            init_strategy = init_to_sample()
-            fprint("  init_to_sample: each chain draws from the prior")
+            # Sample globals from priors, then r_ang conditional on sampled D_c.
+            rng_key = random.PRNGKey(seed)
+            init_params = {}
+            _global_priors = [
+                ("D", "D_c"), ("eta", "eta"), ("x0", "x0"), ("y0", "y0"),
+                ("i0", "i0"), ("Omega0", "Omega0"),
+                ("dOmega_dr", "dOmega_dr"), ("di_dr", "di_dr"),
+                ("sigma_x_floor", "sigma_x_floor"),
+                ("sigma_y_floor", "sigma_y_floor"),
+                ("sigma_v_sys", "sigma_v_sys"), ("sigma_v_hv", "sigma_v_hv"),
+                ("sigma_a_floor", "sigma_a_floor"), ("dv_sys", "dv_sys"),
+            ]
+            for prior_key, site_name in _global_priors:
+                rng_key, subkey = random.split(rng_key)
+                init_params[site_name] = model.priors[prior_key].sample(subkey)
+            if model.use_ecc:
+                if model.ecc_cartesian:
+                    for k in ("e_x", "e_y"):
+                        rng_key, subkey = random.split(rng_key)
+                        init_params[k] = model.priors[k].sample(subkey)
+                else:
+                    rng_key, subkey = random.split(rng_key)
+                    init_params["ecc"] = model.priors["ecc"].sample(subkey)
+                    init_params["periapsis_rad"] = jnp.array(0.0)
+                rng_key, subkey = random.split(rng_key)
+                init_params["dperiapsis_dr"] = model.priors["dperiapsis_dr"].sample(subkey)
+            if model.use_quadratic_warp:
+                for k in ("d2i_dr2", "d2Omega_dr2"):
+                    rng_key, subkey = random.split(rng_key)
+                    init_params[k] = model.priors[k].sample(subkey)
+            if model.mode in ("mode0", "mode1"):
+                from scipy.stats import truncnorm as _truncnorm
+                rng = np.random.default_rng(seed)
+
+                D_c = float(init_params["D_c"])
+                H0_ref = float(get_nested(
+                    model.config, "model/H0_ref", 73.0))
+                z_cosmo = float(model.distance2redshift(
+                    jnp.atleast_1d(jnp.asarray(D_c)),
+                    h=H0_ref / 100.0).squeeze())
+                D_A = D_c / (1.0 + z_cosmo)
+                r_lo = float(model._R_phys_lo / (D_A * PC_PER_MAS_MPC))
+                r_hi = float(model._R_phys_hi / (D_A * PC_PER_MAS_MPC))
+
+                eta = float(init_params["eta"])
+                x0 = float(init_params["x0"])   # μas
+                y0 = float(init_params["y0"])   # μas
+                i0_rad = np.deg2rad(float(init_params["i0"]))
+                sin_i = abs(np.sin(i0_rad))
+                M_BH = 10.0 ** (eta + np.log10(D_A) - 7.0)  # 1e7 Msun
+
+                is_hv = np.asarray(model.is_highvel, dtype=bool)
+                has_accel = np.asarray(model._all_has_accel, dtype=bool)
+
+                # HV: group mean/sd from projected sky radii.
+                x_hv = np.asarray(model._all_x)[is_hv]  # μas
+                y_hv = np.asarray(model._all_y)[is_hv]  # μas
+                r_hv = np.clip(np.sqrt((x_hv - x0)**2 + (y_hv - y0)**2) / 1e3,
+                               r_lo * 1.01, r_hi * 0.99)
+                mu_hv = float(np.mean(r_hv))
+                sd_hv = max(float(np.std(r_hv)), 0.1 * mu_hv)
+
+                # Systemic: group mean/sd from spots with accel measurements.
+                sys_accel = (~is_hv) & has_accel
+                if sys_accel.any():
+                    a_sys = np.abs(np.asarray(model._all_a)[sys_accel])
+                    r_sys = np.sqrt(
+                        _C_a * M_BH * sin_i / (D_A**2 * (a_sys + 1e-30)))
+                    r_sys = np.clip(r_sys, r_lo * 1.01, r_hi * 0.99)
+                    mu_sys = float(np.mean(r_sys))
+                    sd_sys = max(float(np.std(r_sys)), 0.1 * mu_sys)
+                else:
+                    mu_sys, sd_sys = mu_hv, sd_hv
+                    fprint("  r_ang: no systemic accel, "
+                           "using HV distribution for systemic spots")
+
+                _r = np.empty(model.n_spots)
+                for mask, mu, sd, label in [
+                    (is_hv, mu_hv, sd_hv, "HV"),
+                    (~is_hv, mu_sys, sd_sys, "sys"),
+                ]:
+                    n = int(mask.sum())
+                    if n == 0:
+                        continue
+                    a = (r_lo - mu) / sd
+                    b = (r_hi - mu) / sd
+                    _r[mask] = _truncnorm.rvs(
+                        a, b, loc=mu, scale=sd,
+                        size=n, random_state=rng)
+                    fprint(f"  r_ang {label}: n={n}, "
+                           f"mu={mu:.3f}, sd={sd:.3f} mas")
+                fprint(f"  r_ang: data-driven init "
+                       f"[{_r.min():.3f}, {_r.max():.3f}] mas "
+                       f"| D_c={D_c:.1f} Mpc")
+                init_params["r_ang"] = jnp.asarray(_r)
+            if model.mode == "mode0":
+                init_params["phi_u"] = jnp.full(model.n_spots, 0.5)
+            init_strategy = init_to_value(values=init_params)
+            for k, v in sorted(init_params.items()):
+                v = jnp.asarray(v)
+                if v.ndim == 0:
+                    fprint(f"  {k:20s} = {float(v):12.4f}")
+                else:
+                    fprint(f"  {k:20s} = [{len(v)} values]")
+        elif init_method == "median":
+            N = int(inf_cfg.get("median_num_samples", 100))
+            rng_key = random.PRNGKey(seed)
+            init_params = {}
+            _global_priors = [
+                ("D", "D_c"), ("eta", "eta"), ("x0", "x0"), ("y0", "y0"),
+                ("i0", "i0"), ("Omega0", "Omega0"),
+                ("dOmega_dr", "dOmega_dr"), ("di_dr", "di_dr"),
+                ("sigma_x_floor", "sigma_x_floor"),
+                ("sigma_y_floor", "sigma_y_floor"),
+                ("sigma_v_sys", "sigma_v_sys"), ("sigma_v_hv", "sigma_v_hv"),
+                ("sigma_a_floor", "sigma_a_floor"), ("dv_sys", "dv_sys"),
+            ]
+            for prior_key, site_name in _global_priors:
+                rng_key, subkey = random.split(rng_key)
+                draws = model.priors[prior_key].sample(subkey, sample_shape=(N,))
+                init_params[site_name] = jnp.median(draws, axis=0)
+            if model.use_ecc:
+                if model.ecc_cartesian:
+                    for k in ("e_x", "e_y"):
+                        rng_key, subkey = random.split(rng_key)
+                        draws = model.priors[k].sample(subkey, sample_shape=(N,))
+                        init_params[k] = jnp.median(draws, axis=0)
+                else:
+                    rng_key, subkey = random.split(rng_key)
+                    draws = model.priors["ecc"].sample(subkey, sample_shape=(N,))
+                    init_params["ecc"] = jnp.median(draws, axis=0)
+                    init_params["periapsis_rad"] = jnp.array(0.0)
+                rng_key, subkey = random.split(rng_key)
+                draws = model.priors["dperiapsis_dr"].sample(subkey, sample_shape=(N,))
+                init_params["dperiapsis_dr"] = jnp.median(draws, axis=0)
+            if model.use_quadratic_warp:
+                for k in ("d2i_dr2", "d2Omega_dr2"):
+                    rng_key, subkey = random.split(rng_key)
+                    draws = model.priors[k].sample(subkey, sample_shape=(N,))
+                    init_params[k] = jnp.median(draws, axis=0)
+            if model.mode in ("mode0", "mode1"):
+                from scipy.stats import truncnorm as _truncnorm
+                rng = np.random.default_rng(seed)
+                D_c = float(init_params["D_c"])
+                H0_ref = float(get_nested(model.config, "model/H0_ref", 73.0))
+                z_cosmo = float(model.distance2redshift(
+                    jnp.atleast_1d(jnp.asarray(D_c)),
+                    h=H0_ref / 100.0).squeeze())
+                D_A = D_c / (1.0 + z_cosmo)
+                r_lo = float(model._R_phys_lo / (D_A * PC_PER_MAS_MPC))
+                r_hi = float(model._R_phys_hi / (D_A * PC_PER_MAS_MPC))
+                eta = float(init_params["eta"])
+                x0 = float(init_params["x0"])
+                y0 = float(init_params["y0"])
+                i0_rad = np.deg2rad(float(init_params["i0"]))
+                sin_i = abs(np.sin(i0_rad))
+                M_BH = 10.0 ** (eta + np.log10(D_A) - 7.0)
+                is_hv = np.asarray(model.is_highvel, dtype=bool)
+                has_accel = np.asarray(model._all_has_accel, dtype=bool)
+                x_hv = np.asarray(model._all_x)[is_hv]
+                y_hv = np.asarray(model._all_y)[is_hv]
+                r_hv = np.clip(np.sqrt((x_hv - x0)**2 + (y_hv - y0)**2) / 1e3,
+                               r_lo * 1.01, r_hi * 0.99)
+                mu_hv = float(np.mean(r_hv))
+                sd_hv = max(float(np.std(r_hv)), 0.1 * mu_hv)
+                sys_accel = (~is_hv) & has_accel
+                if sys_accel.any():
+                    a_sys = np.abs(np.asarray(model._all_a)[sys_accel])
+                    r_sys = np.sqrt(
+                        _C_a * M_BH * sin_i / (D_A**2 * (a_sys + 1e-30)))
+                    r_sys = np.clip(r_sys, r_lo * 1.01, r_hi * 0.99)
+                    mu_sys = float(np.mean(r_sys))
+                    sd_sys = max(float(np.std(r_sys)), 0.1 * mu_sys)
+                else:
+                    mu_sys, sd_sys = mu_hv, sd_hv
+                    fprint("  r_ang: no systemic accel, "
+                           "using HV distribution for systemic spots")
+                _r = np.empty(model.n_spots)
+                for mask, mu, sd, label in [
+                    (is_hv, mu_hv, sd_hv, "HV"),
+                    (~is_hv, mu_sys, sd_sys, "sys"),
+                ]:
+                    n = int(mask.sum())
+                    if n == 0:
+                        continue
+                    a = (r_lo - mu) / sd
+                    b = (r_hi - mu) / sd
+                    _r[mask] = _truncnorm.rvs(
+                        a, b, loc=mu, scale=sd,
+                        size=n, random_state=rng)
+                    fprint(f"  r_ang {label}: n={n}, "
+                           f"mu={mu:.3f}, sd={sd:.3f} mas")
+                fprint(f"  r_ang: data-driven init "
+                       f"[{_r.min():.3f}, {_r.max():.3f}] mas "
+                       f"| D_c={D_c:.1f} Mpc")
+                init_params["r_ang"] = jnp.asarray(_r)
+            if model.mode == "mode0":
+                init_params["phi_u"] = jnp.full(model.n_spots, 0.5)
+            init_strategy = init_to_value(values=init_params)
+            for k, v in sorted(init_params.items()):
+                v = jnp.asarray(v)
+                if v.ndim == 0:
+                    fprint(f"  {k:20s} = {float(v):12.4f}")
+                else:
+                    fprint(f"  {k:20s} = [{len(v)} values]")
         else:
-            init_strategy = init_to_median(num_samples=20)
+            raise ValueError(f"Unknown init_method: {init_method!r}")
     # Dense mass matrix: joint uses full dense; single-galaxy uses
     # per-galaxy dense_mass_globals flag for a globals-only block.
     t0 = time.time()
@@ -500,12 +682,17 @@ if sampler == "nuts":
 
     if is_joint:
         _tap = float(inf_cfg.get("target_accept_prob", 0.8))
+        _init_step_size = float(inf_cfg.get("init_step_size", 1.0))
     else:
         _tap = float(gcfg.get("target_accept_prob",
                               inf_cfg.get("target_accept_prob", 0.8)))
+        _init_step_size = float(gcfg.get(
+            "init_step_size", inf_cfg.get("init_step_size", 1.0)))
+    fprint(f"NUTS: target_accept_prob={_tap}, init_step_size={_init_step_size}")
     nuts_kernel = NUTS(model,
                        max_tree_depth=inf_cfg.get("max_tree_depth", 10),
                        target_accept_prob=_tap,
+                       step_size=_init_step_size,
                        dense_mass=_dense_mass,
                        init_strategy=init_strategy)
 
@@ -598,7 +785,7 @@ else:
     H0_implied = v_sys_obs / D_c
 
     frame = data.get("velocity_frame", "unknown")
-    print(f"  v_sys ({frame:11s}) = {v_sys.mean():.1f} +/- {v_sys.std():.1f} km/s",
+    print(f"  v_sys ({frame}) = {v_sys.mean():.1f} +/- {v_sys.std():.1f} km/s",
           flush=True)
 
     from candel.pvdata.megamaser_data import v_sys_to_cmb
@@ -606,14 +793,23 @@ else:
     dec_gal = float(gcfg["dec"])
     v_cmb = v_sys_to_cmb(v_sys, frame, ra_gal, dec_gal)
     if v_cmb is not None:
-        print(f"  v_sys (cmb        ) = {v_cmb.mean():.1f} +/- {v_cmb.std():.1f} km/s",
+        print(f"  v_sys (cmb) = {v_cmb.mean():.1f} +/- {v_cmb.std():.1f} km/s",
               flush=True)
     else:
-        print("  v_sys (cmb        ) = unknown frame, conversion skipped",
+        print(f"  v_sys (cmb) = unknown frame, conversion skipped",
               flush=True)
 
     print(f"  H0 (v_sys_obs/D_c) = {H0_implied.mean():.1f} "
           f"+/- {H0_implied.std():.1f} km/s/Mpc", flush=True)
+
+    # Warp angles re-expressed at r = 0 (same units as sampled: deg, deg/mas)
+    _w0 = remap_warp_to_r0(
+        samples, model._r_ang_ref_i, model._r_ang_ref_Omega)
+    print(f"\n  Warp at r=0 (pivot was r_i={model._r_ang_ref_i:.3f}, "
+          f"r_Ω={model._r_ang_ref_Omega:.3f} mas):", flush=True)
+    for _k, _v in _w0.items():
+        print(f"  {_k:20s} = {_v.mean():10.3f} +/- {_v.std():8.3f}",
+              flush=True)
 
 # Summary table
 fsection("Summary")

@@ -28,10 +28,9 @@ usage() {
     echo "  --f-grid F             Grid scaling factor (default: 1)"
     echo "  --num-chains N         Number of NUTS chains, always vectorised (default: 1)"
     echo "  --init-method METHOD   NUTS initialisation method (default: config)"
-    echo "                           config:      globals from config, r_ang data-driven from sky positions / accelerations"
-    echo "                           sobol_adam:  Sobol+Adam MAP optimisation"
-    echo "                           median:      numpyro median over prior samples"
-    echo "                           sample:      each chain draws independently from the prior"
+    echo "                           config:  globals from config, r_ang data-driven from sky positions / accelerations"
+    echo "                           median:  median of N prior draws, r_ang data-driven"
+    echo "                           sample:  globals from prior, r_ang data-driven"
     echo "  -h, --help             Show this help and exit"
 }
 
