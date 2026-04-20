@@ -19,7 +19,7 @@ usage() {
     echo "  --sampler nss|nuts     Inference method"
     echo ""
     echo "Options:"
-    echo "  --galaxy GAL           Single galaxy to submit (nss: default all five; nuts: default joint)"
+    echo "  --galaxy GAL           Single galaxy to submit (default: all five)"
     echo "                         Choices: $ALL_GALS"
     echo "  --mode MODE            Sampling mode: mode0, mode1, mode2"
     echo "                         NSS only supports mode2 (default for NSS)."
@@ -70,20 +70,20 @@ EXTRA_ARGS=""
 [[ -n "$MODE" ]]   && EXTRA_ARGS="$EXTRA_ARGS --mode $MODE"
 [[ -n "$F_GRID" ]] && EXTRA_ARGS="$EXTRA_ARGS --f-grid $F_GRID"
 
-if [[ "$SAMPLER" == "nss" ]]; then
-    [[ -z "$QUEUE" ]] && QUEUE="gpulong"
-    GALS="${GALAXY:-$ALL_GALS}"
-    for GAL in $GALS; do
-        echo "Submitting $GAL (nss, $QUEUE)..."
+DEFAULT_QUEUE="gpulong"
+[[ "$SAMPLER" == "nuts" ]] && DEFAULT_QUEUE="optgpu"
+[[ -z "$QUEUE" ]] && QUEUE="$DEFAULT_QUEUE"
+
+GALS="${GALAXY:-$ALL_GALS}"
+for GAL in $GALS; do
+    echo "Submitting $GAL ($SAMPLER, $QUEUE)..."
+    if [[ "$SAMPLER" == "nss" ]]; then
         addqueue -q "$QUEUE" -s -m 16 --gpus 1 \
             $PYTHON -u $RUNNER $GAL \
             --sampler nss --D-c-prior uniform $EXTRA_ARGS
-    done
-else
-    [[ -z "$QUEUE" ]] && QUEUE="optgpu"
-    TARGET="${GALAXY:-joint}"
-    echo "Submitting NUTS run for $TARGET ($QUEUE)..."
-    addqueue -q "$QUEUE" -s -m 16 --gpus 1 \
-        $PYTHON -u $RUNNER "$TARGET" \
-        --sampler nuts --num-warmup $NUM_WARMUP --num-samples $NUM_SAMPLES $EXTRA_ARGS
-fi
+    else
+        addqueue -q "$QUEUE" -s -m 16 --gpus 1 \
+            $PYTHON -u $RUNNER $GAL \
+            --sampler nuts --num-warmup $NUM_WARMUP --num-samples $NUM_SAMPLES $EXTRA_ARGS
+    fi
+done
