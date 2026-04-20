@@ -24,6 +24,72 @@ _MRT_FILES = {
     "CGCG074-064": "CGCG074-064_Pesce2020_mrt.txt",
 }
 
+# Velocity reference frame of the spot data for each galaxy.
+# "lsr"         — LSR frame, optical convention (cz)
+# "barycentric" — barycentric (heliocentric) frame, optical convention
+# "unknown"     — not stated in the source paper
+_GALAXY_VELOCITY_FRAME = {
+    "NGC6264":     "lsr",         # Kuo+2013, footnote a
+    "NGC6323":     "lsr",         # Kuo+2015, footnote a
+    "UGC3789":     "lsr",         # Reid+2009/2013, column header
+    "CGCG074-064": "barycentric", # Pesce+2020 MRT header
+    "NGC5765b":    "unknown",     # Gao+2016: not stated
+    "NGC4258":     "lsr",         # Argon+2007
+}
+
+# Solar motion w.r.t. LSR (Schönrich+2010, km/s, Galactic Cartesian U,V,W)
+_SOLAR_LSR_UVW = (11.1, 12.24, 7.25)
+
+# CMB dipole (Planck 2018): direction in Galactic coords, amplitude in km/s
+_CMB_DIPOLE_L = 264.021   # deg
+_CMB_DIPOLE_B = 48.253    # deg
+_CMB_DIPOLE_V = 369.82    # km/s
+
+
+def v_sys_to_cmb(v_sys_km_s, frame, ra_deg, dec_deg):
+    """Convert a systemic velocity to the CMB rest frame.
+
+    Parameters
+    ----------
+    v_sys_km_s : float
+        Systemic velocity in km/s in the original `frame`.
+    frame : str
+        One of "lsr", "barycentric", or "unknown".
+    ra_deg, dec_deg : float
+        Galaxy sky position (ICRS, degrees).
+
+    Returns
+    -------
+    float or None
+        CMB-frame velocity in km/s, or None if frame is "unknown".
+    """
+    if frame == "unknown":
+        return None
+
+    from astropy.coordinates import SkyCoord
+    import astropy.units as u
+
+    target = SkyCoord(ra=ra_deg * u.deg, dec=dec_deg * u.deg, frame="icrs")
+    l = float(target.galactic.l.rad)
+    b = float(target.galactic.b.rad)
+
+    # LSR → heliocentric: subtract solar motion projected onto LOS
+    if frame == "lsr":
+        U, V, W = _SOLAR_LSR_UVW
+        v_helio = (v_sys_km_s
+                   - (U * np.cos(b) * np.cos(l)
+                      + V * np.cos(b) * np.sin(l)
+                      + W * np.sin(b)))
+    else:  # barycentric ≈ heliocentric (sub-km/s difference)
+        v_helio = v_sys_km_s
+
+    # Heliocentric → CMB: add CMB dipole projected onto LOS
+    l_cmb = np.deg2rad(_CMB_DIPOLE_L)
+    b_cmb = np.deg2rad(_CMB_DIPOLE_B)
+    cos_theta = (np.sin(b) * np.sin(b_cmb)
+                 + np.cos(b) * np.cos(b_cmb) * np.cos(l - l_cmb))
+    return v_helio + _CMB_DIPOLE_V * cos_theta
+
 # Column byte ranges (1-indexed, inclusive) from the MRT header.
 _MRT_COLUMNS = {
     "spot_type":      (1, 1),
@@ -457,6 +523,7 @@ def load_megamaser_spots(root, galaxy="CGCG074-064", v_sys_obs=None):
         labels = remap[lab]
         method = "k-means on velocity"
 
+    data["velocity_frame"] = _GALAXY_VELOCITY_FRAME.get(galaxy, "unknown")
     data["is_highvel"] = labels != 1
 
     # Per-spot phi bounds

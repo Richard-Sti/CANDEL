@@ -593,8 +593,26 @@ else:
 
     # Implied H0 from Hubble law (no peculiar velocity correction)
     v_sys_obs = float(gcfg["v_sys_obs"])
+    dv_sys = np.asarray(samples['dv_sys']) if 'dv_sys' in samples else np.zeros(1)
+    v_sys = v_sys_obs + dv_sys
     H0_implied = v_sys_obs / D_c
-    print(f"  H0 (v_sys/D_c) = {H0_implied.mean():.1f} "
+
+    frame = data.get("velocity_frame", "unknown")
+    print(f"  v_sys ({frame:11s}) = {v_sys.mean():.1f} +/- {v_sys.std():.1f} km/s",
+          flush=True)
+
+    from candel.pvdata.megamaser_data import v_sys_to_cmb
+    ra_gal = float(gcfg["ra"])
+    dec_gal = float(gcfg["dec"])
+    v_cmb = v_sys_to_cmb(v_sys, frame, ra_gal, dec_gal)
+    if v_cmb is not None:
+        print(f"  v_sys (cmb        ) = {v_cmb.mean():.1f} +/- {v_cmb.std():.1f} km/s",
+              flush=True)
+    else:
+        print("  v_sys (cmb        ) = unknown frame, conversion skipped",
+              flush=True)
+
+    print(f"  H0 (v_sys_obs/D_c) = {H0_implied.mean():.1f} "
           f"+/- {H0_implied.std():.1f} km/s/Mpc", flush=True)
 
 # Summary table
