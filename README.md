@@ -38,6 +38,19 @@ These models work in units of $h^{-1}\,\mathrm{Mpc}$ (i.e. assume $h = 1$). Mult
 - **TRGB-calibrated $H_0$:** Tip of the Red Giant Branch distances from CCHP and EDD
 - **2MTF-calibrated $H_0$:** Tully--Fisher distances from the EDD-2MTF sample *(experimental)*
 
+## Megamaser disk model
+
+CANDEL includes a warped Keplerian disk model (`MaserDiskModel`) for fitting VLBI water-maser spots directly, following the methodology of the Megamaser Cosmology Project ([Humphreys et al. 2013](https://arxiv.org/abs/1307.6031); [Pesce et al. 2020](https://arxiv.org/abs/2001.09213)). The model marginalises over azimuthal angle $\phi$ on a per-spot basis using log-space Simpson integration, and supports:
+
+- **Warped geometry:** linear inclination gradient $\mathrm{d}i/\mathrm{d}r$ across the disk.
+- **Eccentricity:** optional eccentric orbits with $e$ and $\omega_\mathrm{disk}$ (disabled by default).
+- **Spot classification:** high-velocity (red/blue) spots constrained by Keplerian velocity, systemic spots constrained by sky position and LOS velocity near $v_\mathrm{sys}$.
+- **Acceleration data:** radial acceleration constraints where available.
+
+Supported galaxies: NGC 5765b, NGC 6264, NGC 6323, UGC 3789, CGCG 074-064, NGC 4258. In addition to the full disk model, CANDEL can also use published distance posteriors directly (e.g. from Pesce+2020) via `MegamaserModel` for a simpler analysis that bypasses spot-level fitting.
+
+For grid convergence tests and numerical accuracy details, see [`docs/maser_numerical_accuracy.md`](docs/maser_numerical_accuracy.md). For running maser disk inference jobs, see [`instructions/maser_disk_jobs.md`](instructions/maser_disk_jobs.md).
+
 ## Package structure
 
 ```
@@ -45,26 +58,45 @@ candel/
   model/          Forward models for each distance indicator
   pvdata/         Data loaders for all supported catalogues
   cosmo/          Cosmography, growth rate, PV covariance matrices
-  inference/      NUTS sampling, evidence estimation, postprocessing
+  inference/      NUTS sampling, nested sampling (NSS), Sobol+Adam optimisation, evidence estimation
   field/          3D density/velocity field loading and LOS interpolation
   redshift2real/  Map observed redshift → cosmological redshift given a velocity field
   mock/           Synthetic catalogue generation for testing
   util.py         Coordinate transforms, config I/O, plotting utilities
+
+scripts/
+  runs/           PV and H0 model configs and main runner
+  megamaser/      Maser disk model config and runner
 ```
 
 ## Running inference
 
-All experiments are defined in TOML configuration files that specify data paths, model parameters, priors, and output locations. The main entry point is:
+All experiments are defined in TOML configuration files that specify data paths, model parameters, priors, and output locations.
 
+**Peculiar-velocity / $H_0$ models:**
 ```bash
 python scripts/runs/main.py --config path/to/config.toml
 ```
 
-To generate a batch of configs from a template with a parameter grid:
-
+To generate a batch of PV/$H_0$ configs from a template with a parameter grid:
 ```bash
 python scripts/runs/generate_tasks.py
 ```
+
+**Megamaser disk model:**
+```bash
+python scripts/megamaser/run_maser_disk.py --config scripts/megamaser/config_maser.toml
+```
+
+### Inference methods
+
+- **NUTS** (default): No-U-Turn Sampler via NumPyro. Robust, gradient-based, suitable for all models.
+- **Nested Slice Sampling (NSS):** Bayesian evidence computation via the [blackjax](https://github.com/handley-lab/blackjax) nested sampling fork. Requires the optional `blackjax` and `nss` packages (see [Installation](#installation)).
+- **Sobol + Adam MAP:** Multi-start MAP optimisation using Sobol quasi-random initialisation and Adam gradient descent. Configured via the `[optimise]` section of the TOML config.
+
+### Job submission guides
+
+The `instructions/` folder contains how-to guides for HPC job submission (GPU queues, batch configuration, grid sizes).
 
 ## Publications
 
@@ -95,7 +127,30 @@ python -m pip install -e .
 
 For GPU support (e.g. on Glamdring), see [INSTALL_GLAMDRING_GPU.md](INSTALL_GLAMDRING_GPU.md).
 
+For nested sampling (NSS), install the [handley-lab blackjax fork](https://github.com/handley-lab/blackjax/tree/nested_sampling) and [nss](https://github.com/yallup/nss):
+```bash
+pip install "blackjax @ git+https://github.com/handley-lab/blackjax@nested_sampling" --no-deps
+pip install git+https://github.com/yallup/nss.git
+```
+These are optional — CANDEL's core functionality (NUTS, optimisation) works without them.
+
 For model-evidence computation, also install [harmonic](https://github.com/astro-informatics/harmonic) (note: there may be compatibility issues with recent JAX versions).
+
+## Paper notes
+
+Implementation findings, data notes, and numerical results that arise during development should be written up in the **"Notes from code"** appendix of the megamaser paper draft:
+
+```
+/mnt/users/rstiskalek/Papers/MMH0/main.tex  →  \section{Notes from code}
+```
+
+This appendix is the canonical place for:
+- Data availability findings (missing tables, non-public datasets, data quirks)
+- Numerical results from convergence/grid studies
+- Observations about spot classification or selection effects
+- Implementation decisions with physical motivation
+
+Keep entries terse and bolded by topic, matching the style of the existing subsections there.
 
 ## Citation
 

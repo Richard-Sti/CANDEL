@@ -25,46 +25,15 @@ from jax import random
 from jax.scipy.special import log_ndtr, logsumexp, ndtr
 from jax.scipy.stats import norm as jax_norm
 from numpyro import factor, plate, sample
-from numpyro.distributions import Distribution, MultivariateNormal, constraints
+from numpyro.distributions import MultivariateNormal
 
 from ...cosmo.cosmography import (Distance2Distmod, Distance2Redshift,
                                   Redshift2Distance)
 from ...util import SPEED_OF_LIGHT, fprint, get_nested
 from ..base_pv import BasePVModel
+from ..integration import ln_simpson
 from ..pv_utils import rsample, sample_galaxy_bias, sample_Vext
-from ..simpson import ln_simpson
-from ..utils import normal_logpdf_var, predict_cz
-
-###############################################################################
-#                         Volume prior for distance                           #
-###############################################################################
-
-
-class VolumePrior(Distribution):
-    """Distance prior p(r) ∝ r² on [r_min, r_max]."""
-
-    arg_constraints = {"r_min": constraints.positive,
-                       "r_max": constraints.positive}
-
-    def __init__(self, r_min, r_max):
-        self.r_min = r_min
-        self.r_max = r_max
-        self._log_norm = jnp.log((r_max**3 - r_min**3) / 3)
-        self._r3_diff = r_max**3 - r_min**3
-        self._support = constraints.interval(r_min, r_max)
-        super().__init__(batch_shape=(), event_shape=())
-
-    @constraints.dependent_property
-    def support(self):
-        return self._support
-
-    def sample(self, key, sample_shape=()):
-        u = random.uniform(key, sample_shape)
-        return (u * self._r3_diff + self.r_min**3)**(1/3)
-
-    def log_prob(self, r):
-        return 2 * jnp.log(r) - self._log_norm
-
+from ..utils import VolumePrior, normal_logpdf_var, predict_cz
 
 ###############################################################################
 #                         Selection integral                                  #

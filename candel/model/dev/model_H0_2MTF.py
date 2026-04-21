@@ -34,11 +34,11 @@ from jax.scipy.stats import norm as norm_jax
 from numpyro import factor, sample
 from numpyro.distributions import Normal, Uniform
 
-from ...util import fprint, get_nested, replace_prior_with_delta
+from ...util import fprint, get_nested
 from ..base_model import H0ModelBase
+from ..integration import ln_simpson_precomputed
 from ..pv_utils import (gauss_hermite_log_weights, get_absmag_TFR,
                         lp_galaxy_bias, rsample, sample_galaxy_bias)
-from ..simpson import ln_simpson_precomputed
 from ..utils import log_prob_integrand_sel, logmeanexp, predict_cz
 
 
@@ -49,13 +49,7 @@ class EDD2MTFModel(H0ModelBase):
     #  Phase 1: model physics
     # ------------------------------------------------------------------
 
-    def _replace_unused_priors(self, config):
-        use_reconstruction = get_nested(
-            config, "model/use_reconstruction", False)
-        if not use_reconstruction:
-            replace_prior_with_delta(config, "beta", 0.0)
-        config = self._replace_bias_priors(config)
-        return config
+    # _replace_unused_priors inherited from H0ModelBase
 
     def _load_selection_thresholds(self):
         config = self.config

@@ -26,27 +26,29 @@ ncpu=32
 memory=7
 nlive=1000
 maxmcmc=5000
-nact=5
+nact=10
 duration=128
 fmin=23
 sampling_frequency=4096
 npool="$ncpu"
-outdir="$repo_root/results/GW170817_jetfit"
-extra_args=""
+outdir="$repo_root/results/GW170817_vanilla"
+extra_args="--no-jetfit --marginalize-psi --aligned-spin --marginalize-phase --marginalize-time"
 
 usage() {
     cat <<EOF
 usage: $(basename "$0") [-h] [-q QUEUE] [-n NCPU] [-m MEMORY] [--nlive N]
                         [--maxmcmc N] [--duration T] [--fmin F]
                         [--label NAME | --outdir PATH] [--no-jetfit]
-                        [--density-prior] [--local]
+                        [--density-prior] [--marginalize-psi] [--n-psi N]
+                        [--aligned-spin] [--marginalize-phase]
+                        [--marginalize-time] [--local]
 
 Submit GW170817 PE (Bilby + dynesty + JetFit constraint) to Glamdring.
 
 Default settings match the LIGO high_spin_PhenomPNRT analysis:
   - IMRPhenomPv2_NRTidal waveform
   - 23--2048 Hz, 128 s segment, 4096 Hz sampling
-  - nlive=1000, nact=5, maxmcmc=5000 (act-walk sampling)
+  - nlive=1000, nact=10, maxmcmc=5000 (act-walk sampling)
   - H1 + L1 + V1, sky position fixed to NGC 4993
   - JetFit afterglow EM constraint enabled by default
 
@@ -66,6 +68,12 @@ options:
                           (default: results/GW170817_jetfit)
   --no-jetfit             Disable JetFit EM constraint
   --density-prior         Use density-weighted distance prior
+  --marginalize-psi       Marginalize over polarisation angle (numerical)
+  --n-psi N               Number of psi quadrature points (default: 50)
+  --aligned-spin          Use aligned-spin waveform (IMRPhenomD_NRTidal)
+  --marginalize-phase     Analytically marginalize over phase
+                          (requires --aligned-spin)
+  --marginalize-time      Marginalize over coalescence time (FFT grid)
   --real-data             Use GWOSC strain (default; omit for injection test)
   --local                 Run locally instead of submitting to queue
 
@@ -80,6 +88,9 @@ Examples:
 
   # Quick local test with injection
   $(basename "$0") --local --nlive 50 --maxmcmc 500 -n 4
+
+  # Psi-marginalised + aligned spin (9D sampling)
+  $(basename "$0") --marginalize-psi --aligned-spin --label GW170817_jetfit_psimarg_aligned
 
   # With density-weighted prior
   $(basename "$0") --density-prior --label GW170817_jetfit_density
@@ -108,6 +119,11 @@ while [[ $# -gt 0 ]]; do
         --no-jetfit)            extra_args="$extra_args --no-jetfit"; shift ;;
         --density-prior)        extra_args="$extra_args --density-prior"; shift ;;
         --roq)                  extra_args="$extra_args --roq"; use_roq=true; shift ;;
+        --marginalize-psi)      extra_args="$extra_args --marginalize-psi"; shift ;;
+        --n-psi)                extra_args="$extra_args --n-psi $2"; shift 2 ;;
+        --aligned-spin)         extra_args="$extra_args --aligned-spin"; shift ;;
+        --marginalize-phase)    extra_args="$extra_args --marginalize-phase"; shift ;;
+        --marginalize-time)     extra_args="$extra_args --marginalize-time"; shift ;;
         --real-data)            real_data=true; shift ;;
         --local)                local_mode=true; shift ;;
         *)                      extra_args="$extra_args $1"; shift ;;

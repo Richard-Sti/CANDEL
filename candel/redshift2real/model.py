@@ -24,13 +24,14 @@ import numpy as np
 from jax import numpy as jnp
 from jax.scipy.stats import norm as jax_norm
 from scipy.integrate import cumulative_trapezoid, simpson
+from scipy.interpolate import CubicSpline
 from scipy.special import logsumexp as logsumexp_np
 from tqdm import trange
 
 from ..cosmo.cosmography import Distance2Redshift
 from ..model import LOSInterpolator
+from ..model.integration import ln_simpson
 from ..model.pv_utils import lp_galaxy_bias
-from ..model.simpson import ln_simpson
 from ..model.utils import logmeanexp
 from ..util import SPEED_OF_LIGHT, fprint, radec_to_cartesian
 
@@ -82,7 +83,6 @@ def lp_galaxy_bias_np(delta, log_rho, bias_params, galaxy_bias):
     elif "linear" in galaxy_bias or galaxy_bias == "unity":
         lp = np.log(smoothclip_nr_np(1 + bias_params[0] * delta, tau=0.1))
     elif galaxy_bias == "spline":
-        from scipy.interpolate import CubicSpline
         knots_log1pd, amplitudes = bias_params
         cs = CubicSpline(knots_log1pd, amplitudes, bc_type='natural')
         x = np.clip(log_rho, knots_log1pd[0], knots_log1pd[-1])

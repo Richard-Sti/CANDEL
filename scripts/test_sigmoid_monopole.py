@@ -1,7 +1,4 @@
 """Test sigmoid monopole implementation: forward pass and gradient."""
-import sys
-sys.path.insert(0, "/mnt/users/rstiskalek/CANDEL")
-
 import os
 import tempfile
 

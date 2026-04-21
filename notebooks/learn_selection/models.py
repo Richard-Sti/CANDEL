@@ -15,7 +15,7 @@
 """NumPyro models for H0 inference with explicit distance sampling."""
 import jax.numpy as jnp
 import numpyro
-from candel.model.simpson import ln_simpson
+from candel.model.integration import ln_simpson
 from jax.scipy.special import log_ndtr
 from numpyro import factor, plate, sample
 from numpyro.distributions import Normal, Uniform

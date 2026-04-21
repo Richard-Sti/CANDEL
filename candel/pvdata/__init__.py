@@ -41,3 +41,7 @@ from .data import (                                                             
     PVDataFrame,                                                                # noqa
     load_PV_dataframes,                                                         # noqa
     )
+
+from .megamaser_data import (                                                   # noqa
+    load_megamaser_spots,                                                       # noqa
+    )

@@ -21,10 +21,10 @@ from numpyro import deterministic, factor, handlers
 
 from ..util import fprint, fsection, get_nested
 from .base_model import ModelBase
+from .integration import simpson_log_weights
 from .pv_utils import (_rsample, compute_Vext_radial, lp_galaxy_bias, rsample,
                        sample_distance_prior, sample_galaxy_bias, sample_Vext,
                        sigma_v_from_density, sumzero_basis)
-from .simpson import simpson_log_weights
 from .utils import (config_hash, log_prior_r_empirical, normal_logpdf_var,
                     predict_cz)
 

@@ -19,7 +19,6 @@ Usage:
 """
 import argparse
 import os
-import sys
 import tempfile
 import time
 from contextlib import redirect_stdout
@@ -31,7 +30,6 @@ import tomli_w
 from scipy.stats import kstest
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-sys.path.insert(0, REPO_ROOT)
 os.chdir(REPO_ROOT)
 
 os.environ.setdefault("JAX_ENABLE_X64", "1")

@@ -27,3 +27,10 @@ from .inference import (                                                        
     save_mcmc_samples,                                                          # noqa
     get_log_density,                                                            # noqa
     )
+
+try:
+    from .optimise import find_MAP, sobol_optimize, de_optimize  # noqa
+except ImportError:
+    pass
+
+from .nested import run_nss, decompose_model                                    # noqa

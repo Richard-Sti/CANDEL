@@ -22,11 +22,12 @@ from numpyro.distributions import Normal, Uniform
 
 from ..util import fprint, get_nested, replace_prior_with_delta
 from .base_model import H0ModelBase
+from .integration import ln_simpson_precomputed
 from .pv_utils import (lp_galaxy_bias, octupole_radial, quadrupole_radial,
                        rsample, sample_galaxy_bias, sample_octupole,
                        sample_quadrupole, sigmoid_monopole_radial)
-from .simpson import ln_simpson_precomputed
-from .utils import logmeanexp, normal_logpdf_var, predict_cz
+from .utils import (logmeanexp, normal_logpdf_var, predict_cz,
+                    student_t_logpdf_var)
 
 
 class TRGBModel(H0ModelBase):
@@ -40,37 +41,36 @@ class TRGBModel(H0ModelBase):
     # ------------------------------------------------------------------
 
     def _replace_unused_priors(self, config):
-        use_reconstruction = get_nested(
-            config, "model/use_reconstruction", False)
+        config = super()._replace_unused_priors(config)
 
-        if not use_reconstruction:
-            replace_prior_with_delta(config, "beta", 0.0)
-
-        # M_B only needed for SN_magnitude selection
         which_sel = get_nested(config, "model/which_selection", None)
         if which_sel != "SN_magnitude":
             replace_prior_with_delta(
                 config, "M_B", -19.0, verbose=False)
 
-        config = self._replace_bias_priors(config)
+        # Student-t: nu_cz only needed when enabled.
+        if get_nested(config, "model/cz_likelihood", "gaussian") \
+                != "student_t":
+            replace_prior_with_delta(
+                config, "nu_cz", 30.0, verbose=False)
+
+        # Anisotropic sigma_v: replace unused components.
+        if get_nested(config, "model/anisotropic_sigma_v", False):
+            replace_prior_with_delta(
+                config, "sigma_v", 150.0, verbose=False)
+        else:
+            for ax in ("sigma_v_x", "sigma_v_y", "sigma_v_z"):
+                replace_prior_with_delta(
+                    config, ax, 150.0, verbose=False)
+
         return config
 
     def _load_selection_thresholds(self):
-        config = self.config
-        priors = config.setdefault(
-            "model", {}).setdefault("priors", {})
-        which_sel = get_nested(config, "model/which_selection", None)
-
-        # Only load thresholds relevant to the active selection.
-        if which_sel == "TRGB_magnitude":
-            active = {"mag_lim_TRGB", "mag_lim_TRGB_width"}
-        elif which_sel == "redshift":
-            active = {"cz_lim_selection", "cz_lim_selection_width"}
-        elif which_sel == "SN_magnitude":
-            active = {"mag_lim_SN", "mag_lim_SN_width"}
-        else:
-            active = set()
-
+        active_map = {
+            "TRGB_magnitude": {"mag_lim_TRGB", "mag_lim_TRGB_width"},
+            "redshift": {"cz_lim_selection", "cz_lim_selection_width"},
+            "SN_magnitude": {"mag_lim_SN", "mag_lim_SN_width"},
+        }
         spec = {
             "cz_lim_selection":       None,
             "cz_lim_selection_width":  None,
@@ -79,25 +79,7 @@ class TRGBModel(H0ModelBase):
             "mag_lim_SN":             None,
             "mag_lim_SN_width":       None,
         }
-        for name, default in spec.items():
-            if name not in active:
-                setattr(self, name, None)
-                setattr(self, f"_infer_{name}", False)
-                continue
-
-            raw = get_nested(config, f"model/{name}", default)
-            if raw == "infer":
-                p = priors.get(name)
-                if p is None:
-                    raise ValueError(
-                        f"`{name}` set to 'infer' but no "
-                        f"prior [model.priors.{name}] found.")
-                setattr(self, name, None)
-                setattr(self, f"_infer_{name}", True)
-                fprint(f"{name} will be inferred.")
-            else:
-                setattr(self, name, raw)
-                setattr(self, f"_infer_{name}", False)
+        super()._load_selection_thresholds(active_map, spec)
 
     # ------------------------------------------------------------------
     #  Phase 2: data loading
@@ -174,16 +156,6 @@ class TRGBModel(H0ModelBase):
                     "for SN_magnitude selection.")
 
     # ------------------------------------------------------------------
-    #  Selection functions
-    # ------------------------------------------------------------------
-
-    def _resolve_threshold(self, name):
-        """Return the threshold value, sampling if flagged."""
-        if getattr(self, f"_infer_{name}"):
-            return rsample(name, self.priors[name])
-        return getattr(self, name)
-
-    # ------------------------------------------------------------------
     #  Forward model
     # ------------------------------------------------------------------
 
@@ -192,7 +164,20 @@ class TRGBModel(H0ModelBase):
         H0 = rsample("H0", self.priors["H0"])
         M_TRGB = rsample("M_TRGB", self.priors["M_TRGB"])
         sigma_int = rsample("sigma_int", self.priors["sigma_int"])
-        sigma_v = rsample("sigma_v", self.priors["sigma_v"])
+
+        # Velocity dispersion: scalar or anisotropic (Galactic frame).
+        if self.anisotropic_sigma_v:
+            sigma_v_x = rsample("sigma_v_x", self.priors["sigma_v_x"])
+            sigma_v_y = rsample("sigma_v_y", self.priors["sigma_v_y"])
+            sigma_v_z = rsample("sigma_v_z", self.priors["sigma_v_z"])
+            sigma_v_vec = jnp.array([sigma_v_x, sigma_v_y, sigma_v_z])
+        else:
+            sigma_v = rsample("sigma_v", self.priors["sigma_v"])
+
+        # Student-t degrees of freedom.
+        nu_cz = None
+        if self.cz_likelihood == "student_t":
+            nu_cz = rsample("nu_cz", self.priors["nu_cz"])
         Vext = rsample("Vext", self.priors["Vext"])
         Vext_quad = None
         if self.use_Vext_quadrupole:
@@ -339,7 +324,7 @@ class TRGBModel(H0ModelBase):
                 rand_los_Vpec_sel = 0.
 
             Vpec_sel = (Vext_rad_rand[None, :, None]
-                       + beta * rand_los_Vpec_sel)
+                        + beta * rand_los_Vpec_sel)
             if isinstance(Vext_mono, tuple):
                 V_left, r_t, angle = Vext_mono
                 k = jnp.tan(angle)
@@ -347,9 +332,21 @@ class TRGBModel(H0ModelBase):
                     V_left, r_t, k, r_sel)[None, None, :]
             elif Vext_mono is not None:
                 Vpec_sel = Vpec_sel + Vext_mono
+            if self.anisotropic_sigma_v:
+                # Per-random-LOS effective sigma_v for selection.
+                # rhat_rand_los_gal is (n_los, 3) or (n_sims, n_los, 3).
+                # [..., None] gives (..., n_los, 1) for correct broadcast
+                # to (..., n_los, n_grid) in log_S_cz.
+                sg_rand = self.rhat_rand_los_gal
+                sigma_v_sel = jnp.sqrt(
+                    jnp.sum(sigma_v_vec**2 * sg_rand**2, axis=-1)
+                )[..., None]
+            else:
+                sigma_v_sel = sigma_v
             log_S = logmeanexp(self.log_S_cz(
                 lp_rand_dist_sel, Vpec_sel,
-                H0, sigma_v, cz_lim, cz_width), axis=-1)
+                H0, sigma_v_sel, cz_lim, cz_width,
+                nu_cz=nu_cz), axis=-1)
 
         elif self.which_selection == "SN_magnitude":
             M_B = rsample("M_B", self.priors["M_B"])
@@ -392,14 +389,24 @@ class TRGBModel(H0ModelBase):
                 self._sn_group_index].add(ll_sn_per)
 
         # --- Per-host distance handling ---
-        e2_cz = self.e2_czcmb + sigma_v**2
+        if self.anisotropic_sigma_v:
+            # sigma_eff_i^2 = sum_j sigma_v_j^2 * n_ij^2  (Galactic frame)
+            sg = self.rhat_host_gal           # (n_hosts, 3)
+            sigma_v2_eff = jnp.sum(sigma_v_vec**2 * sg**2, axis=-1)
+            e2_cz = self.e2_czcmb + sigma_v2_eff
+            sigma_v_scalar = jnp.sqrt(
+                jnp.mean(sigma_v_vec**2))    # for selection
+        else:
+            e2_cz = self.e2_czcmb + sigma_v**2
+            sigma_v_scalar = sigma_v
 
         self._call_marginalized(
-            h, M_TRGB, sigma_int, sigma_v, beta, bias_params,
+            h, M_TRGB, sigma_int, sigma_v_scalar, beta, bias_params,
             Vext_rad_host, r_grid, lp_r, e2_cz, log_S,
             mu_grid=mu_grid, z_grid=z_grid,
             ll_sn_host=ll_sn_host,
-            Vext_mono_host_grid=Vext_mono_host_grid)
+            Vext_mono_host_grid=Vext_mono_host_grid,
+            nu_cz=nu_cz)
 
     # ------------------------------------------------------------------
     #  Distance marginalization path
@@ -410,13 +417,21 @@ class TRGBModel(H0ModelBase):
                            e2_cz, log_S,
                            mu_grid=None, z_grid=None,
                            ll_sn_host=None,
-                           Vext_mono_host_grid=None):
+                           Vext_mono_host_grid=None,
+                           nu_cz=None):
         if mu_grid is None:
             mu_grid = self.distance2distmod(r_grid, h=h)
         if z_grid is None:
             z_grid = self.distance2redshift(r_grid, h=h)
 
         log_w = self._simpson_log_w
+
+        # Choose cz likelihood kernel.
+        if nu_cz is not None:
+            def ll_cz_fn(obs, pred, var):
+                return student_t_logpdf_var(obs, pred, var, nu_cz)
+        else:
+            ll_cz_fn = normal_logpdf_var
 
         e2_mag = self.e2_mag_obs + sigma_int**2
         ll_mag = normal_logpdf_var(
@@ -444,7 +459,7 @@ class TRGBModel(H0ModelBase):
             if Vext_mono_host_grid is not None:
                 Vpec_grid += Vext_mono_host_grid[None, None, :]
             cz_pred = predict_cz(z_grid[None, None, :], Vpec_grid)
-            ll_cz = normal_logpdf_var(
+            ll_cz = ll_cz_fn(
                 self.czcmb[None, :, None], cz_pred,
                 e2_cz[None, :, None])
 
@@ -473,7 +488,7 @@ class TRGBModel(H0ModelBase):
             if Vext_mono_host_grid is not None:
                 Vpec_no_recon = Vpec_no_recon + Vext_mono_host_grid[None, :]
             cz_pred = predict_cz(z_grid[None, :], Vpec_no_recon)
-            ll_cz = normal_logpdf_var(
+            ll_cz = ll_cz_fn(
                 self.czcmb[:, None], cz_pred, e2_cz[:, None])
 
             # Marginalize over distance

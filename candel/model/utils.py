@@ -23,12 +23,21 @@ import jax.numpy as jnp
 import numpy as np
 from jax import random
 from jax.scipy.linalg import solve_triangular
-from jax.scipy.special import gammainc, gammaln, logsumexp
+from jax.scipy.special import betainc, gammainc, gammaln, logsumexp
 from jax.scipy.stats import norm as norm_jax
-from numpyro.distributions import (Delta, Distribution, Normal,
-                                   TruncatedNormal, Uniform, constraints)
+from numpy.polynomial.hermite import hermgauss as _hermgauss
+from numpyro.distributions import (Delta, Distribution, Gamma, LogUniform,
+                                   Normal, TruncatedNormal, Uniform,
+                                   constraints)
 
 from ..util import SPEED_OF_LIGHT
+
+# Gauss-Hermite nodes for Student-t selection integrals via log-space
+# saddle-point quadrature. int f(x) exp(-x^2) dx ~ sum_i w_i f(x_i).
+_N_GH_SEL = 16
+_GH_SEL_NODES_NP, _GH_SEL_WEIGHTS_NP = _hermgauss(_N_GH_SEL)
+_GH_SEL_NODES = jnp.asarray(_GH_SEL_NODES_NP)
+_GH_SEL_LOG_WEIGHTS = jnp.log(jnp.asarray(_GH_SEL_WEIGHTS_NP))
 
 ###############################################################################
 #                         Configuration file checks                           #
@@ -78,6 +87,28 @@ def normal_logpdf_var(x, mean, var):
     return -0.5 * (jnp.log(2 * jnp.pi * var) + d * d / var)
 
 
+def student_t_logpdf_var(x, mean, var, nu):
+    """Log-pdf of a Student-t parameterized by variance (=scale^2).
+
+    `var` is the scale parameter squared, not the distribution
+    variance (which is var * nu / (nu - 2) for nu > 2).
+    """
+    d = x - mean
+    return (gammaln((nu + 1) / 2) - gammaln(nu / 2)
+            - 0.5 * jnp.log(nu * jnp.pi * var)
+            - (nu + 1) / 2 * jnp.log1p(d * d / (nu * var)))
+
+
+def student_t_logcdf(t, nu):
+    """Log-CDF of a standardized Student-t distribution (loc=0, scale=1)."""
+    t2 = t * t
+    w = nu / (nu + t2)
+    Ix = betainc(nu / 2, 0.5, w)
+    return jnp.where(t < 0,
+                     jnp.log(0.5) + jnp.log(Ix),
+                     jnp.log1p(-0.5 * Ix))
+
+
 ###############################################################################
 #                                Priors                                       #
 ###############################################################################
@@ -110,6 +141,87 @@ def log_prior_r_empirical(r, R, p, n, Rmax_grid, Rmax_truncate=None):
     logpdf = p * jnp.log(r) - (r / R)**n - log_norm
     valid = (r > 0) & (r <= Rmax)
     return jnp.where(valid, logpdf, -jnp.inf)
+
+
+class SineAngle(Distribution):
+    r"""Sine-weighted angle prior for disk inclination.
+
+    Isotropic random orientation gives P(i) ∝ sin(i) for the inclination
+    angle i ∈ [low, high] (in radians internally, but the distribution
+    works in DEGREES to match the maser model convention).
+
+    PDF:
+        f(i) = sin(i) / (cos(low) - cos(high)),  low <= i <= high
+    where i, low, high are in degrees.
+    """
+    arg_constraints = {"low": constraints.real, "high": constraints.real}
+    reparametrized_params = ["low", "high"]
+
+    def __init__(self, low=0.0, high=180.0, validate_args=None):
+        self.low = jnp.asarray(low)
+        self.high = jnp.asarray(high)
+        batch_shape = jnp.broadcast_shapes(
+            jnp.shape(self.low), jnp.shape(self.high))
+        super().__init__(batch_shape=batch_shape, validate_args=validate_args)
+
+    @constraints.dependent_property(is_discrete=False, event_dim=0)
+    def support(self):
+        return constraints.interval(self.low, self.high)
+
+    def sample(self, key, sample_shape=()):
+        # CDF inversion: cos(i) ~ Uniform(cos(high), cos(low))
+        shape = sample_shape + self.batch_shape
+        lo_rad = jnp.deg2rad(self.low)
+        hi_rad = jnp.deg2rad(self.high)
+        u = random.uniform(key, shape)
+        cos_i = jnp.cos(hi_rad) + u * (jnp.cos(lo_rad) - jnp.cos(hi_rad))
+        return jnp.rad2deg(jnp.arccos(cos_i))
+
+    def log_prob(self, value):
+        lo_rad = jnp.deg2rad(self.low)
+        hi_rad = jnp.deg2rad(self.high)
+        val_rad = jnp.deg2rad(value)
+        log_norm = jnp.log(jnp.abs(jnp.cos(lo_rad) - jnp.cos(hi_rad)))
+        # sin(i) in radians, but value is in degrees so need deg->rad Jacobian
+        # f(i_deg) = sin(i_rad) / norm * (pi/180)
+        lp = jnp.log(jnp.sin(val_rad)) - log_norm + jnp.log(jnp.pi / 180)
+        in_bounds = (value >= self.low) & (value <= self.high)
+        return jnp.where(in_bounds, lp, -jnp.inf)
+
+
+class VolumePrior(Distribution):
+    r"""Volumetric distance prior p(D) \propto D^2 on [low, high].
+
+    Normalised PDF: f(D) = 3 D^2 / (high^3 - low^3).
+    CDF inversion: D = (u * (high^3 - low^3) + low^3)^{1/3}.
+    """
+    arg_constraints = {"low": constraints.positive,
+                       "high": constraints.positive}
+    reparametrized_params = ["low", "high"]
+
+    def __init__(self, low, high, validate_args=None):
+        self.low = jnp.asarray(low, dtype=float)
+        self.high = jnp.asarray(high, dtype=float)
+        self._d3_diff = self.high**3 - self.low**3
+        self._log_norm = jnp.log(self._d3_diff / 3)
+        batch_shape = jnp.broadcast_shapes(
+            jnp.shape(self.low), jnp.shape(self.high))
+        super().__init__(batch_shape=batch_shape,
+                         validate_args=validate_args)
+
+    @constraints.dependent_property(is_discrete=False, event_dim=0)
+    def support(self):
+        return constraints.interval(self.low, self.high)
+
+    def sample(self, key, sample_shape=()):
+        shape = sample_shape + self.batch_shape
+        u = random.uniform(key, shape)
+        return (u * self._d3_diff + self.low**3)**(1 / 3)
+
+    def log_prob(self, value):
+        in_bounds = (value >= self.low) & (value <= self.high)
+        return jnp.where(in_bounds, 2 * jnp.log(value) - self._log_norm,
+                         -jnp.inf)
 
 
 class JeffreysPrior(Uniform):
@@ -172,9 +284,14 @@ def load_priors(config_priors):
         "normal": lambda p: Normal(p["loc"], p["scale"]),
         "truncated_normal": lambda p: TruncatedNormal(p["mean"], p["scale"], low=p.get("low", None), high= p.get("high", None)),  # noqa
         "uniform": lambda p: Uniform(p["low"], p["high"]),
+        "log_uniform": lambda p: LogUniform(p["low"], p["high"]),
         "delta": lambda p: Delta(p["value"]),
         "jeffreys": lambda p: JeffreysPrior(p["low"], p["high"]),
+        "volume": lambda p: VolumePrior(p["low"], p["high"]),
+        "gamma": lambda p: Gamma(p["concentration"], p["rate"]),
         "maxwell": lambda p: Maxwell(p["scale"]),
+        "sine_angle": lambda p: SineAngle(
+            p.get("low", 0.0), p.get("high", 180.0)),
         "vector_uniform": lambda p: {"type": "vector_uniform", "low": p["low"], "high": p["high"]},  # noqa
         "vector_uniform_fixed": lambda p: {"type": "vector_uniform_fixed", "low": p["low"], "high": p["high"],},  # noqa
         "vector_radial_uniform": lambda p: {"type": "vector_radial_uniform", "nval": len(p["rknot"]), "low": p["low"], "high": p["high"]},  # noqa
@@ -213,11 +330,44 @@ def log_integral_gauss_pdf_times_cdf(mu, sigma, t, w):
     return norm_jax.logcdf((t - mu) / jnp.sqrt(sigma**2 + w**2))
 
 
-def log_prob_integrand_sel(x, e_x, lim, lim_width):
-    if lim_width is None:
-        return norm_jax.logcdf((lim - x) / e_x)
+def _student_t_sel_gh_weights(nu):
+    """GH quadrature nodes (tau) and log-weights for Student-t selection.
+
+    The Student-t is a Gaussian scale mixture: t_nu = int N(0,1/tau)
+    Gamma(tau|a,a) dtau with a=nu/2. Substituting s=log(tau) and expanding
+    around the saddle point (s=0, curvature a) gives a GH quadrature.
+    Fully differentiable w.r.t. nu.
+    """
+    a = nu / 2
+    sigma_s = 1.0 / jnp.sqrt(a)
+    s = jnp.sqrt(2.0) * sigma_s * _GH_SEL_NODES
+    tau = jnp.exp(s)
+
+    # log [Gamma(exp(s)|a,a) * exp(s)] = a*log(a) - gammaln(a) + a*s - a*exp(s)
+    log_gamma_s = a * jnp.log(a) - gammaln(a) + a * s - a * tau
+
+    # GH: int h(s) ds = sigma*sqrt(2) * sum_i w_i * h(s_i) * exp(x_i^2)
+    log_w = (_GH_SEL_LOG_WEIGHTS + _GH_SEL_NODES**2
+             + jnp.log(jnp.sqrt(2.0) * sigma_s) + log_gamma_s)
+    return tau, log_w
+
+
+def log_prob_integrand_sel(x, e_x, lim, lim_width, nu_cz=None):
+    if nu_cz is None:
+        if lim_width is None:
+            return norm_jax.logcdf((lim - x) / e_x)
+        else:
+            return log_integral_gauss_pdf_times_cdf(x, e_x, lim, lim_width)
     else:
-        return log_integral_gauss_pdf_times_cdf(x, e_x, lim, lim_width)
+        tau, log_w = _student_t_sel_gh_weights(nu_cz)
+        if lim_width is None:
+            log_cdf = norm_jax.logcdf(
+                (lim - x)[..., None] / e_x[..., None] * jnp.sqrt(tau))
+        else:
+            var_eff = e_x[..., None]**2 / tau + lim_width**2
+            log_cdf = norm_jax.logcdf(
+                (lim - x[..., None]) / jnp.sqrt(var_eff))
+        return logsumexp(log_w + log_cdf, axis=-1)
 
 
 def logmeanexp(x, axis=None, denom=None):

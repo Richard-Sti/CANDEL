@@ -29,13 +29,14 @@ from numpyro.distributions.transforms import biject_to
 from numpyro.infer import MCMC, NUTS
 from numpyro.infer.initialization import init_to_median, init_to_value
 from numpyro.infer.util import log_density
+from scipy.optimize import minimize as sp_minimize
 from tqdm import trange
 
 from ..util import (fprint, fsection, galactic_to_radec, plot_corner,
-                    plot_radial_profiles, plot_spline_bias,
-                    plot_Vext_moll, plot_Vext_rad_corner,
-                    plot_Vext_radmag, radec_cartesian_to_galactic,
-                    radec_to_cartesian, radec_to_galactic)
+                    plot_radial_profiles, plot_spline_bias, plot_Vext_moll,
+                    plot_Vext_rad_corner, plot_Vext_radmag,
+                    radec_cartesian_to_galactic, radec_to_cartesian,
+                    radec_to_galactic)
 from .evidence import (BIC_AIC, dict_samples_to_array, harmonic_evidence,
                        laplace_evidence)
 
@@ -55,12 +56,26 @@ def _parse_dense_mass(kwargs, site_names=None):
 
     Supports:
       - ``dense_mass = true/false`` (boolean, applies to all parameters)
-      - ``dense_mass_params = ["H0", "M_TRGB", ...]`` (list of site names
-        that share a dense mass matrix; remaining sites get diagonal)
+      - ``dense_mass_params = ["H0", "M_TRGB", ...]`` (single block)
+      - ``dense_mass_blocks = [["H0", "D_c"], ["i0", "di_dr"], ...]``
+        (multiple independent dense blocks)
 
-    If `site_names` is provided, any names in ``dense_mass_params`` that
-    are not actual sample sites are silently dropped.
+    If `site_names` is provided, any names not in actual sample sites
+    are silently dropped.
     """
+    blocks = kwargs.get("dense_mass_blocks", None)
+    if blocks is not None:
+        result = []
+        for block in blocks:
+            if site_names is not None:
+                block = [p for p in block if p in site_names]
+            if len(block) >= 2:
+                result.append(tuple(block))
+                fprint(f"dense mass block: {block}")
+            elif len(block) == 1:
+                fprint(f"dropped single-site block: {block}")
+        return result if result else False
+
     dense_mass_params = kwargs.get("dense_mass_params", None)
     if dense_mass_params is not None:
         if site_names is not None:
@@ -89,6 +104,17 @@ def _get_sample_site_names(model, model_kwargs, seed=42):
             if v["type"] == "sample" and not v.get("is_observed", False)}
 
 
+def _setup_dense_mass(kwargs, init_params, model, model_kwargs):
+    if init_params is not None:
+        site_names = set(init_params.keys())
+    elif (kwargs.get("dense_mass_params") is not None
+          or kwargs.get("dense_mass_blocks") is not None):
+        site_names = _get_sample_site_names(model, model_kwargs)
+    else:
+        site_names = None
+    return _parse_dense_mass(kwargs, site_names=site_names)
+
+
 def find_initial_point(model, model_kwargs, maxiter=100, seed=42):
     """Run L-BFGS to find a reasonable MCMC starting point.
 
@@ -96,8 +122,6 @@ def find_initial_point(model, model_kwargs, maxiter=100, seed=42):
     scipy L-BFGS-B with JAX autodiff gradients, then maps back to
     constrained space. Returns None if the optimisation fails.
     """
-    from scipy.optimize import minimize as sp_minimize
-
     # Trace at the prior median to get transforms and a reasonable start
     substituted_model = handlers.substitute(
         handlers.seed(model, rng_seed=seed),
@@ -162,7 +186,37 @@ def find_initial_point(model, model_kwargs, maxiter=100, seed=42):
         return None
 
     unc_opt = unflatten(result.x)
-    return {k: transforms[k](v) for k, v in unc_opt.items()}
+    constrained_opt = {k: transforms[k](v) for k, v in unc_opt.items()}
+
+    # Re-trace at the optimised point to get live support bounds
+    # (important for parameters with dynamic bounds, e.g. r_ang
+    # whose Uniform bounds depend on the sampled D_A).
+    opt_model = handlers.substitute(
+        handlers.seed(model, rng_seed=seed), data=constrained_opt)
+    opt_trace = handlers.trace(opt_model).get_trace(**model_kwargs)
+
+    n_clamped = 0
+    eps = 1e-6
+    for k, v in constrained_opt.items():
+        site = opt_trace.get(k)
+        if site is None:
+            continue
+        support = site["fn"].support
+        lo = getattr(support, "lower_bound", None)
+        hi = getattr(support, "upper_bound", None)
+        if lo is not None or hi is not None:
+            v_new = v
+            if lo is not None:
+                v_new = jnp.maximum(v_new, lo + eps)
+            if hi is not None:
+                v_new = jnp.minimum(v_new, hi - eps)
+            if not jnp.array_equal(v_new, v):
+                n_clamped += int(jnp.sum(v_new != v))
+                constrained_opt[k] = v_new
+    if n_clamped > 0:
+        fprint(f"  clamped {n_clamped} parameters to support bounds.")
+
+    return constrained_opt
 
 
 def print_evidence(bic, aic, lnZ_laplace, err_lnZ_laplace,
@@ -242,13 +296,7 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
         fprint("initialising NUTS from prior median.")
         init_strategy = init_to_median(num_samples=5000)
 
-    if init_params is not None:
-        site_names = set(init_params.keys())
-    elif kwargs.get("dense_mass_params") is not None:
-        site_names = _get_sample_site_names(model, model_kwargs)
-    else:
-        site_names = None
-    dense_mass = _parse_dense_mass(kwargs, site_names=site_names)
+    dense_mass = _setup_dense_mass(kwargs, init_params, model, model_kwargs)
     if init_params is not None:
         ndim = sum(int(np.prod(v.shape)) for v in init_params.values())
         if isinstance(dense_mass, bool):
@@ -413,33 +461,42 @@ def run_H0_inference(model, model_kwargs=None, print_summary=True,
 
     kwargs = model.config["inference"]
 
-    if init_maxiter is None:
-        init_maxiter = kwargs.get("init_maxiter", 1000)
+    init_method = kwargs.get("init_method", "lbfgs")
 
-    if init_maxiter > 0:
-        init_params = find_initial_point(
-            model, model_kwargs, maxiter=init_maxiter,
-            seed=kwargs["seed"])
-        if init_params is not None:
-            fprint("initialising NUTS from L-BFGS solution.")
-            init_strategy = init_to_value(values=init_params)
+    if init_method == "sobol_adam":
+        from .optimise import _use_de, find_MAP
+        init_params = find_MAP(model, model_kwargs, seed=kwargs["seed"])
+        method = "DE" if _use_de(model) else "Sobol+Adam"
+        fprint(f"initialising NUTS from {method} MAP.")
+        init_strategy = init_to_value(values=init_params)
+    else:
+        if init_maxiter is None:
+            init_maxiter = kwargs.get("init_maxiter", 1000)
+
+        if init_maxiter > 0:
+            init_params = find_initial_point(
+                model, model_kwargs, maxiter=init_maxiter,
+                seed=kwargs["seed"])
+            if init_params is not None:
+                fprint("initialising NUTS from L-BFGS solution.")
+                init_strategy = init_to_value(values=init_params)
+            else:
+                init_params = None
+                fprint("L-BFGS failed, initialising NUTS from prior median.")
+                init_strategy = init_to_median(num_samples=5000)
         else:
             init_params = None
-            fprint("L-BFGS failed, initialising NUTS from prior median.")
+            fprint("initialising NUTS from prior median.")
             init_strategy = init_to_median(num_samples=5000)
-    else:
-        init_params = None
-        fprint("initialising NUTS from prior median.")
-        init_strategy = init_to_median(num_samples=5000)
 
-    if init_params is not None:
-        site_names = set(init_params.keys())
-    elif kwargs.get("dense_mass_params") is not None:
-        site_names = _get_sample_site_names(model, model_kwargs)
-    else:
-        site_names = None
-    dense_mass = _parse_dense_mass(kwargs, site_names=site_names)
-    kernel = NUTS(model, init_strategy=init_strategy, dense_mass=dense_mass)
+    dense_mass = _setup_dense_mass(kwargs, init_params, model, model_kwargs)
+    max_tree_depth = kwargs.get("max_tree_depth", 10)
+    target_accept_prob = kwargs.get("target_accept_prob", 0.8)
+    kernel = NUTS(model, init_strategy=init_strategy, dense_mass=dense_mass,
+                  max_tree_depth=max_tree_depth,
+                  target_accept_prob=target_accept_prob)
+    fprint(f"NUTS: max_tree_depth={max_tree_depth}, "
+           f"target_accept_prob={target_accept_prob}")
     mcmc = MCMC(
         kernel, num_warmup=kwargs["num_warmup"],
         num_samples=kwargs["num_samples"], num_chains=kwargs["num_chains"],
@@ -553,7 +610,7 @@ def postprocess_samples(samples):
 
     for model_prefix in model_prefixes:
         for prefix in ["Vext_rad", "Vext_radmag", "Vext",
-                        "zeropoint_dipole"]:
+                       "zeropoint_dipole"]:
             full_prefix = f"{model_prefix}{prefix}"
             # Spherical form: phi + cos_theta (+ mag optional)
             phi_key = f"{full_prefix}_phi"

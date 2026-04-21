@@ -136,12 +136,36 @@ def insert_comment_at_top(path: str, label: str):
         f.writelines(original)
 
 
+_SPOT_ARRAY_KEYS = ("velocity", "x", "sigma_x", "y", "sigma_y",
+                     "a", "sigma_a", "accel_measured", "is_highvel",
+                     "phi_lo", "phi_hi")
+
+
+def downsample_spots(data, max_spots, seed=42):
+    """Randomly downsample maser spot data to at most `max_spots`."""
+    n = data["n_spots"]
+    if max_spots >= n:
+        return data
+    rng = __import__("numpy").random.default_rng(seed)
+    idx = rng.choice(n, max_spots, replace=False)
+    idx.sort()
+    data = dict(data)
+    for key in _SPOT_ARRAY_KEYS:
+        if key in data:
+            data[key] = data[key][idx]
+    data["n_spots"] = max_spots
+    fprint(f"downsampled to {max_spots}/{n} spots.")
+    return data
+
+
 if __name__ == "__main__":
     parser = ArgumentParser(
         description="Run inference on a PV model."
     )
     parser.add_argument("--config", type=str, required=True,
                         help="Path to the configuration file.")
+    parser.add_argument("--max-spots", type=int, default=None,
+                        help="Randomly downsample maser spots to this many.")
     # Re-expose the pre-parsed options so they show up in --help
     parser.add_argument("--host-devices", type=int,
                         help="NumPyro host device count (handled pre-import).")
@@ -201,6 +225,67 @@ if __name__ == "__main__":
             model = candel.model.JointTRGBCSPModel(
                 args.config, trgb_data, csp_data)
             candel.run_H0_inference(model, )
+        elif which_run == "maser_disk":
+            import tempfile
+            import tomli_w
+
+            maser_cfg = get_nested(config, "io/maser_data", {})
+            root = maser_cfg.get("root", "data/Megamaser")
+            galaxy = get_nested(config, "model/galaxy", "CGCG074-064")
+            all_galaxies = get_nested(config, "model/galaxies", {})
+
+            if galaxy == "joint":
+                galaxy_names = list(all_galaxies.keys())
+                fprint(f"selected joint maser disk model "
+                       f"({len(galaxy_names)} galaxies: "
+                       f"{', '.join(galaxy_names)}).")
+                data_list = [
+                    candel.pvdata.load_megamaser_spots(
+                        root, g,
+                        v_sys_obs=all_galaxies[g]["v_sys_obs"])
+                    for g in galaxy_names]
+                if args.max_spots is not None:
+                    data_list = [downsample_spots(d, args.max_spots)
+                                 for d in data_list]
+                config["io"]["fname_output"] = "results/Maser/joint.hdf5"
+
+                tmp = tempfile.NamedTemporaryFile(
+                    mode="wb", suffix=".toml", delete=False)
+                tomli_w.dump(config, tmp)
+                tmp.close()
+                model = candel.model.JointMaserModel(
+                    tmp.name, data_list)
+            else:
+                fprint(f"selected maser disk model for {galaxy}.")
+                gal_cfg = all_galaxies.get(galaxy, {})
+                for key in ("fit_di_dr", "sample_accel_det", "use_selection"):
+                    if key in gal_cfg:
+                        config["model"][key] = gal_cfg[key]
+                gal_priors = gal_cfg.get("priors", {})
+                for pname, pval in gal_priors.items():
+                    config["model"]["priors"][pname] = pval
+
+                # Per-galaxy init_values override global init settings.
+                gal_init = gal_cfg.get("init_values", None)
+                if gal_init is not None:
+                    config["inference"]["init_values"] = gal_init
+                    fprint(f"using per-galaxy init_values for {galaxy}.")
+
+                config["io"]["fname_output"] = (
+                    f"results/Maser/{galaxy}.hdf5")
+
+                tmp = tempfile.NamedTemporaryFile(
+                    mode="wb", suffix=".toml", delete=False)
+                tomli_w.dump(config, tmp)
+                tmp.close()
+                data = candel.pvdata.load_megamaser_spots(
+                    root, galaxy,
+                    v_sys_obs=gal_cfg["v_sys_obs"])
+                if args.max_spots is not None:
+                    data = downsample_spots(data, args.max_spots)
+                model = candel.model.MaserDiskModel(tmp.name, data)
+
+            candel.run_H0_inference(model)
         else:
             data = candel.pvdata.load_PV_dataframes(args.config)
 

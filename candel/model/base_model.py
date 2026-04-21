@@ -27,11 +27,18 @@ from ..cosmo.cosmography import (Distance2Distmod, Distance2Redshift,
                                  Redshift2Distance)
 from ..util import (fprint, fsection, get_nested, load_config,
                     radec_to_cartesian, replace_prior_with_delta)
+from .integration import ln_simpson_precomputed, simpson_log_weights
 from .interp import LOSInterpolator
 from .pv_utils import (lp_galaxy_bias, octupole_radial, quadrupole_radial,
-                       sigmoid_monopole_radial)
-from .simpson import ln_simpson_precomputed, simpson_log_weights
+                       rsample, sigmoid_monopole_radial)
 from .utils import load_priors, log_prob_integrand_sel, predict_cz
+
+# ICRS equatorial → Galactic Cartesian rotation matrix.
+# Computed via astropy: SkyCoord(basis, frame='icrs').galactic.
+_R_ICRS_TO_GAL = np.array([
+    [-0.05487565771259163, -0.87343705195561590, -0.48383507361671546],
+    [+0.49410943719272680, -0.44482972122329520, +0.74698218398666760],
+    [-0.86766613755965760, -0.19807633727300053, +0.45598381368730160]])
 
 
 def make_adaptive_grid(r_min, r_max, delta_mu, dr_max):
@@ -188,6 +195,12 @@ class ModelBase(ABC):
                         f"{ra_key} must be 1D or 2D, got {ra.ndim}D")
                 setattr(self, attr, _normalize_rows(rhat))
                 attrs_set.append(attr)
+
+                # Galactic unit vectors for anisotropic sigma_v.
+                gal_attr = attr + "_gal"
+                rhat_gal = (np.asarray(rhat) @ _R_ICRS_TO_GAL.T)
+                setattr(self, gal_attr, jnp.asarray(rhat_gal))
+                attrs_set.append(gal_attr)
 
         fprint("set the following attributes: "
                f"{', '.join(attrs_set)}")
@@ -409,6 +422,8 @@ class ModelBase(ABC):
                              sin_theta * np.sin(phi),
                              cos_theta], axis=1)
             self.rhat_rand_los = jnp.asarray(rhat)
+            self.rhat_rand_los_gal = jnp.asarray(
+                rhat @ _R_ICRS_TO_GAL.T)
             self.rand_los_RA = None
             self.rand_los_dec = None
 
@@ -435,7 +450,7 @@ class ModelBase(ABC):
         return 2 * jnp.log(r)
 
     def log_S_cz(self, lp_r, Vpec, H0, sigma_v,
-                 cz_lim, cz_width):
+                 cz_lim, cz_width, nu_cz=None):
         """Selection correction for a redshift-truncated sample."""
         zcosmo = self.distance2redshift(
             self.r_sel_range, h=H0 / 100)
@@ -445,7 +460,7 @@ class ModelBase(ABC):
             sigma_v = sigma_v[None, ...]
         sigma_v = jnp.broadcast_to(sigma_v, cz_r.shape)
         log_prob = log_prob_integrand_sel(
-            cz_r, sigma_v, cz_lim, cz_width)
+            cz_r, sigma_v, cz_lim, cz_width, nu_cz=nu_cz)
         return ln_simpson_precomputed(
             lp_r + log_prob, self._simpson_log_w_sel, axis=-1)
 
@@ -487,6 +502,14 @@ class H0ModelBase(ModelBase):
         self._load_and_set_priors()
         self._load_selection_thresholds()
         self._load_model_flags()
+
+    def _replace_unused_priors(self, config):
+        use_reconstruction = get_nested(
+            config, "model/use_reconstruction", False)
+        if not use_reconstruction:
+            replace_prior_with_delta(config, "beta", 0.0)
+        config = self._replace_bias_priors(config)
+        return config
 
     def _load_model_flags(self):
         config = self.config
@@ -546,6 +569,54 @@ class H0ModelBase(ModelBase):
             fprint(f"use_Vext_octupole set to True "
                    f"(mag range: {self.Vext_oct_mag_range})")
         self.apply_sel = self.which_selection is not None
+
+        # Robust velocity-error modelling options
+        self.cz_likelihood = get_nested(
+            config, "model/cz_likelihood", "gaussian")
+        if self.cz_likelihood not in ("gaussian", "student_t"):
+            raise ValueError(
+                f"Invalid cz_likelihood: '{self.cz_likelihood}'. "
+                "Expected 'gaussian' or 'student_t'.")
+        if self.cz_likelihood != "gaussian":
+            fprint(f"cz_likelihood set to {self.cz_likelihood}")
+
+        self.anisotropic_sigma_v = get_nested(
+            config, "model/anisotropic_sigma_v", False)
+        if self.anisotropic_sigma_v:
+            fprint("anisotropic_sigma_v enabled "
+                   "(sigma_v_x, sigma_v_y, sigma_v_z in Galactic frame)")
+
+    def _load_selection_thresholds(self, active_map, spec):
+        config = self.config
+        priors = config.setdefault(
+            "model", {}).setdefault("priors", {})
+        which_sel = get_nested(config, "model/which_selection", None)
+        active = active_map.get(which_sel, set())
+
+        for name, default in spec.items():
+            if name not in active:
+                setattr(self, name, None)
+                setattr(self, f"_infer_{name}", False)
+                continue
+
+            raw = get_nested(config, f"model/{name}", default)
+            if raw == "infer":
+                p = priors.get(name)
+                if p is None:
+                    raise ValueError(
+                        f"`{name}` set to 'infer' but no "
+                        f"prior [model.priors.{name}] found.")
+                setattr(self, name, None)
+                setattr(self, f"_infer_{name}", True)
+                fprint(f"{name} will be inferred.")
+            else:
+                setattr(self, name, raw)
+                setattr(self, f"_infer_{name}", False)
+
+    def _resolve_threshold(self, name):
+        if getattr(self, f"_infer_{name}"):
+            return rsample(name, self.priors[name])
+        return getattr(self, name)
 
     def _replace_bias_priors(self, config):
         """Inject delta priors for galaxy bias params if missing.

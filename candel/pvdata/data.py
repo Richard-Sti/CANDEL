@@ -29,12 +29,14 @@ from h5py import File
 from jax import core as jcore
 from jax import numpy as jnp
 from jax.nn import one_hot
+from scipy import linalg
 from scipy.linalg import cholesky
 
+from ..cosmo.cosmography import Redshift2Distance
+from ..model.integration import simpson_log_weights
 from ..model.interp import LOSInterpolator
-from ..util import (SPEED_OF_LIGHT, fprint, fsection, get_nested,
-                    heliocentric_to_cmb, load_config, radec_to_cartesian,
-                    radec_to_galactic)
+from ..util import (SPEED_OF_LIGHT, fprint, fsection, get_nested, load_config,
+                    radec_to_cartesian, radec_to_galactic)
 from .dust import read_dustmap
 
 ###############################################################################
@@ -75,8 +77,6 @@ def _compute_r_grid(r_limits, dr, data, Om=0.3):
             h_auto = float(r_limits.split("_")[1])
         else:
             h_auto = 1.0
-
-        from ..cosmo.cosmography import Redshift2Distance
 
         if "czcmb" in data:
             cz_obs = data["czcmb"]
@@ -233,7 +233,6 @@ class PVDataFrame:
 
         # Pre-compute Simpson log weights for the radial grid.
         if "r_grid" in self.data:
-            from ..model.simpson import simpson_log_weights
             self._simpson_log_w = simpson_log_weights(self.data["r_grid"])
         else:
             self._simpson_log_w = None
@@ -886,8 +885,6 @@ def load_SH0ES(root):
     Y = fits.open(Y_fits_path)[0].data
     L = fits.open(L_fits_path)[0].data
     C = fits.open(C_fits_path)[0].data
-
-    from scipy import linalg
 
     C_inv_cho = linalg.cho_solve(linalg.cho_factor(C), np.identity(C.shape[0]))
     q_lstsq, sigma_lstsq = np.loadtxt(lstsq_results_path, unpack=True)
@@ -2140,6 +2137,7 @@ def load_EDD_2MTF_from_config(config_path):
 ###############################################################################
 #                          Catalogue registry                                 #
 ###############################################################################
+
 
 _CATALOGUE_LOADERS = {
     "2MTF": load_2MTF,

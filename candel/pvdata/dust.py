@@ -13,6 +13,8 @@
 # with this program; if not, write to the Free Software Foundation, Inc.,
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 """Dust maps support."""
+import importlib
+
 import numpy as np
 from astropy.coordinates import SkyCoord
 
@@ -31,7 +33,6 @@ def read_dustmap(RA, dec, model):
 
     module_name, class_name = _DUST_MODELS[model]
     try:
-        import importlib
         mod = importlib.import_module(module_name)
         QueryClass = getattr(mod, class_name)
     except ImportError:

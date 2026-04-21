@@ -24,8 +24,15 @@ scripts/mocks/logs/
 
 modules_arc.sh
 python.sh
+bash.sh
 *.out
 CLAUDE.md
 GEMINI.md
 AGENTS.md
 local_config.toml
+
+*.png
+*.pdf
+CLAUDE.md
+background_papers/
+docs/plans/

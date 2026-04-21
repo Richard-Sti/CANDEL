@@ -62,6 +62,11 @@ def simpson_log_weights(x):
     adjacent spacing ratios stay below 2).
     """
     x = jnp.asarray(x)
+    N = x.shape[0]
+    if N < 3 or N % 2 == 0:
+        raise ValueError(
+            f"Simpson's rule requires an odd number of points >= 3, "
+            f"got {N}.")
     h = jnp.diff(x)
     h0, h1 = h[0::2], h[1::2]
     hsum = h0 + h1
@@ -70,7 +75,6 @@ def simpson_log_weights(x):
     c_mid = hsum**3 / (6 * h0 * h1)
     c_right = hsum / 6 * (2 - h0 / h1)
 
-    N = x.shape[0]
     n_panels = len(h0)
     idx = jnp.arange(n_panels) * 2
     w = jnp.zeros(N)
@@ -81,12 +85,50 @@ def simpson_log_weights(x):
     return jnp.log(w)
 
 
+def trapz_log_weights(x):
+    """Log of composite trapezoidal weights for a 1D grid.
+
+    All weights are positive, so the log is always well-defined.
+    Use with ``ln_trapz_precomputed`` for log-space trapezoidal
+    integration.
+    """
+    x = jnp.asarray(x)
+    h = jnp.diff(x)
+    N = x.shape[0]
+    w = jnp.zeros(N)
+    w = w.at[0].set(h[0] / 2)
+    w = w.at[-1].set(h[-1] / 2)
+    w = w.at[1:-1].set((h[:-1] + h[1:]) / 2)
+    return jnp.log(w)
+
+
+@partial(jax.jit, static_argnums=2)
+def ln_trapz_precomputed(ln_y, log_w, axis=-1):
+    """Log-space trapezoidal integration using pre-computed log weights.
+
+    Computes log(sum_i w_i * y_i) numerically stably via logsumexp.
+    The implementation is identical to ``ln_simpson_precomputed`` —
+    the distinction is semantic (which weights are passed).
+
+    Parameters
+    ----------
+    ln_y : array_like
+        Log function values. The integration axis must match `log_w`.
+    log_w : array_like
+        Pre-computed log trapezoidal weights from ``trapz_log_weights``.
+    axis : int
+        Axis along which to integrate.
+    """
+    return logsumexp(ln_y + log_w, axis=axis)
+
+
 @partial(jax.jit, static_argnums=2)
 def ln_simpson_precomputed(ln_y, log_w, axis=-1):
     """Log-space Simpson integration using pre-computed log weights.
 
-    Equivalent to ``ln_simpson`` but avoids recomputing weights each call.
-    Use ``simpson_log_weights(x)`` once to obtain ``log_w``.
+    Computes log(sum_i w_i * y_i) numerically stably via logsumexp.
+    The implementation is identical to ``ln_trapz_precomputed`` —
+    the distinction is semantic (which weights are passed).
 
     Parameters
     ----------

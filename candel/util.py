@@ -37,6 +37,7 @@ from h5py import File
 from interpax import interp1d
 from jax import vmap
 from matplotlib.ticker import FuncFormatter
+from scipy.interpolate import CubicSpline
 
 SPEED_OF_LIGHT = 299_792.458  # km / s
 
@@ -51,6 +52,19 @@ def fprint(*args, verbose=True, **kwargs):
     """Print an indented status message."""
     if verbose:
         print("  ", *args, **kwargs)
+
+
+def patch_tqdm(mininterval=5):
+    """Monkey-patch tqdm to reduce output frequency for long-running jobs."""
+    import tqdm
+    _Orig = tqdm.tqdm
+
+    class _Slow(_Orig):
+        def __init__(self, *a, **kw):
+            kw.setdefault("mininterval", mininterval)
+            super().__init__(*a, **kw)
+
+    tqdm.tqdm = _Slow
 
 
 def convert_none_strings(d):
@@ -185,7 +199,8 @@ def load_config(config_path, replace_none=True, fill_paths=True,
 
     shared_params = config.get("inference", {}).get("shared_params", None)
     if shared_params and str(shared_params).lower() != "none":
-        config.setdefault("inference", {})["shared_params"] = shared_params.split(",")
+        config.setdefault("inference", {})["shared_params"] = (
+            shared_params.split(","))
 
     return config
 
@@ -267,41 +282,6 @@ def galactic_to_radec_cartesian(ell, b):
     xyz = icrs.cartesian.xyz.value.T
 
     return xyz[0] if np.isscalar(ell) and np.isscalar(b) else xyz
-
-
-def query_ned_cmb_redshift_radec(name):
-    """
-    Query NED for heliocentric redshift and ICRS coordinates and return the
-    CMB-frame velocity (cz_CMB) derived from the NED redshift.
-    """
-    try:
-        from astroquery.exceptions import RemoteServiceError
-        from astroquery.ned import Ned
-    except ImportError as exc:
-        raise ImportError("astroquery is required for querying NED.") from exc
-
-    try:
-        tab = Ned.query_object(name)
-    except (RemoteServiceError, IndexError) as exc:
-        raise RuntimeError(
-            f"NED did not return a valid entry for `{name}`: {exc}"
-        ) from exc
-
-    if len(tab) == 0:
-        raise RuntimeError(f"NED did not return any entry for `{name}`.")
-    required = {"Redshift", "RA", "DEC"}
-    if not required.issubset(tab.colnames):
-        raise RuntimeError(
-            f"Missing required columns in NED output: {tab.colnames}")
-
-    z_helio = tab["Redshift"][0]
-    ra_deg = tab["RA"][0]
-    dec_deg = tab["DEC"][0]
-
-    z_cmb = heliocentric_to_cmb(z_helio, ra_deg, dec_deg)
-    cz_cmb = z_cmb * SPEED_OF_LIGHT
-
-    return cz_cmb, ra_deg, dec_deg
 
 
 def supergalactic_to_radec(sgl, sgb):
@@ -455,6 +435,23 @@ def name2label(name):
         "mag_lim_SN_width": r"$\sigma_{m,{\rm lim}}^{\rm SN}$",
         "mu_LMC": r"$\mu_{\rm LMC}$",
         "mu_N4258": r"$\mu_{\rm N4258}$",
+        # Maser disk model
+        "D_c": r"$D_c$",
+        "eta": r"$\eta$",
+        "log_MBH": r"$\log M_{\rm BH}$",
+        "i0": r"$i_0$",
+        "di_dr": r"$\mathrm{d}i/\mathrm{d}r$",
+        "Omega0": r"$\Omega_0$",
+        "dOmega_dr": r"$\mathrm{d}\Omega/\mathrm{d}r$",
+        "x0": r"$x_0$",
+        "y0": r"$y_0$",
+        "dv_sys": r"$\Delta v_{\rm sys}$",
+        "sigma_x_floor": r"$\sigma_{x,\mathrm{fl}}$",
+        "sigma_y_floor": r"$\sigma_{y,\mathrm{fl}}$",
+        "sigma_v_sys": r"$\sigma_{v,\mathrm{sys}}$",
+        "sigma_v_hv": r"$\sigma_{v,\mathrm{hv}}$",
+        "sigma_a_floor": r"$\sigma_{a,\mathrm{fl}}$",
+        "sigma_pec": r"$\sigma_{\rm pec}~[\mathrm{km/s}]$",
     }
 
     if "/" in name:
@@ -568,7 +565,10 @@ def plot_corner(samples, show_fig=True, filename=None, smooth=1, keys=None):
 
         if v.ndim > 1:
             continue
-        flat_samples.append(v.reshape(-1))
+        v = np.asarray(v).reshape(-1)
+        if np.ptp(v) == 0:
+            continue
+        flat_samples.append(v)
         labels.append(name2label(k))
 
     if not flat_samples:
@@ -1073,11 +1073,8 @@ def plot_spline_bias(samples, knots_delta, show_fig=True, filename=None,
     linear_b1_samples : array-like or None
         If provided, overlay log(1 + b1*delta) band from a linear bias run.
     """
-    from scipy.interpolate import CubicSpline
-
     knots_delta = np.array(sorted(knots_delta))
     knots_log1pd = np.log(1 + knots_delta)
-    pin_idx = int(np.argmin(np.abs(knots_delta)))
     n_knots = len(knots_delta)
 
     # Collect amplitude samples, shape (n_samples, n_knots)
@@ -1098,7 +1095,7 @@ def plot_spline_bias(samples, knots_delta, show_fig=True, filename=None,
         cs = CubicSpline(knots_log1pd, amp_samples[j], bc_type='natural')
         spline_eval[j] = cs(log1pd_eval)
 
-    p16, p50, p84 = np.percentile(spline_eval, [16, 50, 84], axis=0)
+    p16, _, p84 = np.percentile(spline_eval, [16, 50, 84], axis=0)
     mean = np.mean(spline_eval, axis=0)
 
     fig, ax = plt.subplots(figsize=(5, 4))
