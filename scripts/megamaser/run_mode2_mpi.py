@@ -777,6 +777,10 @@ def run_de(coll, model, names, bounds, *, popsize, maxiter, F, CR, tol, seed,
         if checkpoint_path and gen % checkpoint_every == 0:
             _save_checkpoint(gen)
             fprint(f"  checkpoint saved at gen {gen}")
+            fprint(f"  best log-post = {best_post:.4f}")
+            wn = max(len(n) for n in names)
+            for n, v in zip(names, best_x):
+                fprint(f"    {n:<{wn}s} = {float(v):+.6g}")
 
         if gen > 50 and abs(best_post - prev_best) < tol and np.std(post) < tol:
             fprint(f"DE converged at gen {gen} (delta < {tol})")
