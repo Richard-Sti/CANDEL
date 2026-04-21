@@ -398,16 +398,21 @@ class MaserDiskModel(ModelBase):
         self.marginalise_phi = (mode in ("mode1", "mode2"))
 
     def _configure_warp_pivots(self, data, gal_cfg):
-        is_hv_np = _np.asarray(data["is_highvel"])
-        x_hv = _np.asarray(data["x"])[is_hv_np]
-        y_hv = _np.asarray(data["y"])[is_hv_np]
-        r_ang_hv = _np.sqrt(x_hv**2 + y_hv**2) / 1e3  # μas → mas
-        r_data = float(_np.median(r_ang_hv))
         r_common = gal_cfg.get("r_ang_ref", None)
-        r_base = float(r_common) if r_common is not None else r_data
-        base_src = (
-            "config" if r_common is not None
-            else f"median projected radius of {len(r_ang_hv)} HV spots")
+        if r_common is not None:
+            r_base = float(r_common)
+            base_src = "config"
+        else:
+            is_hv_np = _np.asarray(data["is_highvel"])
+            x_hv = _np.asarray(data["x"])[is_hv_np]
+            y_hv = _np.asarray(data["y"])[is_hv_np]
+            if x_hv.size == 0:
+                raise ValueError(
+                    "_configure_warp_pivots: no HV spots and r_ang_ref not "
+                    "set in gal_cfg; cannot derive pivot radius.")
+            r_ang_hv = _np.sqrt(x_hv**2 + y_hv**2) / 1e3  # μas → mas
+            r_base = float(_np.median(r_ang_hv))
+            base_src = f"median projected radius of {x_hv.size} HV spots"
 
         self._r_ang_ref_i = float(gal_cfg.get("r_ang_ref_i", r_base))
         self._r_ang_ref_Omega = float(gal_cfg.get("r_ang_ref_Omega", r_base))

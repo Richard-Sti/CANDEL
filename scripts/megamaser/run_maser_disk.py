@@ -128,6 +128,10 @@ parser.add_argument("--sampler", type=str, default=None,
                     choices=["nuts", "nss"])
 parser.add_argument("--seed", type=int, default=None)
 # NUTS
+parser.add_argument("--num-warmup", type=int, default=None,
+                    help="Number of NUTS warmup steps (default: from config)")
+parser.add_argument("--num-samples", type=int, default=None,
+                    help="Number of NUTS samples per chain (default: from config)")
 parser.add_argument("--num-chains", type=int, default=None,
                     help="Number of NUTS chains (default: from config); "
                          "chains always run vectorised")
@@ -236,8 +240,8 @@ dense_mass_blocks = inf_cfg.get("dense_mass_blocks", [
 
 config = {
     "inference": {
-        "num_warmup": inf_cfg.get("num_warmup", 2000),
-        "num_samples": inf_cfg.get("num_samples", 2000),
+        "num_warmup": args.num_warmup or inf_cfg.get("num_warmup", 2000),
+        "num_samples": args.num_samples or inf_cfg.get("num_samples", 2000),
         "num_chains": args.num_chains or inf_cfg.get("num_chains", 1),
         "chain_method": "vectorized",
         "seed": seed,
@@ -316,8 +320,8 @@ if not is_joint:
 
 
 if sampler == "nuts":
-    num_warmup = inf_cfg.get("num_warmup", 2000)
-    num_samples = inf_cfg.get("num_samples", 2000)
+    num_warmup = args.num_warmup or inf_cfg.get("num_warmup", 2000)
+    num_samples = args.num_samples or inf_cfg.get("num_samples", 2000)
     num_chains = args.num_chains or inf_cfg.get("num_chains", 1)
 
     if is_joint:
