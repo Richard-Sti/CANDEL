@@ -36,3 +36,4 @@ local_config.toml
 CLAUDE.md
 background_papers/
 docs/plans/
+remote_logs/
