@@ -11,9 +11,10 @@ A typical configuration file is organized into several sections:
 
 .. code-block:: toml
 
-   # Root directories for outputs and data
-   root_main = "./results/my_experiment"
-   root_data = "./data"
+   # Root directories for code, data, and results
+   root_main = "/path/to/CANDEL/"           # repo root
+   root_data = "/path/to/CANDEL/data/"      # optional, defaults to <root_main>/data
+   root_results = "/path/to/CANDEL/results/" # optional, defaults to <root_main>/results
    fname_output = "samples.h5"
 
    [model]
@@ -38,11 +39,14 @@ A typical configuration file is organized into several sections:
 Path handling
 -------------
 
-- ``root_main``: The directory where all output files (samples, plots, logs)
-  will be saved.
-- ``root_data``: The base directory for input data files (catalogues, fields).
-- Relative paths in the configuration are automatically resolved relative to
-  the respective root directory.
+- ``root_main``: The repository root (where the code lives). Required.
+- ``root_data``: Base directory for input data files. Optional; defaults to
+  ``<root_main>/data``.
+- ``root_results``: Base directory for outputs (samples, plots, logs).
+  Optional; defaults to ``<root_main>/results``.
+- Relative paths in the configuration are automatically resolved against the
+  appropriate root: data file keys against ``root_data``, output keys
+  (``fname_output``) against ``root_results``.
 
 Priors
 ------

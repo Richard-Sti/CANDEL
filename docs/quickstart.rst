@@ -25,9 +25,9 @@ minimal example for a Tully--Fisher inference:
 
 .. code-block:: toml
 
-   root_main = "./results/tfr_test"
-   root_data = "./data"
-   fname_output = "samples.h5"
+   root_main = "/path/to/CANDEL/"
+   # root_data and root_results default to <root_main>/data and <root_main>/results
+   fname_output = "tfr_test/samples.h5"
 
    [model]
    name = "TFR"

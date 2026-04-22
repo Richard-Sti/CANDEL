@@ -97,12 +97,22 @@ def replace_prior_with_delta(config, param, value, verbose=True):
     return config
 
 
+def get_root_data(config):
+    """Resolve the data root, defaulting to ``<root_main>/data``."""
+    return config.get("root_data", join(config["root_main"], "data"))
+
+
+def get_root_results(config):
+    """Resolve the results root, defaulting to ``<root_main>/results``."""
+    return config.get("root_results", join(config["root_main"], "results"))
+
+
 def convert_to_absolute_paths(config):
     """Recursively convert relative paths in config to absolute paths."""
-    root = config["root_main"]
-    root_data = config.get("root_data", root)
+    root_data = get_root_data(config)
+    root_results = get_root_results(config)
 
-    path_keys_root = {
+    path_keys_results = {
         "fname_output",
     }
     path_keys_data = {
@@ -118,8 +128,8 @@ def convert_to_absolute_paths(config):
             if isinstance(v, dict):
                 _recurse(v)
             elif isinstance(v, str):
-                if k in path_keys_root and not isabs(v):
-                    d[k] = abspath(join(root, v))
+                if k in path_keys_results and not isabs(v):
+                    d[k] = abspath(join(root_results, v))
                 elif k in path_keys_data and not isabs(v):
                     d[k] = abspath(join(root_data, v))
 

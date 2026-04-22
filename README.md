@@ -136,6 +136,47 @@ These are optional — CANDEL's core functionality (NUTS, optimisation) works wi
 
 For model-evidence computation, also install [harmonic](https://github.com/astro-informatics/harmonic) (note: there may be compatibility issues with recent JAX versions).
 
+## Local configuration (`local_config.toml`)
+
+Per-machine settings live in a `local_config.toml` file at the repository
+root. This file is **not** versioned and must be created on each machine where
+CANDEL is installed. It supplies machine-specific paths and Python interpreters
+that the run scripts and submission helpers read.
+
+A minimal `local_config.toml` looks like:
+
+```toml
+root_main    = "/path/to/CANDEL/"   # repo root (required)
+root_data    = "/path/to/data/"     # optional, defaults to <root_main>/data
+root_results = "/path/to/results/"  # optional, defaults to <root_main>/results
+
+python_exec     = "/path/to/venv_candel/bin/python"
+python_exec_gpu = "/path/to/venv_gpu_candel/bin/python"
+machine = "my-machine"
+```
+
+Keys:
+
+- `root_main` — repository root. Required. Used as the fallback for the data
+  and results roots when those are not set.
+- `root_data` — base directory for input data files (catalogues, fields,
+  reconstructions). Optional; defaults to `<root_main>/data`. Set this when
+  the data live on a different filesystem than the code (e.g. on an HPC
+  cluster with a separate scratch area).
+- `root_results` — base directory for outputs (samples, plots, logs).
+  Optional; defaults to `<root_main>/results`. Same rationale as
+  `root_data`.
+- `python_exec`, `python_exec_gpu` — absolute paths to the CPU and GPU
+  Python interpreters used by submission scripts.
+- `machine` — free-form label for the host (used in logs and tags).
+- `gpu_ld_library_path` — list of directories prepended to `LD_LIBRARY_PATH`
+  on GPU jobs (typically the bundled NVIDIA libs in the venv plus system
+  CUDA paths).
+
+Path resolution: relative paths in run-time TOML configs are resolved against
+the appropriate root — input data file keys against `root_data`, output keys
+(`fname_output`) against `root_results`. Absolute paths are left unchanged.
+
 ## Paper notes
 
 Implementation findings, data notes, and numerical results that arise during development should be written up in the **"Notes from code"** appendix of the megamaser paper draft:

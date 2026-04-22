@@ -114,7 +114,7 @@ def main():
     args = parser.parse_args()
 
     config = candel.load_config(args.config)
-    root = config["root_main"]
+    root_data = candel.get_root_data(config)
     recon = args.reconstruction
 
     # Number of realisations per reconstruction
@@ -129,7 +129,7 @@ def main():
     # Load GW170817 posterior samples
     fprint("loading GW170817 posterior samples.", verbose=verbose)
     data = np.genfromtxt(
-        join(root, "data/high_spin_PhenomPNRT_posterior_samples.dat.gz"),
+        join(root_data, "high_spin_PhenomPNRT_posterior_samples.dat.gz"),
         names=True)
     n_samples = len(data)
     fprint(f"loaded {n_samples} samples.", verbose=verbose)
@@ -175,7 +175,7 @@ def main():
                 density_all[i] = dens_i
                 vrad_all[i] = vrad_i
 
-        outfile = join(root, f"data/GW170817_fields_{recon}.hdf5")
+        outfile = join(root_data, f"GW170817_fields_{recon}.hdf5")
         fprint(f"saving results to `{outfile}`.")
         with File(outfile, "w") as f:
             f.create_dataset("density", data=density_all)

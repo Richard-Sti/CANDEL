@@ -81,8 +81,8 @@ except ModuleNotFoundError:
 
 import tomli_w
 
-from candel import (SPEED_OF_LIGHT, fprint, get_nested, load_config,  # noqa
-                    replace_prior_with_delta)
+from candel import (SPEED_OF_LIGHT, fprint, get_nested, get_root_results,  # noqa
+                    load_config, replace_prior_with_delta)
 
 
 def load_local_config():
@@ -478,7 +478,8 @@ if __name__ == "__main__":
 
             # Check that the output directory exists
             fdir_out = join(
-                local_config["root_main"], local_config["io"]["root_output"])
+                get_root_results(local_config),
+                local_config["io"]["root_output"])
             if not exists(fdir_out):
                 fprint(f"creating output directory `{fdir_out}`")
                 makedirs(fdir_out, exist_ok=True)
@@ -498,7 +499,7 @@ if __name__ == "__main__":
                 local_config, "io/fname_output", fname_out)
 
             toml_out = join(
-                local_config["root_main"],
+                get_root_results(local_config),
                 splitext(fname_out)[0] + ".toml"
             )
             fprint(f"writing the configuration file to `{toml_out}`")

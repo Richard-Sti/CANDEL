@@ -70,6 +70,8 @@ from .util import (                                                             
     radec_to_supergalactic,                                                     # noqa
     heliocentric_to_cmb,                                                        # noqa
     load_config,                                                                # noqa
+    get_root_data,                                                              # noqa
+    get_root_results,                                                           # noqa
     replace_prior_with_delta,                                                   # noqa
     hms_to_degrees,                                                             # noqa
     dms_to_degrees,                                                             # noqa

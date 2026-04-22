@@ -35,8 +35,9 @@ from scipy.linalg import cholesky
 from ..cosmo.cosmography import Redshift2Distance
 from ..model.integration import simpson_log_weights
 from ..model.interp import LOSInterpolator
-from ..util import (SPEED_OF_LIGHT, fprint, fsection, get_nested, load_config,
-                    radec_to_cartesian, radec_to_galactic)
+from ..util import (SPEED_OF_LIGHT, fprint, fsection, get_nested,
+                    get_root_data, load_config, radec_to_cartesian,
+                    radec_to_galactic)
 from .dust import read_dustmap
 
 ###############################################################################
@@ -1222,7 +1223,7 @@ def load_CCHP_from_config(config_path, ra_dec_only=False):
     redshift_source = get_nested(
         config, "io/CCHP_redshift_source/kind", "cz_cmb")
     if not isabs(path):
-        path = join(config["root_main"], path)
+        path = join(get_root_data(config), path)
 
     data_tbl = np.genfromtxt(
         path,
@@ -1438,7 +1439,7 @@ def load_CSP_from_config(config_path):
     if csp_root is None:
         raise ValueError("CSP root not specified in config [io.CSP.root]")
     if not isabs(csp_root):
-        csp_root = join(config["root_main"], csp_root)
+        csp_root = join(get_root_data(config), csp_root)
 
     # Get optional CSP loading parameters
     which_sample = get_nested(config, "io/CSP/which_sample", None)
