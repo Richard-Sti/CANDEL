@@ -28,6 +28,7 @@ from scipy.stats import kstest
 import candel
 from candel.mock import gen_TRGB_mock
 from candel.mock.TRGB_mock import DEFAULT_ANCHORS, DEFAULT_TRUE_PARAMS
+from candel.util import results_path
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
@@ -614,7 +615,7 @@ def main():
                             REPO_ROOT, "scripts/runs/config_EDD_TRGB.toml"),
                         help="Base config for inference settings")
     parser.add_argument("--outdir",
-                        default=os.path.join(REPO_ROOT, "results/mocks_TRGB"),
+                        default=results_path("results/mocks_TRGB"),
                         help="Output directory")
     parser.add_argument("--timeout", type=int, default=3600,
                         help="Per-mock timeout in seconds (0=none)")

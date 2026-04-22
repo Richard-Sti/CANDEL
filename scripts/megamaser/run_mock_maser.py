@@ -24,6 +24,8 @@ import tempfile  # noqa: E402
 import numpy as np  # noqa: E402
 import tomli_w  # noqa: E402
 
+from candel.util import results_path  # noqa: E402
+
 from candel.mock.maser_disk_mock import gen_maser_disk_mock  # noqa: E402
 from candel.model.model_H0_maser import MaserDiskModel  # noqa: E402
 from candel.inference.inference import run_H0_inference  # noqa: E402
@@ -129,7 +131,7 @@ config = {
         },
     },
     "io": {
-        "fname_output": "results/Maser/mock_test.hdf5",
+        "fname_output": results_path("results/Maser/mock_test.hdf5"),
     },
 }
 

@@ -107,6 +107,34 @@ def get_root_results(config):
     return config.get("root_results", join(config["root_main"], "results"))
 
 
+_LOCAL_CONFIG_CACHE = None
+
+
+def local_config():
+    """Return the parsed local_config.toml for this repo (cached).
+
+    Resolves to ``<repo>/local_config.toml`` relative to this file. Scripts
+    that don't go through :func:`load_config` can use this + :func:`data_path`
+    / :func:`results_path` to get the same root_data/root_results semantics.
+    """
+    global _LOCAL_CONFIG_CACHE
+    if _LOCAL_CONFIG_CACHE is None:
+        path = Path(__file__).resolve().parent.parent / "local_config.toml"
+        with open(path, "rb") as f:
+            _LOCAL_CONFIG_CACHE = tomllib.load(f)
+    return _LOCAL_CONFIG_CACHE
+
+
+def data_path(*parts):
+    """Join `parts` under ``root_data`` from local_config.toml."""
+    return join(get_root_data(local_config()), *parts)
+
+
+def results_path(*parts):
+    """Join `parts` under ``root_results`` from local_config.toml."""
+    return join(get_root_results(local_config()), *parts)
+
+
 def convert_to_absolute_paths(config):
     """Recursively convert relative paths in config to absolute paths."""
     root_data = get_root_data(config)

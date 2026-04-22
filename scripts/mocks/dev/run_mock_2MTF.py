@@ -36,7 +36,7 @@ os.environ.setdefault("JAX_ENABLE_X64", "1")
 os.environ.setdefault("JAX_PLATFORMS", "cpu")
 
 import candel  # noqa: E402
-from candel.inference import radec_cartesian_to_galactic  # noqa: E402
+from candel.util import radec_cartesian_to_galactic, results_path  # noqa: E402
 from candel.mock import gen_EDD_2MTF_mock  # noqa: E402
 from candel.mock.dev.EDD_2MTF_mock import DEFAULT_TRUE_PARAMS  # noqa: E402
 
@@ -302,7 +302,7 @@ def main():
     parser.add_argument("--num-warmup", type=int, default=500)
     parser.add_argument("--num-samples", type=int, default=500)
     parser.add_argument("--outdir",
-                        default=os.path.join(REPO_ROOT, "results/mocks_2MTF"))
+                        default=results_path("results/mocks_2MTF"))
     parser.add_argument("--fix-H0", action="store_true",
                         help="Fix H0 to true value, infer a_TFR")
     parser.add_argument("--fix-a-TFR", action="store_true",

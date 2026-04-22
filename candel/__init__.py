@@ -72,6 +72,9 @@ from .util import (                                                             
     load_config,                                                                # noqa
     get_root_data,                                                              # noqa
     get_root_results,                                                           # noqa
+    local_config,                                                               # noqa
+    data_path,                                                                  # noqa
+    results_path,                                                               # noqa
     replace_prior_with_delta,                                                   # noqa
     hms_to_degrees,                                                             # noqa
     dms_to_degrees,                                                             # noqa

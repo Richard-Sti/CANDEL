@@ -49,13 +49,14 @@ from scipy.stats import gaussian_kde, norm
 from candel.cosmo.cosmography import Distance2Redshift
 from candel.model.integration import ln_simpson
 from candel.model.utils import Maxwell
-from candel.util import (SPEED_OF_LIGHT, fsection, load_config, read_samples)
+from candel.util import (SPEED_OF_LIGHT, fsection, load_config, read_samples,
+                         results_path)
 
 # -----------------------------------------------------------------------
 # Hard-coded paths and galaxy data
 # -----------------------------------------------------------------------
 
-RESULT_ROOT = "results/Megamaser"
+RESULT_ROOT = results_path("results/Megamaser")
 CONFIG_PATH = "scripts/megamaser/config_maser.toml"
 
 # Hard-coded NSS result files per galaxy

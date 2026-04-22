@@ -31,6 +31,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
 from candel.model.model_H0_maser import MaserDiskModel, PC_PER_MAS_MPC
 from candel.pvdata.megamaser_data import load_megamaser_spots
+from candel.util import data_path, results_path
 import optax
 from numpyro.infer.util import initialize_model, log_density
 
@@ -123,8 +124,8 @@ def load_data():
     gcfg = cfg["model"]["galaxies"][GALAXY]
 
     data = load_megamaser_spots(
-        cfg["io"]["maser_data"]["root"], galaxy=GALAXY,
-        v_sys_obs=gcfg["v_sys_obs"])
+        data_path(cfg["io"]["maser_data"]["root"]),
+        galaxy=GALAXY, v_sys_obs=gcfg["v_sys_obs"])
 
     # Build model just to extract arrays
     cfg_copy = cfg.copy()
@@ -424,7 +425,7 @@ def main():
     print(f"D_c median = {np.median(D_c):.3f} Mpc", flush=True)
 
     # Save
-    outdir = "results/Maser/NGC4258_mode1"
+    outdir = results_path("results/Maser/NGC4258_mode1")
     os.makedirs(outdir, exist_ok=True)
     outpath = os.path.join(outdir, "samples.npz")
     np.savez(outpath, **{k: np.asarray(v) for k, v in samples.items()})

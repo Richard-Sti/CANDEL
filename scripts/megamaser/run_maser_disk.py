@@ -70,7 +70,8 @@ from candel.model.model_H0_maser import (C_a as _C_a, JointMaserModel,
                                           MaserDiskModel, PC_PER_MAS_MPC,
                                           remap_warp_to_r0)
 from candel.pvdata.megamaser_data import load_megamaser_spots
-from candel.util import fprint, fsection, get_nested, plot_corner
+from candel.util import (data_path, fprint, fsection, get_nested, plot_corner,
+                         results_path)
 
 _devs = jax.devices()
 _dev_names = ", ".join(d.device_kind for d in _devs)
@@ -215,7 +216,7 @@ if is_joint:
     data_list = []
     for gname in galaxy_names:
         gcfg_g = galaxies[gname]
-        d = load_megamaser_spots("data/Megamaser", gname,
+        d = load_megamaser_spots(data_path("data", "Megamaser"), gname,
                                  v_sys_obs=gcfg_g["v_sys_obs"])
         if "D_lo" in gcfg_g and "D_hi" in gcfg_g:
             d["D_lo"] = float(gcfg_g["D_lo"])
@@ -226,7 +227,7 @@ else:
     gcfg = galaxies[galaxy]
     v_sys_obs = gcfg["v_sys_obs"]
     fsection(f"Loading {galaxy} data")
-    data = load_megamaser_spots("data/Megamaser", galaxy, v_sys_obs=v_sys_obs)
+    data = load_megamaser_spots(data_path("data", "Megamaser"), galaxy, v_sys_obs=v_sys_obs)
     if "D_lo" in gcfg and "D_hi" in gcfg:
         data["D_lo"] = float(gcfg["D_lo"])
         data["D_hi"] = float(gcfg["D_hi"])
@@ -823,7 +824,7 @@ else:
     print_nested_summary(samples, meta=meta)
 
 # ---- Output ----
-outdir = os.path.abspath(master_cfg["io"].get("root_output", "results/Maser"))
+outdir = results_path(master_cfg["io"].get("root_output", "results/Maser"))
 os.makedirs(outdir, exist_ok=True)
 _out_name = "joint" if is_joint else galaxy
 

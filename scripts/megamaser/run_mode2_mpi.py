@@ -70,7 +70,7 @@ from h5py import File as H5File
 
 from candel.model.model_H0_maser import MaserDiskModel, PC_PER_MAS_MPC
 from candel.pvdata.megamaser_data import load_megamaser_spots
-from candel.util import fprint, fsection, get_nested
+from candel.util import data_path, fprint, fsection, get_nested, results_path
 
 
 COMM = MPI.COMM_WORLD
@@ -1026,8 +1026,8 @@ def main():
 
     # ---- Load full galaxy data (all ranks load it) ----
     full = load_megamaser_spots(
-        master_cfg["io"]["maser_data"]["root"], args.galaxy,
-        v_sys_obs=v_sys_obs)
+        data_path(master_cfg["io"]["maser_data"]["root"]),
+        args.galaxy, v_sys_obs=v_sys_obs)
     if "D_lo" in gcfg_src and "D_hi" in gcfg_src:
         full["D_lo"] = float(gcfg_src["D_lo"])
         full["D_hi"] = float(gcfg_src["D_hi"])
@@ -1158,9 +1158,9 @@ def main():
         out_root = os.path.abspath(args.out_dir)
     else:
         stamp = time.strftime("%Y%m%d_%H%M%S")
-        out_root = os.path.abspath(os.path.join(
+        out_root = results_path(
             cfg["io"]["root_output"],
-            f"{args.galaxy}_mode2_mpi_{args.method}_{stamp}_{os.getpid()}"))
+            f"{args.galaxy}_mode2_mpi_{args.method}_{stamp}_{os.getpid()}")
     file_tag = f"{args.galaxy}_mode2_mpi"
     Path(out_root).mkdir(parents=True, exist_ok=True)
 
