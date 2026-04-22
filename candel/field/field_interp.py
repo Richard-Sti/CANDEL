@@ -225,8 +225,11 @@ def apply_gaussian_smoothing(field, smooth_scale, boxsize, make_copy=False):
         W_k = SL.FT_filter(boxsize, smooth_scale, N, "Gaussian", 1)
         return SL.field_smoothing(field, W_k, 1)
     except ImportError:
-        warn("Pylians3 not found. Switching to NumPy FFT calculation.",
-             UserWarning)
+        warn(
+            "Optional `smoothing_library` (from Pylians3) not found; "
+            "falling back to a NumPy FFT implementation. Install it "
+            "with `pip install pylians` for the optimised path.",
+            UserWarning)
 
     x = field.copy() if make_copy else field
     dx = boxsize / N

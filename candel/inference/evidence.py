@@ -111,12 +111,15 @@ def harmonic_evidence(samples_arr, log_density, temperature=0.8, epochs_num=20,
     try:
         import harmonic as hm
     except ImportError as e:
+        msg = (
+            "Evidence computation in CANDEL requires the optional "
+            "`harmonic` package, which is not installed. Install it with "
+            "`pip install harmonic` (note: there may be compatibility "
+            "issues with recent JAX versions)."
+        )
         if return_flow_samples:
-            raise ImportError("The `harmonic` package is required to "
-                              "calculate the evidence.") from e
-        fprint("The `harmonic` package is required to calculate the evidence. "
-               "Skipping. Install it with `pip install harmonic` to enable "
-               "evidence computation.")
+            raise ImportError(msg) from e
+        fprint(msg + " Skipping evidence computation.")
         return np.nan, np.nan
 
     # Do some standard checks of inputs.

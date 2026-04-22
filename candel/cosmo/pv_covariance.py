@@ -29,9 +29,11 @@ def get_Pk_CAMB(H0=67.4, Om0=0.3153, Ombh2=0.0224, As=2.100549e-9, ns=0.965,
     """Get (non-linear) matter power spectrum from CAMB in `Mpc / h` units."""
     try:
         import camb
-    except ImportError:
-        raise ImportError("CAMB is not installed. "
-                          "Please install it to use `get_Pk_CAMB`.")
+    except ImportError as e:
+        raise ImportError(
+            "`get_Pk_CAMB` requires the optional `camb` package, which is "
+            "not installed. Install it with `pip install camb`."
+        ) from e
     pars = camb.CAMBparams()
     h = H0 / 100.0
     omch2 = Om0 * h**2 - Ombh2

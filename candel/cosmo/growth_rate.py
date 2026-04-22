@@ -62,7 +62,11 @@ class Beta2Cosmology:
         try:
             from symbolic_pofk import syren_new
         except ImportError as e:
-            raise ImportError("symbolic_pofk.syren_new not found.") from e
+            raise ImportError(
+                "`compute_sigma8_nonlinear_from_pk` requires the optional "
+                "`symbolic_pofk` package (module `syren_new`), which is "
+                "not installed. Install it with `pip install symbolic_pofk`."
+            ) from e
 
         p = self.cosmo_params
         k = np.logspace(np.log10(9e-3), np.log10(9), 2500)
@@ -88,7 +92,11 @@ class Beta2Cosmology:
         try:
             from symbolic_pofk import linear_new
         except ImportError as e:
-            raise ImportError("symbolic_pofk.linear_new not found.") from e
+            raise ImportError(
+                "`_find_linear_sigma8` requires the optional "
+                "`symbolic_pofk` package (module `linear_new`), which is "
+                "not installed. Install it with `pip install symbolic_pofk`."
+            ) from e
 
         p = self.cosmo_params
 
