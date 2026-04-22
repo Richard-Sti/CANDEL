@@ -14,7 +14,7 @@
 #   bash scripts/megamaser/submit_ngc4258.sh --no-ecc --no-quadratic-warp  # circular + linear warp
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-PYTHON="$ROOT/venv_gpu_candel/bin/python"
+PYTHON="$ROOT/venv_candel/bin/python"
 
 QUEUE="optgpu"
 WARMUP=2000

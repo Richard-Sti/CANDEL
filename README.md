@@ -150,8 +150,7 @@ root_main    = "/path/to/CANDEL/"   # repo root (required)
 root_data    = "/path/to/data/"     # optional, defaults to <root_main>/data
 root_results = "/path/to/results/"  # optional, defaults to <root_main>/results
 
-python_exec     = "/path/to/venv_candel/bin/python"
-python_exec_gpu = "/path/to/venv_gpu_candel/bin/python"
+python_exec = "/path/to/venv_candel/bin/python"
 machine = "my-machine"
 ```
 
@@ -166,8 +165,10 @@ Keys:
 - `root_results` — base directory for outputs (samples, plots, logs).
   Optional; defaults to `<root_main>/results`. Same rationale as
   `root_data`.
-- `python_exec`, `python_exec_gpu` — absolute paths to the CPU and GPU
-  Python interpreters used by submission scripts.
+- `python_exec` — absolute path to the CANDEL Python interpreter used by
+  submission scripts. A single venv is used for both CPU and GPU jobs:
+  install JAX with the CUDA wheels (`pip install "jax[cuda12]"`) and it
+  falls back to CPU automatically when no GPU is visible.
 - `machine` — free-form label for the host (used in logs and tags).
 - `gpu_ld_library_path` — list of directories prepended to `LD_LIBRARY_PATH`
   on GPU jobs (typically the bundled NVIDIA libs in the venv plus system

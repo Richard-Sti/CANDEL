@@ -19,8 +19,7 @@ get_toml_key() {
     grep -m1 "^${key}" "$file" 2>/dev/null | sed 's/.*=\s*"\?\([^"]*\)"\?.*/\1/' | tr -d ' '
 }
 
-PYTHON=$(get_toml_key "python_exec_gpu" "$CONFIG")
-[[ -z "$PYTHON" ]] && PYTHON=$(get_toml_key "python_exec" "$CONFIG")
+PYTHON=$(get_toml_key "python_exec" "$CONFIG")
 [[ -z "$PYTHON" ]] && { echo "ERROR: python_exec not set in $CONFIG"; exit 1; }
 
 BENCHMARK="$ROOT_DIR/scripts/benchmarks/benchmark_chains_gpu.py"

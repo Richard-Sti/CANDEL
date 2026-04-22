@@ -62,7 +62,7 @@ if [[ -n "$GALAXY" ]] && ! echo "$ALL_GALS" | grep -qw "$GALAXY"; then
 fi
 
 ROOT="/mnt/users/rstiskalek/CANDEL"
-PYTHON="$ROOT/venv_gpu_candel/bin/python"
+PYTHON="$ROOT/venv_candel/bin/python"
 RUNNER="$ROOT/scripts/megamaser/run_maser_disk.py"
 
 EXTRA_ARGS=""

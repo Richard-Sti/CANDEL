@@ -34,7 +34,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-PYTHON="$ROOT_DIR/venv_gpu_candel/bin/python"
+PYTHON="$ROOT_DIR/venv_candel/bin/python"
 
 echo "Submitting convergence_grids -> $QUEUE"
 addqueue -q "$QUEUE" -s -m 16 --gpus 1 \

@@ -51,19 +51,19 @@ If `--gputype` is omitted, the scheduler picks any available GPU in the queue.
 Run a Python script on any `gpulong` GPU:
 ```bash
 addqueue -q gpulong -s -m 16 --gpus 1 \
-    /mnt/users/$USER/CANDEL/venv_gpu_candel/bin/python -u my_script.py
+    /mnt/users/$USER/CANDEL/venv_candel/bin/python -u my_script.py
 ```
 
 Run on the A6000 (48 GB):
 ```bash
 addqueue -q optgpu -s -m 16 --gpus 1 \
-    /mnt/users/$USER/CANDEL/venv_gpu_candel/bin/python -u my_script.py
+    /mnt/users/$USER/CANDEL/venv_candel/bin/python -u my_script.py
 ```
 
 Run on a specific RTX 3090:
 ```bash
 addqueue -q cmbgpu -s -m 16 --gpus 1 --gputype rtx3090with24gb \
-    /mnt/users/$USER/CANDEL/venv_gpu_candel/bin/python -u my_script.py
+    /mnt/users/$USER/CANDEL/venv_candel/bin/python -u my_script.py
 ```
 
 ## Output Files
@@ -92,12 +92,14 @@ scancel <jobid>      # cancel a job
 
 ### Python executable
 
-The GPU venv python is at:
+CANDEL uses a single venv (`venv_candel`) for both CPU and GPU jobs;
+JAX is installed with the CUDA wheels and falls back to CPU automatically
+when no GPU is visible. The interpreter lives at:
 ```
-/mnt/users/$USER/CANDEL/venv_gpu_candel/bin/python
+/mnt/users/$USER/CANDEL/venv_candel/bin/python
 ```
 
-This is also set in `local_config.toml` as `python_exec_gpu`.
+This is also set in `local_config.toml` as `python_exec`.
 
 ### Submit script for inference
 
@@ -117,7 +119,7 @@ Template for submitting a standalone Python script to GPU:
 #!/bin/bash -l
 QUEUE=${1:-gpulong}
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-PYTHON="$ROOT_DIR/venv_gpu_candel/bin/python"
+PYTHON="$ROOT_DIR/venv_candel/bin/python"
 
 addqueue -q "$QUEUE" -s -m 16 --gpus 1 \
     $PYTHON -u "$ROOT_DIR/scripts/my_script.py" --arg1 val1

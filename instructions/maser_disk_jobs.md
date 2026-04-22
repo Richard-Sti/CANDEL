@@ -104,7 +104,7 @@ bash scripts/megamaser/submit_nss_ngc5765b.sh
 
 # Custom: any galaxy, any sampler, any mode
 ROOT=/mnt/users/$USER/CANDEL
-PYTHON=$ROOT/venv_gpu_candel/bin/python
+PYTHON=$ROOT/venv_candel/bin/python
 addqueue -q cmbgpu -s -m 16 --gpus 1 \
     $PYTHON -u $ROOT/scripts/megamaser/run_maser_disk.py NGC6264 \
     --sampler nuts --num-warmup 2000 --num-samples 2000 --mode mode2

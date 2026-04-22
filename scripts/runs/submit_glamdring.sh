@@ -144,10 +144,8 @@ echo "  CPUs:        $ncpu"
 echo "  Memory:      ${memory} GB"
 if $is_gpu; then
     echo "  GPU type:    $gputype"
-    echo "  Python:      python_exec_gpu (GPU venv)"
-else
-    echo "  Python:      python_exec (CPU venv)"
 fi
+echo "  Python:      python_exec"
 if (( ${#task_files[@]} == 1 )); then
     echo "  Task file:   ${task_files[0]}"
 else
@@ -197,18 +195,7 @@ for i in "${!task_lines[@]}"; do
         continue
     fi
 
-    python_exec=""
-    if $is_gpu; then
-        python_exec=$(get_toml_key "python_exec_gpu" "$config_path")
-        if [[ -n "$python_exec" ]]; then
-            echo "[INFO] Using GPU python: $python_exec"
-        else
-            echo "[WARNING] python_exec_gpu not set, falling back to python_exec"
-        fi
-    fi
-    if [[ -z "$python_exec" ]]; then
-        python_exec=$(get_toml_key "python_exec" "$config_path")
-    fi
+    python_exec=$(get_toml_key "python_exec" "$config_path")
     if [[ -z "$python_exec" ]]; then
         echo "[ERROR] Missing python_exec in: $config_path"
         continue

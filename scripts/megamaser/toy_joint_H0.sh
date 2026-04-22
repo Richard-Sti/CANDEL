@@ -7,7 +7,7 @@
 #   bash scripts/megamaser/toy_joint_H0.sh -q optgpu         # different queue
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-PYTHON="$ROOT/venv_gpu_candel/bin/python"
+PYTHON="$ROOT/venv_candel/bin/python"
 
 QUEUE="gpulong"
 FLAT_DIST=""
