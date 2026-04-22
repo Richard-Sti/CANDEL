@@ -27,6 +27,7 @@ setup(
     packages=find_packages(include=["candel", "candel.*"]),
     extras_require={
         "docs": ["sphinx", "sphinx-rtd-theme", "numpydoc"],
+        "gpu": ["jax[cuda12]"],
     },
     classifiers=[
         "Programming Language :: Python :: 3",
@@ -38,7 +39,6 @@ setup(
     python_requires=">=3.10",
     install_requires=[
         "jax",
-        "jaxlib",
         "numpyro",
         "numpy",
         "scipy",
