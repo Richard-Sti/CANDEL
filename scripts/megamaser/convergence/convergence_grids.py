@@ -85,6 +85,11 @@ def build_test_settings(default):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--galaxies", nargs="+", default=ALL_GALAXIES)
+    parser.add_argument(
+        "--spot-batch", type=int, default=16,
+        help="Chunk size on the spot axis when evaluating the test-grid "
+             "phi marginal. Lower if the largest (n_r_local, n_phi) "
+             "combination OOMs on a small GPU (default: 16).")
     args = parser.parse_args()
 
     jax.config.update("jax_platform_name", "gpu")
@@ -149,7 +154,8 @@ def main():
             D_A = phys_args[2]
             groups = m_t._build_r_grids_mode2(
                 D_A, M_BH, v_sys, sigma_a_floor2, i0, var_v_hv)
-            ll = m_t._eval_phi_marginal(groups, phys_args, phys_kw)
+            ll = m_t._eval_phi_marginal(
+                groups, phys_args, phys_kw, spot_batch=args.spot_batch)
             ll_total = float(jnp.sum(ll))
             delta = ll_total - ll_ref
             print(f"  {setting['tag']:>5} {setting['n_r_local']:>7d} "
