@@ -175,5 +175,4 @@ $DRY && dry_flag=(--dry)
 
 submit_job --queue "$QUEUE" --mem "$MEMORY" --mpi-n "$MPI_N_SPEC" \
     --name "mode2_${GALAXY}_${METHOD}" \
-    --logdir "$ROOT/scripts/megamaser/logs" \
     "${dry_flag[@]}" -- "${PYCMD[@]}"

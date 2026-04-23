@@ -86,12 +86,19 @@ from candel import (SPEED_OF_LIGHT, fprint, get_nested, get_root_results,  # noq
 
 
 def load_local_config():
-    """Load machine-specific settings from local_config.toml at project root."""
+    """Load machine-specific settings from local_config.toml at project root.
+
+    List/dict values (e.g. ``gpu_ld_library_path``) are dropped: downstream
+    ``expand_override_grid`` treats every list as a Cartesian product
+    dimension, but these entries are runtime environment, not overrides.
+    """
     project_root = Path(__file__).resolve().parent.parent.parent
     local_config_path = project_root / "local_config.toml"
     if local_config_path.exists():
         with open(local_config_path, 'rb') as f:
-            return tomllib.load(f)
+            cfg = tomllib.load(f)
+        return {k: v for k, v in cfg.items()
+                if not isinstance(v, (list, dict))}
     return {}
 
 
@@ -340,8 +347,8 @@ if __name__ == "__main__":
         help="Arbitrary tag/index for this task list.")
     args = parser.parse_args()
 
-    # --- EDD TRGB: TRGB selection, Carrick, grouped + ungrouped ---
-    config_path = "./config_EDD_TRGB.toml"
+    # --- Foundation SNe: Carrick2015 field, uniform prior on beta ---
+    config_path = "./configs/config.toml"
     config = load_config(
         config_path, replace_none=False, replace_los_prior=False,
         fill_paths=False)
@@ -354,18 +361,29 @@ if __name__ == "__main__":
 
     manual_overrides = {
         **{k: v for k, v in _local_cfg.items()},
-        "model/which_run": "EDD_TRGB_grouped",
-        "model/which_selection": "TRGB_magnitude",
-        "model/use_reconstruction": True,
-        "model/use_Vext_monopole": True,
-        "model/use_Vext_quadrupole": False,
-        "model/use_Vext_octupole": False,
-        "io/PV_main/EDD_TRGB_grouped/which_host_los": "manticore_2MPP_MULTIBIN_N256_DES_V2",
-        "model/which_bias": "powerlaw",
+        "inference/model": "SNModel",
+        "io/catalogue_name": "Foundation",
+        "pv_model/kind": "precomputed_los_Carrick2015",
+        "model/priors/beta": {"dist": "uniform", "low": 0.0, "high": 2.0},
+        "inference/num_chains": 1,
     }
 
+    # # --- EDD TRGB: TRGB selection, Carrick, grouped + ungrouped ---
+    # config_path = "./configs/config_EDD_TRGB.toml"
+    # manual_overrides = {
+    #     **{k: v for k, v in _local_cfg.items()},
+    #     "model/which_run": "EDD_TRGB_grouped",
+    #     "model/which_selection": "TRGB_magnitude",
+    #     "model/use_reconstruction": True,
+    #     "model/use_Vext_monopole": True,
+    #     "model/use_Vext_quadrupole": False,
+    #     "model/use_Vext_octupole": False,
+    #     "io/PV_main/EDD_TRGB_grouped/which_host_los": "manticore_2MPP_MULTIBIN_N256_DES_V2",
+    #     "model/which_bias": "powerlaw",
+    # }
+
     # # --- CCHP TRGB: SN magnitude selection, Manticore reconstruction ---
-    # config_path = "./config_CCHP_TRGB.toml"
+    # config_path = "./configs/config_CCHP_TRGB.toml"
     # manual_overrides = {
     #     **{k: v for k, v in _local_cfg.items()},
     #     "model/which_selection": "TRGB_magnitude",
@@ -375,7 +393,7 @@ if __name__ == "__main__":
     # }
 
     # # --- CCHP TRGB: SN magnitude selection, Carrick reconstruction ---
-    # config_path = "./config_CCHP_TRGB.toml"
+    # config_path = "./configs/config_CCHP_TRGB.toml"
     # manual_overrides = {
     #     **{k: v for k, v in _local_cfg.items()},
     #     "model/which_selection": "SN_magnitude",
@@ -385,7 +403,7 @@ if __name__ == "__main__":
     # }
 
     # # --- EDD TRGB: redshift selection, Carrick reconstruction ---
-    # config_path = "./config_EDD_TRGB.toml"
+    # config_path = "./configs/config_EDD_TRGB.toml"
     # manual_overrides = {
     #     **{k: v for k, v in _local_cfg.items()},
     #     "model/which_selection": "redshift",
@@ -395,7 +413,7 @@ if __name__ == "__main__":
     # }
 
     # # --- EDD TRGB: magnitude selection, Manticore reconstruction ---
-    # config_path = "./config_EDD_TRGB.toml"
+    # config_path = "./configs/config_EDD_TRGB.toml"
     # manual_overrides = {
     #     **{k: v for k, v in _local_cfg.items()},
     #     "model/run_ppc": True,

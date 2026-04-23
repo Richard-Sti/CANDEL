@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ---- user variables ----
-config="../runs/config.toml"
+config="../runs/configs/config.toml"
 queue="berg"
 ncpu=10
 memory=32

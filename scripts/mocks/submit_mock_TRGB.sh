@@ -14,7 +14,7 @@ n_mocks=100
 master_seed=0
 num_warmup=500
 num_samples=1000
-config="$ROOT/scripts/runs/config_EDD_TRGB.toml"
+config="$ROOT/scripts/runs/configs/config_EDD_TRGB.toml"
 outdir="$ROOT/results/mocks_TRGB"
 extra_args=""
 local_mode=false
@@ -116,7 +116,7 @@ if $single_mode || [[ $ncpu -eq 1 ]]; then
         dry_flag=()
         $dry && dry_flag=(--dry)
         submit_job --queue "$queue" --mem "$memory" --cpus 1 \
-            --name "mock_TRGB" --logdir "$ROOT/scripts/mocks/logs" \
+            --name "mock_TRGB" \
             "${dry_flag[@]}" -- $pycmd
     fi
 elif $local_mode; then
@@ -126,7 +126,7 @@ else
     dry_flag=()
     $dry && dry_flag=(--dry)
     submit_job --queue "$queue" --mem "$memory" --mpi-n "$ncpu" \
-        --name "mock_TRGB" --logdir "$ROOT/scripts/mocks/logs" \
+        --name "mock_TRGB" \
         "${dry_flag[@]}" -- $pycmd
 fi
 

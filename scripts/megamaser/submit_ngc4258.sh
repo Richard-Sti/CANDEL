@@ -78,6 +78,5 @@ dry_flag=()
 [[ "$DRY" == true ]] && dry_flag=(--dry)
 
 submit_job --gpu --queue "$QUEUE" --mem 16 --name "n4258_${MODE}" \
-    --logdir "$ROOT/scripts/megamaser/logs" \
     "${dry_flag[@]}" \
     -- $pycmd

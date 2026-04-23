@@ -2,7 +2,7 @@
 # Job started at: 2026-03-12 10:02:48
 # Job finished at: 2026-03-12 00:49:52
 # Job started at: 2026-03-12 00:41:39
-base = ["../config_priors.toml", "../config_paths.toml", "../config.toml"]
+base = ["../configs/config_priors.toml", "../configs/config_paths.toml", "../configs/config.toml"]
 
 [inference]
 model = "SNModel"

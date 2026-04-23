@@ -71,6 +71,5 @@ for gal in "${GALAXIES[@]}"; do
     echo "Submitting DE MAP: $gal -> $CANDEL_CLUSTER:$QUEUE"
     pycmd="$CANDEL_PYTHON -u $ROOT/scripts/megamaser/run_de_map.py $gal"
     submit_job --gpu --queue "$QUEUE" --mem 16 --name "de_map_${gal}" \
-        --logdir "$ROOT/scripts/megamaser/logs" \
         "${dry_flag[@]}" -- $pycmd
 done
