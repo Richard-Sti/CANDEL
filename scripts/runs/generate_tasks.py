@@ -371,8 +371,8 @@ if __name__ == "__main__":
 
     # --- S8 from PVs: 5 individual + 1 joint run, 3 galaxy bias models ---
     # Reproduces the paper results (linear_from_beta) and extends to linear
-    # and double_powerlaw galaxy bias.
-    bias_models = ["linear_from_beta", "linear", "double_powerlaw"]
+    # and quadratic galaxy bias.
+    bias_models = ["linear_from_beta", "linear", "quadratic"]
 
     common = {
         **{k: v for k, v in _local_cfg.items()},
