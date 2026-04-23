@@ -20,7 +20,6 @@ os.environ["JAX_PLATFORMS"] = ""
 import jax
 import jax.numpy as jnp
 from jax.scipy.special import logsumexp
-from functools import partial
 import numpyro
 import numpyro.distributions as dist
 from numpyro.infer import NUTS, MCMC, init_to_value
@@ -29,11 +28,20 @@ import tomli_w
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
-from candel.model.model_H0_maser import MaserDiskModel, PC_PER_MAS_MPC
+from candel.model.model_H0_maser import (LOG_2PI, MaserDiskModel,
+                                          PC_PER_MAS_MPC,
+                                          neg_half_chi2_acceleration,
+                                          neg_half_chi2_position,
+                                          neg_half_chi2_velocity,
+                                          predict_acceleration_los,
+                                          predict_position,
+                                          predict_velocity_los,
+                                          radius_from_los_velocity,
+                                          warp_geometry)
 from candel.pvdata.megamaser_data import load_megamaser_spots
 from candel.util import data_path, results_path
 import optax
-from numpyro.infer.util import initialize_model, log_density
+from numpyro.infer.util import initialize_model
 
 print(f"JAX platform: {jax.default_backend()}", flush=True)
 print(f"JAX devices: {jax.devices()}", flush=True)
@@ -41,13 +49,6 @@ numpyro.set_host_device_count(1)
 
 CONFIG_PATH = "scripts/megamaser/config_maser.toml"
 GALAXY = "NGC4258"
-
-# Physics constants
-C_v = 2978.8656
-C_a = 1.872e3
-C_g = 1.974e-4
-SPEED_OF_LIGHT = 299792.458
-LOG_2PI = float(np.log(2 * np.pi))
 
 # Phi grid (module-level constant for JIT)
 N_PHI = 100001
@@ -70,48 +71,41 @@ def phi_marginal(r_ang, x_obs, y_obs, var_x, var_y,
                  v_obs, var_v, a_obs, var_a, has_accel,
                  x0, y0, D_A, M_BH, v_sys,
                  r_ang_ref, i0_rad, di_dr_rad, Omega0_rad, dOmega_dr_rad):
-    """Phi-marginalized logL for all spots. Returns (n_spots,)."""
-    dr = r_ang - r_ang_ref
-    i_r = i0_rad + di_dr_rad * dr
-    Om_r = Omega0_rad + dOmega_dr_rad * dr
+    """Phi-marginalized logL for all spots. Returns (n_spots,).
 
-    sin_i = jnp.sin(i_r)[:, None]
-    cos_i = jnp.cos(i_r)[:, None]
-    sin_O = jnp.sin(Om_r)[:, None]
-    cos_O = jnp.cos(Om_r)[:, None]
-    r = r_ang[:, None]
+    Builds predictions on the (N, n_phi) grid via the canonical
+    ``predict_*`` physics functions, so the mas → μas conversion for
+    the position channel is handled uniformly with the main model.
+    """
+    i_r, Om_r = warp_geometry(
+        r_ang, r_ang_ref, r_ang_ref,
+        i0_rad, di_dr_rad, Omega0_rad, dOmega_dr_rad)
 
+    r_b = r_ang[:, None]
+    sin_i_b = jnp.sin(i_r)[:, None]
+    cos_i_b = jnp.cos(i_r)[:, None]
+    sin_O_b = jnp.sin(Om_r)[:, None]
+    cos_O_b = jnp.cos(Om_r)[:, None]
     sp = SIN_PHI[None, :]
     cp = COS_PHI[None, :]
 
-    X = x0 + r * (sp * sin_O - cp * cos_O * cos_i)
-    Y = y0 + r * (sp * cos_O + cp * sin_O * cos_i)
+    X, Y = predict_position(r_b, sp, cp, x0, y0,
+                            sin_i_b, cos_i_b, sin_O_b, cos_O_b)
+    V = predict_velocity_los(r_b, sp, cp, D_A, M_BH, v_sys, sin_i_b)
+    A = predict_acceleration_los(r_b, sp, cp, D_A, M_BH, sin_i_b)
 
-    rD = r * D_A
-    v_kep = C_v * jnp.sqrt(M_BH / rD)
-    beta = v_kep / SPEED_OF_LIGHT
-    gamma = 1.0 / jnp.sqrt(1.0 - beta * beta)
-    zpg = 1.0 / jnp.sqrt(1.0 - C_g * M_BH / rD)
-    v_z = v_kep * sp * sin_i
-    V = SPEED_OF_LIGHT * (
-        gamma * (1.0 + v_z / SPEED_OF_LIGHT) * zpg
-        * (1.0 + v_sys / SPEED_OF_LIGHT) - 1.0)
-
-    chi2 = ((x_obs[:, None] - X) ** 2 / var_x[:, None]
-            + (y_obs[:, None] - Y) ** 2 / var_y[:, None]
-            + (v_obs[:, None] - V) ** 2 / var_v[:, None])
-
-    # Acceleration: masked by has_accel (1 for spots with a measurement)
-    A = C_a * M_BH / (r ** 2 * D_A ** 2) * cp * sin_i
-    chi2 = chi2 + ((a_obs[:, None] - A) ** 2 / var_a[:, None]
-                   * has_accel[:, None])
+    nhc = neg_half_chi2_position(
+        x_obs[:, None], y_obs[:, None], X, Y,
+        var_x[:, None], var_y[:, None])
+    nhc = nhc + neg_half_chi2_velocity(v_obs[:, None], V, var_v[:, None])
+    nhc = nhc + neg_half_chi2_acceleration(
+        a_obs[:, None], A, var_a[:, None], has_accel[:, None])
 
     lnorm = -0.5 * (3 * LOG_2PI + jnp.log(var_x) + jnp.log(var_y)
-                     + jnp.log(var_v))
+                    + jnp.log(var_v))
     lnorm = lnorm - 0.5 * (LOG_2PI + jnp.log(var_a)) * has_accel
 
-    log_integrand = lnorm[:, None] - 0.5 * chi2
-    return logsumexp(log_integrand + LOG_W_PHI[None, :], axis=1)
+    return lnorm + logsumexp(nhc + LOG_W_PHI[None, :], axis=1)
 
 
 # -----------------------------------------------------------------------
@@ -166,11 +160,14 @@ def load_data():
         r_ang_ref=float(gcfg.get("r_ang_ref", 0.0)),
         r_min=float(r_min),
         r_max=float(r_max),
+        R_phys_lo=float(model._R_phys_lo),
+        R_phys_hi=float(model._R_phys_hi),
         D_lo=float(gcfg["D_lo"]),
         D_hi=float(gcfg["D_hi"]),
         init=gcfg["init"],
     )
-    print(f"Loaded {d['n_spots']} spots, r_ang in [{r_min:.3f}, {r_max:.3f}] mas",
+    print(f"Loaded {d['n_spots']} spots, r_ang in "
+          f"[{r_min:.3f}, {r_max:.3f}] mas (at H0=73, v_sys_obs)",
           flush=True)
     return d
 
@@ -205,14 +202,23 @@ def maser_model(data):
     sigma_a_floor = numpyro.sample(
         "sigma_a_floor", dist.TruncatedNormal(0.3, 0.15, low=0.0, high=0.75))
 
-    # --- Per-spot r_ang (uniform prior) ---
-    r_ang = numpyro.sample(
-        "r_ang", dist.Uniform(data["r_min"], data["r_max"]).expand([n]))
-
     # --- Derived quantities ---
     D_A = D_c  # approx for z ~ 0.002
     M_BH = jnp.power(10.0, eta + jnp.log10(D_A) - 7.0)
     v_sys = data["v_sys_obs"] + dv_sys
+
+    # --- Per-spot r_ang ---
+    # Improper uniform on the physical R_phys range converted through
+    # the current D_A; bounds track the sampled distance.
+    _conv = D_A * PC_PER_MAS_MPC
+    r_min_spots = data["R_phys_lo"] / _conv
+    r_max_spots = data["R_phys_hi"] / _conv
+    with numpyro.plate("spots", n):
+        r_ang = numpyro.sample(
+            "r_ang",
+            dist.ImproperUniform(
+                dist.constraints.interval(r_min_spots, r_max_spots),
+                (), ()))
 
     # Unit conversions
     i0_rad = jnp.deg2rad(i0)
@@ -261,14 +267,13 @@ def estimate_r_ang(data):
     n = data["n_spots"]
     r_est = np.full(n, np.sqrt(data["r_min"] * data["r_max"]))  # fallback
 
-    # HV spots: r ≈ C_v² M sin²i / (D_A dv²)
-    dv = np.abs(v_obs - v_sys)
-    dv = np.maximum(dv, 1.0)  # avoid div by zero
-    r_hv = C_v**2 * M_BH * sin_i**2 / (dv**2 * D_A)
+    # HV spots: invert v_LOS ≈ v_kep·sin_i (phi ≈ ±π/2).
+    dv = np.maximum(np.abs(v_obs - v_sys), 1.0)
+    r_hv = np.asarray(radius_from_los_velocity(dv, sin_i, D_A, M_BH))
     r_est[is_hv] = r_hv[is_hv]
 
-    # Systemic spots: r ≈ |position offset|
-    r_pos = np.sqrt((x_obs - x0)**2 + (y_obs - y0)**2)
+    # Systemic spots: r_ang ≈ (projected sky offset, μas) / 1e3  → mas.
+    r_pos = np.sqrt((x_obs - x0) ** 2 + (y_obs - y0) ** 2) / 1e3
     r_pos = np.maximum(r_pos, data["r_min"])
     r_est[~is_hv] = r_pos[~is_hv]
 
@@ -293,7 +298,6 @@ def main():
 
     data = load_data()
     init = data["init"]
-    n = data["n_spots"]
 
     # --- Initial values from config ---
     r_est = estimate_r_ang(data)
@@ -373,10 +377,6 @@ def main():
         t_adam = time.perf_counter() - t0
         print(f"  Adam completed in {t_adam:.1f}s", flush=True)
         print(f"  Best logp = {-best_loss:.2f}", flush=True)
-
-        # Extract constrained params from best unconstrained
-        from numpyro.infer.util import constrain_fn
-        transforms = model_info.param_info.transforms if hasattr(model_info.param_info, 'transforms') else None
 
         # Use the best unconstrained params for NUTS init
         init_params_unc = best_params_unc

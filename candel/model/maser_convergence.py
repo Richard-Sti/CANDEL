@@ -15,11 +15,12 @@ import numpy as np
 from jax.scipy.special import logsumexp
 
 from candel.model.integration import trapz_log_weights
-from candel.model.model_H0_maser import (LOG_2PI, PC_PER_MAS_MPC,
-                                         SPEED_OF_LIGHT,
-                                         _observables_from_precomputed,
-                                         _precompute_r_quantities,
-                                         warp_geometry)
+from candel.model.model_H0_maser import (LOG_2PI, neg_half_chi2_acceleration,
+                                         neg_half_chi2_position,
+                                         neg_half_chi2_velocity,
+                                         predict_acceleration_los,
+                                         predict_position,
+                                         predict_velocity_los, warp_geometry)
 
 _DTYPES = {"float32": jnp.float32, "float64": jnp.float64}
 
@@ -56,54 +57,47 @@ def _bruteforce_rchunk(
     i_r, Om_r = warp_geometry(
         r_chunk, r_ang_ref_i, r_ang_ref_Omega,
         i0, di_dr, Omega0, dOmega_dr, d2i_dr2, d2Omega_dr2)
-    sin_i = jnp.sin(i_r)
-    cos_i = jnp.cos(i_r)
-    sin_O = jnp.sin(Om_r)
-    cos_O = jnp.cos(Om_r)
-    v_kep, gamma, z_g, a_mag, pA, pB, pC, pD = _precompute_r_quantities(
-        r_chunk, D_A, M_BH, sin_i, cos_i, sin_O, cos_O)
 
     sp = jnp.sin(phi_grid)[None, :]
     cp = jnp.cos(phi_grid)[None, :]
-    X, Y, V, A = _observables_from_precomputed(
-        sp, cp, x0, y0, v_sys,
-        sin_i[:, None], r_chunk[:, None],
-        v_kep[:, None], gamma[:, None], z_g[:, None], a_mag[:, None],
-        pA[:, None], pB[:, None], pC[:, None], pD[:, None])
 
+    r_b = r_chunk[:, None]
+    sin_i_b = jnp.sin(i_r)[:, None]
+    cos_i_b = jnp.cos(i_r)[:, None]
+    sin_O_b = jnp.sin(Om_r)[:, None]
+    cos_O_b = jnp.cos(Om_r)[:, None]
+
+    X, Y = predict_position(r_b, sp, cp, x0, y0,
+                            sin_i_b, cos_i_b, sin_O_b, cos_O_b)
+    A = predict_acceleration_los(r_b, sp, cp, D_A, M_BH, sin_i_b)
     if ecc_on:
         omega_r = (periapsis0
                    + dperiapsis_dr * (r_chunk - r_ang_ref_periapsis))
-        sw = jnp.sin(omega_r)[:, None]
-        cw = jnp.cos(omega_r)[:, None]
-        cos_d = cp * cw + sp * sw
-        ecc_fac = (cp + ecc * cw) / jnp.sqrt(1.0 + ecc * cos_d)
-        v_z = v_kep[:, None] * ecc_fac * sin_i[:, None]
-        beta_c2 = (v_kep[:, None] / SPEED_OF_LIGHT) ** 2
-        beta_e2 = (beta_c2 * (1.0 + ecc ** 2 + 2.0 * ecc * cos_d)
-                   / (1.0 + ecc * cos_d))
-        gamma_e = 1.0 / jnp.sqrt(1.0 - beta_e2)
-        one_plus_z_D = gamma_e * (1.0 + v_z / SPEED_OF_LIGHT)
-        V = SPEED_OF_LIGHT * (
-            one_plus_z_D * z_g[:, None]
-            * (1.0 + v_sys / SPEED_OF_LIGHT) - 1.0)
+        V = predict_velocity_los(
+            r_b, sp, cp, D_A, M_BH, v_sys, sin_i_b,
+            ecc=ecc,
+            sin_om=jnp.sin(omega_r)[:, None],
+            cos_om=jnp.cos(omega_r)[:, None])
+    else:
+        V = predict_velocity_los(r_b, sp, cp, D_A, M_BH, v_sys, sin_i_b)
 
-    chi2 = ((x_obs[:, None, None] - X[None]) ** 2
-            * (1.0 / var_x)[:, None, None]
-            + (y_obs[:, None, None] - Y[None]) ** 2
-            * (1.0 / var_y)[:, None, None]
-            + (v_obs[:, None, None] - V[None]) ** 2
-            * (1.0 / var_v)[:, None, None])
+    dpad = (slice(None), None, None)
+    neg_half_chi2 = neg_half_chi2_position(
+        x_obs[dpad], y_obs[dpad], X[None], Y[None],
+        var_x[dpad], var_y[dpad])
+    neg_half_chi2 = neg_half_chi2 + neg_half_chi2_velocity(
+        v_obs[dpad], V[None], var_v[dpad])
     if has_accel:
-        chi2 = chi2 + ((a_obs[:, None, None] - A[None]) ** 2
-                       * (1.0 / var_a)[:, None, None])
+        has_a = jnp.ones_like(a_obs)
+        neg_half_chi2 = neg_half_chi2 + neg_half_chi2_acceleration(
+            a_obs[dpad], A[None], var_a[dpad], has_a[dpad])
 
     lnorm = -0.5 * (3 * LOG_2PI + jnp.log(var_x) + jnp.log(var_y) +
                     jnp.log(var_v))
     if has_accel:
         lnorm = lnorm - 0.5 * (LOG_2PI + jnp.log(var_a))
 
-    log_f = lnorm[:, None, None] - 0.5 * chi2
+    log_f = lnorm[:, None, None] + neg_half_chi2
     log_w_2d = log_w_r_chunk[:, None] + log_w_phi[None, :]
     return logsumexp(log_f + log_w_2d[None], axis=(-2, -1))
 
@@ -134,9 +128,7 @@ def bruteforce_ll_mode2(model, phys_args, phys_kw, ref_cfg):
     if not ecc_on:
         ecc = 0.0
 
-    conv = D_A * PC_PER_MAS_MPC
-    r_min = model._R_phys_lo / conv
-    r_max = model._R_phys_hi / conv
+    r_min, r_max = model.r_ang_range(D_A)
 
     log_r = jnp.linspace(jnp.log(r_min), jnp.log(r_max), n_r)
     r_grid = jnp.exp(log_r)
@@ -232,11 +224,14 @@ def _production_ll_mode1(model, phys_args, phys_kw, r_ang):
     """Per-type total ll_disk under the production Mode 1 phi marginal."""
     groups = []
     if model._n_sys > 0:
-        groups.append(("sys", model._idx_sys, r_ang[model._idx_sys], None))
+        groups.append(
+            ("sys", model._idx_sys, r_ang[model._idx_sys], None, False))
     if model._n_red > 0:
-        groups.append(("red", model._idx_red, r_ang[model._idx_red], None))
+        groups.append(
+            ("red", model._idx_red, r_ang[model._idx_red], None, False))
     if model._n_blue > 0:
-        groups.append(("blue", model._idx_blue, r_ang[model._idx_blue], None))
+        groups.append(
+            ("blue", model._idx_blue, r_ang[model._idx_blue], None, False))
     ll = model._eval_phi_marginal(groups, phys_args, phys_kw)
     return dict(
         sys=float(jnp.sum(ll[model._idx_sys])),

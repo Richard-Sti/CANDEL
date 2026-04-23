@@ -13,7 +13,7 @@ parser.add_argument("--num-warmup", type=int, default=500)
 parser.add_argument("--num-samples", type=int, default=2500)
 parser.add_argument("--seed", type=int, default=42)
 parser.add_argument("--mode", type=str, default="mode2",
-                    choices=["mode0", "mode1", "mode2"])
+                    choices=["mode1", "mode2"])
 args = parser.parse_args()
 
 if args.host_devices > 1:

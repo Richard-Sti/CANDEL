@@ -42,8 +42,6 @@ import argparse
 import tempfile
 import time
 
-import tomli
-
 # Check per-galaxy use_float64 before importing JAX (must be set pre-init)
 with open("scripts/megamaser/config_maser.toml", "rb") as _f:
     _pre_cfg = tomli.load(_f)
@@ -66,8 +64,8 @@ from numpyro.infer.initialization import init_to_value
 
 from candel.inference.inference import print_clean_summary, _setup_dense_mass
 from candel.inference.nested import print_nested_summary, run_nss
-from candel.model.model_H0_maser import (C_a as _C_a, JointMaserModel,
-                                          MaserDiskModel, PC_PER_MAS_MPC,
+from candel.model.model_H0_maser import (JointMaserModel, MaserDiskModel,
+                                          radius_from_los_acceleration,
                                           remap_warp_to_r0)
 from candel.pvdata.megamaser_data import load_megamaser_spots
 from candel.util import (data_path, fprint, fsection, get_nested, plot_corner,
@@ -142,12 +140,9 @@ parser.add_argument("--num-mcmc-steps", type=int, default=None)
 parser.add_argument("--num-delete", type=int, default=None)
 parser.add_argument("--termination", type=float, default=None)
 parser.add_argument("--mode", type=str, default=None,
-                    choices=["mode0", "mode1", "mode2"],
-                    help="Sampling mode: mode0 samples r AND phi per spot, "
-                         "mode1 samples r and marginalises phi, "
-                         "mode2 marginalises both (default: from config)")
-parser.add_argument("--grid-factor", type=float, default=1.0,
-                    help="Multiply all grid sizes by this factor")
+                    choices=["mode1", "mode2"],
+                    help="Sampling mode: mode1 samples r and marginalises "
+                         "phi, mode2 marginalises both (default: from config)")
 parser.add_argument("--f-grid", type=float, default=1.0,
                     help="Scale every integer phi/r grid size by this "
                          "factor; results are rounded to the nearest "
@@ -183,10 +178,6 @@ _tags.append("Dvol" if _dc_prior == "volume" else "Dflat")
 _gal_mode = _mcfg.get("galaxies", {}).get(args.galaxy, {}).get("mode", None)
 _mode_tag = args.mode or _gal_mode or _mcfg.get("mode", "mode2")
 _tags.append(_mode_tag)
-
-# Grid factor
-if args.grid_factor != 1.0:
-    _tags.append(f"gf{args.grid_factor:g}")
 
 if args.f_grid != 1.0:
     _tags.append(f"fg{args.f_grid:g}")
@@ -263,18 +254,6 @@ if args.no_ecc or args.no_quadratic_warp:
     if args.no_quadratic_warp:
         gcfg_ov["use_quadratic_warp"] = False
         fprint("CLI override: use_quadratic_warp = False")
-
-# Grid resolution multiplier
-if args.grid_factor != 1.0:
-    gf = args.grid_factor
-    m = config["model"]
-    m["G_phi_half"] = int(m.get("G_phi_half", 202) * gf)
-    m["n_inner_sys"] = int(m.get("n_inner_sys", 202) * gf)
-    m["n_wing_sys"] = int(m.get("n_wing_sys", 100) * gf)
-    m["n_r"] = int(m.get("n_r", 251) * gf)
-    fprint(f"grid-factor={gf:g}: G_phi_half={m['G_phi_half']}, "
-           f"n_inner_sys={m['n_inner_sys']}, "
-           f"n_wing_sys={m['n_wing_sys']}, n_r={m['n_r']}")
 
 # Joint: apply prior overrides from [joint.priors] config section
 if is_joint:
@@ -371,9 +350,8 @@ if sampler == "nuts":
                 for _k in ("d2i_dr2", "d2Omega_dr2"):
                     init_params.pop(_k, None)
 
-            # Mode 0/1: model samples r_ang, so init needs r_ang.
-            # Mode 0 also samples phi_u (aux ∈ [0,1] mapped to phi).
-            if model.mode in ("mode0", "mode1") and "r_ang" not in init_params:
+            # Mode 1: model samples r_ang, so init needs r_ang.
+            if model.mode == "mode1" and "r_ang" not in init_params:
                 rng = np.random.default_rng(seed)
                 from scipy.stats import truncnorm as _truncnorm
                 D_c = float(init_params["D_c"])
@@ -382,8 +360,8 @@ if sampler == "nuts":
                     jnp.atleast_1d(jnp.asarray(D_c)),
                     h=H0_ref / 100.0).squeeze())
                 D_A = D_c / (1.0 + z_cosmo)
-                r_lo = float(model._R_phys_lo / (D_A * PC_PER_MAS_MPC))
-                r_hi = float(model._R_phys_hi / (D_A * PC_PER_MAS_MPC))
+                _lo, _hi = model.r_ang_range(D_A)
+                r_lo, r_hi = float(_lo), float(_hi)
 
                 eta = float(init_params["eta"])
                 x0 = float(init_params["x0"])   # μas
@@ -408,8 +386,8 @@ if sampler == "nuts":
                 sys_accel = (~is_hv) & has_accel
                 if sys_accel.any():
                     a_sys = np.abs(np.asarray(model._all_a)[sys_accel])
-                    r_sys = np.sqrt(
-                        _C_a * M_BH * sin_i / (D_A**2 * (a_sys + 1e-30)))
+                    r_sys = np.asarray(radius_from_los_acceleration(
+                        a_sys + 1e-30, sin_i, D_A, M_BH))
                     r_sys = np.clip(r_sys, r_lo * 1.01, r_hi * 0.99)
                     mu_sys = float(np.mean(r_sys))
                     sd_sys = max(float(np.std(r_sys)), 0.1 * mu_sys)
@@ -437,9 +415,6 @@ if sampler == "nuts":
                        f"[{_r.min():.3f}, {_r.max():.3f}] mas "
                        f"| D_c={D_c:.1f} Mpc")
                 init_params["r_ang"] = jnp.asarray(_r)
-
-            if model.mode == "mode0" and "phi_u" not in init_params:
-                init_params["phi_u"] = jnp.full(model.n_spots, 0.5)
 
             init_strategy = init_to_value(values=init_params)
             for k, v in sorted(init_params.items()):
@@ -479,7 +454,7 @@ if sampler == "nuts":
                 for k in ("d2i_dr2", "d2Omega_dr2"):
                     rng_key, subkey = random.split(rng_key)
                     init_params[k] = model.priors[k].sample(subkey)
-            if model.mode in ("mode0", "mode1"):
+            if model.mode == "mode1":
                 from scipy.stats import truncnorm as _truncnorm
                 rng = np.random.default_rng(seed)
 
@@ -490,8 +465,8 @@ if sampler == "nuts":
                     jnp.atleast_1d(jnp.asarray(D_c)),
                     h=H0_ref / 100.0).squeeze())
                 D_A = D_c / (1.0 + z_cosmo)
-                r_lo = float(model._R_phys_lo / (D_A * PC_PER_MAS_MPC))
-                r_hi = float(model._R_phys_hi / (D_A * PC_PER_MAS_MPC))
+                _lo, _hi = model.r_ang_range(D_A)
+                r_lo, r_hi = float(_lo), float(_hi)
 
                 eta = float(init_params["eta"])
                 x0 = float(init_params["x0"])   # μas
@@ -515,8 +490,8 @@ if sampler == "nuts":
                 sys_accel = (~is_hv) & has_accel
                 if sys_accel.any():
                     a_sys = np.abs(np.asarray(model._all_a)[sys_accel])
-                    r_sys = np.sqrt(
-                        _C_a * M_BH * sin_i / (D_A**2 * (a_sys + 1e-30)))
+                    r_sys = np.asarray(radius_from_los_acceleration(
+                        a_sys + 1e-30, sin_i, D_A, M_BH))
                     r_sys = np.clip(r_sys, r_lo * 1.01, r_hi * 0.99)
                     mu_sys = float(np.mean(r_sys))
                     sd_sys = max(float(np.std(r_sys)), 0.1 * mu_sys)
@@ -544,8 +519,6 @@ if sampler == "nuts":
                        f"[{_r.min():.3f}, {_r.max():.3f}] mas "
                        f"| D_c={D_c:.1f} Mpc")
                 init_params["r_ang"] = jnp.asarray(_r)
-            if model.mode == "mode0":
-                init_params["phi_u"] = jnp.full(model.n_spots, 0.5)
             init_strategy = init_to_value(values=init_params)
             for k, v in sorted(init_params.items()):
                 v = jnp.asarray(v)
@@ -589,7 +562,7 @@ if sampler == "nuts":
                     rng_key, subkey = random.split(rng_key)
                     draws = model.priors[k].sample(subkey, sample_shape=(N,))
                     init_params[k] = jnp.median(draws, axis=0)
-            if model.mode in ("mode0", "mode1"):
+            if model.mode == "mode1":
                 from scipy.stats import truncnorm as _truncnorm
                 rng = np.random.default_rng(seed)
                 D_c = float(init_params["D_c"])
@@ -598,8 +571,8 @@ if sampler == "nuts":
                     jnp.atleast_1d(jnp.asarray(D_c)),
                     h=H0_ref / 100.0).squeeze())
                 D_A = D_c / (1.0 + z_cosmo)
-                r_lo = float(model._R_phys_lo / (D_A * PC_PER_MAS_MPC))
-                r_hi = float(model._R_phys_hi / (D_A * PC_PER_MAS_MPC))
+                _lo, _hi = model.r_ang_range(D_A)
+                r_lo, r_hi = float(_lo), float(_hi)
                 eta = float(init_params["eta"])
                 x0 = float(init_params["x0"])
                 y0 = float(init_params["y0"])
@@ -617,8 +590,8 @@ if sampler == "nuts":
                 sys_accel = (~is_hv) & has_accel
                 if sys_accel.any():
                     a_sys = np.abs(np.asarray(model._all_a)[sys_accel])
-                    r_sys = np.sqrt(
-                        _C_a * M_BH * sin_i / (D_A**2 * (a_sys + 1e-30)))
+                    r_sys = np.asarray(radius_from_los_acceleration(
+                        a_sys + 1e-30, sin_i, D_A, M_BH))
                     r_sys = np.clip(r_sys, r_lo * 1.01, r_hi * 0.99)
                     mu_sys = float(np.mean(r_sys))
                     sd_sys = max(float(np.std(r_sys)), 0.1 * mu_sys)
@@ -645,8 +618,6 @@ if sampler == "nuts":
                        f"[{_r.min():.3f}, {_r.max():.3f}] mas "
                        f"| D_c={D_c:.1f} Mpc")
                 init_params["r_ang"] = jnp.asarray(_r)
-            if model.mode == "mode0":
-                init_params["phi_u"] = jnp.full(model.n_spots, 0.5)
             init_strategy = init_to_value(values=init_params)
             for k, v in sorted(init_params.items()):
                 v = jnp.asarray(v)
@@ -666,7 +637,7 @@ if sampler == "nuts":
         # Collect all scalar (non-r_ang) param names from init config,
         # excluding params that aren't sampled in single-galaxy mode
         # or that are disabled by CLI overrides.
-        _skip = {"r_ang", "phi_u", "H0", "sigma_pec"}
+        _skip = {"r_ang", "H0", "sigma_pec"}
         if not model.use_ecc:
             _skip |= {"e_x", "e_y", "ecc", "periapsis", "dperiapsis_dr"}
         if not model.use_quadratic_warp:

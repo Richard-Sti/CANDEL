@@ -165,12 +165,19 @@ def gen_maser_disk_mock(seed, true_params=None, n_spots=50, Om0=0.315,
         d2i_dr2_rad, d2Omega_dr2_rad))
 
     # True observables (using angular radius and D_A)
+    sin_phi_true = np.sin(phi_true)
+    cos_phi_true = np.cos(phi_true)
+    sin_i_k = np.sin(i_k)
+    cos_i_k = np.cos(i_k)
+    sin_O_k = np.sin(Omega_k)
+    cos_O_k = np.cos(Omega_k)
     X_true, Y_true = np.array(predict_position(
-        r_ang_true, phi_true, x0, y0, i_k, Omega_k))
+        r_ang_true, sin_phi_true, cos_phi_true, x0, y0,
+        sin_i_k, cos_i_k, sin_O_k, cos_O_k))
     V_true = np.array(predict_velocity_los(
-        r_ang_true, phi_true, D_A, M_BH, v_sys, i_k))
+        r_ang_true, sin_phi_true, cos_phi_true, D_A, M_BH, v_sys, sin_i_k))
     A_true = np.array(predict_acceleration_los(
-        r_ang_true, phi_true, D_A, M_BH, i_k))
+        r_ang_true, sin_phi_true, cos_phi_true, D_A, M_BH, sin_i_k))
 
     # ---- Measurement noise ----
     sigma_x_obs = np.full(n_spots, tp["sigma_x"])
@@ -205,6 +212,7 @@ def gen_maser_disk_mock(seed, true_params=None, n_spots=50, Om0=0.315,
         "sigma_y": sigma_y_obs,
         "a": a_obs,
         "sigma_a": sigma_a_obs,
+        "accel_measured": np.ones(n_spots, dtype=bool),
         "is_systemic": is_systemic,
         "is_highvel": is_highvel,
         "is_blue": is_blue,

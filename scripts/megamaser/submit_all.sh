@@ -35,7 +35,7 @@ Options:
   --sampler nss|nuts     Inference method (default: $SAMPLER)
   --galaxy GAL           Single galaxy to submit (default: all five)
                          Choices: $ALL_GALS
-  --mode MODE            Sampling mode: mode0, mode1, mode2
+  --mode MODE            Sampling mode: mode1, mode2
                          (default: runner picks — mode2 for NSS)
   --f-grid F             Grid scaling factor (default: 1.0)
   --num-chains N         NUTS vectorised chains (default: $NUM_CHAINS)
