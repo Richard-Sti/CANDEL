@@ -347,7 +347,6 @@ if __name__ == "__main__":
         help="Arbitrary tag/index for this task list.")
     args = parser.parse_args()
 
-    # --- Foundation SNe: Carrick2015 field, uniform prior on beta ---
     config_path = "./configs/config.toml"
     config = load_config(
         config_path, replace_none=False, replace_los_prior=False,
@@ -356,81 +355,37 @@ if __name__ == "__main__":
     tag = "default"
     tasks_index = args.tasks_index
 
-    # Load machine-specific settings from local_config.toml
     _local_cfg = load_local_config()
 
-    manual_overrides = {
+    # --- S8 from PVs: 5 individual + 1 joint run, 3 galaxy bias models ---
+    # Reproduces the paper results (linear_from_beta) and extends to linear
+    # and double_powerlaw galaxy bias.
+    bias_models = ["linear_from_beta", "linear", "double_powerlaw"]
+
+    common = {
         **{k: v for k, v in _local_cfg.items()},
-        "inference/model": "SNModel",
-        "io/catalogue_name": "Foundation",
         "pv_model/kind": "precomputed_los_Carrick2015",
+        "pv_model/galaxy_bias": bias_models,
         "model/priors/beta": {"dist": "uniform", "low": 0.0, "high": 2.0},
-        "inference/num_chains": 1,
     }
 
-    # # --- EDD TRGB: TRGB selection, Carrick, grouped + ungrouped ---
-    # config_path = "./configs/config_EDD_TRGB.toml"
-    # manual_overrides = {
-    #     **{k: v for k, v in _local_cfg.items()},
-    #     "model/which_run": "EDD_TRGB_grouped",
-    #     "model/which_selection": "TRGB_magnitude",
-    #     "model/use_reconstruction": True,
-    #     "model/use_Vext_monopole": True,
-    #     "model/use_Vext_quadrupole": False,
-    #     "model/use_Vext_octupole": False,
-    #     "io/PV_main/EDD_TRGB_grouped/which_host_los": "manticore_2MPP_MULTIBIN_N256_DES_V2",
-    #     "model/which_bias": "powerlaw",
-    # }
+    individual_datasets = [
+        {"inference/model": "TFRModel",          "io/catalogue_name": "CF4_W1"},
+        {"inference/model": "TFRModel",          "io/catalogue_name": "CF4_i"},
+        {"inference/model": "FPModel",           "io/catalogue_name": "6dF_FP"},
+        {"inference/model": "FPModel",           "io/catalogue_name": "SDSS_FP"},
+        {"inference/model": "PantheonPlusModel", "io/catalogue_name": "PantheonPlusLane"},
+    ]
 
-    # # --- CCHP TRGB: SN magnitude selection, Manticore reconstruction ---
-    # config_path = "./configs/config_CCHP_TRGB.toml"
-    # manual_overrides = {
-    #     **{k: v for k, v in _local_cfg.items()},
-    #     "model/which_selection": "TRGB_magnitude",
-    #     "model/use_reconstruction": True,
-    #     "model/which_bias": "double_powerlaw",
-    #     "io/which_host_los": "manticore_2MPP_MULTIBIN_N256_DES_V2",
-    # }
-
-    # # --- CCHP TRGB: SN magnitude selection, Carrick reconstruction ---
-    # config_path = "./configs/config_CCHP_TRGB.toml"
-    # manual_overrides = {
-    #     **{k: v for k, v in _local_cfg.items()},
-    #     "model/which_selection": "SN_magnitude",
-    #     "model/use_reconstruction": True,
-    #     "model/which_bias": "linear",
-    #     "io/which_host_los": "Carrick2015",
-    # }
-
-    # # --- EDD TRGB: redshift selection, Carrick reconstruction ---
-    # config_path = "./configs/config_EDD_TRGB.toml"
-    # manual_overrides = {
-    #     **{k: v for k, v in _local_cfg.items()},
-    #     "model/which_selection": "redshift",
-    #     "model/use_reconstruction": True,
-    #     "model/which_bias": "linear",
-    #     "io/which_host_los": "Carrick2015",
-    # }
-
-    # # --- EDD TRGB: magnitude selection, Manticore reconstruction ---
-    # config_path = "./configs/config_EDD_TRGB.toml"
-    # manual_overrides = {
-    #     **{k: v for k, v in _local_cfg.items()},
-    #     "model/run_ppc": True,
-    #     "model/which_selection": "TRGB_magnitude",
-    #     "model/use_reconstruction": True,
-    #     "model/priors/beta": {"dist": "delta", "value": 1.0},
-    #     "model/which_bias": "double_powerlaw",
-    #     "io/which_host_los": "manticore_2MPP_MULTIBIN_N256_DES_V2",
-    # }
+    all_override_combinations = []
+    for dataset in individual_datasets:
+        all_override_combinations.extend(
+            expand_override_grid({**common, **dataset}))
 
     task_file = f"tasks_{tasks_index}.txt"
-    log_dir = f"logs_{tasks_index}"
-
-    override_combinations = expand_override_grid(manual_overrides)
 
     with open(task_file, "w") as task_fh:
-        for idx, override_set in enumerate(override_combinations):
+        for idx, override_set in enumerate(all_override_combinations):
             local_config = deepcopy(config)
 
             for key, value in override_set.items():

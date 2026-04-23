@@ -106,9 +106,9 @@ mean = 1.0
 scale = 1.0
 
 [model.priors.b1]
-dist = "normal"
-loc = 1
-scale = 1.0
+dist = "uniform"
+low = 0.0
+high = 10.0
 
 [model.priors.b2]
 dist = "normal"
