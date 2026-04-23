@@ -151,7 +151,10 @@ root_data    = "/path/to/data/"     # optional, defaults to <root_main>/data
 root_results = "/path/to/results/"  # optional, defaults to <root_main>/results
 
 python_exec = "/path/to/venv_candel/bin/python"
-machine = "my-machine"
+machine     = "glamdring"           # "glamdring" (addqueue) or "arc" (sbatch)
+
+modules     = ""                    # optional, space-separated module list
+modules_gpu = ""                    # optional, overrides `modules` for GPU jobs
 ```
 
 Keys:
@@ -169,10 +172,17 @@ Keys:
   submission scripts. A single venv is used for both CPU and GPU jobs:
   install JAX with the CUDA wheels (`pip install "jax[cuda12]"`) and it
   falls back to CPU automatically when no GPU is visible.
-- `machine` — free-form label for the host (used in logs and tags).
+- `machine` — selects the cluster submission backend. Currently supported:
+  `"glamdring"` (uses `addqueue`) and `"arc"` (uses `sbatch`). Also appears
+  in logs and tags. An unknown value will break job submission.
+- `modules` — space-separated list of environment modules to `module add`
+  before a job runs. Optional; empty or missing means no modules are loaded.
+- `modules_gpu` — same as `modules`, but used for GPU jobs instead of
+  `modules`. Optional.
 - `gpu_ld_library_path` — list of directories prepended to `LD_LIBRARY_PATH`
   on GPU jobs (typically the bundled NVIDIA libs in the venv plus system
-  CUDA paths).
+  CUDA paths). Optional; leave empty unless JAX fails to find cuDNN/cuBLAS
+  at runtime.
 
 Path resolution: relative paths in run-time TOML configs are resolved against
 the appropriate root — input data file keys against `root_data`, output keys
