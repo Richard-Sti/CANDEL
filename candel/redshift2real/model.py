@@ -24,7 +24,6 @@ import numpy as np
 from jax import numpy as jnp
 from jax.scipy.stats import norm as jax_norm
 from scipy.integrate import cumulative_trapezoid, simpson
-from scipy.interpolate import CubicSpline
 from scipy.special import logsumexp as logsumexp_np
 from tqdm import trange
 
@@ -82,11 +81,6 @@ def lp_galaxy_bias_np(delta, log_rho, bias_params, galaxy_bias):
               + (alpha_high - alpha_low) * np.logaddexp(0.0, log_x))
     elif "linear" in galaxy_bias or galaxy_bias == "unity":
         lp = np.log(smoothclip_nr_np(1 + bias_params[0] * delta, tau=0.1))
-    elif galaxy_bias == "spline":
-        knots_log1pd, amplitudes = bias_params
-        cs = CubicSpline(knots_log1pd, amplitudes, bc_type='natural')
-        x = np.clip(log_rho, knots_log1pd[0], knots_log1pd[-1])
-        lp = cs(x)
     else:
         raise ValueError(f"Invalid galaxy bias model '{galaxy_bias}'.")
     return lp
@@ -168,10 +162,6 @@ class BaseRedshift2Real(ABC):
                 np.asarray(calibration_samples["log_rho_t"]),
             ]
             self._bias_param_names = ["alpha_low", "alpha_high", "log_rho_t"]
-        elif which_bias == "spline":
-            raise NotImplementedError(
-                "Spline bias is not yet supported in redshift2real. "
-                "Use 'linear' or 'double_powerlaw' for redshift2real.")
         else:
             raise ValueError(f"Unknown bias model: {which_bias}")
 

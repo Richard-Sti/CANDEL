@@ -13,18 +13,12 @@ seed = 44
 
 [pv_model]
 kind = "precomputed_los_Carrick2015"
-galaxy_bias = "spline"
-spline_bias_knots_delta = [-0.5, 0.0, 0.5, 1.0, 2.0, 3.0, 5.0]
+galaxy_bias = "linear"
 density_dependent_sigma_v = true
 which_Vext = "constant"
 r_limits_malmquist = "auto"
 dr_malmquist = 0.5
 los_decay_scale = 10.0
-
-[model.priors.spline_bias_y]
-dist = "normal"
-loc = 0.0
-scale = 3.0
 
 [model.priors.sigma_int]
 dist = "jeffreys"

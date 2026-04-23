@@ -33,7 +33,7 @@ from scipy.optimize import minimize as sp_minimize
 from tqdm import trange
 
 from ..util import (fprint, fsection, galactic_to_radec, plot_corner,
-                    plot_radial_profiles, plot_spline_bias, plot_Vext_moll,
+                    plot_radial_profiles, plot_Vext_moll,
                     plot_Vext_rad_corner, plot_Vext_radmag,
                     radec_cartesian_to_galactic, radec_to_cartesian,
                     radec_to_galactic)
@@ -409,12 +409,6 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
 
             fname_plot = splitext(fname_out)[0] + "_moll_Vext_pix.png"
             plot_Vext_moll(samples["Vext_pix"], fname_plot,)
-
-        if model.galaxy_bias == "spline":
-            fname_plot = splitext(fname_out)[0] + "_spline_bias.png"
-            plot_spline_bias(
-                samples, model.spline_bias_knots_delta,
-                show_fig=False, filename=fname_plot)
 
     if return_original_samples:
         return samples, log_density, original_samples

@@ -640,7 +640,6 @@ class H0ModelBase(ModelBase):
             "linear_from_beta_stochastic": {"delta_b1"},
             "double_powerlaw": {"alpha_low", "alpha_high", "log_rho_t"},
             "quadratic": {"b1", "b2"},
-            "spline": {"spline_bias_y"},
         }
         required = _required.get(which_bias, set())
 

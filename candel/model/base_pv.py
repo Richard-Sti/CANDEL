@@ -101,22 +101,11 @@ class BasePVModel(ModelBase):
         if self.galaxy_bias not in ["unity", "powerlaw", "linear",
                                     "linear_from_beta",
                                     "linear_from_beta_stochastic",
-                                    "double_powerlaw", "quadratic",
-                                    "spline"]:
+                                    "double_powerlaw", "quadratic"]:
             raise ValueError(
                 f"Invalid galaxy bias model '{self.galaxy_bias}'.")
         self.quadratic_bias_delta0 = get_nested(
             config, "pv_model/quadratic_bias_delta0", 0.0)
-
-        if self.galaxy_bias == "spline":
-            knots = get_nested(config, "pv_model/spline_bias_knots_delta")
-            if knots is None:
-                raise ValueError(
-                    "spline_bias_knots_delta must be set for spline bias.")
-            if 0.0 not in knots:
-                raise ValueError(
-                    "spline_bias_knots_delta must include 0.0 (pinned knot).")
-            self.spline_bias_knots_delta = sorted(knots)
 
         self.density_dependent_sigma_v = get_nested(
             config, "pv_model/density_dependent_sigma_v", False)
@@ -165,12 +154,9 @@ class BasePVModel(ModelBase):
                 "sigma_v", self.priors["sigma_v"], shared_params)
 
         beta = rsample("beta", self.priors["beta"], shared_params)
-        bias_kwargs = dict(Om=self.Om, beta=beta)
-        if self.galaxy_bias == "spline":
-            bias_kwargs["spline_bias_knots_delta"] = \
-                self.spline_bias_knots_delta
         bias_params = sample_galaxy_bias(
-            self.priors, self.galaxy_bias, shared_params, **bias_kwargs)
+            self.priors, self.galaxy_bias, shared_params,
+            Om=self.Om, beta=beta)
         return kwargs_dist, h, Vext, sigma_v, beta, bias_params
 
     def _get_simpson_log_w(self, data, r_grid):
@@ -262,9 +248,6 @@ class JointPVModel:
         self.config = submodels[0].config
         self.which_Vext = submodels[0].which_Vext
         self.galaxy_bias = submodels[0].galaxy_bias
-        if hasattr(submodels[0], 'spline_bias_knots_delta'):
-            self.spline_bias_knots_delta = \
-                submodels[0].spline_bias_knots_delta
 
     def _sample_shared_params(self, priors):
         shared = {}
