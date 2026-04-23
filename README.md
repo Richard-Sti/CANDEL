@@ -91,7 +91,7 @@ python scripts/megamaser/run_maser_disk.py --config scripts/megamaser/config_mas
 ### Inference methods
 
 - **NUTS** (default): No-U-Turn Sampler via NumPyro. Robust, gradient-based, suitable for all models.
-- **Nested Slice Sampling (NSS):** Bayesian evidence computation via the [blackjax](https://github.com/handley-lab/blackjax) nested sampling fork. Requires the optional `blackjax` and `nss` packages (see [Installation](#installation)).
+- **Nested Slice Sampling (NSS):** Bayesian evidence computation via a self-contained reimplementation of the NSS algorithm ([Yallup et al. 2025](https://arxiv.org/abs/2601.23252)) in `candel/inference/nested.py`. No external nested-sampling dependency required.
 - **Sobol + Adam MAP:** Multi-start MAP optimisation using Sobol quasi-random initialisation and Adam gradient descent. Configured via the `[optimise]` section of the TOML config.
 
 ### Job submission guides
@@ -127,14 +127,9 @@ python -m pip install -e .
 
 For GPU support (e.g. on Glamdring), see [INSTALL_GLAMDRING_GPU.md](INSTALL_GLAMDRING_GPU.md).
 
-For nested sampling (NSS), install the [handley-lab blackjax fork](https://github.com/handley-lab/blackjax/tree/nested_sampling) and [nss](https://github.com/yallup/nss):
-```bash
-pip install "blackjax @ git+https://github.com/handley-lab/blackjax@nested_sampling" --no-deps
-pip install git+https://github.com/yallup/nss.git
-```
-These are optional — CANDEL's core functionality (NUTS, optimisation) works without them.
+Nested sampling (NSS) is self-contained and ships with CANDEL — no extra dependencies are required.
 
-For model-evidence computation, also install [harmonic](https://github.com/astro-informatics/harmonic) (note: there may be compatibility issues with recent JAX versions).
+For model-evidence computation via learnt harmonic mean, also install [harmonic](https://github.com/astro-informatics/harmonic) (note: there may be compatibility issues with recent JAX versions).
 
 ## Local configuration (`local_config.toml`)
 
