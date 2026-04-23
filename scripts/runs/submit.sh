@@ -158,7 +158,7 @@ export PYTHONPATH="$frozen_root:${PYTHONPATH:-}"
 for i in "${!task_lines[@]}"; do
     line="${task_lines[$i]}"
     idx=$(echo "$line" | cut -d' ' -f1)
-    config_path=$(echo "$line" | cut -d' ' -f2-)
+    config_path="$CANDEL_ROOT/$(echo "$line" | cut -d' ' -f2-)"
 
     echo "[INFO] === Task $idx (${task_line_sources[$i]}) ==="
     echo "[INFO] Config: $config_path"

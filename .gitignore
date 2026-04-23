@@ -18,6 +18,7 @@ scripts/sync_from_rusty*
 logs_*/
 slurm-*
 scripts/runs/tasks_*.txt
+scripts/runs/generated_configs/
 scripts/runs/logs
 scripts/runs/logs
 scripts/mocks/logs/

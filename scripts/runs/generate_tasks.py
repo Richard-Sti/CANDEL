@@ -71,7 +71,7 @@ from argparse import ArgumentParser
 from copy import deepcopy
 from itertools import product
 from os import makedirs
-from os.path import exists, join, splitext
+from os.path import join
 from pathlib import Path
 
 try:
@@ -81,8 +81,16 @@ except ModuleNotFoundError:
 
 import tomli_w
 
-from candel import (SPEED_OF_LIGHT, fprint, get_nested, get_root_results,  # noqa
-                    load_config, replace_prior_with_delta)
+from candel import fprint, get_nested, load_config, replace_prior_with_delta  # noqa
+
+
+# Keys that must come from local_config.toml at job runtime, not baked into
+# generated configs. Baking them in defeats the portability mechanism in
+# load_config, which injects local_config.toml only for keys not already set.
+_MACHINE_KEYS = {
+    "root_main", "root_data", "root_results",
+    "python_exec", "machine", "modules", "modules_gpu",
+}
 
 
 def load_local_config():
@@ -91,6 +99,9 @@ def load_local_config():
     List/dict values (e.g. ``gpu_ld_library_path``) are dropped: downstream
     ``expand_override_grid`` treats every list as a Cartesian product
     dimension, but these entries are runtime environment, not overrides.
+    Machine path keys are also excluded so they are never baked into generated
+    configs — they are injected at job runtime from the executing machine's
+    local_config.toml.
     """
     project_root = Path(__file__).resolve().parent.parent.parent
     local_config_path = project_root / "local_config.toml"
@@ -98,7 +109,8 @@ def load_local_config():
         with open(local_config_path, 'rb') as f:
             cfg = tomllib.load(f)
         return {k: v for k, v in cfg.items()
-                if not isinstance(v, (list, dict))}
+                if not isinstance(v, (list, dict))
+                and k not in _MACHINE_KEYS}
     return {}
 
 
@@ -382,6 +394,10 @@ if __name__ == "__main__":
         all_override_combinations.extend(
             expand_override_grid({**common, **dataset}))
 
+    candel_root = Path(__file__).resolve().parent.parent.parent
+    gen_dir = candel_root / "scripts" / "runs" / "generated_configs" / tasks_index
+    makedirs(gen_dir, exist_ok=True)
+
     task_file = f"tasks_{tasks_index}.txt"
 
     with open(task_file, "w") as task_fh:
@@ -449,37 +465,24 @@ if __name__ == "__main__":
                     f"Invalid which_run='{which_run}'. "
                     f"Must be one of {valid_runs}.")
 
-            # Check that the output directory exists
-            fdir_out = join(
-                get_root_results(local_config),
-                local_config["io"]["root_output"])
-            if not exists(fdir_out):
-                fprint(f"creating output directory `{fdir_out}`")
-                makedirs(fdir_out, exist_ok=True)
-
             dynamic_tag = generate_dynamic_tag(local_config, base_tag=tag)
 
             kind = get_nested(local_config, "pv_model/kind", None)
-            if kind is None:
-                fname_out = join(
-                    local_config["io"]["root_output"], f"{dynamic_tag}.hdf5")
-            else:
-                fname_out = join(
-                    local_config["io"]["root_output"],
-                    f"{kind}_{dynamic_tag}.hdf5")
-
+            stem = f"{kind}_{dynamic_tag}" if kind else dynamic_tag
+            # io/fname_output is relative; load_config resolves it against
+            # root_results from local_config.toml at job runtime.
+            fname_out = join(local_config["io"]["root_output"],
+                             f"{stem}.hdf5")
             local_config = overwrite_config(
                 local_config, "io/fname_output", fname_out)
 
-            toml_out = join(
-                get_root_results(local_config),
-                splitext(fname_out)[0] + ".toml"
-            )
+            toml_out = gen_dir / f"{stem}.toml"
             fprint(f"writing the configuration file to `{toml_out}`")
             with open(toml_out, "wb") as f:
                 tomli_w.dump(local_config, f)
 
-            task_fh.write(f"{idx} {toml_out}\n")
+            rel_path = toml_out.relative_to(candel_root)
+            task_fh.write(f"{idx} {rel_path}\n")
 
     fprint(f"wrote task list to `{task_file}`")
 
