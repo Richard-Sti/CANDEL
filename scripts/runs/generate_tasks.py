@@ -392,7 +392,7 @@ if __name__ == "__main__":
         {"inference/model": "TFRModel",          "io/catalogue_name": "CF4_i"},
         {"inference/model": "FPModel",           "io/catalogue_name": "6dF_FP"},
         {"inference/model": "FPModel",           "io/catalogue_name": "SDSS_FP"},
-        {"inference/model": "PantheonPlusModel", "io/catalogue_name": "PantheonPlusLane"},
+        {"inference/model": "PantheonPlusModel", "io/catalogue_name": "PantheonPlus"},
     ]
 
     all_override_combinations = []
