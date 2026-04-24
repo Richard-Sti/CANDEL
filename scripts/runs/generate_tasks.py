@@ -384,6 +384,7 @@ if __name__ == "__main__":
         "inference/num_chains": 1,
         "inference/num_warmup": 2000,
         "inference/num_samples": 10000,
+        "io/root_output": "results/S8",
     }
 
     individual_datasets = [
