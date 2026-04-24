@@ -51,7 +51,8 @@ Note:
 
 Usage:
 ------
-1. Edit the `manual_overrides` dictionary near the bottom of the script to
+1. Edit the `common` / `individual_datasets` structures in the
+   ``if __name__ == "__main__":`` block at the bottom of this script to
    specify your sweep.
 2. Run the script:
        $ python generate_tasks.py 0
@@ -380,6 +381,9 @@ if __name__ == "__main__":
         "pv_model/kind": "precomputed_los_Carrick2015",
         "pv_model/galaxy_bias": bias_models,
         "model/priors/beta": {"dist": "uniform", "low": 0.0, "high": 2.0},
+        "inference/num_chains": 1,
+        "inference/num_warmup": 2000,
+        "inference/num_samples": 10000,
     }
 
     individual_datasets = [
@@ -494,98 +498,3 @@ if __name__ == "__main__":
 
     fprint(f"wrote task list to `{task_file}`")
 
-
-"""
---- UNUSED OVERRIDES ---
-
-
-
-    #    # --- TFR/SN/FP/Cluster flow model over-rides ---
-    manual_overrides = {
-        # ###### - INFERENCE - ######
-        "inference/num_warmup": 500,
-        "inference/num_samples": 5000,
-        "inference/num_chains": 1,
-        "inference/compute_log_density": False,
-        "inference/compute_evidence": False,
-        "inference/track_log_density_per_sample": False,
-        # "inference/model": "TFRModel",
-        "inference/model": "CSPModel",
-        # "inference/shared_params": "beta,sigma_v,Vext",
-        # ###### -- MODEL -- ######
-        # ###### -- PV MODEL -- ######
-        # "pv_model/kind": "precomputed_los_Carrick2015",
-        # "pv_model/kind": "Vext",
-        # "pv_model/smooth_target": "none",
-        "pv_model/galaxy_bias": "double_powerlaw",
-        # "pv_model/kind": "precomputed_los_manticore_2MPP_MULTIBIN_N256_DES_V2",  # noqa
-        "pv_model/kind": "Vext",  # noqa
-        # "pv_model/which_Vext": "radial_magnitude",
-        "pv_model/r_limits_malmquist": [[0.1, 501]],
-        "pv_model/dr_malmquist": 1.0,
-        # "pv_model/which_distance_prior": "empirical",
-        # "pv_model/which_distance_prior": "volume_redshift_selected",
-        # ##### - PRIORS -- ######
-        # "model/priors/Vext_radial_magnitude": {
-        #     "dist": "vector_radialmag_uniform",
-        #     "low": 0.0,
-        #     "high": 10_000,
-        #     "rknot": [0, 50, 100, 150, 200, 250, 300, 350, 400, 450],
-        #     "method": "linear"
-        # },
-        "model/use_stretch_gmm": False,
-        "model/priors/beta": [
-            # {"dist": "uniform", "low": -1, "high": 2.0},
-            # {"dist": "normal", "loc": 0.43, "scale": 0.25},
-            # {"dist": "normal", "loc": 0.43, "scale": 0.25},
-            {"dist": "delta", "value": 1.0},
-        ],
-        # "model/priors/b1": [{"dist": "delta", "value": x}
-        #                     for x in [round(0.1 * n, 1) for n in range(16)]],  # noqa
-        # "model/priors/zeropoint_dipole": [
-        #     {"dist": "delta", "value": [0.0, 0.0, 0.0]},
-        #     {"dist": "vector_uniform_fixed", "low": 0.0, "high": 0.3},
-        #     # {"dist": "vector_components_uniform", "low": -0.3, "high": 0.3},  # noqa
-        # ],
-        # "model/priors/Vext": [
-            # {"dist": "delta", "value": [0.0, 0.0, 0.0]},
-        #     # {"dist": "vector_components_uniform", "low": -0.3, "high": 0.3},  # noqa
-        # ],
-        # "model/priors/Om": {"dist": "delta", "value": 0.3},
-        # ###### - IO - ######
-        "io/catalogue_name": "CSP",
-        "io/CSP/which_sample": "CSPII",
-        # "io/CSP/zcmb_max": 0.05,
-        "io/root_output": "results_test/",
-    }
-
-    # --- CH0 overrides ---
-    manual_overrides = {
-        "io/root_output": "results/test",
-        # "model/which_selection": "SN_magnitude_or_redshift_Nmag",
-        "model/which_selection": "redshift",
-        # "model/num_hosts_selection_mag": 35,
-        # "model/which_selection": ["none", "redshift", "SN_magnitude", "SN_magnitude_redshift", "empirical"],  # noqa
-        # "model/which_selection": ["none", "redshift", "SN_magnitude"],  # noqa
-        # "model/which_selection": ["SN_magnitude_redshift", "empirical"],  # noqa
-        "model/use_reconstruction": True,
-        "model/use_density_dependent_sigma_v": True,
-        # "model/use_fiducial_Cepheid_host_PV_covariance": True,
-        # "model/use_PV_covmat_scaling": [False, True],
-        # "model/weight_selection_by_covmat_Neff": True,  # Only for redshift sel!  # noqa
-        "io/SH0ES/which_host_los": "Carrick2015",
-        # "io/SH0ES/which_host_los": "manticore_2MPP_MULTIBIN_N256_DES_V2",
-        "model/which_bias": "linear_from_beta",
-        # "model/track_host_velocity": True,
-        # "model/priors/Vext": [
-        #     {"dist": "vector_uniform_fixed", "low": 0.0, "high": 2500},
-        #     # {"dist": "delta", "value": [0., 0., 0.]},
-        # ],
-        "model/priors/beta": [
-            {"dist": "normal", "loc": 0.43, "scale": 0.02},
-            # {"dist": "delta", "value": 1.0},
-            # {"dist": "normal", "loc": 1.0, "scale": 0.5},
-        ],
-    }
-
-"""
