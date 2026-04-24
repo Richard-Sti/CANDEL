@@ -41,6 +41,12 @@ from .evidence import (BIC_AIC, dict_samples_to_array, harmonic_evidence,
                        laplace_evidence)
 
 
+def _harmonic_available():
+    """True iff the optional ``harmonic`` package can be imported."""
+    import importlib.util
+    return importlib.util.find_spec("harmonic") is not None
+
+
 def _setup_platform():
     """Detect devices and set NumPyro platform."""
     devices = jax.devices()
@@ -318,7 +324,16 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
     auxiliary = extract_auxiliary(samples, ["Vpec_host_skipZ"])
     log_density_per_sample = samples.pop("log_density_per_sample", None)
 
-    if kwargs["compute_log_density"]:
+    compute_log_density = kwargs["compute_log_density"]
+    compute_evidence = model.config["inference"]["compute_evidence"]
+    if (compute_log_density or compute_evidence) and not _harmonic_available():
+        fprint("[WARN] `harmonic` not installed — disabling post-sampling "
+               "log-density and evidence computation. Install with "
+               "`pip install harmonic` to re-enable.")
+        compute_log_density = False
+        compute_evidence = False
+
+    if compute_log_density:
         log_density = get_log_density(samples, model, model_kwargs)
     else:
         log_density = None
@@ -328,7 +343,6 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
 
     samples = drop_deterministic(samples)
 
-    compute_evidence = model.config["inference"]["compute_evidence"]
     if compute_evidence:
         ndata = len(model_kwargs["data"])
         bic, aic = BIC_AIC(samples, log_density, ndata)
