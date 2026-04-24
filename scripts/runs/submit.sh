@@ -21,20 +21,23 @@ gputype=""
 gpu_flag=false
 no_gpu=false
 walltime=""
+tasks_spec=""
+skip_done=false
+status_only=false
 local_mode=false
 dry=false
 
 usage() {
     cat <<EOF
 usage: $(basename "$0") -q QUEUE [-n NCPU] [-m MEMORY]
-                        [--gpu | --no-gpu] [--gputype TYPE]
-                        [--time T] [--local] [--dry] <task_index>
+                        [--gpu | --no-gpu] [--gputype TYPE] [--time T]
+                        [--tasks SPEC] [--skip-done]
+                        [--status] [--local] [--dry] <task_index>
 
 Submit CANDEL inference tasks.
 
 positional:
-  task_index              reads tasks_<index>.txt. Suffix 'X' matches
-                          tasks_<base>X*.txt (split mode).
+  task_index              reads tasks_<index>.txt.
 
 options:
   -q, --queue QUEUE       queue/partition (REQUIRED unless --local;
@@ -53,6 +56,12 @@ options:
   --time T                Wall time. Bare integer = hours (arc only).
                           (default on arc: short=12, medium=48, long=required;
                            ignored on glamdring)
+  --tasks SPEC            Comma-separated task IDs / ranges to submit
+                          (e.g. 3,5,7-9). Default: all tasks in the file.
+  --skip-done             Skip tasks whose io/fname_output already exists.
+  --status                Report done/pending status for each task and exit
+                          (no submission). Respects --tasks SPEC. -q is
+                          not required in this mode.
   --local                 run inline (login node on clusters;
                           implicit when machine='local')
   --dry                   print submit commands without submitting
@@ -71,6 +80,9 @@ while [[ $# -gt 0 ]]; do
         --no-gpu)        no_gpu=true; shift ;;
         --gputype)       gputype="$2"; shift 2 ;;
         --time)          walltime="$2"; shift 2 ;;
+        --tasks)         tasks_spec="$2"; shift 2 ;;
+        --skip-done)     skip_done=true; shift ;;
+        --status)        status_only=true; shift ;;
         --local)         local_mode=true; shift ;;
         --dry)           dry=true; shift ;;
         *)               task_index="$1"; shift ;;
@@ -90,9 +102,43 @@ if [[ "$CANDEL_CLUSTER" == "local" ]]; then
         local_mode=true
     fi
 fi
-if ! $local_mode && [[ -z "$queue" ]]; then
+if ! $local_mode && ! $status_only && [[ -z "$queue" ]]; then
     echo "[ERROR] -q QUEUE is required (cluster=$CANDEL_CLUSTER)"; exit 1
 fi
+
+# Read [io] fname_output from a task's TOML (section-aware, unquoted).
+_read_fname_output() {
+    awk '
+        /^\[io\][[:space:]]*$/ { in_io=1; next }
+        /^\[/                  { in_io=0 }
+        in_io && /^[[:space:]]*fname_output[[:space:]]*=/ {
+            line = $0
+            sub(/^[^=]*=[[:space:]]*/, "", line)
+            sub(/[[:space:]]*(#.*)?$/, "", line)
+            gsub(/^["'\'']|["'\'']$/, "", line)
+            print line
+            exit
+        }
+    ' "$1"
+}
+
+# Resolve io/fname_output against root_results from local_config.toml.
+_resolved_output() {
+    local cfg_rel="$1"
+    local cfg_abs="$CANDEL_ROOT/$cfg_rel"
+    [[ -f "$cfg_abs" ]] || { echo ""; return; }
+    local fname; fname=$(_read_fname_output "$cfg_abs")
+    [[ -z "$fname" ]] && { echo ""; return; }
+    if [[ "$fname" = /* ]]; then
+        echo "$fname"; return
+    fi
+    local root; root=$(_toml_get root_results "$CANDEL_ROOT/local_config.toml")
+    if [[ -z "$root" ]]; then
+        root=$(_toml_get root_main "$CANDEL_ROOT/local_config.toml")
+        root="${root%/}/results"
+    fi
+    echo "${root%/}/$fname"
+}
 
 # GPU policy per cluster. On glamdring, only GPU-named queues imply GPU use
 # (explicit --gpu/--gputype also works). On arc, GPU is the default — every
@@ -115,27 +161,86 @@ if $no_gpu; then
     is_gpu=false
 fi
 
-# Resolve task files.
-task_files=()
-if [[ "$task_index" == *X ]]; then
-    while IFS= read -r f; do task_files+=("$f"); done \
-        < <(compgen -G "tasks_${task_index}*.txt" | sort -V)
-    if (( ${#task_files[@]} == 0 )); then
-        echo "[ERROR] No split task files matching: tasks_${task_index}*.txt"; exit 2
-    fi
-else
-    task_files=("tasks_${task_index}.txt")
-    [[ -f "${task_files[0]}" ]] || { echo "[ERROR] Task file not found: ${task_files[0]}"; exit 2; }
+# Resolve the single task file.
+task_file="tasks_${task_index}.txt"
+[[ -f "$task_file" ]] || { echo "[ERROR] Task file not found: $task_file"; exit 2; }
+
+# Parse --tasks SPEC ("3,5,7-9") into the allowed-id set.
+declare -A allowed_ids
+allowed_any=true
+if [[ -n "$tasks_spec" ]]; then
+    allowed_any=false
+    IFS=',' read -ra _parts <<< "$tasks_spec"
+    for p in "${_parts[@]}"; do
+        [[ -z "$p" ]] && continue
+        if [[ "$p" == *-* ]]; then
+            _lo=${p%-*}; _hi=${p#*-}
+            for ((i=_lo; i<=_hi; i++)); do allowed_ids[$i]=1; done
+        else
+            allowed_ids[$p]=1
+        fi
+    done
 fi
 
+# Walk the task file once, filtering by --tasks and resolving output paths
+# so --skip-done and --status don't need a second pass.
 task_lines=()
-task_line_sources=()
-for tf in "${task_files[@]}"; do
-    while IFS= read -r line || [[ -n "$line" ]]; do
-        task_lines+=("$line")
-        task_line_sources+=("$tf")
-    done < "$tf"
-done
+task_outputs=()
+task_done=()
+total_in_file=0
+n_done_in_scope=0
+while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ -z "$line" || "$line" == \#* ]] && continue
+    total_in_file=$((total_in_file + 1))
+    id=${line%% *}
+    cfg_rel=${line#* }
+    if ! $allowed_any && [[ -z "${allowed_ids[$id]:-}" ]]; then continue; fi
+    out=$(_resolved_output "$cfg_rel")
+    if [[ -n "$out" && -f "$out" ]]; then
+        done_flag=1
+        n_done_in_scope=$((n_done_in_scope + 1))
+    else
+        done_flag=0
+    fi
+    task_lines+=("$line")
+    task_outputs+=("$out")
+    task_done+=("$done_flag")
+done < "$task_file"
+
+# --status: print per-task report and exit.
+if $status_only; then
+    n_total_in_scope=${#task_lines[@]}
+    for i in "${!task_lines[@]}"; do
+        id=${task_lines[$i]%% *}
+        if [[ "${task_done[$i]}" == 1 ]]; then
+            echo "  [done]    task $id: ${task_outputs[$i]}"
+        else
+            out="${task_outputs[$i]:-<unresolved>}"
+            echo "  [pending] task $id: $out"
+        fi
+    done
+    echo
+    echo "$n_done_in_scope/$n_total_in_scope done"
+    exit 0
+fi
+
+# --skip-done: drop the rows whose output exists.
+if $skip_done; then
+    filtered_lines=()
+    for i in "${!task_lines[@]}"; do
+        id=${task_lines[$i]%% *}
+        if [[ "${task_done[$i]}" == 1 ]]; then
+            echo "[SKIP] task $id: output exists (${task_outputs[$i]})"
+            continue
+        fi
+        filtered_lines+=("${task_lines[$i]}")
+    done
+    task_lines=("${filtered_lines[@]}")
+fi
+
+if (( ${#task_lines[@]} == 0 )); then
+    echo "[INFO] No tasks to submit after filtering."; exit 0
+fi
 
 if (( CANDEL_USE_FROZEN )); then
     run_root="$CANDEL_FROZEN_ROOT"
@@ -158,16 +263,19 @@ total_memory=$(( memory * ncpu ))
 echo "  CPUs:        $ncpu"
 echo "  Memory:      ${memory} GB/CPU  (total ${total_memory} GB)"
 $is_gpu && echo "  GPU:         yes${gputype:+ ($gputype)}"
-echo "  Total tasks: ${#task_lines[@]}"
+if (( ${#task_lines[@]} != total_in_file )); then
+    echo "  Total tasks: ${#task_lines[@]} (of $total_in_file in $task_file)"
+else
+    echo "  Total tasks: ${#task_lines[@]}"
+fi
 echo "  Source:      $source_label"
 echo
 
 echo "Tasks to run:"
-for i in "${!task_lines[@]}"; do
-    line="${task_lines[$i]}"
-    idx=$(echo "$line" | cut -d' ' -f1)
-    config_path=$(echo "$line" | cut -d' ' -f2-)
-    echo "  - [${task_line_sources[$i]}] Task $idx: $config_path"
+for line in "${task_lines[@]}"; do
+    idx=${line%% *}
+    config_path=${line#* }
+    echo "  - Task $idx: $config_path"
 done
 echo
 
@@ -186,7 +294,7 @@ for i in "${!task_lines[@]}"; do
     idx=$(echo "$line" | cut -d' ' -f1)
     config_path="$CANDEL_ROOT/$(echo "$line" | cut -d' ' -f2-)"
 
-    echo "[INFO] === Task $idx (${task_line_sources[$i]}) ==="
+    echo "[INFO] === Task $idx ==="
     echo "[INFO] Config: $config_path"
     if [[ ! -f "$config_path" ]]; then
         echo "[WARNING] Config file not found: $config_path"; continue
