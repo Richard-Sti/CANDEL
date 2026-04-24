@@ -15,16 +15,20 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "$ROOT/scripts/_submit_lib.sh"
 
 queue=""
-ncpu=1
-memory=16
+ncpu=4
+memory=6
 gputype=""
+gpu_flag=false
+no_gpu=false
+walltime=""
 local_mode=false
 dry=false
 
 usage() {
     cat <<EOF
-usage: $(basename "$0") -q QUEUE [-n NCPU] [-m MEMORY] [--gputype TYPE]
-                        [--local] [--dry] <task_index>
+usage: $(basename "$0") -q QUEUE [-n NCPU] [-m MEMORY]
+                        [--gpu | --no-gpu] [--gputype TYPE]
+                        [--time T] [--local] [--dry] <task_index>
 
 Submit CANDEL inference tasks.
 
@@ -39,8 +43,16 @@ options:
                             glamdring GPU: gpulong, cmbgpu, optgpu
                             arc: short, medium, long
   -n, --ncpu NCPU         number of CPUs (default: $ncpu)
-  -m, --memory MEMORY     memory per job (GB, default: $memory)
-  --gputype TYPE          glamdring-only GPU type; ignored on arc
+  -m, --memory MEMORY     memory per CPU (GB, default: $memory)
+                          total requested = MEMORY * NCPU
+  --gpu                   request a GPU (any type). Implicit on arc and on
+                          glamdring GPU queues (gpulong/cmbgpu/optgpu).
+  --no-gpu                submit as a CPU-only job (overrides arc default).
+  --gputype TYPE          specific GPU type. glamdring: selects gputype.
+                          arc: selects --gres=gpu:TYPE:1 (implies --gpu).
+  --time T                Wall time. Bare integer = hours (arc only).
+                          (default on arc: short=12, medium=48, long=required;
+                           ignored on glamdring)
   --local                 run inline (login node on clusters;
                           implicit when machine='local')
   --dry                   print submit commands without submitting
@@ -55,7 +67,10 @@ while [[ $# -gt 0 ]]; do
         -q|--queue)      queue="$2"; shift 2 ;;
         -n|--ncpu)       ncpu="$2"; shift 2 ;;
         -m|--memory)     memory="$2"; shift 2 ;;
+        --gpu)           gpu_flag=true; shift ;;
+        --no-gpu)        no_gpu=true; shift ;;
         --gputype)       gputype="$2"; shift 2 ;;
+        --time)          walltime="$2"; shift 2 ;;
         --local)         local_mode=true; shift ;;
         --dry)           dry=true; shift ;;
         *)               task_index="$1"; shift ;;
@@ -79,23 +94,25 @@ if ! $local_mode && [[ -z "$queue" ]]; then
     echo "[ERROR] -q QUEUE is required (cluster=$CANDEL_CLUSTER)"; exit 1
 fi
 
-# GPU queues per cluster.
+# GPU policy per cluster. On glamdring, only GPU-named queues imply GPU use
+# (explicit --gpu/--gputype also works). On arc, GPU is the default — every
+# submission lands on a GPU node unless --no-gpu is passed.
 is_gpu=false
-case "$CANDEL_CLUSTER:$queue" in
-    glamdring:gpulong|glamdring:cmbgpu|glamdring:optgpu) is_gpu=true ;;
-    arc:*)
-        # On arc any queue can request a GPU; treat --gputype presence
-        # as opt-out (arc doesn't honour glamdring gputypes). GPU use on
-        # arc here is implicit by --gputype being ignored; to actually
-        # request a GPU on arc, keep old semantics: if gputype provided
-        # OR queue name implies GPU, assume GPU. Simpler: only GPU when
-        # the user explicitly gave --gputype.
-        [[ -n "$gputype" ]] && is_gpu=true
+case "$CANDEL_CLUSTER" in
+    glamdring)
+        case "$queue" in
+            gpulong|cmbgpu|optgpu) is_gpu=true ;;
+        esac
+        ;;
+    arc)
+        is_gpu=true
         ;;
 esac
-
-if [[ -n "$gputype" && "$CANDEL_CLUSTER" != "glamdring" ]]; then
-    echo "[INFO] --gputype $gputype ignored on $CANDEL_CLUSTER"
+if $gpu_flag || [[ -n "$gputype" ]]; then
+    is_gpu=true
+fi
+if $no_gpu; then
+    is_gpu=false
 fi
 
 # Resolve task files.
@@ -120,7 +137,15 @@ for tf in "${task_files[@]}"; do
     done < "$tf"
 done
 
-frozen_root="$CANDEL_FROZEN_ROOT"
+if (( CANDEL_USE_FROZEN )); then
+    run_root="$CANDEL_FROZEN_ROOT"
+    run_main="$run_root/main.py"
+    source_label="frozen: $run_root"
+else
+    run_root="$CANDEL_ROOT"
+    run_main="$run_root/scripts/runs/main.py"
+    source_label="live:   $run_root"
+fi
 
 echo "Task submission ($CANDEL_CLUSTER)"
 echo "============================================================"
@@ -129,11 +154,12 @@ if $local_mode; then
 else
     echo "  Mode:        SUBMIT (queue=$queue)"
 fi
+total_memory=$(( memory * ncpu ))
 echo "  CPUs:        $ncpu"
-echo "  Memory:      ${memory} GB"
+echo "  Memory:      ${memory} GB/CPU  (total ${total_memory} GB)"
 $is_gpu && echo "  GPU:         yes${gputype:+ ($gputype)}"
 echo "  Total tasks: ${#task_lines[@]}"
-echo "  Frozen root: $frozen_root"
+echo "  Source:      $source_label"
 echo
 
 echo "Tasks to run:"
@@ -148,12 +174,12 @@ echo
 read -rp "Proceed? [y/N]: " confirm
 if [[ ! "$confirm" =~ ^[Yy]$ ]]; then echo "Aborting."; exit 1; fi
 
-if [[ ! -d "$frozen_root" ]]; then
-    echo "[ERROR] Frozen package not found: $frozen_root"
-    echo "Run freeze_candel.sh first."; exit 4
+if (( CANDEL_USE_FROZEN )) && [[ ! -d "$run_root" ]]; then
+    echo "[ERROR] Frozen package not found: $run_root"
+    echo "Run freeze_candel.sh first, or set use_frozen=false in local_config.toml."
+    exit 4
 fi
-
-export PYTHONPATH="$frozen_root:${PYTHONPATH:-}"
+export PYTHONPATH="$run_root:${PYTHONPATH:-}"
 
 for i in "${!task_lines[@]}"; do
     line="${task_lines[$i]}"
@@ -166,7 +192,7 @@ for i in "${!task_lines[@]}"; do
         echo "[WARNING] Config file not found: $config_path"; continue
     fi
 
-    pycmd="$CANDEL_PYTHON $frozen_root/main.py --config $config_path --host-devices $ncpu"
+    pycmd="$CANDEL_PYTHON $run_main --config $config_path --host-devices $ncpu"
 
     if $local_mode; then
         echo "[INFO] Running locally..."; echo "  $pycmd"
@@ -175,14 +201,15 @@ for i in "${!task_lines[@]}"; do
         gpu_flags=()
         if $is_gpu; then
             gpu_flags+=(--gpu)
-            [[ -n "$gputype" && "$CANDEL_CLUSTER" == "glamdring" ]] \
-                && gpu_flags+=(--gputype "$gputype")
+            [[ -n "$gputype" ]] && gpu_flags+=(--gputype "$gputype")
         fi
         dry_flag=()
         $dry && dry_flag=(--dry)
-        submit_job "${gpu_flags[@]}" --queue "$queue" --mem "$memory" \
+        time_flag=()
+        [[ -n "$walltime" ]] && time_flag=(--time "$walltime")
+        submit_job "${gpu_flags[@]}" --queue "$queue" --mem "$total_memory" \
             --cpus "$ncpu" --name "task_${idx}" \
-            "${dry_flag[@]}" -- $pycmd
+            "${time_flag[@]}" "${dry_flag[@]}" -- $pycmd
     fi
     echo
 done

@@ -90,6 +90,7 @@ from candel import fprint, get_nested, load_config, replace_prior_with_delta  # 
 _MACHINE_KEYS = {
     "root_main", "root_data", "root_results",
     "python_exec", "machine", "modules", "modules_gpu",
+    "use_frozen", "gpu_ld_library_path",
 }
 
 
@@ -478,8 +479,15 @@ if __name__ == "__main__":
 
             toml_out = gen_dir / f"{stem}.toml"
             fprint(f"writing the configuration file to `{toml_out}`")
+            # Drop machine-specific keys that load_config injected from
+            # local_config.toml — they must be resolved at job runtime on
+            # the executing machine, not baked in here.
+            to_dump = {
+                k: v for k, v in local_config.items()
+                if k not in _MACHINE_KEYS
+            }
             with open(toml_out, "wb") as f:
-                tomli_w.dump(local_config, f)
+                tomli_w.dump(to_dump, f)
 
             rel_path = toml_out.relative_to(candel_root)
             task_fh.write(f"{idx} {rel_path}\n")

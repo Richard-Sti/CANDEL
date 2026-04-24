@@ -23,6 +23,8 @@
 #   CANDEL_PYTHON       python_exec from local_config.toml
 #   CANDEL_CLUSTER      value of `machine`
 #   CANDEL_FROZEN_ROOT  per-cluster frozen-package install root
+#   CANDEL_USE_FROZEN   1 if use_frozen=true in local_config.toml, else 0
+#                       (default 0 when absent)
 
 _submit_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CANDEL_ROOT="$(cd "$_submit_lib_dir/.." && pwd)"
@@ -53,7 +55,13 @@ CANDEL_CLUSTER="$(_toml_get machine "$_local_config")"
 CANDEL_PYTHON="$(_toml_get python_exec "$_local_config")"
 CANDEL_MODULES="$(_toml_get modules "$_local_config")"
 CANDEL_MODULES_GPU="$(_toml_get modules_gpu "$_local_config")"
-export CANDEL_CLUSTER CANDEL_PYTHON CANDEL_MODULES CANDEL_MODULES_GPU
+_use_frozen_raw="$(_toml_get use_frozen "$_local_config")"
+case "${_use_frozen_raw,,}" in
+    true|1|yes) CANDEL_USE_FROZEN=1 ;;
+    *)          CANDEL_USE_FROZEN=0 ;;
+esac
+export CANDEL_CLUSTER CANDEL_PYTHON CANDEL_MODULES CANDEL_MODULES_GPU \
+       CANDEL_USE_FROZEN
 
 if [[ -z "$CANDEL_CLUSTER" ]]; then
     echo "[submit_lib] 'machine' not set in $_local_config" >&2
@@ -141,14 +149,16 @@ submit_job() {
 
     case "$CANDEL_CLUSTER" in
         arc)
-            # On arc logs always land in the submit CWD (logs-<jobid>.{out,err}).
+            # On arc logs always land in the submit CWD as logs-<jobid>.out.
+            # Omitting --error routes stderr into the same file — keeps the
+            # numpyro tqdm progress bar (written to stderr) in the .out file
+            # alongside regular print output, instead of a separate .err.
             local sbatch_flags=(
                 -p "$queue"
                 --mem="${mem}G"
                 --job-name="$name"
                 --chdir="$PWD"
                 --output="logs-%j.out"
-                --error="logs-%j.err"
             )
             if [[ -n "$mpi_n" ]]; then
                 sbatch_flags+=(--ntasks="$mpi_total" --cpus-per-task=1)
