@@ -15,6 +15,7 @@
 """Running the MCMC inference for the model and some postprocessing."""
 import contextlib
 from copy import deepcopy
+from os import makedirs
 from os.path import dirname, splitext
 
 import jax
@@ -694,6 +695,9 @@ def print_clean_summary(samples):
 def save_mcmc_samples(samples, log_density, log_density_per_sample, gof,
                       filename, auxiliary=None):
     """Save the MCMC samples to an HDF5 file."""
+    out_dir = dirname(filename)
+    if out_dir:
+        makedirs(out_dir, exist_ok=True)
     with File(filename, 'w') as f:
         grp = f.create_group("samples")
         for key, x in samples.items():
