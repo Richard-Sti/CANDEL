@@ -292,6 +292,14 @@ def generate_dynamic_tag(config, base_tag="default"):
                 get_nested(config,
                            f"io/PV_main/{which_run}/which_host_los", None)))
 
+    shared = get_nested(config, "inference/shared_params", None)
+    if _is_active(shared):
+        if isinstance(shared, list):
+            shared_str = "+".join(shared)
+        else:
+            shared_str = str(shared).replace(",", "+")
+        parts.append(f"shared-{shared_str}")
+
     if base_tag != "default":
         parts.append(base_tag)
 
@@ -371,9 +379,10 @@ if __name__ == "__main__":
 
     _local_cfg = load_local_config()
 
-    # --- S8 from PVs: 5 individual + 1 joint run, 3 galaxy bias models ---
-    # Reproduces the paper results (linear_from_beta) and extends to linear
-    # and quadratic galaxy bias.
+    # --- S8 from PVs: 5 individual (× 3 galaxy biases) + 2 joint runs ---
+    # Individual runs reproduce the paper (linear_from_beta) and extend to
+    # linear and quadratic galaxy bias. Joint runs combine all five datasets
+    # at the paper-default bias, with and without Vext as a shared parameter.
     bias_models = ["linear_from_beta", "linear", "quadratic"]
 
     common = {
@@ -396,8 +405,26 @@ if __name__ == "__main__":
          "inference/init_maxiter": 0},
     ]
 
+    # Joint runs over all five datasets. Single galaxy bias (paper default)
+    # so the per-bias sweep stays a property of the individual runs only.
+    joint_models = ["TFRModel", "TFRModel", "FPModel", "FPModel",
+                    "PantheonPlusModel"]
+    joint_catalogues = ["CF4_W1", "CF4_i", "6dF_FP", "SDSS_FP", "PantheonPlus"]
+    joint_base = {
+        "inference/model": joint_models,
+        "io/catalogue_name": joint_catalogues,
+        "pv_model/galaxy_bias": "linear_from_beta",
+    }
+    joint_datasets = [
+        {**joint_base, "inference/shared_params": "sigma_v,Vext,beta"},
+        {**joint_base, "inference/shared_params": "sigma_v,beta"},
+    ]
+
     all_override_combinations = []
     for dataset in individual_datasets:
+        all_override_combinations.extend(
+            expand_override_grid({**common, **dataset}))
+    for dataset in joint_datasets:
         all_override_combinations.extend(
             expand_override_grid({**common, **dataset}))
 
