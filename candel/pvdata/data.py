@@ -173,7 +173,10 @@ def load_PV_dataframes(config_path):
     dfs = []
     fsection("Data")
     fprint(f"loading {len(names)} PV dataframes: {names}")
+    multi = len(names) > 1
     for name in names:
+        if multi:
+            fprint(f"--- {name} ---")
         is_mock = name.startswith("CF4_mock")
         if is_mock:
             kwargs = config_io["CF4_mock"].copy()

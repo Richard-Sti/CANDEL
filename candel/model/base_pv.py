@@ -19,7 +19,7 @@ import jax.numpy as jnp
 from jax.scipy.special import logsumexp
 from numpyro import deterministic, factor, handlers
 
-from ..util import fprint, fsection, get_nested
+from ..util import fprint, get_nested
 from .base_model import ModelBase
 from .integration import simpson_log_weights
 from .pv_utils import (_rsample, compute_Vext_radial, lp_galaxy_bias, rsample,
@@ -47,7 +47,6 @@ class BasePVModel(ModelBase):
     def __init__(self, config_path):
         super().__init__(config_path)
         config = self.config
-        fsection("Model")
 
         kind = get_nested(config, "pv_model/kind", "Vext")
         kind_allowed = ["Vext", "Vext_radial"]

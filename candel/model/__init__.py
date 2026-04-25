@@ -35,7 +35,11 @@ from .interp import LOSInterpolator                                             
 from .integration import (ln_simpson, ln_trapz_precomputed,                     # noqa
                           simpson_log_weights, trapz_log_weights)               # noqa
 
-from ..util import fprint
+from ..util import fprint, fsection, get_nested, load_config
+
+
+def _model_section_title(name, cat):
+    return f"Model: {name} ({cat})" if cat else f"Model: {name}"
 
 
 def name2model(name, shared_param=None, config=None):
@@ -46,10 +50,18 @@ def name2model(name, shared_param=None, config=None):
         "FPModel": FPModel,
         }
 
+    cats = None
+    if config is not None:
+        cfg = load_config(config, replace_none=False, replace_los_prior=False,
+                          fill_paths=False)
+        cats = get_nested(cfg, "io/catalogue_name", None)
+
     if isinstance(name, str):
         if name not in mapping:
             raise ValueError(f"Model name `{name}` not recognized.\n"
                              f"Available models: {list(mapping.keys())}")
+        cat = cats if isinstance(cats, str) else None
+        fsection(_model_section_title(name, cat))
         return mapping[name](config)
 
     if isinstance(name, list):
@@ -62,7 +74,12 @@ def name2model(name, shared_param=None, config=None):
         else:
             fprint(f"using shared parameters: `{shared_param}`")
 
-        submodels = [mapping[n](config) for n in name]
+        cat_list = (cats if isinstance(cats, list)
+                    else [None] * len(name))
+        submodels = []
+        for n, cat in zip(name, cat_list):
+            fsection(_model_section_title(n, cat))
+            submodels.append(mapping[n](config))
         return JointPVModel(submodels, shared_param)
 
     raise TypeError("`name` must be a string or a list of strings.")
