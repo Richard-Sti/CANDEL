@@ -34,7 +34,7 @@ class TFRModel(BasePVModel):
 
         if not self.marginalize_eta:
             fprint("setting `compute_evidence` to False.")
-            self.config["inference"]["compute_evidence"] = False
+            self.compute_evidence = False
 
         if self.which_distance_prior != "empirical":
             raise ValueError(

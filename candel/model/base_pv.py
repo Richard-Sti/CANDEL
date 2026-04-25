@@ -248,6 +248,7 @@ class JointPVModel:
         self.config = submodels[0].config
         self.which_Vext = submodels[0].which_Vext
         self.galaxy_bias = submodels[0].galaxy_bias
+        self.compute_evidence = all(m.compute_evidence for m in submodels)
 
     def _sample_shared_params(self, priors):
         shared = {}

@@ -1115,7 +1115,7 @@ class JointTRGBCSPModel:
 
         # Disable evidence computation
         fprint("setting `compute_evidence` to False.")
-        self.config["inference"]["compute_evidence"] = False
+        self.compute_evidence = False
 
     def _sample_shared_params(self):
         """Sample parameters shared between TRGB and CSP models."""

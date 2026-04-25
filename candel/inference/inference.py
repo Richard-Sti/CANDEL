@@ -377,7 +377,7 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
     log_density_per_sample = samples.pop("log_density_per_sample", None)
 
     compute_log_density = kwargs["compute_log_density"]
-    compute_evidence = model.config["inference"]["compute_evidence"]
+    compute_evidence = model.compute_evidence
     if (compute_log_density or compute_evidence) and not _harmonic_available():
         fprint("[WARN] `harmonic` not installed — disabling post-sampling "
                "log-density and evidence computation. Install with "

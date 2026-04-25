@@ -50,7 +50,7 @@ class PantheonPlusModel(BasePVModel):
                 f"got '{self.which_distance_prior}'.")
 
         fprint("setting `compute_evidence` to False.")
-        self.config["inference"]["compute_evidence"] = False
+        self.compute_evidence = False
 
     def __call__(self, data, shared_params=None):
         nsamples = len(data)

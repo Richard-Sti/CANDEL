@@ -116,6 +116,8 @@ class ModelBase(ABC):
         self.redshift2distance, self.distmod2distance = \
             Redshift2Distance(Om0=self.Om), Distmod2Distance(Om0=self.Om)
         self.config = config
+        self.compute_evidence = bool(
+            get_nested(config, "inference/compute_evidence", True))
 
     def _load_and_set_priors(self):
         """Load priors from config and store as attributes."""

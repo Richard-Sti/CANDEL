@@ -381,7 +381,7 @@ class CSPModel(BasePVModel):
             fprint("CSP stretch distribution: 2-component GMM")
 
         fprint("setting `compute_evidence` to False.")
-        self.config["inference"]["compute_evidence"] = False
+        self.compute_evidence = False
 
     def _setup_selection(self, data):
         """Setup selection grids, using data to compute auto limits."""
