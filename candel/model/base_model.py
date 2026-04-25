@@ -488,7 +488,7 @@ class H0ModelBase(ModelBase):
 
     def __init__(self, config_path, data):
         super().__init__(config_path)
-        fsection("Model")
+        fsection(f"Model: {type(self).__name__}")
         self._configure_physics()
         self._load_data(data)
         self._setup_grids()

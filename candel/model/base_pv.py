@@ -25,8 +25,8 @@ from .integration import simpson_log_weights
 from .pv_utils import (_rsample, compute_Vext_radial, lp_galaxy_bias, rsample,
                        sample_distance_prior, sample_galaxy_bias, sample_Vext,
                        sigma_v_from_density, sumzero_basis)
-from .utils import (config_hash, log_prior_r_empirical, normal_logpdf_var,
-                    predict_cz)
+from .utils import (joint_config_mismatch, log_prior_r_empirical,
+                    normal_logpdf_var, predict_cz)
 
 
 class BasePVModel(ModelBase):
@@ -238,11 +238,19 @@ class JointPVModel:
         self.submodels = submodels
         self.shared_param_names = shared_param_names
 
-        # Check that all submodels have the same config.
-        ref_hash = config_hash(submodels[0].config)
+        # Submodels must agree on the joint-relevant config sections
+        # (model/, pv_model/) so the shared-parameter sampling and
+        # forward physics are consistent.
+        ref_cfg = submodels[0].config
         for i, model in enumerate(submodels[1:], start=1):
-            if config_hash(model.config) != ref_hash:
-                raise ValueError(f"Submodel {i} has a different config hash.")
+            diffs = joint_config_mismatch(ref_cfg, model.config)
+            if diffs:
+                details = "\n".join(
+                    f"  {p}: submodel[0]={a!r}, submodel[{i}]={b!r}"
+                    for p, a, b in diffs)
+                raise ValueError(
+                    f"Submodel {i} differs from submodel[0] in "
+                    f"joint-relevant config keys:\n{details}")
 
         self.config = submodels[0].config
         self.which_Vext = submodels[0].which_Vext

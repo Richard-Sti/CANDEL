@@ -16,9 +16,6 @@
 General utility functions for PV and H0 forward models: configuration,
 physics, priors, and SH0ES helpers.
 """
-import hashlib
-import json
-
 import jax.numpy as jnp
 import numpy as np
 from jax import random
@@ -44,23 +41,61 @@ _GH_SEL_LOG_WEIGHTS = jnp.log(jnp.asarray(_GH_SEL_WEIGHTS_NP))
 ###############################################################################
 
 
-def make_json_safe(obj):
-    if isinstance(obj, dict):
-        return {k: make_json_safe(v) for k, v in obj.items()}
-    elif isinstance(obj, (list, tuple)):
-        return [make_json_safe(x) for x in obj]
-    elif isinstance(obj, (jnp.ndarray, np.ndarray)):
-        return obj.tolist()
-    elif hasattr(obj, 'item') and isinstance(obj.item(), (int, float, bool, str)):  # noqa
-        return obj.item()
-    else:
-        return obj
+# Config sub-sections that must match across submodels in a joint
+# inference. Anything outside these (per-catalogue io entries,
+# inference-control flags like compute_evidence) may legitimately
+# differ between submodels.
+JOINT_RELEVANT_SECTIONS = ("model", "pv_model")
 
 
-def config_hash(cfg):
-    safe_cfg = make_json_safe(cfg)
-    json_str = json.dumps(safe_cfg, sort_keys=True)
-    return hashlib.sha256(json_str.encode()).hexdigest()
+def _leaf_eq(a, b):
+    """Equality that tolerates numpy/jax arrays (whose ``==`` is elementwise)."""
+    if hasattr(a, "__array__") or hasattr(b, "__array__"):
+        try:
+            return bool(np.array_equal(a, b))
+        except Exception:
+            return False
+    return a == b
+
+
+def _dict_path_diffs(a, b, prefix):
+    """Return list of (path, val_a, val_b) leaf disagreements."""
+    if isinstance(a, dict) and isinstance(b, dict):
+        out = []
+        for k in sorted(set(a) | set(b)):
+            sub = f"{prefix}/{k}"
+            if k not in a:
+                out.append((sub, "<missing>", b[k]))
+            elif k not in b:
+                out.append((sub, a[k], "<missing>"))
+            else:
+                out.extend(_dict_path_diffs(a[k], b[k], sub))
+        return out
+    if isinstance(a, list) and isinstance(b, list):
+        if len(a) != len(b):
+            return [(prefix, a, b)]
+        out = []
+        for i, (x, y) in enumerate(zip(a, b)):
+            out.extend(_dict_path_diffs(x, y, f"{prefix}[{i}]"))
+        return out
+    if _leaf_eq(a, b):
+        return []
+    return [(prefix, a, b)]
+
+
+def joint_config_mismatch(ref_cfg, other_cfg,
+                          sections=JOINT_RELEVANT_SECTIONS):
+    """List joint-incompatible differences between two config dicts.
+
+    Returns ``[(key_path, ref_value, other_value), ...]`` restricted to
+    the sections that determine joint forward-model behaviour. An empty
+    list means the two configs agree on every joint-relevant key.
+    """
+    diffs = []
+    for section in sections:
+        diffs.extend(_dict_path_diffs(
+            ref_cfg.get(section, {}), other_cfg.get(section, {}), section))
+    return diffs
 
 ###############################################################################
 #                            Useful functions                                 #
