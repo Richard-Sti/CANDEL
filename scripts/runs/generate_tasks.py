@@ -379,10 +379,10 @@ if __name__ == "__main__":
 
     _local_cfg = load_local_config()
 
-    # --- S8 from PVs: 5 individual (× 3 galaxy biases) + 2 joint runs ---
-    # Individual runs reproduce the paper (linear_from_beta) and extend to
-    # linear and quadratic galaxy bias. Joint runs combine all five datasets
-    # at the paper-default bias, with and without Vext as a shared parameter.
+    # --- S8 from PVs: 5 individual + 2 joint runs, each × 3 galaxy biases ---
+    # Reproduces the paper (linear_from_beta) and extends to linear and
+    # quadratic galaxy bias. Joint runs combine all five datasets, with and
+    # without Vext as a shared parameter.
     bias_models = ["linear_from_beta", "linear", "quadratic"]
 
     common = {
@@ -405,15 +405,16 @@ if __name__ == "__main__":
          "inference/init_maxiter": 0},
     ]
 
-    # Joint runs over all five datasets. Single galaxy bias (paper default)
-    # so the per-bias sweep stays a property of the individual runs only.
+    # Joint runs over all five datasets, swept over the same bias models as
+    # the individual runs. expand_override_grid Cartesian-expands galaxy_bias
+    # against the paired (model, catalogue) lists.
     joint_models = ["TFRModel", "TFRModel", "FPModel", "FPModel",
                     "PantheonPlusModel"]
     joint_catalogues = ["CF4_W1", "CF4_i", "6dF_FP", "SDSS_FP", "PantheonPlus"]
     joint_base = {
         "inference/model": joint_models,
         "io/catalogue_name": joint_catalogues,
-        "pv_model/galaxy_bias": "linear_from_beta",
+        "pv_model/galaxy_bias": bias_models,
     }
     joint_datasets = [
         {**joint_base, "inference/shared_params": "sigma_v,Vext,beta"},
