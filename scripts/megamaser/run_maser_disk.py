@@ -92,7 +92,8 @@ _FGRID_KEYS = (
     "n_phi_hv_low_mode1",
     "n_phi_sys_mode1",
     "n_r_local",
-    "n_r_brute",
+    "n_r_global",
+    "n_r_scan",
 )
 
 
@@ -273,7 +274,8 @@ if args.f_grid != 1.0:
            f"n_phi_hv_low_mode1={m.get('n_phi_hv_low_mode1')}, "
            f"n_phi_sys_mode1={m.get('n_phi_sys_mode1')}, "
            f"n_r_local={m.get('n_r_local')}, "
-           f"n_r_brute={m.get('n_r_brute')}")
+           f"n_r_global={m.get('n_r_global')}, "
+           f"n_r_scan={m.get('n_r_scan')}")
 
 tmp = tempfile.NamedTemporaryFile(mode="wb", suffix=".toml", delete=False)
 tomli_w.dump(config, tmp)
