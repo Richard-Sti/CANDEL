@@ -263,8 +263,8 @@ def main():
                     help="Timed iterations (default: 100)")
     ap.add_argument("--n-warmup", type=int, default=5,
                     help="Extra warm-up calls after JIT (default: 5)")
-    ap.add_argument("--spot-batch", type=int, default=32,
-                    help="Spot-axis chunk size for Mode 2 (0=off, default: 32)")
+    ap.add_argument("--spot-batch", type=int, default=0,
+                    help="Spot-axis chunk size for Mode 2 (0=off, default: 0)")
     ap.add_argument("--f64", action="store_true",
                     help="Use float64 (default: float32)")
     args = ap.parse_args()

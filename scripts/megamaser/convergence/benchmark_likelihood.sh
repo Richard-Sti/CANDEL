@@ -24,7 +24,7 @@ while [[ $# -gt 0 ]]; do
             echo "      choices: CGCG074-064 NGC4258 NGC5765b NGC6264 NGC6323 UGC3789"
             echo "  --n-repeats N         timed iterations (default: 100)"
             echo "  --n-warmup N          extra warm-up calls after JIT (default: 5)"
-            echo "  --spot-batch N        spot-axis chunk for Mode 2 (0=off, default: 32)"
+            echo "  --spot-batch N        spot-axis chunk for Mode 2 (0=off, default: 0)"
             echo "  --f64                 use float64 (default: float32)"
             echo ""
             echo "Examples:"
