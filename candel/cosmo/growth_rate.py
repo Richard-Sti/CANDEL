@@ -34,7 +34,7 @@ class Beta2Cosmology:
     """
 
     def __init__(self, Om0=0.3111, h=0.6766, Ob=None, ns=0.9665,
-                 mnu=0.0, w0=-1, wa=0, gamma=6/11,
+                 mnu=0.0, w0=-1, wa=0, gamma=0.55,
                  sigma8g_prior="carrick", method="sr", beta_jusz=0.216):
 
         Ob = 0.02242 / h**2 if Ob is None else Ob
@@ -104,7 +104,8 @@ class Beta2Cosmology:
             return self.compute_sigma8_nonlinear_from_pk(As) - sigma8_nl
 
         res = minimize_scalar(
-            lambda As: residual(As)**2, bracket=(0.5, 2.2, 5.0))
+            lambda As: residual(As)**2,
+            bounds=(0.1, 5.0), method="bounded")
         if not res.success:
             raise RuntimeError(
                 f"Failed to find As for sigma8_nl={sigma8_nl}: {res.message}")
