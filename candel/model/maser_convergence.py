@@ -312,7 +312,7 @@ def build_model(galaxy, master_cfg, **overrides):
 
     Any recognised [model] key may be passed (n_phi_hv_high, n_phi_hv_low,
     n_phi_sys, phi_hv_inner_deg, phi_hv_outer_deg, phi_sys_ranges_deg,
-    n_r_local, n_r_global, n_r_scan, K_sigma, mode, refine_r_center,
+    n_r_local, n_r_global, K_sigma, mode, refine_r_center,
     mode2_spot_batch, ...).  Per-galaxy settings in
     the config normally override globals; for the convergence tests we
     want the GLOBAL values to win, so we temporarily strip the galaxy's
@@ -335,10 +335,9 @@ def build_model(galaxy, master_cfg, **overrides):
     for key in ("n_phi_hv_high", "n_phi_hv_low", "n_phi_sys",
                 "phi_hv_inner_deg", "phi_hv_outer_deg",
                 "phi_sys_ranges_deg",
-                "n_r_local", "n_r_global", "n_r_scan", "K_sigma",
+                "n_r_local", "n_r_global", "K_sigma",
                 "mode", "forbid_marginalise_r",
                 "refine_r_center", "n_refine_steps",
-                "refine_step_max", "refine_hess_floor",
                 "mode2_spot_batch"):
         gblk.pop(key, None)
         for suffix in ("_mode1", "_mode2"):
@@ -394,7 +393,6 @@ def resolve_grid_for_galaxy(master_cfg, galaxy, mode):
         n_sys=_phi("n_phi_sys"),
         n_r_local=_r("n_r_local"),
         n_r_global=_r("n_r_global"),
-        n_r_scan=_r("n_r_scan"),
     )
 
 
@@ -514,7 +512,7 @@ def jax_phys_from_sample(model, sample):
 
 def _ll_mode2_production(model, sample):
     """Scalar sum of log-marginal likelihoods under the production
-    Mode 2 path. Closed-form seeds, Newton refinement and the union
+    Mode 2 path. Closed-form seeds, Brent refinement and the union
     grid are all applied as in sampling; only _r_grids positions are
     stop_gradient'd by _build_r_grids_mode2."""
     pa, pk = jax_phys_from_sample(model, sample)
