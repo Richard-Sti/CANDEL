@@ -159,10 +159,6 @@ def main():
     if args.ref_spot_batch is not None:
         ref_cfg["spot_batch"] = int(args.ref_spot_batch)
 
-    if "NGC4258" in args.galaxies:
-        raise ValueError(
-            "NGC4258 is Mode 1 only (forbid_marginalise_r = true).")
-
     print("=" * 90)
     print("Mode 2 grid convergence")
     print(f"Reference (ll): {ref_cfg['n_r']} r (log-uniform) × "
