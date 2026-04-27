@@ -379,10 +379,11 @@ if __name__ == "__main__":
 
     _local_cfg = load_local_config()
 
-    # --- S8 from PVs: 5 individual + 2 joint runs, each × 3 galaxy biases ---
-    # Reproduces the paper (linear_from_beta) and extends to linear and
-    # quadratic galaxy bias. Joint runs combine all five datasets, with and
-    # without Vext as a shared parameter.
+    # --- S8 from PVs: 5 individual + 4 joint runs ---
+    # Individual: each × 3 galaxy biases (linear_from_beta, linear, quadratic).
+    # Joint (all 5 datasets): 2 runs × 3 biases (with/without shared Vext).
+    # Joint (no 6dF): 1 run × 2 biases (linear, quadratic), shared Vext.
+    # Joint (no 6dF, no SDSS): 1 run × 2 biases (linear, quadratic), shared Vext.
     bias_models = ["linear_from_beta", "linear", "quadratic"]
 
     common = {
@@ -419,6 +420,32 @@ if __name__ == "__main__":
     joint_datasets = [
         {**joint_base, "inference/shared_params": "sigma_v,Vext,beta"},
         {**joint_base, "inference/shared_params": "sigma_v,beta"},
+    ]
+
+    # Joint runs excluding 6dF, with linear and quadratic bias only.
+    bias_models_no6dF = ["linear", "quadratic"]
+    joint_models_no6dF = ["TFRModel", "TFRModel", "FPModel",
+                          "PantheonPlusModel"]
+    joint_cats_no6dF = ["CF4_W1", "CF4_i", "SDSS_FP", "PantheonPlus"]
+    joint_base_no6dF = {
+        "inference/model": joint_models_no6dF,
+        "io/catalogue_name": joint_cats_no6dF,
+        "pv_model/galaxy_bias": bias_models_no6dF,
+    }
+    joint_datasets += [
+        {**joint_base_no6dF, "inference/shared_params": "sigma_v,Vext,beta"},
+    ]
+
+    # Joint runs excluding both 6dF and SDSS.
+    joint_models_noFP = ["TFRModel", "TFRModel", "PantheonPlusModel"]
+    joint_cats_noFP = ["CF4_W1", "CF4_i", "PantheonPlus"]
+    joint_base_noFP = {
+        "inference/model": joint_models_noFP,
+        "io/catalogue_name": joint_cats_noFP,
+        "pv_model/galaxy_bias": bias_models_no6dF,
+    }
+    joint_datasets += [
+        {**joint_base_noFP, "inference/shared_params": "sigma_v,Vext,beta"},
     ]
 
     all_override_combinations = []
