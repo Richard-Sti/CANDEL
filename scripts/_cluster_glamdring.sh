@@ -14,6 +14,14 @@ if [[ -n "${CANDEL_ROOT:-}" && -f "$CANDEL_ROOT/local_config.toml" ]]; then
             if (length) print
         }
     ' "$CANDEL_ROOT/local_config.toml" | paste -sd: -)
+    # Also add the libpython directory from the venv's Python build.
+    if [[ -n "${CANDEL_PYTHON:-}" ]]; then
+        _pylib=$("$CANDEL_PYTHON" -c \
+            "import sysconfig; print(sysconfig.get_config_var('LIBDIR'))" \
+            2>/dev/null)
+        [[ -n "$_pylib" ]] && _ldpath="${_pylib}${_ldpath:+:$_ldpath}"
+        unset _pylib
+    fi
     if [[ -n "$_ldpath" ]]; then
         export LD_LIBRARY_PATH="$_ldpath${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
     fi

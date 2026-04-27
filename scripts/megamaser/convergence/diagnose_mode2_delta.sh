@@ -22,6 +22,8 @@ while [[ $# -gt 0 ]]; do
             echo ""
             echo "Common Python toggles (forwarded as-is):"
             echo "  --galaxies G [G ...]  subset to run"
+            echo "      choices: CGCG074-064 NGC4258 NGC5765b NGC6264 NGC6323 UGC3789"
+            echo "      (default: all with mode=mode2, i.e. all except NGC4258)"
             echo "  --n-worst N           how many worst spots to plot (default: 12)"
             echo "  --spot-batch N        spot-axis chunk (default: 4)"
             echo ""

@@ -222,19 +222,7 @@ def run_galaxy(galaxy, master_cfg, args):
         args.n_r_ref, args.n_phi_ref, args.r_chunk_ref)
     print(f"  done ({time.time()-t0:.1f}s)", flush=True)
 
-    deltas_full = {}
-    print(f"\nFull-res Dll (prod - ref):", flush=True)
-    for gi in worst_idx:
-        gi = int(gi)
-        d = float(ll_prod[gi]) - ll_ref_map[gi]
-        deltas_full[gi] = d
-        print(f"  spot {gi:3d}  {spot_types[gi]:>4}  "
-              f"accel={'Y' if has_accel[gi] else 'N'}  "
-              f"Dll={d:+.6f}  "
-              f"prod={ll_prod[gi]:.4f}  ref={ll_ref_map[gi]:.4f}",
-              flush=True)
-
-    # ── 4. Dense r posteriors ──
+    # ── 4. Get Mode 2 centres ──
     centres = model.get_mode2_centres(phys_args, phys_kw)
     r_min = float(centres["r_min"])
     r_max = float(centres["r_max"])
@@ -251,9 +239,25 @@ def run_galaxy(galaxy, master_cfg, args):
             rc_map[int(gi)] = float(rc_arr[i])
             s_map[int(gi)] = float(s_arr[i])
 
+    print(f"r_ang range: [{r_min:.4f}, {r_max:.4f}] mas", flush=True)
+
+    deltas_full = {}
+    print(f"\nFull-res Dll (prod - ref):", flush=True)
+    for gi in worst_idx:
+        gi = int(gi)
+        d = float(ll_prod[gi]) - ll_ref_map[gi]
+        deltas_full[gi] = d
+        rc = rc_map.get(gi, np.nan)
+        s = s_map.get(gi, np.nan)
+        print(f"  spot {gi:3d}  {spot_types[gi]:>4}  "
+              f"accel={'Y' if has_accel[gi] else 'N'}  "
+              f"Dll={d:+.6f}  "
+              f"r_c={rc:.4f}  s={s:.5f}  "
+              f"prod={ll_prod[gi]:.4f}  ref={ll_ref_map[gi]:.4f}",
+              flush=True)
+
     K_sigma = float(model._K_sigma)
-    log_bin = (np.log(r_max) - np.log(r_min)) / (model._n_r_global - 1)
-    zoom_half = 5 * log_bin
+    zoom_half = 0.2 * (np.log(r_max) - np.log(r_min))
 
     n_phi_full = 20001
     phi_full = jnp.linspace(0.0, 2 * jnp.pi, n_phi_full)
@@ -263,16 +267,13 @@ def run_galaxy(galaxy, master_cfg, args):
 
     print("\nComputing dense r posteriors...", flush=True)
     dense_data = {}
+    r_dense_full = jnp.exp(jnp.linspace(
+        jnp.log(r_min), jnp.log(r_max), args.n_r_dense))
     for gi in worst_idx:
         gi = int(gi)
         tp = spot_types[gi]
         pc = model._phi_concat[tp]
-        rc = rc_map.get(gi, np.sqrt(r_min * r_max))
-        log_center = np.log(rc)
-        log_lo_z = max(np.log(r_min), log_center - zoom_half)
-        log_hi_z = min(np.log(r_max), log_center + zoom_half)
-        r_local = jnp.exp(jnp.linspace(log_lo_z, log_hi_z,
-                                        args.n_r_dense))
+        r_local = r_dense_full
         lp_prod = r_posterior_1spot(
             model, gi, r_local, phys_args, phys_kw,
             pc["sin_phi"], pc["cos_phi"], pc["log_w_phi"],
@@ -284,7 +285,12 @@ def run_galaxy(galaxy, master_cfg, args):
         dense_data[gi] = dict(r=np.asarray(r_local), lp_prod=lp_prod,
                               lp_full=lp_full,
                               log_w=np.asarray(trapz_log_weights(r_local)))
-        print(f"  spot {gi:3d} done", flush=True)
+        n_nan = int(np.isnan(lp_prod).sum())
+        n_inf = int(np.isinf(lp_prod).sum())
+        extra = ""
+        if n_nan > 0 or n_inf > 0:
+            extra = f"  *** {n_nan} NaN, {n_inf} inf ***"
+        print(f"  spot {gi:3d} done{extra}", flush=True)
 
     # ── 5. Plot ──
     n_plot = len(worst_idx)
@@ -317,6 +323,19 @@ def run_galaxy(galaxy, master_cfg, args):
                        np.exp(np.log(rc) + K_sigma * s),
                        color="C3", alpha=0.08)
 
+        # Auto-zoom: show the pink band + peak with 50% padding
+        # outside the band so the band doesn't fill the entire plot.
+        lp_best = dd["lp_prod"]
+        i_peak = int(np.argmax(lp_best))
+        rc_plot = rc_map.get(gi, r_np[i_peak])
+        s_plot = s_map.get(gi, 0.01)
+        band_half = K_sigma * s_plot
+        log_lo_zoom = min(np.log(rc_plot) - band_half,
+                          np.log(r_np[i_peak])) - 0.5 * band_half
+        log_hi_zoom = max(np.log(rc_plot) + band_half,
+                          np.log(r_np[i_peak])) + 0.5 * band_half
+        ax.set_xlim(np.exp(log_lo_zoom), np.exp(log_hi_zoom))
+
         d_full = deltas_full.get(gi, delta_screen[gi])
         ax.set_title(
             f"#{gi} {spot_types[gi]} "
@@ -344,10 +363,21 @@ def run_galaxy(galaxy, master_cfg, args):
     plt.close(fig)
     print(f"\nWrote {out_png}", flush=True)
 
+    worst_dll = min(deltas_full.values())
+    return dict(galaxy=galaxy, n_spots=model.n_spots,
+                total_dll_screen=float(delta_screen.sum()),
+                worst_dll=worst_dll, out_png=out_png)
+
 
 def main():
+    with open(CONFIG_PATH, "rb") as f:
+        master_cfg = tomli.load(f)
+    all_galaxies = list(master_cfg["model"]["galaxies"].keys())
+
     ap = argparse.ArgumentParser(
-        description="Per-spot Mode 2 Dll diagnostic for MCP galaxies.")
+        description="Per-spot Mode 2 Dll diagnostic for MCP galaxies.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=f"Available galaxies: {', '.join(all_galaxies)}")
     ap.add_argument("--galaxies", nargs="+", default=None,
                     help="Galaxies to test (default: all with mode=mode2)")
     ap.add_argument("--spot-batch", type=int, default=4)
@@ -356,7 +386,7 @@ def main():
     ap.add_argument("--r-chunk-screen", type=int, default=1000)
     ap.add_argument("--n-r-ref", type=int, default=50000)
     ap.add_argument("--n-phi-ref", type=int, default=50001)
-    ap.add_argument("--r-chunk-ref", type=int, default=2000)
+    ap.add_argument("--r-chunk-ref", type=int, default=500)
     ap.add_argument("--n-r-dense", type=int, default=2001)
     ap.add_argument("--r-batch", type=int, default=64)
     ap.add_argument("--n-worst", type=int, default=12)
@@ -364,9 +394,6 @@ def main():
 
     jax.config.update("jax_enable_x64", True)
     print(f"JAX: {jax.default_backend()}, f64", flush=True)
-
-    with open(CONFIG_PATH, "rb") as f:
-        master_cfg = tomli.load(f)
 
     if args.galaxies is not None:
         galaxies = args.galaxies
@@ -378,8 +405,20 @@ def main():
             galaxies = list(master_cfg["model"]["galaxies"].keys())
 
     print(f"Galaxies: {galaxies}", flush=True)
+    results = []
     for galaxy in galaxies:
-        run_galaxy(galaxy, master_cfg, args)
+        results.append(run_galaxy(galaxy, master_cfg, args))
+
+    print(f"\n{'=' * 60}", flush=True)
+    print("Summary", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    print(f"{'Galaxy':<14} {'Spots':>5} {'Worst Dll':>10} {'Plot'}",
+          flush=True)
+    print("-" * 60, flush=True)
+    for r in results:
+        print(f"{r['galaxy']:<14} {r['n_spots']:>5} {r['worst_dll']:>+10.4f} "
+              f"{r['out_png']}", flush=True)
+    print(f"{'=' * 60}", flush=True)
 
 
 if __name__ == "__main__":
