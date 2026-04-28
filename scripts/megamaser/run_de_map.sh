@@ -10,6 +10,7 @@ source "$ROOT/scripts/_submit_lib.sh"
 
 QUEUE=""
 MEM=7
+CPUS=""
 GPUTYPE=""
 TIME=""
 DRY=false
@@ -38,6 +39,7 @@ Options:
   -m MEM          Memory in GB (default: 7)
   --gputype TYPE  GPU type (default: any)
   --time T        Wall time. Bare integer = hours (arc only)
+  -n N            Number of CPU cores (default: 4 with --gpu)
   --dry           Print submit command without submitting
   --resume        Resume from latest checkpoint if one exists
   --no-ecc        Disable eccentricity model
@@ -60,6 +62,7 @@ EOF
             exit 0 ;;
         -q) QUEUE="$2"; shift 2 ;;
         -m) MEM="$2"; shift 2 ;;
+        -n) CPUS="$2"; shift 2 ;;
         --gputype) GPUTYPE="$2"; shift 2 ;;
         --time) TIME="$2"; shift 2 ;;
         --dry) DRY=true; shift ;;
@@ -68,6 +71,7 @@ EOF
         --no-quadratic-warp) NO_QUAD_WARP=true; shift ;;
         --max-retries) _WATCH_RETRIES="$2"; shift 2 ;;
         --poll) _WATCH_POLL="$2"; shift 2 ;;
+        -*) echo "[ERROR] unknown option: $1"; exit 1 ;;
         *)  GALAXIES+=("$1"); shift ;;
     esac
 done
@@ -79,6 +83,7 @@ if [[ -n "$_WATCH_RETRIES" ]]; then
     [[ -n "$_WATCH_POLL" ]] && _wargs+=(--poll "$_WATCH_POLL")
     # Rebuild the original command without --max-retries and --poll.
     _cmd=(bash "$0" -q "$QUEUE" -m "$MEM")
+    [[ -n "$CPUS" ]]    && _cmd+=(-n "$CPUS")
     [[ -n "$GPUTYPE" ]] && _cmd+=(--gputype "$GPUTYPE")
     [[ -n "$TIME" ]]    && _cmd+=(--time "$TIME")
     $DRY && _cmd+=(--dry)
@@ -122,6 +127,7 @@ for gal in "${GALAXIES[@]}"; do
     $NO_ECC && pycmd="$pycmd --no-ecc"
     $NO_QUAD_WARP && pycmd="$pycmd --no-quadratic-warp"
     extra_flags=()
+    [[ -n "$CPUS" ]]    && extra_flags+=(--cpus "$CPUS")
     [[ -n "$GPUTYPE" ]] && extra_flags+=(--gputype "$GPUTYPE")
     [[ -n "$TIME" ]]    && extra_flags+=(--time "$TIME")
     submit_job --gpu --queue "$QUEUE" --mem "$MEM" --name "de_map_${gal}" \
