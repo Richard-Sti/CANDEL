@@ -14,6 +14,8 @@ GPUTYPE=""
 TIME=""
 DRY=false
 RESUME=false
+NO_ECC=false
+NO_QUAD_WARP=false
 GALAXIES=()
 _WATCH_RETRIES=""
 _WATCH_POLL=""
@@ -38,6 +40,8 @@ Options:
   --time T        Wall time. Bare integer = hours (arc only)
   --dry           Print submit command without submitting
   --resume        Resume from latest checkpoint if one exists
+  --no-ecc        Disable eccentricity model
+  --no-quadratic-warp  Disable quadratic disk warp
   --max-retries N Watch and resubmit up to N times on timeout
   --poll S        Seconds between squeue polls (default: 120)
   GALAXY ...      Galaxy names (default: all below)
@@ -60,6 +64,8 @@ EOF
         --time) TIME="$2"; shift 2 ;;
         --dry) DRY=true; shift ;;
         --resume) RESUME=true; shift ;;
+        --no-ecc) NO_ECC=true; shift ;;
+        --no-quadratic-warp) NO_QUAD_WARP=true; shift ;;
         --max-retries) _WATCH_RETRIES="$2"; shift 2 ;;
         --poll) _WATCH_POLL="$2"; shift 2 ;;
         *)  GALAXIES+=("$1"); shift ;;
@@ -77,6 +83,8 @@ if [[ -n "$_WATCH_RETRIES" ]]; then
     [[ -n "$TIME" ]]    && _cmd+=(--time "$TIME")
     $DRY && _cmd+=(--dry)
     $RESUME && _cmd+=(--resume)
+    $NO_ECC && _cmd+=(--no-ecc)
+    $NO_QUAD_WARP && _cmd+=(--no-quadratic-warp)
     (( ${#GALAXIES[@]} )) && _cmd+=("${GALAXIES[@]}")
     _sname="watcher_de_map_$(date +%H%M%S)"
     _logdir="$ROOT/scripts/megamaser/logs"
@@ -111,6 +119,8 @@ for gal in "${GALAXIES[@]}"; do
     echo "Submitting DE MAP: $gal -> $CANDEL_CLUSTER:$QUEUE"
     pycmd="$CANDEL_PYTHON -u $ROOT/scripts/megamaser/run_de_map.py $gal"
     $RESUME && pycmd="$pycmd --resume"
+    $NO_ECC && pycmd="$pycmd --no-ecc"
+    $NO_QUAD_WARP && pycmd="$pycmd --no-quadratic-warp"
     extra_flags=()
     [[ -n "$GPUTYPE" ]] && extra_flags+=(--gputype "$GPUTYPE")
     [[ -n "$TIME" ]]    && extra_flags+=(--time "$TIME")

@@ -23,6 +23,8 @@ DRY=false
 _WATCH_RETRIES=""
 _WATCH_POLL=""
 RESUME=false
+NO_ECC=false
+NO_QUAD_WARP=false
 
 ALL_GALS="CGCG074-064 NGC5765b NGC6264 NGC6323 UGC3789"
 
@@ -51,6 +53,8 @@ Options:
                          (default on arc: short=12, medium=48, long=required;
                           ignored on glamdring)
   --mem GB               Memory in GB (default: $MEM)
+  --no-ecc               Disable eccentricity model
+  --no-quadratic-warp    Disable quadratic disk warp
   --dry                  Print submit command without submitting (default: off)
   --resume               Resume NSS from latest checkpoint (ignored for NUTS)
   --max-retries N        Watch and resubmit up to N times on timeout
@@ -71,6 +75,8 @@ while [[ $# -gt 0 ]]; do
         --gputype) GPUTYPE="$2"; shift 2 ;;
         --time) TIME="$2"; shift 2 ;;
         --mem) MEM="$2"; shift 2 ;;
+        --no-ecc) NO_ECC=true; shift ;;
+        --no-quadratic-warp) NO_QUAD_WARP=true; shift ;;
         --dry) DRY=true; shift ;;
         --resume) RESUME=true; shift ;;
         --max-retries) _WATCH_RETRIES="$2"; shift 2 ;;
@@ -95,6 +101,8 @@ if [[ -n "$_WATCH_RETRIES" ]]; then
     [[ -n "$GPUTYPE" ]]     && _cmd+=(--gputype "$GPUTYPE")
     [[ -n "$TIME" ]]        && _cmd+=(--time "$TIME")
     [[ "$NUM_CHAINS" != "1" ]] && _cmd+=(--num-chains "$NUM_CHAINS")
+    $NO_ECC && _cmd+=(--no-ecc)
+    $NO_QUAD_WARP && _cmd+=(--no-quadratic-warp)
     $DRY && _cmd+=(--dry)
     $RESUME && _cmd+=(--resume)
     _sname="watcher_${SAMPLER}_$(date +%H%M%S)"
@@ -124,6 +132,8 @@ EXTRA_ARGS=""
 [[ -n "$MODE" ]]        && EXTRA_ARGS="$EXTRA_ARGS --mode $MODE"
 [[ -n "$F_GRID" ]]      && EXTRA_ARGS="$EXTRA_ARGS --f-grid $F_GRID"
 [[ -n "$INIT_METHOD" ]] && EXTRA_ARGS="$EXTRA_ARGS --init-method $INIT_METHOD"
+$NO_ECC && EXTRA_ARGS="$EXTRA_ARGS --no-ecc"
+$NO_QUAD_WARP && EXTRA_ARGS="$EXTRA_ARGS --no-quadratic-warp"
 $RESUME && EXTRA_ARGS="$EXTRA_ARGS --resume"
 
 dry_flag=()
