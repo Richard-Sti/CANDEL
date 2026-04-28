@@ -13,6 +13,8 @@ MEM=7
 DRY=false
 RESUME=false
 GALAXIES=()
+_WATCH_RETRIES=""
+_WATCH_POLL=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -24,13 +26,15 @@ with open('$ROOT/scripts/megamaser/config_maser.toml', 'rb') as f:
 print(' '.join(cfg['model']['galaxies']))
 ")
             cat <<EOF
-Usage: bash $0 -q QUEUE [-m MEM] [--dry] [--resume] [GALAXY ...]
+Usage: bash $0 -q QUEUE [-m MEM] [--dry] [--resume] [--max-retries N] [GALAXY ...]
 
 Options:
   -q QUEUE        Queue/partition (REQUIRED)
   -m MEM          Memory in GB (default: 7)
   --dry           Print submit command without submitting
   --resume        Resume from latest checkpoint if one exists
+  --max-retries N Watch and resubmit up to N times on timeout
+  --poll S        Seconds between squeue polls (default: 120)
   GALAXY ...      Galaxy names (default: all below)
 
 Galaxies: $_gals
@@ -42,15 +46,31 @@ Examples:
   bash $0 -q cmbgpu
   bash $0 -q optgpu NGC4258
   bash $0 -q cmbgpu --resume NGC5765b
+  bash $0 -q cmbgpu --max-retries 5
 EOF
             exit 0 ;;
         -q) QUEUE="$2"; shift 2 ;;
         -m) MEM="$2"; shift 2 ;;
         --dry) DRY=true; shift ;;
         --resume) RESUME=true; shift ;;
+        --max-retries) _WATCH_RETRIES="$2"; shift 2 ;;
+        --poll) _WATCH_POLL="$2"; shift 2 ;;
         *)  GALAXIES+=("$1"); shift ;;
     esac
 done
+
+# If --max-retries is set, delegate to the watcher and exit.
+if [[ -n "$_WATCH_RETRIES" ]]; then
+    _watcher="$ROOT/scripts/megamaser/watch_and_resubmit.sh"
+    _wargs=(--marker "MAP init" --max-retries "$_WATCH_RETRIES")
+    [[ -n "$_WATCH_POLL" ]] && _wargs+=(--poll "$_WATCH_POLL")
+    # Rebuild the original command without --max-retries and --poll.
+    _cmd=(bash "$0" -q "$QUEUE" -m "$MEM")
+    $DRY && _cmd+=(--dry)
+    $RESUME && _cmd+=(--resume)
+    (( ${#GALAXIES[@]} )) && _cmd+=("${GALAXIES[@]}")
+    exec bash "$_watcher" "${_wargs[@]}" -- "${_cmd[@]}"
+fi
 
 if [[ -z "$QUEUE" ]]; then
     echo "[ERROR] -q QUEUE is required (cluster=$CANDEL_CLUSTER)"; exit 1

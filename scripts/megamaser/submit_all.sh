@@ -20,6 +20,9 @@ GPUTYPE=""
 TIME=""
 MEM=16
 DRY=false
+_WATCH_RETRIES=""
+_WATCH_POLL=""
+RESUME=false
 
 ALL_GALS="CGCG074-064 NGC5765b NGC6264 NGC6323 UGC3789"
 
@@ -49,6 +52,9 @@ Options:
                           ignored on glamdring)
   --mem GB               Memory in GB (default: $MEM)
   --dry                  Print submit command without submitting (default: off)
+  --resume               Resume NSS from latest checkpoint (ignored for NUTS)
+  --max-retries N        Watch and resubmit up to N times on timeout
+  --poll S               Seconds between squeue polls (default: 120)
   -h, --help
 EOF
 }
@@ -66,10 +72,33 @@ while [[ $# -gt 0 ]]; do
         --time) TIME="$2"; shift 2 ;;
         --mem) MEM="$2"; shift 2 ;;
         --dry) DRY=true; shift ;;
+        --resume) RESUME=true; shift ;;
+        --max-retries) _WATCH_RETRIES="$2"; shift 2 ;;
+        --poll) _WATCH_POLL="$2"; shift 2 ;;
         -h|--help) usage; exit 0 ;;
         *) echo "Unknown option: $1"; exit 1 ;;
     esac
 done
+
+# If --max-retries is set, delegate to the watcher and exit.
+if [[ -n "$_WATCH_RETRIES" ]]; then
+    _watcher="$ROOT/scripts/megamaser/watch_and_resubmit.sh"
+    _wargs=(--marker "saved samples to" --max-retries "$_WATCH_RETRIES")
+    [[ -n "$_WATCH_POLL" ]] && _wargs+=(--poll "$_WATCH_POLL")
+    [[ "$SAMPLER" == "nuts" ]] && _wargs+=(--no-resume)
+    # Rebuild the original command without --max-retries and --poll.
+    _cmd=(bash "$0" --sampler "$SAMPLER" -q "$QUEUE" --mem "$MEM")
+    [[ -n "$MODE" ]]        && _cmd+=(--mode "$MODE")
+    [[ -n "$F_GRID" ]]      && _cmd+=(--f-grid "$F_GRID")
+    [[ -n "$GALAXY" ]]      && _cmd+=(--galaxy "$GALAXY")
+    [[ -n "$INIT_METHOD" ]] && _cmd+=(--init-method "$INIT_METHOD")
+    [[ -n "$GPUTYPE" ]]     && _cmd+=(--gputype "$GPUTYPE")
+    [[ -n "$TIME" ]]        && _cmd+=(--time "$TIME")
+    [[ "$NUM_CHAINS" != "1" ]] && _cmd+=(--num-chains "$NUM_CHAINS")
+    $DRY && _cmd+=(--dry)
+    $RESUME && _cmd+=(--resume)
+    exec bash "$_watcher" "${_wargs[@]}" -- "${_cmd[@]}"
+fi
 
 if [[ "$SAMPLER" != "nss" && "$SAMPLER" != "nuts" ]]; then
     echo "Error: --sampler must be nss or nuts"; exit 1
@@ -90,6 +119,7 @@ EXTRA_ARGS=""
 [[ -n "$MODE" ]]        && EXTRA_ARGS="$EXTRA_ARGS --mode $MODE"
 [[ -n "$F_GRID" ]]      && EXTRA_ARGS="$EXTRA_ARGS --f-grid $F_GRID"
 [[ -n "$INIT_METHOD" ]] && EXTRA_ARGS="$EXTRA_ARGS --init-method $INIT_METHOD"
+$RESUME && EXTRA_ARGS="$EXTRA_ARGS --resume"
 
 dry_flag=()
 [[ "$DRY" == true ]] && dry_flag=(--dry)

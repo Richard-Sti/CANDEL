@@ -176,34 +176,27 @@ squeue -u $USER
 scancel <JOBID>
 ```
 
-## Auto-resubmit watcher
+## Auto-resubmit on timeout
 
-For long-running jobs that may time out, use `watch_and_resubmit.sh` to
-poll `squeue`, check logs for a completion marker, and resubmit with
-`--resume` if incomplete:
+Add `--max-retries N` to any submit command. The script delegates to a
+watcher that polls `squeue`, checks logs for a completion marker, and
+resubmits with `--resume` if incomplete:
 
 ```bash
-# DE MAP — all galaxies
-bash scripts/megamaser/watch_and_resubmit.sh --marker "MAP init" -- \
-    bash scripts/megamaser/run_de_map.sh -q cmbgpu
+# DE MAP — resubmit up to 5 times
+bash scripts/megamaser/run_de_map.sh -q cmbgpu --max-retries 5
 
 # DE MAP — specific galaxies
-bash scripts/megamaser/watch_and_resubmit.sh --marker "MAP init" -- \
-    bash scripts/megamaser/run_de_map.sh -q cmbgpu NGC5765b NGC6264
+bash scripts/megamaser/run_de_map.sh -q cmbgpu --max-retries 5 NGC5765b NGC6264
 
 # NSS — all galaxies
-bash scripts/megamaser/watch_and_resubmit.sh --marker "saved samples to" -- \
-    bash scripts/megamaser/submit_all.sh --sampler nss -q cmbgpu
+bash scripts/megamaser/submit_all.sh --sampler nss -q cmbgpu --max-retries 5
 
-# NUTS — no resume support
-bash scripts/megamaser/watch_and_resubmit.sh --marker "saved samples to" --no-resume -- \
-    bash scripts/megamaser/submit_all.sh --sampler nuts -q cmbgpu
+# NUTS — restarts from scratch (no checkpoint support)
+bash scripts/megamaser/submit_all.sh --sampler nuts -q cmbgpu --max-retries 3
 
-# Custom retries and poll interval
-bash scripts/megamaser/watch_and_resubmit.sh --marker "MAP init" --max-retries 10 --poll 60 -- \
-    bash scripts/megamaser/run_de_map.sh -q cmbgpu
+# Custom poll interval (seconds between squeue checks, default 120)
+bash scripts/megamaser/run_de_map.sh -q cmbgpu --max-retries 10 --poll 60
 ```
 
-Options: `--marker` (required), `--max-retries` (default 5), `--poll`
-seconds (default 120), `--resume-flag` (default `--resume`),
-`--no-resume`. Works on both glamdring and arc.
+Without `--max-retries`, the scripts behave exactly as before.
