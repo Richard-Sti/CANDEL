@@ -16,6 +16,7 @@ queue=""
 ncpu=1
 memory=16
 gputype=""
+gpu_constraint=""
 local_mode=false
 dry=false
 
@@ -38,6 +39,7 @@ options:
   -n, --ncpu NCPU         number of CPUs (default: $ncpu)
   -m, --memory MEMORY     memory per job (GB, default: $memory)
   --gputype TYPE          glamdring-only GPU type; ignored on arc
+  --gpu-constraint EXPR   SLURM constraint for GPU selection (e.g. "h100|l40s")
   --local                 run on login node
   --dry                   print submit commands without submitting
 EOF
@@ -52,6 +54,7 @@ while [[ $# -gt 0 ]]; do
         -n|--ncpu)       ncpu="$2"; shift 2 ;;
         -m|--memory)     memory="$2"; shift 2 ;;
         --gputype)       gputype="$2"; shift 2 ;;
+        --gpu-constraint) gpu_constraint="$2"; shift 2 ;;
         --local)         local_mode=true; shift ;;
         --dry)           dry=true; shift ;;
         *)               task_index="$1"; shift ;;
@@ -76,7 +79,7 @@ case "$CANDEL_CLUSTER:$queue" in
         # request a GPU on arc, keep old semantics: if gputype provided
         # OR queue name implies GPU, assume GPU. Simpler: only GPU when
         # the user explicitly gave --gputype.
-        [[ -n "$gputype" ]] && is_gpu=true
+        [[ -n "$gputype" || -n "$gpu_constraint" ]] && is_gpu=true
         ;;
 esac
 
@@ -122,7 +125,7 @@ else
 fi
 echo "  CPUs:        $ncpu"
 echo "  Memory:      ${memory} GB"
-$is_gpu && echo "  GPU:         yes${gputype:+ ($gputype)}"
+$is_gpu && echo "  GPU:         yes${gputype:+ ($gputype)}${gpu_constraint:+ (constraint: $gpu_constraint)}"
 echo "  Total tasks: ${#task_lines[@]}"
 echo "  Frozen root: $frozen_root"
 echo
@@ -168,6 +171,8 @@ for i in "${!task_lines[@]}"; do
             gpu_flags+=(--gpu)
             [[ -n "$gputype" && "$CANDEL_CLUSTER" == "glamdring" ]] \
                 && gpu_flags+=(--gputype "$gputype")
+            [[ -n "$gpu_constraint" ]] \
+                && gpu_flags+=(--gpu-constraint "$gpu_constraint")
         fi
         dry_flag=()
         $dry && dry_flag=(--dry)
