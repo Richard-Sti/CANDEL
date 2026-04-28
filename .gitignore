@@ -22,6 +22,7 @@ scripts/runs/logs
 scripts/runs/logs
 scripts/runs/generated_configs/
 scripts/mocks/logs/
+scripts/megamaser/logs/
 
 modules_arc.sh
 python.sh
