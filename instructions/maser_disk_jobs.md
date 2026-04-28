@@ -175,3 +175,27 @@ tail -f python-<JOBID>.out
 squeue -u $USER
 scancel <JOBID>
 ```
+
+## Auto-resubmit watcher
+
+For long-running jobs that may time out (DE MAP, NSS), use the watcher
+to auto-resubmit with `--resume`:
+
+```bash
+# DE MAP — all galaxies
+bash scripts/megamaser/watch_and_resubmit.sh de -q cmbgpu
+
+# DE MAP — specific galaxies
+bash scripts/megamaser/watch_and_resubmit.sh de -q cmbgpu NGC5765b NGC6264
+
+# NSS — all galaxies
+bash scripts/megamaser/watch_and_resubmit.sh nss -q optgpu
+
+# Customize retries and poll interval
+bash scripts/megamaser/watch_and_resubmit.sh --max-retries 10 --poll 60 nss -q cmbgpu
+```
+
+The watcher polls `squeue` every 2 minutes (configurable via `--poll`),
+checks job logs for completion markers, and resubmits incomplete galaxies.
+Max retries default to 5. NUTS mode restarts from scratch (no checkpoint
+support).
