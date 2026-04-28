@@ -6,8 +6,7 @@
 #   submit_job --queue Q --mem GB
 #              [--cpus N]                 # CPU cores (default: 1, or 4 with --gpu)
 #              [--mpi-n N | AxB]          # MPI ranks; mutually exclusive with --gpu
-#              [--gpu] [--gputype TYPE]   # single GPU; TYPE e.g. l40s, h100, a100
-#              [--gpu-constraint EXPR]    # SLURM --constraint; OR syntax e.g. "h100|l40s"
+#              [--gpu] [--gputype TYPE]   # single GPU; TYPE e.g. l40s, h100, "h100|l40s"
 #              [--time H | D-HH:MM:SS]    # bare integer = hours; required on 'long'
 #                                         # defaults: short=12h, medium=48h
 #              [--name JOB]               # job name (default: candel)
@@ -112,7 +111,7 @@ launch_detached() {
 
 submit_job() {
     local queue="" mem="" cpus="" time="" name="candel" logdir="logs"
-    local gpu=0 dry=0 mpi_n="" gputype="" gpu_constraint=""
+    local gpu=0 dry=0 mpi_n="" gputype=""
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --queue)   queue="$2"; shift 2 ;;
@@ -124,7 +123,6 @@ submit_job() {
             --logdir)  logdir="$2"; shift 2 ;;
             --gpu)     gpu=1; shift ;;
             --gputype) gputype="$2"; shift 2 ;;
-            --gpu-constraint) gpu_constraint="$2"; shift 2 ;;
             --dry)     dry=1; shift ;;
             --)        shift; break ;;
             *)
@@ -154,14 +152,6 @@ submit_job() {
     if [[ -n "$gputype" ]] && (( ! gpu )); then
         echo "[submit_job] --gputype given without --gpu; ignoring" >&2
         gputype=""
-    fi
-    if [[ -n "$gputype" && -n "$gpu_constraint" ]]; then
-        echo "[submit_job] --gputype and --gpu-constraint are mutually exclusive" >&2
-        return 2
-    fi
-    if [[ -n "$gpu_constraint" ]] && (( ! gpu )); then
-        echo "[submit_job] --gpu-constraint given without --gpu; ignoring" >&2
-        gpu_constraint=""
     fi
 
     # Total MPI ranks, resolved from --mpi-n spec "N" or "AxB".
@@ -216,12 +206,13 @@ submit_job() {
             fi
             sbatch_flags+=(--time="$time")
             if (( gpu )); then
-                if [[ -n "$gputype" ]]; then
+                if [[ -n "$gputype" && "$gputype" == *"|"* ]]; then
+                    sbatch_flags+=(--gres=gpu:1 --constraint="$gputype")
+                elif [[ -n "$gputype" ]]; then
                     sbatch_flags+=(--gres="gpu:${gputype}:1")
                 else
                     sbatch_flags+=(--gres=gpu:1)
                 fi
-                [[ -n "$gpu_constraint" ]] && sbatch_flags+=(--constraint="$gpu_constraint")
             fi
             echo "[submit_job] arc: sbatch ${sbatch_flags[*]}"
             echo "[submit_job] cmd : $cmd_str"
@@ -247,9 +238,6 @@ SCRIPT
         glamdring)
             if [[ -n "$time" ]]; then
                 echo "[submit_job] glamdring: --time is not plumbed to addqueue; ignoring ($time)" >&2
-            fi
-            if [[ -n "$gpu_constraint" ]]; then
-                echo "[submit_job] glamdring: --gpu-constraint not supported by addqueue; ignoring" >&2
             fi
             local addqueue_flags=(-s -q "$queue" -m "$mem" -c "$name")
             if (( gpu )); then
