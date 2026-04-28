@@ -139,7 +139,7 @@ def _bench_mode1(model, galaxy, gcfg, master_cfg, grid, args):
     ndim = sum(v.size for v in jax.tree.leaves(z))
     pe = float(potential_fn(z))
     print(f"Unconstrained dim: {ndim}")
-    print(f"Init potential: {pe:.2f} (logp = {-pe:.2f})", flush=True)
+    print(f"Init potential: {pe:.10f} (logp = {-pe:.10f})", flush=True)
     if not np.isfinite(pe):
         print("  WARNING: non-finite potential", flush=True)
 
@@ -160,7 +160,7 @@ def _bench_mode1(model, galaxy, gcfg, master_cfg, grid, args):
           f"{mem_peak:.0f} MiB peak", flush=True)
 
     return dict(galaxy=galaxy, mode="mode1", n_spots=model.n_spots,
-                ndim=ndim, grid=grid,
+                ndim=ndim, grid=grid, logp=-pe,
                 jit_fwd=jit_fwd_t, jit_grad=jit_grad_t,
                 fwd_ms=t_fwd, grad_ms=t_grad,
                 mem_used=mem_used, mem_peak=mem_peak)
@@ -193,7 +193,7 @@ def _bench_mode2(model, galaxy, gcfg, grid, args):
     x0 = jnp.concatenate(x_parts)
 
     ll = float(log_likelihood_fn(x0))
-    print(f"Init log-likelihood: {ll:.2f}", flush=True)
+    print(f"Init log-likelihood: {ll:.10f}", flush=True)
     if not np.isfinite(ll):
         print("  WARNING: non-finite log-likelihood", flush=True)
 
@@ -208,7 +208,7 @@ def _bench_mode2(model, galaxy, gcfg, grid, args):
           f"{mem_peak:.0f} MiB peak", flush=True)
 
     return dict(galaxy=galaxy, mode="mode2", n_spots=model.n_spots,
-                ndim=ndim, grid=grid,
+                ndim=ndim, grid=grid, logp=ll,
                 jit_fwd=jit_fwd_t, jit_grad=None,
                 fwd_ms=t_fwd, grad_ms=None,
                 mem_used=mem_used, mem_peak=mem_peak)
@@ -292,7 +292,7 @@ def main():
                       f"reduce --spot-batch", flush=True)
                 results.append(dict(
                     galaxy=galaxy, mode="—", n_spots=0, ndim=0, grid={},
-                    jit_fwd=0, jit_grad=None,
+                    logp=float('nan'), jit_fwd=0, jit_grad=None,
                     fwd_ms=np.array([np.nan]), grad_ms=None,
                     mem_used=float('nan'), mem_peak=float('nan')))
             else:
@@ -301,12 +301,12 @@ def main():
         gc.collect()
 
     # Summary table
-    W = 100
+    W = 120
     print(f"\n{'=' * W}")
     print(f"Summary ({precision})")
     print(f"{'=' * W}")
     hdr = (f"{'Galaxy':<14} {'Mode':<6} {'Spots':>5} {'Dim':>5} "
-           f"{'Forward (ms)':>16} {'Grad (ms)':>16} "
+           f"{'logp':>16} {'Forward (ms)':>16} {'Grad (ms)':>16} "
            f"{'GPU (MiB)':>10} {'JIT fwd':>8} {'JIT grad':>9}")
     print(hdr)
     print("-" * W)
@@ -324,8 +324,9 @@ def main():
             jit_g = "—"
         mem = (f"{r['mem_peak']:.0f}" if np.isfinite(r["mem_peak"])
                else "?")
+        logp = f"{r['logp']:.4f}" if np.isfinite(r.get("logp", np.nan)) else "?"
         print(f"{r['galaxy']:<14} {r['mode']:<6} {r['n_spots']:>5} "
-              f"{r['ndim']:>5} {fwd:>16} {grad:>16} "
+              f"{r['ndim']:>5} {logp:>16} {fwd:>16} {grad:>16} "
               f"{mem:>10} {r['jit_fwd']:>7.1f}s {jit_g:>9}")
     print(f"{'=' * W}", flush=True)
 
