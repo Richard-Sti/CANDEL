@@ -116,6 +116,8 @@ class ModelBase(ABC):
         self.redshift2distance, self.distmod2distance = \
             Redshift2Distance(Om0=self.Om), Distmod2Distance(Om0=self.Om)
         self.config = config
+        self.compute_evidence = bool(
+            get_nested(config, "inference/compute_evidence", True))
 
     def _load_and_set_priors(self):
         """Load priors from config and store as attributes."""
@@ -486,7 +488,7 @@ class H0ModelBase(ModelBase):
 
     def __init__(self, config_path, data):
         super().__init__(config_path)
-        fsection("Model")
+        fsection(f"Model: {type(self).__name__}")
         self._configure_physics()
         self._load_data(data)
         self._setup_grids()
@@ -640,7 +642,6 @@ class H0ModelBase(ModelBase):
             "linear_from_beta_stochastic": {"delta_b1"},
             "double_powerlaw": {"alpha_low", "alpha_high", "log_rho_t"},
             "quadratic": {"b1", "b2"},
-            "spline": {"spline_bias_y"},
         }
         required = _required.get(which_bias, set())
 

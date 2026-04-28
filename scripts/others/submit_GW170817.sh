@@ -148,7 +148,7 @@ else
     dry_flag=()
     $dry && dry_flag=(--dry)
     submit_job --queue "$queue" --mem "$memory" --mpi-n "1x$ncpu" \
-        --name "GW170817" --logdir "$ROOT/scripts/others/logs" \
+        --name "GW170817" \
         "${dry_flag[@]}" -- $pycmd
 fi
 

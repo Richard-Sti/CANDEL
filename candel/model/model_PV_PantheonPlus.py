@@ -50,7 +50,7 @@ class PantheonPlusModel(BasePVModel):
                 f"got '{self.which_distance_prior}'.")
 
         fprint("setting `compute_evidence` to False.")
-        self.config["inference"]["compute_evidence"] = False
+        self.compute_evidence = False
 
     def __call__(self, data, shared_params=None):
         nsamples = len(data)
@@ -97,12 +97,9 @@ class PantheonPlusModel(BasePVModel):
 
         # Remaining parameters
         beta = rsample("beta", self.priors["beta"], shared_params)
-        bias_kwargs = dict(Om=self.Om, beta=beta)
-        if self.galaxy_bias == "spline":
-            bias_kwargs["spline_bias_knots_delta"] = \
-                self.spline_bias_knots_delta
         bias_params = sample_galaxy_bias(
-            self.priors, self.galaxy_bias, shared_params, **bias_kwargs)
+            self.priors, self.galaxy_bias, shared_params,
+            Om=self.Om, beta=beta)
 
         # For the distance marginalization, h is not sampled. A grid is still
         # required to normalize the inhomogeneous Malmquist bias distribution.

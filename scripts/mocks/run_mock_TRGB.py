@@ -612,7 +612,7 @@ def main():
                         help="Number of mock hosts per catalog")
     parser.add_argument("--config", type=str,
                         default=os.path.join(
-                            REPO_ROOT, "scripts/runs/config_EDD_TRGB.toml"),
+                            REPO_ROOT, "scripts/runs/configs/config_EDD_TRGB.toml"),
                         help="Base config for inference settings")
     parser.add_argument("--outdir",
                         default=results_path("results/mocks_TRGB"),

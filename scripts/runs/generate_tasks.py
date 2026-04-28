@@ -51,7 +51,8 @@ Note:
 
 Usage:
 ------
-1. Edit the `manual_overrides` dictionary near the bottom of the script to
+1. Edit the `common` / `individual_datasets` structures in the
+   ``if __name__ == "__main__":`` block at the bottom of this script to
    specify your sweep.
 2. Run the script:
        $ python generate_tasks.py 0
@@ -71,7 +72,7 @@ from argparse import ArgumentParser
 from copy import deepcopy
 from itertools import product
 from os import makedirs
-from os.path import exists, join, splitext
+from os.path import join
 from pathlib import Path
 
 try:
@@ -81,17 +82,37 @@ except ModuleNotFoundError:
 
 import tomli_w
 
-from candel import (SPEED_OF_LIGHT, fprint, get_nested, get_root_results,  # noqa
-                    load_config, replace_prior_with_delta)
+from candel import fprint, get_nested, load_config, replace_prior_with_delta  # noqa
+
+
+# Keys that must come from local_config.toml at job runtime, not baked into
+# generated configs. Baking them in defeats the portability mechanism in
+# load_config, which injects local_config.toml only for keys not already set.
+_MACHINE_KEYS = {
+    "root_main", "root_data", "root_results",
+    "python_exec", "machine", "modules", "modules_gpu",
+    "use_frozen", "gpu_ld_library_path",
+}
 
 
 def load_local_config():
-    """Load machine-specific settings from local_config.toml at project root."""
+    """Load machine-specific settings from local_config.toml at project root.
+
+    List/dict values (e.g. ``gpu_ld_library_path``) are dropped: downstream
+    ``expand_override_grid`` treats every list as a Cartesian product
+    dimension, but these entries are runtime environment, not overrides.
+    Machine path keys are also excluded so they are never baked into generated
+    configs — they are injected at job runtime from the executing machine's
+    local_config.toml.
+    """
     project_root = Path(__file__).resolve().parent.parent.parent
     local_config_path = project_root / "local_config.toml"
     if local_config_path.exists():
         with open(local_config_path, 'rb') as f:
-            return tomllib.load(f)
+            cfg = tomllib.load(f)
+        return {k: v for k, v in cfg.items()
+                if not isinstance(v, (list, dict))
+                and k not in _MACHINE_KEYS}
     return {}
 
 
@@ -271,6 +292,14 @@ def generate_dynamic_tag(config, base_tag="default"):
                 get_nested(config,
                            f"io/PV_main/{which_run}/which_host_los", None)))
 
+    shared = get_nested(config, "inference/shared_params", None)
+    if _is_active(shared):
+        if isinstance(shared, list):
+            shared_str = "+".join(shared)
+        else:
+            shared_str = str(shared).replace(",", "+")
+        parts.append(f"shared-{shared_str}")
+
     if base_tag != "default":
         parts.append(base_tag)
 
@@ -340,8 +369,7 @@ if __name__ == "__main__":
         help="Arbitrary tag/index for this task list.")
     args = parser.parse_args()
 
-    # --- EDD TRGB: TRGB selection, Carrick, grouped + ungrouped ---
-    config_path = "./config_EDD_TRGB.toml"
+    config_path = "./configs/config.toml"
     config = load_config(
         config_path, replace_none=False, replace_los_prior=False,
         fill_paths=False)
@@ -349,70 +377,93 @@ if __name__ == "__main__":
     tag = "default"
     tasks_index = args.tasks_index
 
-    # Load machine-specific settings from local_config.toml
     _local_cfg = load_local_config()
 
-    manual_overrides = {
+    # --- S8 from PVs: 5 individual + 4 joint runs ---
+    # Individual: each × 3 galaxy biases (linear_from_beta, linear, quadratic).
+    # Joint (all 5 datasets): 2 runs × 3 biases (with/without shared Vext).
+    # Joint (no 6dF): 1 run × 2 biases (linear, quadratic), shared Vext.
+    # Joint (no 6dF, no SDSS): 1 run × 2 biases (linear, quadratic), shared Vext.
+    bias_models = ["linear_from_beta", "linear", "quadratic"]
+
+    common = {
         **{k: v for k, v in _local_cfg.items()},
-        "model/which_run": "EDD_TRGB_grouped",
-        "model/which_selection": "TRGB_magnitude",
-        "model/use_reconstruction": True,
-        "model/use_Vext_monopole": True,
-        "model/use_Vext_quadrupole": False,
-        "model/use_Vext_octupole": False,
-        "io/PV_main/EDD_TRGB_grouped/which_host_los": "manticore_2MPP_MULTIBIN_N256_DES_V2",
-        "model/which_bias": "powerlaw",
+        "pv_model/kind": "precomputed_los_Carrick2015",
+        "pv_model/galaxy_bias": bias_models,
+        "model/priors/beta": {"dist": "uniform", "low": 0.0, "high": 2.0},
+        "inference/num_chains": 1,
+        "inference/num_warmup": 2000,
+        "inference/num_samples": 10000,
+        "io/root_output": "results/S8",
     }
 
-    # # --- CCHP TRGB: SN magnitude selection, Manticore reconstruction ---
-    # config_path = "./config_CCHP_TRGB.toml"
-    # manual_overrides = {
-    #     **{k: v for k, v in _local_cfg.items()},
-    #     "model/which_selection": "TRGB_magnitude",
-    #     "model/use_reconstruction": True,
-    #     "model/which_bias": "double_powerlaw",
-    #     "io/which_host_los": "manticore_2MPP_MULTIBIN_N256_DES_V2",
-    # }
+    individual_datasets = [
+        {"inference/model": "TFRModel",          "io/catalogue_name": "CF4_W1"},
+        {"inference/model": "TFRModel",          "io/catalogue_name": "CF4_i"},
+        {"inference/model": "FPModel",           "io/catalogue_name": "6dF_FP"},
+        {"inference/model": "FPModel",           "io/catalogue_name": "SDSS_FP"},
+        {"inference/model": "PantheonPlusModel", "io/catalogue_name": "PantheonPlus",
+         "inference/init_maxiter": 0},
+    ]
 
-    # # --- CCHP TRGB: SN magnitude selection, Carrick reconstruction ---
-    # config_path = "./config_CCHP_TRGB.toml"
-    # manual_overrides = {
-    #     **{k: v for k, v in _local_cfg.items()},
-    #     "model/which_selection": "SN_magnitude",
-    #     "model/use_reconstruction": True,
-    #     "model/which_bias": "linear",
-    #     "io/which_host_los": "Carrick2015",
-    # }
+    # Joint runs over all five datasets, swept over the same bias models as
+    # the individual runs. expand_override_grid Cartesian-expands galaxy_bias
+    # against the paired (model, catalogue) lists.
+    joint_models = ["TFRModel", "TFRModel", "FPModel", "FPModel",
+                    "PantheonPlusModel"]
+    joint_catalogues = ["CF4_W1", "CF4_i", "6dF_FP", "SDSS_FP", "PantheonPlus"]
+    joint_base = {
+        "inference/model": joint_models,
+        "io/catalogue_name": joint_catalogues,
+        "pv_model/galaxy_bias": bias_models,
+    }
+    joint_datasets = [
+        {**joint_base, "inference/shared_params": "sigma_v,Vext,beta"},
+        {**joint_base, "inference/shared_params": "sigma_v,beta"},
+    ]
 
-    # # --- EDD TRGB: redshift selection, Carrick reconstruction ---
-    # config_path = "./config_EDD_TRGB.toml"
-    # manual_overrides = {
-    #     **{k: v for k, v in _local_cfg.items()},
-    #     "model/which_selection": "redshift",
-    #     "model/use_reconstruction": True,
-    #     "model/which_bias": "linear",
-    #     "io/which_host_los": "Carrick2015",
-    # }
+    # Joint runs excluding 6dF, with linear and quadratic bias only.
+    bias_models_no6dF = ["linear", "quadratic"]
+    joint_models_no6dF = ["TFRModel", "TFRModel", "FPModel",
+                          "PantheonPlusModel"]
+    joint_cats_no6dF = ["CF4_W1", "CF4_i", "SDSS_FP", "PantheonPlus"]
+    joint_base_no6dF = {
+        "inference/model": joint_models_no6dF,
+        "io/catalogue_name": joint_cats_no6dF,
+        "pv_model/galaxy_bias": bias_models_no6dF,
+    }
+    joint_datasets += [
+        {**joint_base_no6dF, "inference/shared_params": "sigma_v,Vext,beta"},
+    ]
 
-    # # --- EDD TRGB: magnitude selection, Manticore reconstruction ---
-    # config_path = "./config_EDD_TRGB.toml"
-    # manual_overrides = {
-    #     **{k: v for k, v in _local_cfg.items()},
-    #     "model/run_ppc": True,
-    #     "model/which_selection": "TRGB_magnitude",
-    #     "model/use_reconstruction": True,
-    #     "model/priors/beta": {"dist": "delta", "value": 1.0},
-    #     "model/which_bias": "double_powerlaw",
-    #     "io/which_host_los": "manticore_2MPP_MULTIBIN_N256_DES_V2",
-    # }
+    # Joint runs excluding both 6dF and SDSS.
+    joint_models_noFP = ["TFRModel", "TFRModel", "PantheonPlusModel"]
+    joint_cats_noFP = ["CF4_W1", "CF4_i", "PantheonPlus"]
+    joint_base_noFP = {
+        "inference/model": joint_models_noFP,
+        "io/catalogue_name": joint_cats_noFP,
+        "pv_model/galaxy_bias": bias_models_no6dF,
+    }
+    joint_datasets += [
+        {**joint_base_noFP, "inference/shared_params": "sigma_v,Vext,beta"},
+    ]
+
+    all_override_combinations = []
+    for dataset in individual_datasets:
+        all_override_combinations.extend(
+            expand_override_grid({**common, **dataset}))
+    for dataset in joint_datasets:
+        all_override_combinations.extend(
+            expand_override_grid({**common, **dataset}))
+
+    candel_root = Path(__file__).resolve().parent.parent.parent
+    gen_dir = candel_root / "scripts" / "runs" / "generated_configs" / tasks_index
+    makedirs(gen_dir, exist_ok=True)
 
     task_file = f"tasks_{tasks_index}.txt"
-    log_dir = f"logs_{tasks_index}"
-
-    override_combinations = expand_override_grid(manual_overrides)
 
     with open(task_file, "w") as task_fh:
-        for idx, override_set in enumerate(override_combinations):
+        for idx, override_set in enumerate(all_override_combinations):
             local_config = deepcopy(config)
 
             for key, value in override_set.items():
@@ -476,132 +527,31 @@ if __name__ == "__main__":
                     f"Invalid which_run='{which_run}'. "
                     f"Must be one of {valid_runs}.")
 
-            # Check that the output directory exists
-            fdir_out = join(
-                get_root_results(local_config),
-                local_config["io"]["root_output"])
-            if not exists(fdir_out):
-                fprint(f"creating output directory `{fdir_out}`")
-                makedirs(fdir_out, exist_ok=True)
-
             dynamic_tag = generate_dynamic_tag(local_config, base_tag=tag)
 
             kind = get_nested(local_config, "pv_model/kind", None)
-            if kind is None:
-                fname_out = join(
-                    local_config["io"]["root_output"], f"{dynamic_tag}.hdf5")
-            else:
-                fname_out = join(
-                    local_config["io"]["root_output"],
-                    f"{kind}_{dynamic_tag}.hdf5")
-
+            stem = f"{kind}_{dynamic_tag}" if kind else dynamic_tag
+            # io/fname_output is relative; load_config resolves it against
+            # root_results from local_config.toml at job runtime.
+            fname_out = join(local_config["io"]["root_output"],
+                             f"{stem}.hdf5")
             local_config = overwrite_config(
                 local_config, "io/fname_output", fname_out)
 
-            toml_out = join(
-                get_root_results(local_config),
-                splitext(fname_out)[0] + ".toml"
-            )
+            toml_out = gen_dir / f"{stem}.toml"
             fprint(f"writing the configuration file to `{toml_out}`")
+            # Drop machine-specific keys that load_config injected from
+            # local_config.toml — they must be resolved at job runtime on
+            # the executing machine, not baked in here.
+            to_dump = {
+                k: v for k, v in local_config.items()
+                if k not in _MACHINE_KEYS
+            }
             with open(toml_out, "wb") as f:
-                tomli_w.dump(local_config, f)
+                tomli_w.dump(to_dump, f)
 
-            task_fh.write(f"{idx} {toml_out}\n")
+            rel_path = toml_out.relative_to(candel_root)
+            task_fh.write(f"{idx} {rel_path}\n")
 
     fprint(f"wrote task list to `{task_file}`")
 
-
-"""
---- UNUSED OVERRIDES ---
-
-
-
-    #    # --- TFR/SN/FP/Cluster flow model over-rides ---
-    manual_overrides = {
-        # ###### - INFERENCE - ######
-        "inference/num_warmup": 500,
-        "inference/num_samples": 5000,
-        "inference/num_chains": 1,
-        "inference/compute_log_density": False,
-        "inference/compute_evidence": False,
-        "inference/track_log_density_per_sample": False,
-        # "inference/model": "TFRModel",
-        "inference/model": "CSPModel",
-        # "inference/shared_params": "beta,sigma_v,Vext",
-        # ###### -- MODEL -- ######
-        # ###### -- PV MODEL -- ######
-        # "pv_model/kind": "precomputed_los_Carrick2015",
-        # "pv_model/kind": "Vext",
-        # "pv_model/smooth_target": "none",
-        "pv_model/galaxy_bias": "double_powerlaw",
-        # "pv_model/kind": "precomputed_los_manticore_2MPP_MULTIBIN_N256_DES_V2",  # noqa
-        "pv_model/kind": "Vext",  # noqa
-        # "pv_model/which_Vext": "radial_magnitude",
-        "pv_model/r_limits_malmquist": [[0.1, 501]],
-        "pv_model/dr_malmquist": 1.0,
-        # "pv_model/which_distance_prior": "empirical",
-        # "pv_model/which_distance_prior": "volume_redshift_selected",
-        # ##### - PRIORS -- ######
-        # "model/priors/Vext_radial_magnitude": {
-        #     "dist": "vector_radialmag_uniform",
-        #     "low": 0.0,
-        #     "high": 10_000,
-        #     "rknot": [0, 50, 100, 150, 200, 250, 300, 350, 400, 450],
-        #     "method": "linear"
-        # },
-        "model/use_stretch_gmm": False,
-        "model/priors/beta": [
-            # {"dist": "uniform", "low": -1, "high": 2.0},
-            # {"dist": "normal", "loc": 0.43, "scale": 0.25},
-            # {"dist": "normal", "loc": 0.43, "scale": 0.25},
-            {"dist": "delta", "value": 1.0},
-        ],
-        # "model/priors/b1": [{"dist": "delta", "value": x}
-        #                     for x in [round(0.1 * n, 1) for n in range(16)]],  # noqa
-        # "model/priors/zeropoint_dipole": [
-        #     {"dist": "delta", "value": [0.0, 0.0, 0.0]},
-        #     {"dist": "vector_uniform_fixed", "low": 0.0, "high": 0.3},
-        #     # {"dist": "vector_components_uniform", "low": -0.3, "high": 0.3},  # noqa
-        # ],
-        # "model/priors/Vext": [
-            # {"dist": "delta", "value": [0.0, 0.0, 0.0]},
-        #     # {"dist": "vector_components_uniform", "low": -0.3, "high": 0.3},  # noqa
-        # ],
-        # "model/priors/Om": {"dist": "delta", "value": 0.3},
-        # ###### - IO - ######
-        "io/catalogue_name": "CSP",
-        "io/CSP/which_sample": "CSPII",
-        # "io/CSP/zcmb_max": 0.05,
-        "io/root_output": "results_test/",
-    }
-
-    # --- CH0 overrides ---
-    manual_overrides = {
-        "io/root_output": "results/test",
-        # "model/which_selection": "SN_magnitude_or_redshift_Nmag",
-        "model/which_selection": "redshift",
-        # "model/num_hosts_selection_mag": 35,
-        # "model/which_selection": ["none", "redshift", "SN_magnitude", "SN_magnitude_redshift", "empirical"],  # noqa
-        # "model/which_selection": ["none", "redshift", "SN_magnitude"],  # noqa
-        # "model/which_selection": ["SN_magnitude_redshift", "empirical"],  # noqa
-        "model/use_reconstruction": True,
-        "model/use_density_dependent_sigma_v": True,
-        # "model/use_fiducial_Cepheid_host_PV_covariance": True,
-        # "model/use_PV_covmat_scaling": [False, True],
-        # "model/weight_selection_by_covmat_Neff": True,  # Only for redshift sel!  # noqa
-        "io/SH0ES/which_host_los": "Carrick2015",
-        # "io/SH0ES/which_host_los": "manticore_2MPP_MULTIBIN_N256_DES_V2",
-        "model/which_bias": "linear_from_beta",
-        # "model/track_host_velocity": True,
-        # "model/priors/Vext": [
-        #     {"dist": "vector_uniform_fixed", "low": 0.0, "high": 2500},
-        #     # {"dist": "delta", "value": [0., 0., 0.]},
-        # ],
-        "model/priors/beta": [
-            {"dist": "normal", "loc": 0.43, "scale": 0.02},
-            # {"dist": "delta", "value": 1.0},
-            # {"dist": "normal", "loc": 1.0, "scale": 0.5},
-        ],
-    }
-
-"""

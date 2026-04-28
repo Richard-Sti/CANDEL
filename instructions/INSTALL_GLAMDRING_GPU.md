@@ -80,21 +80,13 @@ python_exec = "/mnt/users/rstiskalek/CANDEL/venv_candel/bin/python"
 machine = "glamdring"
 ```
 
-## 7. Update freeze_candel.sh
+## 7. Freeze and submit
 
-Add a `glamdring` machine block (if not already present):
-
-```bash
-elif [[ "$machine" == "glamdring" ]]; then
-    src_dir="/mnt/users/${USER}/CANDEL/candel"
-    main_script="/mnt/users/${USER}/CANDEL/scripts/runs/main.py"
-    frozen_root="/mnt/users/${USER}/frozen_candel"
-```
-
-Then freeze and submit:
+`freeze_candel.sh` and `submit.sh` pick the correct paths from `machine` in
+`local_config.toml` — no per-machine editing needed.
 
 ```bash
 cd /mnt/users/$USER/CANDEL/scripts/runs
 bash freeze_candel.sh
-./submit_glamdring.sh -q cmbgpu 0
+bash submit.sh -q cmbgpu 0
 ```

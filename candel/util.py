@@ -37,7 +37,6 @@ from h5py import File
 from interpax import interp1d
 from jax import vmap
 from matplotlib.ticker import FuncFormatter
-from scipy.interpolate import CubicSpline
 
 SPEED_OF_LIGHT = 299_792.458  # km / s
 
@@ -1090,83 +1089,6 @@ def plot_radial_profiles(samples, model, r_eval_size=1000, show_fig=True,
     fig.tight_layout()
     if filename is not None:
         fprint(f"saving a radial profile plot to {filename}")
-        fig.savefig(filename, bbox_inches="tight", dpi=450)
-
-    if show_fig:
-        fig.show()
-    else:
-        plt.close(fig)
-
-
-def plot_spline_bias(samples, knots_delta, show_fig=True, filename=None,
-                     n_eval=200, linear_b1_samples=None):
-    """Plot the spline galaxy bias log(n/n̄) vs δ with 16-84 percentile band.
-
-    Parameters
-    ----------
-    samples : dict
-        Posterior samples containing spline_bias_y_* keys.
-    knots_delta : list
-        Knot positions in δ (same as config).
-    linear_b1_samples : array-like or None
-        If provided, overlay log(1 + b1*delta) band from a linear bias run.
-    """
-    knots_delta = np.array(sorted(knots_delta))
-    knots_log1pd = np.log(1 + knots_delta)
-    n_knots = len(knots_delta)
-
-    # Collect amplitude samples, shape (n_samples, n_knots)
-    # Determine n_samples from any available key in samples dict
-    n_samples = len(next(iter(samples.values())))
-    amp_samples = np.zeros((n_samples, n_knots))
-    for i in range(n_knots):
-        key = f"spline_bias_y_{i}"
-        if key in samples:
-            amp_samples[:, i] = samples[key]
-        # pinned knot stays 0
-
-    # Evaluate spline on a dense δ grid
-    delta_eval = np.linspace(knots_delta[0], knots_delta[-1], n_eval)
-    log1pd_eval = np.log(1 + delta_eval)
-    spline_eval = np.zeros((n_samples, n_eval))
-    for j in range(n_samples):
-        cs = CubicSpline(knots_log1pd, amp_samples[j], bc_type='natural')
-        spline_eval[j] = cs(log1pd_eval)
-
-    p16, _, p84 = np.percentile(spline_eval, [16, 50, 84], axis=0)
-    mean = np.mean(spline_eval, axis=0)
-
-    fig, ax = plt.subplots(figsize=(5, 4))
-    c = plt.rcParams["axes.prop_cycle"].by_key()["color"][0]
-    ax.fill_between(delta_eval, p16, p84, alpha=0.3, color=c, label="Spline")
-    ax.plot(delta_eval, mean, color=c)
-
-    # Overlay linear bias if provided
-    if linear_b1_samples is not None:
-        b1 = np.asarray(linear_b1_samples)
-        lin_eval = np.log(
-            np.clip(1 + b1[:, None] * delta_eval[None, :], 1e-10, None))
-        lin_p16, lin_mean, lin_p84 = np.percentile(
-            lin_eval, [16, 50, 84], axis=0)
-        c2 = plt.rcParams["axes.prop_cycle"].by_key()["color"][1]
-        ax.fill_between(delta_eval, lin_p16, lin_p84, alpha=0.3, color=c2,
-                        label="Linear")
-        ax.plot(delta_eval, lin_mean, color=c2)
-        ax.legend()
-
-    ax.axhline(0, ls="--", c="k", lw=0.5)
-    ax.axvline(0, ls=":", c="k", lw=0.5)
-
-    # Mark knot positions
-    for kd in knots_delta:
-        ax.axvline(kd, ls=":", c="grey", lw=0.5, alpha=0.5)
-
-    ax.set_xlabel(r"$\delta$")
-    ax.set_ylabel(r"$\log(n / \bar{n})$")
-
-    fig.tight_layout()
-    if filename is not None:
-        fprint(f"saving a spline bias plot to {filename}")
         fig.savefig(filename, bbox_inches="tight", dpi=450)
 
     if show_fig:

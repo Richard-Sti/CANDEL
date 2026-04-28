@@ -1,4 +1,4 @@
-base = ["./config_priors.toml"]
+base = ["config_priors.toml"]
 
 ###############################################################################
 #                               Inference                                     #

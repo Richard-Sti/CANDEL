@@ -35,7 +35,7 @@ which_Vext = "constant"
 
 # (Inhomogeneous Malmquist bias settings and extrapolation), in units of Mpc / h.
 r_limits_malmquist = "auto"
-dr_malmquist = 0.5
+dr_malmquist = 0.3
 
 los_decay_scale = 10.0
 
@@ -106,9 +106,9 @@ mean = 1.0
 scale = 1.0
 
 [model.priors.b1]
-dist = "normal"
-loc = 1
-scale = 1.0
+dist = "uniform"
+low = 0.0
+high = 10.0
 
 [model.priors.b2]
 dist = "normal"

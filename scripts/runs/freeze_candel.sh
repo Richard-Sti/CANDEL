@@ -1,69 +1,30 @@
-#!/bin/bash
-set -e
+#!/bin/bash -l
+#
+# Freeze the candel/ package and scripts/runs/main.py into a per-cluster
+# install root (CANDEL_FROZEN_ROOT), so subsequent submissions run against
+# a stable snapshot instead of the evolving source tree.
+#
+# Paths and cluster identity come from local_config.toml via _submit_lib.sh.
 
-# Extract a TOML key from a config file, with fallback to local_config.toml
-get_toml_key() {
-    local key="$1"
-    local config="$2"
-    local val
-    val=$(grep -E "^${key} *= *" "$config" 2>/dev/null | sed -E "s/^${key} *= *\"([^\"]+)\"$/\1/")
-    if [[ -z "$val" ]]; then
-        local local_config
-        local_config="$(cd "$(dirname "$0")/../.." && pwd)/local_config.toml"
-        val=$(grep -E "^${key} *= *" "$local_config" 2>/dev/null | sed -E "s/^${key} *= *\"([^\"]+)\"$/\1/")
-    fi
-    echo "$val"
-}
+set -euo pipefail
 
-# --- Parse machine from local_config.toml only ---
-local_config="$(cd "$(dirname "$0")/../.." && pwd)/local_config.toml"
-if [[ ! -f "$local_config" ]]; then
-    echo "[ERROR] local_config.toml not found at $local_config"
-    exit 1
-fi
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=../_submit_lib.sh
+source "$ROOT/scripts/_submit_lib.sh"
 
-machine=$(grep -E "^machine *= *" "$local_config" | sed -E "s/^machine *= *\"([^\"]+)\"$/\1/")
-if [[ -z "$machine" ]]; then
-    echo "[ERROR] Could not determine machine from config.toml or local_config.toml"
-    exit 2
-fi
+src_dir="$CANDEL_ROOT/candel"
+main_script="$CANDEL_ROOT/scripts/runs/main.py"
+frozen_dir="$CANDEL_FROZEN_ROOT"
 
-# --- Choose paths based on machine ---
-if [[ "$machine" == "rusty" ]]; then
-    src_dir="/mnt/home/${USER}/CANDEL/candel"
-    main_script="/mnt/home/${USER}/CANDEL/scripts/runs/main.py"
-    frozen_root="/mnt/home/${USER}/frozen_candel"
-elif [[ "$machine" == "local" ]]; then
-    src_dir="/Users/${USER}/Projects/CANDEL/candel"
-    main_script="/Users/${USER}/Projects/CANDEL/scripts/runs/main.py"
-    frozen_root="/Users/${USER}/Projects/CANDEL_frozen"
-elif [[ "$machine" == "glamdring" ]]; then
-    src_dir="/mnt/users/${USER}/CANDEL/candel"
-    main_script="/mnt/users/${USER}/CANDEL/scripts/runs/main.py"
-    frozen_root="/mnt/users/${USER}/frozen_candel"
-elif [[ "$machine" == "arc" ]]; then
-    ARC_USER="${USER:-phys1997}"
-    src_dir="/home/${ARC_USER}/CANDEL/candel"
-    main_script="/home/${ARC_USER}/CANDEL/scripts/runs/main.py"
-    frozen_root="/home/${ARC_USER}/frozen_candel"
-else
-    echo "[ERROR] Unknown machine: $machine"
-    exit 3
-fi
-
-frozen_dir="${frozen_root}"
-
-# Freeze
 echo "[INFO] Freezing candel package + main.py"
-echo "[INFO] From: $src_dir"
-echo "[INFO] To:   $frozen_dir"
+echo "[INFO] Cluster: $CANDEL_CLUSTER"
+echo "[INFO] From:    $src_dir"
+echo "[INFO] To:      $frozen_dir"
+
 rm -rf "$frozen_dir"
-mkdir -p "$frozen_root"
+mkdir -p "$frozen_dir"
 
-# Copy the full candel/ package
 rsync -a --exclude '__pycache__' --exclude '*.pyc' "$src_dir" "$frozen_dir"
-
-# Copy or symlink main.py into frozen dir root
 cp "$main_script" "$frozen_dir/main.py"
 
 echo "[INFO] Frozen structure:"

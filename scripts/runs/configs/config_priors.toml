@@ -16,7 +16,7 @@ high = 100
 # Peculiar velocity dispersion
 [model.priors.sigma_v]
 dist = "maxwell"
-scale = 200
+scale = 125
 
 # External bulk flow
 [model.priors.Vext]

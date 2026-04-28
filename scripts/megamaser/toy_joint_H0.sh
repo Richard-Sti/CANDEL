@@ -48,5 +48,4 @@ pycmd="$CANDEL_PYTHON -u $ROOT/scripts/megamaser/toy_joint_H0.py \
 dry_flag=()
 $DRY && dry_flag=(--dry)
 submit_job --gpu --queue "$QUEUE" --mem 16 --name "toy_jointH0" \
-    --logdir "$ROOT/scripts/megamaser/logs" \
     "${dry_flag[@]}" -- $pycmd

@@ -141,7 +141,6 @@ for GAL in $GALS; do
     [[ -n "$GPUTYPE" ]] && extra_flags+=(--gputype "$GPUTYPE")
     [[ -n "$TIME" ]]    && extra_flags+=(--time "$TIME")
     submit_job --gpu --queue "$QUEUE" --mem "$MEM" --name "maser_${GAL}" \
-        --logdir "$ROOT/scripts/megamaser/logs" \
         "${extra_flags[@]}" \
         "${dry_flag[@]}" \
         -- $pycmd

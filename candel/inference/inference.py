@@ -15,6 +15,7 @@
 """Running the MCMC inference for the model and some postprocessing."""
 import contextlib
 from copy import deepcopy
+from os import makedirs
 from os.path import dirname, splitext
 
 import jax
@@ -33,12 +34,18 @@ from scipy.optimize import minimize as sp_minimize
 from tqdm import trange
 
 from ..util import (fprint, fsection, galactic_to_radec, plot_corner,
-                    plot_radial_profiles, plot_spline_bias, plot_Vext_moll,
+                    plot_radial_profiles, plot_Vext_moll,
                     plot_Vext_rad_corner, plot_Vext_radmag,
                     radec_cartesian_to_galactic, radec_to_cartesian,
                     radec_to_galactic)
 from .evidence import (BIC_AIC, dict_samples_to_array, harmonic_evidence,
                        laplace_evidence)
+
+
+def _harmonic_available():
+    """True iff the optional ``harmonic`` package can be imported."""
+    import importlib.util
+    return importlib.util.find_spec("harmonic") is not None
 
 
 def _setup_platform():
@@ -55,25 +62,37 @@ def _parse_dense_mass(kwargs, site_names=None):
     """Parse the dense mass matrix config.
 
     Supports:
-      - ``dense_mass = true/false`` (boolean, applies to all parameters)
+      - ``dense_mass = true/false`` (boolean). With True, builds one dense
+        block over all sampled sites whose names do NOT contain
+        ``dense_mass_exclude_pattern`` (default ``"_latent"``); this keeps
+        per-host latents diagonal.
       - ``dense_mass_params = ["H0", "M_TRGB", ...]`` (single block)
       - ``dense_mass_blocks = [["H0", "D_c"], ["i0", "di_dr"], ...]``
         (multiple independent dense blocks)
+      - ``dense_mass_exclude_pattern = "_latent"`` (substring, only applied
+        on the ``dense_mass=True`` auto-exclusion path)
 
-    If `site_names` is provided, any names not in actual sample sites
-    are silently dropped.
+    If `site_names` is provided, entries in ``dense_mass_params`` /
+    ``dense_mass_blocks`` that are not actual sample sites are dropped and
+    the dropped names are logged.
     """
+    exclude_pattern = kwargs.get("dense_mass_exclude_pattern", "_latent")
+
     blocks = kwargs.get("dense_mass_blocks", None)
     if blocks is not None:
         result = []
         for block in blocks:
             if site_names is not None:
+                dropped = [p for p in block if p not in site_names]
                 block = [p for p in block if p in site_names]
+                if dropped:
+                    fprint(f"dropped {len(dropped)} non-sampled sites from "
+                           f"dense_mass_blocks entry: {dropped}")
             if len(block) >= 2:
                 result.append(tuple(block))
-                fprint(f"dense mass block: {block}")
+                fprint(f"dense mass block ({len(block)}): {list(block)}")
             elif len(block) == 1:
-                fprint(f"dropped single-site block: {block}")
+                fprint(f"dropped single-site block: {list(block)}")
         return result if result else False
 
     dense_mass_params = kwargs.get("dense_mass_params", None)
@@ -87,10 +106,29 @@ def _parse_dense_mass(kwargs, site_names=None):
                        f"dense_mass_params: {dropped}")
 
         fprint(f"using dense mass matrix for {len(dense_mass_params)} "
-               f"parameters: {dense_mass_params}")
+               f"parameters: {list(dense_mass_params)}")
         return [tuple(dense_mass_params)]
 
-    return kwargs.get("dense_mass", True)
+    if not bool(kwargs.get("dense_mass", True)):
+        fprint("using diagonal mass matrix.")
+        return False
+
+    if site_names is None:
+        # Cannot introspect sites; fall back to NumPyro's default.
+        fprint("using dense mass matrix over all parameters (site names "
+               f"unavailable — no *{exclude_pattern}* auto-exclusion).")
+        return True
+
+    excluded = sorted(s for s in site_names if exclude_pattern in s)
+    kept = sorted(s for s in site_names if exclude_pattern not in s)
+    if excluded:
+        fprint(f"auto-excluding {len(excluded)} *{exclude_pattern}* site(s) "
+               f"from dense mass matrix: {excluded}")
+    if len(kept) < 2:
+        fprint(f"using diagonal mass matrix ({len(kept)} non-excluded site).")
+        return False
+    fprint(f"using dense mass matrix for {len(kept)} parameters: {kept}")
+    return [tuple(kept)]
 
 
 def _get_sample_site_names(model, model_kwargs, seed=42):
@@ -104,23 +142,45 @@ def _get_sample_site_names(model, model_kwargs, seed=42):
             if v["type"] == "sample" and not v.get("is_observed", False)}
 
 
-def _setup_dense_mass(kwargs, init_params, model, model_kwargs):
-    if init_params is not None:
-        site_names = set(init_params.keys())
-    elif (kwargs.get("dense_mass_params") is not None
-          or kwargs.get("dense_mass_blocks") is not None):
-        site_names = _get_sample_site_names(model, model_kwargs)
-    else:
-        site_names = None
+def _setup_dense_mass(kwargs, init_params, model, model_kwargs,
+                      site_names=None):
+    """Resolve sample-site names and delegate to :func:`_parse_dense_mass`.
+
+    Resolution order for ``site_names``: caller-supplied > keys of
+    ``init_params`` (e.g. from L-BFGS) > tracing the model. Tracing is
+    skipped when it would not be used — i.e. ``dense_mass=False`` with no
+    explicit ``dense_mass_params`` / ``dense_mass_blocks``.
+    """
+    if site_names is None:
+        needs_sites = (
+            kwargs.get("dense_mass_params") is not None
+            or kwargs.get("dense_mass_blocks") is not None
+            or bool(kwargs.get("dense_mass", True))
+        )
+        if needs_sites:
+            if init_params is not None:
+                site_names = set(init_params.keys())
+            else:
+                site_names = _get_sample_site_names(model, model_kwargs)
     return _parse_dense_mass(kwargs, site_names=site_names)
 
 
-def find_initial_point(model, model_kwargs, maxiter=100, seed=42):
+def find_initial_point(model, model_kwargs, maxiter=100, seed=42,
+                       return_site_names=False):
     """Run L-BFGS to find a reasonable MCMC starting point.
 
     Traces the model from the prior, maps to unconstrained space, runs
     scipy L-BFGS-B with JAX autodiff gradients, then maps back to
     constrained space. Returns None if the optimisation fails.
+
+    Parameters
+    ----------
+    return_site_names : bool, optional
+        If True, always returns a tuple ``(init_params, site_names)`` where
+        ``site_names`` is the set of non-observed sample-site names
+        populated from the trace that was performed regardless. Allows
+        downstream callers to avoid re-tracing the model when the
+        optimisation fails. Default False (original single-return API).
     """
     # Trace at the prior median to get transforms and a reasonable start
     substituted_model = handlers.substitute(
@@ -135,6 +195,7 @@ def find_initial_point(model, model_kwargs, maxiter=100, seed=42):
         if v["type"] == "sample" and not v.get("is_observed", False):
             transforms[k] = biject_to(v["fn"].support)
             init_constrained[k] = v["value"]
+    site_names = set(init_constrained.keys())
 
     # Sort keys for consistent flattening
     keys = sorted(init_constrained.keys())
@@ -183,6 +244,8 @@ def find_initial_point(model, model_kwargs, maxiter=100, seed=42):
 
     if not np.isfinite(result.fun):
         fprint("  optimisation diverged, falling back to prior sample.")
+        if return_site_names:
+            return None, site_names
         return None
 
     unc_opt = unflatten(result.x)
@@ -216,6 +279,8 @@ def find_initial_point(model, model_kwargs, maxiter=100, seed=42):
     if n_clamped > 0:
         fprint(f"  clamped {n_clamped} parameters to support bounds.")
 
+    if return_site_names:
+        return constrained_opt, site_names
     return constrained_opt
 
 
@@ -282,9 +347,9 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
         init_maxiter = kwargs.get("init_maxiter", 1000)
 
     if init_maxiter > 0:
-        init_params = find_initial_point(
+        init_params, site_names = find_initial_point(
             model, model_kwargs, maxiter=init_maxiter,
-            seed=kwargs["seed"])
+            seed=kwargs["seed"], return_site_names=True)
         if init_params is not None:
             fprint("initialising NUTS from L-BFGS solution.")
             init_strategy = init_to_value(values=init_params)
@@ -293,19 +358,12 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
             init_strategy = init_to_median(num_samples=5000)
     else:
         init_params = None
+        site_names = None
         fprint("initialising NUTS from prior median.")
         init_strategy = init_to_median(num_samples=5000)
 
-    dense_mass = _setup_dense_mass(kwargs, init_params, model, model_kwargs)
-    if init_params is not None:
-        ndim = sum(int(np.prod(v.shape)) for v in init_params.values())
-        if isinstance(dense_mass, bool):
-            fprint(f"using {'dense' if dense_mass else 'diagonal'} mass "
-                   f"matrix ({ndim} parameters).")
-            if dense_mass and ndim > 100:
-                fprint(
-                    f"WARNING: dense_mass=True with {ndim} parameters. "
-                    f"Consider using dense_mass_params in the config.")
+    dense_mass = _setup_dense_mass(kwargs, init_params, model, model_kwargs,
+                                   site_names=site_names)
     kernel = NUTS(model, init_strategy=init_strategy, dense_mass=dense_mass)
     mcmc = MCMC(
         kernel, num_warmup=kwargs["num_warmup"],
@@ -318,7 +376,16 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
     auxiliary = extract_auxiliary(samples, ["Vpec_host_skipZ"])
     log_density_per_sample = samples.pop("log_density_per_sample", None)
 
-    if kwargs["compute_log_density"]:
+    compute_log_density = kwargs["compute_log_density"]
+    compute_evidence = model.compute_evidence
+    if (compute_log_density or compute_evidence) and not _harmonic_available():
+        fprint("[WARN] `harmonic` not installed — disabling post-sampling "
+               "log-density and evidence computation. Install with "
+               "`pip install harmonic` to re-enable.")
+        compute_log_density = False
+        compute_evidence = False
+
+    if compute_log_density:
         log_density = get_log_density(samples, model, model_kwargs)
     else:
         log_density = None
@@ -328,7 +395,6 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
 
     samples = drop_deterministic(samples)
 
-    compute_evidence = model.config["inference"]["compute_evidence"]
     if compute_evidence:
         ndata = len(model_kwargs["data"])
         bic, aic = BIC_AIC(samples, log_density, ndata)
@@ -410,12 +476,6 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
             fname_plot = splitext(fname_out)[0] + "_moll_Vext_pix.png"
             plot_Vext_moll(samples["Vext_pix"], fname_plot,)
 
-        if model.galaxy_bias == "spline":
-            fname_plot = splitext(fname_out)[0] + "_spline_bias.png"
-            plot_spline_bias(
-                samples, model.spline_bias_knots_delta,
-                show_fig=False, filename=fname_plot)
-
     if return_original_samples:
         return samples, log_density, original_samples
 
@@ -463,6 +523,7 @@ def run_H0_inference(model, model_kwargs=None, print_summary=True,
 
     init_method = kwargs.get("init_method", "lbfgs")
 
+    site_names = None
     if init_method == "sobol_adam":
         from .optimise import _use_de, find_MAP
         init_params = find_MAP(model, model_kwargs, seed=kwargs["seed"])
@@ -474,9 +535,9 @@ def run_H0_inference(model, model_kwargs=None, print_summary=True,
             init_maxiter = kwargs.get("init_maxiter", 1000)
 
         if init_maxiter > 0:
-            init_params = find_initial_point(
+            init_params, site_names = find_initial_point(
                 model, model_kwargs, maxiter=init_maxiter,
-                seed=kwargs["seed"])
+                seed=kwargs["seed"], return_site_names=True)
             if init_params is not None:
                 fprint("initialising NUTS from L-BFGS solution.")
                 init_strategy = init_to_value(values=init_params)
@@ -489,7 +550,8 @@ def run_H0_inference(model, model_kwargs=None, print_summary=True,
             fprint("initialising NUTS from prior median.")
             init_strategy = init_to_median(num_samples=5000)
 
-    dense_mass = _setup_dense_mass(kwargs, init_params, model, model_kwargs)
+    dense_mass = _setup_dense_mass(kwargs, init_params, model, model_kwargs,
+                                   site_names=site_names)
     max_tree_depth = kwargs.get("max_tree_depth", 10)
     target_accept_prob = kwargs.get("target_accept_prob", 0.8)
     kernel = NUTS(model, init_strategy=init_strategy, dense_mass=dense_mass,
@@ -686,6 +748,9 @@ def print_clean_summary(samples):
 def save_mcmc_samples(samples, log_density, log_density_per_sample, gof,
                       filename, auxiliary=None):
     """Save the MCMC samples to an HDF5 file."""
+    out_dir = dirname(filename)
+    if out_dir:
+        makedirs(out_dir, exist_ok=True)
     with File(filename, 'w') as f:
         grp = f.create_group("samples")
         for key, x in samples.items():

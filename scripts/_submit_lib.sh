@@ -10,18 +10,21 @@
 #              [--time H | D-HH:MM:SS]    # bare integer = hours; required on 'long'
 #                                         # defaults: short=12h, medium=48h
 #              [--name JOB]               # job name (default: candel)
-#              [--logdir DIR]             # log directory (default: logs)
 #              [--dry]                    # print command without submitting
 #              -- <cmd...>
 #
 # Cluster is read from `machine` in local_config.toml:
 #   machine="arc"       -> sbatch (time/partition defaults, --gputype via --gres)
 #   machine="glamdring" -> addqueue (--time is currently ignored)
+#   machine="local"     -> no batch backend; submit.sh must use --local
 #
 # Exposes for callers:
-#   CANDEL_ROOT    absolute path to the repo root
-#   CANDEL_PYTHON  python_exec from local_config.toml
-#   CANDEL_CLUSTER value of `machine`
+#   CANDEL_ROOT         absolute path to the repo root
+#   CANDEL_PYTHON       python_exec from local_config.toml
+#   CANDEL_CLUSTER      value of `machine`
+#   CANDEL_FROZEN_ROOT  per-cluster frozen-package install root
+#   CANDEL_USE_FROZEN   1 if use_frozen=true in local_config.toml, else 0
+#                       (default 0 when absent)
 
 _submit_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CANDEL_ROOT="$(cd "$_submit_lib_dir/.." && pwd)"
@@ -52,7 +55,13 @@ CANDEL_CLUSTER="$(_toml_get machine "$_local_config")"
 CANDEL_PYTHON="$(_toml_get python_exec "$_local_config")"
 CANDEL_MODULES="$(_toml_get modules "$_local_config")"
 CANDEL_MODULES_GPU="$(_toml_get modules_gpu "$_local_config")"
-export CANDEL_CLUSTER CANDEL_PYTHON CANDEL_MODULES CANDEL_MODULES_GPU
+_use_frozen_raw="$(_toml_get use_frozen "$_local_config")"
+case "${_use_frozen_raw,,}" in
+    true|1|yes) CANDEL_USE_FROZEN=1 ;;
+    *)          CANDEL_USE_FROZEN=0 ;;
+esac
+export CANDEL_CLUSTER CANDEL_PYTHON CANDEL_MODULES CANDEL_MODULES_GPU \
+       CANDEL_USE_FROZEN
 
 if [[ -z "$CANDEL_CLUSTER" ]]; then
     echo "[submit_lib] 'machine' not set in $_local_config" >&2
@@ -63,11 +72,21 @@ if [[ -z "$CANDEL_PYTHON" ]]; then
     return 1 2>/dev/null || exit 1
 fi
 
+# Per-cluster frozen-package install root. Kept in sync with freeze_candel.sh
+# so callers (submit.sh, freeze_candel.sh) agree on where the frozen tree
+# lives without duplicating the mapping.
+case "$CANDEL_CLUSTER" in
+    glamdring) CANDEL_FROZEN_ROOT="/mnt/users/${USER}/frozen_candel" ;;
+    arc)       CANDEL_FROZEN_ROOT="/home/${USER}/frozen_candel" ;;
+    local)     CANDEL_FROZEN_ROOT="$(dirname "$CANDEL_ROOT")/frozen_candel" ;;
+    *)
+        echo "[submit_lib] unknown cluster '$CANDEL_CLUSTER' in $_local_config" >&2
+        echo "[submit_lib] expected one of: glamdring, arc, local" >&2
+        return 1 2>/dev/null || exit 1 ;;
+esac
+export CANDEL_FROZEN_ROOT
+
 _cluster_profile="$_submit_lib_dir/_cluster_${CANDEL_CLUSTER}.sh"
-if [[ ! -f "$_cluster_profile" ]]; then
-    echo "[submit_lib] no cluster profile: $_cluster_profile" >&2
-    return 1 2>/dev/null || exit 1
-fi
 
 # Source the profile in the current shell. On glamdring this puts the env
 # needed by addqueue jobs into place (inherited via -s). On arc this still
@@ -110,7 +129,7 @@ launch_detached() {
 }
 
 submit_job() {
-    local queue="" mem="" cpus="" time="" name="candel" logdir="logs"
+    local queue="" mem="" cpus="" time="" name="candel"
     local gpu=0 dry=0 mpi_n="" gputype=""
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -120,7 +139,6 @@ submit_job() {
             --mpi-n)   mpi_n="$2"; shift 2 ;;
             --time)    time="$2"; shift 2 ;;
             --name)    name="$2"; shift 2 ;;
-            --logdir)  logdir="$2"; shift 2 ;;
             --gpu)     gpu=1; shift ;;
             --gputype) gputype="$2"; shift 2 ;;
             --dry)     dry=1; shift ;;
@@ -168,15 +186,16 @@ submit_job() {
 
     case "$CANDEL_CLUSTER" in
         arc)
-            # On arc logs always land in the submit CWD (logs-<jobid>.{out,err}).
-            # --logdir is ignored here.
+            # On arc logs always land in the submit CWD as logs-<jobid>.out.
+            # Omitting --error routes stderr into the same file — keeps the
+            # numpyro tqdm progress bar (written to stderr) in the .out file
+            # alongside regular print output, instead of a separate .err.
             local sbatch_flags=(
                 -p "$queue"
                 --mem="${mem}G"
                 --job-name="$name"
                 --chdir="$PWD"
                 --output="logs-%j.out"
-                --error="logs-%j.err"
             )
             if [[ -n "$mpi_n" ]]; then
                 sbatch_flags+=(--ntasks="$mpi_total" --cpus-per-task=1)
@@ -256,8 +275,8 @@ SCRIPT
             _jid=$(echo "$_aq_out" | grep -oP 'Submitted batch job \K[0-9]+')
             [[ -n "$_jid" ]] && echo "JOBID=$_jid"
             ;;
-        *)
-            echo "[submit_job] unknown cluster: $CANDEL_CLUSTER" >&2
+        local)
+            echo "[submit_job] machine='local' has no batch backend; use submit.sh --local" >&2
             return 1 ;;
     esac
 }

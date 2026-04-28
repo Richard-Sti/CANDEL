@@ -18,6 +18,7 @@ scripts/sync_from_rusty*
 logs_*/
 slurm-*
 scripts/runs/tasks_*.txt
+scripts/runs/generated_configs/
 scripts/runs/logs
 scripts/runs/logs
 scripts/runs/generated_configs/
@@ -39,3 +40,4 @@ CLAUDE.md
 background_papers/
 docs/plans/
 remote_logs/
+notebooks/paper_S8/sr_interp_cache/

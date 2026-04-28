@@ -17,7 +17,6 @@ PV-specific sampling utilities: vector sampling, galaxy bias, external
 velocity, distance priors, and TFR/SN helpers.
 """
 import jax.numpy as jnp
-import numpy as np
 from interpax import interp1d
 from jax import vmap
 from jax.lax import cond
@@ -386,23 +385,6 @@ def sample_galaxy_bias(priors, galaxy_bias, shared_params=None, **kwargs):
         b1 = rsample("b1", priors["b1"], shared_params)
         b2 = rsample("b2", priors["b2"], shared_params)
         bias_params = [b1, b2]
-    elif galaxy_bias == "spline":
-        knots_delta = kwargs["spline_bias_knots_delta"]
-        knots_log1pd = jnp.log(1 + jnp.array(knots_delta))
-        pin_idx = int(np.argmin(np.abs(np.array(knots_delta))))
-        n_knots = len(knots_delta)
-        # Sample N-1 free amplitudes, insert 0 at pinned knot
-        amps = []
-        for i in range(n_knots):
-            if i == pin_idx:
-                continue
-            y_i = rsample(f"spline_bias_y_{i}", priors["spline_bias_y"],
-                          shared_params)
-            amps.append((i, y_i))
-        all_amps = jnp.zeros(n_knots)
-        for i, y_i in amps:
-            all_amps = all_amps.at[i].set(y_i)
-        bias_params = [knots_log1pd, all_amps]
     else:
         raise ValueError(f"Invalid galaxy bias model '{galaxy_bias}'.")
 
@@ -427,12 +409,6 @@ def lp_galaxy_bias(delta, log_rho, bias_params, galaxy_bias,
         b1, b2 = bias_params
         d = delta - quadratic_bias_delta0
         lp = jnp.log(smoothclip_nr(1 + b1 * d + b2 * d**2, tau=0.1))
-    elif galaxy_bias == "spline":
-        knots_log1pd, amplitudes = bias_params
-        shape = log_rho.shape
-        x = jnp.clip(log_rho.ravel(), knots_log1pd[0], knots_log1pd[-1])
-        lp = interp1d(x, knots_log1pd, amplitudes, method="cubic")
-        lp = lp.reshape(shape)
     else:
         raise ValueError(f"Invalid galaxy bias model '{galaxy_bias}'.")
 
