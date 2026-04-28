@@ -43,16 +43,16 @@ selects how per-spot angular radius `r_ang` and azimuth `φ` are handled:
 
 | Mode | `r_ang` | `φ` | Sample sites | Typical use |
 |------|---------|-----|--------------|-------------|
-| `mode1` | sampled | marginalised | `r_ang` | required when position errors are too small for a practical Mode-2 r-grid (NGC4258) |
+| `mode1` | sampled | marginalised | `r_ang` | when position errors are small (e.g. NGC4258) |
 | `mode2` | marginalised | marginalised | none per-spot | default for the five MCP galaxies; compatible with nested sampling |
 
-**Mode 1 details.** Samples `r_ang_i` per spot; φ is marginalised analytically via trapezoidal integration over the configured sub-ranges. Required for any galaxy with `forbid_marginalise_r = true`.
+**Mode 1 details.** Samples `r_ang_i` per spot; φ is marginalised analytically via trapezoidal integration over the configured sub-ranges.
 
 **Mode 2 details.** Both `r_ang_i` and φ are marginalised: per-spot adaptive sinh r-grid (HV + sys-with-accel) and log-uniform brute grid (sys-without-accel), folded with the unified φ grid. No per-spot NUTS dimensions — lowest-dimensional mode; required by nested sampling.
 
 **Per-galaxy override.** Set `mode = "mode1"` in a
 `[model.galaxies.<NAME>]` block to pin that galaxy regardless of the
-global default. NGC4258 is pinned to `mode1` with `forbid_marginalise_r = true` guarding against `mode2`.
+global default. NGC4258 defaults to `mode1` but can be switched to `mode2`.
 
 **CLI override.** `--mode mode1|mode2` overrides the global default (but *not* per-galaxy overrides).
 

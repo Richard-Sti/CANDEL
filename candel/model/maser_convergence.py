@@ -336,7 +336,7 @@ def build_model(galaxy, master_cfg, **overrides):
                 "phi_hv_inner_deg", "phi_hv_outer_deg",
                 "phi_sys_ranges_deg",
                 "n_r_local", "n_r_global", "K_sigma",
-                "mode", "forbid_marginalise_r",
+                "mode",
                 "refine_r_center", "n_refine_steps",
                 "mode2_spot_batch"):
         gblk.pop(key, None)
