@@ -207,7 +207,7 @@ submit_job() {
             sbatch_flags+=(--time="$time")
             if (( gpu )); then
                 if [[ -n "$gputype" && "$gputype" == *"|"* ]]; then
-                    sbatch_flags+=(--gres=gpu:1 --constraint="$gputype")
+                    sbatch_flags+=(--gres=gpu:1 --constraint "$gputype")
                 elif [[ -n "$gputype" ]]; then
                     sbatch_flags+=(--gres="gpu:${gputype}:1")
                 else
