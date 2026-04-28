@@ -69,11 +69,16 @@ if [[ -n "$_WATCH_RETRIES" ]]; then
     $DRY && _cmd+=(--dry)
     $RESUME && _cmd+=(--resume)
     (( ${#GALAXIES[@]} )) && _cmd+=("${GALAXIES[@]}")
-    _gal_str="${GALAXIES[*]:-all}"
     _sname="watcher_de_map_$(date +%H%M%S)"
-    screen -dmS "$_sname" bash "$_watcher" "${_wargs[@]}" -- "${_cmd[@]}"
-    echo "[watch] DE MAP | galaxies: $_gal_str | queue: $QUEUE"
-    echo "[watch] max-retries: $_WATCH_RETRIES | poll: ${_WATCH_POLL:-120}s"
+    _logdir="$ROOT/scripts/megamaser/logs"
+    mkdir -p "$_logdir"
+    _screenlog="$_logdir/${_sname}.log"
+    screen -dmS "$_sname" -L -Logfile "$_screenlog" \
+        bash "$_watcher" "${_wargs[@]}" -- "${_cmd[@]}"
+    # Wait for the first round of output (submission + JOBID).
+    sleep 3
+    [[ -f "$_screenlog" ]] && cat "$_screenlog"
+    echo ""
     echo "[watch] screen: $_sname"
     echo "[watch]   reattach: screen -r $_sname"
     echo "[watch]   kill:     screen -X -S $_sname quit"
