@@ -34,7 +34,7 @@ Usage: bash $0 -q QUEUE [-m MEM] [--gputype TYPE] [--time T]
 Options:
   -q QUEUE        Queue/partition (REQUIRED)
   -m MEM          Memory in GB (default: 7)
-  --gputype TYPE  GPU type (glamdring only; ignored on arc)
+  --gputype TYPE  GPU type (default: any)
   --time T        Wall time. Bare integer = hours (arc only)
   --dry           Print submit command without submitting
   --resume        Resume from latest checkpoint if one exists
