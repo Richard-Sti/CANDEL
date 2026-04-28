@@ -69,7 +69,14 @@ if [[ -n "$_WATCH_RETRIES" ]]; then
     $DRY && _cmd+=(--dry)
     $RESUME && _cmd+=(--resume)
     (( ${#GALAXIES[@]} )) && _cmd+=("${GALAXIES[@]}")
-    exec bash "$_watcher" "${_wargs[@]}" -- "${_cmd[@]}"
+    _logdir="$ROOT/scripts/megamaser/logs"
+    mkdir -p "$_logdir"
+    _logfile="$_logdir/watcher_de_map_$(date +%Y%m%d_%H%M%S).log"
+    nohup bash "$_watcher" "${_wargs[@]}" -- "${_cmd[@]}" > "$_logfile" 2>&1 &
+    disown
+    echo "[watch] Running in background (PID $!, log: $_logfile)"
+    echo "[watch] Follow with: tail -f $_logfile"
+    exit 0
 fi
 
 if [[ -z "$QUEUE" ]]; then
