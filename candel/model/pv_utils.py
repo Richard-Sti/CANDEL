@@ -573,12 +573,15 @@ def sigmoid_monopole_radial(V_left, r_t, k, r):
     return V_left / (1 + jnp.exp(k * (r - r_t)))
 
 
-def sample_distance_prior(priors):
-    """Sample hyperparameters describing the empirical distance prior."""
+def sample_distance_prior_volume(priors):
+    """Hyperparameters of the volume-normalized empirical prior:
+        π̃(x) ∝ n(x) * exp(-(|x|/R)^q),
+    integrated globally over the 3D field volume. Used by base_pv when
+    `which_distance_prior == "empirical"`.
+    """
     return {
         "R": rsample("R_dist_emp", priors["R_dist_emp"]),
-        "p": rsample("p_dist_emp", priors["p_dist_emp"]),
-        "n": rsample("n_dist_emp", priors["n_dist_emp"])
+        "q": rsample("q_dist_emp", priors["q_dist_emp"]),
         }
 
 

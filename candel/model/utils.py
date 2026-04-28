@@ -20,7 +20,7 @@ import jax.numpy as jnp
 import numpy as np
 from jax import random
 from jax.scipy.linalg import solve_triangular
-from jax.scipy.special import betainc, gammainc, gammaln, logsumexp
+from jax.scipy.special import betainc, gammaln, logsumexp
 from jax.scipy.stats import norm as norm_jax
 from numpy.polynomial.hermite import hermgauss as _hermgauss
 from numpyro.distributions import (Delta, Distribution, Gamma, LogUniform,
@@ -152,30 +152,6 @@ def student_t_logcdf(t, nu):
 def smoothclip_nr(nr, tau):
     """Smooth zero-clipping for the number density."""
     return 0.5 * (nr + jnp.sqrt(nr**2 + tau**2))
-
-
-def log_prior_r_empirical(r, R, p, n, Rmax_grid, Rmax_truncate=None):
-    """
-    Log of the (empirical) truncated prior:
-        π(r) ∝ r^p * exp(-(r/R)^n),   0 < r ≤ Rmax
-    Normalized by Z = [R^(1+p) * γ(a, x)] / n with a = (1+p)/n, x = (Rmax/R)^n
-    """
-    if Rmax_truncate is None:
-        Rmax = Rmax_grid
-    else:
-        Rmax = jnp.minimum(Rmax_grid, Rmax_truncate)
-
-    a = (1.0 + p) / n
-    x = (Rmax / R) ** n
-
-    # log γ(a, x) = log Γ(a) + log P(a, x), P = regularized lower γ
-    log_gamma_lower = (
-        gammaln(a) + jnp.log(jnp.clip(gammainc(a, x), 1e-300, 1.0)))
-    log_norm = (1.0 + p) * jnp.log(R) - jnp.log(n) + log_gamma_lower
-
-    logpdf = p * jnp.log(r) - (r / R)**n - log_norm
-    valid = (r > 0) & (r <= Rmax)
-    return jnp.where(valid, logpdf, -jnp.inf)
 
 
 class SineAngle(Distribution):

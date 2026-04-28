@@ -173,7 +173,7 @@ class TFRModel(BasePVModel):
                 ll = ll_cz + ll_mag + lp_dist
                 ll = self._marginalize_over_r(ll, r_grid, data)
 
-            self._average_fields_and_factor(
-                ll, data,
-                log_density_per_sample
-                if self.track_log_density_per_sample else None)
+        self._average_fields_and_factor(
+            ll, data,
+            log_density_per_sample
+            if self.track_log_density_per_sample else None)
