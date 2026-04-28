@@ -178,24 +178,32 @@ scancel <JOBID>
 
 ## Auto-resubmit watcher
 
-For long-running jobs that may time out (DE MAP, NSS), use the watcher
-to auto-resubmit with `--resume`:
+For long-running jobs that may time out, use `watch_and_resubmit.sh` to
+poll `squeue`, check logs for a completion marker, and resubmit with
+`--resume` if incomplete:
 
 ```bash
 # DE MAP — all galaxies
-bash scripts/megamaser/watch_and_resubmit.sh de -q cmbgpu
+bash scripts/megamaser/watch_and_resubmit.sh --marker "MAP init" -- \
+    bash scripts/megamaser/run_de_map.sh -q cmbgpu
 
 # DE MAP — specific galaxies
-bash scripts/megamaser/watch_and_resubmit.sh de -q cmbgpu NGC5765b NGC6264
+bash scripts/megamaser/watch_and_resubmit.sh --marker "MAP init" -- \
+    bash scripts/megamaser/run_de_map.sh -q cmbgpu NGC5765b NGC6264
 
 # NSS — all galaxies
-bash scripts/megamaser/watch_and_resubmit.sh nss -q optgpu
+bash scripts/megamaser/watch_and_resubmit.sh --marker "saved samples to" -- \
+    bash scripts/megamaser/submit_all.sh --sampler nss -q cmbgpu
 
-# Customize retries and poll interval
-bash scripts/megamaser/watch_and_resubmit.sh --max-retries 10 --poll 60 nss -q cmbgpu
+# NUTS — no resume support
+bash scripts/megamaser/watch_and_resubmit.sh --marker "saved samples to" --no-resume -- \
+    bash scripts/megamaser/submit_all.sh --sampler nuts -q cmbgpu
+
+# Custom retries and poll interval
+bash scripts/megamaser/watch_and_resubmit.sh --marker "MAP init" --max-retries 10 --poll 60 -- \
+    bash scripts/megamaser/run_de_map.sh -q cmbgpu
 ```
 
-The watcher polls `squeue` every 2 minutes (configurable via `--poll`),
-checks job logs for completion markers, and resubmits incomplete galaxies.
-Max retries default to 5. NUTS mode restarts from scratch (no checkpoint
-support).
+Options: `--marker` (required), `--max-retries` (default 5), `--poll`
+seconds (default 120), `--resume-flag` (default `--resume`),
+`--no-resume`. Works on both glamdring and arc.
