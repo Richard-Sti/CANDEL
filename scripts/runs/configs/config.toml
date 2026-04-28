@@ -112,8 +112,9 @@ low = 0.0
 high = 10.0
 
 [model.priors.b2]
-dist = "normal"
-loc = 0
+dist = "truncated_normal"
+low = 0.0
+mean = 0.0
 scale = 1.0
 
 [model.priors.delta_b1]
