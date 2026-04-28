@@ -542,7 +542,7 @@ def _log_weights(rng_key, dead_info, n_compress=100):
     return log_w[unsort_idx]
 
 
-# ── Checkpoint helpers ────────────────────────────────────────────────────────
+# ── Checkpoint helpers ───────────────────────────────────────────────────────
 
 def _save_nss_checkpoint(path, state, dead, rng_key, n_dead):
     p = state.particles
