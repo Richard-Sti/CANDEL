@@ -97,11 +97,14 @@ if [[ -n "$_WATCH_RETRIES" ]]; then
     [[ "$NUM_CHAINS" != "1" ]] && _cmd+=(--num-chains "$NUM_CHAINS")
     $DRY && _cmd+=(--dry)
     $RESUME && _cmd+=(--resume)
+    _gal_str="${GALAXY:-all}"
     _sname="watcher_${SAMPLER}_$(date +%H%M%S)"
     screen -dmS "$_sname" bash "$_watcher" "${_wargs[@]}" -- "${_cmd[@]}"
-    echo "[watch] Started in screen session: $_sname"
-    echo "[watch] Reattach: screen -r $_sname"
-    echo "[watch] List all:  screen -ls"
+    echo "[watch] ${SAMPLER^^} | galaxy: $_gal_str | queue: $QUEUE"
+    echo "[watch] max-retries: $_WATCH_RETRIES | poll: ${_WATCH_POLL:-120}s"
+    echo "[watch] screen: $_sname"
+    echo "[watch]   reattach: screen -r $_sname"
+    echo "[watch]   kill:     screen -X -S $_sname quit"
     exit 0
 fi
 
