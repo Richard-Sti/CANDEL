@@ -178,6 +178,8 @@ submit_job() {
                 --chdir="$PWD"
                 --output="logs-%j.out"
                 --error="logs-%j.out"
+                --mail-type=BEGIN,END,FAIL
+                --mail-user=richard.stiskalek@physics.ox.ac.uk
             )
             if [[ -n "$mpi_n" ]]; then
                 sbatch_flags+=(--ntasks="$mpi_total" --cpus-per-task=1)
