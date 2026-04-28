@@ -168,7 +168,8 @@ submit_job() {
 
     case "$CANDEL_CLUSTER" in
         arc)
-            # On arc logs always land in the submit CWD (logs-<jobid>.{out,err}).
+            # On arc logs land in the submit CWD. Merge stderr into the
+            # same file so there is a single log per job.
             # --logdir is ignored here.
             local sbatch_flags=(
                 -p "$queue"
@@ -176,7 +177,7 @@ submit_job() {
                 --job-name="$name"
                 --chdir="$PWD"
                 --output="logs-%j.out"
-                --error="logs-%j.err"
+                --error="logs-%j.out"
             )
             if [[ -n "$mpi_n" ]]; then
                 sbatch_flags+=(--ntasks="$mpi_total" --cpus-per-task=1)
