@@ -75,6 +75,40 @@ fi
 # shellcheck disable=SC1090
 source "$_cluster_profile"
 
+launch_detached() {
+    # Launch a command in a detached screen/tmux session.
+    # Usage: launch_detached <session-name> <logfile> <cmd...>
+    local sname="$1" logfile="$2"; shift 2
+
+    # Build a properly quoted command string for tmux.
+    local cmd_str=""
+    for arg in "$@"; do
+        cmd_str+="$(printf '%q ' "$arg")"
+    done
+
+    if command -v screen &>/dev/null; then
+        screen -dmS "$sname" -L -Logfile "$logfile" "$@"
+        sleep 3
+        [[ -f "$logfile" ]] && cat "$logfile"
+        echo ""
+        echo "[watch] screen: $sname"
+        echo "[watch]   reattach: screen -r $sname"
+        echo "[watch]   kill:     screen -S $sname -X quit"
+    elif command -v tmux &>/dev/null; then
+        tmux new-session -d -s "$sname" \
+            "bash -c '${cmd_str} 2>&1 | tee ${logfile}'"
+        sleep 3
+        [[ -f "$logfile" ]] && cat "$logfile"
+        echo ""
+        echo "[watch] tmux: $sname"
+        echo "[watch]   reattach: tmux attach -t $sname"
+        echo "[watch]   kill:     tmux kill-session -t $sname"
+    else
+        echo "[watch] Error: neither screen nor tmux found" >&2
+        return 1
+    fi
+}
+
 submit_job() {
     local queue="" mem="" cpus="" time="" name="candel" logdir="logs"
     local gpu=0 dry=0 mpi_n="" gputype=""

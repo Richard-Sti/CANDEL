@@ -72,16 +72,8 @@ if [[ -n "$_WATCH_RETRIES" ]]; then
     _sname="watcher_de_map_$(date +%H%M%S)"
     _logdir="$ROOT/scripts/megamaser/logs"
     mkdir -p "$_logdir"
-    _screenlog="$_logdir/${_sname}.log"
-    screen -dmS "$_sname" -L -Logfile "$_screenlog" \
+    launch_detached "$_sname" "$_logdir/${_sname}.log" \
         bash "$_watcher" "${_wargs[@]}" -- "${_cmd[@]}"
-    # Wait for the first round of output (submission + JOBID).
-    sleep 3
-    [[ -f "$_screenlog" ]] && cat "$_screenlog"
-    echo ""
-    echo "[watch] screen: $_sname"
-    echo "[watch]   reattach: screen -r $_sname"
-    echo "[watch]   kill:     screen -X -S $_sname quit"
     exit 0
 fi
 
