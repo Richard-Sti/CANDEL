@@ -17,6 +17,7 @@ NUM_CHAINS=1
 GALAXY=""
 INIT_METHOD=""
 GPUTYPE=""
+GPU_MEM=""
 TIME=""
 MEM=16
 DRY=false
@@ -46,9 +47,8 @@ Options:
   --num-chains N         NUTS vectorised chains (default: $NUM_CHAINS)
   --init-method METHOD   NUTS init method: config | median | sample
                          (default: runner picks from config)
-  --gputype TYPE         GPU type or constraint (default: any)
-                           glamdring: cmbgpu|gpulong|optgpu-style names
-                           arc: l40s, h100, "h100|l40s", ...
+  --gputype TYPE         GPU type (default: any; e.g. h100, l40s)
+  --gpu-mem GB           Min GPU VRAM in GB (arc only; queries sinfo)
   --time T               Wall time. Bare integer = hours (arc only).
                          (default on arc: short=12, medium=48, long=required;
                           ignored on glamdring)
@@ -73,6 +73,7 @@ while [[ $# -gt 0 ]]; do
         --init-method) INIT_METHOD="$2"; shift 2 ;;
         --galaxy) GALAXY="$2"; shift 2 ;;
         --gputype) GPUTYPE="$2"; shift 2 ;;
+        --gpu-mem) GPU_MEM="$2"; shift 2 ;;
         --time) TIME="$2"; shift 2 ;;
         --mem) MEM="$2"; shift 2 ;;
         --no-ecc) NO_ECC=true; shift ;;
@@ -99,6 +100,7 @@ if [[ -n "$_WATCH_RETRIES" ]]; then
     [[ -n "$GALAXY" ]]      && _cmd+=(--galaxy "$GALAXY")
     [[ -n "$INIT_METHOD" ]] && _cmd+=(--init-method "$INIT_METHOD")
     [[ -n "$GPUTYPE" ]]     && _cmd+=(--gputype "$GPUTYPE")
+    [[ -n "$GPU_MEM" ]]     && _cmd+=(--gpu-mem "$GPU_MEM")
     [[ -n "$TIME" ]]        && _cmd+=(--time "$TIME")
     [[ "$NUM_CHAINS" != "1" ]] && _cmd+=(--num-chains "$NUM_CHAINS")
     $NO_ECC && _cmd+=(--no-ecc)
@@ -149,6 +151,7 @@ for GAL in $GALS; do
     fi
     extra_flags=()
     [[ -n "$GPUTYPE" ]] && extra_flags+=(--gputype "$GPUTYPE")
+    [[ -n "$GPU_MEM" ]] && extra_flags+=(--gpu-mem "$GPU_MEM")
     [[ -n "$TIME" ]]    && extra_flags+=(--time "$TIME")
     submit_job --gpu --queue "$QUEUE" --mem "$MEM" --name "maser_${GAL}" \
         --logdir "$ROOT/scripts/megamaser/logs" \

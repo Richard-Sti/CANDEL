@@ -12,6 +12,7 @@ QUEUE=""
 MEM=7
 CPUS=""
 GPUTYPE=""
+GPU_MEM=""
 TIME=""
 DRY=false
 RESUME=false
@@ -37,7 +38,8 @@ Usage: bash $0 -q QUEUE [-m MEM] [--gputype TYPE] [--time T]
 Options:
   -q QUEUE        Queue/partition (REQUIRED)
   -m MEM          Memory in GB (default: 7)
-  --gputype TYPE  GPU type or constraint (e.g. h100, "h100|l40s")
+  --gputype TYPE  GPU type (default: any; e.g. h100, l40s)
+  --gpu-mem GB    Min GPU VRAM in GB (arc only; queries sinfo for matching GPUs)
   --time T        Wall time. Bare integer = hours (arc only)
   -n N            Number of CPU cores (default: 4 with --gpu)
   --dry           Print submit command without submitting
@@ -64,6 +66,7 @@ EOF
         -m) MEM="$2"; shift 2 ;;
         -n) CPUS="$2"; shift 2 ;;
         --gputype) GPUTYPE="$2"; shift 2 ;;
+        --gpu-mem) GPU_MEM="$2"; shift 2 ;;
         --time) TIME="$2"; shift 2 ;;
         --dry) DRY=true; shift ;;
         --resume) RESUME=true; shift ;;
@@ -85,6 +88,7 @@ if [[ -n "$_WATCH_RETRIES" ]]; then
     _cmd=(bash "$0" -q "$QUEUE" -m "$MEM")
     [[ -n "$CPUS" ]]    && _cmd+=(-n "$CPUS")
     [[ -n "$GPUTYPE" ]] && _cmd+=(--gputype "$GPUTYPE")
+    [[ -n "$GPU_MEM" ]] && _cmd+=(--gpu-mem "$GPU_MEM")
     [[ -n "$TIME" ]]    && _cmd+=(--time "$TIME")
     $DRY && _cmd+=(--dry)
     $RESUME && _cmd+=(--resume)
@@ -129,6 +133,7 @@ for gal in "${GALAXIES[@]}"; do
     extra_flags=()
     [[ -n "$CPUS" ]]    && extra_flags+=(--cpus "$CPUS")
     [[ -n "$GPUTYPE" ]] && extra_flags+=(--gputype "$GPUTYPE")
+    [[ -n "$GPU_MEM" ]] && extra_flags+=(--gpu-mem "$GPU_MEM")
     [[ -n "$TIME" ]]    && extra_flags+=(--time "$TIME")
     submit_job --gpu --queue "$QUEUE" --mem "$MEM" --name "de_map_${gal}" \
         --logdir "$ROOT/scripts/megamaser/logs" \

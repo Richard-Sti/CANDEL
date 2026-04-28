@@ -16,6 +16,7 @@ queue=""
 ncpu=1
 memory=16
 gputype=""
+gpu_mem=""
 local_mode=false
 dry=false
 
@@ -37,7 +38,8 @@ options:
                             arc: short, medium, long
   -n, --ncpu NCPU         number of CPUs (default: $ncpu)
   -m, --memory MEMORY     memory per job (GB, default: $memory)
-  --gputype TYPE          GPU type or constraint (e.g. h100, "h100|l40s")
+  --gputype TYPE          GPU type (e.g. h100, l40s)
+  --gpu-mem GB            Min GPU VRAM in GB (arc only; queries sinfo)
   --local                 run on login node
   --dry                   print submit commands without submitting
 EOF
@@ -52,6 +54,7 @@ while [[ $# -gt 0 ]]; do
         -n|--ncpu)       ncpu="$2"; shift 2 ;;
         -m|--memory)     memory="$2"; shift 2 ;;
         --gputype)       gputype="$2"; shift 2 ;;
+        --gpu-mem)       gpu_mem="$2"; shift 2 ;;
         --local)         local_mode=true; shift ;;
         --dry)           dry=true; shift ;;
         *)               task_index="$1"; shift ;;
@@ -76,7 +79,7 @@ case "$CANDEL_CLUSTER:$queue" in
         # request a GPU on arc, keep old semantics: if gputype provided
         # OR queue name implies GPU, assume GPU. Simpler: only GPU when
         # the user explicitly gave --gputype.
-        [[ -n "$gputype" ]] && is_gpu=true
+        [[ -n "$gputype" || -n "$gpu_mem" ]] && is_gpu=true
         ;;
 esac
 
@@ -164,6 +167,7 @@ for i in "${!task_lines[@]}"; do
         if $is_gpu; then
             gpu_flags+=(--gpu)
             [[ -n "$gputype" ]] && gpu_flags+=(--gputype "$gputype")
+            [[ -n "$gpu_mem" ]] && gpu_flags+=(--gpu-mem "$gpu_mem")
         fi
         dry_flag=()
         $dry && dry_flag=(--dry)
