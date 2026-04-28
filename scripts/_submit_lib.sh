@@ -180,12 +180,18 @@ submit_job() {
             fi
             local mods="$CANDEL_MODULES"
             (( gpu )) && [[ -n "$CANDEL_MODULES_GPU" ]] && mods="$CANDEL_MODULES_GPU"
-            sbatch "${sbatch_flags[@]}" <<SCRIPT
+            local _sbatch_out
+            _sbatch_out=$(sbatch "${sbatch_flags[@]}" <<SCRIPT
 #!/bin/bash -l
 export CANDEL_MODULES_ACTIVE="$mods"
 source "$_cluster_profile"
 $cmd_str
 SCRIPT
+            )
+            echo "$_sbatch_out"
+            local _jid
+            _jid=$(echo "$_sbatch_out" | grep -oP 'Submitted batch job \K[0-9]+')
+            [[ -n "$_jid" ]] && echo "JOBID=$_jid"
             ;;
         glamdring)
             if [[ -n "$time" ]]; then
@@ -206,7 +212,12 @@ SCRIPT
                 echo "[submit_job] (dry: not submitting)"
                 return 0
             fi
-            addqueue "${addqueue_flags[@]}" $cmd_str
+            local _aq_out
+            _aq_out=$(addqueue --sbatch "${addqueue_flags[@]}" $cmd_str 2>&1)
+            echo "$_aq_out"
+            local _jid
+            _jid=$(echo "$_aq_out" | grep -oP 'Submitted batch job \K[0-9]+')
+            [[ -n "$_jid" ]] && echo "JOBID=$_jid"
             ;;
         *)
             echo "[submit_job] unknown cluster: $CANDEL_CLUSTER" >&2
