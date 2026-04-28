@@ -12,6 +12,7 @@ QUEUE=""
 MEM=7
 CPUS=""
 GPUTYPE=""
+GPU_CONSTRAINT=""
 TIME=""
 DRY=false
 RESUME=false
@@ -38,6 +39,7 @@ Options:
   -q QUEUE        Queue/partition (REQUIRED)
   -m MEM          Memory in GB (default: 7)
   --gputype TYPE  GPU type (default: any)
+  --gpu-constraint EXPR  SLURM constraint for GPU selection (e.g. "h100|l40s")
   --time T        Wall time. Bare integer = hours (arc only)
   -n N            Number of CPU cores (default: 4 with --gpu)
   --dry           Print submit command without submitting
@@ -64,6 +66,7 @@ EOF
         -m) MEM="$2"; shift 2 ;;
         -n) CPUS="$2"; shift 2 ;;
         --gputype) GPUTYPE="$2"; shift 2 ;;
+        --gpu-constraint) GPU_CONSTRAINT="$2"; shift 2 ;;
         --time) TIME="$2"; shift 2 ;;
         --dry) DRY=true; shift ;;
         --resume) RESUME=true; shift ;;
@@ -84,8 +87,9 @@ if [[ -n "$_WATCH_RETRIES" ]]; then
     # Rebuild the original command without --max-retries and --poll.
     _cmd=(bash "$0" -q "$QUEUE" -m "$MEM")
     [[ -n "$CPUS" ]]    && _cmd+=(-n "$CPUS")
-    [[ -n "$GPUTYPE" ]] && _cmd+=(--gputype "$GPUTYPE")
-    [[ -n "$TIME" ]]    && _cmd+=(--time "$TIME")
+    [[ -n "$GPUTYPE" ]]        && _cmd+=(--gputype "$GPUTYPE")
+    [[ -n "$GPU_CONSTRAINT" ]] && _cmd+=(--gpu-constraint "$GPU_CONSTRAINT")
+    [[ -n "$TIME" ]]           && _cmd+=(--time "$TIME")
     $DRY && _cmd+=(--dry)
     $RESUME && _cmd+=(--resume)
     $NO_ECC && _cmd+=(--no-ecc)
@@ -128,8 +132,9 @@ for gal in "${GALAXIES[@]}"; do
     $NO_QUAD_WARP && pycmd="$pycmd --no-quadratic-warp"
     extra_flags=()
     [[ -n "$CPUS" ]]    && extra_flags+=(--cpus "$CPUS")
-    [[ -n "$GPUTYPE" ]] && extra_flags+=(--gputype "$GPUTYPE")
-    [[ -n "$TIME" ]]    && extra_flags+=(--time "$TIME")
+    [[ -n "$GPUTYPE" ]]        && extra_flags+=(--gputype "$GPUTYPE")
+    [[ -n "$GPU_CONSTRAINT" ]] && extra_flags+=(--gpu-constraint "$GPU_CONSTRAINT")
+    [[ -n "$TIME" ]]           && extra_flags+=(--time "$TIME")
     submit_job --gpu --queue "$QUEUE" --mem "$MEM" --name "de_map_${gal}" \
         --logdir "$ROOT/scripts/megamaser/logs" \
         "${extra_flags[@]}" "${dry_flag[@]}" -- $pycmd
