@@ -10,6 +10,8 @@ source "$ROOT/scripts/_submit_lib.sh"
 
 QUEUE=""
 MEM=7
+GPUTYPE=""
+TIME=""
 DRY=false
 RESUME=false
 GALAXIES=()
@@ -26,11 +28,14 @@ with open('$ROOT/scripts/megamaser/config_maser.toml', 'rb') as f:
 print(' '.join(cfg['model']['galaxies']))
 ")
             cat <<EOF
-Usage: bash $0 -q QUEUE [-m MEM] [--dry] [--resume] [--max-retries N] [GALAXY ...]
+Usage: bash $0 -q QUEUE [-m MEM] [--gputype TYPE] [--time T]
+              [--dry] [--resume] [--max-retries N] [GALAXY ...]
 
 Options:
   -q QUEUE        Queue/partition (REQUIRED)
   -m MEM          Memory in GB (default: 7)
+  --gputype TYPE  GPU type (glamdring only; ignored on arc)
+  --time T        Wall time. Bare integer = hours (arc only)
   --dry           Print submit command without submitting
   --resume        Resume from latest checkpoint if one exists
   --max-retries N Watch and resubmit up to N times on timeout
@@ -51,6 +56,8 @@ EOF
             exit 0 ;;
         -q) QUEUE="$2"; shift 2 ;;
         -m) MEM="$2"; shift 2 ;;
+        --gputype) GPUTYPE="$2"; shift 2 ;;
+        --time) TIME="$2"; shift 2 ;;
         --dry) DRY=true; shift ;;
         --resume) RESUME=true; shift ;;
         --max-retries) _WATCH_RETRIES="$2"; shift 2 ;;
@@ -66,6 +73,8 @@ if [[ -n "$_WATCH_RETRIES" ]]; then
     [[ -n "$_WATCH_POLL" ]] && _wargs+=(--poll "$_WATCH_POLL")
     # Rebuild the original command without --max-retries and --poll.
     _cmd=(bash "$0" -q "$QUEUE" -m "$MEM")
+    [[ -n "$GPUTYPE" ]] && _cmd+=(--gputype "$GPUTYPE")
+    [[ -n "$TIME" ]]    && _cmd+=(--time "$TIME")
     $DRY && _cmd+=(--dry)
     $RESUME && _cmd+=(--resume)
     (( ${#GALAXIES[@]} )) && _cmd+=("${GALAXIES[@]}")
@@ -102,7 +111,10 @@ for gal in "${GALAXIES[@]}"; do
     echo "Submitting DE MAP: $gal -> $CANDEL_CLUSTER:$QUEUE"
     pycmd="$CANDEL_PYTHON -u $ROOT/scripts/megamaser/run_de_map.py $gal"
     $RESUME && pycmd="$pycmd --resume"
+    extra_flags=()
+    [[ -n "$GPUTYPE" ]] && extra_flags+=(--gputype "$GPUTYPE")
+    [[ -n "$TIME" ]]    && extra_flags+=(--time "$TIME")
     submit_job --gpu --queue "$QUEUE" --mem "$MEM" --name "de_map_${gal}" \
         --logdir "$ROOT/scripts/megamaser/logs" \
-        "${dry_flag[@]}" -- $pycmd
+        "${extra_flags[@]}" "${dry_flag[@]}" -- $pycmd
 done
