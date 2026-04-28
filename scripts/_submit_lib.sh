@@ -112,6 +112,9 @@ submit_job() {
     if [[ -z "$cpus" ]]; then
         if (( gpu )); then cpus=4; else cpus=1; fi
     fi
+    if [[ -n "${CANDEL_WATCH_ROUND:-}" && "$CANDEL_WATCH_ROUND" -gt 0 ]] 2>/dev/null; then
+        name="${name}_r${CANDEL_WATCH_ROUND}"
+    fi
     if [[ -n "$gputype" ]] && (( ! gpu )); then
         echo "[submit_job] --gputype given without --gpu; ignoring" >&2
         gputype=""
@@ -197,7 +200,7 @@ SCRIPT
             if [[ -n "$time" ]]; then
                 echo "[submit_job] glamdring: --time is not plumbed to addqueue; ignoring ($time)" >&2
             fi
-            local addqueue_flags=(-s -q "$queue" -m "$mem")
+            local addqueue_flags=(-s -q "$queue" -m "$mem" -c "$name")
             if (( gpu )); then
                 addqueue_flags+=(--gpus 1 -n "$cpus")
                 [[ -n "$gputype" ]] && addqueue_flags+=(--gputype "$gputype")
