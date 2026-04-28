@@ -379,17 +379,14 @@ if __name__ == "__main__":
 
     _local_cfg = load_local_config()
 
-    # --- S8 from PVs: 5 individual + 4 joint runs ---
-    # Individual: each × 3 galaxy biases (linear_from_beta, linear, quadratic).
-    # Joint (all 5 datasets): 2 runs × 3 biases (with/without shared Vext).
-    # Joint (no 6dF): 1 run × 2 biases (linear, quadratic), shared Vext.
-    # Joint (no 6dF, no SDSS): 1 run × 2 biases (linear, quadratic), shared Vext.
-    bias_models = ["linear_from_beta", "linear", "quadratic"]
+    # --- S8 from PVs: 5 individual datasets × 2 galaxy biases ---
+    bias_models = ["linear", "quadratic"]
 
     common = {
         **{k: v for k, v in _local_cfg.items()},
         "pv_model/kind": "precomputed_los_Carrick2015",
         "pv_model/galaxy_bias": bias_models,
+        "pv_model/density_3d_downsample": 1,
         "model/priors/beta": {"dist": "uniform", "low": 0.0, "high": 2.0},
         "inference/num_chains": 1,
         "inference/num_warmup": 2000,
@@ -406,53 +403,8 @@ if __name__ == "__main__":
          "inference/init_maxiter": 0},
     ]
 
-    # Joint runs over all five datasets, swept over the same bias models as
-    # the individual runs. expand_override_grid Cartesian-expands galaxy_bias
-    # against the paired (model, catalogue) lists.
-    joint_models = ["TFRModel", "TFRModel", "FPModel", "FPModel",
-                    "PantheonPlusModel"]
-    joint_catalogues = ["CF4_W1", "CF4_i", "6dF_FP", "SDSS_FP", "PantheonPlus"]
-    joint_base = {
-        "inference/model": joint_models,
-        "io/catalogue_name": joint_catalogues,
-        "pv_model/galaxy_bias": bias_models,
-    }
-    joint_datasets = [
-        {**joint_base, "inference/shared_params": "sigma_v,Vext,beta"},
-        {**joint_base, "inference/shared_params": "sigma_v,beta"},
-    ]
-
-    # Joint runs excluding 6dF, with linear and quadratic bias only.
-    bias_models_no6dF = ["linear", "quadratic"]
-    joint_models_no6dF = ["TFRModel", "TFRModel", "FPModel",
-                          "PantheonPlusModel"]
-    joint_cats_no6dF = ["CF4_W1", "CF4_i", "SDSS_FP", "PantheonPlus"]
-    joint_base_no6dF = {
-        "inference/model": joint_models_no6dF,
-        "io/catalogue_name": joint_cats_no6dF,
-        "pv_model/galaxy_bias": bias_models_no6dF,
-    }
-    joint_datasets += [
-        {**joint_base_no6dF, "inference/shared_params": "sigma_v,Vext,beta"},
-    ]
-
-    # Joint runs excluding both 6dF and SDSS.
-    joint_models_noFP = ["TFRModel", "TFRModel", "PantheonPlusModel"]
-    joint_cats_noFP = ["CF4_W1", "CF4_i", "PantheonPlus"]
-    joint_base_noFP = {
-        "inference/model": joint_models_noFP,
-        "io/catalogue_name": joint_cats_noFP,
-        "pv_model/galaxy_bias": bias_models_no6dF,
-    }
-    joint_datasets += [
-        {**joint_base_noFP, "inference/shared_params": "sigma_v,Vext,beta"},
-    ]
-
     all_override_combinations = []
     for dataset in individual_datasets:
-        all_override_combinations.extend(
-            expand_override_grid({**common, **dataset}))
-    for dataset in joint_datasets:
         all_override_combinations.extend(
             expand_override_grid({**common, **dataset}))
 
