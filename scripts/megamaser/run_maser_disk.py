@@ -159,6 +159,8 @@ parser.add_argument("--no-ecc", action="store_true",
                     help="Disable eccentricity model (override config)")
 parser.add_argument("--no-quadratic-warp", action="store_true",
                     help="Disable quadratic warp (override config)")
+parser.add_argument("--resume", action="store_true",
+                    help="Resume NSS from latest checkpoint (error for NUTS)")
 args = parser.parse_args()
 
 galaxy = args.galaxy
@@ -287,6 +289,10 @@ else:
 os.unlink(tmp.name)
 
 # ---- Run sampler ----
+if args.resume and sampler == "nuts":
+    print("ERROR: --resume is not supported for NUTS.", flush=True)
+    sys.exit(1)
+
 if sampler == "nss" and model.mode != "mode2":
     print("ERROR: nested sampling requires mode2 "
           f"(current mode: {model.mode})", flush=True)
@@ -699,12 +705,28 @@ elif sampler == "nss":
     fsection(f"Running NSS ({_label}, {n_spots} spots)")
     fprint(f"n_live={n_live}, mcmc_steps={num_mcmc_steps}, "
            f"num_delete={num_delete}")
+
+    _nss_ckpt_dir = os.path.join(
+        master_cfg["io"].get("root_output", "results/Maser"),
+        "nss_checkpoints", galaxy if not is_joint else "joint")
+    os.makedirs(_nss_ckpt_dir, exist_ok=True)
+    _nss_ckpt_path = os.path.join(_nss_ckpt_dir, "nss_ckpt.npz")
+    _nss_resume = None
+    if args.resume and os.path.isfile(_nss_ckpt_path):
+        _nss_resume = _nss_ckpt_path
+        fprint(f"Resuming from {_nss_ckpt_path}")
+    elif args.resume:
+        fprint(f"--resume: no checkpoint found at {_nss_ckpt_path}, "
+               "starting fresh")
+    fprint(f"Checkpoints: {_nss_ckpt_dir}")
+
     t0 = time.time()
     samples = run_nss(
         model, model_kwargs={},
         n_live=n_live, num_mcmc_steps=num_mcmc_steps,
         num_delete=num_delete,
         termination=termination, seed=seed,
+        checkpoint_dir=_nss_ckpt_dir, resume_path=_nss_resume,
     )
     dt = time.time() - t0
 

@@ -26,6 +26,7 @@ Algorithm matches the handley-lab blackjax fork exactly:
   - Same evidence integrator (logX, logZ, logZ_live)
   - Same stochastic prior-volume compression for log_weights
 """
+import os
 from functools import partial
 from timeit import default_timer as timer
 from typing import NamedTuple
@@ -543,11 +544,70 @@ def _log_weights(rng_key, dead_info, n_compress=100):
     return log_w[unsort_idx]
 
 
+# ── Checkpoint helpers ────────────────────────────────────────────────────────
+
+def _save_nss_checkpoint(path, state, dead, rng_key, n_dead):
+    p = state.particles
+    d_all = jax.tree.map(
+        lambda *xs: np.asarray(jnp.concatenate(xs, axis=0)),
+        *[d.particles for d in dead]) if dead else None
+    data = dict(
+        pos=np.asarray(p.position),
+        logprior=np.asarray(p.logprior),
+        loglikelihood=np.asarray(p.loglikelihood),
+        logL_birth=np.asarray(p.logL_birth),
+        logX=np.asarray(state.integrator.logX),
+        logZ=np.asarray(state.integrator.logZ),
+        logZ_live=np.asarray(state.integrator.logZ_live),
+        cov=np.asarray(state.cov),
+        rng_key=np.asarray(rng_key),
+        n_dead=np.array(n_dead),
+    )
+    if d_all is not None:
+        data["dead_pos"] = np.asarray(d_all.position)
+        data["dead_logprior"] = np.asarray(d_all.logprior)
+        data["dead_loglikelihood"] = np.asarray(d_all.loglikelihood)
+        data["dead_logL_birth"] = np.asarray(d_all.logL_birth)
+    tmp = path + ".tmp.npz"
+    np.savez(tmp, **data)
+    os.replace(tmp, path)
+
+
+def _load_nss_checkpoint(path):
+    d = np.load(path)
+    particles = _Particle(
+        position=jnp.array(d["pos"]),
+        logprior=jnp.array(d["logprior"]),
+        loglikelihood=jnp.array(d["loglikelihood"]),
+        logL_birth=jnp.array(d["logL_birth"]),
+    )
+    integrator = _Integrator(
+        logX=jnp.array(d["logX"]),
+        logZ=jnp.array(d["logZ"]),
+        logZ_live=jnp.array(d["logZ_live"]),
+    )
+    state = _NSSState(particles, integrator, jnp.array(d["cov"]))
+    rng_key = jnp.array(d["rng_key"])
+    n_dead = int(d["n_dead"])
+    dead = []
+    if "dead_pos" in d:
+        dead_p = _Particle(
+            position=jnp.array(d["dead_pos"]),
+            logprior=jnp.array(d["dead_logprior"]),
+            loglikelihood=jnp.array(d["dead_loglikelihood"]),
+            logL_birth=jnp.array(d["dead_logL_birth"]),
+        )
+        dead = [_DeadInfo(dead_p)]
+    return state, dead, rng_key, n_dead
+
+
 # ── Public API ───────────────────────────────────────────────────────────────
 
 def run_nss(model, model_args=(), model_kwargs=None,
             n_live=500, num_mcmc_steps=50, num_delete=1,
-            termination=-3, seed=42, validate=True):
+            termination=-3, seed=42, validate=True,
+            checkpoint_dir=None, resume_path=None,
+            checkpoint_interval=1800):
     """Run the Nested Slice Sampler on a NumPyro model.
 
     Recommended settings (Yallup+2025, arXiv:2601.23252):
@@ -598,32 +658,6 @@ def run_nss(model, model_args=(), model_kwargs=None,
     fprint(f"NSS: ndim={ndim}, num_mcmc_steps={num_mcmc_steps}, "
            f"n_live={n_live}, num_delete={num_delete}")
 
-    # ---- Draw initial live points from prior ----
-    initial_samples = sample_prior(dists, names, sizes, n_live, seed)
-
-    # ---- Batched init (avoids GPU OOM) ----
-    init_fn = partial(
-        _make_particle, logprior_fn=log_prior_fn,
-        loglikelihood_fn=log_likelihood_fn,
-        logL_birth=jnp.nan)
-    batched_fn = jax.jit(jax.vmap(init_fn))
-
-    all_results = []
-    for i in tqdm.tqdm(range(0, n_live, num_delete),
-                       desc="init live pts", unit=" batch"):
-        batch = initial_samples[i:i + num_delete]
-        result = jax.block_until_ready(batched_fn(batch))
-        result = jax.tree.map(lambda x: np.asarray(x), result)
-        all_results.append(result)
-
-    particles = jax.tree.map(
-        lambda *xs: jnp.concatenate(xs, axis=0), *all_results)
-
-    integrator = _init_integrator(particles)
-    cov = jnp.atleast_2d(
-        jnp.cov(particles.position, ddof=0, rowvar=False))
-    state = _NSSState(particles, integrator, cov)
-
     # ---- JIT the NSS step ----
     @jax.jit
     def step_fn(state, rng_key):
@@ -631,16 +665,53 @@ def run_nss(model, model_args=(), model_kwargs=None,
             rng_key, state, log_prior_fn,
             log_likelihood_fn, num_delete, num_mcmc_steps)
 
-    # ---- Warmup JIT ----
-    rng_key = jax.random.PRNGKey(seed + 1)
-    rng_key, subkey = jax.random.split(rng_key)
-    state, _ = jax.block_until_ready(step_fn(state, subkey))
+    if resume_path is not None:
+        state, dead, rng_key, n_dead = _load_nss_checkpoint(resume_path)
+        # Warmup JIT with restored state
+        rng_key, subkey = jax.random.split(rng_key)
+        _warmup_state, _ = jax.block_until_ready(step_fn(state, subkey))
+        del _warmup_state
+        fprint(f"Resumed from {resume_path} (n_dead={n_dead}, "
+               f"logZ={float(state.integrator.logZ):.2f})")
+    else:
+        # ---- Draw initial live points from prior ----
+        initial_samples = sample_prior(dists, names, sizes, n_live, seed)
 
-    # ---- Main loop ----
-    dead = []
-    t0 = timer()
-    n_dead = 0
-    with tqdm.tqdm(desc="NSS", unit=" pts") as pbar:
+        # ---- Batched init (avoids GPU OOM) ----
+        init_fn = partial(
+            _make_particle, logprior_fn=log_prior_fn,
+            loglikelihood_fn=log_likelihood_fn,
+            logL_birth=jnp.nan)
+        batched_fn = jax.jit(jax.vmap(init_fn))
+
+        all_results = []
+        for i in tqdm.tqdm(range(0, n_live, num_delete),
+                           desc="init live pts", unit=" batch"):
+            batch = initial_samples[i:i + num_delete]
+            result = jax.block_until_ready(batched_fn(batch))
+            result = jax.tree.map(lambda x: np.asarray(x), result)
+            all_results.append(result)
+
+        particles = jax.tree.map(
+            lambda *xs: jnp.concatenate(xs, axis=0), *all_results)
+
+        integrator = _init_integrator(particles)
+        cov = jnp.atleast_2d(
+            jnp.cov(particles.position, ddof=0, rowvar=False))
+        state = _NSSState(particles, integrator, cov)
+
+        # ---- Warmup JIT ----
+        rng_key = jax.random.PRNGKey(seed + 1)
+        rng_key, subkey = jax.random.split(rng_key)
+        state, _ = jax.block_until_ready(step_fn(state, subkey))
+
+        dead = []
+        n_dead = 0
+    _ckpt_path = (os.path.join(checkpoint_dir, "nss_ckpt.npz")
+                  if checkpoint_dir is not None else None)
+    _last_ckpt_time = timer()
+
+    with tqdm.tqdm(desc="NSS", unit=" pts", initial=n_dead) as pbar:
         while not (state.integrator.logZ_live
                    - state.integrator.logZ < termination):
             rng_key, subkey = jax.random.split(rng_key)
@@ -654,6 +725,12 @@ def run_nss(model, model_args=(), model_kwargs=None,
             pbar.set_postfix({"logZ": f"{logZ:.2f}",
                               "gap":  f"{gap:.2f}"})
             pbar.update(num_delete)
+
+            if (_ckpt_path is not None
+                    and timer() - _last_ckpt_time >= checkpoint_interval):
+                _save_nss_checkpoint(
+                    _ckpt_path, state, dead, rng_key, n_dead)
+                _last_ckpt_time = timer()
 
             # Non-finite likelihood checks
             ll_live = state.particles.loglikelihood

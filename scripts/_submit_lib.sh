@@ -193,7 +193,7 @@ SCRIPT
             fi
             local addqueue_flags=(-s -q "$queue" -m "$mem")
             if (( gpu )); then
-                addqueue_flags+=(--gpus 1)
+                addqueue_flags+=(--gpus 1 -n "$cpus")
                 [[ -n "$gputype" ]] && addqueue_flags+=(--gputype "$gputype")
             elif [[ -n "$mpi_n" ]]; then
                 addqueue_flags+=(-n "$mpi_n")
