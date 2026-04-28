@@ -221,7 +221,8 @@ def _bench_mode2(model, galaxy, gcfg, grid, args):
 def benchmark_galaxy(galaxy, master_cfg, args):
     galaxies_cfg = master_cfg["model"]["galaxies"]
     gcfg = galaxies_cfg[galaxy]
-    mode = gcfg.get("mode", master_cfg["model"].get("mode", "mode2"))
+    mode = (args.mode
+            or gcfg.get("mode", master_cfg["model"].get("mode", "mode2")))
 
     print(f"\n{'=' * 60}")
     print(f"{galaxy}  (mode={mode}, {args.n_repeats} repeats)")
@@ -267,6 +268,8 @@ def main():
                     help="Spot-axis chunk size for Mode 2 (0=off, default: 0)")
     ap.add_argument("--f64", action="store_true",
                     help="Use float64 (default: float32)")
+    ap.add_argument("--mode", choices=["mode1", "mode2"], default=None,
+                    help="Force mode (default: use config)")
     args = ap.parse_args()
 
     if args.f64:
@@ -294,7 +297,7 @@ def main():
                     mem_used=float('nan'), mem_peak=float('nan')))
             else:
                 raise
-        jax.clear_backends()
+        jax.clear_caches()
         gc.collect()
 
     # Summary table

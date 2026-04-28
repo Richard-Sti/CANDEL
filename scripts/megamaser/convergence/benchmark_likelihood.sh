@@ -26,6 +26,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --n-warmup N          extra warm-up calls after JIT (default: 5)"
             echo "  --spot-batch N        spot-axis chunk for Mode 2 (0=off, default: 0)"
             echo "  --f64                 use float64 (default: float32)"
+            echo "  --mode {mode1,mode2}  force mode (default: use config)"
             echo ""
             echo "Examples:"
             echo "  bash $0 --galaxies NGC4258"
