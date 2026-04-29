@@ -27,6 +27,7 @@
 _submit_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CANDEL_ROOT="$(cd "$_submit_lib_dir/.." && pwd)"
 export CANDEL_ROOT
+export PYTHONPATH="$CANDEL_ROOT${PYTHONPATH:+:$PYTHONPATH}"
 
 _toml_get() {
     local key="$1" file="$2"
@@ -246,6 +247,7 @@ submit_job() {
             _sbatch_out=$(sbatch "${sbatch_flags[@]}" <<SCRIPT
 #!/bin/bash -l
 export CANDEL_MODULES_ACTIVE="$mods"
+export PYTHONPATH="$CANDEL_ROOT\${PYTHONPATH:+:\$PYTHONPATH}"
 source "$_cluster_profile"
 $cmd_str
 SCRIPT
