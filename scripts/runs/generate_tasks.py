@@ -397,8 +397,10 @@ if __name__ == "__main__":
     individual_datasets = [
         {"inference/model": "TFRModel",          "io/catalogue_name": "CF4_W1"},
         {"inference/model": "TFRModel",          "io/catalogue_name": "CF4_i"},
-        {"inference/model": "FPModel",           "io/catalogue_name": "6dF_FP"},
-        {"inference/model": "FPModel",           "io/catalogue_name": "SDSS_FP"},
+        {"inference/model": "FPModel",           "io/catalogue_name": "6dF_FP",
+         "pv_model/galaxy_bias": [*bias_models, "cubic"]},
+        {"inference/model": "FPModel",           "io/catalogue_name": "SDSS_FP",
+         "pv_model/galaxy_bias": [*bias_models, "cubic"]},
         {"inference/model": "PantheonPlusModel", "io/catalogue_name": "PantheonPlus",
          "inference/init_maxiter": 0},
     ]
