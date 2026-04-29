@@ -100,7 +100,7 @@ class BasePVModel(ModelBase):
         if self.galaxy_bias not in ["unity", "powerlaw", "linear",
                                     "linear_from_beta",
                                     "linear_from_beta_stochastic",
-                                    "double_powerlaw", "quadratic"]:
+                                    "double_powerlaw", "quadratic", "cubic"]:
             raise ValueError(
                 f"Invalid galaxy bias model '{self.galaxy_bias}'.")
         self.quadratic_bias_delta0 = get_nested(

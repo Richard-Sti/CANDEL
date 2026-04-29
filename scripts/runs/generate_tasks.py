@@ -447,6 +447,8 @@ if __name__ == "__main__":
                         local_config = replace_prior_with_delta(
                             local_config, "b2", 0.)
                         local_config = replace_prior_with_delta(
+                            local_config, "b3", 0.)
+                        local_config = replace_prior_with_delta(
                             local_config, "delta_b1", 0.)
 
                 if isinstance(value, dict):

@@ -117,6 +117,12 @@ low = 0.0
 mean = 0.0
 scale = 1.0
 
+[model.priors.b3]
+dist = "truncated_normal"
+low = 0.0
+mean = 0.0
+scale = 1.0
+
 [model.priors.delta_b1]
 dist = "normal"
 loc = 0.0

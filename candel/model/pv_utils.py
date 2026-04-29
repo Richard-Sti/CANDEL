@@ -385,6 +385,11 @@ def sample_galaxy_bias(priors, galaxy_bias, shared_params=None, **kwargs):
         b1 = rsample("b1", priors["b1"], shared_params)
         b2 = rsample("b2", priors["b2"], shared_params)
         bias_params = [b1, b2]
+    elif galaxy_bias == "cubic":
+        b1 = rsample("b1", priors["b1"], shared_params)
+        b2 = rsample("b2", priors["b2"], shared_params)
+        b3 = rsample("b3", priors["b3"], shared_params)
+        bias_params = [b1, b2, b3]
     else:
         raise ValueError(f"Invalid galaxy bias model '{galaxy_bias}'.")
 
@@ -409,6 +414,11 @@ def lp_galaxy_bias(delta, log_rho, bias_params, galaxy_bias,
         b1, b2 = bias_params
         d = delta - quadratic_bias_delta0
         lp = jnp.log(smoothclip_nr(1 + b1 * d + b2 * d**2, tau=0.1))
+    elif galaxy_bias == "cubic":
+        b1, b2, b3 = bias_params
+        d = delta - quadratic_bias_delta0
+        lp = jnp.log(smoothclip_nr(
+            1 + b1 * d + b2 * d**2 + b3 * d**3, tau=0.1))
     else:
         raise ValueError(f"Invalid galaxy bias model '{galaxy_bias}'.")
 
