@@ -243,6 +243,14 @@ def _joint_variant_rows(beta2cosmo, bias):
     return rows
 
 
+def _joint_files_present(bias):
+    """Return (have_main_joint, have_variants) for ``bias``."""
+    main = exists(join(ROOT, _joint_run(bias)))
+    var = all(exists(join(ROOT, _joint_variant_run(c, bias)))
+              for _, c in JOINT_VARIANTS)
+    return main, var
+
+
 def collect_S8_and_fs8(fnames, labels, beta2cosmo, joint=True,
                        bias="linear"):
     """Return ``(beta_list, S8_list, fs8_list, labels_with_joint)``.
@@ -296,11 +304,12 @@ def print_table_b1_beta_S8(fnames, labels, beta_list, S8_list, fs8_list,
               f"{fmt_pm(np.mean(beta_list[i]), np.std(beta_list[i])):>16}  "
               f"{fmt_pm(np.mean(S8_list[i]), np.std(S8_list[i])):>16}  "
               f"{fmt_pm(np.mean(fs8_list[i]), np.std(fs8_list[i])):>16}")
-    i = all_labels.index("Joint")
-    print(f"{'Joint':<{lab_w}} {ZEFF['Joint']:>6.3f}  {'-':>16}  "
-          f"{fmt_pm(np.mean(beta_list[i]), np.std(beta_list[i])):>16}  "
-          f"{fmt_pm(np.mean(S8_list[i]), np.std(S8_list[i])):>16}  "
-          f"{fmt_pm(np.mean(fs8_list[i]), np.std(fs8_list[i])):>16}")
+    if "Joint" in all_labels:
+        i = all_labels.index("Joint")
+        print(f"{'Joint':<{lab_w}} {ZEFF['Joint']:>6.3f}  {'-':>16}  "
+              f"{fmt_pm(np.mean(beta_list[i]), np.std(beta_list[i])):>16}  "
+              f"{fmt_pm(np.mean(S8_list[i]), np.std(S8_list[i])):>16}  "
+              f"{fmt_pm(np.mean(fs8_list[i]), np.std(fs8_list[i])):>16}")
     for lab, beta, S8, fs8 in extra_joint_rows or []:
         print(f"{lab:<{lab_w}} {'-':>6}  {'-':>16}  "
               f"{fmt_pm(np.mean(beta), np.std(beta)):>16}  "
@@ -666,10 +675,21 @@ def main():
     # Plots that need posteriors (beta/S8/fs8) — load lazily.
     needs_posterior = {"s8_posterior", "s8_comparison", "fs8_z"}
     S8_list_q = fs8_list_q = None
+    extra_rows = extra_rows_q = []
+    have_joint = have_variants = False
     if needs_posterior & set(plots):
+        have_joint, have_variants = _joint_files_present(primary)
+        if not have_joint:
+            print(f"  [skip] joint run for '{primary}' missing — "
+                  "per-survey only.")
+        if not have_variants:
+            print(f"  [skip] joint variants for '{primary}' missing — "
+                  "no 'no 6dF'/'no 6dF, no SDSS' rows.")
+
         beta_list, S8_list, fs8_list, all_labels = collect_S8_and_fs8(
-            fnames, labels, beta2cosmo, joint=True, bias=primary)
-        extra_rows = _joint_variant_rows(beta2cosmo, primary)
+            fnames, labels, beta2cosmo, joint=have_joint, bias=primary)
+        if have_variants:
+            extra_rows = _joint_variant_rows(beta2cosmo, primary)
         print_table_b1_beta_S8(fnames, labels, beta_list, S8_list,
                                fs8_list, all_labels,
                                title=f"Table 1 [{primary}]",
@@ -678,11 +698,17 @@ def main():
                             title=f"Table 2 [{primary}]")
 
         if args.bias == "both":
+            have_joint_q, have_variants_q = _joint_files_present("quadratic")
+            if not have_joint_q:
+                print("  [skip] joint run for 'quadratic' missing.")
+            if not have_variants_q:
+                print("  [skip] joint variants for 'quadratic' missing.")
             fnames_q, labels_q = load_per_survey("quadratic")
             beta_list_q, S8_list_q, fs8_list_q, all_labels_q = (
                 collect_S8_and_fs8(fnames_q, labels_q, beta2cosmo,
-                                   joint=True, bias="quadratic"))
-            extra_rows_q = _joint_variant_rows(beta2cosmo, "quadratic")
+                                   joint=have_joint_q, bias="quadratic"))
+            if have_variants_q:
+                extra_rows_q = _joint_variant_rows(beta2cosmo, "quadratic")
             print_table_b1_beta_S8(fnames_q, labels_q, beta_list_q,
                                    S8_list_q, fs8_list_q, all_labels_q,
                                    title="Table 1 [quadratic]",
@@ -714,19 +740,27 @@ def main():
         if p == "s8_posterior":
             plot_s8_posterior(S8_list, all_labels, args.savedir)
         elif p == "s8_comparison":
-            S8_swap = _swap_joint(S8_list, extra_rows, "S8")
-            keep = [i for i, l in enumerate(labs_swap)
-                    if l != "Joint (no 6dF)"]
-            plot_s8_comparison([S8_swap[i] for i in keep],
-                               [labs_swap[i] for i in keep],
-                               args.savedir, S8_list_q=None)
+            if have_variants:
+                S8_swap = _swap_joint(S8_list, extra_rows, "S8")
+                keep = [i for i, l in enumerate(labs_swap)
+                        if l != "Joint (no 6dF)"]
+                plot_s8_comparison([S8_swap[i] for i in keep],
+                                   [labs_swap[i] for i in keep],
+                                   args.savedir, S8_list_q=None)
+            else:
+                plot_s8_comparison(S8_list, all_labels, args.savedir,
+                                   S8_list_q=None)
         elif p == "vext_corner":
             plot_vext_corner(fnames, labels, args.savedir)
         elif p == "fs8_z":
-            fs8_swap_q = (_swap_joint(fs8_list_q, extra_rows_q, "fs8")
-                          if fs8_list_q is not None else None)
-            plot_fs8_z(_swap_joint(fs8_list, extra_rows, "fs8"),
-                       labs_swap, args.savedir, fs8_list_q=fs8_swap_q)
+            if have_variants:
+                fs8_swap_q = (_swap_joint(fs8_list_q, extra_rows_q, "fs8")
+                              if fs8_list_q is not None else None)
+                plot_fs8_z(_swap_joint(fs8_list, extra_rows, "fs8"),
+                           labs_swap, args.savedir, fs8_list_q=fs8_swap_q)
+            else:
+                plot_fs8_z(fs8_list, all_labels, args.savedir,
+                           fs8_list_q=fs8_list_q)
         saved.append((p, join(args.savedir, plot_files[p])))
 
     print("\n=== Saved plots ===")
