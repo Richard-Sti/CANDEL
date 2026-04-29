@@ -403,8 +403,19 @@ if __name__ == "__main__":
          "inference/init_maxiter": 0},
     ]
 
+    joint_datasets = [
+        {"inference/model": ["TFRModel", "TFRModel", "PantheonPlusModel"],
+         "io/catalogue_name": ["CF4_i", "CF4_W1", "PantheonPlus"],
+         "inference/shared_params": "beta,sigma_v",
+         "inference/init_maxiter": 0},
+    ]
+
     all_override_combinations = []
     for dataset in individual_datasets:
+        all_override_combinations.extend(
+            expand_override_grid({**common, **dataset}))
+
+    for dataset in joint_datasets:
         all_override_combinations.extend(
             expand_override_grid({**common, **dataset}))
 
