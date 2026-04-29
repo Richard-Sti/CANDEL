@@ -3,11 +3,13 @@
 Times the functions that the production samplers call:
   Mode 1 (NUTS): potential_fn and value_and_grad(potential_fn)
   Mode 2 (NSS):  log_likelihood_fn (forward only)
+  Mode 2 + --mode2-grad: also potential_fn and value_and_grad
 
 Usage:
   python benchmark_likelihood.py                        # all galaxies
   python benchmark_likelihood.py --galaxies NGC4258     # single galaxy
   python benchmark_likelihood.py --n-repeats 200        # more samples
+  python benchmark_likelihood.py --mode2-grad           # include Mode 2 grad
 """
 import argparse
 import gc
@@ -21,6 +23,12 @@ import tomli
 from candel.model.maser_convergence import build_model, resolve_grid_for_galaxy
 
 CONFIG_PATH = "scripts/megamaser/config_maser.toml"
+
+
+def _odd(n):
+    """Round down to nearest odd integer (>= 3) for trapezoid grids."""
+    n = max(int(n), 3)
+    return n if n % 2 == 1 else n - 1
 
 
 # -------------------------------------------------------------------
@@ -166,7 +174,7 @@ def _bench_mode1(model, galaxy, gcfg, master_cfg, grid, args):
                 mem_used=mem_used, mem_peak=mem_peak)
 
 
-def _bench_mode2(model, galaxy, gcfg, grid, args):
+def _bench_mode2_fwd(model, galaxy, gcfg, grid, args):
     from candel.inference.nested import decompose_model
 
     print("Decomposing model...", flush=True)
@@ -175,7 +183,6 @@ def _bench_mode2(model, galaxy, gcfg, grid, args):
     ndim = sum(sizes)
     print(f"Params: {ndim} ({', '.join(names)})", flush=True)
 
-    # Construct flat initial vector from config init
     init = gcfg["init"]
     x_parts = []
     offset = 0
@@ -197,7 +204,6 @@ def _bench_mode2(model, galaxy, gcfg, grid, args):
     if not np.isfinite(ll):
         print("  WARNING: non-finite log-likelihood", flush=True)
 
-    # Forward only
     jit_ll = jax.jit(log_likelihood_fn)
     print("\nForward (log_likelihood_fn)...", flush=True)
     jit_fwd_t, t_fwd = _time_fn(jit_ll, x0, args.n_warmup, args.n_repeats)
@@ -211,6 +217,119 @@ def _bench_mode2(model, galaxy, gcfg, grid, args):
                 ndim=ndim, grid=grid, logp=ll,
                 jit_fwd=jit_fwd_t, jit_grad=None,
                 fwd_ms=t_fwd, grad_ms=None,
+                mem_used=mem_used, mem_peak=mem_peak)
+
+
+def _bench_mode2_grad(model, galaxy, gcfg, grid, args):
+    """Mode 2 gradient via per-group separate JIT (grids pre-built).
+
+    Builds r-grids outside the JAX trace, then JIT-compiles a separate
+    value_and_grad for each spot group (sys/red/blue). Peak memory is
+    determined by the single largest group's backward pass.
+    """
+    from candel.model.maser_convergence import (
+        ensure_grad_sample, jax_phys_from_sample)
+
+    init_block = gcfg["init"]
+    sample = ensure_grad_sample(model, init_block)
+    ndim = len(sample)
+    print(f"Params: {ndim} ({', '.join(sample)})", flush=True)
+    print(f"spot_batch={model._mode2_spot_batch or 'off'}", flush=True)
+
+    # Phase 1: build grids outside the JAX trace
+    print("\nBuilding grids...", flush=True)
+    t0 = time.perf_counter()
+    sample_np = {k: np.asarray(v) for k, v in sample.items()}
+    pa_np, pk_np, diag = model.phys_from_sample(sample_np)
+    groups = model._build_r_grids_mode2(
+        pa_np[2], pa_np[3], pa_np[4],
+        pa_np[16], pa_np[8], pa_np[15],
+        phys_args=pa_np, phys_kw=pk_np)
+    grid_time = time.perf_counter() - t0
+    print(f"  {grid_time:.2f}s  (D_A={diag['D_A']:.2f} Mpc)", flush=True)
+    for tk, idx, r_u, _ in groups:
+        print(f"  {tk}: {int(idx.shape[0])} spots, "
+              f"r_union {r_u.shape}", flush=True)
+
+    batch = model._mode2_spot_batch
+
+    # Phase 2: per-group JIT'd forward and value_and_grad functions
+    jit_groups = []
+    for type_key, idx, r_union, log_w_union in groups:
+        has_accel = model._group_has_any_accel(type_key)
+        r_j = jnp.asarray(r_union)
+        lw_j = jnp.asarray(log_w_union)
+        idx_j = jnp.asarray(idx)
+
+        def _make(tk, ix, r, lw, ha):
+            def f(s):
+                pa, pk = jax_phys_from_sample(model, s)
+                ps = model._marginal_per_spot_r(
+                    tk, ix, r, lw, ha, pa, pk, batch)
+                return jnp.sum(ps)
+            return f
+
+        f_g = _make(type_key, idx_j, r_j, lw_j, has_accel)
+        jit_groups.append((type_key, int(idx.shape[0]),
+                           jax.jit(f_g),
+                           jax.jit(jax.value_and_grad(f_g))))
+
+    # JIT compile each group
+    print("\nJIT compiling per-group...", flush=True)
+    total_jit_fwd = 0.0
+    total_jit_grad = 0.0
+    total_ll = 0.0
+    for tk, ns, jf, jvg in jit_groups:
+        t0 = time.perf_counter()
+        ll_val = float(jax.block_until_ready(jf(sample)))
+        jit_f = time.perf_counter() - t0
+        total_jit_fwd += jit_f
+        total_ll += ll_val
+
+        t0 = time.perf_counter()
+        jax.block_until_ready(jvg(sample))
+        jit_g = time.perf_counter() - t0
+        total_jit_grad += jit_g
+
+        print(f"  {tk} ({ns} spots): fwd JIT {jit_f:.1f}s, "
+              f"grad JIT {jit_g:.1f}s", flush=True)
+
+    print(f"Init log-likelihood: {total_ll:.10f}", flush=True)
+
+    # Warm up
+    for _ in range(args.n_warmup):
+        for _, _, jf, jvg in jit_groups:
+            jax.block_until_ready(jf(sample))
+            jax.block_until_ready(jvg(sample))
+
+    # Time forward (per-group, grids pre-built)
+    print("\nForward (per-group, grids pre-built)...", flush=True)
+    t_fwd = np.empty(args.n_repeats)
+    for i in range(args.n_repeats):
+        t0 = time.perf_counter()
+        for _, _, jf, _ in jit_groups:
+            jax.block_until_ready(jf(sample))
+        t_fwd[i] = (time.perf_counter() - t0) * 1e3
+    _print_timing("Forward", total_jit_fwd, t_fwd)
+
+    # Time gradient (per-group, grids pre-built)
+    print("\nGradient (per-group, grids pre-built)...", flush=True)
+    t_grad = np.empty(args.n_repeats)
+    for i in range(args.n_repeats):
+        t0 = time.perf_counter()
+        for _, _, _, jvg in jit_groups:
+            jax.block_until_ready(jvg(sample))
+        t_grad[i] = (time.perf_counter() - t0) * 1e3
+    _print_timing("Grad", total_jit_grad, t_grad)
+
+    mem_used, mem_peak = _gpu_mem_MiB()
+    print(f"\nGPU memory: {mem_used:.0f} MiB in use, "
+          f"{mem_peak:.0f} MiB peak", flush=True)
+
+    return dict(galaxy=galaxy, mode="mode2", n_spots=model.n_spots,
+                ndim=ndim, grid=grid, logp=total_ll,
+                jit_fwd=total_jit_fwd, jit_grad=total_jit_grad,
+                fwd_ms=t_fwd, grad_ms=t_grad,
                 mem_used=mem_used, mem_peak=mem_peak)
 
 
@@ -229,24 +348,30 @@ def benchmark_galaxy(galaxy, master_cfg, args):
     print(f"{'=' * 60}", flush=True)
 
     grid = resolve_grid_for_galaxy(master_cfg, galaxy, mode)
+    f = args.phi_factor
+    n_hv_high = _odd(int(grid["n_hv_high"] * f))
+    n_hv_low = _odd(int(grid["n_hv_low"] * f))
+    n_sys = _odd(int(grid["n_sys"] * f))
     overrides = dict(mode=mode,
-                     n_phi_hv_high=grid["n_hv_high"],
-                     n_phi_hv_low=grid["n_hv_low"],
-                     n_phi_sys=grid["n_sys"],
+                     n_phi_hv_high=n_hv_high,
+                     n_phi_hv_low=n_hv_low,
+                     n_phi_sys=n_sys,
                      n_r_global=grid["n_r_global"])
     if args.spot_batch > 0:
         overrides["mode2_spot_batch"] = args.spot_batch
     model = build_model(galaxy, master_cfg, **overrides)
 
     print(f"Spots: {model.n_spots}")
-    grid_str = f"phi=({grid['n_hv_high']}, {grid['n_hv_low']}, {grid['n_sys']})"
+    grid_str = f"phi=({n_hv_high}, {n_hv_low}, {n_sys})"
     if mode == "mode2":
         grid_str += f", r=({grid['n_r_local']}, {grid['n_r_global']})"
     print(f"Grid: {grid_str}", flush=True)
 
     if mode == "mode1":
         return _bench_mode1(model, galaxy, gcfg, master_cfg, grid, args)
-    return _bench_mode2(model, galaxy, gcfg, grid, args)
+    if args.mode2_grad:
+        return _bench_mode2_grad(model, galaxy, gcfg, grid, args)
+    return _bench_mode2_fwd(model, galaxy, gcfg, grid, args)
 
 
 def main():
@@ -266,6 +391,10 @@ def main():
                     help="Extra warm-up calls after JIT (default: 5)")
     ap.add_argument("--spot-batch", type=int, default=0,
                     help="Spot-axis chunk size for Mode 2 (0=off, default: 0)")
+    ap.add_argument("--phi-factor", type=float, default=1.0,
+                    help="Multiply all phi grid sizes by this factor (default: 1)")
+    ap.add_argument("--mode2-grad", action="store_true",
+                    help="Benchmark Mode 2 gradient (per-group, low memory)")
     ap.add_argument("--f64", action="store_true",
                     help="Use float64 (default: float32)")
     ap.add_argument("--mode", choices=["mode1", "mode2"], default=None,
@@ -279,8 +408,11 @@ def main():
 
     galaxies = args.galaxies if args.galaxies is not None else all_galaxies
     print(f"Galaxies: {galaxies}")
+    phi_str = f"phi_factor: {args.phi_factor}" if args.phi_factor > 1 else ""
     print(f"Repeats: {args.n_repeats}, warmup: {args.n_warmup}, "
-          f"spot_batch: {args.spot_batch or 'off'}", flush=True)
+          f"spot_batch: {args.spot_batch or 'off'}, "
+          f"mode2_grad: {args.mode2_grad}"
+          f"{', ' + phi_str if phi_str else ''}", flush=True)
 
     results = []
     for galaxy in galaxies:
@@ -288,8 +420,8 @@ def main():
             results.append(benchmark_galaxy(galaxy, master_cfg, args))
         except Exception as e:
             if "RESOURCE_EXHAUSTED" in str(e):
-                print(f"\n  SKIPPED: GPU OOM — run this galaxy alone or "
-                      f"reduce --spot-batch", flush=True)
+                print("\n  SKIPPED: GPU OOM — run this galaxy alone or "
+                      "reduce --spot-batch", flush=True)
                 results.append(dict(
                     galaxy=galaxy, mode="—", n_spots=0, ndim=0, grid={},
                     logp=float('nan'), jit_fwd=0, jit_grad=None,

@@ -436,16 +436,16 @@ def ensure_grad_sample(model, init_block):
     which is a valid neighbourhood for the remaining parameters
     (Cartesian offsets, warp rates, noise floors — all small).
     """
-    sample = {k: jnp.asarray(float(v), dtype=jnp.float64)
+    dtype = jnp.float64 if jax.config.jax_enable_x64 else jnp.float32
+    sample = {k: jnp.asarray(float(v), dtype=dtype)
               for k, v in init_block.items()}
     H0_ref = float(get_nested(model.config, "model/H0_ref", 73.0))
     defaults = {"H0": H0_ref}
     for k in GRAD_PARAMS_BASE:
-        sample.setdefault(k, jnp.asarray(defaults.get(k, 0.0),
-                                         dtype=jnp.float64))
+        sample.setdefault(k, jnp.asarray(defaults.get(k, 0.0), dtype=dtype))
     if model.use_quadratic_warp:
         for k in ("d2i_dr2", "d2Omega_dr2"):
-            sample.setdefault(k, jnp.asarray(0.0, dtype=jnp.float64))
+            sample.setdefault(k, jnp.asarray(0.0, dtype=dtype))
     return sample
 
 
@@ -455,11 +455,13 @@ def jax_phys_from_sample(model, sample):
     All non-derived quantities flow through as jnp scalars so jax.grad
     can differentiate w.r.t. any entry of ``sample``.
     """
+    dtype = jnp.float64 if jax.config.jax_enable_x64 else jnp.float32
+
     def g(key, default=None):
         if key in sample:
             return sample[key]
         if default is not None:
-            return jnp.asarray(default, dtype=jnp.float64)
+            return jnp.asarray(default, dtype=dtype)
         raise KeyError(f"missing '{key}' in sample")
 
     H0_ref = float(get_nested(model.config, "model/H0_ref", 73.0))
@@ -475,9 +477,9 @@ def jax_phys_from_sample(model, sample):
     phys_args = (
         g("x0"), g("y0"),
         D_A, M_BH, v_sys,
-        jnp.asarray(model._r_ang_ref_i, dtype=jnp.float64),
-        jnp.asarray(model._r_ang_ref_Omega, dtype=jnp.float64),
-        jnp.asarray(model._r_ang_ref_periapsis, dtype=jnp.float64),
+        jnp.asarray(model._r_ang_ref_i, dtype=dtype),
+        jnp.asarray(model._r_ang_ref_Omega, dtype=dtype),
+        jnp.asarray(model._r_ang_ref_periapsis, dtype=dtype),
         jnp.deg2rad(g("i0")),
         jnp.deg2rad(g("di_dr")),
         jnp.deg2rad(g("Omega0")),
