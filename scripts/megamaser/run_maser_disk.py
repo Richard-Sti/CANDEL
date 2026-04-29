@@ -306,16 +306,6 @@ if sampler == "nss" and is_joint:
 if not is_joint:
     n_spots = data["n_spots"]
 
-# NSS vmaps over num_delete chains simultaneously; without spot batching
-# the (num_delete × N_group × n_r × n_phi) intermediate can OOM on GPU.
-# Set a safe default when the config doesn't specify one.
-_NSS_DEFAULT_SPOT_BATCH = 16
-if (sampler == "nss" and not is_joint
-        and model._mode2_spot_batch is None):
-    model._mode2_spot_batch = _NSS_DEFAULT_SPOT_BATCH
-    fprint(f"NSS: auto-set mode2_spot_batch={_NSS_DEFAULT_SPOT_BATCH} "
-           f"(override via per-galaxy config)")
-
 if sampler == "nuts":
     num_warmup = args.num_warmup or inf_cfg.get("num_warmup", 2000)
     num_samples = args.num_samples or inf_cfg.get("num_samples", 2000)
@@ -715,7 +705,7 @@ elif sampler == "nss":
     fprint(f"n_live={n_live}, mcmc_steps={num_mcmc_steps}, "
            f"num_delete={num_delete}")
 
-    _nss_ckpt_dir = os.path.join(
+    _nss_ckpt_dir = results_path(
         master_cfg["io"].get("root_output", "results/Maser"),
         "nss_checkpoints", galaxy if not is_joint else "joint")
     os.makedirs(_nss_ckpt_dir, exist_ok=True)
