@@ -39,8 +39,8 @@ Required:
 
 Options:
   --sampler nss|nuts     Inference method (default: $SAMPLER)
-  --galaxy GAL           Single galaxy to submit (default: all five)
-                         Choices: $ALL_GALS
+  --galaxy GAL[,GAL,...] Galaxy/galaxies to submit (comma-separated;
+                         default: all five). Choices: $ALL_GALS
   --mode MODE            Sampling mode: mode1, mode2
                          (default: runner picks — mode2 for NSS)
   --f-grid F             Grid scaling factor (default: 1.0)
@@ -121,8 +121,11 @@ fi
 if [[ "$SAMPLER" == "nss" && -n "$MODE" && "$MODE" != "mode2" ]]; then
     echo "Error: NSS only supports mode2."; exit 1
 fi
-if [[ -n "$GALAXY" ]] && ! echo "$ALL_GALS" | grep -qw "$GALAXY"; then
-    echo "Error: unknown galaxy '$GALAXY'. Choices: $ALL_GALS"; exit 1
+if [[ -n "$GALAXY" ]]; then
+    GALAXY="${GALAXY//,/ }"
+    for _g in $GALAXY; do
+        echo "$ALL_GALS" | grep -qw "$_g" || { echo "Error: unknown galaxy '$_g'. Choices: $ALL_GALS"; exit 1; }
+    done
 fi
 if [[ -z "$QUEUE" ]]; then
     echo "[ERROR] -q QUEUE is required (cluster=$CANDEL_CLUSTER)"; exit 1
