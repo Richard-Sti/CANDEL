@@ -20,11 +20,10 @@ from numpyro.distributions import MultivariateNormal, Uniform
 
 from ..util import fprint
 from .base_pv import BasePVModel
-from .integration import ln_simpson
 from .pv_utils import (add_sigma_mag_to_lane_cov, lp_galaxy_bias, rsample,
-                       sample_distance_prior, sample_galaxy_bias,
+                       sample_distance_prior_volume, sample_galaxy_bias,
                        sigma_v_from_density)
-from .utils import log_prior_r_empirical, normal_logpdf_var, predict_cz
+from .utils import normal_logpdf_var, predict_cz
 
 
 class PantheonPlusModel(BasePVModel):
@@ -75,7 +74,7 @@ class PantheonPlusModel(BasePVModel):
             x1 = data["x1"]
             c = data["c"]
 
-        kwargs_dist = sample_distance_prior(self.priors)
+        kwargs_dist = sample_distance_prior_volume(self.priors)
 
         # Sample velocity field parameters.
         Vext = rsample("Vext", self.priors["Vext"], shared_params)
@@ -100,6 +99,7 @@ class PantheonPlusModel(BasePVModel):
         bias_params = sample_galaxy_bias(
             self.priors, self.galaxy_bias, shared_params,
             Om=self.Om, beta=beta)
+        self._validate_volume_normalized_prior_data(data)
 
         # For the distance marginalization, h is not sampled. A grid is still
         # required to normalize the inhomogeneous Malmquist bias distribution.
@@ -113,9 +113,12 @@ class PantheonPlusModel(BasePVModel):
 
         mu = self.distance2distmod(r, h=h)  # (n_gal,)
 
-        # Precompute the homogeneous distance prior, `(n_field, n_galaxies)`
-        lp_dist = log_prior_r_empirical(
-            r, **kwargs_dist, Rmax_grid=Rmax)[None, :]
+        # Pointwise volume-normalized empirical prior along each source LOS:
+        # log n(r,θ_s) + log f(r) + 2 log r - log N_field.
+        r_safe = jnp.clip(r, a_min=1e-12)
+        log_f = -jnp.exp(
+            kwargs_dist["q"] * (jnp.log(r_safe) - jnp.log(kwargs_dist["R"])))
+        lp_dist = (log_f + 2.0 * jnp.log(r_safe))[None, :]
 
         if data.with_lane_covmat:
             # Lane covariance is 3N x 3N where the values in the data vector
@@ -140,29 +143,16 @@ class PantheonPlusModel(BasePVModel):
                  + jnp.eye(data["mag_covmat"].shape[0]) * sigma_int**2)
             sample("mag_obs", MultivariateNormal(mu + M, C), obs=data["mag"])
 
-        if data.has_precomputed_los:
-            # Evaluate the radial velocity and the galaxy bias at the sampled
-            # distances, `(n_field, n_gal,)`
-            Vrad = beta * data.f_los_velocity(r)
-            # Inhomogeneous Malmquist bias contribution.
-            lp_dist += lp_galaxy_bias(
-                data.f_los_delta(r), data.f_los_log_density(r),
-                bias_params, self.galaxy_bias,
-                self.quadratic_bias_delta0)
-
-            # Distance prior normalization grid, `(n_field, n_gal, n_rbin)`
-            lp_dist_norm = log_prior_r_empirical(
-                r_grid, **kwargs_dist, Rmax_grid=Rmax)[None, None, :]
-            lp_dist_norm += lp_galaxy_bias(
-                data["los_delta_r_grid"],
-                data["los_log_density_r_grid"],
-                bias_params, self.galaxy_bias,
-                self.quadratic_bias_delta0)
-            # Finally integrate over the radial bins and normalize.
-            lp_dist -= ln_simpson(
-                lp_dist_norm, x=r_grid[None, None, :], axis=-1)
-        else:
-            Vrad = 0.
+        # Evaluate the radial velocity and the galaxy bias at the sampled
+        # distances, `(n_field, n_gal,)`, then apply the per-field 3D
+        # normalizer shared by all LOS.
+        Vrad = beta * data.f_los_velocity(r)
+        lp_dist += lp_galaxy_bias(
+            data.f_los_delta(r), data.f_los_log_density(r),
+            bias_params, self.galaxy_bias,
+            self.quadratic_bias_delta0)
+        lp_dist -= self._compute_volume_log_N(
+            data, kwargs_dist, bias_params)[:, None]
 
         with plate("plate_redshift", nsamples):
             # Predicted redshift, `(n_field, n_galaxies)`

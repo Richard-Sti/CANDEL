@@ -68,8 +68,10 @@ Typical output:
 This script is meant to streamline robust, reproducible inference workflows in
 CANDEL.
 """
+import hashlib
 from argparse import ArgumentParser
 from copy import deepcopy
+from datetime import datetime, timezone
 from itertools import product
 from os import makedirs
 from os.path import join
@@ -306,6 +308,50 @@ def generate_dynamic_tag(config, base_tag="default"):
     return "_".join(p for p in parts if p)
 
 
+def write_provenance_footer(fh, tasks_index, n_tasks, body_sha256,
+                            local_cfg, files):
+    """Append a `#`-prefixed footer embedding the verbatim contents of
+    ``files`` plus the filtered ``local_config.toml`` dict that fed the
+    override grid, so the task list is fully self-describing. Submission
+    scripts skip any line beginning with `#`, so the footer is inert at
+    runtime.
+    """
+    bar = "# " + "=" * 60
+    fh.write("#\n")
+    fh.write(bar + "\n")
+    fh.write("# == GENERATOR PROVENANCE " + "=" * 36 + "\n")
+    fh.write(bar + "\n")
+    fh.write(f"# generated_utc: {datetime.now(timezone.utc).isoformat()}\n")
+    fh.write(f"# tasks_index:   {tasks_index}\n")
+    fh.write(f"# n_tasks:       {n_tasks}\n")
+    fh.write(f"# body_sha256:   {body_sha256}\n")
+    fh.write("#\n")
+    fh.write("# Verbatim source of the generator and base config template at\n")
+    fh.write("# the time this file was produced. Strip the leading '# ' from\n")
+    fh.write("# each line to recover the originals.\n")
+    fh.write(bar + "\n")
+
+    fh.write("#\n")
+    fh.write("# --- BEGIN local_config (filtered: machine keys excluded) ---\n")
+    if local_cfg:
+        for k, v in local_cfg.items():
+            fh.write(f"# {k} = {v!r}\n")
+    else:
+        fh.write("# <empty>\n")
+    fh.write("# --- END local_config ---\n")
+
+    for label, path in files:
+        fh.write("#\n")
+        fh.write(f"# --- BEGIN FILE: {label} ---\n")
+        try:
+            with open(path, "r") as src:
+                for line in src:
+                    fh.write("# " + line.rstrip("\n") + "\n")
+        except OSError as e:
+            fh.write(f"# <ERROR reading {path}: {e}>\n")
+        fh.write(f"# --- END FILE: {label} ---\n")
+
+
 def expand_override_grid(overrides):
     """Expand override grid into a list of flat key-value combinations."""
     model_key = "inference/model"
@@ -379,80 +425,31 @@ if __name__ == "__main__":
 
     _local_cfg = load_local_config()
 
-    # --- S8 from PVs: 5 individual + 4 joint runs ---
-    # Individual: each × 3 galaxy biases (linear_from_beta, linear, quadratic).
-    # Joint (all 5 datasets): 2 runs × 3 biases (with/without shared Vext).
-    # Joint (no 6dF): 1 run × 2 biases (linear, quadratic), shared Vext.
-    # Joint (no 6dF, no SDSS): 1 run × 2 biases (linear, quadratic), shared Vext.
-    bias_models = ["linear_from_beta", "linear", "quadratic"]
+    # --- S8 from PVs: linear bias, b1 fixed on a grid ---
+    # 21 values: 0.5, 0.6, ..., 2.5
+    b1_values = [round(0.5 + 0.1 * i, 1) for i in range(21)]
+    b1_priors = [{"dist": "delta", "value": v} for v in b1_values]
 
     common = {
         **{k: v for k, v in _local_cfg.items()},
         "pv_model/kind": "precomputed_los_Carrick2015",
-        "pv_model/galaxy_bias": bias_models,
+        "pv_model/galaxy_bias": "linear",
+        "pv_model/density_3d_downsample": 1,
         "model/priors/beta": {"dist": "uniform", "low": 0.0, "high": 2.0},
+        "model/priors/b1": b1_priors,
         "inference/num_chains": 1,
         "inference/num_warmup": 2000,
         "inference/num_samples": 10000,
         "io/root_output": "results/S8",
     }
 
-    individual_datasets = [
-        {"inference/model": "TFRModel",          "io/catalogue_name": "CF4_W1"},
-        {"inference/model": "TFRModel",          "io/catalogue_name": "CF4_i"},
-        {"inference/model": "FPModel",           "io/catalogue_name": "6dF_FP"},
-        {"inference/model": "FPModel",           "io/catalogue_name": "SDSS_FP"},
-        {"inference/model": "PantheonPlusModel", "io/catalogue_name": "PantheonPlus",
-         "inference/init_maxiter": 0},
-    ]
-
-    # Joint runs over all five datasets, swept over the same bias models as
-    # the individual runs. expand_override_grid Cartesian-expands galaxy_bias
-    # against the paired (model, catalogue) lists.
-    joint_models = ["TFRModel", "TFRModel", "FPModel", "FPModel",
-                    "PantheonPlusModel"]
-    joint_catalogues = ["CF4_W1", "CF4_i", "6dF_FP", "SDSS_FP", "PantheonPlus"]
-    joint_base = {
-        "inference/model": joint_models,
-        "io/catalogue_name": joint_catalogues,
-        "pv_model/galaxy_bias": bias_models,
-    }
-    joint_datasets = [
-        {**joint_base, "inference/shared_params": "sigma_v,Vext,beta"},
-        {**joint_base, "inference/shared_params": "sigma_v,beta"},
-    ]
-
-    # Joint runs excluding 6dF, with linear and quadratic bias only.
-    bias_models_no6dF = ["linear", "quadratic"]
-    joint_models_no6dF = ["TFRModel", "TFRModel", "FPModel",
-                          "PantheonPlusModel"]
-    joint_cats_no6dF = ["CF4_W1", "CF4_i", "SDSS_FP", "PantheonPlus"]
-    joint_base_no6dF = {
-        "inference/model": joint_models_no6dF,
-        "io/catalogue_name": joint_cats_no6dF,
-        "pv_model/galaxy_bias": bias_models_no6dF,
-    }
-    joint_datasets += [
-        {**joint_base_no6dF, "inference/shared_params": "sigma_v,Vext,beta"},
-    ]
-
-    # Joint runs excluding both 6dF and SDSS.
-    joint_models_noFP = ["TFRModel", "TFRModel", "PantheonPlusModel"]
-    joint_cats_noFP = ["CF4_W1", "CF4_i", "PantheonPlus"]
-    joint_base_noFP = {
-        "inference/model": joint_models_noFP,
-        "io/catalogue_name": joint_cats_noFP,
-        "pv_model/galaxy_bias": bias_models_no6dF,
-    }
-    joint_datasets += [
-        {**joint_base_noFP, "inference/shared_params": "sigma_v,Vext,beta"},
+    datasets = [
+        {"inference/model": "TFRModel", "io/catalogue_name": "CF4_W1"},
+        {"inference/model": "FPModel",  "io/catalogue_name": "SDSS_FP"},
     ]
 
     all_override_combinations = []
-    for dataset in individual_datasets:
-        all_override_combinations.extend(
-            expand_override_grid({**common, **dataset}))
-    for dataset in joint_datasets:
+    for dataset in datasets:
         all_override_combinations.extend(
             expand_override_grid({**common, **dataset}))
 
@@ -461,6 +458,8 @@ if __name__ == "__main__":
     makedirs(gen_dir, exist_ok=True)
 
     task_file = f"tasks_{tasks_index}.txt"
+    body_hash = hashlib.sha256()
+    n_written = 0
 
     with open(task_file, "w") as task_fh:
         for idx, override_set in enumerate(all_override_combinations):
@@ -483,6 +482,8 @@ if __name__ == "__main__":
                             local_config, "b1", 0.)
                         local_config = replace_prior_with_delta(
                             local_config, "b2", 0.)
+                        local_config = replace_prior_with_delta(
+                            local_config, "b3", 0.)
                         local_config = replace_prior_with_delta(
                             local_config, "delta_b1", 0.)
 
@@ -551,7 +552,23 @@ if __name__ == "__main__":
                 tomli_w.dump(to_dump, f)
 
             rel_path = toml_out.relative_to(candel_root)
-            task_fh.write(f"{idx} {rel_path}\n")
+            line = f"{idx} {rel_path}\n"
+            task_fh.write(line)
+            body_hash.update(line.encode())
+            n_written += 1
+
+        write_provenance_footer(
+            task_fh,
+            tasks_index=tasks_index,
+            n_tasks=n_written,
+            body_sha256=body_hash.hexdigest(),
+            local_cfg=_local_cfg,
+            files=[
+                ("scripts/runs/generate_tasks.py", Path(__file__).resolve()),
+                ("scripts/runs/configs/config.toml",
+                 Path(config_path).resolve()),
+            ],
+        )
 
     fprint(f"wrote task list to `{task_file}`")
 

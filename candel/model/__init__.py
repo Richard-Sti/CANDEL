@@ -15,7 +15,6 @@
 
 from .utils import (                                                            # noqa
     load_priors,                                                                # noqa
-    log_prior_r_empirical,                                                      # noqa
     smoothclip_nr,                                                              # noqa
     )
 from .pv_utils import (                                                         # noqa

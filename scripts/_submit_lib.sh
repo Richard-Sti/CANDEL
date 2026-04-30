@@ -55,11 +55,11 @@ CANDEL_CLUSTER="$(_toml_get machine "$_local_config")"
 CANDEL_PYTHON="$(_toml_get python_exec "$_local_config")"
 CANDEL_MODULES="$(_toml_get modules "$_local_config")"
 CANDEL_MODULES_GPU="$(_toml_get modules_gpu "$_local_config")"
-_use_frozen_raw="$(_toml_get use_frozen "$_local_config")"
-case "${_use_frozen_raw,,}" in
-    true|1|yes) CANDEL_USE_FROZEN=1 ;;
-    *)          CANDEL_USE_FROZEN=0 ;;
-esac
+if [[ "$(_toml_get use_frozen "$_local_config")" == "true" ]]; then
+    CANDEL_USE_FROZEN=1
+else
+    CANDEL_USE_FROZEN=0
+fi
 export CANDEL_CLUSTER CANDEL_PYTHON CANDEL_MODULES CANDEL_MODULES_GPU \
        CANDEL_USE_FROZEN
 

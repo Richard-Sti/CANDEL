@@ -165,8 +165,9 @@ fi
 task_file="tasks_${task_index}.txt"
 [[ -f "$task_file" ]] || { echo "[ERROR] Task file not found: $task_file"; exit 2; }
 
-# Parse --tasks SPEC ("3,5,7-9") into the allowed-id set.
-declare -A allowed_ids
+# Parse --tasks SPEC ("3,5,7-9") into the allowed-id set. Stored as a
+# space-padded string for portable substring membership tests on bash 3.2.
+allowed_ids=" "
 allowed_any=true
 if [[ -n "$tasks_spec" ]]; then
     allowed_any=false
@@ -175,9 +176,9 @@ if [[ -n "$tasks_spec" ]]; then
         [[ -z "$p" ]] && continue
         if [[ "$p" == *-* ]]; then
             _lo=${p%-*}; _hi=${p#*-}
-            for ((i=_lo; i<=_hi; i++)); do allowed_ids[$i]=1; done
+            for ((i=_lo; i<=_hi; i++)); do allowed_ids+="$i "; done
         else
-            allowed_ids[$p]=1
+            allowed_ids+="$p "
         fi
     done
 fi
@@ -194,7 +195,7 @@ while IFS= read -r line || [[ -n "$line" ]]; do
     total_in_file=$((total_in_file + 1))
     id=${line%% *}
     cfg_rel=${line#* }
-    if ! $allowed_any && [[ -z "${allowed_ids[$id]:-}" ]]; then continue; fi
+    if ! $allowed_any && [[ "$allowed_ids" != *" $id "* ]]; then continue; fi
     out=$(_resolved_output "$cfg_rel")
     if [[ -n "$out" && -f "$out" ]]; then
         done_flag=1

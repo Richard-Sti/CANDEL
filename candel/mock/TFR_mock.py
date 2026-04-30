@@ -21,13 +21,13 @@ from ..util import (SPEED_OF_LIGHT, fprint, galactic_to_radec,
                     galactic_to_radec_cartesian, radec_to_cartesian)
 
 
-def sample_distance(r_grid, los_density, b1, R, p, n, gen):
-    """Sample distance from p(r) ∝ (1 + b1*δ) r^p exp(-(r/R)^n)."""
+def los_distance_cdf(r_grid, los_density, b1, R, p, n):
+    """CDF and integrated weight Z for p(r|n̂) ∝ (1+b1·δ) r^p exp(-(r/R)^n)."""
     los_delta = los_density - 1
     pi_r = (1 + b1 * los_delta) * r_grid**p * np.exp(-(r_grid / R)**n)
     cdf_r = cumulative_simpson(pi_r, x=r_grid, initial=0)
-    cdf_r /= cdf_r[-1]
-    return np.interp(gen.uniform(), cdf_r, r_grid)
+    Z = cdf_r[-1]
+    return cdf_r / Z, Z
 
 
 def gen_TFR_mock(nsamples, r_grid, Vext_mag, Vext_ell, Vext_b, sigma_v, beta,
@@ -35,45 +35,65 @@ def gen_TFR_mock(nsamples, r_grid, Vext_mag, Vext_ell, Vext_b, sigma_v, beta,
                  zeropoint_dipole_ell, zeropoint_dipole_b, h, e_mag,
                  eta_prior_mean, eta_prior_std, e_eta, b_min, zcmb_max,
                  R, p, n, field_loader, r2distmod, r2z, Om=0.3, seed=42,
-                 verbose=True):
+                 los_oversample=10, verbose=True):
     """
     Generate a mock TFR survey with distances sampled from an empirical
     distribution, without any further selection effects.
     """
     gen = np.random.default_rng(seed)
 
-    # Sample the sky-coordinates of the sample.
-    ell = gen.uniform(0, 360, size=nsamples)
+    # Oversample LOS uniformly on the sky; we will importance-resample below
+    # so that overdense lines of sight are drawn more often, recovering the
+    # joint p(r, n̂) ∝ (1 + b1·δ(r,n̂)) r^p exp[-(r/R)^n].
+    ncand = nsamples * los_oversample
+    ell = gen.uniform(0, 360, size=ncand)
     if b_min is None:
-        b = np.arcsin(gen.uniform(-1, 1, size=nsamples))
+        b = np.arcsin(gen.uniform(-1, 1, size=ncand))
     else:
-        b = np.arcsin(gen.uniform(np.sin(np.deg2rad(b_min)), 1, size=nsamples))
-        b[gen.random(nsamples) < 0.5] *= -1
+        b = np.arcsin(gen.uniform(np.sin(np.deg2rad(b_min)), 1, size=ncand))
+        b[gen.random(ncand) < 0.5] *= -1
 
     b = np.rad2deg(b)
-    RA, dec = galactic_to_radec(ell, b)
-    rhat = radec_to_cartesian(RA, dec)
-
-    Vext = Vext_mag * galactic_to_radec_cartesian(Vext_ell, Vext_b)
-    Vext_rad = np.sum(Vext[None, :] * rhat, axis=1)
+    RA_c, dec_c = galactic_to_radec(ell, b)
 
     if field_loader is not None:
-        los_density, los_velocity = interpolate_los_density_velocity(
-            field_loader, r_grid, RA, dec, verbose=False)
+        los_density_c, los_velocity_c = interpolate_los_density_velocity(
+            field_loader, r_grid, RA_c, dec_c, verbose=False)
     else:
-        los_density = np.ones((nsamples, len(r_grid)))
-        los_velocity = np.zeros_like(los_density)
+        los_density_c = np.ones((ncand, len(r_grid)))
+        los_velocity_c = np.zeros_like(los_density_c)
 
-    r = np.full(nsamples, np.nan)
-    Vpec = np.full(nsamples, np.nan)
     if beta == 0:
         b1 = 0.
     else:
         b1 = Om**0.5 / beta
-    for i in range(nsamples):
-        Vpec[i] = Vext_rad[i]
-        r[i] = sample_distance(r_grid, los_density[i], b1, R, p, n, gen)
-        Vpec[i] += beta * np.interp(r[i], r_grid, los_velocity[i])
+
+    cdf_c = np.empty((ncand, len(r_grid)))
+    Z_c = np.empty(ncand)
+    for i in range(ncand):
+        cdf_c[i], Z_c[i] = los_distance_cdf(
+            r_grid, los_density_c[i], b1, R, p, n)
+
+    # SIR step: weight each candidate by Z(n̂) = ∫ pi_r dr.
+    w = Z_c / Z_c.sum()
+    idx = gen.choice(ncand, size=nsamples, replace=True, p=w)
+
+    RA = RA_c[idx]
+    dec = dec_c[idx]
+    rhat = radec_to_cartesian(RA, dec)
+    los_density = los_density_c[idx]
+    los_velocity = los_velocity_c[idx]
+
+    Vext = Vext_mag * galactic_to_radec_cartesian(Vext_ell, Vext_b)
+    Vext_rad = np.sum(Vext[None, :] * rhat, axis=1)
+
+    # Fresh r-draw per selected LOS from its conditional CDF.
+    u = gen.uniform(size=nsamples)
+    r = np.empty(nsamples)
+    Vpec = np.empty(nsamples)
+    for i, j in enumerate(idx):
+        r[i] = np.interp(u[i], cdf_c[j], r_grid)
+        Vpec[i] = Vext_rad[i] + beta * np.interp(r[i], r_grid, los_velocity[i])
 
     eta = gen.normal(eta_prior_mean, eta_prior_std, size=nsamples)
     eta_obs = gen.normal(eta, e_eta, size=nsamples)

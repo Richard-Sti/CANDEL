@@ -84,17 +84,31 @@ COLS = ["#87193d", "#1e42b9", "#d42a29", "#05dd6b", "#ee35d5", "#f5c000"]
 SURVEY_LABELS = ["CF4 TFR W1", "CF4 TFR i", "Pantheon+", "SDSS FP", "6dF FP"]
 SURVEY_TAGS = ["CF4_W1", "CF4_i", "PantheonPlus", "SDSS_FP", "6dF_FP"]
 
+# Fixed colour for every sample label, used by all plots so the same
+# survey/joint chain always gets the same colour. The two joint variants
+# share a colour because they appear in disjoint plots (one swaps for
+# the other).
+LABEL_COLORS = {
+    "Joint TFR + SNe": COLS[0],
+    "Joint (no 6dF)":  COLS[0],
+    "CF4 TFR W1":      COLS[1],
+    "CF4 TFR i":       COLS[2],
+    "Pantheon+":       COLS[3],
+    "SDSS FP":         COLS[4],
+    "6dF FP":          COLS[5],
+}
+
 
 def _per_survey_runs(bias):
     return [(f"precomputed_los_Carrick2015_{tag}_{bias}.hdf5", lab)
             for tag, lab in zip(SURVEY_TAGS, SURVEY_LABELS)]
 
 
-# Joint run with per-survey Vext (Vext NOT shared, only sigma_v + beta shared).
-# This is the configuration recommended by the referee.
+# Joint run with per-survey Vext (Vext NOT shared, only beta + sigma_v shared).
+# Currently CF4 TFR (W1, i) + Pantheon+; FP catalogues dropped.
 def _joint_run(bias):
-    return (f"precomputed_los_Carrick2015_CF4_W1,CF4_i,6dF_FP,SDSS_FP,"
-            f"PantheonPlus_{bias}_shared-sigma_v+beta.hdf5")
+    return (f"precomputed_los_Carrick2015_CF4_i,CF4_W1,"
+            f"PantheonPlus_{bias}_shared-beta+sigma_v.hdf5")
 
 
 # Extra joint variants that drop one or both FP catalogues. These runs
@@ -115,7 +129,7 @@ def _joint_variant_run(cats, bias):
 # Effective survey redshifts (computed once and cached).
 # NOTE: "Joint (no 6dF)" reuses the 5-survey joint value as a placeholder;
 # recompute properly when convenient.
-ZEFF = {"Joint":           0.030413097,
+ZEFF = {"Joint TFR + SNe": 0.02028967,
         "Joint (no 6dF)":  0.030413097,
         "CF4 TFR W1":      0.01655924,
         "CF4 TFR i":       0.02208739,
@@ -243,12 +257,20 @@ def _joint_variant_rows(beta2cosmo, bias):
     return rows
 
 
+def _joint_files_present(bias):
+    """Return (have_main_joint, have_variants) for ``bias``."""
+    main = exists(join(ROOT, _joint_run(bias)))
+    var = all(exists(join(ROOT, _joint_variant_run(c, bias)))
+              for _, c in JOINT_VARIANTS)
+    return main, var
+
+
 def collect_S8_and_fs8(fnames, labels, beta2cosmo, joint=True,
                        bias="linear"):
     """Return ``(beta_list, S8_list, fs8_list, labels_with_joint)``.
 
     If ``joint`` is True, the joint-run derived posteriors are prepended
-    with label ``"Joint"``.
+    with label ``"Joint TFR + SNe"``.
     """
     beta_list = get_key_all(fnames, "beta")
     S8_list = compute_S8_all(fnames, beta2cosmo)
@@ -261,7 +283,7 @@ def collect_S8_and_fs8(fnames, labels, beta2cosmo, joint=True,
         beta_list = [beta_joint] + beta_list
         S8_list = [S8_joint] + S8_list
         fs8_list = [fs8_joint] + fs8_list
-        labels = ["Joint"] + list(labels)
+        labels = ["Joint TFR + SNe"] + list(labels)
 
     return beta_list, S8_list, fs8_list, labels
 
@@ -277,32 +299,42 @@ def print_table_b1_beta_S8(fnames, labels, beta_list, S8_list, fs8_list,
 
     ``extra_joint_rows`` is an optional list of
     ``(label, beta, S8, fs8)`` tuples for additional joint variants that
-    are appended after the main "Joint" row (b1 and z_eff print as '-').
+    are appended after the main "Joint TFR + SNe" row (b1 and z_eff print as '-').
     """
     b1_list = get_key_all(fnames, "b1")
+    with File(fnames[0], "r") as _f:
+        has_b2 = "b2" in _f["samples"]
+    b2_list = get_key_all(fnames, "b2") if has_b2 else None
     fmt_pm = lambda mu, sd: f"{mu:.3f} +/- {sd:.3f}"
     extra_widths = [len(l) for l, *_ in (extra_joint_rows or [])]
     lab_w = max([12, *extra_widths])
-    header = (f"{'Sample':<{lab_w}} {'z_eff':>6}  {'b1':>16}  "
+    b2_col = f"  {'b2':>16}" if has_b2 else ""
+    header = (f"{'Sample':<{lab_w}} {'z_eff':>6}  {'b1':>16}{b2_col}  "
               f"{'beta*':>16}  {'S8':>16}  {'fsigma8_L':>16}")
     sep = "-" * len(header)
-    print(f"\n=== {title}: b1, beta*, S8, fsigma8_L ===")
+    print(f"\n=== {title}: "
+          f"b1, {'b2, ' if has_b2 else ''}beta*, S8, fsigma8_L ===")
     print(header)
     print(sep)
-    for lab, b1 in zip(labels, b1_list):
+    for k, (lab, b1) in enumerate(zip(labels, b1_list)):
         i = all_labels.index(lab)
+        b2_cell = (f"  {fmt_pm(np.mean(b2_list[k]), np.std(b2_list[k])):>16}"
+                   if has_b2 else "")
         print(f"{lab:<{lab_w}} {ZEFF[lab]:>6.3f}  "
-              f"{fmt_pm(np.mean(b1), np.std(b1)):>16}  "
+              f"{fmt_pm(np.mean(b1), np.std(b1)):>16}{b2_cell}  "
               f"{fmt_pm(np.mean(beta_list[i]), np.std(beta_list[i])):>16}  "
               f"{fmt_pm(np.mean(S8_list[i]), np.std(S8_list[i])):>16}  "
               f"{fmt_pm(np.mean(fs8_list[i]), np.std(fs8_list[i])):>16}")
-    i = all_labels.index("Joint")
-    print(f"{'Joint':<{lab_w}} {ZEFF['Joint']:>6.3f}  {'-':>16}  "
-          f"{fmt_pm(np.mean(beta_list[i]), np.std(beta_list[i])):>16}  "
-          f"{fmt_pm(np.mean(S8_list[i]), np.std(S8_list[i])):>16}  "
-          f"{fmt_pm(np.mean(fs8_list[i]), np.std(fs8_list[i])):>16}")
+    dash16 = f"  {'-':>16}" if has_b2 else ""
+    if "Joint TFR + SNe" in all_labels:
+        i = all_labels.index("Joint TFR + SNe")
+        print(f"{'Joint TFR + SNe':<{lab_w}} "
+              f"{ZEFF['Joint TFR + SNe']:>6.3f}  {'-':>16}{dash16}  "
+              f"{fmt_pm(np.mean(beta_list[i]), np.std(beta_list[i])):>16}  "
+              f"{fmt_pm(np.mean(S8_list[i]), np.std(S8_list[i])):>16}  "
+              f"{fmt_pm(np.mean(fs8_list[i]), np.std(fs8_list[i])):>16}")
     for lab, beta, S8, fs8 in extra_joint_rows or []:
-        print(f"{lab:<{lab_w}} {'-':>6}  {'-':>16}  "
+        print(f"{lab:<{lab_w}} {'-':>6}  {'-':>16}{dash16}  "
               f"{fmt_pm(np.mean(beta), np.std(beta)):>16}  "
               f"{fmt_pm(np.mean(S8), np.std(S8)):>16}  "
               f"{fmt_pm(np.mean(fs8), np.std(fs8)):>16}")
@@ -353,17 +385,17 @@ def plot_s8_posterior(S8_list, labels, savedir):
 
     # Drop the joint chain — dominated by SDSS, so leave only per-survey.
     pairs = [(S8, lab) for S8, lab in zip(S8_list, labels)
-             if lab != "Joint"]
+             if lab != "Joint TFR + SNe"]
 
     with plt.style.context("science"):
         fig, ax = plt.subplots(figsize=(6.4, 3.5))
-        for i, (S8, lab) in enumerate(pairs):
+        for S8, lab in pairs:
             agr = posterior_agreement.compute_agreement(
                 (planck, S8)).sigma
             print(f"  {lab:<12} S8 = {np.mean(S8):.3f} ± {np.std(S8):.3f} "
                   f"| {agr:.2f} σ from Planck")
             zo = 0 if lab == "6dF FP" else 1
-            sns.kdeplot(S8, label=lab, fill=True, color=COLS[i],
+            sns.kdeplot(S8, label=lab, fill=True, color=LABEL_COLORS[lab],
                         bw_method=bw, ax=ax, zorder=zo)
 
         planck_band = ax.axvspan(mu - sig, mu + sig, color="k", alpha=0.45,
@@ -530,7 +562,7 @@ def plot_vext_corner(fnames, labels, savedir):
         fontsize=18,
         filled=True,
         labels=labels,
-        cols=COLS[1:1 + len(fnames)],   # skip "Joint" colour
+        cols=[LABEL_COLORS[l] for l in labels],
         keys=["Vext_mag", "Vext_ell", "Vext_b"],
         filename=out,
         show_fig=False,
@@ -557,19 +589,20 @@ def plot_fs8_z(fs8_list, labels, savedir, fs8_list_q=None):
     with plt.style.context("science"):
         fig, ax = plt.subplots(figsize=(6.4, 3.5))
         q_alpha = 0.45
-        for i, (fs8, lab) in enumerate(zip(fs8_list, labels)):
-            if lab in {"Joint", "Joint (no 6dF)"}:
+        for fs8, lab in zip(fs8_list, labels):
+            if lab == "Joint (no 6dF)":
                 continue
             ax.errorbar(ZEFF[lab], np.median(fs8), yerr=np.std(fs8),
-                        fmt="o", capsize=3, color=COLS[i], label=lab)
+                        fmt="o", capsize=3, color=LABEL_COLORS[lab],
+                        label=lab)
         if fs8_list_q is not None:
-            for i, (fs8q, lab) in enumerate(zip(fs8_list_q, labels)):
-                if lab in {"Joint", "Joint (no 6dF)"}:
+            for fs8q, lab in zip(fs8_list_q, labels):
+                if lab == "Joint (no 6dF)":
                     continue
-                ax.errorbar(ZEFF[lab] * 1.05, np.median(fs8q),
+                ax.errorbar(ZEFF[lab] * 1.035, np.median(fs8q),
                             yerr=np.std(fs8q), fmt="s", capsize=3,
-                            mfc="none", color=COLS[i], linestyle="--",
-                            alpha=q_alpha)
+                            mfc="none", color=LABEL_COLORS[lab],
+                            linestyle="--", alpha=q_alpha)
         band = ax.fill_between(z, lo, hi, alpha=0.3)
         ax.plot(z, mid)
 
@@ -582,7 +615,7 @@ def plot_fs8_z(fs8_list, labels, savedir, fs8_list_q=None):
 
         ax.set_xlabel(r"$z$")
         ax.set_ylabel(r"$f\sigma_8(z)$")
-        ax.set_xlim(z.min(), z.max())
+        ax.set_xlim(z.min(), 0.041)
 
         # This work above the panel, left-aligned with axes; on the
         # right (same y) a small legend distinguishing linear vs
@@ -592,7 +625,7 @@ def plot_fs8_z(fs8_list, labels, savedir, fs8_list_q=None):
                 if l not in literature]
         leg1 = ax.legend([h for h, _ in keep], [l for _, l in keep],
                          loc="lower left", bbox_to_anchor=(0.0, 1.02),
-                         ncol=3, fontsize=8, frameon=False)
+                         ncol=3, fontsize="small", frameon=False)
         ax.add_artist(leg1)
 
         extra_artists = [leg1]
@@ -600,19 +633,22 @@ def plot_fs8_z(fs8_list, labels, savedir, fs8_list_q=None):
             from matplotlib.lines import Line2D
             bias_handles = [
                 Line2D([], [], marker="o", color="0.3", linestyle="-",
-                       label="linear"),
+                       label="Linear"),
                 Line2D([], [], marker="s", mfc="none", color="0.3",
-                       linestyle="--", alpha=q_alpha, label="quadratic"),
+                       linestyle="--", alpha=q_alpha, label="Quadratic"),
             ]
             leg_bias = ax.legend(handles=bias_handles, loc="lower right",
-                                 bbox_to_anchor=(1.0, 1.02), fontsize=8,
-                                 frameon=False)
+                                 bbox_to_anchor=(1.0, 1.02),
+                                 fontsize="small", frameon=False)
             ax.add_artist(leg_bias)
             extra_artists.append(leg_bias)
 
+        from matplotlib.transforms import blended_transform_factory
+        trans = blended_transform_factory(ax.transData, ax.transAxes)
         leg2 = ax.legend(lit_handles, list(literature.keys()),
-                         loc="lower right", fontsize="x-small", ncol=1,
-                         frameon=True)
+                         loc="lower left", bbox_to_anchor=(0.02, 0.0),
+                         bbox_transform=trans,
+                         fontsize="small", ncol=1, frameon=True)
         extra_artists.append(leg2)
         ax.text(0.02, 0.98, r"$\Lambda$CDM (Planck)",
                 transform=ax.transAxes, ha="left", va="top",
@@ -625,11 +661,73 @@ def plot_fs8_z(fs8_list, labels, savedir, fs8_list_q=None):
         print(f"  saved {out}")
 
 
+def plot_b1_beta(savedir, b1_min=0.25):
+    """Plot beta* vs fixed b1 bands for runs with scanned b1.
+
+    Reads only ``beta`` from each ``*_linear_b1_*.hdf5`` file and draws a
+    +/-1 sigma band per survey. Uses the same per-survey colour as the
+    rest of the figures.
+    """
+    from glob import glob
+
+    surveys = [("CF4 TFR W1", "CF4_W1"), ("SDSS FP", "SDSS_FP")]
+    fid_files = {tag: f"precomputed_los_Carrick2015_{tag}_linear.hdf5"
+                 for _, tag in surveys}
+
+    with plt.style.context("science"):
+        fig, ax = plt.subplots(figsize=(3.5, 0.75 * 3.5))
+        b1_lo, b1_hi = np.inf, -np.inf
+        for label, tag in surveys:
+            patt = join(ROOT,
+                        f"precomputed_los_Carrick2015_{tag}_linear_b1_*.hdf5")
+            files = glob(patt)
+            if not files:
+                print(f"  [skip] no b1 scan files for {label}")
+                continue
+            b1, mu, sd = [], [], []
+            for f in files:
+                v = float(f.split("_b1_")[-1].split(".hdf5")[0])
+                with File(f, "r") as h:
+                    beta = h["samples"]["beta"][...]
+                b1.append(v)
+                mu.append(np.mean(beta))
+                sd.append(np.std(beta))
+            b1 = np.array(b1); mu = np.array(mu); sd = np.array(sd)
+            k = np.argsort(b1)
+            b1, mu, sd = b1[k], mu[k], sd[k]
+            m = b1 >= b1_min
+            b1, mu, sd = b1[m], mu[m], sd[m]
+            c = LABEL_COLORS[label]
+            ax.fill_between(b1, mu - sd, mu + sd, color=c, alpha=0.3,
+                            label=label)
+            b1_lo = min(b1_lo, b1.min())
+            b1_hi = max(b1_hi, b1.max())
+
+            fid = join(ROOT, fid_files[tag])
+            if exists(fid):
+                with File(fid, "r") as h:
+                    b1f = h["samples"]["b1"][...]
+                    bf = h["samples"]["beta"][...]
+                ax.errorbar(np.mean(b1f), np.mean(bf), yerr=np.std(bf),
+                            fmt="o", ms=2.5, capsize=3, color=c, zorder=10)
+
+        ax.set_xlim(b1_lo, b1_hi)
+        ax.set_xlabel(r"$b_1$")
+        ax.set_ylabel(r"$\beta^\star$")
+        ax.legend()
+        fig.tight_layout()
+        out = join(savedir, "b1_beta.pdf")
+        fig.savefig(out, bbox_inches="tight", dpi=450)
+        plt.close(fig)
+        print(f"  saved {out}")
+
+
 # -----------------------------------------------------------------------------
 # Main
 # -----------------------------------------------------------------------------
 
-ALL_PLOTS = ["s8_posterior", "s8_comparison", "vext_corner", "fs8_z"]
+ALL_PLOTS = ["s8_posterior", "s8_comparison", "vext_corner", "fs8_z",
+             "b1_beta"]
 
 
 def main():
@@ -666,10 +764,23 @@ def main():
     # Plots that need posteriors (beta/S8/fs8) — load lazily.
     needs_posterior = {"s8_posterior", "s8_comparison", "fs8_z"}
     S8_list_q = fs8_list_q = None
+    extra_rows = extra_rows_q = []
+    have_joint = have_variants = False
+    S8_list = fs8_list = beta_list = None
+    all_labels = list(labels)
     if needs_posterior & set(plots):
+        have_joint, have_variants = _joint_files_present(primary)
+        if not have_joint:
+            print(f"  [skip] joint run for '{primary}' missing — "
+                  "per-survey only.")
+        if not have_variants:
+            print(f"  [skip] joint variants for '{primary}' missing — "
+                  "no 'no 6dF'/'no 6dF, no SDSS' rows.")
+
         beta_list, S8_list, fs8_list, all_labels = collect_S8_and_fs8(
-            fnames, labels, beta2cosmo, joint=True, bias=primary)
-        extra_rows = _joint_variant_rows(beta2cosmo, primary)
+            fnames, labels, beta2cosmo, joint=have_joint, bias=primary)
+        if have_variants:
+            extra_rows = _joint_variant_rows(beta2cosmo, primary)
         print_table_b1_beta_S8(fnames, labels, beta_list, S8_list,
                                fs8_list, all_labels,
                                title=f"Table 1 [{primary}]",
@@ -678,11 +789,17 @@ def main():
                             title=f"Table 2 [{primary}]")
 
         if args.bias == "both":
+            have_joint_q, have_variants_q = _joint_files_present("quadratic")
+            if not have_joint_q:
+                print("  [skip] joint run for 'quadratic' missing.")
+            if not have_variants_q:
+                print("  [skip] joint variants for 'quadratic' missing.")
             fnames_q, labels_q = load_per_survey("quadratic")
             beta_list_q, S8_list_q, fs8_list_q, all_labels_q = (
                 collect_S8_and_fs8(fnames_q, labels_q, beta2cosmo,
-                                   joint=True, bias="quadratic"))
-            extra_rows_q = _joint_variant_rows(beta2cosmo, "quadratic")
+                                   joint=have_joint_q, bias="quadratic"))
+            if have_variants_q:
+                extra_rows_q = _joint_variant_rows(beta2cosmo, "quadratic")
             print_table_b1_beta_S8(fnames_q, labels_q, beta_list_q,
                                    S8_list_q, fs8_list_q, all_labels_q,
                                    title="Table 1 [quadratic]",
@@ -690,23 +807,24 @@ def main():
             print_table_tension(labels_q, S8_list_q, all_labels_q,
                                 title="Table 2 [quadratic]")
 
-    # For fs8_z and s8_comparison, replace the 5-survey "Joint" entry
+    # For fs8_z and s8_comparison, replace the 5-survey "Joint TFR + SNe" entry
     # with the "Joint (no 6dF)" variant. Returns a new list with the
-    # entry at the "Joint" index replaced by ``new_value``; labels list
+    # entry at the "Joint TFR + SNe" index replaced by ``new_value``; labels list
     # gets the variant name.
     def _swap_joint(values, rows, field):
         no6df = next(r for r in rows if r[0] == "Joint (no 6dF)")
         idx = {"S8": 2, "fs8": 3}[field]
         out = list(values)
-        out[all_labels.index("Joint")] = no6df[idx]
+        out[all_labels.index("Joint TFR + SNe")] = no6df[idx]
         return out
 
-    labs_swap = ["Joint (no 6dF)" if l == "Joint" else l for l in all_labels]
+    labs_swap = ["Joint (no 6dF)" if l == "Joint TFR + SNe" else l for l in all_labels]
 
     plot_files = {"s8_posterior":  "S8_posterior.pdf",
                   "s8_comparison": "S8_comparison.pdf",
                   "vext_corner":   "Vext.pdf",
-                  "fs8_z":         "fs8_z.pdf"}
+                  "fs8_z":         "fs8_z.pdf",
+                  "b1_beta":       "b1_beta.pdf"}
     saved = []
 
     for p in plots:
@@ -714,19 +832,29 @@ def main():
         if p == "s8_posterior":
             plot_s8_posterior(S8_list, all_labels, args.savedir)
         elif p == "s8_comparison":
-            S8_swap = _swap_joint(S8_list, extra_rows, "S8")
-            keep = [i for i, l in enumerate(labs_swap)
-                    if l != "Joint (no 6dF)"]
-            plot_s8_comparison([S8_swap[i] for i in keep],
-                               [labs_swap[i] for i in keep],
-                               args.savedir, S8_list_q=None)
+            if have_variants:
+                S8_swap = _swap_joint(S8_list, extra_rows, "S8")
+                keep = [i for i, l in enumerate(labs_swap)
+                        if l != "Joint (no 6dF)"]
+                plot_s8_comparison([S8_swap[i] for i in keep],
+                                   [labs_swap[i] for i in keep],
+                                   args.savedir, S8_list_q=None)
+            else:
+                plot_s8_comparison(S8_list, all_labels, args.savedir,
+                                   S8_list_q=None)
         elif p == "vext_corner":
             plot_vext_corner(fnames, labels, args.savedir)
+        elif p == "b1_beta":
+            plot_b1_beta(args.savedir)
         elif p == "fs8_z":
-            fs8_swap_q = (_swap_joint(fs8_list_q, extra_rows_q, "fs8")
-                          if fs8_list_q is not None else None)
-            plot_fs8_z(_swap_joint(fs8_list, extra_rows, "fs8"),
-                       labs_swap, args.savedir, fs8_list_q=fs8_swap_q)
+            if have_variants:
+                fs8_swap_q = (_swap_joint(fs8_list_q, extra_rows_q, "fs8")
+                              if fs8_list_q is not None else None)
+                plot_fs8_z(_swap_joint(fs8_list, extra_rows, "fs8"),
+                           labs_swap, args.savedir, fs8_list_q=fs8_swap_q)
+            else:
+                plot_fs8_z(fs8_list, all_labels, args.savedir,
+                           fs8_list_q=fs8_list_q)
         saved.append((p, join(args.savedir, plot_files[p])))
 
     print("\n=== Saved plots ===")

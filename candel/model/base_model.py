@@ -642,6 +642,7 @@ class H0ModelBase(ModelBase):
             "linear_from_beta_stochastic": {"delta_b1"},
             "double_powerlaw": {"alpha_low", "alpha_high", "log_rho_t"},
             "quadratic": {"b1", "b2"},
+            "cubic": {"b1", "b2", "b3"},
         }
         required = _required.get(which_bias, set())
 
@@ -652,7 +653,7 @@ class H0ModelBase(ModelBase):
                         f"Bias model '{which_bias}' requires prior "
                         f"[model.priors.{param}] but none was found.")
 
-        bias_defaults = {"b1": 1.0, "b2": 0.0, "alpha": 1.0,
+        bias_defaults = {"b1": 1.0, "b2": 0.0, "b3": 0.0, "alpha": 1.0,
                          "delta_b1": 0.0}
         for param, default in bias_defaults.items():
             if param not in priors:

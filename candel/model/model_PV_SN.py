@@ -101,4 +101,4 @@ class SNModel(BasePVModel):
             ll = self._marginalize_over_r(ll, r_grid)
             ll += log_ev_obs
 
-            self._average_fields_and_factor(ll, data)
+        self._average_fields_and_factor(ll, data)

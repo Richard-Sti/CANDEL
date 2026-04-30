@@ -16,6 +16,7 @@
 Base classes for peculiar velocity (PV) forward models.
 """
 import jax.numpy as jnp
+from jax import lax
 from jax.scipy.special import logsumexp
 from numpyro import deterministic, factor, handlers
 
@@ -23,10 +24,9 @@ from ..util import fprint, get_nested
 from .base_model import ModelBase
 from .integration import simpson_log_weights
 from .pv_utils import (_rsample, compute_Vext_radial, lp_galaxy_bias, rsample,
-                       sample_distance_prior, sample_galaxy_bias, sample_Vext,
-                       sigma_v_from_density, sumzero_basis)
-from .utils import (joint_config_mismatch, log_prior_r_empirical,
-                    normal_logpdf_var, predict_cz)
+                       sample_distance_prior_volume, sample_galaxy_bias,
+                       sample_Vext, sigma_v_from_density, sumzero_basis)
+from .utils import joint_config_mismatch, normal_logpdf_var, predict_cz
 
 
 class BasePVModel(ModelBase):
@@ -100,7 +100,7 @@ class BasePVModel(ModelBase):
         if self.galaxy_bias not in ["unity", "powerlaw", "linear",
                                     "linear_from_beta",
                                     "linear_from_beta_stochastic",
-                                    "double_powerlaw", "quadratic"]:
+                                    "double_powerlaw", "quadratic", "cubic"]:
             raise ValueError(
                 f"Invalid galaxy bias model '{self.galaxy_bias}'.")
         self.quadratic_bias_delta0 = get_nested(
@@ -131,7 +131,7 @@ class BasePVModel(ModelBase):
                f"{self.density_dependent_sigma_v}")
 
     def _sample_common_params(self, shared_params):
-        kwargs_dist = sample_distance_prior(self.priors)
+        kwargs_dist = sample_distance_prior_volume(self.priors)
         h = 1.
         Vext = sample_Vext(
             self.priors, self.which_Vext, shared_params, self.kwargs_Vext)
@@ -164,25 +164,101 @@ class BasePVModel(ModelBase):
             return data._simpson_log_w
         return simpson_log_weights(r_grid)
 
-    def _setup_lp_dist_and_Vrad(self, data, r_grid, kwargs_dist, beta,
-                                bias_params):
-        lp_dist = log_prior_r_empirical(
-            r_grid, **kwargs_dist, Rmax_grid=r_grid[-1])[None, None, :]
+    def _expected_volume_density_mode(self):
+        return ("log_rho" if self.galaxy_bias in
+                ("powerlaw", "double_powerlaw") else "delta")
 
-        if data.has_precomputed_los:
-            Vrad = beta * data["los_velocity_r_grid"]
-            lp_dist += lp_galaxy_bias(
-                data["los_delta_r_grid"],
-                data["los_log_density_r_grid"],
+    def _validate_volume_normalized_prior_data(self, data):
+        if not data.has_precomputed_los:
+            raise ValueError(
+                "Volume-normalized empirical prior requires precomputed LOS "
+                "data (`pv_model.kind = precomputed_los_<X>`).")
+
+        if not getattr(data, "has_volume_density_3d", False):
+            raise ValueError(
+                "Volume-normalized empirical prior requires a 3D density "
+                "cube; call `attach_volume_density_3d` (handled in "
+                "`PVDataFrame.from_config_dict` for supported catalogues).")
+
+        density_mode = data.density_3d_mode
+        expected_mode = self._expected_volume_density_mode()
+        if density_mode != expected_mode:
+            raise ValueError(
+                "3D density representation does not match galaxy bias model: "
+                f"{density_mode} for {self.galaxy_bias}.")
+
+    def _compute_volume_log_N(self, data, kwargs_dist, bias_params):
+        """Compute the empirical prior 3D normalizer per field realization."""
+        self._validate_volume_normalized_prior_data(data)
+
+        R = kwargs_dist["R"]
+        q = kwargs_dist["q"]
+        log_R = jnp.log(R)
+        density_mode = data.density_3d_mode
+        log_r_3d = data["log_r_3d"]
+
+        def _log_N_one(density_3d):
+            if density_mode == "log_rho":
+                delta_3d = 0.0
+                log_rho_3d = density_3d
+            else:
+                delta_3d = density_3d
+                log_rho_3d = 0.0
+            log_n_3d = lp_galaxy_bias(
+                delta_3d, log_rho_3d,
                 bias_params, self.galaxy_bias,
                 self.quadratic_bias_delta0)
-            log_w_r = self._get_simpson_log_w(data, r_grid)
-            lp_dist -= logsumexp(
-                lp_dist + log_w_r[None, None, :], axis=-1)[..., None]
-        else:
-            Vrad = 0.
+            log_f_3d = -jnp.exp(q * (log_r_3d - log_R))
+            return logsumexp(log_n_3d + log_f_3d) + data.log_dV_3d
 
-        return lp_dist, Vrad
+        log_N = lax.map(
+            _log_N_one,
+            data["density_3d_fields"],
+            batch_size=data.volume_density_batch_size)
+
+        if log_N.shape[0] != data.num_fields:
+            raise ValueError(
+                "Number of 3D density normalizers does not match LOS field "
+                f"realisations: {log_N.shape[0]} != {data.num_fields}.")
+
+        return log_N
+
+    def _setup_lp_dist_and_Vrad(self, data, r_grid, kwargs_dist, beta,
+                                bias_params):
+        r"""Volume-normalized empirical distance prior.
+
+        Treats each source's 3D position as drawn from
+        :math:`\tilde\pi(\mathbf{x}) \propto n(\mathbf{x})\,\exp(-(|\mathbf{x}|/R)^q)`,
+        with `n` the bias-applied galaxy number density. The normalizer is a
+        single 3D volume integral shared across sources (per field
+        realization), and the per-LOS integrand picks up the radial Jacobian
+        :math:`r^2`.
+        """
+        self._validate_volume_normalized_prior_data(data)
+
+        R = kwargs_dist["R"]
+        q = kwargs_dist["q"]
+        log_R = jnp.log(R)
+
+        Vrad = beta * data["los_velocity_r_grid"]
+
+        # Per-source LOS integrand: log n(r,θ_s) + log f(r) + 2 log r.
+        log_n_los = lp_galaxy_bias(
+            data["los_delta_r_grid"],
+            data["los_log_density_r_grid"],
+            bias_params, self.galaxy_bias,
+            self.quadratic_bias_delta0)
+        log_f_los = -jnp.exp(q * (data["log_r_grid"] - log_R))
+        lp_los = log_n_los + (log_f_los + data["log_jac_los"])[None, None, :]
+
+        # Global 3D normalization, one scalar per field realisation:
+        #   log N_f = logsumexp(log n_f + log f_f) + log dV_f.
+        # `lax.map` keeps the reduction chunked over field realisations, avoiding
+        # a full-field vmap and the corresponding `(nfield, nx, ny, nz)`
+        # intermediate arrays.
+        log_N = self._compute_volume_log_N(data, kwargs_dist, bias_params)
+
+        return lp_los - log_N[:, None, None], Vrad
 
     def _compute_ll_cz(self, data, r_grid, h, Vext, sigma_v, Vrad):
         Vext_rad = compute_Vext_radial(
@@ -210,7 +286,7 @@ class BasePVModel(ModelBase):
     def _average_fields_and_factor(self, ll, data,
                                    log_density_per_sample=None):
         ll = logsumexp(ll, axis=0) - jnp.log(data.num_fields)
-        factor("ll_obs", ll)
+        factor("ll_obs", ll.sum())
 
         if self.track_log_density_per_sample and log_density_per_sample is not None:  # noqa
             log_density_per_sample += ll

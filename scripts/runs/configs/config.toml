@@ -38,6 +38,7 @@ r_limits_malmquist = "auto"
 dr_malmquist = 0.3
 
 los_decay_scale = 10.0
+density_3d_normalizer_batch_size = 1
 
 Vext_per_pix_nside = "none"
 which_distance_prior = "empirical"
@@ -111,8 +112,15 @@ low = 0.0
 high = 10.0
 
 [model.priors.b2]
-dist = "normal"
-loc = 0
+dist = "truncated_normal"
+low = 0.0
+mean = 0.0
+scale = 1.0
+
+[model.priors.b3]
+dist = "truncated_normal"
+low = 0.0
+mean = 0.0
 scale = 1.0
 
 [model.priors.delta_b1]
@@ -353,13 +361,8 @@ dist = "uniform"
 low = 1.0
 high = 300
 
-[model.priors.p_dist_emp]
-dist = "truncated_normal"
-low = 0.0
-mean = 2.0
-scale = 0.1
-
-[model.priors.n_dist_emp]
+# Volume-normalized empirical prior cutoff exponent: f(r) = exp(-(r/R)^q).
+[model.priors.q_dist_emp]
 dist = "truncated_normal"
 low = 0.0
 mean = 1.0

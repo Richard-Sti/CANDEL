@@ -228,6 +228,7 @@ def load_config(config_path, replace_none=True, fill_paths=True,
         config = replace_prior_with_delta(config, "beta", 0.)
         config = replace_prior_with_delta(config, "b1", 0.)
         config = replace_prior_with_delta(config, "b2", 0.)
+        config = replace_prior_with_delta(config, "b3", 0.)
         config = replace_prior_with_delta(config, "delta_b1", 0.)
 
     # Convert relative paths to absolute paths
@@ -434,6 +435,7 @@ def name2label(name):
         "log_rho_t": r"$\ln \rho_t$",
         "b1": r"$b_1$",
         "b2": r"$b_2$",
+        "b3": r"$b_3$",
         "beta": r"$\beta$",
         "Vext_mag": r"$V_\mathrm{ext}$",
         "Vext_ell": r"$\ell_\mathrm{ext}$",
@@ -459,8 +461,7 @@ def name2label(name):
         "sigma_log_theta": r"$\sigma_{\log \theta}$",
         "R_dust": r"$R_{\rm W1}$",
         "R_dist_emp": r"$R_{\rm dist}$",
-        "n_dist_emp": r"$q_{\rm dist}$",
-        "p_dist_emp": r"$p_{\rm dist}$",
+        "q_dist_emp": r"$q_{\rm dist}$",
         "Rmax_dist_emp": r"$R_{\rm max, dist}$",
         "rho_corr": r"$\rho_{\rm corr}$",
         "Vext_radmag_ell": r"$\ell_{\mathrm{Vext}}$",
@@ -523,6 +524,7 @@ def name2labelgetdist(name):
         "log_rho_t": r"\ln \rho_t",
         "b1": r"b_1",
         "b2": r"b_2",
+        "b3": r"b_3",
         "beta": r"\beta",
         "Vext_mag": r"V_\mathrm{ext}~\left[\mathrm{km}\,\mathrm{s}^{-1}\right]",  # noqa
         "Vext_ell": r"\ell_\mathrm{ext}~\left[\mathrm{deg}\right]",
@@ -553,8 +555,7 @@ def name2labelgetdist(name):
         "H0": r"H_0~\left[\mathrm{km}\,\mathrm{s}^{-1}\,\mathrm{Mpc}^{-1}\right]",  # noqa
         "dZP": r"\Delta_{\rm ZP}",
         "R_dist_emp": r"R~\left[h^{-1}\,\mathrm{Mpc}\right]",
-        "n_dist_emp": r"q",
-        "p_dist_emp": r"p",
+        "q_dist_emp": r"q",
         "rho_corr": r"\rho_{\rm corr}",
     }
 

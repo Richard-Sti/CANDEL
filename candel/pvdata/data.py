@@ -18,6 +18,7 @@ Data loading and preprocessing utilities for peculiar-velocity catalogues.
 Provides dataframe-like containers, LOS interpolation helpers, covariance
 assembly, and catalogue I/O wired to the project config files.
 """
+from itertools import chain
 from os.path import isabs, join
 
 import healpy as hp
@@ -33,12 +34,17 @@ from scipy import linalg
 from scipy.linalg import cholesky
 
 from ..cosmo.cosmography import Redshift2Distance
+from ..field.loader import name2field_loader
 from ..model.integration import simpson_log_weights
 from ..model.interp import LOSInterpolator
 from ..util import (SPEED_OF_LIGHT, fprint, fsection, get_nested,
                     get_root_data, load_config, radec_to_cartesian,
                     radec_to_galactic)
 from .dust import read_dustmap
+
+# Hard cap on the per-axis voxel count — keeps the volume sum cheap and forces
+# the user to coarsen larger native grids.
+_VOLUME_DENSITY_NGRID_MAX = 257
 
 ###############################################################################
 #                            Helper functions                                 #
@@ -56,6 +62,94 @@ def _zcmb_blat_mask(zcmb, RA, dec, zcmb_min=None, zcmb_max=None, b_min=None):
         b = radec_to_galactic(RA, dec)[1]
         mask &= np.abs(b) > b_min
     return mask
+
+
+def _density_unit_normalization(source):
+    """Return the raw-density divisor needed to get dimensionless 1 + delta."""
+    source_str = str(source)
+    source_lower = source_str.lower()
+    source_upper = source_str.upper()
+
+    if "manticore" in source_lower:
+        return 0.306 * 275.4, "Manticore", "Om = 0.306"
+    if source_upper == "CB1" or "_CB1" in source_upper:
+        return 0.307 * 275.4, "CB1", "Om = 0.307"
+    if source_upper == "CB2" or "_CB2" in source_upper:
+        return 0.3111 * 275.4, "CB2", "Om = 0.3111"
+    if source_upper == "HAMLET_V1" or "HAMLET_V1" in source_upper:
+        return 0.3 * 275.4, "HAMLET_V1", "Om = 0.3"
+    return None
+
+
+def _load_volume_density_3d(loader_name, loader_kwargs, downsample=1,
+                            nsim=None):
+    """Load a 3D density cube and return (rho_3d, observer_pos, dx) as NumPy.
+
+    `rho_3d` is dimensionless (1 + δ) on a regular Cartesian grid of side
+    `loader.boxsize` (Mpc/h). `observer_pos` is the observer's position in
+    box coordinates (Mpc/h). `dx` is the voxel side length (Mpc/h).
+
+    `downsample` (int ≥ 1) keeps every Nth voxel along each axis (point
+    subsampling); the voxel side `dx` is rescaled by N. The voxel cap is
+    enforced after downsampling so a finely-sampled native cube can be
+    coarsened to fit.
+    """
+    if not isinstance(downsample, int) or downsample < 1:
+        raise ValueError(
+            f"`density_3d_downsample` must be a positive int, got {downsample!r}.")  # noqa
+
+    loader_kwargs = dict(loader_kwargs)
+    if nsim is not None:
+        loader_kwargs.setdefault("nsim", nsim)
+
+    loader_cls = name2field_loader(loader_name)
+    loader = loader_cls(**loader_kwargs)
+    rho = loader.load_density()
+    norm = _density_unit_normalization(loader_name)
+    if norm is not None:
+        divisor, label, detail = norm
+        fprint(f"  normalizing the {label} 3D density ({detail}).")
+        rho = rho / divisor
+    if rho.ndim != 3 or rho.shape[0] != rho.shape[1] or rho.shape[0] != rho.shape[2]:  # noqa
+        raise ValueError(
+            f"Volume density cube must be cubic 3D, got shape {rho.shape}.")
+
+    dx = float(loader.boxsize) / rho.shape[0]
+    if downsample > 1:
+        rho = rho[::downsample, ::downsample, ::downsample]
+        dx *= downsample
+        fprint(
+            f"  downsampled by factor {downsample} -> shape {rho.shape}, "
+            f"dx = {dx:.4f} Mpc/h.")
+
+    if rho.shape[0] > _VOLUME_DENSITY_NGRID_MAX:
+        raise ValueError(
+            f"Volume density grid {rho.shape} exceeds the per-axis cap of "
+            f"{_VOLUME_DENSITY_NGRID_MAX}; increase `density_3d_downsample`.")
+    obs = np.asarray(loader.observer_pos, dtype=np.float32)
+    return rho.astype(np.float32), obs, dx
+
+
+def _volume_density_geometry(shape, observer_pos, dx):
+    """Return log voxel radius and log voxel volume for one grid geometry."""
+    ngrid = shape[0]
+    ax = (np.arange(ngrid, dtype=np.float32) + 0.5) * dx
+    x = ax[:, None, None] - observer_pos[0]
+    y = ax[None, :, None] - observer_pos[1]
+    z = ax[None, None, :] - observer_pos[2]
+    r_3d = np.sqrt(x * x + y * y + z * z)
+
+    return (
+        jnp.asarray(np.log(np.maximum(r_3d, 0.25 * dx)).astype(np.float32)),
+        float(3.0 * np.log(dx)),
+    )
+
+
+def _volume_density_mode(galaxy_bias):
+    """Minimal density representation needed by the 3D bias normalizer."""
+    if galaxy_bias in ("powerlaw", "double_powerlaw"):
+        return "log_rho"
+    return "delta"
 
 
 def _filter_data(data, mask, los_data_path=None):
@@ -190,9 +284,16 @@ def load_PV_dataframes(config_path):
             fprint(
                 f"loading existing LOS data from {kwargs['los_data_path']}.")
 
+        recon_kwargs = None
+        if los_reconstruction is not None:
+            recon_main = config_io.get("reconstruction_main", {})
+            recon_kwargs = recon_main.get(los_reconstruction, None)
+
         df = PVDataFrame.from_config_dict(
             kwargs, name, try_pop_los=try_pop_los,
-            config_pv_model=config_pv_model)
+            config_pv_model=config_pv_model,
+            reconstruction_kwargs=recon_kwargs,
+            reconstruction_name=los_reconstruction)
         dfs.append(df)
 
     if len(dfs) == 1:
@@ -238,14 +339,76 @@ class PVDataFrame:
         # Pre-compute Simpson log weights for the radial grid.
         if "r_grid" in self.data:
             self._simpson_log_w = simpson_log_weights(self.data["r_grid"])
+            # Reused every step in the LOS integrand (`(r/R)^q` and Jacobian).
+            self.data["log_r_grid"] = jnp.log(self.data["r_grid"])
+            self.data["log_jac_los"] = 2.0 * self.data["log_r_grid"]
         else:
             self._simpson_log_w = None
 
         self.has_calibrators = bool(self.num_calibrators > 0)
         self._cache = {}
+        self.has_volume_density_3d = False
+
+    def attach_volume_density_3d(self, rho_3d, observer_pos, dx,
+                                 galaxy_bias="linear"):
+        """Attach a 3D density cube for the volume-normalized empirical prior.
+
+        Stores the minimal density representation needed by `galaxy_bias`,
+        plus `log_r_3d` (log voxel distance from the observer; floored at
+        `0.25 dx` so the central voxel is finite) and `log_dV = 3 log(dx)`.
+
+        `log_r_3d` is precomputed so the per-step `(r/R)^q` is evaluated as
+        `exp(q · (log_r_3d − log R))`, avoiding ~ngrid^3 `log` ops per leapfrog
+        step. The `0.25 dx` floor at the central voxel only affects a single
+        cell whose `(r/R)^q` is O((dx/R)^q) ≈ 0 anyway.
+        """
+        self.attach_volume_density_3d_fields(
+            [(rho_3d, observer_pos, dx)], galaxy_bias=galaxy_bias)
+
+    def attach_volume_density_3d_fields(self, fields, batch_size=1,
+                                        galaxy_bias="linear"):
+        """Attach one 3D density cube per field realisation.
+
+        The model maps over the leading field axis with an explicit batch size,
+        avoiding full-field vectorization of `(nfield, nx, ny, nz)`
+        intermediates during the normalizer calculation.
+        """
+        field_iter = iter(fields)
+        try:
+            first = next(field_iter)
+        except StopIteration:
+            raise ValueError("At least one 3D density field is required.")
+
+        mode = _volume_density_mode(galaxy_bias)
+        rho0, obs0, dx0 = first
+        log_r_3d, log_dV = _volume_density_geometry(rho0.shape, obs0, dx0)
+        density_fields = []
+        for rho_3d, obs_pos, dx in chain((first,), field_iter):
+            if rho_3d.shape != rho0.shape:
+                raise ValueError(
+                    "All 3D density fields must have the same shape; got "
+                    f"{rho_3d.shape} and {rho0.shape}.")
+            if not np.allclose(obs_pos, obs0) or not np.isclose(dx, dx0):
+                raise ValueError(
+                    "All 3D density fields must share observer position and "
+                    "voxel size to reuse the volume geometry.")
+            if mode == "log_rho":
+                density_fields.append(
+                    np.log(rho_3d).astype(np.float32))
+            else:
+                density_fields.append(
+                    (rho_3d - 1.0).astype(np.float32))
+
+        self.data["density_3d_fields"] = jnp.asarray(np.stack(density_fields))
+        self.data["log_r_3d"] = log_r_3d
+        self.log_dV_3d = log_dV
+        self.density_3d_mode = mode
+        self.volume_density_batch_size = int(batch_size)
+        self.has_volume_density_3d = True
 
     @classmethod
-    def from_config_dict(cls, config, name, try_pop_los, config_pv_model):
+    def from_config_dict(cls, config, name, try_pop_los, config_pv_model,
+                         reconstruction_kwargs=None, reconstruction_name=None):
         root = config.pop("root")
         nsamples_subsample = config.pop("nsamples_subsample", None)
         seed_subsample = config.pop("seed_subsample", 42)
@@ -338,6 +501,59 @@ class PVDataFrame:
 
         frame.with_lane_covmat = name == "PantheonPlusLane"
         frame.name = name
+
+        if config_pv_model.get("which_distance_prior", "empirical") == "empirical":
+            if reconstruction_kwargs is None or reconstruction_name is None:
+                raise ValueError(
+                    "The volume-normalized empirical distance prior requires "
+                    "a precomputed reconstruction; set "
+                    "`pv_model.kind = precomputed_los_<X>` and provide "
+                    "`io.reconstruction_main.<X>` paths.")
+            if not frame.has_precomputed_los:
+                raise ValueError(
+                    "The volume-normalized empirical distance prior requires "
+                    "precomputed LOS data.")
+            downsample = int(config_pv_model.get(
+                "density_3d_downsample", 1))
+            batch_size = int(config_pv_model.get(
+                "density_3d_normalizer_batch_size", 1))
+            if batch_size < 1:
+                raise ValueError(
+                    "`density_3d_normalizer_batch_size` must be positive, "
+                    f"got {batch_size}.")
+            galaxy_bias = config_pv_model.get("galaxy_bias", "unity")
+            fprint(
+                f"loading {frame.num_fields} volume density cube(s) via "
+                f"{reconstruction_name} "
+                f"loader (downsample={downsample}, "
+                f"normalizer_batch_size={batch_size}, "
+                f"density_mode="
+                f"{_volume_density_mode(galaxy_bias)}).")
+            field_indices = np.asarray(
+                data.get("los_field_indices", np.arange(frame.num_fields)),
+                dtype=np.int32)
+            if len(field_indices) != frame.num_fields:
+                raise ValueError(
+                    "Number of LOS field indices does not match field "
+                    f"realisations: {len(field_indices)} != "
+                    f"{frame.num_fields}.")
+
+            def _iter_fields_3d():
+                for k, nsim in enumerate(field_indices):
+                    rho_3d, obs_pos, dx = _load_volume_density_3d(
+                        reconstruction_name, reconstruction_kwargs,
+                        downsample=downsample, nsim=int(nsim))
+                    fprint(
+                        f"  field {k} (nsim={int(nsim)}): "
+                        f"cube shape {rho_3d.shape}, "
+                        f"dx = {dx:.4f} Mpc/h, "
+                        f"observer at {obs_pos.tolist()} Mpc/h.")
+                    yield rho_3d, obs_pos, dx
+
+            frame.attach_volume_density_3d_fields(
+                _iter_fields_3d(), batch_size=batch_size,
+                galaxy_bias=galaxy_bias)
+
         return frame
 
     def subsample(self, nsamples, los_radial_decay_scale, seed=42):
@@ -369,14 +585,17 @@ class PVDataFrame:
             "mag_covmat",
             "los_density", "los_delta", "los_velocity", "los_log_density",
             "r_grid", "los_delta_r_grid", "los_velocity_r_grid",
-            "los_log_density_r_grid"]
+            "los_log_density_r_grid", "log_r_grid", "log_jac_los",
+            "los_field_indices", "density_3d_fields", "log_r_3d"]
 
         subsampled = {key: self[key][main_mask]
                       for key in self.keys() if key not in keys_skip}
 
         for key in keys_skip:
             if key in self.data:
-                if key.startswith("los_") and key != "los_r":
+                if key == "los_field_indices":
+                    subsampled[key] = self.data[key]
+                elif key.startswith("los_") and key != "los_r":
                     subsampled[key] = self[key][:, main_mask, ...]
                 elif key == "is_calibrator":
                     subsampled[key] = self[key][main_mask]
@@ -388,6 +607,11 @@ class PVDataFrame:
         out = PVDataFrame(subsampled, los_radial_decay_scale)
         out.sample_dust = getattr(self, "sample_dust", False)
         out.name = self.name
+        if self.has_volume_density_3d:
+            out.has_volume_density_3d = True
+            out.log_dV_3d = self.log_dV_3d
+            out.density_3d_mode = self.density_3d_mode
+            out.volume_density_batch_size = self.volume_density_batch_size
         return out
 
     def __getitem__(self, key):
@@ -488,34 +712,30 @@ def load_los(los_data_path, data, mask=None, verbose=True):
 
         assert np.all(data["los_density"] > 0)
         assert np.all(np.isfinite(data["los_velocity"]))
+        los_field_indices = np.arange(data["los_density"].shape[0])
 
-        if "manticore" in los_data_path.lower():
-            fprint("normalizing the Manticore LOS density (Om = 0.306)",
+        norm = _density_unit_normalization(los_data_path)
+        if norm is not None:
+            divisor, label, detail = norm
+            fprint(f"normalizing the {label} LOS density ({detail})",
                    verbose=verbose)
-            data["los_density"] /= 0.306 * 275.4  # Manticore normalization
-        elif "_CB1" in los_data_path:
-            data["los_density"] /= 0.307 * 275.4
-            fprint("normalizing the CB1 LOS density (Om = 0.307)",
-                   verbose=verbose)
+            data["los_density"] /= divisor
 
+        if "_CB1" in los_data_path:
             if len(data["los_density"]) == 100:
                 fprint("downsampling the CB1 LOS density from 100 to 20",
                        verbose=verbose)
                 data["los_density"] = data["los_density"][::5]
                 data["los_velocity"] = data["los_velocity"][::5]
-        elif "_CB2" in los_data_path:
-            fprint("normalizing the CB2 LOS density (Om = 0.3111)",
-                   verbose=verbose)
-            data["los_density"] /= 0.3111 * 275.4
-        elif "HAMLET_V1" in los_data_path:
-            fprint("normalizing the HAMLET_V1 LOS density (Om = 0.3)",
-                   verbose=verbose)
-            data["los_density"] /= 0.3 * 275.4
+                los_field_indices = los_field_indices[::5]
         elif "_CF4.hdf5" in los_data_path and len(data["los_density"]) == 100:
             fprint("downsampling the CF4 LOS density from 100 to 20",
                    verbose=verbose)
             data["los_density"] = data["los_density"][::5]
             data["los_velocity"] = data["los_velocity"][::5]
+            los_field_indices = los_field_indices[::5]
+
+        data["los_field_indices"] = los_field_indices.astype(np.int32)
 
     return data
 

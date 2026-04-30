@@ -385,6 +385,11 @@ def sample_galaxy_bias(priors, galaxy_bias, shared_params=None, **kwargs):
         b1 = rsample("b1", priors["b1"], shared_params)
         b2 = rsample("b2", priors["b2"], shared_params)
         bias_params = [b1, b2]
+    elif galaxy_bias == "cubic":
+        b1 = rsample("b1", priors["b1"], shared_params)
+        b2 = rsample("b2", priors["b2"], shared_params)
+        b3 = rsample("b3", priors["b3"], shared_params)
+        bias_params = [b1, b2, b3]
     else:
         raise ValueError(f"Invalid galaxy bias model '{galaxy_bias}'.")
 
@@ -409,6 +414,11 @@ def lp_galaxy_bias(delta, log_rho, bias_params, galaxy_bias,
         b1, b2 = bias_params
         d = delta - quadratic_bias_delta0
         lp = jnp.log(smoothclip_nr(1 + b1 * d + b2 * d**2, tau=0.1))
+    elif galaxy_bias == "cubic":
+        b1, b2, b3 = bias_params
+        d = delta - quadratic_bias_delta0
+        lp = jnp.log(smoothclip_nr(
+            1 + b1 * d + b2 * d**2 + b3 * d**3, tau=0.1))
     else:
         raise ValueError(f"Invalid galaxy bias model '{galaxy_bias}'.")
 
@@ -573,12 +583,15 @@ def sigmoid_monopole_radial(V_left, r_t, k, r):
     return V_left / (1 + jnp.exp(k * (r - r_t)))
 
 
-def sample_distance_prior(priors):
-    """Sample hyperparameters describing the empirical distance prior."""
+def sample_distance_prior_volume(priors):
+    """Hyperparameters of the volume-normalized empirical prior:
+        π̃(x) ∝ n(x) * exp(-(|x|/R)^q),
+    integrated globally over the 3D field volume. Used by base_pv when
+    `which_distance_prior == "empirical"`.
+    """
     return {
         "R": rsample("R_dist_emp", priors["R_dist_emp"]),
-        "p": rsample("p_dist_emp", priors["p_dist_emp"]),
-        "n": rsample("n_dist_emp", priors["n_dist_emp"])
+        "q": rsample("q_dist_emp", priors["q_dist_emp"]),
         }
 
 
