@@ -128,38 +128,36 @@ def decompose_model(model, model_args=(), model_kwargs=None, seed=42):
     def _in_support(x):
         return jnp.all((x >= lo_jax) & (x <= hi_jax))
 
-    def log_prior_fn(x):
+    def _prior_and_likelihood(x):
+        """Single trace → (log_prior, log_likelihood)."""
         params = _unflatten(x, names, sizes)
         tr = _get_trace(params)
         lp = 0.0
-        for k, v in tr.items():
-            if (v["type"] == "sample"
-                    and not v.get("is_observed", False)
-                    and not isinstance(v["fn"], (Delta, Unit))):
-                lp = lp + jnp.sum(v["fn"].log_prob(v["value"]))
-        # NumPyro Uniform.log_prob doesn't return -inf outside the support
-        # when validate_args=False (the default). Enforce support explicitly.
-        return jnp.where(_in_support(x), lp, -jnp.inf)
-
-    def log_likelihood_fn(x):
-        params = _unflatten(x, names, sizes)
-        tr = _get_trace(params)
         ll = 0.0
         for k, v in tr.items():
-            if (v["type"] == "sample"
-                    and v.get("is_observed", False)
-                    and isinstance(v["fn"], Unit)):
+            if v["type"] != "sample":
+                continue
+            if not v.get("is_observed", False):
+                if not isinstance(v["fn"], (Delta, Unit)):
+                    lp = lp + jnp.sum(v["fn"].log_prob(v["value"]))
+            elif isinstance(v["fn"], Unit):
                 ll = ll + jnp.sum(v["fn"].log_prob(v["value"]))
-        # Enforce prior support: NSS slice sampler checks loglikelihood but
-        # not log_prior for acceptance. Without this, the sampler explores
-        # outside the prior support, biasing the evidence by ~O(d) nats.
-        ll = jnp.where(_in_support(x), ll, -jnp.inf)
-        # Clamp NaN from numerical overflow (e.g. extreme eta → huge M_BH)
-        # and +inf from log_Z underflow. Must preserve -inf for
-        # out-of-support.
+
+        in_supp = _in_support(x)
+        lp = jnp.where(in_supp, lp, -jnp.inf)
+        ll = jnp.where(in_supp, ll, -jnp.inf)
         ll = jnp.where(jnp.isnan(ll), -jnp.inf, ll)
         max_ll = jnp.finfo(ll.dtype).max / 2
-        return jnp.where(ll == jnp.inf, max_ll, ll)
+        ll = jnp.where(ll == jnp.inf, max_ll, ll)
+        return lp, ll
+
+    def log_prior_fn(x):
+        lp, _ = _prior_and_likelihood(x)
+        return lp
+
+    def log_likelihood_fn(x):
+        _, ll = _prior_and_likelihood(x)
+        return ll
 
     def log_joint_fn(x):
         params = _unflatten(x, names, sizes)
@@ -544,7 +542,7 @@ def _log_weights(rng_key, dead_info, n_compress=100):
     return log_w[unsort_idx]
 
 
-# ── Checkpoint helpers ────────────────────────────────────────────────────────
+# ── Checkpoint helpers ───────────────────────────────────────────────────────
 
 def _save_nss_checkpoint(path, state, dead, rng_key, n_dead):
     p = state.particles
@@ -710,6 +708,7 @@ def run_nss(model, model_args=(), model_kwargs=None,
     _ckpt_path = (os.path.join(checkpoint_dir, "nss_ckpt.npz")
                   if checkpoint_dir is not None else None)
     _last_ckpt_time = timer()
+    t0 = timer()
 
     with tqdm.tqdm(desc="NSS", unit=" pts", initial=n_dead) as pbar:
         while not (state.integrator.logZ_live

@@ -10,8 +10,14 @@ source "$ROOT/scripts/_submit_lib.sh"
 
 QUEUE=""
 MEM=7
+CPUS=""
+GPUTYPE=""
+GPU_MEM=""
+TIME=""
 DRY=false
 RESUME=false
+NO_ECC=false
+NO_QUAD_WARP=false
 GALAXIES=()
 _WATCH_RETRIES=""
 _WATCH_POLL=""
@@ -26,13 +32,20 @@ with open('$ROOT/scripts/megamaser/config_maser.toml', 'rb') as f:
 print(' '.join(cfg['model']['galaxies']))
 ")
             cat <<EOF
-Usage: bash $0 -q QUEUE [-m MEM] [--dry] [--resume] [--max-retries N] [GALAXY ...]
+Usage: bash $0 -q QUEUE [-m MEM] [--gputype TYPE] [--time T]
+              [--dry] [--resume] [--max-retries N] [GALAXY ...]
 
 Options:
   -q QUEUE        Queue/partition (REQUIRED)
   -m MEM          Memory in GB (default: 7)
+  --gputype TYPE  GPU type (default: any; e.g. h100, l40s)
+  --gpu-mem GB    Min GPU VRAM in GB (arc only; queries sinfo for matching GPUs)
+  --time T        Wall time. Bare integer = hours (arc only)
+  -n N            Number of CPU cores (default: 4 with --gpu)
   --dry           Print submit command without submitting
   --resume        Resume from latest checkpoint if one exists
+  --no-ecc        Disable eccentricity model
+  --no-quadratic-warp  Disable quadratic disk warp
   --max-retries N Watch and resubmit up to N times on timeout
   --poll S        Seconds between squeue polls (default: 120)
   GALAXY ...      Galaxy names (default: all below)
@@ -51,10 +64,17 @@ EOF
             exit 0 ;;
         -q) QUEUE="$2"; shift 2 ;;
         -m) MEM="$2"; shift 2 ;;
+        -n) CPUS="$2"; shift 2 ;;
+        --gputype) GPUTYPE="$2"; shift 2 ;;
+        --gpu-mem) GPU_MEM="$2"; shift 2 ;;
+        --time) TIME="$2"; shift 2 ;;
         --dry) DRY=true; shift ;;
         --resume) RESUME=true; shift ;;
+        --no-ecc) NO_ECC=true; shift ;;
+        --no-quadratic-warp) NO_QUAD_WARP=true; shift ;;
         --max-retries) _WATCH_RETRIES="$2"; shift 2 ;;
         --poll) _WATCH_POLL="$2"; shift 2 ;;
+        -*) echo "[ERROR] unknown option: $1"; exit 1 ;;
         *)  GALAXIES+=("$1"); shift ;;
     esac
 done
@@ -66,8 +86,14 @@ if [[ -n "$_WATCH_RETRIES" ]]; then
     [[ -n "$_WATCH_POLL" ]] && _wargs+=(--poll "$_WATCH_POLL")
     # Rebuild the original command without --max-retries and --poll.
     _cmd=(bash "$0" -q "$QUEUE" -m "$MEM")
+    [[ -n "$CPUS" ]]    && _cmd+=(-n "$CPUS")
+    [[ -n "$GPUTYPE" ]] && _cmd+=(--gputype "$GPUTYPE")
+    [[ -n "$GPU_MEM" ]] && _cmd+=(--gpu-mem "$GPU_MEM")
+    [[ -n "$TIME" ]]    && _cmd+=(--time "$TIME")
     $DRY && _cmd+=(--dry)
     $RESUME && _cmd+=(--resume)
+    $NO_ECC && _cmd+=(--no-ecc)
+    $NO_QUAD_WARP && _cmd+=(--no-quadratic-warp)
     (( ${#GALAXIES[@]} )) && _cmd+=("${GALAXIES[@]}")
     _sname="watcher_de_map_$(date +%H%M%S)"
     _logdir="$ROOT/scripts/megamaser/logs"
@@ -102,7 +128,14 @@ for gal in "${GALAXIES[@]}"; do
     echo "Submitting DE MAP: $gal -> $CANDEL_CLUSTER:$QUEUE"
     pycmd="$CANDEL_PYTHON -u $ROOT/scripts/megamaser/run_de_map.py $gal"
     $RESUME && pycmd="$pycmd --resume"
+    $NO_ECC && pycmd="$pycmd --no-ecc"
+    $NO_QUAD_WARP && pycmd="$pycmd --no-quadratic-warp"
+    extra_flags=()
+    [[ -n "$CPUS" ]]    && extra_flags+=(--cpus "$CPUS")
+    [[ -n "$GPUTYPE" ]] && extra_flags+=(--gputype "$GPUTYPE")
+    [[ -n "$GPU_MEM" ]] && extra_flags+=(--gpu-mem "$GPU_MEM")
+    [[ -n "$TIME" ]]    && extra_flags+=(--time "$TIME")
     submit_job --gpu --queue "$QUEUE" --mem "$MEM" --name "de_map_${gal}" \
         --logdir "$ROOT/scripts/megamaser/logs" \
-        "${dry_flag[@]}" -- $pycmd
+        "${extra_flags[@]}" "${dry_flag[@]}" -- $pycmd
 done

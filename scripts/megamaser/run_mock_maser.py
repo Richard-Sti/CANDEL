@@ -215,8 +215,9 @@ fig = corner(corner_data, labels=labels, truths=truths,
              plot_datapoints=False,
              title_kwargs={"fontsize": 8},
              label_kwargs={"fontsize": 8})
-fig.savefig("test_mock_corner.png", dpi=150, bbox_inches="tight")
-fprint("saved corner plot to test_mock_corner.png")
+_corner_path = results_path("results/Maser/test_mock_corner.png")
+fig.savefig(_corner_path, dpi=150, bbox_inches="tight")
+fprint(f"saved corner plot to {_corner_path}")
 
 # --- Bias plot ---
 z_global = []
@@ -262,8 +263,9 @@ ax.set_ylabel(
     r"$(\langle \theta \rangle - \theta_{\rm true}) / \sigma_\theta$")
 
 fig.tight_layout()
-fig.savefig("test_mock_bias.png", dpi=150, bbox_inches="tight")
-fprint("saved bias plot to test_mock_bias.png")
+_bias_path = results_path("results/Maser/test_mock_bias.png")
+fig.savefig(_bias_path, dpi=150, bbox_inches="tight")
+fprint(f"saved bias plot to {_bias_path}")
 
 # --- Correlation analysis ---
 fsection("Correlation analysis")
@@ -339,8 +341,8 @@ if has_r:
     axes[0].set_ylabel("Pearson r")
 
     fig.tight_layout()
-    fig.savefig("test_mock_correlations.png", dpi=150,
-                bbox_inches="tight")
-    fprint("saved correlation plot to test_mock_correlations.png")
+    _corr_path = results_path("results/Maser/test_mock_correlations.png")
+    fig.savefig(_corr_path, dpi=150, bbox_inches="tight")
+    fprint(f"saved correlation plot to {_corr_path}")
 
 os.unlink(tmp.name)

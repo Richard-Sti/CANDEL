@@ -25,6 +25,8 @@ while [[ $# -gt 0 ]]; do
             echo "  --n-repeats N         timed iterations (default: 100)"
             echo "  --n-warmup N          extra warm-up calls after JIT (default: 5)"
             echo "  --spot-batch N        spot-axis chunk for Mode 2 (0=off, default: 0)"
+            echo "  --phi-factor F        multiply phi grid sizes by F (default: 1)"
+            echo "  --mode2-grad          also benchmark Mode 2 gradient"
             echo "  --f64                 use float64 (default: float32)"
             echo "  --mode {mode1,mode2}  force mode (default: use config)"
             echo ""

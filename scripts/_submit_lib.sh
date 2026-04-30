@@ -7,6 +7,7 @@
 #              [--cpus N]                 # CPU cores (default: 1, or 4 with --gpu)
 #              [--mpi-n N | AxB]          # MPI ranks; mutually exclusive with --gpu
 #              [--gpu] [--gputype TYPE]   # single GPU; TYPE e.g. l40s, h100, a100
+#              [--gpu-mem GB]             # min GPU VRAM; arc-only, queries sinfo
 #              [--time H | D-HH:MM:SS]    # bare integer = hours; required on 'long'
 #                                         # defaults: short=12h, medium=48h
 #              [--name JOB]               # job name (default: candel)
@@ -29,6 +30,7 @@
 _submit_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CANDEL_ROOT="$(cd "$_submit_lib_dir/.." && pwd)"
 export CANDEL_ROOT
+export PYTHONPATH="$CANDEL_ROOT${PYTHONPATH:+:$PYTHONPATH}"
 
 _toml_get() {
     local key="$1" file="$2"
@@ -129,8 +131,8 @@ launch_detached() {
 }
 
 submit_job() {
-    local queue="" mem="" cpus="" time="" name="candel"
-    local gpu=0 dry=0 mpi_n="" gputype=""
+    local queue="" mem="" cpus="" time="" name="candel" logdir="logs"
+    local gpu=0 dry=0 mpi_n="" gputype="" gpu_mem_min=""
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --queue)   queue="$2"; shift 2 ;;
@@ -141,6 +143,7 @@ submit_job() {
             --name)    name="$2"; shift 2 ;;
             --gpu)     gpu=1; shift ;;
             --gputype) gputype="$2"; shift 2 ;;
+            --gpu-mem) gpu_mem_min="$2"; shift 2 ;;
             --dry)     dry=1; shift ;;
             --)        shift; break ;;
             *)
@@ -171,6 +174,14 @@ submit_job() {
         echo "[submit_job] --gputype given without --gpu; ignoring" >&2
         gputype=""
     fi
+    if [[ -n "$gpu_mem_min" ]] && (( ! gpu )); then
+        echo "[submit_job] --gpu-mem given without --gpu; ignoring" >&2
+        gpu_mem_min=""
+    fi
+    if [[ -n "$gputype" && -n "$gpu_mem_min" ]]; then
+        echo "[submit_job] --gputype and --gpu-mem are mutually exclusive" >&2
+        return 2
+    fi
 
     # Total MPI ranks, resolved from --mpi-n spec "N" or "AxB".
     local mpi_total=""
@@ -186,16 +197,17 @@ submit_job() {
 
     case "$CANDEL_CLUSTER" in
         arc)
-            # On arc logs always land in the submit CWD as logs-<jobid>.out.
-            # Omitting --error routes stderr into the same file — keeps the
-            # numpyro tqdm progress bar (written to stderr) in the .out file
-            # alongside regular print output, instead of a separate .err.
+            # On arc logs land in the submit CWD. Merge stderr into the
+            # same file so there is a single log per job.
             local sbatch_flags=(
                 -p "$queue"
                 --mem="${mem}G"
                 --job-name="$name"
                 --chdir="$PWD"
                 --output="logs-%j.out"
+                --error="logs-%j.out"
+                --mail-type=BEGIN,END,FAIL
+                --mail-user=richard.stiskalek@physics.ox.ac.uk
             )
             if [[ -n "$mpi_n" ]]; then
                 sbatch_flags+=(--ntasks="$mpi_total" --cpus-per-task=1)
@@ -227,6 +239,18 @@ submit_job() {
                 else
                     sbatch_flags+=(--gres=gpu:1)
                 fi
+                if [[ -n "$gpu_mem_min" ]]; then
+                    local _mem_constraint
+                    _mem_constraint=$(sinfo -p "$queue" -h -o "%f" \
+                        | tr ',' '\n' | grep -oP 'gpu_mem:\K[0-9]+' | sort -un \
+                        | awk -v min="$gpu_mem_min" '$1 >= min {printf "gpu_mem:%dGB|", $1}' \
+                        | sed 's/|$//')
+                    if [[ -z "$_mem_constraint" ]]; then
+                        echo "[submit_job] no GPUs with >= ${gpu_mem_min}GB in partition '$queue'" >&2
+                        return 2
+                    fi
+                    sbatch_flags+=(--constraint "$_mem_constraint")
+                fi
             fi
             echo "[submit_job] arc: sbatch ${sbatch_flags[*]}"
             echo "[submit_job] cmd : $cmd_str"
@@ -240,6 +264,7 @@ submit_job() {
             _sbatch_out=$(sbatch "${sbatch_flags[@]}" <<SCRIPT
 #!/bin/bash -l
 export CANDEL_MODULES_ACTIVE="$mods"
+export PYTHONPATH="$CANDEL_ROOT\${PYTHONPATH:+:\$PYTHONPATH}"
 source "$_cluster_profile"
 $cmd_str
 SCRIPT
@@ -252,6 +277,9 @@ SCRIPT
         glamdring)
             if [[ -n "$time" ]]; then
                 echo "[submit_job] glamdring: --time is not plumbed to addqueue; ignoring ($time)" >&2
+            fi
+            if [[ -n "$gpu_mem_min" ]]; then
+                echo "[submit_job] glamdring: --gpu-mem not supported; ignoring" >&2
             fi
             local addqueue_flags=(-s -q "$queue" -m "$mem" -c "$name")
             if (( gpu )); then

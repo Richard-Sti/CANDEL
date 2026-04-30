@@ -18,6 +18,7 @@ queue=""
 ncpu=4
 memory=6
 gputype=""
+gpu_mem=""
 gpu_flag=false
 no_gpu=false
 walltime=""
@@ -53,6 +54,7 @@ options:
   --no-gpu                submit as a CPU-only job (overrides arc default).
   --gputype TYPE          specific GPU type. glamdring: selects gputype.
                           arc: selects --gres=gpu:TYPE:1 (implies --gpu).
+  --gpu-mem GB            Min GPU VRAM in GB (arc only; queries sinfo)
   --time T                Wall time. Bare integer = hours (arc only).
                           (default on arc: short=12, medium=48, long=required;
                            ignored on glamdring)
@@ -79,6 +81,7 @@ while [[ $# -gt 0 ]]; do
         --gpu)           gpu_flag=true; shift ;;
         --no-gpu)        no_gpu=true; shift ;;
         --gputype)       gputype="$2"; shift 2 ;;
+        --gpu-mem)       gpu_mem="$2"; shift 2 ;;
         --time)          walltime="$2"; shift 2 ;;
         --tasks)         tasks_spec="$2"; shift 2 ;;
         --skip-done)     skip_done=true; shift ;;
@@ -154,7 +157,7 @@ case "$CANDEL_CLUSTER" in
         is_gpu=true
         ;;
 esac
-if $gpu_flag || [[ -n "$gputype" ]]; then
+if $gpu_flag || [[ -n "$gputype" ]] || [[ -n "$gpu_mem" ]]; then
     is_gpu=true
 fi
 if $no_gpu; then
@@ -311,6 +314,7 @@ for i in "${!task_lines[@]}"; do
         if $is_gpu; then
             gpu_flags+=(--gpu)
             [[ -n "$gputype" ]] && gpu_flags+=(--gputype "$gputype")
+            [[ -n "$gpu_mem" ]] && gpu_flags+=(--gpu-mem "$gpu_mem")
         fi
         dry_flag=()
         $dry && dry_flag=(--dry)

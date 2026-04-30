@@ -17,12 +17,15 @@ NUM_CHAINS=1
 GALAXY=""
 INIT_METHOD=""
 GPUTYPE=""
+GPU_MEM=""
 TIME=""
 MEM=16
 DRY=false
 _WATCH_RETRIES=""
 _WATCH_POLL=""
 RESUME=false
+NO_ECC=false
+NO_QUAD_WARP=false
 
 ALL_GALS="CGCG074-064 NGC5765b NGC6264 NGC6323 UGC3789"
 
@@ -36,21 +39,22 @@ Required:
 
 Options:
   --sampler nss|nuts     Inference method (default: $SAMPLER)
-  --galaxy GAL           Single galaxy to submit (default: all five)
-                         Choices: $ALL_GALS
+  --galaxy GAL[,GAL,...] Galaxy/galaxies to submit (comma-separated;
+                         default: all five). Choices: $ALL_GALS
   --mode MODE            Sampling mode: mode1, mode2
                          (default: runner picks — mode2 for NSS)
   --f-grid F             Grid scaling factor (default: 1.0)
   --num-chains N         NUTS vectorised chains (default: $NUM_CHAINS)
   --init-method METHOD   NUTS init method: config | median | sample
                          (default: runner picks from config)
-  --gputype TYPE         GPU type (default: any)
-                           glamdring: cmbgpu|gpulong|optgpu-style names
-                           arc:       l40s|h100|a100|v100|rtx8000|a6000|...
+  --gputype TYPE         GPU type (default: any; e.g. h100, l40s)
+  --gpu-mem GB           Min GPU VRAM in GB (arc only; queries sinfo)
   --time T               Wall time. Bare integer = hours (arc only).
                          (default on arc: short=12, medium=48, long=required;
                           ignored on glamdring)
   --mem GB               Memory in GB (default: $MEM)
+  --no-ecc               Disable eccentricity model
+  --no-quadratic-warp    Disable quadratic disk warp
   --dry                  Print submit command without submitting (default: off)
   --resume               Resume NSS from latest checkpoint (ignored for NUTS)
   --max-retries N        Watch and resubmit up to N times on timeout
@@ -69,8 +73,11 @@ while [[ $# -gt 0 ]]; do
         --init-method) INIT_METHOD="$2"; shift 2 ;;
         --galaxy) GALAXY="$2"; shift 2 ;;
         --gputype) GPUTYPE="$2"; shift 2 ;;
+        --gpu-mem) GPU_MEM="$2"; shift 2 ;;
         --time) TIME="$2"; shift 2 ;;
         --mem) MEM="$2"; shift 2 ;;
+        --no-ecc) NO_ECC=true; shift ;;
+        --no-quadratic-warp) NO_QUAD_WARP=true; shift ;;
         --dry) DRY=true; shift ;;
         --resume) RESUME=true; shift ;;
         --max-retries) _WATCH_RETRIES="$2"; shift 2 ;;
@@ -93,8 +100,11 @@ if [[ -n "$_WATCH_RETRIES" ]]; then
     [[ -n "$GALAXY" ]]      && _cmd+=(--galaxy "$GALAXY")
     [[ -n "$INIT_METHOD" ]] && _cmd+=(--init-method "$INIT_METHOD")
     [[ -n "$GPUTYPE" ]]     && _cmd+=(--gputype "$GPUTYPE")
+    [[ -n "$GPU_MEM" ]]     && _cmd+=(--gpu-mem "$GPU_MEM")
     [[ -n "$TIME" ]]        && _cmd+=(--time "$TIME")
     [[ "$NUM_CHAINS" != "1" ]] && _cmd+=(--num-chains "$NUM_CHAINS")
+    $NO_ECC && _cmd+=(--no-ecc)
+    $NO_QUAD_WARP && _cmd+=(--no-quadratic-warp)
     $DRY && _cmd+=(--dry)
     $RESUME && _cmd+=(--resume)
     _sname="watcher_${SAMPLER}_$(date +%H%M%S)"
@@ -111,8 +121,11 @@ fi
 if [[ "$SAMPLER" == "nss" && -n "$MODE" && "$MODE" != "mode2" ]]; then
     echo "Error: NSS only supports mode2."; exit 1
 fi
-if [[ -n "$GALAXY" ]] && ! echo "$ALL_GALS" | grep -qw "$GALAXY"; then
-    echo "Error: unknown galaxy '$GALAXY'. Choices: $ALL_GALS"; exit 1
+if [[ -n "$GALAXY" ]]; then
+    GALAXY="${GALAXY//,/ }"
+    for _g in $GALAXY; do
+        echo "$ALL_GALS" | grep -qw "$_g" || { echo "Error: unknown galaxy '$_g'. Choices: $ALL_GALS"; exit 1; }
+    done
 fi
 if [[ -z "$QUEUE" ]]; then
     echo "[ERROR] -q QUEUE is required (cluster=$CANDEL_CLUSTER)"; exit 1
@@ -124,6 +137,8 @@ EXTRA_ARGS=""
 [[ -n "$MODE" ]]        && EXTRA_ARGS="$EXTRA_ARGS --mode $MODE"
 [[ -n "$F_GRID" ]]      && EXTRA_ARGS="$EXTRA_ARGS --f-grid $F_GRID"
 [[ -n "$INIT_METHOD" ]] && EXTRA_ARGS="$EXTRA_ARGS --init-method $INIT_METHOD"
+$NO_ECC && EXTRA_ARGS="$EXTRA_ARGS --no-ecc"
+$NO_QUAD_WARP && EXTRA_ARGS="$EXTRA_ARGS --no-quadratic-warp"
 $RESUME && EXTRA_ARGS="$EXTRA_ARGS --resume"
 
 dry_flag=()
@@ -139,6 +154,7 @@ for GAL in $GALS; do
     fi
     extra_flags=()
     [[ -n "$GPUTYPE" ]] && extra_flags+=(--gputype "$GPUTYPE")
+    [[ -n "$GPU_MEM" ]] && extra_flags+=(--gpu-mem "$GPU_MEM")
     [[ -n "$TIME" ]]    && extra_flags+=(--time "$TIME")
     submit_job --gpu --queue "$QUEUE" --mem "$MEM" --name "maser_${GAL}" \
         "${extra_flags[@]}" \

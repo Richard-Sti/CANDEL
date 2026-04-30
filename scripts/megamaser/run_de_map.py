@@ -30,21 +30,20 @@ if needed:
     os.environ["LD_LIBRARY_PATH"] = ":".join(needed) + (f":{ld}" if ld else "")
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
+os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
+
 import argparse
 import tempfile
 import time
 
 import tomli
 
-# Check per-galaxy use_float64 before importing JAX
-with open("scripts/megamaser/config_maser.toml", "rb") as _f:
-    _pre_cfg = tomli.load(_f)
-_galaxy_arg = sys.argv[1] if len(sys.argv) > 1 else ""
-_gal_cfg = _pre_cfg.get("model", {}).get("galaxies", {}).get(_galaxy_arg, {})
-if _gal_cfg.get("use_float64", False):
+# DE is derivative-free so float32 is sufficient; use --f64 to override.
+if "--f64" in sys.argv:
+    sys.argv.remove("--f64")
     import jax
     jax.config.update("jax_enable_x64", True)
-    print(f"float64 enabled for {_galaxy_arg}", flush=True)
+    print("float64 enabled (--f64)", flush=True)
 
 import jax
 import numpy as np
@@ -53,7 +52,7 @@ import tomli_w
 from candel.inference.optimise import find_MAP
 from candel.model.model_H0_maser import MaserDiskModel
 from candel.pvdata.megamaser_data import load_megamaser_spots
-from candel.util import data_path, fprint, fsection
+from candel.util import data_path, fprint, fsection, results_path
 
 _devs = jax.devices()
 _dev_names = ", ".join(d.device_kind for d in _devs)
@@ -71,6 +70,10 @@ parser.add_argument("galaxy", type=str)
 parser.add_argument("--seed", type=int, default=42)
 parser.add_argument("--resume", action="store_true",
                     help="Resume from latest checkpoint if one exists")
+parser.add_argument("--no-ecc", action="store_true",
+                    help="Disable eccentricity model")
+parser.add_argument("--no-quadratic-warp", action="store_true",
+                    help="Disable quadratic disk warp")
 args = parser.parse_args()
 
 galaxy = args.galaxy
@@ -97,16 +100,30 @@ if "D_lo" in gcfg and "D_hi" in gcfg:
     data["D_hi"] = float(gcfg["D_hi"])
 
 # ---- Build model (force mode2 — DE requires r+phi marginalisation) ----
+opt_cfg = dict(master_cfg.get("optimise", {}))
+if "eval_chunk" in gcfg:
+    opt_cfg["eval_chunk"] = gcfg["eval_chunk"]
+
 config = {
     "inference": master_cfg["inference"],
     "model": {**master_cfg["model"], "mode": "mode2"},
     "io": master_cfg["io"],
-    "optimise": master_cfg.get("optimise", {}),
+    "optimise": opt_cfg,
 }
 config["model"]["galaxies"] = {
     g: {k: v for k, v in blk.items() if k != "mode"}
     for g, blk in master_cfg["model"]["galaxies"].items()
 }
+if args.no_ecc:
+    config["model"]["galaxies"][galaxy]["use_ecc"] = False
+if args.no_quadratic_warp:
+    config["model"]["galaxies"][galaxy]["use_quadratic_warp"] = False
+
+ckpt_tag = "de_ckpt"
+if args.no_ecc:
+    ckpt_tag += "_no_ecc"
+if args.no_quadratic_warp:
+    ckpt_tag += "_no_quad_warp"
 
 tmp = tempfile.NamedTemporaryFile(mode="wb", suffix=".toml", delete=False)
 tomli_w.dump(config, tmp)
@@ -114,12 +131,15 @@ tmp.close()
 model = MaserDiskModel(tmp.name, data)
 os.unlink(tmp.name)
 
+fprint(f"DE settings: eval_chunk={opt_cfg.get('eval_chunk', 'default')}, "
+       f"mode2_spot_batch={model._mode2_spot_batch}")
+
 # ---- Run DE MAP ----
-ckpt_dir = os.path.join(
+ckpt_dir = results_path(
     master_cfg["io"].get("root_output", "results/Megamaser"),
     "de_checkpoints", galaxy)
 os.makedirs(ckpt_dir, exist_ok=True)
-ckpt_path = os.path.join(ckpt_dir, "de_ckpt.npz")
+ckpt_path = os.path.join(ckpt_dir, f"{ckpt_tag}.npz")
 resume_path = None
 if args.resume and os.path.isfile(ckpt_path):
     resume_path = ckpt_path

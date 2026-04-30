@@ -21,6 +21,7 @@ from numpyro.infer.initialization import init_to_median
 
 import candel
 from candel.mock.maser_disk_mock import gen_maser_disk_mock
+from candel.util import results_path
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 BASE_CONFIG = os.path.join(REPO_ROOT, "scripts", "megamaser", "config_maser.toml")
@@ -106,8 +107,7 @@ def main():
     parser.add_argument("--num-warmup", type=int, default=1000)
     parser.add_argument("--num-samples", type=int, default=500)
     parser.add_argument("--outdir", type=str,
-                        default=os.path.join(REPO_ROOT, "results",
-                                             "mocks_maser_disk"))
+                        default=results_path("results/mocks_maser_disk"))
     args = parser.parse_args()
     os.makedirs(args.outdir, exist_ok=True)
 

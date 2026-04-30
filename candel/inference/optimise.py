@@ -833,9 +833,9 @@ def de_optimize(model, model_args=(), model_kwargs=None,
                     fprint(f"  {name:20s}: [{p_lo:.4g}, {p_hi:.4g}]")
                 offset += size
 
-    # Build log-density
+    # Build log-density (scalar logp_fn for progress logging; batched
+    # fitness for Sobol survey + DE loop — single JIT compilation).
     logp_fn = _build_logp_flat(model, model_args, model_kwargs, names, sizes)
-    _logp_batch_raw = jax.jit(jax.vmap(logp_fn))
 
     def _fitness_single(x_normed):
         x = lo + x_normed * scale
@@ -843,36 +843,31 @@ def de_optimize(model, model_args=(), model_kwargs=None,
 
     _fitness_raw = jax.jit(jax.vmap(_fitness_single))
 
-    def _eval_padded(fn, x, chunk):
+    def _eval_padded(fn, x, chunk, desc=None):
         """Evaluate fn on x in chunks of exactly `chunk`, padding if needed."""
         n = x.shape[0]
         n_pad = (-n) % chunk
         if n_pad:
-            x = jnp.concatenate([x, jnp.broadcast_to(x[:1], (n_pad,) + x.shape[1:])])
+            pad = jnp.broadcast_to(x[:1], (n_pad,) + x.shape[1:])
+            x = jnp.concatenate([x, pad])
+        n_chunks = x.shape[0] // chunk
         parts = []
-        for i in range(0, x.shape[0], chunk):
+        for i in trange(0, x.shape[0], chunk, total=n_chunks,
+                        desc=desc, disable=(desc is None or not verbose)):
             parts.append(fn(x[i:i + chunk]))
             jax.block_until_ready(parts[-1])
         out = jnp.concatenate(parts)
         return out[:n]
 
-    def fitness_batch(x_normed):
-        return _eval_padded(_fitness_raw, x_normed, eval_chunk)
+    def fitness_batch(x_normed, desc=None):
+        return _eval_padded(_fitness_raw, x_normed, eval_chunk, desc=desc)
 
-    # Compile
-    t0 = time.time()
-    x_test = jnp.tile(jnp.array(0.5 * (lo + hi))[None, :], (eval_chunk, 1))
-    _ = _logp_batch_raw(x_test)
-    jax.block_until_ready(_)
-    if verbose:
-        fprint(f"JIT compiled in {time.time() - t0:.1f}s")
-
-    # Compile fitness (needed for both fresh and resume paths)
+    # Compile (single JIT — Sobol survey reuses the same fitness function)
     t0 = time.time()
     _ = fitness_batch(jnp.full((eval_chunk, D), 0.5))
     jax.block_until_ready(_)
     if verbose:
-        fprint(f"Fitness JIT compiled in {time.time() - t0:.1f}s")
+        fprint(f"JIT compiled in {time.time() - t0:.1f}s")
 
     de = DifferentialEvolution(
         population_size=pop_size, solution=jnp.zeros(D))
@@ -903,21 +898,10 @@ def de_optimize(model, model_args=(), model_kwargs=None,
         sampler = Sobol(d=D, scramble=True, seed=seed)
         sobol_01 = sampler.random(N_sobol)
         sobol_points = sobol_lo + sobol_01 * (sobol_hi - sobol_lo)
-        sobol_jax = jnp.array(sobol_points)
 
         t0 = time.time()
-        n_pad = (-N_sobol) % eval_chunk
-        if n_pad:
-            sobol_jax = jnp.concatenate(
-                [sobol_jax, jnp.broadcast_to(sobol_jax[:1], (n_pad,) + sobol_jax.shape[1:])])
-        logp_all = []
-        n_batches = sobol_jax.shape[0] // eval_chunk
-        for i in trange(n_batches, desc="Sobol", disable=not verbose):
-            start = i * eval_chunk
-            vals = _logp_batch_raw(sobol_jax[start:start + eval_chunk])
-            jax.block_until_ready(vals)
-            logp_all.append(np.asarray(vals))
-        logp_all = np.concatenate(logp_all)[:N_sobol]
+        sobol_normed = jnp.array((sobol_points - lo) / scale)
+        logp_all = -np.asarray(fitness_batch(sobol_normed, desc="Sobol"))
         valid = np.isfinite(logp_all)
         logp_all = np.where(valid, logp_all, -np.inf)
 

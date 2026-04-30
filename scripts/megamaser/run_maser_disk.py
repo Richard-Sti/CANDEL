@@ -306,7 +306,6 @@ if sampler == "nss" and is_joint:
 if not is_joint:
     n_spots = data["n_spots"]
 
-
 if sampler == "nuts":
     num_warmup = args.num_warmup or inf_cfg.get("num_warmup", 2000)
     num_samples = args.num_samples or inf_cfg.get("num_samples", 2000)
@@ -706,7 +705,7 @@ elif sampler == "nss":
     fprint(f"n_live={n_live}, mcmc_steps={num_mcmc_steps}, "
            f"num_delete={num_delete}")
 
-    _nss_ckpt_dir = os.path.join(
+    _nss_ckpt_dir = results_path(
         master_cfg["io"].get("root_output", "results/Maser"),
         "nss_checkpoints", galaxy if not is_joint else "joint")
     os.makedirs(_nss_ckpt_dir, exist_ok=True)
