@@ -84,6 +84,20 @@ COLS = ["#87193d", "#1e42b9", "#d42a29", "#05dd6b", "#ee35d5", "#f5c000"]
 SURVEY_LABELS = ["CF4 TFR W1", "CF4 TFR i", "Pantheon+", "SDSS FP", "6dF FP"]
 SURVEY_TAGS = ["CF4_W1", "CF4_i", "PantheonPlus", "SDSS_FP", "6dF_FP"]
 
+# Fixed colour for every sample label, used by all plots so the same
+# survey/joint chain always gets the same colour. The two joint variants
+# share a colour because they appear in disjoint plots (one swaps for
+# the other).
+LABEL_COLORS = {
+    "Joint TFR + SNe": COLS[0],
+    "Joint (no 6dF)":  COLS[0],
+    "CF4 TFR W1":      COLS[1],
+    "CF4 TFR i":       COLS[2],
+    "Pantheon+":       COLS[3],
+    "SDSS FP":         COLS[4],
+    "6dF FP":          COLS[5],
+}
+
 
 def _per_survey_runs(bias):
     return [(f"precomputed_los_Carrick2015_{tag}_{bias}.hdf5", lab)
@@ -375,13 +389,13 @@ def plot_s8_posterior(S8_list, labels, savedir):
 
     with plt.style.context("science"):
         fig, ax = plt.subplots(figsize=(6.4, 3.5))
-        for i, (S8, lab) in enumerate(pairs):
+        for S8, lab in pairs:
             agr = posterior_agreement.compute_agreement(
                 (planck, S8)).sigma
             print(f"  {lab:<12} S8 = {np.mean(S8):.3f} ± {np.std(S8):.3f} "
                   f"| {agr:.2f} σ from Planck")
             zo = 0 if lab == "6dF FP" else 1
-            sns.kdeplot(S8, label=lab, fill=True, color=COLS[i],
+            sns.kdeplot(S8, label=lab, fill=True, color=LABEL_COLORS[lab],
                         bw_method=bw, ax=ax, zorder=zo)
 
         planck_band = ax.axvspan(mu - sig, mu + sig, color="k", alpha=0.45,
@@ -548,7 +562,7 @@ def plot_vext_corner(fnames, labels, savedir):
         fontsize=18,
         filled=True,
         labels=labels,
-        cols=COLS[1:1 + len(fnames)],   # skip "Joint TFR + SNe" colour
+        cols=[LABEL_COLORS[l] for l in labels],
         keys=["Vext_mag", "Vext_ell", "Vext_b"],
         filename=out,
         show_fig=False,
@@ -575,19 +589,20 @@ def plot_fs8_z(fs8_list, labels, savedir, fs8_list_q=None):
     with plt.style.context("science"):
         fig, ax = plt.subplots(figsize=(6.4, 3.5))
         q_alpha = 0.45
-        for i, (fs8, lab) in enumerate(zip(fs8_list, labels)):
+        for fs8, lab in zip(fs8_list, labels):
             if lab == "Joint (no 6dF)":
                 continue
             ax.errorbar(ZEFF[lab], np.median(fs8), yerr=np.std(fs8),
-                        fmt="o", capsize=3, color=COLS[i], label=lab)
+                        fmt="o", capsize=3, color=LABEL_COLORS[lab],
+                        label=lab)
         if fs8_list_q is not None:
-            for i, (fs8q, lab) in enumerate(zip(fs8_list_q, labels)):
+            for fs8q, lab in zip(fs8_list_q, labels):
                 if lab == "Joint (no 6dF)":
                     continue
                 ax.errorbar(ZEFF[lab] * 1.035, np.median(fs8q),
                             yerr=np.std(fs8q), fmt="s", capsize=3,
-                            mfc="none", color=COLS[i], linestyle="--",
-                            alpha=q_alpha)
+                            mfc="none", color=LABEL_COLORS[lab],
+                            linestyle="--", alpha=q_alpha)
         band = ax.fill_between(z, lo, hi, alpha=0.3)
         ax.plot(z, mid)
 
