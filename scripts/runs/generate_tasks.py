@@ -425,45 +425,31 @@ if __name__ == "__main__":
 
     _local_cfg = load_local_config()
 
-    # --- S8 from PVs: 5 individual datasets × 2 galaxy biases ---
-    bias_models = ["linear", "quadratic"]
+    # --- S8 from PVs: linear bias, b1 fixed on a grid ---
+    # 21 values: 0.5, 0.6, ..., 2.5
+    b1_values = [round(0.5 + 0.1 * i, 1) for i in range(21)]
+    b1_priors = [{"dist": "delta", "value": v} for v in b1_values]
 
     common = {
         **{k: v for k, v in _local_cfg.items()},
         "pv_model/kind": "precomputed_los_Carrick2015",
-        "pv_model/galaxy_bias": bias_models,
+        "pv_model/galaxy_bias": "linear",
         "pv_model/density_3d_downsample": 1,
         "model/priors/beta": {"dist": "uniform", "low": 0.0, "high": 2.0},
+        "model/priors/b1": b1_priors,
         "inference/num_chains": 1,
         "inference/num_warmup": 2000,
         "inference/num_samples": 10000,
         "io/root_output": "results/S8",
     }
 
-    individual_datasets = [
-        {"inference/model": "TFRModel",          "io/catalogue_name": "CF4_W1"},
-        {"inference/model": "TFRModel",          "io/catalogue_name": "CF4_i"},
-        {"inference/model": "FPModel",           "io/catalogue_name": "6dF_FP",
-         "pv_model/galaxy_bias": [*bias_models, "cubic"]},
-        {"inference/model": "FPModel",           "io/catalogue_name": "SDSS_FP",
-         "pv_model/galaxy_bias": [*bias_models, "cubic"]},
-        {"inference/model": "PantheonPlusModel", "io/catalogue_name": "PantheonPlus",
-         "inference/init_maxiter": 0},
-    ]
-
-    joint_datasets = [
-        {"inference/model": ["TFRModel", "TFRModel", "PantheonPlusModel"],
-         "io/catalogue_name": ["CF4_i", "CF4_W1", "PantheonPlus"],
-         "inference/shared_params": "beta,sigma_v",
-         "inference/init_maxiter": 0},
+    datasets = [
+        {"inference/model": "TFRModel", "io/catalogue_name": "CF4_W1"},
+        {"inference/model": "FPModel",  "io/catalogue_name": "SDSS_FP"},
     ]
 
     all_override_combinations = []
-    for dataset in individual_datasets:
-        all_override_combinations.extend(
-            expand_override_grid({**common, **dataset}))
-
-    for dataset in joint_datasets:
+    for dataset in datasets:
         all_override_combinations.extend(
             expand_override_grid({**common, **dataset}))
 
