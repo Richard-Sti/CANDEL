@@ -661,11 +661,73 @@ def plot_fs8_z(fs8_list, labels, savedir, fs8_list_q=None):
         print(f"  saved {out}")
 
 
+def plot_b1_beta(savedir, b1_min=0.25):
+    """Plot beta* vs fixed b1 bands for runs with scanned b1.
+
+    Reads only ``beta`` from each ``*_linear_b1_*.hdf5`` file and draws a
+    +/-1 sigma band per survey. Uses the same per-survey colour as the
+    rest of the figures.
+    """
+    from glob import glob
+
+    surveys = [("CF4 TFR W1", "CF4_W1"), ("SDSS FP", "SDSS_FP")]
+    fid_files = {tag: f"precomputed_los_Carrick2015_{tag}_linear.hdf5"
+                 for _, tag in surveys}
+
+    with plt.style.context("science"):
+        fig, ax = plt.subplots(figsize=(3.5, 0.75 * 3.5))
+        b1_lo, b1_hi = np.inf, -np.inf
+        for label, tag in surveys:
+            patt = join(ROOT,
+                        f"precomputed_los_Carrick2015_{tag}_linear_b1_*.hdf5")
+            files = glob(patt)
+            if not files:
+                print(f"  [skip] no b1 scan files for {label}")
+                continue
+            b1, mu, sd = [], [], []
+            for f in files:
+                v = float(f.split("_b1_")[-1].split(".hdf5")[0])
+                with File(f, "r") as h:
+                    beta = h["samples"]["beta"][...]
+                b1.append(v)
+                mu.append(np.mean(beta))
+                sd.append(np.std(beta))
+            b1 = np.array(b1); mu = np.array(mu); sd = np.array(sd)
+            k = np.argsort(b1)
+            b1, mu, sd = b1[k], mu[k], sd[k]
+            m = b1 >= b1_min
+            b1, mu, sd = b1[m], mu[m], sd[m]
+            c = LABEL_COLORS[label]
+            ax.fill_between(b1, mu - sd, mu + sd, color=c, alpha=0.3,
+                            label=label)
+            b1_lo = min(b1_lo, b1.min())
+            b1_hi = max(b1_hi, b1.max())
+
+            fid = join(ROOT, fid_files[tag])
+            if exists(fid):
+                with File(fid, "r") as h:
+                    b1f = h["samples"]["b1"][...]
+                    bf = h["samples"]["beta"][...]
+                ax.errorbar(np.mean(b1f), np.mean(bf), yerr=np.std(bf),
+                            fmt="o", ms=2.5, capsize=3, color=c, zorder=10)
+
+        ax.set_xlim(b1_lo, b1_hi)
+        ax.set_xlabel(r"$b_1$")
+        ax.set_ylabel(r"$\beta^\star$")
+        ax.legend()
+        fig.tight_layout()
+        out = join(savedir, "b1_beta.pdf")
+        fig.savefig(out, bbox_inches="tight", dpi=450)
+        plt.close(fig)
+        print(f"  saved {out}")
+
+
 # -----------------------------------------------------------------------------
 # Main
 # -----------------------------------------------------------------------------
 
-ALL_PLOTS = ["s8_posterior", "s8_comparison", "vext_corner", "fs8_z"]
+ALL_PLOTS = ["s8_posterior", "s8_comparison", "vext_corner", "fs8_z",
+             "b1_beta"]
 
 
 def main():
@@ -704,6 +766,8 @@ def main():
     S8_list_q = fs8_list_q = None
     extra_rows = extra_rows_q = []
     have_joint = have_variants = False
+    S8_list = fs8_list = beta_list = None
+    all_labels = list(labels)
     if needs_posterior & set(plots):
         have_joint, have_variants = _joint_files_present(primary)
         if not have_joint:
@@ -759,7 +823,8 @@ def main():
     plot_files = {"s8_posterior":  "S8_posterior.pdf",
                   "s8_comparison": "S8_comparison.pdf",
                   "vext_corner":   "Vext.pdf",
-                  "fs8_z":         "fs8_z.pdf"}
+                  "fs8_z":         "fs8_z.pdf",
+                  "b1_beta":       "b1_beta.pdf"}
     saved = []
 
     for p in plots:
@@ -779,6 +844,8 @@ def main():
                                    S8_list_q=None)
         elif p == "vext_corner":
             plot_vext_corner(fnames, labels, args.savedir)
+        elif p == "b1_beta":
+            plot_b1_beta(args.savedir)
         elif p == "fs8_z":
             if have_variants:
                 fs8_swap_q = (_swap_joint(fs8_list_q, extra_rows_q, "fs8")
