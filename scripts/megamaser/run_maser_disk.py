@@ -43,7 +43,7 @@ import tempfile
 import time
 
 # Check per-galaxy use_float64 before importing JAX (must be set pre-init)
-with open("scripts/megamaser/config_maser.toml", "rb") as _f:
+with open(os.path.join(os.path.dirname(__file__), "config_maser.toml"), "rb") as _f:
     _pre_cfg = tomli.load(_f)
 _galaxy_arg = sys.argv[1] if len(sys.argv) > 1 else ""
 _gal_cfg = _pre_cfg.get("model", {}).get("galaxies", {}).get(_galaxy_arg, {})
@@ -78,7 +78,7 @@ print(f"JAX platform: {jax.default_backend()}, devices: {_devs} "
       f"({_dev_names}), precision: {_precision}", flush=True)
 
 # ---- Load master config ----
-with open("scripts/megamaser/config_maser.toml", "rb") as f:
+with open(os.path.join(os.path.dirname(__file__), "config_maser.toml"), "rb") as f:
     master_cfg = tomli.load(f)
 
 inf_cfg = master_cfg["inference"]
