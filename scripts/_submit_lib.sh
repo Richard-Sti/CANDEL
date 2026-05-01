@@ -206,8 +206,8 @@ submit_job() {
                 --mem="${mem}G"
                 --job-name="$name"
                 --chdir="$PWD"
-                --output="${name}-%j.out"
-                --error="${name}-%j.out"
+                --output="logs-%j-${name}.out"
+                --error="logs-%j-${name}.out"
                 --mail-type=BEGIN,END,FAIL
                 --mail-user=richard.stiskalek@physics.ox.ac.uk
             )
@@ -283,7 +283,7 @@ SCRIPT
             if [[ -n "$gpu_mem_min" ]]; then
                 echo "[submit_job] glamdring: --gpu-mem not supported; ignoring" >&2
             fi
-            local addqueue_flags=(-s -q "$queue" -m "$mem" -c "$name" -o "${name}-%j.out")
+            local addqueue_flags=(-s -q "$queue" -m "$mem" -c "$name" -o "logs-%j-${name}.out")
             if (( gpu )); then
                 addqueue_flags+=(--gpus 1 -n "$cpus")
                 [[ -n "$gputype" ]] && addqueue_flags+=(--gputype "$gputype")
@@ -293,7 +293,7 @@ SCRIPT
                 addqueue_flags+=(-n "$cpus")
             fi
             echo "[submit_job] glamdring: addqueue ${addqueue_flags[*]} $cmd_str"
-            echo "[submit_job] log     : $PWD/${name}-<jobid>.out"
+            echo "[submit_job] log     : $PWD/logs-<jobid>-${name}.out"
             if (( dry )); then
                 echo "[submit_job] (dry: not submitting)"
                 return 0
