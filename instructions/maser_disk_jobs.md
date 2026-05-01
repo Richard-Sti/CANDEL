@@ -184,19 +184,19 @@ resubmits with `--resume` if incomplete:
 
 ```bash
 # DE MAP — resubmit up to 5 times
-bash scripts/megamaser/run_de_map.sh -q cmbgpu --max-retries 5
+bash scripts/megamaser/submit.sh --sampler de -q cmbgpu --galaxy NGC5765b --max-retries 5
 
-# DE MAP — specific galaxies
-bash scripts/megamaser/run_de_map.sh -q cmbgpu --max-retries 5 NGC5765b NGC6264
+# DE MAP — multiple galaxies
+bash scripts/megamaser/submit.sh --sampler de -q cmbgpu --galaxy NGC5765b,NGC6264 --max-retries 5
 
-# NSS — all galaxies
-bash scripts/megamaser/submit_all.sh --sampler nss -q cmbgpu --max-retries 5
+# NSS — one galaxy
+bash scripts/megamaser/submit.sh --sampler nss -q cmbgpu --galaxy NGC5765b --max-retries 5
 
 # NUTS — restarts from scratch (no checkpoint support)
-bash scripts/megamaser/submit_all.sh --sampler nuts -q cmbgpu --max-retries 3
+bash scripts/megamaser/submit.sh --sampler nuts -q cmbgpu --galaxy NGC5765b --max-retries 3
 
 # Custom poll interval (seconds between squeue checks, default 120)
-bash scripts/megamaser/run_de_map.sh -q cmbgpu --max-retries 10 --poll 60
+bash scripts/megamaser/submit.sh --sampler de -q cmbgpu --galaxy NGC5765b --max-retries 10 --poll 60
 ```
 
 Without `--max-retries`, the scripts behave exactly as before.
