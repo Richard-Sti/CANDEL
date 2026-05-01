@@ -87,17 +87,17 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# If --max-retries is set, delegate to the watcher and exit.
+# If --max-retries is set, delegate to the watcher and exit. One watcher
+# per galaxy so each retries independently as soon as its own job ends.
 if [[ -n "$_WATCH_RETRIES" ]]; then
     _watcher="$ROOT/scripts/megamaser/watch_and_resubmit.sh"
     _wargs=(--marker "saved samples to" --max-retries "$_WATCH_RETRIES")
     [[ -n "$_WATCH_POLL" ]] && _wargs+=(--poll "$_WATCH_POLL")
     [[ "$SAMPLER" == "nuts" ]] && _wargs+=(--no-resume)
-    # Rebuild the original command without --max-retries and --poll.
+    # Per-galaxy submit command (--galaxy is appended in the loop below).
     _cmd=(bash "$0" --sampler "$SAMPLER" -q "$QUEUE" --mem "$MEM")
     [[ -n "$MODE" ]]        && _cmd+=(--mode "$MODE")
     [[ -n "$F_GRID" ]]      && _cmd+=(--f-grid "$F_GRID")
-    [[ -n "$GALAXY" ]]      && _cmd+=(--galaxy "$GALAXY")
     [[ -n "$INIT_METHOD" ]] && _cmd+=(--init-method "$INIT_METHOD")
     [[ -n "$GPUTYPE" ]]     && _cmd+=(--gputype "$GPUTYPE")
     [[ -n "$GPU_MEM" ]]     && _cmd+=(--gpu-mem "$GPU_MEM")
@@ -107,11 +107,16 @@ if [[ -n "$_WATCH_RETRIES" ]]; then
     $NO_QUAD_WARP && _cmd+=(--no-quadratic-warp)
     $DRY && _cmd+=(--dry)
     $RESUME && _cmd+=(--resume)
-    _sname="watcher_${SAMPLER}_$(date +%H%M%S)"
     _logdir="$ROOT/scripts/megamaser/logs"
     mkdir -p "$_logdir"
-    launch_detached "$_sname" "$_logdir/${_sname}.log" \
-        bash "$_watcher" "${_wargs[@]}" -- "${_cmd[@]}"
+    _ts=$(date +%H%M%S)
+    _gals="${GALAXY:-$ALL_GALS}"
+    _gals="${_gals//,/ }"
+    for _gal in $_gals; do
+        _sname="watcher_${SAMPLER}_${_gal}_${_ts}"
+        launch_detached "$_sname" "$_logdir/${_sname}.log" \
+            bash "$_watcher" "${_wargs[@]}" -- "${_cmd[@]}" --galaxy "$_gal"
+    done
     exit 0
 fi
 

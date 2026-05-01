@@ -88,7 +88,9 @@ launch_detached() {
         cmd_str+="$(printf '%q ' "$arg")"
     done
 
+    local mux=""
     if command -v screen &>/dev/null; then
+        mux="screen"
         screen -dmS "$sname" -L -Logfile "$logfile" "$@"
         sleep 3
         [[ -f "$logfile" ]] && cat "$logfile"
@@ -97,6 +99,7 @@ launch_detached() {
         echo "[watch]   reattach: screen -r $sname"
         echo "[watch]   kill:     screen -S $sname -X quit"
     elif command -v tmux &>/dev/null; then
+        mux="tmux"
         tmux new-session -d -s "$sname" \
             "bash -c '${cmd_str} 2>&1 | tee ${logfile}'"
         sleep 3
@@ -108,6 +111,22 @@ launch_detached() {
     else
         echo "[watch] Error: neither screen nor tmux found" >&2
         return 1
+    fi
+
+    # Print management hints once per shell invocation, regardless of how
+    # many detached sessions we spawn.
+    if [[ -z "${_LAUNCH_DETACHED_HINTED:-}" ]]; then
+        case "$mux" in
+            screen)
+                echo "[watch]   list all: screen -ls"
+                echo "[watch]   detach:   Ctrl-a d (from inside an attached session)"
+                ;;
+            tmux)
+                echo "[watch]   list all: tmux ls"
+                echo "[watch]   detach:   Ctrl-b d (from inside an attached session)"
+                ;;
+        esac
+        export _LAUNCH_DETACHED_HINTED=1
     fi
 }
 
