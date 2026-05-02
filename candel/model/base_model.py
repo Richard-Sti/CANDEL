@@ -14,11 +14,97 @@
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 """
 Thin common base class for all forward models (PV and H0).
+
+H0 selection-integral convention
+--------------------------------
+For H0 models with an explicit sample selection (`which_selection` is set)
+and a reconstruction, the population selection normalizer is evaluated
+directly on the 3D reconstruction grid. Without a reconstruction, the model
+falls back to the radial volume integral with n = 1 and no reconstructed
+peculiar-velocity field.
+
+The ideal target is an integral over all space. In practice, the reconstruction
+field is finite, so the model uses a fixed computational truncation specified
+by `model.selection_integral_grid_radius` in Mpc/h. Its geometry is controlled
+by `model.selection_integral_geometry`:
+
+    "sphere": keep voxels with non-zero fractional volume inside R_grid and
+              flatten them to 1D arrays. This drops cube corners and is
+              usually cheaper.
+    "cube":   keep the full cubic sub-grid with half-side R_grid. This is
+              simpler geometrically and can be useful for cross-checks.
+
+The likelihood sums over all loaded voxels in either representation. The
+truncation radius is therefore a numerical accuracy choice, not a physical
+model boundary: it should be increased until `log S` is stable.
+Conceptually, the density outside the loaded reconstruction can be treated as
+mean density (`n_i = 1`), but the practical requirement is stricter: for
+posterior-relevant selection parameters, the selection probability should be
+negligible before the truncation boundary so that this omitted tail does not
+change the normalizer.
+
+Reconstruction fields are stored in Mpc/h. At each sampled H0, with
+
+    h = H0 / 100,
+
+the model uses
+
+    r_phys = r_grid / h,
+    dV_phys = dV_grid / h^3.
+
+The selection normalizer is then evaluated as
+
+    S = sum_i P_sel,i n_i dV_phys,
+
+or in log space,
+
+    log S = logsumexp_i(log P_sel,i + log n_i) + log dV_phys.
+
+Here `P_sel,i` is the selection probability at voxel i and `n_i` is the
+density/galaxy-bias factor. Since the computational sphere is intended to
+approximate infinity, the exact outer boundary is acceptable only if the
+omitted tail has negligible selection weight.
+
+Example: magnitude selection
+----------------------------
+For a magnitude-limited sample, each voxel is assigned a distance modulus using
+the reconstruction-coordinate radius and the sampled H0,
+
+    mu_i(H0) = mu_i(h=1) - 5 log10(h).
+
+For an object population with absolute magnitude M and effective magnitude
+scatter/error sigma_m, the apparent magnitude at voxel i is
+
+    m_i = mu_i(H0) + M.
+
+The smooth selection probability is then the same softened threshold used
+elsewhere in the H0 models,
+
+    P_sel,i = Phi((m_lim - m_i) / sigma_m),
+
+with the implementation provided by `log_prob_integrand_sel`, allowing the
+configured magnitude limit and width to be sampled or fixed. The magnitude
+selection normalizer is therefore
+
+    S_mag = sum_i Phi((m_lim - mu_i(H0) - M) / sigma_m) n_i dV_grid / h^3,
+
+or
+
+    log S_mag = logsumexp_i(log P_sel,i + log n_i)
+                + log dV_grid - 3 log h.
+
+The practical convergence check is to recompute `log S` with larger
+`selection_integral_grid_radius`; if the changes are negligible, the loaded
+grid is a sufficient approximation to the integral to infinity. This
+convergence requirement is for posterior-relevant parameter values rather than
+necessarily every extreme point in a deliberately broad prior.
 """
 from abc import ABC, abstractmethod
 
 import jax.numpy as jnp
 import numpy as np
+from jax import lax
+from jax.scipy.special import logsumexp
 from numpyro import factor
 
 from ..cosmo.cosmography import (Distance2Distmod, Distance2Redshift,
@@ -30,8 +116,10 @@ from ..util import (fprint, fsection, get_nested, load_config,
 from .integration import ln_simpson_precomputed, simpson_log_weights
 from .interp import LOSInterpolator
 from .pv_utils import (lp_galaxy_bias, octupole_radial, quadrupole_radial,
-                       rsample, sigmoid_monopole_radial)
-from .utils import load_priors, log_prob_integrand_sel, predict_cz
+                       rsample, sample_octupole, sample_quadrupole,
+                       sigmoid_monopole_radial)
+from .utils import (load_priors, log_prob_integrand_sel, logmeanexp,
+                    normal_logpdf_var, predict_cz, student_t_logpdf_var)
 
 # ICRS equatorial → Galactic Cartesian rotation matrix.
 # Computed via astropy: SkyCoord(basis, frame='icrs').galactic.
@@ -39,6 +127,13 @@ _R_ICRS_TO_GAL = np.array([
     [-0.05487565771259163, -0.87343705195561590, -0.48383507361671546],
     [+0.49410943719272680, -0.44482972122329520, +0.74698218398666760],
     [-0.86766613755965760, -0.19807633727300053, +0.45598381368730160]])
+
+# ICRS equatorial -> Supergalactic Cartesian rotation matrix.
+# Computed via astropy: SkyCoord(basis, frame='icrs').supergalactic.
+_R_ICRS_TO_SUPERGAL = np.array([
+    [+0.37501555570303163, +0.34135887185624750, +0.86188018516831910],
+    [-0.89832043772761380, -0.09572710024885137, +0.42878516000301936],
+    [+0.22887490937543750, -0.93504569026490690, +0.27075049949244600]])
 
 
 def make_adaptive_grid(r_min, r_max, delta_mu, dr_max):
@@ -198,12 +293,6 @@ class ModelBase(ABC):
                 setattr(self, attr, _normalize_rows(rhat))
                 attrs_set.append(attr)
 
-                # Galactic unit vectors for anisotropic sigma_v.
-                gal_attr = attr + "_gal"
-                rhat_gal = (np.asarray(rhat) @ _R_ICRS_TO_GAL.T)
-                setattr(self, gal_attr, jnp.asarray(rhat_gal))
-                attrs_set.append(gal_attr)
-
         fprint("set the following attributes: "
                f"{', '.join(attrs_set)}")
 
@@ -284,18 +373,31 @@ class ModelBase(ABC):
             self.config, "io/los_r0_decay_scale", 5)
         use_recon = get_nested(
             self.config, "model/use_reconstruction", False)
+        use_3d_selection_integral = (
+            get_nested(self.config, "model/which_selection", None)
+            is not None)
         if use_recon and get_nested(
                 self.config, "io/load_host_los", use_recon):
             self._load_los_interpolator(
                 data, which="host",
                 r0_decay_scale=r0_decay_scale)
-        if use_recon and get_nested(
-                self.config, "io/load_rand_los", use_recon):
+        if (use_recon and not use_3d_selection_integral and get_nested(
+                self.config, "io/load_rand_los", use_recon)):
             self._load_los_interpolator(
                 data, which="rand",
                 r0_decay_scale=r0_decay_scale)
 
         self._set_data_arrays(data)
+
+        if data.get("has_volume_density_3d", False):
+            self.has_volume_density_3d = True
+            self.density_3d_mode = data.get("density_3d_mode", "delta")
+            self.volume_density_batch_size = data.get(
+                "volume_density_batch_size", 1)
+            self.coordinate_frame_3d = data.get(
+                "coordinate_frame_3d", "icrs")
+        else:
+            self.has_volume_density_3d = False
 
     def _setup_cosmography(self):
         """Set up cosmography interpolators."""
@@ -390,44 +492,30 @@ class ModelBase(ABC):
             self.r_sel_range = self.r_host_range
             self._simpson_log_w_sel = self._simpson_log_w
 
-        self._lp_sel_dist_grid = self.log_prior_distance(
-            self.r_sel_range)[None, None, :]
+    def _setup_no_recon_direction_grid(self):
+        """Set up isotropic directions for no-reconstruction redshift cuts."""
+        if self.use_reconstruction or not self.apply_sel:
+            return
 
-    def _setup_random_los_grid(self):
-        """Set up dummy random LOS when no reconstruction is used."""
-        if not self.use_reconstruction and self.apply_sel:
-            which_sel = get_nested(
-                self.config, "model/which_selection", None)
+        which_sel = get_nested(
+            self.config, "model/which_selection", None)
+        if which_sel != "redshift":
+            return
 
-            if which_sel == "redshift":
-                # Redshift selection needs many directions to average
-                # over the Vext projection.
-                num_rand = get_nested(
-                    self.config, "model/num_rand_los_no_recon", 1000)
-                fprint(f"setting {num_rand} isotropic random LOS "
-                       "(no reconstruction, redshift selection).")
-            else:
-                # Magnitude selection is isotropic: 1 LOS suffices.
-                num_rand = 1
-                fprint("setting 1 random LOS "
-                       "(no reconstruction, isotropic selection).")
-            self.num_rand_los = num_rand
-            self.rand_los_density = jnp.ones(
-                (1, num_rand, self._num_points_malmquist))
-            self.rand_los_velocity = jnp.zeros_like(
-                self.rand_los_density)
-            gen = np.random.default_rng(42)
-            phi = gen.uniform(0, 2 * np.pi, num_rand)
-            cos_theta = gen.uniform(-1, 1, num_rand)
-            sin_theta = np.sqrt(1 - cos_theta**2)
-            rhat = np.stack([sin_theta * np.cos(phi),
-                             sin_theta * np.sin(phi),
-                             cos_theta], axis=1)
-            self.rhat_rand_los = jnp.asarray(rhat)
-            self.rhat_rand_los_gal = jnp.asarray(
-                rhat @ _R_ICRS_TO_GAL.T)
-            self.rand_los_RA = None
-            self.rand_los_dec = None
+        num_dirs = get_nested(
+            self.config, "model/num_no_recon_directions",
+            get_nested(self.config, "model/num_rand_los_no_recon", 1000))
+        fprint(f"setting {num_dirs} isotropic directions "
+               "(no reconstruction, redshift selection).")
+        self.num_no_recon_directions = num_dirs
+        gen = np.random.default_rng(42)
+        phi = gen.uniform(0, 2 * np.pi, num_dirs)
+        cos_theta = gen.uniform(-1, 1, num_dirs)
+        sin_theta = np.sqrt(1 - cos_theta**2)
+        rhat = np.stack([sin_theta * np.cos(phi),
+                         sin_theta * np.sin(phi),
+                         cos_theta], axis=1)
+        self.rhat_no_recon_directions = jnp.asarray(rhat)
 
     def _setup_fields_and_bias(self):
         """Count field realizations."""
@@ -440,7 +528,7 @@ class ModelBase(ABC):
         """Run all grid setup methods."""
         self._setup_cosmography()
         self._setup_malmquist_grid()
-        self._setup_random_los_grid()
+        self._setup_no_recon_direction_grid()
         self._setup_fields_and_bias()
 
     # ------------------------------------------------------------------
@@ -511,6 +599,15 @@ class H0ModelBase(ModelBase):
         if not use_reconstruction:
             replace_prior_with_delta(config, "beta", 0.0)
         config = self._replace_bias_priors(config)
+        config = self._replace_cz_likelihood_priors(config)
+        return config
+
+    def _replace_cz_likelihood_priors(self, config):
+        """Replace robust cz-likelihood priors when they are inactive."""
+        if get_nested(config, "model/cz_likelihood", "gaussian") \
+                != "student_t":
+            replace_prior_with_delta(
+                config, "nu_cz", 30.0, verbose=False)
         return config
 
     def _load_model_flags(self):
@@ -572,6 +669,17 @@ class H0ModelBase(ModelBase):
                    f"(mag range: {self.Vext_oct_mag_range})")
         self.apply_sel = self.which_selection is not None
 
+        self.selection_integral_grid_radius = get_nested(
+            config, "model/selection_integral_grid_radius", None)
+        self.selection_integral_geometry = get_nested(
+            config, "model/selection_integral_geometry", "sphere")
+        if self.selection_integral_geometry not in ("sphere", "cube"):
+            raise ValueError(
+                "`model.selection_integral_geometry` must be 'sphere' "
+                "or 'cube'.")
+        if self.apply_sel and self.use_reconstruction:
+            fprint("using 3D selection integral")
+
         # Robust velocity-error modelling options
         self.cz_likelihood = get_nested(
             config, "model/cz_likelihood", "gaussian")
@@ -581,12 +689,6 @@ class H0ModelBase(ModelBase):
                 "Expected 'gaussian' or 'student_t'.")
         if self.cz_likelihood != "gaussian":
             fprint(f"cz_likelihood set to {self.cz_likelihood}")
-
-        self.anisotropic_sigma_v = get_nested(
-            config, "model/anisotropic_sigma_v", False)
-        if self.anisotropic_sigma_v:
-            fprint("anisotropic_sigma_v enabled "
-                   "(sigma_v_x, sigma_v_y, sigma_v_z in Galactic frame)")
 
     def _load_selection_thresholds(self, active_map, spec):
         config = self.config
@@ -619,6 +721,71 @@ class H0ModelBase(ModelBase):
         if getattr(self, f"_infer_{name}"):
             return rsample(name, self.priors[name])
         return getattr(self, name)
+
+    def _sample_nu_cz(self):
+        """Sample Student-t cz degrees of freedom when enabled."""
+        if self.cz_likelihood == "student_t":
+            return rsample("nu_cz", self.priors["nu_cz"])
+        return None
+
+    def _cz_logpdf_fn(self, nu_cz):
+        """Return the configured scalar cz log-likelihood kernel."""
+        if nu_cz is None:
+            return normal_logpdf_var
+
+        def ll_cz_fn(obs, pred, var):
+            return student_t_logpdf_var(obs, pred, var, nu_cz)
+
+        return ll_cz_fn
+
+    def _sample_external_velocity(self):
+        """Sample shared external-velocity components."""
+        Vext = rsample("Vext", self.priors["Vext"])
+        Vext_quad = None
+        if self.use_Vext_quadrupole:
+            Vext_quad = sample_quadrupole(
+                "Vext_quad", *self.Vext_quad_mag_range)
+        Vext_oct = None
+        if self.use_Vext_octupole:
+            Vext_oct = sample_octupole(
+                "Vext_oct", *self.Vext_oct_mag_range)
+
+        Vext_mono = None
+        if self.which_Vext_monopole == "constant":
+            Vext_mono = rsample("Vext_mono", self.priors["Vext_mono"])
+        elif self.which_Vext_monopole == "sigmoid":
+            Vext_mono_left = rsample(
+                "Vext_mono_left", self.priors["Vext_mono_left"])
+            Vext_mono_rt = rsample(
+                "Vext_mono_rt", self.priors["Vext_mono_rt"])
+            Vext_mono_angle = rsample(
+                "Vext_mono_angle", self.priors["Vext_mono_angle"])
+            Vext_mono = (Vext_mono_left, Vext_mono_rt, Vext_mono_angle)
+
+        return Vext, Vext_quad, Vext_oct, Vext_mono
+
+    def _host_Vext_radial(self, Vext, Vext_quad=None, Vext_oct=None):
+        """Project external multipoles onto host directions."""
+        Vext_rad = jnp.sum(Vext[None, :] * self.rhat_host, axis=-1)
+        if Vext_quad is not None:
+            Q_mag, q1_hat, q2_hat = Vext_quad
+            Vext_rad = Vext_rad + quadrupole_radial(
+                Q_mag, q1_hat, q2_hat, self.rhat_host)
+        if Vext_oct is not None:
+            O_mag, o1_hat, o2_hat, o3_hat = Vext_oct
+            Vext_rad = Vext_rad + octupole_radial(
+                O_mag, o1_hat, o2_hat, o3_hat, self.rhat_host)
+        return Vext_rad
+
+    def _Vext_monopole_radial(self, Vext_mono, r):
+        """Evaluate the shared radial monopole on distances ``r``."""
+        if isinstance(Vext_mono, tuple):
+            V_left, r_t, angle = Vext_mono
+            k = jnp.tan(angle)
+            return sigmoid_monopole_radial(V_left, r_t, k, r)
+        if Vext_mono is not None:
+            return jnp.broadcast_to(Vext_mono, jnp.shape(r))
+        return None
 
     def _replace_bias_priors(self, config):
         """Inject delta priors for galaxy bias params if missing.
@@ -668,37 +835,6 @@ class H0ModelBase(ModelBase):
     #  Reconstruction helpers
     # ------------------------------------------------------------------
 
-    def _prepare_selection_grid(self, lp_host_dist_grid, Vext,
-                                Vext_quad=None, Vext_oct=None,
-                                Vext_mono=None):
-        """Prepare random-LOS distance prior grid and Vext projection."""
-        Vext_mono_sel = None
-        if self.apply_sel:
-            lp_rand_dist_grid = lp_host_dist_grid
-            # Works for rhat_rand_los both (n_los, 3) and (n_sims, n_los, 3)
-            Vext_rad_rand = jnp.sum(
-                Vext[None, :] * self.rhat_rand_los, axis=-1)
-            if isinstance(Vext_mono, tuple):
-                V_left, r_t, angle = Vext_mono
-                k = jnp.tan(angle)
-                Vext_mono_sel = sigmoid_monopole_radial(
-                    V_left, r_t, k, self.r_sel_range)
-            elif Vext_mono is not None:
-                Vext_mono_sel = jnp.full_like(
-                    self.r_sel_range, Vext_mono)
-            if Vext_quad is not None:
-                Q_mag, q1_hat, q2_hat = Vext_quad
-                Vext_rad_rand = Vext_rad_rand + quadrupole_radial(
-                    Q_mag, q1_hat, q2_hat, self.rhat_rand_los)
-            if Vext_oct is not None:
-                O_mag, o1_hat, o2_hat, o3_hat = Vext_oct
-                Vext_rad_rand = Vext_rad_rand + octupole_radial(
-                    O_mag, o1_hat, o2_hat, o3_hat, self.rhat_rand_los)
-        else:
-            lp_rand_dist_grid = 0.
-            Vext_rad_rand = 0.
-        return lp_rand_dist_grid, Vext_rad_rand, Vext_mono_sel
-
     def _apply_host_reconstruction(self, lp_host_dist, r_host, h,
                                    bias_params):
         """Apply galaxy bias to host LOS (unnormalized).
@@ -722,3 +858,201 @@ class H0ModelBase(ModelBase):
     def _no_reconstruction_fallback(self, lp_host_dist):
         """Handle the no-reconstruction branch."""
         factor("lp_host_dist", lp_host_dist)
+
+    def _validate_selection_integral(self, needs_velocity=False):
+        """Validate common 3D selection-integral requirements."""
+        if not self.apply_sel:
+            return
+        if self.use_Vext_quadrupole or self.use_Vext_octupole:
+            raise ValueError(
+                "Vext quadrupole/octupole are not supported with "
+                "selection integrals.")
+        if not self.use_reconstruction:
+            return
+        if self.selection_integral_grid_radius is None:
+            raise ValueError(
+                "3D selection integrals require explicit "
+                "`model.selection_integral_grid_radius` in Mpc/h.")
+        if not self.has_volume_density_3d:
+            raise ValueError(
+                "3D selection integrals require 3D density data.")
+        n_3d = self.density_3d_fields.shape[0]
+        if n_3d != self.num_fields:
+            raise ValueError(
+                f"Number of 3D density fields ({n_3d}) does not match LOS "
+                f"field realisations ({self.num_fields}).")
+        if needs_velocity and not hasattr(self, "vrad_3d_fields"):
+            raise ValueError(
+                "This selection integral requires 3D velocity data.")
+
+    def _volume_log_dV_phys(self, H0):
+        """Log physical voxel volume from reconstruction-coordinate volume."""
+        return self.log_dV_3d - 3 * jnp.log(H0 / 100)
+
+    def _volume_log_cell_weight_phys(self, H0):
+        """Log physical voxel volume including fractional boundary weights."""
+        return (self._volume_log_dV_phys(H0)
+                + getattr(self, "log_volume_weight_3d", 0.0))
+
+    def _vol_sel_galaxy_bias(self, density_3d, bias_params):
+        """Apply galaxy bias to a 3D density field."""
+        if self.density_3d_mode == "log_rho":
+            return lp_galaxy_bias(
+                0.0, density_3d, bias_params, self.which_bias)
+        return lp_galaxy_bias(
+            density_3d, 0.0, bias_params, self.which_bias)
+
+    def _vol_sel_Vext_rad_3d(self, Vext, Vext_mono, h):
+        """Project Vext onto each voxel direction in the field frame."""
+        if self.coordinate_frame_3d == "galactic":
+            Vext = jnp.asarray(_R_ICRS_TO_GAL) @ Vext
+        elif self.coordinate_frame_3d == "supergalactic":
+            Vext = jnp.asarray(_R_ICRS_TO_SUPERGAL) @ Vext
+        elif self.coordinate_frame_3d != "icrs":
+            raise ValueError(
+                f"3D selection integrals do not support coordinate frame "
+                f"'{self.coordinate_frame_3d}'.")
+        Vext_rad = (Vext[0] * self.rhat_x_3d
+                    + Vext[1] * self.rhat_y_3d
+                    + Vext[2] * self.rhat_z_3d)
+        if isinstance(Vext_mono, tuple):
+            V_left, r_t, angle = Vext_mono
+            k = jnp.tan(angle)
+            # `r_t` is in Mpc (matches host loop); voxel radii are in Mpc/h.
+            Vext_rad = Vext_rad + sigmoid_monopole_radial(
+                V_left, r_t, k, jnp.exp(self.log_r_3d) / h)
+        elif Vext_mono is not None:
+            Vext_rad = Vext_rad + Vext_mono
+        return Vext_rad
+
+    def _no_recon_selection_Vpec(self, Vext, Vext_mono):
+        """Selection-grid Vpec for no-reconstruction H0 selection."""
+        Vext_rad = jnp.sum(
+            Vext[None, :] * self.rhat_no_recon_directions, axis=-1)
+        Vpec = Vext_rad[None, :, None]
+        if isinstance(Vext_mono, tuple):
+            V_left, r_t, angle = Vext_mono
+            k = jnp.tan(angle)
+            Vpec = Vpec + sigmoid_monopole_radial(
+                V_left, r_t, k, self.r_sel_range)[None, None, :]
+        elif Vext_mono is not None:
+            Vpec = Vpec + Vext_mono
+        return Vpec
+
+    def _compute_no_recon_log_S_cz(self, H0, sigma_v, Vext, Vext_mono,
+                                   cz_lim, cz_width, nu_cz=None):
+        """No-reconstruction redshift selection with n=1 and v_rec=0."""
+        lp_r = self.log_prior_distance(self.r_sel_range)[None, None, :]
+        Vpec = self._no_recon_selection_Vpec(Vext, Vext_mono)
+        log_S = self.log_S_cz(
+            lp_r, Vpec, H0, sigma_v, cz_lim, cz_width, nu_cz=nu_cz)
+        # `log_S_cz` has already integrated over radius. The remaining axis
+        # is the isotropic angular average over Vext projections.
+        return logmeanexp(log_S, axis=-1).reshape(-1)
+
+    def _compute_no_recon_log_S_mag_cz(self, M_abs, e_mag, H0, sigma_v,
+                                       Vext, Vext_mono, mag_lim, mag_width,
+                                       cz_lim, cz_width, nu_cz=None):
+        """No-reconstruction combined magnitude and redshift selection."""
+        h = H0 / 100
+        lp_r = self.log_prior_distance(self.r_sel_range)[None, None, :]
+        mu_grid = self.distance2distmod(self.r_sel_range, h=h)
+        zcosmo = self.distance2redshift(self.r_sel_range, h=h)
+        Vpec = self._no_recon_selection_Vpec(Vext, Vext_mono)
+        cz_r = predict_cz(zcosmo[None, None, :], Vpec)
+
+        sigma_v = jnp.asarray(sigma_v)
+        while sigma_v.ndim < cz_r.ndim:
+            sigma_v = sigma_v[None, ...]
+        sigma_v = jnp.broadcast_to(sigma_v, cz_r.shape)
+
+        log_prob = log_prob_integrand_sel(
+            (mu_grid + M_abs)[None, None, :],
+            e_mag, mag_lim, mag_width)
+        log_prob += log_prob_integrand_sel(
+            cz_r, sigma_v, cz_lim, cz_width, nu_cz=nu_cz)
+        log_S = ln_simpson_precomputed(
+            lp_r + log_prob, self._simpson_log_w_sel, axis=-1)
+        # The Simpson rule above has already integrated over radius. The
+        # remaining axis is the isotropic angular average.
+        return logmeanexp(log_S, axis=-1).reshape(-1)
+
+    def _compute_volume_log_S_mag(self, bias_params, M_abs, e_mag, H0,
+                                  mag_lim, mag_width):
+        """3D selection integral for a magnitude-limited sample."""
+        if not self.use_reconstruction:
+            lp_r = self.log_prior_distance(self.r_sel_range)[None, None, :]
+            log_S = self.log_S_mag(
+                lp_r, M_abs, H0, e_mag, mag_lim, mag_width)
+            # `log_S_mag` has already integrated over radius.  Magnitude-only
+            # selection is isotropic, so the LOS axis is a singleton here.
+            return logmeanexp(log_S, axis=-1).reshape(-1)
+
+        h = H0 / 100
+        mu_3d = self.mu_at_h1_3d - 5 * jnp.log10(h)
+        log_P_sel = log_prob_integrand_sel(
+            mu_3d + M_abs, e_mag, mag_lim, mag_width)
+        log_cell_weight = self._volume_log_cell_weight_phys(H0)
+
+        def _one(density_3d):
+            log_n = self._vol_sel_galaxy_bias(density_3d, bias_params)
+            return logsumexp(log_P_sel + log_n + log_cell_weight)
+
+        return lax.map(_one, self.density_3d_fields,
+                       batch_size=self.volume_density_batch_size)
+
+    def _compute_volume_log_S_cz(self, bias_params, H0, sigma_v, beta,
+                                 Vext, Vext_mono, cz_lim, cz_width,
+                                 nu_cz=None):
+        """3D selection integral for a redshift-limited sample."""
+        if not self.use_reconstruction:
+            return self._compute_no_recon_log_S_cz(
+                H0, sigma_v, Vext, Vext_mono, cz_lim, cz_width,
+                nu_cz=nu_cz)
+
+        log_cell_weight = self._volume_log_cell_weight_phys(H0)
+        Vext_rad_3d = self._vol_sel_Vext_rad_3d(Vext, Vext_mono, H0 / 100)
+
+        def _one(inputs):
+            density_3d, vrad_3d = inputs
+            log_n = self._vol_sel_galaxy_bias(density_3d, bias_params)
+            Vpec = beta * vrad_3d + Vext_rad_3d
+            cz_pred = predict_cz(self.zcosmo_3d, Vpec)
+            log_P_sel = log_prob_integrand_sel(
+                cz_pred, sigma_v, cz_lim, cz_width, nu_cz=nu_cz)
+            return logsumexp(log_P_sel + log_n + log_cell_weight)
+
+        return lax.map(
+            _one, (self.density_3d_fields, self.vrad_3d_fields),
+            batch_size=self.volume_density_batch_size)
+
+    def _compute_volume_log_S_mag_cz(self, bias_params, M_abs, e_mag, H0,
+                                     sigma_v, beta, Vext, Vext_mono,
+                                     mag_lim, mag_width,
+                                     cz_lim, cz_width, nu_cz=None):
+        """3D selection integral for combined magnitude and redshift cuts."""
+        if not self.use_reconstruction:
+            return self._compute_no_recon_log_S_mag_cz(
+                M_abs, e_mag, H0, sigma_v, Vext, Vext_mono,
+                mag_lim, mag_width, cz_lim, cz_width, nu_cz=nu_cz)
+
+        h = H0 / 100
+        mu_3d = self.mu_at_h1_3d - 5 * jnp.log10(h)
+        log_P_mag = log_prob_integrand_sel(
+            mu_3d + M_abs, e_mag, mag_lim, mag_width)
+        log_cell_weight = self._volume_log_cell_weight_phys(H0)
+        Vext_rad_3d = self._vol_sel_Vext_rad_3d(Vext, Vext_mono, h)
+
+        def _one(inputs):
+            density_3d, vrad_3d = inputs
+            log_n = self._vol_sel_galaxy_bias(density_3d, bias_params)
+            Vpec = beta * vrad_3d + Vext_rad_3d
+            cz_pred = predict_cz(self.zcosmo_3d, Vpec)
+            log_P_cz = log_prob_integrand_sel(
+                cz_pred, sigma_v, cz_lim, cz_width, nu_cz=nu_cz)
+            return logsumexp(
+                log_P_mag + log_P_cz + log_n + log_cell_weight)
+
+        return lax.map(
+            _one, (self.density_3d_fields, self.vrad_3d_fields),
+            batch_size=self.volume_density_batch_size)

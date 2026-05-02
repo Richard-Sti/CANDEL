@@ -50,6 +50,7 @@ from .dust import read_dustmap
 # the user to coarsen larger native grids.
 _VOLUME_DENSITY_NGRID_MAX = 257
 _FIELD_CACHE_VERSION = 1
+_SPHERE_RADIUS_DX_WARN_MIN = 15.0
 
 ###############################################################################
 #                            Helper functions                                 #
@@ -302,6 +303,16 @@ def _sphere_voxel_weights(disp, radius, dx):
         np.float32)
 
 
+def _warn_coarse_sphere_radius(radius, dx, label):
+    """Warn when the spherical boundary is poorly resolved by the voxel grid."""
+    radius_over_dx = float(radius) / float(dx)
+    if radius_over_dx < _SPHERE_RADIUS_DX_WARN_MIN:
+        fprint(
+            f"warning: `{label}` spans only {radius_over_dx:.1f} voxels; "
+            "sphere boundary weights are approximate, so consider increasing "
+            "the radius or decreasing `density_3d_downsample`.")
+
+
 def _precompute_cosmo_3d(log_r_3d, Om0):
     """Precompute h=1 distance modulus and cosmological redshift on 3D grid.
 
@@ -372,6 +383,8 @@ def _load_volume_data_for_H0(
         required = [
             "density_3d_fields", "log_r_3d", "log_dV_3d",
             "mu_at_h1_3d", "zcosmo_3d"]
+        if geometry == "sphere" and subcube_radius is not None:
+            required.append("log_volume_weight_3d")
         if load_velocity:
             required.extend([
                 "vrad_3d_fields", "rhat_x_3d", "rhat_y_3d", "rhat_z_3d"])
@@ -427,6 +440,10 @@ def _load_volume_data_for_H0(
         if downsample > 1:
             rho = rho[::downsample, ::downsample, ::downsample]
             dx *= downsample
+
+        if k == 0 and geometry == "sphere" and subcube_radius is not None:
+            _warn_coarse_sphere_radius(
+                subcube_radius, dx, "model.selection_integral_grid_radius")
 
         extract_radius = subcube_radius
         if (geometry == "sphere" and subcube_radius is not None):
@@ -1001,6 +1018,8 @@ class PVDataFrame:
         rho0, obs0, dx0 = first
         log_r_grid, log_dV = _volume_density_geometry(rho0.shape, obs0, dx0)
         if geometry == "sphere":
+            _warn_coarse_sphere_radius(
+                radius, dx0, "pv_model.density_3d_radius")
             nsub = rho0.shape
             ax = [(np.arange(nsub[i], dtype=np.float32) + 0.5) * dx0
                   for i in range(3)]
