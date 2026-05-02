@@ -43,7 +43,19 @@ TAG_WORK = 1
 TAG_RESULT = 2
 TAG_DONE = 3
 
-_VOLUME_SELECTION_CACHE = {}
+_DENSITY_3D_CACHE = {}
+
+
+def _safe_tag(value):
+    """Return a filesystem-friendly tag component."""
+    return "".join(c if c.isalnum() or c in "-_" else "_" for c in str(value))
+
+
+def _mode_tag(which_selection, use_field, field_name, infer_selection):
+    """Tag output files by the mock/inference mode."""
+    field = f"field_{_safe_tag(field_name)}" if use_field else "nofield"
+    selection = "infersel" if infer_selection else "fixedsel"
+    return "_".join([_safe_tag(which_selection), field, selection])
 
 
 def _standardised_bias(samples, true_val, param):
@@ -138,8 +150,8 @@ def _load_density_3d_data(config, field_name):
         config["model"].get("selection_integral_geometry", "sphere"),
         load_velocity,
     )
-    if key not in _VOLUME_SELECTION_CACHE:
-        _VOLUME_SELECTION_CACHE[key] = _load_volume_data_for_H0(
+    if key not in _DENSITY_3D_CACHE:
+        _DENSITY_3D_CACHE[key] = _load_volume_data_for_H0(
             field_name, field_kwargs, field_indices=[0],
             galaxy_bias=config["model"].get("which_bias", "linear"),
             Om0=config["model"].get("Om", config["model"].get("Om0", 0.3)),
@@ -152,7 +164,7 @@ def _load_density_3d_data(config, field_name):
             cache_dir=config.get("io", {}).get("field_cache_dir"),
             cache_enabled=config["model"].get(
                 "density_3d_cache_enabled", True))
-    return _VOLUME_SELECTION_CACHE[key]
+    return _DENSITY_3D_CACHE[key]
 
 
 def run_one_mock(seed, base_config_path, true_params, mock_kwargs,
@@ -232,6 +244,7 @@ def master(comm, n_workers, config_info):
     master_seed = config_info["master_seed"]
     true_params = config_info["true_params"]
     outdir = config_info["outdir"]
+    mode_tag = config_info["mode_tag"]
 
     t0 = time.time()
     rng = np.random.default_rng(master_seed)
@@ -316,7 +329,7 @@ def master(comm, n_workers, config_info):
         if val is not None:
             save_dict[f"true_{p}"] = np.array(val)
 
-    outfile = os.path.join(outdir, "mock_TRGB_biases.npz")
+    outfile = os.path.join(outdir, f"mock_TRGB_biases_{mode_tag}.npz")
     np.savez(outfile, **save_dict)
     print(f"[INFO] Saved to {outfile}")
 
@@ -499,7 +512,8 @@ def run_sequential(config_info):
         if val is not None:
             save_dict[f"true_{p}"] = np.array(val)
 
-    outfile = os.path.join(outdir, "mock_TRGB_biases.npz")
+    outfile = os.path.join(
+        outdir, f"mock_TRGB_biases_{config_info['mode_tag']}.npz")
     np.savez(outfile, **save_dict)
     print(f"[INFO] Saved to {outfile}")
 
@@ -512,7 +526,7 @@ def run_single(seed, true_params, mock_kwargs, config_path,
                num_warmup=500, num_samples=500,
                which_selection="TRGB_magnitude",
                infer_selection=True, use_field=False, field_name=None,
-               plot_only=False):
+               outdir=None, plot_only=False):
     """Generate a single mock, optionally run inference, and plot."""
     print(f"{'='*60}")
     print("Mock configuration")
@@ -638,8 +652,13 @@ def run_single(seed, true_params, mock_kwargs, config_path,
     axes[2].legend()
 
     fig.tight_layout()
+    if outdir is None:
+        outdir = os.path.dirname(os.path.abspath(__file__))
+    os.makedirs(outdir, exist_ok=True)
     fname = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "mock_TRGB_single.png")
+        outdir,
+        "mock_TRGB_single_"
+        f"{_mode_tag(which_selection, use_field, field_name, infer_selection)}.png")
     fig.savefig(fname, dpi=150)
     print(f"\nSaved plot to {fname}")
     plt.close(fig)
@@ -782,6 +801,7 @@ def main():
                    infer_selection=args.infer_selection,
                    use_field=args.use_field,
                    field_name=args.field_name,
+                   outdir=args.outdir,
                    plot_only=args.plot_only)
         return
 
@@ -800,6 +820,8 @@ def main():
         "infer_selection": args.infer_selection,
         "use_field": args.use_field,
         "field_name": args.field_name,
+        "mode_tag": _mode_tag(args.which_selection, args.use_field,
+                              args.field_name, args.infer_selection),
     }
 
     # Try MPI; fall back to sequential if only 1 rank
