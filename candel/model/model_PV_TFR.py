@@ -64,7 +64,7 @@ class TFRModel(BasePVModel):
         a_TFR_dipole = rsample(
             "zeropoint_dipole", self.priors["zeropoint_dipole"], shared_params)
         a_TFR = a_TFR + jnp.sum(a_TFR_dipole * data["rhat"], axis=1)
-        kwargs_dist, h, Vext, sigma_v, beta, bias_params = \
+        kwargs_dist, h, Vext, sigma_v, beta, bias_params, nu_cz = \
             self._sample_common_params(shared_params)
 
         if data.sample_dust:
@@ -118,7 +118,7 @@ class TFRModel(BasePVModel):
                 data, r_grid, kwargs_dist, beta, bias_params)
 
             ll_cz = self._compute_ll_cz(
-                data, r_grid, h, Vext, sigma_v, Vrad)
+                data, r_grid, h, Vext, sigma_v, Vrad, nu_cz=nu_cz)
 
             # Likelihood of the observed magnitudes.
             if self.marginalize_eta:

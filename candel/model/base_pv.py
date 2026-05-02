@@ -14,6 +14,12 @@
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 """
 Base classes for peculiar velocity (PV) forward models.
+
+For empirical PV distance priors, the 3D normalizer can be evaluated on either
+the full cubic reconstruction sub-grid or on flattened spherical voxels loaded
+with `pv_model.density_3d_geometry = "sphere"`. This geometry is a numerical
+truncation of the prior normalizer; the radial taper `exp(-(r/R)^q)` remains
+part of the prior itself.
 """
 import jax.numpy as jnp
 from jax import lax
@@ -26,7 +32,8 @@ from .integration import simpson_log_weights
 from .pv_utils import (_rsample, compute_Vext_radial, lp_galaxy_bias, rsample,
                        sample_distance_prior_volume, sample_galaxy_bias,
                        sample_Vext, sigma_v_from_density, sumzero_basis)
-from .utils import joint_config_mismatch, normal_logpdf_var, predict_cz
+from .utils import (joint_config_mismatch, normal_logpdf_var, predict_cz,
+                    student_t_logpdf_var)
 
 
 class BasePVModel(ModelBase):
@@ -59,6 +66,15 @@ class BasePVModel(ModelBase):
             config, "inference/track_log_density_per_sample", False)
 
         self.which_Vext = get_nested(config, "pv_model/which_Vext", "constant")
+        self.cz_likelihood = get_nested(
+            config, "pv_model/cz_likelihood",
+            get_nested(config, "model/cz_likelihood", "gaussian"))
+        if self.cz_likelihood not in ("gaussian", "student_t"):
+            raise ValueError(
+                f"Invalid cz_likelihood '{self.cz_likelihood}'. "
+                "Expected 'gaussian' or 'student_t'.")
+        if self.cz_likelihood != "gaussian":
+            fprint(f"cz_likelihood set to {self.cz_likelihood}")
 
         priors = config["model"]["priors"]
 
@@ -152,11 +168,15 @@ class BasePVModel(ModelBase):
             sigma_v = rsample(
                 "sigma_v", self.priors["sigma_v"], shared_params)
 
+        nu_cz = None
+        if self.cz_likelihood == "student_t":
+            nu_cz = rsample("nu_cz", self.priors["nu_cz"], shared_params)
+
         beta = rsample("beta", self.priors["beta"], shared_params)
         bias_params = sample_galaxy_bias(
             self.priors, self.galaxy_bias, shared_params,
             Om=self.Om, beta=beta)
-        return kwargs_dist, h, Vext, sigma_v, beta, bias_params
+        return kwargs_dist, h, Vext, sigma_v, beta, bias_params, nu_cz
 
     def _get_simpson_log_w(self, data, r_grid):
         """Return pre-computed Simpson log weights, or compute on the fly."""
@@ -196,6 +216,10 @@ class BasePVModel(ModelBase):
         log_R = jnp.log(R)
         density_mode = data.density_3d_mode
         log_r_3d = data["log_r_3d"]
+        log_volume_weight_3d = (
+            data["log_volume_weight_3d"]
+            if "log_volume_weight_3d" in data.keys()
+            else 0.0)
 
         def _log_N_one(density_3d):
             if density_mode == "log_rho":
@@ -209,7 +233,9 @@ class BasePVModel(ModelBase):
                 bias_params, self.galaxy_bias,
                 self.quadratic_bias_delta0)
             log_f_3d = -jnp.exp(q * (log_r_3d - log_R))
-            return logsumexp(log_n_3d + log_f_3d) + data.log_dV_3d
+            return (logsumexp(
+                log_n_3d + log_f_3d + log_volume_weight_3d)
+                + data.log_dV_3d)
 
         log_N = lax.map(
             _log_N_one,
@@ -228,7 +254,8 @@ class BasePVModel(ModelBase):
         r"""Volume-normalized empirical distance prior.
 
         Treats each source's 3D position as drawn from
-        :math:`\tilde\pi(\mathbf{x}) \propto n(\mathbf{x})\,\exp(-(|\mathbf{x}|/R)^q)`,
+        :math:`\tilde\pi(\mathbf{x}) \propto n(\mathbf{x})`
+        times :math:`\exp(-(|\mathbf{x}|/R)^q)`,
         with `n` the bias-applied galaxy number density. The normalizer is a
         single 3D volume integral shared across sources (per field
         realization), and the per-LOS integrand picks up the radial Jacobian
@@ -253,14 +280,15 @@ class BasePVModel(ModelBase):
 
         # Global 3D normalization, one scalar per field realisation:
         #   log N_f = logsumexp(log n_f + log f_f) + log dV_f.
-        # `lax.map` keeps the reduction chunked over field realisations, avoiding
-        # a full-field vmap and the corresponding `(nfield, nx, ny, nz)`
-        # intermediate arrays.
+        # `lax.map` keeps the reduction chunked over field realisations,
+        # avoiding a full-field vmap and its `(nfield, nx, ny, nz)`
+        # intermediate.
         log_N = self._compute_volume_log_N(data, kwargs_dist, bias_params)
 
         return lp_los - log_N[:, None, None], Vrad
 
-    def _compute_ll_cz(self, data, r_grid, h, Vext, sigma_v, Vrad):
+    def _compute_ll_cz(self, data, r_grid, h, Vext, sigma_v, Vrad,
+                       nu_cz=None):
         Vext_rad = compute_Vext_radial(
             data, r_grid, Vext, which_Vext=self.which_Vext,
             **self.kwargs_Vext)
@@ -273,9 +301,16 @@ class BasePVModel(ModelBase):
             sigma_v_grid = sigma_v_from_density(
                 data["los_delta_r_grid"], sigma_v_low, sigma_v_high,
                 log_rho_t, k)
+            if nu_cz is not None:
+                return student_t_logpdf_var(
+                    data["czcmb"][None, :, None], czpred, sigma_v_grid**2,
+                    nu_cz)
             return normal_logpdf_var(
                 data["czcmb"][None, :, None], czpred, sigma_v_grid**2)
 
+        if nu_cz is not None:
+            return student_t_logpdf_var(
+                data["czcmb"][None, :, None], czpred, sigma_v**2, nu_cz)
         return normal_logpdf_var(
             data["czcmb"][None, :, None], czpred, sigma_v**2)
 
