@@ -604,7 +604,7 @@ def _load_nss_checkpoint(path):
 def run_nss(model, model_args=(), model_kwargs=None,
             n_live=500, num_mcmc_steps=50, num_delete=1,
             termination=-3, seed=42, validate=True,
-            checkpoint_dir=None, resume_path=None,
+            checkpoint_dir=None, checkpoint_path=None, resume_path=None,
             checkpoint_interval=1800):
     """Run the Nested Slice Sampler on a NumPyro model.
 
@@ -629,6 +629,9 @@ def run_nss(model, model_args=(), model_kwargs=None,
         Random seed.
     validate : bool
         If True, validate the prior/likelihood decomposition first.
+    checkpoint_path : str or None
+        Explicit checkpoint ``.npz`` path. Overrides ``checkpoint_dir`` when
+        set.
 
     Returns
     -------
@@ -705,8 +708,9 @@ def run_nss(model, model_args=(), model_kwargs=None,
 
         dead = []
         n_dead = 0
-    _ckpt_path = (os.path.join(checkpoint_dir, "nss_ckpt.npz")
-                  if checkpoint_dir is not None else None)
+    _ckpt_path = checkpoint_path
+    if _ckpt_path is None and checkpoint_dir is not None:
+        _ckpt_path = os.path.join(checkpoint_dir, "nss_ckpt.npz")
     _last_ckpt_time = timer()
     t0 = timer()
 
