@@ -57,7 +57,7 @@ from candel.util import (SPEED_OF_LIGHT, fsection, load_config, read_samples,
 # -----------------------------------------------------------------------
 
 RESULT_ROOT = results_path("results/Megamaser")
-CONFIG_PATH = "scripts/megamaser/config_maser.toml"
+CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config_maser.toml")
 
 # Hard-coded NSS result files per galaxy
 NSS_FILES = {

@@ -10,10 +10,10 @@
 #
 # Examples:
 #   bash watch_and_resubmit.sh --marker "MAP init" -- \
-#       bash scripts/megamaser/run_de_map.sh -q cmbgpu
+#       bash scripts/megamaser/submit.sh --sampler de -q cmbgpu --galaxy NGC5765b
 #
 #   bash watch_and_resubmit.sh --marker "saved samples to" -- \
-#       bash scripts/megamaser/submit_all.sh --sampler nss -q cmbgpu
+#       bash scripts/megamaser/submit.sh --sampler nss -q cmbgpu --galaxy NGC5765b
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -43,25 +43,25 @@ by _submit_lib.sh's submit_job function).
 On resubmit, the same command is re-run with the resume flag appended.
 
 Examples:
-  # DE MAP (all galaxies, auto-resume on timeout)
+  # DE MAP (one galaxy, auto-resume on timeout)
   bash watch_and_resubmit.sh --marker "MAP init" -- \
-      bash scripts/megamaser/run_de_map.sh -q cmbgpu
+      bash scripts/megamaser/submit.sh --sampler de -q cmbgpu --galaxy NGC5765b
 
-  # DE MAP (specific galaxies)
+  # DE MAP (multiple galaxies)
   bash watch_and_resubmit.sh --marker "MAP init" -- \
-      bash scripts/megamaser/run_de_map.sh -q cmbgpu NGC5765b NGC6264
+      bash scripts/megamaser/submit.sh --sampler de -q cmbgpu --galaxy NGC5765b,NGC6264
 
-  # NSS (all galaxies)
+  # NSS (one galaxy)
   bash watch_and_resubmit.sh --marker "saved samples to" -- \
-      bash scripts/megamaser/submit_all.sh --sampler nss -q cmbgpu
+      bash scripts/megamaser/submit.sh --sampler nss -q cmbgpu --galaxy NGC5765b
 
   # NUTS (no resume support)
   bash watch_and_resubmit.sh --marker "saved samples to" --no-resume -- \
-      bash scripts/megamaser/submit_all.sh --sampler nuts -q cmbgpu
+      bash scripts/megamaser/submit.sh --sampler nuts -q cmbgpu --galaxy NGC5765b
 
   # Custom poll and retries
   bash watch_and_resubmit.sh --marker "MAP init" --max-retries 10 --poll 60 -- \
-      bash scripts/megamaser/run_de_map.sh -q cmbgpu
+      bash scripts/megamaser/submit.sh --sampler de -q cmbgpu --galaxy NGC5765b
 EOF
 }
 
@@ -91,12 +91,12 @@ CMD=("$@")
 # ── helpers ────────────────────────────────────────────────────────────────
 
 log_path_for_job() {
+    # submit_job writes logs as "logs-<jobid>-<jobname>.out" in $PWD on
+    # both clusters. The watcher only knows the jobid, so glob to find it.
     local jid="$1"
-    case "$CANDEL_CLUSTER" in
-        glamdring) echo "$ROOT/python-${jid}.out" ;;
-        arc)       echo "$PWD/logs-${jid}.out" ;;
-        *)         echo "unknown-${jid}.out" ;;
-    esac
+    local f
+    f=$(ls "$PWD"/logs-"${jid}"-*.out 2>/dev/null | head -1)
+    echo "${f:-$PWD/logs-${jid}-<name>.out}"
 }
 
 run_and_capture_jobids() {

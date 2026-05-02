@@ -107,7 +107,9 @@ launch_detached() {
         cmd_str+="$(printf '%q ' "$arg")"
     done
 
+    local mux=""
     if command -v screen &>/dev/null; then
+        mux="screen"
         screen -dmS "$sname" -L -Logfile "$logfile" "$@"
         sleep 3
         [[ -f "$logfile" ]] && cat "$logfile"
@@ -116,6 +118,7 @@ launch_detached() {
         echo "[watch]   reattach: screen -r $sname"
         echo "[watch]   kill:     screen -S $sname -X quit"
     elif command -v tmux &>/dev/null; then
+        mux="tmux"
         tmux new-session -d -s "$sname" \
             "bash -c '${cmd_str} 2>&1 | tee ${logfile}'"
         sleep 3
@@ -127,6 +130,22 @@ launch_detached() {
     else
         echo "[watch] Error: neither screen nor tmux found" >&2
         return 1
+    fi
+
+    # Print management hints once per shell invocation, regardless of how
+    # many detached sessions we spawn.
+    if [[ -z "${_LAUNCH_DETACHED_HINTED:-}" ]]; then
+        case "$mux" in
+            screen)
+                echo "[watch]   list all: screen -ls"
+                echo "[watch]   detach:   Ctrl-a d (from inside an attached session)"
+                ;;
+            tmux)
+                echo "[watch]   list all: tmux ls"
+                echo "[watch]   detach:   Ctrl-b d (from inside an attached session)"
+                ;;
+        esac
+        export _LAUNCH_DETACHED_HINTED=1
     fi
 }
 
@@ -204,8 +223,8 @@ submit_job() {
                 --mem="${mem}G"
                 --job-name="$name"
                 --chdir="$PWD"
-                --output="logs-%j.out"
-                --error="logs-%j.out"
+                --output="logs-%j-${name}.out"
+                --error="logs-%j-${name}.out"
                 --mail-type=BEGIN,END,FAIL
                 --mail-user=richard.stiskalek@physics.ox.ac.uk
             )
@@ -281,7 +300,7 @@ SCRIPT
             if [[ -n "$gpu_mem_min" ]]; then
                 echo "[submit_job] glamdring: --gpu-mem not supported; ignoring" >&2
             fi
-            local addqueue_flags=(-s -q "$queue" -m "$mem" -c "$name")
+            local addqueue_flags=(-s -q "$queue" -m "$mem" -c "$name" -o "logs-%j-${name}.out")
             if (( gpu )); then
                 addqueue_flags+=(--gpus 1 -n "$cpus")
                 [[ -n "$gputype" ]] && addqueue_flags+=(--gputype "$gputype")
@@ -291,7 +310,7 @@ SCRIPT
                 addqueue_flags+=(-n "$cpus")
             fi
             echo "[submit_job] glamdring: addqueue ${addqueue_flags[*]} $cmd_str"
-            echo "[submit_job] log     : $PWD/python-<jobid>.out"
+            echo "[submit_job] log     : $PWD/logs-<jobid>-${name}.out"
             if (( dry )); then
                 echo "[submit_job] (dry: not submitting)"
                 return 0

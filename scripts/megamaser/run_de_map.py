@@ -61,7 +61,7 @@ print(f"JAX platform: {jax.default_backend()}, devices: {_devs} "
       f"({_dev_names}), precision: {_precision}", flush=True)
 
 # ---- Load master config ----
-with open("scripts/megamaser/config_maser.toml", "rb") as f:
+with open(os.path.join(os.path.dirname(__file__), "config_maser.toml"), "rb") as f:
     master_cfg = tomli.load(f)
 
 # ---- Parse args ----
@@ -147,11 +147,13 @@ if args.resume and os.path.isfile(ckpt_path):
 elif args.resume:
     fprint(f"--resume: no checkpoint found at {ckpt_path}, starting fresh")
 fprint(f"Checkpoints: {ckpt_dir}")
+fprint(f"Checkpoint file: {ckpt_path}")
 
 fsection(f"DE MAP optimization ({galaxy}, {data['n_spots']} spots)")
 t0 = time.time()
 init_params = find_MAP(model, model_kwargs={}, seed=seed,
-                       checkpoint_dir=ckpt_dir, resume_path=resume_path)
+                       checkpoint_dir=ckpt_dir, checkpoint_path=ckpt_path,
+                       resume_path=resume_path)
 dt = time.time() - t0
 
 # ---- Print results ----
