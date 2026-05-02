@@ -5,6 +5,7 @@
 [io]
 los_file_random = "data/los_random_<X>.hdf5"
 los_r0_decay_scale = 5
+field_cache_dir = "data/field_cache"
 
 # --- Catalog paths ---
 

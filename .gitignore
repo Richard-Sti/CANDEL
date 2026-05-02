@@ -1,4 +1,5 @@
 .claude/
+.codex
 .vscode/
 venv_candel/
 venv_gpu_candel/
@@ -6,6 +7,7 @@ candel.egg-info/
 __pycache__/
 data/
 data_heavy/
+field_cache/
 results/
 results_test/
 tasks_list*/

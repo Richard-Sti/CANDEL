@@ -1,4 +1,4 @@
-base = ["config_priors.toml"]
+base = ["config_priors.toml", "config_paths.toml"]
 
 ###############################################################################
 #                               Inference                                     #
@@ -41,9 +41,10 @@ mag_lim_SN_width = 0.15
 
 distmod_limits = [15, 43]
 
-# Selection integral grid
-r_max_selection = 70
-dr_malmquist = 0.5
+# 3D selection integral spherical truncation radius in Mpc/h.
+selection_integral_geometry = "sphere"
+selection_integral_grid_radius = 100.0
+density_3d_downsample = 1
 
 # --- Overrides from default priors ---
 

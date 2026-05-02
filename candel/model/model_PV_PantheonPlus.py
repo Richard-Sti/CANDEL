@@ -23,7 +23,7 @@ from .base_pv import BasePVModel
 from .pv_utils import (add_sigma_mag_to_lane_cov, lp_galaxy_bias, rsample,
                        sample_distance_prior_volume, sample_galaxy_bias,
                        sigma_v_from_density)
-from .utils import normal_logpdf_var, predict_cz
+from .utils import normal_logpdf_var, predict_cz, student_t_logpdf_var
 
 
 class PantheonPlusModel(BasePVModel):
@@ -91,6 +91,9 @@ class PantheonPlusModel(BasePVModel):
         else:
             sigma_v = rsample(
                 "sigma_v", self.priors["sigma_v"], shared_params)
+        nu_cz = None
+        if self.cz_likelihood == "student_t":
+            nu_cz = rsample("nu_cz", self.priors["nu_cz"], shared_params)
         # Radially-project Vext
         Vext_rad = jnp.sum(data["rhat"] * Vext[None, :], axis=1)
 
@@ -165,11 +168,20 @@ class PantheonPlusModel(BasePVModel):
                 sigma_v_r = sigma_v_from_density(
                     delta_at_r, sigma_v_low, sigma_v_high,
                     log_sigma_v_rho_t, sigma_v_k)
-                ll = normal_logpdf_var(
-                    data["czcmb"][None, :], czpred, sigma_v_r**2)
+                if nu_cz is not None:
+                    ll = student_t_logpdf_var(
+                        data["czcmb"][None, :], czpred, sigma_v_r**2,
+                        nu_cz)
+                else:
+                    ll = normal_logpdf_var(
+                        data["czcmb"][None, :], czpred, sigma_v_r**2)
             else:
-                ll = normal_logpdf_var(
-                    data["czcmb"][None, :], czpred, sigma_v**2)
+                if nu_cz is not None:
+                    ll = student_t_logpdf_var(
+                        data["czcmb"][None, :], czpred, sigma_v**2, nu_cz)
+                else:
+                    ll = normal_logpdf_var(
+                        data["czcmb"][None, :], czpred, sigma_v**2)
             ll += lp_dist
             # Average over field realizations and track
             factor("ll_obs", logsumexp(ll, axis=0) - jnp.log(data.num_fields))

@@ -191,7 +191,7 @@ def validate_decomposition(log_prior_fn, log_likelihood_fn, log_joint_fn,
 
     # Verify that log_prior and log_likelihood return -inf outside the prior
     # support. Without this, the slice sampler explores outside the prior,
-    # causing an O(d) evidence bias (see CLAUDE.md "NSS evidence bias fix").
+    # causing an O(d) evidence bias.
     key2 = jax.random.PRNGKey(seed + 999)
     for dim in range(ndim):
         for side, offset in [("above upper", hi[dim] + 1.0),

@@ -11,6 +11,7 @@
 #              [--time H | D-HH:MM:SS]    # bare integer = hours; required on 'long'
 #                                         # defaults: short=12h, medium=48h
 #              [--name JOB]               # job name (default: candel)
+#              [--logdir DIR]             # log directory (default: logs)
 #              [--dry]                    # print command without submitting
 #              -- <cmd...>
 #
@@ -91,8 +92,8 @@ export CANDEL_FROZEN_ROOT
 _cluster_profile="$_submit_lib_dir/_cluster_${CANDEL_CLUSTER}.sh"
 
 # Source the profile in the current shell. On glamdring this puts the env
-# needed by addqueue jobs into place (inherited via -s). On arc this still
-# runs but is mostly redundant; the sbatch script re-sources it anyway.
+# needed by addqueue jobs into place. On arc this still runs but is mostly
+# redundant; the sbatch script re-sources it anyway.
 # shellcheck disable=SC1090
 source "$_cluster_profile"
 
@@ -160,6 +161,7 @@ submit_job() {
             --mpi-n)   mpi_n="$2"; shift 2 ;;
             --time)    time="$2"; shift 2 ;;
             --name)    name="$2"; shift 2 ;;
+            --logdir)  logdir="$2"; shift 2 ;;
             --gpu)     gpu=1; shift ;;
             --gputype) gputype="$2"; shift 2 ;;
             --gpu-mem) gpu_mem_min="$2"; shift 2 ;;
@@ -302,21 +304,37 @@ SCRIPT
             fi
             local addqueue_flags=(-s -q "$queue" -m "$mem" -c "$name" -o "logs-%j-${name}.out")
             if (( gpu )); then
-                addqueue_flags+=(--gpus 1 -n "$cpus")
+                addqueue_flags+=(-s --gpus 1 -n 1x2)
                 [[ -n "$gputype" ]] && addqueue_flags+=(--gputype "$gputype")
             elif [[ -n "$mpi_n" ]]; then
                 addqueue_flags+=(-n "$mpi_n")
             else
-                addqueue_flags+=(-n "$cpus")
+                addqueue_flags+=(-s -n "$cpus")
             fi
-            echo "[submit_job] glamdring: addqueue ${addqueue_flags[*]} $cmd_str"
+            local addqueue_env=()
+            if (( gpu )); then
+                if [[ -z "${JAX_PLATFORMS+x}" || "$JAX_PLATFORMS" == "cpu" ]]; then
+                    # JAX 0.8.x: "gpu" can trigger ROCm init on glamdring;
+                    # CUDA jobs should ask for the CUDA plugin explicitly.
+                    addqueue_env+=(JAX_PLATFORMS=cuda)
+                else
+                    addqueue_env+=(JAX_PLATFORMS="$JAX_PLATFORMS")
+                fi
+            fi
+            local addqueue_prefix=""
+            [[ ${#addqueue_env[@]} -gt 0 ]] && addqueue_prefix="${addqueue_env[*]} "
+            echo "[submit_job] glamdring: ${addqueue_prefix}addqueue ${addqueue_flags[*]} $cmd_str"
             echo "[submit_job] log     : $PWD/logs-<jobid>-${name}.out"
             if (( dry )); then
                 echo "[submit_job] (dry: not submitting)"
                 return 0
             fi
             local _aq_out
-            _aq_out=$(addqueue --sbatch "${addqueue_flags[@]}" $cmd_str 2>&1)
+            if [[ ${#addqueue_env[@]} -gt 0 ]]; then
+                _aq_out=$(env "${addqueue_env[@]}" addqueue --sbatch "${addqueue_flags[@]}" $cmd_str 2>&1)
+            else
+                _aq_out=$(addqueue --sbatch "${addqueue_flags[@]}" $cmd_str 2>&1)
+            fi
             echo "$_aq_out"
             local _jid
             _jid=$(echo "$_aq_out" | grep -oP 'Submitted batch job \K[0-9]+')

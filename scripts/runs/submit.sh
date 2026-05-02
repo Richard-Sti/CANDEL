@@ -15,8 +15,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "$ROOT/scripts/_submit_lib.sh"
 
 queue=""
-ncpu=4
-memory=6
+ncpu=2
+memory=7
 gputype=""
 gpu_mem=""
 gpu_flag=false
@@ -47,8 +47,9 @@ options:
                             glamdring GPU: gpulong, cmbgpu, optgpu
                             arc: short, medium, long
   -n, --ncpu NCPU         number of CPUs (default: $ncpu)
-  -m, --memory MEMORY     memory per CPU (GB, default: $memory)
-                          total requested = MEMORY * NCPU
+  -m, --memory MEMORY     memory in GB (default: $memory)
+                          glamdring GPU: passed directly to addqueue -m;
+                          otherwise total requested = MEMORY * NCPU
   --gpu                   request a GPU (any type). Implicit on arc and on
                           glamdring GPU queues (gpulong/cmbgpu/optgpu).
   --no-gpu                submit as a CPU-only job (overrides arc default).
@@ -264,9 +265,18 @@ else
     echo "  Mode:        SUBMIT (queue=$queue)"
 fi
 total_memory=$(( memory * ncpu ))
+submit_memory=$total_memory
+host_devices=$ncpu
+if $is_gpu; then
+    if [[ "$CANDEL_CLUSTER" == "glamdring" ]]; then
+        submit_memory=$memory
+    fi
+    host_devices=1
+fi
 echo "  CPUs:        $ncpu"
-echo "  Memory:      ${memory} GB/CPU  (total ${total_memory} GB)"
+echo "  Memory:      ${submit_memory} GB requested"
 $is_gpu && echo "  GPU:         yes${gputype:+ ($gputype)}"
+echo "  Host devices: $host_devices"
 if (( ${#task_lines[@]} != total_in_file )); then
     echo "  Total tasks: ${#task_lines[@]} (of $total_in_file in $task_file)"
 else
@@ -304,7 +314,7 @@ for i in "${!task_lines[@]}"; do
         echo "[WARNING] Config file not found: $config_path"; continue
     fi
 
-    pycmd="$CANDEL_PYTHON $run_main --config $config_path --host-devices $ncpu"
+    pycmd="$CANDEL_PYTHON $run_main --config $config_path --host-devices $host_devices"
 
     if $local_mode; then
         echo "[INFO] Running locally..."; echo "  $pycmd"
@@ -320,7 +330,7 @@ for i in "${!task_lines[@]}"; do
         $dry && dry_flag=(--dry)
         time_flag=()
         [[ -n "$walltime" ]] && time_flag=(--time "$walltime")
-        submit_job "${gpu_flags[@]}" --queue "$queue" --mem "$total_memory" \
+        submit_job "${gpu_flags[@]}" --queue "$queue" --mem "$submit_memory" \
             --cpus "$ncpu" --name "task_${idx}" \
             "${time_flag[@]}" "${dry_flag[@]}" -- $pycmd
     fi

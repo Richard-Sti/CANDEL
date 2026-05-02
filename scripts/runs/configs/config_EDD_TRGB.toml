@@ -52,6 +52,11 @@ dr_max = 0.2
 delta_mu_sel = 0.35
 dr_max_sel = 1.5
 
+# 3D selection integral spherical truncation radius in Mpc/h.
+selection_integral_geometry = "sphere"
+selection_integral_grid_radius = 75.0
+density_3d_downsample = 1
+
 mag_lim_TRGB = "infer"
 mag_lim_TRGB_width = "infer"
 cz_lim_selection = "infer"

@@ -14,19 +14,16 @@
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 """Cepheid-calibrated H0 (CH0) forward model in JAX."""
 import jax.numpy as jnp
-import numpy as np
 from jax.scipy.stats import norm as norm_jax
 from numpyro import deterministic, factor, plate, sample
 from numpyro.distributions import MultivariateNormal, Normal, Uniform
 
 from ..util import fprint, get_nested, replace_prior_with_delta
 from .base_model import H0ModelBase
-from .integration import ln_simpson_precomputed, simpson_log_weights
-from .pv_utils import (lp_galaxy_bias, octupole_radial, quadrupole_radial,
-                       rsample, sample_galaxy_bias, sample_octupole,
-                       sample_quadrupole, sigmoid_monopole_radial)
-from .utils import (log_prob_integrand_sel, logmeanexp, mvn_logpdf_cholesky,
-                    normal_logpdf_var, predict_cz, student_t_logpdf_var)
+from .integration import simpson_log_weights
+from .pv_utils import rsample, sample_galaxy_bias
+from .utils import (logmeanexp, mvn_logpdf_cholesky, normal_logpdf_var,
+                    predict_cz)
 
 ###############################################################################
 #                          Base CH0 model                                     #
@@ -63,21 +60,6 @@ class CH0Model(H0ModelBase):
 
         if not use_PV_covmat_scaling:
             replace_prior_with_delta(config, "A_covmat", 1.0)
-
-        # Student-t: nu_cz only needed when enabled.
-        if get_nested(config, "model/cz_likelihood", "gaussian") \
-                != "student_t":
-            replace_prior_with_delta(
-                config, "nu_cz", 30.0, verbose=False)
-
-        # Anisotropic sigma_v: replace unused components.
-        if get_nested(config, "model/anisotropic_sigma_v", False):
-            replace_prior_with_delta(
-                config, "sigma_v", 150.0, verbose=False)
-        else:
-            for ax in ("sigma_v_x", "sigma_v_y", "sigma_v_z"):
-                replace_prior_with_delta(
-                    config, ax, 150.0, verbose=False)
 
         return config
 
@@ -136,26 +118,25 @@ class CH0Model(H0ModelBase):
         super()._set_data_arrays(data, skip_keys=skip)
 
     def _setup_malmquist_grid(self):
-        """CH0 samples distance moduli directly — only the selection grid
-        is needed, not the host integration grid."""
-        config = self.config
-        r_min = 0.01
-        r_max_sel = get_nested(config, "model/r_max_selection", 70)
-        dr = get_nested(config, "model/dr_malmquist", 0.5)
+        """CH0 samples distance moduli directly and uses the 3D volume
+        selection integral, so neither the host nor the selection radial
+        grid is needed."""
+        if not self.use_reconstruction and self.apply_sel:
+            r_min = 0.01
+            r_max_sel = get_nested(self.config, "model/r_max_selection", 70)
+            dr = get_nested(self.config, "model/dr_malmquist", 0.5)
 
-        num_pts = int(np.round((r_max_sel - r_min) / dr)) + 1
-        num_pts = max(num_pts, 3)
-        if num_pts % 2 == 0:
-            num_pts += 1
+            num_pts = int(round((r_max_sel - r_min) / dr)) + 1
+            num_pts = max(num_pts, 3)
+            if num_pts % 2 == 0:
+                num_pts += 1
 
-        self.r_sel_range = jnp.linspace(r_min, r_max_sel, num_pts)
-        self._simpson_log_w_sel = simpson_log_weights(self.r_sel_range)
-        dr_actual = float((r_max_sel - r_min) / (num_pts - 1))
-        fprint(f"selection grid: {num_pts} points over "
-               f"[{r_min}, {r_max_sel}] Mpc (dr={dr_actual:.3f}).")
-
-        self._lp_sel_dist_grid = self.log_prior_distance(
-            self.r_sel_range)[None, None, :]
+            self.r_sel_range = jnp.linspace(r_min, r_max_sel, num_pts)
+            self._simpson_log_w_sel = simpson_log_weights(self.r_sel_range)
+            self._num_points_malmquist = num_pts
+            fprint(f"selection grid: {num_pts} points over "
+                   f"[{r_min}, {r_max_sel}] Mpc (dr={dr:.3f}).")
+        return
 
     # ------------------------------------------------------------------
     #  Validation
@@ -177,11 +158,6 @@ class CH0Model(H0ModelBase):
             raise ValueError(
                 "`use_density_dependent_sigma_v` requires "
                 "`use_reconstruction` to be set to True.")
-
-        if self.anisotropic_sigma_v and self.use_density_dependent_sigma_v:
-            raise ValueError(
-                "`anisotropic_sigma_v` and `use_density_dependent_sigma_v` "
-                "are mutually exclusive.")
 
         if (self.cz_likelihood == "student_t"
                 and self.use_fiducial_Cepheid_host_PV_covariance):
@@ -217,10 +193,13 @@ class CH0Model(H0ModelBase):
                 "If `which_selection` is set, "
                 "`use_uniform_mu_host_priors` must be set to False.")
 
-        if self.apply_sel and self.use_reconstruction and not self.has_rand_los:  # noqa
+        self._validate_selection_integral(
+            needs_velocity=self.which_selection in (
+                "redshift", "SN_magnitude_redshift"))
+        if self.apply_sel and self.use_density_dependent_sigma_v:
             raise ValueError(
-                "If `which_selection` is set and `use_reconstruction` is "
-                "True, `has_rand_los` must be set to True.")
+                "density_dependent_sigma_v is not supported with "
+                "3D selection integrals.")
 
         if not self.use_fiducial_Cepheid_host_PV_covariance and self.weight_selection_by_covmat_Neff:  # noqa
             raise ValueError(
@@ -255,41 +234,6 @@ class CH0Model(H0ModelBase):
 
         return mu_host, mu_N4258, mu_LMC, mu_M31
 
-    # ------------------------------------------------------------------
-    #  Selection functions
-    # ------------------------------------------------------------------
-
-    def log_S_SN_mag(self, lp_r, M_SN, H0, mag_lim, mag_width):
-        """Probability of detection term if supernova magnitude-truncated."""
-        return self.log_S_mag(
-            lp_r, M_SN, H0,
-            self.mean_std_mag_SN_unique_Cepheid_host,
-            mag_lim, mag_width)
-
-    def log_S_SN_mag_cz(self, lp_r, Vpec, M_SN, H0, sigma_v,
-                        mag_lim, mag_width, cz_lim, cz_width,
-                        nu_cz=None):
-        """
-        Probability of detection term if supernova magnitude and
-        redshift-truncated.
-        """
-        h = H0 / 100
-        zcosmo = self.distance2redshift(self.r_sel_range, h=h)
-        cz_r = predict_cz(zcosmo[None, None, :], Vpec)
-        mag = self.distance2distmod(self.r_sel_range, h=h) + M_SN
-
-        sigma_v = jnp.asarray(sigma_v)
-        while sigma_v.ndim < cz_r.ndim:
-            sigma_v = sigma_v[None, ...]
-        sigma_v = jnp.broadcast_to(sigma_v, cz_r.shape)
-        log_prob = log_prob_integrand_sel(
-            mag[None, None, :], self.mean_std_mag_SN_unique_Cepheid_host,
-            mag_lim, mag_width)
-        log_prob += log_prob_integrand_sel(
-            cz_r, sigma_v, cz_lim, cz_width, nu_cz=nu_cz)
-        return ln_simpson_precomputed(
-            lp_r + log_prob, self._simpson_log_w_sel, axis=-1)
-
     def sigma_v_from_density(self, delta, sigma_v_low, sigma_v_high,
                              log_rho_t, k):
         """Map overdensity to sigma_v through a sigmoid in log density."""
@@ -311,33 +255,9 @@ class CH0Model(H0ModelBase):
         M_B = rsample("M_B", self.priors["M_B"])
 
         # Velocity field calibration
-        Vext = rsample("Vext", self.priors["Vext"])
-        Vext_quad = None
-        if self.use_Vext_quadrupole:
-            Vext_quad = sample_quadrupole(
-                "Vext_quad", *self.Vext_quad_mag_range)
-        Vext_oct = None
-        if self.use_Vext_octupole:
-            Vext_oct = sample_octupole(
-                "Vext_oct", *self.Vext_oct_mag_range)
-        Vext_mono = None
-        if self.which_Vext_monopole == "constant":
-            Vext_mono = rsample("Vext_mono", self.priors["Vext_mono"])
-        elif self.which_Vext_monopole == "sigmoid":
-            Vext_mono_left = rsample(
-                "Vext_mono_left", self.priors["Vext_mono_left"])
-            Vext_mono_rt = rsample(
-                "Vext_mono_rt", self.priors["Vext_mono_rt"])
-            Vext_mono_angle = rsample(
-                "Vext_mono_angle", self.priors["Vext_mono_angle"])
-            Vext_mono = (Vext_mono_left, Vext_mono_rt, Vext_mono_angle)
-        if self.anisotropic_sigma_v:
-            sigma_v_x = rsample("sigma_v_x", self.priors["sigma_v_x"])
-            sigma_v_y = rsample("sigma_v_y", self.priors["sigma_v_y"])
-            sigma_v_z = rsample("sigma_v_z", self.priors["sigma_v_z"])
-            sigma_v_vec = jnp.array([sigma_v_x, sigma_v_y, sigma_v_z])
-            sigma_v_base = jnp.sqrt(jnp.mean(sigma_v_vec**2))
-        elif self.use_density_dependent_sigma_v:
+        Vext, Vext_quad, Vext_oct, Vext_mono = \
+            self._sample_external_velocity()
+        if self.use_density_dependent_sigma_v:
             sigma_v_low = rsample("sigma_v_low", self.priors["sigma_v_low"])
             sigma_v_high = rsample("sigma_v_high", self.priors["sigma_v_high"])
             log_sigma_v_rho_t = rsample(
@@ -348,10 +268,7 @@ class CH0Model(H0ModelBase):
             sigma_v = rsample("sigma_v", self.priors["sigma_v"])
             sigma_v_base = sigma_v
 
-        # Student-t degrees of freedom.
-        nu_cz = None
-        if self.cz_likelihood == "student_t":
-            nu_cz = rsample("nu_cz", self.priors["nu_cz"])
+        nu_cz = self._sample_nu_cz()
 
         A_covmat = rsample("A_covmat", self.priors["A_covmat"])
         beta = rsample("beta", self.priors["beta"])
@@ -368,15 +285,8 @@ class CH0Model(H0ModelBase):
             return jnp.broadcast_to(sigma_v_base, delta.shape)
 
         h = H0 / 100
-        Vext_rad_host = self.rhat_host @ Vext
-        if Vext_quad is not None:
-            Q_mag, q1_hat, q2_hat = Vext_quad
-            Vext_rad_host = Vext_rad_host + quadrupole_radial(
-                Q_mag, q1_hat, q2_hat, self.rhat_host)
-        if Vext_oct is not None:
-            O_mag, o1_hat, o2_hat, o3_hat = Vext_oct
-            Vext_rad_host = Vext_rad_host + octupole_radial(
-                O_mag, o1_hat, o2_hat, o3_hat, self.rhat_host)
+        Vext_rad_host = self._host_Vext_radial(
+            Vext, Vext_quad, Vext_oct)
 
         # HST and Gaia zero-point calibration of MW Cepheids.
         factor("M_W_HST",
@@ -402,13 +312,9 @@ class CH0Model(H0ModelBase):
         r_host_all = self.distmod2distance(mu_host_all, h=h)
         r_host = r_host_all[:self.num_hosts]
 
-        if isinstance(Vext_mono, tuple):
-            V_left, r_t, angle = Vext_mono
-            k = jnp.tan(angle)
-            Vext_rad_host = Vext_rad_host + sigmoid_monopole_radial(
-                V_left, r_t, k, r_host)
-        elif Vext_mono is not None:
-            Vext_rad_host = Vext_rad_host + Vext_mono
+        Vext_mono_host = self._Vext_monopole_radial(Vext_mono, r_host)
+        if Vext_mono_host is not None:
+            Vext_rad_host = Vext_rad_host + Vext_mono_host
 
         # Do we use a r^2 prior on the host distance moduli?
         if self.use_uniform_mu_host_priors:
@@ -422,57 +328,6 @@ class CH0Model(H0ModelBase):
             lp_anchor_dist = lp_all_host_dist[self.num_hosts:]
             factor("lp_anchor_dist", lp_anchor_dist)
 
-        lp_rand_dist_grid, Vext_rad_rand, Vext_mono_sel = \
-            self._prepare_selection_grid(
-                self._lp_sel_dist_grid, Vext, Vext_quad, Vext_oct,
-                Vext_mono)
-
-        if self.use_reconstruction:
-            ll_reconstruction, los_delta_host, rh_host = \
-                self._apply_host_reconstruction(
-                    lp_host_dist, r_host, h, bias_params)
-            sigma_v_host = map_sigma_v(los_delta_host)
-            if self.apply_sel:
-                rand_los_delta_grid = \
-                    self.f_rand_los_delta.interp_many_steps_per_galaxy(
-                        self.r_sel_range * h)
-                log_rho = (jnp.log(1 + rand_los_delta_grid)
-                           if "linear" not in self.which_bias
-                           else None)
-                lp_rand_dist_grid += lp_galaxy_bias(
-                    rand_los_delta_grid, log_rho,
-                    bias_params, self.which_bias)
-                sigma_v_selection = map_sigma_v(rand_los_delta_grid)
-                _needs_vel = self.which_selection in [
-                    "redshift", "SN_magnitude_redshift"]
-                if _needs_vel:
-                    rand_los_Vpec_grid = \
-                        self.f_rand_los_velocity\
-                        .interp_many_steps_per_galaxy(
-                            self.r_sel_range * h)
-                else:
-                    rand_los_Vpec_grid = 0.
-            else:
-                rand_los_Vpec_grid = 0.
-        else:
-            rand_los_Vpec_grid = 0.
-            self._no_reconstruction_fallback(lp_host_dist)
-            sigma_v_host = map_sigma_v(jnp.zeros((1, self.num_hosts)))
-            if self.apply_sel:
-                sigma_v_selection = map_sigma_v(
-                    jnp.zeros((1, self.num_rand_los,
-                               self.r_sel_range.size)))
-
-        # Override selection sigma_v for anisotropic model: project onto
-        # each random LOS direction.
-        if self.anisotropic_sigma_v and self.apply_sel:
-            # rhat_rand_los_gal is (n_rand_los, 3) or (n_sims, n_rand, 3).
-            # [..., None] gives (..., n_rand, 1) for correct broadcast
-            # to (..., n_rand, n_grid) in log_S_cz.
-            sg_rand = self.rhat_rand_los_gal
-            sigma_v_selection = jnp.sqrt(
-                jnp.sum(sigma_v_vec**2 * sg_rand**2, axis=-1))[..., None]
-
         # SN magnitude likelihood (shared by SN_magnitude* selections)
         if self.which_selection in ["SN_magnitude", "SN_magnitude_redshift"]:
             mag_SN = (self.L_SN_unique_Cepheid_host_dist @ mu_host_all) + M_B
@@ -482,78 +337,68 @@ class CH0Model(H0ModelBase):
                     self.mag_SN_unique_Cepheid_host, mag_SN,
                     self.L_SN_unique_Cepheid_host))
 
-        # Per-object selection probability + population selection integral
-        if self.which_selection == "redshift":
-            cz_lim = self._resolve_threshold("cz_lim_selection")
-            cz_width = self._resolve_threshold("cz_lim_selection_width")
-
-            factor("ll_sel_per_object", jnp.sum(
-                norm_jax.logcdf(
-                    (cz_lim - self.czcmb_cepheid_host) / cz_width)))
-
-            Vpec_sel = (Vext_rad_rand[None, ..., None]
-                        + beta * rand_los_Vpec_grid)
-            if Vext_mono_sel is not None:
-                Vpec_sel = Vpec_sel + Vext_mono_sel[None, None, :]
-            log_S = self.log_S_cz(
-                lp_rand_dist_grid, Vpec_sel,
-                H0, sigma_v_selection, cz_lim, cz_width,
-                nu_cz=nu_cz)
-
-            if self.weight_selection_by_covmat_Neff:
-                log_S *= self.Neff_PV_covmat_cepheid_host / self.num_hosts
-
-        elif self.which_selection == "SN_magnitude":
-            mag_lim = self._resolve_threshold("mag_lim_SN")
-            mag_width = self._resolve_threshold("mag_lim_SN_width")
-
-            factor("ll_sel_per_object", jnp.sum(
-                norm_jax.logcdf(
-                    (mag_lim - self.mag_SN_unique_Cepheid_host) / mag_width)))
-
-            log_S = self.log_S_SN_mag(
-                lp_rand_dist_grid, M_B, H0, mag_lim, mag_width)
-
-            if self.weight_selection_by_covmat_Neff:
-                log_S *= self.Neff_C_SN_unique_Cepheid_host / self.num_hosts
-
-        elif self.which_selection == "SN_magnitude_redshift":
-            cz_lim = self._resolve_threshold("cz_lim_selection")
-            cz_width = self._resolve_threshold("cz_lim_selection_width")
-            mag_lim = self._resolve_threshold("mag_lim_SN")
-            mag_width = self._resolve_threshold("mag_lim_SN_width")
-
-            factor("ll_sel_per_object", jnp.sum(
-                norm_jax.logcdf(
-                    (cz_lim - self.czcmb_cepheid_host) / cz_width)
-                + norm_jax.logcdf(
-                    (mag_lim - self.mag_SN_unique_Cepheid_host) / mag_width)))
-
-            Vpec_sel = (Vext_rad_rand[None, ..., None]
-                        + beta * rand_los_Vpec_grid)
-            if Vext_mono_sel is not None:
-                Vpec_sel = Vpec_sel + Vext_mono_sel[None, None, :]
-            log_S = self.log_S_SN_mag_cz(
-                lp_rand_dist_grid, Vpec_sel,
-                M_B, H0, sigma_v_selection,
-                mag_lim, mag_width, cz_lim, cz_width,
-                nu_cz=nu_cz)
-
-            if self.weight_selection_by_covmat_Neff:
-                log_S *= self.Neff_PV_covmat_cepheid_host / self.num_hosts
-        else:
-            log_S = jnp.zeros((1, self.num_hosts))
-
-        # axis=-1 averages over random LOS.
-        log_S = logmeanexp(log_S, axis=-1)
-        # Ensure log_S is (n_fields,) for broadcasting with
-        # ll_reconstruction (n_fields, n_hosts).
-        log_S = log_S.reshape(-1)
-
         if self.use_reconstruction:
-            ll_reconstruction -= log_S[:, None]
+            ll_reconstruction, los_delta_host, rh_host = \
+                self._apply_host_reconstruction(
+                    lp_host_dist, r_host, h, bias_params)
+            sigma_v_host = map_sigma_v(los_delta_host)
         else:
-            factor("neg_log_S_correction", -log_S * self.num_hosts)
+            self._no_reconstruction_fallback(lp_host_dist)
+            sigma_v_host = map_sigma_v(jnp.zeros((1, self.num_hosts)))
+
+        if self.apply_sel:
+            if self.which_selection == "SN_magnitude":
+                mag_lim = self._resolve_threshold("mag_lim_SN")
+                mag_width = self._resolve_threshold("mag_lim_SN_width")
+                factor("ll_sel_per_object", jnp.sum(
+                    norm_jax.logcdf(
+                        (mag_lim - self.mag_SN_unique_Cepheid_host)
+                        / mag_width)))
+                log_S = self._compute_volume_log_S_mag(
+                    bias_params, M_B,
+                    self.mean_std_mag_SN_unique_Cepheid_host,
+                    H0, mag_lim, mag_width)
+            elif self.which_selection == "redshift":
+                cz_lim = self._resolve_threshold("cz_lim_selection")
+                cz_width = self._resolve_threshold(
+                    "cz_lim_selection_width")
+                factor("ll_sel_per_object", jnp.sum(
+                    norm_jax.logcdf(
+                        (cz_lim - self.czcmb_cepheid_host)
+                        / cz_width)))
+                log_S = self._compute_volume_log_S_cz(
+                    bias_params, H0, sigma_v_base, beta,
+                    Vext, Vext_mono, cz_lim, cz_width,
+                    nu_cz=nu_cz)
+            elif self.which_selection == "SN_magnitude_redshift":
+                cz_lim = self._resolve_threshold("cz_lim_selection")
+                cz_width = self._resolve_threshold(
+                    "cz_lim_selection_width")
+                mag_lim = self._resolve_threshold("mag_lim_SN")
+                mag_width = self._resolve_threshold("mag_lim_SN_width")
+                factor("ll_sel_per_object", jnp.sum(
+                    norm_jax.logcdf(
+                        (cz_lim - self.czcmb_cepheid_host) / cz_width)
+                    + norm_jax.logcdf(
+                        (mag_lim - self.mag_SN_unique_Cepheid_host)
+                        / mag_width)))
+                log_S = self._compute_volume_log_S_mag_cz(
+                    bias_params, M_B,
+                    self.mean_std_mag_SN_unique_Cepheid_host,
+                    H0, sigma_v_base, beta, Vext, Vext_mono,
+                    mag_lim, mag_width, cz_lim, cz_width,
+                    nu_cz=nu_cz)
+
+            if self.weight_selection_by_covmat_Neff:
+                Neff = (self.Neff_PV_covmat_cepheid_host
+                        if self.which_selection in (
+                            "redshift", "SN_magnitude_redshift")
+                        else self.Neff_C_SN_unique_Cepheid_host)
+                log_S = log_S * Neff / self.num_hosts
+            if self.use_reconstruction:
+                ll_reconstruction -= log_S[:, None]
+            else:
+                factor("neg_log_S_correction", -log_S[0] * self.num_hosts)
 
         # Now assign these host distances to each Cepheid.
         mu_cepheid = (self.L_Cepheid_host_dist @ mu_host_cepheid
@@ -568,27 +413,13 @@ class CH0Model(H0ModelBase):
         if self.use_Cepheid_host_redshift:
             z_cosmo = self.distmod2redshift(mu_host, h=h)
 
-            # Effective velocity variance per host.
-            if self.anisotropic_sigma_v:
-                sg = self.rhat_host_gal       # (n_hosts, 3)
-                sigma_v2_eff = jnp.sum(sigma_v_vec**2 * sg**2, axis=-1)
-                if self.use_reconstruction:
-                    e2_cz = (self.e2_czcmb_cepheid_host[None, :]
-                             + sigma_v2_eff[None, :])
-                else:
-                    e2_cz = self.e2_czcmb_cepheid_host + sigma_v2_eff
-            elif self.use_reconstruction:
+            if self.use_reconstruction:
                 e2_cz = (
                     self.e2_czcmb_cepheid_host[None, :] + sigma_v_host**2)
             else:
                 e2_cz = self.e2_czcmb_cepheid_host + sigma_v_host[0]**2
 
-            # Choose cz likelihood kernel.
-            if nu_cz is not None:
-                def ll_cz_fn(obs, pred, var):
-                    return student_t_logpdf_var(obs, pred, var, nu_cz)
-            else:
-                ll_cz_fn = normal_logpdf_var
+            ll_cz_fn = self._cz_logpdf_fn(nu_cz)
 
             if self.use_fiducial_Cepheid_host_PV_covariance:
                 # PV covariance path: remains multivariate Gaussian.

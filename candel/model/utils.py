@@ -31,7 +31,7 @@ from ..util import SPEED_OF_LIGHT
 
 # Gauss-Hermite nodes for Student-t selection integrals via log-space
 # saddle-point quadrature. int f(x) exp(-x^2) dx ~ sum_i w_i f(x_i).
-_N_GH_SEL = 16
+_N_GH_SEL = 32
 _GH_SEL_NODES_NP, _GH_SEL_WEIGHTS_NP = _hermgauss(_N_GH_SEL)
 _GH_SEL_NODES = jnp.asarray(_GH_SEL_NODES_NP)
 _GH_SEL_LOG_WEIGHTS = jnp.log(jnp.asarray(_GH_SEL_WEIGHTS_NP))
@@ -49,7 +49,10 @@ JOINT_RELEVANT_SECTIONS = ("model", "pv_model")
 
 
 def _leaf_eq(a, b):
-    """Equality that tolerates numpy/jax arrays (whose ``==`` is elementwise)."""
+    """Equality that tolerates numpy/jax arrays.
+
+    Their ``==`` is elementwise.
+    """
     if hasattr(a, "__array__") or hasattr(b, "__array__"):
         try:
             return bool(np.array_equal(a, b))
@@ -364,6 +367,8 @@ def _student_t_sel_gh_weights(nu):
 
 
 def log_prob_integrand_sel(x, e_x, lim, lim_width, nu_cz=None):
+    x = jnp.asarray(x)
+    e_x = jnp.asarray(e_x)
     if nu_cz is None:
         if lim_width is None:
             return norm_jax.logcdf((lim - x) / e_x)

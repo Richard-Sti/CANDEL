@@ -133,7 +133,7 @@ def _gen_homogeneous_path(nsamples, h, rmin, rmax, e_mag, e_czcmb,
 def _gen_field_path(nsamples, h, b1, beta, rmin, rmax, e_mag, e_czcmb,
                     M_TRGB, sigma_int, sigma_v, Vext,
                     mag_lim, mag_lim_width, cz_lim, cz_lim_width,
-                    field_loader, num_rand_los, r2mu, r2z, gen, verbose):
+                    field_loader, r2mu, r2z, gen, verbose):
     """Field-based (inhomogeneous Malmquist) distance sampling path.
 
     Galaxies are sampled from the 3D density field using accept/reject,
@@ -280,12 +280,6 @@ def _gen_field_path(nsamples, h, b1, beta, rmin, rmax, e_mag, e_czcmb,
         field_loader, r_grid, collected["RA"], collected["dec"],
         verbose=verbose)
 
-    # Random LOS for selection normalization
-    RA_rand = gen.uniform(0, 360, num_rand_los)
-    dec_rand = np.rad2deg(np.arcsin(gen.uniform(-1, 1, num_rand_los)))
-    rand_density, rand_velocity = interpolate_los_density_velocity(
-        field_loader, r_grid, RA_rand, dec_rand, verbose=False)
-
     result = {
         "RA": collected["RA"],
         "dec": collected["dec"],
@@ -297,12 +291,6 @@ def _gen_field_path(nsamples, h, b1, beta, rmin, rmax, e_mag, e_czcmb,
         "host_los_density": los_density[None, ...],
         "host_los_velocity": los_velocity[None, ...],
         "host_los_r": r_grid,
-        # Random LOS data: (1, num_rand_los, n_r)
-        "rand_los_density": rand_density[None, ...],
-        "rand_los_velocity": rand_velocity[None, ...],
-        "rand_los_r": r_grid,
-        "rand_los_RA": RA_rand,
-        "rand_los_dec": dec_rand,
     }
     return result
 
@@ -313,7 +301,7 @@ def gen_TRGB_mock(nsamples=480, Om=0.3, e_mag=0.05, e_czcmb=10.0,
                   cz_lim=None, cz_lim_width=None,
                   true_params=None, anchors=None,
                   noisy_anchors=True, field_loader=None,
-                  num_rand_los=1000, seed=42, verbose=True):
+                  density_3d_data=None, seed=42, verbose=True):
     """Generate a mock TRGB survey compatible with TRGBModel.
 
     When ``field_loader`` is None (default), distances are drawn from
@@ -356,7 +344,7 @@ def gen_TRGB_mock(nsamples=480, Om=0.3, e_mag=0.05, e_czcmb=10.0,
             nsamples, h, tp["b1"], beta, rmin, rmax, e_mag, e_czcmb,
             M_TRGB, sigma_int, sigma_v, Vext,
             mag_lim, mag_lim_width, cz_lim, cz_lim_width,
-            field_loader, num_rand_los, r2mu, r2z, gen, verbose)
+            field_loader, r2mu, r2z, gen, verbose)
     else:
         collected = _gen_homogeneous_path(
             nsamples, h, rmin, rmax, e_mag, e_czcmb,
@@ -405,14 +393,18 @@ def gen_TRGB_mock(nsamples=480, Om=0.3, e_mag=0.05, e_czcmb=10.0,
         "has_rand_los": False,
     }
 
-    # Add LOS data for field-based mocks
-    for k in ["host_los_density", "host_los_velocity", "host_los_r",
-              "rand_los_density", "rand_los_velocity", "rand_los_r",
-              "rand_los_RA", "rand_los_dec"]:
+    # Add host LOS data for field-based mocks. Reconstruction integrals use
+    # 3D density data, not random LOS.
+    for k in ["host_los_density", "host_los_velocity", "host_los_r"]:
         if k in collected:
             data[k] = collected[k]
     if "host_los_r" in collected:
-        data["has_rand_los"] = True
+        data["has_rand_los"] = False
+    if density_3d_data is not None:
+        data.update(density_3d_data)
+        data["has_volume_density_3d"] = True
+    else:
+        data["has_volume_density_3d"] = False
 
     # Store true Cartesian Vext for reference
     tp["Vext_x"], tp["Vext_y"], tp["Vext_z"] = Vext
