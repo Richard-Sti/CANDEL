@@ -34,10 +34,9 @@ from scipy.optimize import minimize as sp_minimize
 from tqdm import trange
 
 from ..util import (fprint, fsection, galactic_to_radec, plot_corner,
-                    plot_radial_profiles, plot_Vext_moll,
-                    plot_Vext_rad_corner, plot_Vext_radmag,
-                    radec_cartesian_to_galactic, radec_to_cartesian,
-                    radec_to_galactic)
+                    plot_radial_profiles, plot_Vext_moll, plot_Vext_rad_corner,
+                    plot_Vext_radmag, radec_cartesian_to_galactic,
+                    radec_to_cartesian, radec_to_galactic)
 from .evidence import (BIC_AIC, dict_samples_to_array, harmonic_evidence,
                        laplace_evidence)
 
