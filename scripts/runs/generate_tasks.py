@@ -422,7 +422,28 @@ if __name__ == "__main__":
 
     # config_path is set inside each branch and used after.
     config_path = None
-    if tasks_index in ("ch0", "ch0_mag"):
+    if tasks_index in ("0", "test_foundation_carrick2015_student_t"):
+        tag = "student_t"
+        config_path = "./configs/config.toml"
+        overrides = {
+            **{k: v for k, v in _local_cfg.items()},
+            "inference/model": "SNModel",
+            "inference/num_chains": 1,
+            "inference/num_warmup": 500,
+            "inference/num_samples": 1000,
+            "inference/chain_method": "sequential",
+            "inference/compute_evidence": False,
+            "inference/skip_if_exists": True,
+            "pv_model/kind": "precomputed_los_Carrick2015",
+            "pv_model/galaxy_bias": "linear_from_beta",
+            "pv_model/which_distance_prior": "empirical",
+            "model/cz_likelihood": "student_t",
+            "io/catalogue_name": "Foundation",
+            "io/root_output": "results/test_foundation_carrick2015_student_t",
+        }
+        all_override_combinations = expand_override_grid(overrides)
+
+    elif tasks_index in ("ch0", "ch0_mag"):
         # CH0: SH0ES Cepheid H0, Carrick2015 field.
         # config_shoes.toml already contains all required settings:
         #   which_run = "CH0", use_reconstruction = true,
@@ -475,6 +496,9 @@ if __name__ == "__main__":
 
     candel_root = Path(__file__).resolve().parent.parent.parent
     gen_dir = candel_root / "scripts" / "runs" / "generated_configs" / tasks_index
+    if tasks_index == "0" and gen_dir.exists():
+        for old_config in gen_dir.glob("*.toml"):
+            old_config.unlink()
     makedirs(gen_dir, exist_ok=True)
 
     task_file = f"tasks_{tasks_index}.txt"
