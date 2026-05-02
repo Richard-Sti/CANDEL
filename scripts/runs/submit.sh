@@ -15,7 +15,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "$ROOT/scripts/_submit_lib.sh"
 
 queue=""
-ncpu=4
+ncpu=2
 memory=7
 gputype=""
 gpu_mem=""
