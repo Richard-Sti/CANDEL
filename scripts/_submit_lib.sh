@@ -91,8 +91,8 @@ export CANDEL_FROZEN_ROOT
 _cluster_profile="$_submit_lib_dir/_cluster_${CANDEL_CLUSTER}.sh"
 
 # Source the profile in the current shell. On glamdring this puts the env
-# needed by addqueue jobs into place (inherited via -s). On arc this still
-# runs but is mostly redundant; the sbatch script re-sources it anyway.
+# needed by addqueue jobs into place. On arc this still runs but is mostly
+# redundant; the sbatch script re-sources it anyway.
 # shellcheck disable=SC1090
 source "$_cluster_profile"
 
@@ -281,14 +281,14 @@ SCRIPT
             if [[ -n "$gpu_mem_min" ]]; then
                 echo "[submit_job] glamdring: --gpu-mem not supported; ignoring" >&2
             fi
-            local addqueue_flags=(-s -q "$queue" -m "$mem" -c "$name")
+            local addqueue_flags=(-q "$queue" -m "$mem" -c "$name")
             if (( gpu )); then
-                addqueue_flags+=(--gpus 1 -n 1x2)
+                addqueue_flags+=(-s --gpus 1 -n 1x2)
                 [[ -n "$gputype" ]] && addqueue_flags+=(--gputype "$gputype")
             elif [[ -n "$mpi_n" ]]; then
                 addqueue_flags+=(-n "$mpi_n")
             else
-                addqueue_flags+=(-n "$cpus")
+                addqueue_flags+=(-s -n "$cpus")
             fi
             local addqueue_env=()
             if (( gpu )); then
