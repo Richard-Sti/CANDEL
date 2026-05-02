@@ -335,7 +335,11 @@ def _load_volume_data_for_H0(
         geometry="sphere", cache_dir=None, cache_enabled=True):
     """Load 3D voxel data for H0 selection integrals.
 
-    Returns a dict to be merged into an H0-model data dict.
+    Returns a dict to be merged into an H0-model data dict. The density field
+    is stored as ``density_3d_fields`` with shape ``(n_fields, n_voxels)`` for
+    spherical geometry or ``(n_fields, nx, ny, nz)`` for cubic geometry.
+    Velocity projections and line-of-sight unit vectors are included only when
+    ``load_velocity`` is True.
     """
     if geometry not in ("sphere", "cube"):
         raise ValueError(
@@ -663,7 +667,9 @@ def _load_volume_density_3d(loader_name, loader_kwargs, downsample=1,
     `loader.boxsize` (Mpc/h). `observer_pos` is the observer's position in
     box coordinates (Mpc/h). `dx` is the voxel side length (Mpc/h). If
     `subcube_radius` is set, the returned cube is cropped to that half-side
-    around the observer in Mpc/h.
+    around the observer in Mpc/h. When ``pad_subcube_boundary`` is True, the
+    extraction radius is expanded by half a voxel diagonal so later spherical
+    boundary weighting has all needed cells.
 
     `downsample` (int ≥ 1) keeps every Nth voxel along each axis (point
     subsampling); the voxel side `dx` is rescaled by N. The voxel cap is
@@ -776,7 +782,11 @@ def _filter_data(data, mask, los_data_path=None):
 
 
 def _compute_r_grid(r_limits, dr, data, Om=0.3):
-    """Compute the radial grid for Malmquist bias integration."""
+    """Compute a radial grid for Malmquist bias integration.
+
+    ``dr`` is the target grid spacing in Mpc. The returned grid is adjusted to
+    have an odd number of points so Simpson integration can be used downstream.
+    """
     if isinstance(r_limits, str) and r_limits.startswith("auto"):
         if "_" in r_limits:
             h_auto = float(r_limits.split("_")[1])
@@ -860,7 +870,7 @@ def precompute_pixel_projection(rhat_data, nside, sigma_deg=None):
 
 
 def load_PV_dataframes(config_path):
-    """Loads PV dataframes from the given configuration file."""
+    """Load one or more PVDataFrame objects from the given configuration file."""
     config = load_config(config_path)
 
     if config["pv_model"]["kind"].startswith("precomputed_los_"):
@@ -978,7 +988,8 @@ class PVDataFrame:
 
         Stores the minimal density representation needed by `galaxy_bias`,
         plus `log_r_3d` (log voxel distance from the observer; floored at
-        `0.25 dx` so the central voxel is finite) and `log_dV = 3 log(dx)`.
+        `0.25 dx` so the central voxel is finite). The voxel log-volume
+        `3 log(dx)` is stored on ``self.log_dV_3d``.
 
         `log_r_3d` is precomputed so the per-step `(r/R)^q` is evaluated as
         `exp(q · (log_r_3d − log R))`, avoiding ~ngrid^3 `log` ops per leapfrog
@@ -2123,6 +2134,10 @@ def load_CCHP_from_config(config_path, ra_dec_only=False):
     """
     Load the processed CCHP TRGB catalogue from a TSV file.
 
+    If ``ra_dec_only`` is True, returns only ``RA``, ``DEC``, ``cz_cmb``, and
+    ``e_czcmb`` arrays from the table before host grouping or LOS loading.
+    Otherwise, returns the full model-ready data described below.
+
     Returns data in EDD-TRGB-compatible format (host-level arrays with
     ``mag_obs``, ``e_mag_obs``, ``czcmb``, ``e_czcmb``, ``RA_host``,
     ``dec_host``) plus SN-level arrays (``m_Bprime``, ``e_m_Bprime``,
@@ -2359,7 +2374,8 @@ def load_CSP_from_config(config_path):
     - io.CSP.root: path to CSP data directory
     - io.CSP.which_sample: sample to select ("CSPI", "CSPII", or "LSQ")
     - model.r_limits_malmquist: radial grid limits for Malmquist bias
-    - model.num_points_malmquist: number of grid points
+    - model.num_points_malmquist: value currently passed as the radial-grid
+      spacing argument to ``_compute_r_grid``
     """
     config = load_config(config_path, replace_los_prior=False)
 
@@ -2535,10 +2551,33 @@ def load_CSP(root, zcmb_min=None, zcmb_max=None, b_min=None, quality_min=None,
 
     Parameters
     ----------
-    which_sample : str, optional
-        Sample to select: "CSPI", "CSPII", or "LSQ".
+    root : str
+        Directory containing the CSP data files.
+    zcmb_min, zcmb_max : float, optional
+        Inclusive CMB-frame redshift bounds.
+    b_min : float, optional
+        Minimum absolute Galactic latitude.
+    quality_min : float, optional
+        Minimum CSP quality flag.
+    st_min, st_max : float, optional
+        Light-curve stretch bounds.
+    t0_min, t0_max : float, optional
+        Time-of-maximum bounds.
+    phys_only : bool
+        If True, keep only physics-sample objects (phys=1).
     exclude_phys : bool
         If True, exclude physics sample (phys=0 only).
+    which_sample : str, optional
+        Sample to select: "CSPI", "CSPII", or "LSQ".
+    los_data_path : str, optional
+        Path to precomputed line-of-sight data to attach.
+    return_all : bool
+        If True, return all loaded rows before cuts and LOS attachment.
+    remove_duplicates : bool
+        If True, remove duplicate supernova entries before applying cuts.
+    kwargs : dict
+        Ignored extra keyword arguments, accepted for config-loader
+        compatibility.
     """
     # Load main photometry file
     fname = join(root, "B_all_noj21.csv")
@@ -2942,7 +2981,8 @@ def load_EDD_2MTF(root, zcmb_min=None, zcmb_max=None, b_min=7.5,
 
     The file format is pipe-delimited with 5 header lines.
     Returns K-band apparent magnitudes (Ktc) and linewidths
-    (eta = log10(Wc) - 2.5).
+    (eta = log10(Wc) - 2.5), with optional LOS arrays attached. If
+    ``return_mask`` is True, returns ``(data, mask)``.
     """
     fpath = join(root, "EDD_2MTF.txt")
     lines = open(fpath).readlines()

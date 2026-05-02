@@ -269,14 +269,35 @@ def simulate_csp(key, n_samples, r_min, r_max,
 
     Parameters
     ----------
+    key : jax.random.PRNGKey
+        Random key used for all simulated draws.
+    n_samples : int
+        Number of supernovae to simulate before selection.
+    r_min, r_max : float
+        Distance range for the volume prior.
+    M_B, alpha, beta, sigma_m : float
+        Magnitude relation and intrinsic magnitude-scatter parameters.
+    mu_s, sigma_s, mu_BV, sigma_BV, rho_pop : float
+        Population mean, scatter, and correlation parameters for stretch and
+        color.
+    m_lim, alpha_sel, beta_sel, sigma_sel : float
+        Selection relation and selection-scatter parameters.
+    sigma_s_obs, sigma_BV_obs : float
+        Observational scatter for stretch and color.
+    rho_ms, rho_mBV, rho_sBV : float
+        Correlations among magnitude, stretch, and color measurement noise.
+    h : float
+        Dimensionless Hubble parameter.
+    Om : float
+        Matter density parameter.
+    sigma_v : float
+        Velocity dispersion in km/s for cz scatter.
     cz_lim : tuple, optional
         (cz_min, cz_max) in km/s for redshift selection.
     s_obs_lim : tuple, optional
         (s_min, s_max) for stretch selection.
     BV_obs_lim : tuple, optional
         (BV_min, BV_max) for color selection.
-    sigma_v : float
-        Velocity dispersion in km/s for cz scatter.
     """
     keys = random.split(key, 5)
     distance2distmod = Distance2Distmod(Om0=Om)

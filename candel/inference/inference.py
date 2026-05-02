@@ -174,12 +174,27 @@ def find_initial_point(model, model_kwargs, maxiter=100, seed=42,
 
     Parameters
     ----------
+    model : callable
+        NumPyro model function.
+    model_kwargs : dict
+        Keyword arguments passed when tracing and evaluating the model.
+    maxiter : int, optional
+        Maximum number of L-BFGS-B iterations.
+    seed : int, optional
+        Random seed used for the initial trace.
     return_site_names : bool, optional
         If True, always returns a tuple ``(init_params, site_names)`` where
         ``site_names`` is the set of non-observed sample-site names
         populated from the trace that was performed regardless. Allows
         downstream callers to avoid re-tracing the model when the
         optimisation fails. Default False (original single-return API).
+
+    Returns
+    -------
+    dict or None, or tuple
+        Constrained initial parameters, or None if optimisation diverges.
+        When ``return_site_names`` is True, returns
+        ``(init_params_or_none, site_names)``.
     """
     # Trace at the prior median to get transforms and a reasonable start
     substituted_model = handlers.substitute(
@@ -593,8 +608,9 @@ def run_H0_inference(model, model_kwargs=None, print_summary=True,
 
 def get_log_density(samples, model, model_kwargs, batch_size=5):
     """
-    Compute the log density of NumPyro model. The batch size cannot be much
-    larger to prevent exhausting the memory.
+    Compute the NumPyro model log density for posterior samples.
+
+    Samples are evaluated in batches to avoid exhausting device memory.
     """
     def f(sample):
         return log_density(model, (), model_kwargs, sample)[0]

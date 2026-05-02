@@ -30,10 +30,20 @@ def _rejection_sample(n, rmin, rmax_sample, k, rng, gen_observables,
 
     Parameters
     ----------
+    n : int
+        Number of accepted samples to return.
+    rmin, rmax_sample : float
+        Sampling range for true distances.
+    k : float
+        Power-law index for the distance prior.
+    rng : numpy.random.Generator
+        Random-number generator.
     gen_observables : callable(r_true, rng, batch_size) -> (obs, ...)
         Returns a tuple of arrays; the first is used for the acceptance test.
     accept_fn : callable(obs_first) -> bool mask
         Returns a boolean mask of accepted samples.
+    verbose : bool
+        If True, print the number of rejection-sampling batches.
     """
     collected_r = []
     collected_obs = []

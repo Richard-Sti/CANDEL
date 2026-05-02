@@ -26,7 +26,11 @@ from ..util import radec_to_cartesian
 
 def get_Pk_CAMB(H0=67.4, Om0=0.3153, Ombh2=0.0224, As=2.100549e-9, ns=0.965,
                 kmax=20.0, nonlinear=True):
-    """Get (non-linear) matter power spectrum from CAMB in `Mpc / h` units."""
+    """
+    Get the linear or non-linear matter power spectrum from CAMB.
+
+    Returns CAMB's `k` grid in `h / Mpc` and `Pk` in `(Mpc / h)^3`.
+    """
     try:
         import camb
     except ImportError as e:
@@ -52,9 +56,9 @@ def compute_dD_dtau(a=1, Omega_m=0.315, Omega_L=0.685, H0=67.4):
     Compute the derivative of the linear growth factor D with respect to
     conformal time τ.
 
-    This function solves the linear growth ODE for a flat ΛCDM cosmology,
-    normalizes D(a) such that D(a=1) = 1, and returns dD/dτ evaluated at the
-    supplied scale factor `a`.
+    This function solves the linear growth ODE for the supplied ΛCDM density
+    parameters, normalizes D(a) such that D(a=1) = 1, and returns dD/dτ
+    evaluated at the supplied scale factor `a`.
     """
     def E(a):
         return np.sqrt(Omega_m / a**3 + Omega_L)
@@ -85,7 +89,10 @@ def compute_dD_dtau(a=1, Omega_m=0.315, Omega_L=0.685, H0=67.4):
 def compute_Fuv(u, v, ells, Pells):
     """
     Compute:
-    F(u, v, cosθ) = Σ_{l=ell_min}^{ell_max} (2l + 1) j_l'(u) j_l'(v) P_l(cosθ)
+    F(u, v, cosθ) = Σ_l (2l + 1) j_l'(u) j_l'(v) P_l(cosθ)
+
+    The sum is evaluated over the supplied multipoles `ells`, with `Pells`
+    containing the matching Legendre polynomial values.
     """
     j_u = spherical_jn(ells, u, derivative=True)
     j_v = spherical_jn(ells, v, derivative=True)
@@ -112,7 +119,7 @@ def compute_covariance_matrix(r, RA, dec, k, Pk, dDdtau, ell_min=0,
                               ell_max=2000, n_jobs=1):
     """
     Compute the velocity covariance matrix for objects at positions
-    (r, RA, dec).
+    (r, RA, dec), using the supplied power-spectrum samples.
     """
     N = len(r)
     C = np.zeros((N, N))

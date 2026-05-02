@@ -40,81 +40,7 @@ from ..pv_utils import lp_galaxy_bias, rsample, sample_galaxy_bias
 from ..utils import (load_priors, log_prob_integrand_sel, logmeanexp,
                      normal_logpdf_var, predict_cz)
 from .model_CSP import (CSPModel, CSPSelection, compute_per_source_selection,
-                        extract_csp_median_errors, log1mexp)
-
-
-def logsumexp_by_group(logp, idx, n_groups=None):
-    """
-    Compute per-group logsumexp given per-item logp and integer group indices.
-    This sums (in probability space) the likelihoods within each group.
-    """
-    if n_groups is None:
-        n_groups = int(jnp.max(idx)) + 1
-
-    # Per-group baselines for numerical stability
-    baseline = jnp.full(n_groups, -jnp.inf)
-    baseline = baseline.at[idx].max(logp)
-
-    # Broadcast baseline to per-item
-    baseline_per_item = baseline[idx]
-    exp_shifted = jnp.exp(logp - baseline_per_item)
-
-    sum_exp = jnp.zeros(n_groups, dtype=logp.dtype)
-    sum_exp = sum_exp.at[idx].add(exp_shifted)
-
-    return jnp.log(sum_exp) + baseline
-
-
-def logmeanexp_by_group(logp, idx, n_groups=None):
-    """
-    Compute per-group log-mean-exp given per-item logp and integer group
-    indices.
-    """
-    if n_groups is None:
-        n_groups = int(jnp.max(idx)) + 1
-    counts = jnp.bincount(idx, length=n_groups)
-    return logsumexp_by_group(logp, idx, n_groups) - jnp.log(counts)
-
-
-def log_at_least_one_selected(log_p_sel_i, idx, n_groups=None):
-    """
-    Compute log P(at least one SN selected) per host.
-
-    For host j with SNe i in group j:
-        P(at least one) = 1 - prod_i(1 - p_i)
-        log P(at least one) = log(1 - exp(sum_i log(1 - p_i)))
-                            = log1mexp(sum_i log1mexp(log_p_i))
-
-    Parameters
-    ----------
-    log_p_sel_i : array (n_sn,)
-        Log selection probability for each SN.
-    idx : array (n_sn,)
-        Group index mapping each SN to its host.
-    n_groups : int, optional
-        Number of groups (hosts).
-
-    Returns
-    -------
-    log_p_host : array (n_groups,)
-        Log probability that at least one SN is selected per host.
-    """
-    if n_groups is None:
-        n_groups = int(jnp.max(idx)) + 1
-
-    # log(1 - p_i) for each SN
-    log_one_minus_p_i = log1mexp(log_p_sel_i)
-
-    # Sum per host: log(prod_i (1 - p_i)) = sum_i log(1 - p_i)
-    log_prod_one_minus_p = jnp.zeros(n_groups, dtype=log_p_sel_i.dtype)
-    log_prod_one_minus_p = log_prod_one_minus_p.at[idx].add(log_one_minus_p_i)
-
-    # Clip away from 0 to avoid log1mexp(0) = -inf
-    # When sum ≈ 0, all p_i ≈ 0, so P(at least one) ≈ sum(p_i) via Taylor
-    log_prod_one_minus_p = jnp.minimum(log_prod_one_minus_p, -1e-7)
-
-    # log(1 - prod(1 - p_i)) = log P(at least one selected)
-    return log1mexp(log_prod_one_minus_p)
+                        extract_csp_median_errors)
 
 
 @dataclass
@@ -123,7 +49,7 @@ class CCHPTRGBSelectionContext:
     # Interpolators (can be None if not using reconstruction)
     f_rand_los_delta: Optional[object]
     f_rand_los_velocity: Optional[object]
-    # Random LOS unit vectors, shape (n_rand_los, 3)
+    # Random LOS unit vectors, shape (n_rand_los, 3) or (n_sims, n_rand_los, 3)
     rhat_rand_los: jnp.ndarray
     # Radial grid for integration
     r_host_range: jnp.ndarray
@@ -151,7 +77,7 @@ class CCHPTRGBSelectionComputation:
 
     def log_S_cz(self, lp_r, Vpec, H0, sigma_v, cz_lim, cz_width,
                  nu_cz=None):
-        """Probability of detection term if redshift-truncated."""
+        """Log redshift-selection probability marginalized over distance."""
         ctx = self.ctx
         zcosmo = ctx.distance2redshift(ctx.r_host_range, h=H0 / 100)
         cz_r = predict_cz(zcosmo[None, None, :], Vpec)
@@ -209,7 +135,7 @@ class CCHPTRGBSelectionComputation:
         # Average over random LOS, shape (nfields,)
         log_S = logmeanexp(log_S, axis=1)
 
-        # Per-source selection factor, shape (ngal,)
+        # Per-source selection factor, shape (n_sources,)
         log_p_sel_i = log_ndtr((cz_lim - ctx.cz_cmb) / cz_width)
 
         return log_S, log_p_sel_i
@@ -234,7 +160,7 @@ class CCHPTRGBSelectionComputation:
         # Average over random LOS, shape (nfields,)
         log_S = logmeanexp(log_S, axis=1)
 
-        # Per-source selection factor, shape (ngal,)
+        # Per-source selection factor, shape (n_sources,)
         log_p_sel_i = log_ndtr((mag_lim - ctx.m_Bprime) / mag_width)
 
         return log_S, log_p_sel_i
@@ -773,7 +699,8 @@ class CCHPTRGBModel(BaseCCHPModel):
     Likelihood structure:
     - Host-level: volume prior, TRGB magnitude, cz (one per unique host)
     - SN-level: SN magnitude or CSP likelihood (summed over all SNe)
-    - Selection correction: -N_host * log p(S=1|Lambda)
+    - Selection: host-level population correction plus per-source selection
+      factors for the observed SN/CSP quantities when enabled
     """
 
     def __init__(self, config_path, data):
@@ -1054,8 +981,8 @@ class JointTRGBCSPModel:
     - Population: mu_s, sigma_s, mu_BV, sigma_BV, rho_pop
     - Selection: m_lim, alpha_sel, beta_sel, sigma_sel
 
-    For overlapping hosts (SNe in both TRGB and CSP samples), distances
-    are sampled once by the TRGB model and shared with the CSP likelihood.
+    The TRGB and CSP samples must be disjoint; overlap is checked at
+    construction time and raises an error.
     """
 
     shared_param_names = [

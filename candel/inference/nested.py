@@ -340,8 +340,10 @@ def _hrss_step(rng_key, particle, logprior_fn, loglikelihood_fn,
 
     Parameters
     ----------
-    rng_key
+    rng_key    : jax.random.PRNGKey — random key for the HRSS proposal
     particle   : _Particle — current live point
+    logprior_fn : callable — log-prior evaluator
+    loglikelihood_fn : callable — log-likelihood evaluator
     logL_0     : scalar — current likelihood threshold
     cov        : (ndim, ndim) — covariance for direction proposal
     max_steps  : int — max stepping-out steps per side (default 10)
@@ -624,7 +626,7 @@ def run_nss(model, model_args=(), model_kwargs=None,
     num_delete : int
         Number of dead points per iteration (10% of n_live recommended).
     termination : float
-        log(Z_live / Z_dead) threshold for termination.
+        Termination threshold for ``log(Z_live / Z_dead)``.
     seed : int
         Random seed.
     validate : bool
@@ -632,13 +634,22 @@ def run_nss(model, model_args=(), model_kwargs=None,
     checkpoint_path : str or None
         Explicit checkpoint ``.npz`` path. Overrides ``checkpoint_dir`` when
         set.
+    checkpoint_dir : str or None
+        Directory for periodic checkpoints. Ignored when ``checkpoint_path``
+        is set. The default checkpoint filename is ``nss_ckpt.npz``.
+    resume_path : str or None
+        Path to a checkpoint ``.npz`` to resume from. Resuming restores live
+        points, dead points, the evidence integrator, RNG key, and dead count.
+    checkpoint_interval : float
+        Minimum time in seconds between periodic checkpoint writes.
 
     Returns
     -------
     samples : dict
         Weighted posterior samples resampled to equal weights.
         Same format as MCMC: ``{name: array(n_eff,)}`` for scalars.
-        Contains ``__nested__`` key with metadata (log_Z, log_Z_err, n_eff).
+        Contains ``__nested__`` metadata with ``log_Z``, ``log_Z_err``,
+        ``n_eff``, run time, names, and sizes.
     """
     if model_kwargs is None:
         model_kwargs = {}

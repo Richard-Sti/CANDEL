@@ -429,10 +429,11 @@ def compute_Vext_radial(data, r_grid, Vext, which_Vext, **kwargs_Vext):
     """
     Compute the line-of-sight projection of the external velocity.
 
-    Promote the final output to shape `(n_field, n_gal, n_rbins)`.
+    Return shape `(1, n_gal, n_rbins)` for radial models,
+    `(1, n_gal, 1)` for per-pixel and constant models.
     """
     if which_Vext == "radial":
-        # Shape (3, n_rbins)
+        # Shape (n_rbins, 3)
         Vext = interp_cartesian_vector(r_grid, v_knot=Vext, **kwargs_Vext)
 
         Vext_rad = jnp.sum(

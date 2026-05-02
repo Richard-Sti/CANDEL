@@ -118,9 +118,12 @@ class CH0Model(H0ModelBase):
         super()._set_data_arrays(data, skip_keys=skip)
 
     def _setup_malmquist_grid(self):
-        """CH0 samples distance moduli directly and uses the 3D volume
-        selection integral, so neither the host nor the selection radial
-        grid is needed."""
+        """Set only the selection grid needed by CH0.
+
+        CH0 samples distance moduli directly, so there is no host radial
+        grid. Reconstruction selections use the shared 3D volume integral;
+        no-reconstruction selections still need a radial selection grid.
+        """
         if not self.use_reconstruction and self.apply_sel:
             r_min = 0.01
             r_max_sel = get_nested(self.config, "model/r_max_selection", 70)

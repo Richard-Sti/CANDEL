@@ -62,6 +62,7 @@ class LOSInterpolator:
         returning `(n_fields, n_galaxies, n_eval)`.
 
     Extrapolation:
+      For `r < r_min`, values are clamped to the first tabulated value.
       For `r > r_max`, values follow an exponential decay:
           f(r) = C + (A - C) * exp(-(r - r_max) / r0)
       where A is the last tabulated value, C = `extrap_constant`,

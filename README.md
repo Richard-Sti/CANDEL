@@ -1,6 +1,6 @@
 # CANDEL
 
-**CANDEL** (*CA*libration and *N*ormalization of the *D*istanc*E* *L*adder) is a JAX-based framework for peculiar-velocity inference and distance-ladder calibration.
+**CANDEL** (*CA*libration and *N*ormalization of the *D*istanc*E* *L*adder) is a JAX-based framework for peculiar-velocity inference, distance-ladder calibration, and megamaser disk modelling.
 
 **Documentation:** [candel.readthedocs.io](https://candel.readthedocs.io/en/latest/)
 
@@ -10,7 +10,7 @@ CANDEL forward-models distance-indicator observables (e.g. magnitude, line width
 
 When a reconstructed density and velocity field is supplied, CANDEL jointly calibrates each distance indicator and the underlying velocity field (e.g. amplitude $\beta$ and external bulk flow $\mathbf{V}_\mathrm{ext}$). The external dipole can also be inferred without any reconstructed field. For peculiar-velocity inferences, the distance prior is modelled following the phenomenological approach of [Lavaux (2016)](https://arxiv.org/abs/1512.04534), which effectively accounts for selection effects; for $H_0$ inferences, a rigorous selection function treatment is used instead (see [Stiskalek et al. 2025](https://arxiv.org/abs/2509.09665)). Model comparison is supported via BIC/AIC, Laplace evidence, and the [harmonic](https://github.com/astro-informatics/harmonic) package.
 
-CANDEL runs locally for small samples or scales to computing clusters with GPU support (one GPU per chain). It includes SLURM submission helpers and batch job generation tools for launching large parameter-grid runs from a frozen copy of the code.
+CANDEL runs locally for small samples or scales to computing clusters with GPU support (one GPU per chain). It includes cluster submission helpers and batch job generation tools for launching large parameter-grid runs from a frozen copy of the code.
 
 ### Highlights
 - Forward modelling of the full distance ladder with JAX and NumPyro.
@@ -20,7 +20,7 @@ CANDEL runs locally for small samples or scales to computing clusters with GPU s
 - Density-dependent velocity dispersion $\sigma_v(\delta)$ via a sigmoid in log-density, allowing different dispersions in underdense and overdense regions.
 - Redshift-to-real-space mapping of observed redshifts given a calibrated velocity field.
 - Peculiar-velocity covariance matrices from CAMB power spectra.
-- HPC-friendly tooling: batch config generation, SLURM submission scripts, GPU auto-detection.
+- HPC-friendly tooling: batch config generation, queue submission scripts, GPU auto-detection, and precomputed line-of-sight field generation.
 
 ## Supported distance indicators and catalogues
 
@@ -35,21 +35,10 @@ These models work in units of $h^{-1}\,\mathrm{Mpc}$ (i.e. assume $h = 1$). Mult
 ### $H_0$ inference
 
 - **Cepheid-calibrated $H_0$:** 35 Cepheid host galaxies from SH0ES
-- **TRGB-calibrated $H_0$:** Tip of the Red Giant Branch distances from CCHP and EDD
+- **TRGB-calibrated $H_0$:** Tip of the Red Giant Branch distances from CCHP and EDD, including grouped EDD hosts
+- **Joint TRGB + CSP $H_0$:** CCHP TRGB calibrators combined with CSP SNe Ia *(development)*
 - **2MTF-calibrated $H_0$:** Tully--Fisher distances from the EDD-2MTF sample *(experimental)*
-
-## Megamaser disk model
-
-CANDEL includes a warped Keplerian disk model (`MaserDiskModel`) for fitting VLBI water-maser spots directly, following the methodology of the Megamaser Cosmology Project ([Humphreys et al. 2013](https://arxiv.org/abs/1307.6031); [Pesce et al. 2020](https://arxiv.org/abs/2001.09213)). The model marginalises over azimuthal angle $\phi$ on a per-spot basis using log-space Simpson integration, and supports:
-
-- **Warped geometry:** linear inclination gradient $\mathrm{d}i/\mathrm{d}r$ across the disk.
-- **Eccentricity:** optional eccentric orbits with $e$ and $\omega_\mathrm{disk}$ (disabled by default).
-- **Spot classification:** high-velocity (red/blue) spots constrained by Keplerian velocity, systemic spots constrained by sky position and LOS velocity near $v_\mathrm{sys}$.
-- **Acceleration data:** radial acceleration constraints where available.
-
-Supported galaxies: NGC 5765b, NGC 6264, NGC 6323, UGC 3789, CGCG 074-064, NGC 4258. In addition to the full disk model, CANDEL can also use published distance posteriors directly (e.g. from Pesce+2020) via `MegamaserModel` for a simpler analysis that bypasses spot-level fitting.
-
-For grid convergence tests and numerical accuracy details, see [`docs/maser_numerical_accuracy.md`](docs/maser_numerical_accuracy.md). For running maser disk inference jobs, see [`instructions/maser_disk_jobs.md`](instructions/maser_disk_jobs.md).
+- **Megamaser disk $H_0$:** spot-level warped disk fits for NGC 5765b, NGC 6264, NGC 6323, UGC 3789, CGCG 074-064, and NGC 4258. `JointMaserModel` fits multiple disks with a shared $H_0$; `toy_joint_H0.py` can combine saved per-galaxy distance posteriors.
 
 ## Package structure
 
@@ -67,6 +56,9 @@ candel/
 scripts/
   runs/           PV and H0 model configs and main runner
   megamaser/      Maser disk model config and runner
+  mocks/          Mock TRGB inference runs
+  preprocess/     Precompute line-of-sight density/velocity data
+  sync/           Cluster sync helpers
 ```
 
 ## Running inference
@@ -85,18 +77,17 @@ python scripts/runs/generate_tasks.py
 
 **Megamaser disk model:**
 ```bash
-python scripts/megamaser/run_maser_disk.py --config scripts/megamaser/config_maser.toml
+python scripts/megamaser/run_maser_disk.py NGC5765b --sampler nss
+python scripts/megamaser/run_maser_disk.py joint --sampler nuts
 ```
+
+The generic `scripts/runs/main.py` runner also supports `model.which_run = "maser_disk"` for config-driven maser jobs.
 
 ### Inference methods
 
 - **NUTS** (default): No-U-Turn Sampler via NumPyro. Robust, gradient-based, suitable for all models.
-- **Nested Slice Sampling (NSS):** Bayesian evidence computation via a self-contained reimplementation of the NSS algorithm ([Yallup et al. 2025](https://arxiv.org/abs/2601.23252)) in `candel/inference/nested.py`. No external nested-sampling dependency required.
+- **Nested Slice Sampling (NSS):** Bayesian evidence computation via a self-contained reimplementation of the NSS algorithm ([Yallup et al. 2026](https://arxiv.org/abs/2601.23252)) in `candel/inference/nested.py`. No external nested-sampling dependency required.
 - **Sobol + Adam MAP:** Multi-start MAP optimisation using Sobol quasi-random initialisation and Adam gradient descent. Configured via the `[optimise]` section of the TOML config.
-
-### Job submission guides
-
-The `instructions/` folder contains how-to guides for HPC job submission (GPU queues, batch configuration, grid sizes).
 
 ## Publications
 
@@ -125,18 +116,16 @@ python -m pip install --upgrade pip setuptools
 python -m pip install -e .
 ```
 
-For GPU support (e.g. on Glamdring), see [INSTALL_GLAMDRING_GPU.md](INSTALL_GLAMDRING_GPU.md).
+Nested sampling (NSS) is self-contained and ships with CANDEL; no extra nested-sampling dependency is required.
 
-Nested sampling (NSS) is self-contained and ships with CANDEL — no extra dependencies are required.
-
-For model-evidence computation via learnt harmonic mean, also install [harmonic](https://github.com/astro-informatics/harmonic) (note: there may be compatibility issues with recent JAX versions).
+For learned harmonic-mean evidence estimates, also install [harmonic](https://github.com/astro-informatics/harmonic).
 
 ## Local configuration (`local_config.toml`)
 
 Per-machine settings live in a `local_config.toml` file at the repository
 root. This file is **not** versioned and must be created on each machine where
 CANDEL is installed. It supplies machine-specific paths and Python interpreters
-that the run scripts and submission helpers read.
+used by the run scripts.
 
 A minimal `local_config.toml` looks like:
 
@@ -145,43 +134,14 @@ root_main    = "/path/to/CANDEL/"   # repo root (required)
 root_data    = "/path/to/data/"     # optional, defaults to <root_main>/data
 root_results = "/path/to/results/"  # optional, defaults to <root_main>/results
 
-python_exec = "/path/to/venv_candel/bin/python"
-machine     = "glamdring"           # "glamdring" (addqueue) or "arc" (sbatch)
-
-modules     = ""                    # optional, space-separated module list
-modules_gpu = ""                    # optional, overrides `modules` for GPU jobs
+python_exec = "/path/to/venv_candel/bin/python"  # used by cluster helpers
 ```
 
-Keys:
-
-- `root_main` — repository root. Required. Used as the fallback for the data
-  and results roots when those are not set.
-- `root_data` — base directory for input data files (catalogues, fields,
-  reconstructions). Optional; defaults to `<root_main>/data`. Set this when
-  the data live on a different filesystem than the code (e.g. on an HPC
-  cluster with a separate scratch area).
-- `root_results` — base directory for outputs (samples, plots, logs).
-  Optional; defaults to `<root_main>/results`. Same rationale as
-  `root_data`.
-- `python_exec` — absolute path to the CANDEL Python interpreter used by
-  submission scripts. A single venv is used for both CPU and GPU jobs:
-  install JAX with the CUDA wheels (`pip install "jax[cuda12]"`) and it
-  falls back to CPU automatically when no GPU is visible.
-- `machine` — selects the cluster submission backend. Currently supported:
-  `"glamdring"` (uses `addqueue`) and `"arc"` (uses `sbatch`). Also appears
-  in logs and tags. An unknown value will break job submission.
-- `modules` — space-separated list of environment modules to `module add`
-  before a job runs. Optional; empty or missing means no modules are loaded.
-- `modules_gpu` — same as `modules`, but used for GPU jobs instead of
-  `modules`. Optional.
-- `gpu_ld_library_path` — list of directories prepended to `LD_LIBRARY_PATH`
-  on GPU jobs (typically the bundled NVIDIA libs in the venv plus system
-  CUDA paths). Optional; leave empty unless JAX fails to find cuDNN/cuBLAS
-  at runtime.
-
-Path resolution: relative paths in run-time TOML configs are resolved against
-the appropriate root — input data file keys against `root_data`, output keys
-(`fname_output`) against `root_results`. Absolute paths are left unchanged.
+Relative input paths in run-time TOML configs are resolved against `root_data`;
+output paths such as `fname_output` are resolved against `root_results`.
+Absolute paths are left unchanged. Cluster submission helpers may use
+additional machine/module keys; see [`docs/configuration.rst`](docs/configuration.rst)
+for the full configuration schema.
 
 ## Citation
 
