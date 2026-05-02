@@ -38,6 +38,8 @@ r_limits_malmquist = "auto"
 dr_malmquist = 0.3
 
 los_decay_scale = 10.0
+density_3d_geometry = "sphere"
+density_3d_radius = 200.0  # Mpc/h numerical truncation for the 3D normalizer
 density_3d_normalizer_batch_size = 1
 
 Vext_per_pix_nside = "none"
