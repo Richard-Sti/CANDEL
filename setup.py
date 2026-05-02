@@ -56,6 +56,7 @@ setup(
         "healpy",
         "tqdm",
         "numba",
+        "mpi4py",
     ],
     include_package_data=True,
     zip_safe=False,

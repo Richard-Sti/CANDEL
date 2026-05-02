@@ -58,6 +58,18 @@ def _mode_tag(which_selection, use_field, field_name, infer_selection):
     return "_".join([_safe_tag(which_selection), field, selection])
 
 
+def _expected_mpi_tasks_from_env():
+    """Return scheduler-advertised MPI tasks, or 1 when not allocated."""
+    for name in ("SLURM_NTASKS", "SLURM_NPROCS", "PMI_SIZE", "OMPI_COMM_WORLD_SIZE"):
+        value = os.environ.get(name)
+        if value:
+            try:
+                return int(value)
+            except ValueError:
+                pass
+    return 1
+
+
 def _standardised_bias(samples, true_val, param):
     """Standardised bias, handling periodic parameters."""
     if param in PERIODIC_PARAMS:
@@ -824,15 +836,30 @@ def main():
                               args.field_name, args.infer_selection),
     }
 
-    # Try MPI; fall back to sequential if only 1 rank
+    # Try MPI; fall back to sequential only when no multi-rank scheduler
+    # allocation is present.
+    expected_mpi_tasks = _expected_mpi_tasks_from_env()
     try:
         from mpi4py import MPI
         comm = MPI.COMM_WORLD
         rank = comm.Get_rank()
         size = comm.Get_size()
-    except ImportError:
+    except ImportError as exc:
+        if expected_mpi_tasks > 1:
+            raise RuntimeError(
+                "This job was started with multiple scheduler tasks "
+                f"({expected_mpi_tasks}), but mpi4py is not importable by "
+                f"{sys.executable}. Install mpi4py in that environment before "
+                "submitting MPI mock batches.") from exc
         size = 1
         rank = 0
+
+    if expected_mpi_tasks > 1 and size == 1:
+        raise RuntimeError(
+            "This job was started with multiple scheduler tasks "
+            f"({expected_mpi_tasks}), but mpi4py sees COMM_WORLD size 1. "
+            "Check that addqueue is starting an MPI environment compatible "
+            f"with the mpi4py installation used by {sys.executable}.")
 
     if size > 1:
         n_workers = size - 1

@@ -127,6 +127,16 @@ if ! $local_mode && [[ -z "$queue" ]]; then
     echo "[ERROR] -q QUEUE is required (cluster=$CANDEL_CLUSTER)"; exit 1
 fi
 
+if ! $single_mode && [[ $ncpu -gt 1 ]]; then
+    if ! "$CANDEL_PYTHON" - <<'PY' >/dev/null 2>&1; then
+from mpi4py import MPI
+PY
+        echo "[ERROR] MPI batch mode requires mpi4py in $CANDEL_PYTHON" >&2
+        echo "        Install it before submitting, or use --single / -n 1." >&2
+        exit 1
+    fi
+fi
+
 echo "TRGB mock closure test"
 echo "============================================================"
 echo "  Cluster:     $CANDEL_CLUSTER"
