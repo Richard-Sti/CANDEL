@@ -283,7 +283,7 @@ SCRIPT
             fi
             local addqueue_flags=(-s -q "$queue" -m "$mem" -c "$name")
             if (( gpu )); then
-                addqueue_flags+=(--gpus 1 -n "$cpus")
+                addqueue_flags+=(--gpus 1 -n 1x2)
                 [[ -n "$gputype" ]] && addqueue_flags+=(--gputype "$gputype")
             elif [[ -n "$mpi_n" ]]; then
                 addqueue_flags+=(-n "$mpi_n")
@@ -292,7 +292,7 @@ SCRIPT
             fi
             local addqueue_env=()
             if (( gpu )); then
-                if [[ -z "${JAX_PLATFORMS+x}" ]]; then
+                if [[ -z "${JAX_PLATFORMS+x}" || "$JAX_PLATFORMS" == "cpu" ]]; then
                     # JAX 0.8.x: "gpu" can trigger ROCm init on glamdring;
                     # CUDA jobs should ask for the CUDA plugin explicitly.
                     addqueue_env+=(JAX_PLATFORMS=cuda)
