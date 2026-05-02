@@ -290,14 +290,30 @@ SCRIPT
             else
                 addqueue_flags+=(-n "$cpus")
             fi
-            echo "[submit_job] glamdring: addqueue ${addqueue_flags[*]} $cmd_str"
+            local addqueue_env=()
+            if (( gpu )); then
+                if [[ -z "${JAX_PLATFORMS+x}" ]]; then
+                    # JAX 0.8.x: "gpu" can trigger ROCm init on glamdring;
+                    # CUDA jobs should ask for the CUDA plugin explicitly.
+                    addqueue_env+=(JAX_PLATFORMS=cuda)
+                else
+                    addqueue_env+=(JAX_PLATFORMS="$JAX_PLATFORMS")
+                fi
+            fi
+            local addqueue_prefix=""
+            [[ ${#addqueue_env[@]} -gt 0 ]] && addqueue_prefix="${addqueue_env[*]} "
+            echo "[submit_job] glamdring: ${addqueue_prefix}addqueue ${addqueue_flags[*]} $cmd_str"
             echo "[submit_job] log     : $PWD/python-<jobid>.out"
             if (( dry )); then
                 echo "[submit_job] (dry: not submitting)"
                 return 0
             fi
             local _aq_out
-            _aq_out=$(addqueue --sbatch "${addqueue_flags[@]}" $cmd_str 2>&1)
+            if [[ ${#addqueue_env[@]} -gt 0 ]]; then
+                _aq_out=$(env "${addqueue_env[@]}" addqueue --sbatch "${addqueue_flags[@]}" $cmd_str 2>&1)
+            else
+                _aq_out=$(addqueue --sbatch "${addqueue_flags[@]}" $cmd_str 2>&1)
+            fi
             echo "$_aq_out"
             local _jid
             _jid=$(echo "$_aq_out" | grep -oP 'Submitted batch job \K[0-9]+')
