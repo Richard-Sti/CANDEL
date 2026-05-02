@@ -43,6 +43,8 @@ TAG_WORK = 1
 TAG_RESULT = 2
 TAG_DONE = 3
 
+_VOLUME_SELECTION_CACHE = {}
+
 
 def _standardised_bias(samples, true_val, param):
     """Standardised bias, handling periodic parameters."""
@@ -107,24 +109,58 @@ def make_mock_config(base_config_path, seed, num_warmup=500,
     return config
 
 
+def _load_density_3d_data(config, field_name):
+    """Load cached 3D density data used by reconstruction integrals."""
+    if not config["model"].get("use_reconstruction", False):
+        return None
+    if config["model"].get("which_selection") is None:
+        return None
+    if field_name is None:
+        raise ValueError("`field_name` is required for field-based mocks.")
+
+    from candel.pvdata.data import _load_volume_data_for_H0
+
+    recon = config.get("io", {}).get("reconstruction_main", {})
+    field_kwargs = recon.get(field_name)
+    if field_kwargs is None:
+        raise ValueError(
+            f"No `io.reconstruction_main.{field_name}` configuration found.")
+
+    which_selection = config["model"]["which_selection"]
+    load_velocity = which_selection == "redshift"
+    key = (
+        field_name,
+        repr(sorted(field_kwargs.items())),
+        config["model"].get("which_bias", "linear"),
+        config["model"].get("Om", config["model"].get("Om0", 0.3)),
+        config["model"].get("selection_integral_grid_radius"),
+        config["model"].get("density_3d_downsample", 1),
+        config["model"].get("selection_integral_geometry", "sphere"),
+        load_velocity,
+    )
+    if key not in _VOLUME_SELECTION_CACHE:
+        _VOLUME_SELECTION_CACHE[key] = _load_volume_data_for_H0(
+            field_name, field_kwargs, field_indices=[0],
+            galaxy_bias=config["model"].get("which_bias", "linear"),
+            Om0=config["model"].get("Om", config["model"].get("Om0", 0.3)),
+            subcube_radius=config["model"].get(
+                "selection_integral_grid_radius"),
+            downsample=config["model"].get("density_3d_downsample", 1),
+            load_velocity=load_velocity,
+            geometry=config["model"].get(
+                "selection_integral_geometry", "sphere"),
+            cache_dir=config.get("io", {}).get("field_cache_dir"),
+            cache_enabled=config["model"].get(
+                "density_3d_cache_enabled", True))
+    return _VOLUME_SELECTION_CACHE[key]
+
+
 def run_one_mock(seed, base_config_path, true_params, mock_kwargs,
                  num_warmup=500, num_samples=500,
                  which_selection="TRGB_magnitude",
-                 infer_selection=True, use_field=False, quiet=True):
+                 infer_selection=True, use_field=False, field_name=None,
+                 quiet=True):
     """Generate one mock, run inference, compute standardised biases."""
-    data, tp, n_parent = gen_TRGB_mock(
-        seed=seed, true_params=true_params, verbose=not quiet, **mock_kwargs)
-    tp["mu_LMC"] = DEFAULT_ANCHORS["mu_LMC"]
-    tp["mu_N4258"] = DEFAULT_ANCHORS["mu_N4258"]
-    _ra, _dec = candel.galactic_to_radec(tp["Vext_ell"], tp["Vext_b"])
-    tp["Vext_phi"] = np.deg2rad(_ra)
-    tp["Vext_cos_theta"] = np.sin(np.deg2rad(_dec))
-    if mock_kwargs.get("mag_lim") is not None:
-        tp["mag_lim_TRGB"] = mock_kwargs["mag_lim"]
-    if mock_kwargs.get("mag_lim_width") is not None:
-        tp["mag_lim_TRGB_width"] = mock_kwargs["mag_lim_width"]
-    n_hosts = len(data["mag_obs"])
-
     config = make_mock_config(
         base_config_path, seed, num_warmup=num_warmup,
         num_samples=num_samples,
@@ -136,6 +172,22 @@ def run_one_mock(seed, base_config_path, true_params, mock_kwargs,
         infer_selection=infer_selection,
         use_field=use_field,
         rmax=mock_kwargs.get("rmax", 40.0))
+    density_3d_data = _load_density_3d_data(
+        config, field_name) if use_field else None
+    data, tp, n_parent = gen_TRGB_mock(
+        seed=seed, true_params=true_params, verbose=not quiet,
+        density_3d_data=density_3d_data, **mock_kwargs)
+    tp["mu_LMC"] = DEFAULT_ANCHORS["mu_LMC"]
+    tp["mu_N4258"] = DEFAULT_ANCHORS["mu_N4258"]
+    _ra, _dec = candel.galactic_to_radec(tp["Vext_ell"], tp["Vext_b"])
+    tp["Vext_phi"] = np.deg2rad(_ra)
+    tp["Vext_cos_theta"] = np.sin(np.deg2rad(_dec))
+    if mock_kwargs.get("mag_lim") is not None:
+        tp["mag_lim_TRGB"] = mock_kwargs["mag_lim"]
+    if mock_kwargs.get("mag_lim_width") is not None:
+        tp["mag_lim_TRGB_width"] = mock_kwargs["mag_lim_width"]
+    n_hosts = len(data["mag_obs"])
+
     tmp = _write_tmp_config(config)
 
     try:
@@ -284,6 +336,7 @@ def worker(comm, config_info):
     which_selection = config_info["which_selection"]
     infer_selection = config_info["infer_selection"]
     use_field = config_info.get("use_field", False)
+    field_name = config_info.get("field_name")
 
     def _alarm_handler(signum, frame):
         raise TimeoutError
@@ -306,7 +359,7 @@ def worker(comm, config_info):
                 num_warmup=num_warmup, num_samples=num_samples,
                 which_selection=which_selection,
                 infer_selection=infer_selection,
-                use_field=use_field, quiet=True)
+                use_field=use_field, field_name=field_name, quiet=True)
             result = (*result, time.time() - t_start)
         except TimeoutError:
             result = None
@@ -394,6 +447,7 @@ def run_sequential(config_info):
                 which_selection=config_info["which_selection"],
                 infer_selection=config_info["infer_selection"],
                 use_field=config_info.get("use_field", False),
+                field_name=config_info.get("field_name"),
                 quiet=True)
             dt = time.time() - t_start
             result = (*result, dt)
@@ -457,7 +511,8 @@ def run_sequential(config_info):
 def run_single(seed, true_params, mock_kwargs, config_path,
                num_warmup=500, num_samples=500,
                which_selection="TRGB_magnitude",
-               infer_selection=True, use_field=False, plot_only=False):
+               infer_selection=True, use_field=False, field_name=None,
+               plot_only=False):
     """Generate a single mock, optionally run inference, and plot."""
     print(f"{'='*60}")
     print("Mock configuration")
@@ -482,8 +537,22 @@ def run_single(seed, true_params, mock_kwargs, config_path,
         print(f"  {p:<15s} = {v}")
     print()
 
+    config = make_mock_config(
+        config_path, seed, num_warmup=num_warmup,
+        num_samples=num_samples,
+        which_selection=which_selection,
+        mag_lim=mock_kwargs.get("mag_lim"),
+        mag_lim_width=mock_kwargs.get("mag_lim_width"),
+        cz_lim=mock_kwargs.get("cz_lim"),
+        cz_lim_width=mock_kwargs.get("cz_lim_width"),
+        infer_selection=infer_selection,
+        use_field=use_field,
+        rmax=mock_kwargs.get("rmax", 40.0))
+    density_3d_data = _load_density_3d_data(
+        config, field_name) if use_field else None
     data, tp, n_parent = gen_TRGB_mock(
-        seed=seed, true_params=true_params, verbose=True, **mock_kwargs)
+        seed=seed, true_params=true_params, verbose=True,
+        density_3d_data=density_3d_data, **mock_kwargs)
     tp["mu_LMC"] = DEFAULT_ANCHORS["mu_LMC"]
     tp["mu_N4258"] = DEFAULT_ANCHORS["mu_N4258"]
     _ra, _dec = candel.galactic_to_radec(tp["Vext_ell"], tp["Vext_b"])
@@ -520,17 +589,6 @@ def run_single(seed, true_params, mock_kwargs, config_path,
     # Run inference
     samples = None
     if not plot_only:
-        config = make_mock_config(
-            config_path, seed, num_warmup=num_warmup,
-            num_samples=num_samples,
-            which_selection=which_selection,
-            mag_lim=mock_kwargs.get("mag_lim"),
-            mag_lim_width=mock_kwargs.get("mag_lim_width"),
-            cz_lim=mock_kwargs.get("cz_lim"),
-            cz_lim_width=mock_kwargs.get("cz_lim_width"),
-            infer_selection=infer_selection,
-            use_field=use_field,
-            rmax=mock_kwargs.get("rmax", 40.0))
         tmp = _write_tmp_config(config)
         try:
             model = candel.model.TRGBModel(tmp, data)
@@ -723,6 +781,7 @@ def main():
                    which_selection=args.which_selection,
                    infer_selection=args.infer_selection,
                    use_field=args.use_field,
+                   field_name=args.field_name,
                    plot_only=args.plot_only)
         return
 
@@ -740,6 +799,7 @@ def main():
         "which_selection": args.which_selection,
         "infer_selection": args.infer_selection,
         "use_field": args.use_field,
+        "field_name": args.field_name,
     }
 
     # Try MPI; fall back to sequential if only 1 rank

@@ -14,6 +14,7 @@ n_mocks=100
 master_seed=0
 num_warmup=500
 num_samples=1000
+which_selection="TRGB_magnitude"
 config="$ROOT/scripts/runs/configs/config_EDD_TRGB.toml"
 outdir="$ROOT/results/mocks_TRGB"
 extra_args=""
@@ -25,8 +26,9 @@ usage() {
     cat <<EOF
 usage: $(basename "$0") -q QUEUE [-n NCPU] [-m MEMORY] [--n-mocks N]
                         [--master-seed S] [--num-warmup N] [--num-samples N]
-                        [--config PATH] [--outdir PATH] [--fix-selection]
-                        [--single] [--local] [--dry]
+                        [--which-selection NAME] [--config PATH]
+                        [--outdir PATH] [--fix-selection] [--use-field]
+                        [--field-name NAME] [--single] [--local] [--dry]
 
 Submit TRGB mock closure test batch jobs. Runs with MPI (ranks = --ncpu).
 
@@ -38,10 +40,14 @@ options:
   --master-seed S         master seed (default: $master_seed)
   --num-warmup N          NUTS warmup (default: $num_warmup)
   --num-samples N         NUTS samples (default: $num_samples)
+  --which-selection NAME   TRGB_magnitude or redshift (default: $which_selection)
   --config PATH           base config (default: $config)
   --outdir PATH           output dir (default: $outdir)
   --fix-selection         fix selection thresholds to mock truth
+  --use-field             sample mocks from the reconstruction field
+  --field-name NAME       reconstruction field name passed to the runner
   --single                run without MPI
+  --plot-only             with --single: generate and plot, skip inference
   --local                 run locally (mpirun / plain python), no submission
   --dry                   print submit command without submitting
   -h, --help
@@ -59,9 +65,12 @@ while [[ $# -gt 0 ]]; do
         --master-seed)     master_seed="$2"; shift 2 ;;
         --num-warmup)      num_warmup="$2"; shift 2 ;;
         --num-samples)     num_samples="$2"; shift 2 ;;
+        --which-selection) which_selection="$2"; shift 2 ;;
         --config)          config="$2"; shift 2 ;;
         --outdir)          outdir="$2"; shift 2 ;;
         --fix-selection)   extra_args="$extra_args --fix-selection"; shift ;;
+        --use-field)       extra_args="$extra_args --use-field"; shift ;;
+        --field-name)      extra_args="$extra_args --field-name $2"; shift 2 ;;
         --single)          single_mode=true; extra_args="$extra_args --single"; shift ;;
         --plot-only)       extra_args="$extra_args --plot-only"; shift ;;
         --local)           local_mode=true; shift ;;
@@ -87,6 +96,7 @@ echo "  N_mocks:     $n_mocks"
 echo "  Master seed: $master_seed"
 echo "  Warmup:      $num_warmup"
 echo "  Samples:     $num_samples"
+echo "  Selection:   $which_selection"
 echo "  Config:      $config"
 echo "  Output:      $outdir"
 [[ -n "$extra_args" ]] && echo "  Extra args: $extra_args"
@@ -104,6 +114,7 @@ pycmd="$CANDEL_PYTHON -u $ROOT/scripts/mocks/run_mock_TRGB.py \
     --master-seed $master_seed \
     --num-warmup $num_warmup \
     --num-samples $num_samples \
+    --which-selection $which_selection \
     --config $config \
     --outdir $outdir \
     $extra_args"
