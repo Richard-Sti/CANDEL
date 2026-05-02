@@ -49,7 +49,10 @@ JOINT_RELEVANT_SECTIONS = ("model", "pv_model")
 
 
 def _leaf_eq(a, b):
-    """Equality that tolerates numpy/jax arrays (whose ``==`` is elementwise)."""
+    """Equality that tolerates numpy/jax arrays.
+
+    Their ``==`` is elementwise.
+    """
     if hasattr(a, "__array__") or hasattr(b, "__array__"):
         try:
             return bool(np.array_equal(a, b))
