@@ -597,54 +597,6 @@ def _ll_mode2_reference(model, sample, n_r_ref, r_batch):
     return total
 
 
-def grad_summed_mode2_production(model, sample):
-    """dict{param_name: scalar ∂(sum ll)/∂param} on the production path."""
-    def f(s):
-        return _ll_mode2_production(model, s)
-    g = jax.grad(f)(sample)
-    return {k: np.asarray(v) for k, v in g.items()}
-
-
-def value_and_grad_summed_mode2_production(model, sample, spot_batch=None):
-    """(scalar sum ll, dict{param_name: ∂(sum ll)/∂param}) in one trace.
-
-    Same path as ``_ll_mode2_production``; using ``jax.value_and_grad``
-    so the forward primal is shared between ll and gradient. Saves one
-    forward XLA compile per call relative to running ll and grad as
-    separate calls — the dominant cost for the convergence sweeps,
-    which hit a unique grid shape per row.
-
-    ``spot_batch`` lets convergence callers override the model's
-    production ``mode2_spot_batch`` without rebuilding the model.
-    """
-    if spot_batch is None:
-        spot_batch = model._mode2_spot_batch
-
-    def f(s):
-        pa, pk = jax_phys_from_sample(model, s)
-        D_A, M_BH, v_sys = pa[2], pa[3], pa[4]
-        i0 = pa[8]
-        var_v_hv = pa[15]
-        sigma_a_floor2 = pa[16]
-        groups = model._build_r_grids_mode2(
-            D_A, M_BH, v_sys, sigma_a_floor2, i0, var_v_hv,
-            phys_args=pa, phys_kw=pk)
-        ll = model._eval_phi_marginal(
-            groups, pa, pk, spot_batch=spot_batch)
-        return jnp.sum(ll)
-
-    ll, g = jax.value_and_grad(f)(sample)
-    return float(ll), {k: np.asarray(v) for k, v in g.items()}
-
-
-def grad_summed_mode2_reference(model, sample, n_r_ref, r_batch):
-    """dict{param_name: scalar ∂(sum ll)/∂param} on the high-res ref."""
-    def f(s):
-        return _ll_mode2_reference(model, s, int(n_r_ref), int(r_batch))
-    g = jax.grad(f)(sample)
-    return {k: np.asarray(v) for k, v in g.items()}
-
-
 def grad_diff_report(grad_test, grad_ref, param_keys):
     """Compute max_abs and max_rel over a set of parameter keys."""
     max_abs = 0.0

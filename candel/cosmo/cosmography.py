@@ -352,7 +352,7 @@ class Distance2Redshift:
 
 class AngularDiameterDistance2Redshift:
     r"""
-    Interpolator to convert angular-diameter distance in `Mpc/h` to redshift.
+    Interpolator to convert angular-diameter distance in `Mpc` to redshift.
 
     Parameters
     ----------
@@ -383,7 +383,7 @@ class AngularDiameterDistance2Redshift:
 class LogGrad_Distmod2ComovingDistance:
     r"""
     Interpolator to compute the log gradient of the comoving distance in
-    `Mpc / h` with respect to distance modulus. Choice of `h` is determined
+    `Mpc` with respect to distance modulus. Choice of `h` is determined
     when calling the `__call__` method.
 
     The function is: `log (dr / dmu) | mu`.

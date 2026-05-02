@@ -144,11 +144,11 @@ def make_adaptive_grid(r_min, r_max, delta_mu, dr_max):
     Parameters
     ----------
     r_min, r_max : float
-        Radial range in Mpc/h.
+        Radial range, in the caller's distance units.
     delta_mu : float
         Step size in distance modulus (mag).
     dr_max : float
-        Maximum step size in comoving distance (Mpc/h).
+        Maximum step size in the same units as ``r_min`` and ``r_max``.
 
     Returns
     -------

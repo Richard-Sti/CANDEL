@@ -12,14 +12,13 @@
 # with this program; if not, write to the Free Software Foundation, Inc.,
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 """
-Scripts to load fields that have been previously interpolated at the line of
-sight of galaxies and saved to HDF5 files, typically this is done with the
-`csiborgtools` package.
+Utilities to interpolate 3D density and velocity fields along galaxy lines of
+sight.
 """
 from warnings import warn
 
 import numpy as np
-from numba import njit, prange
+from numba import njit
 from scipy.interpolate import RegularGridInterpolator
 
 from ..util import (fprint, radec_to_cartesian, radec_to_galactic,
@@ -94,121 +93,6 @@ def _trilinear_interp_field(field_flat, pos_flat, grid_min, grid_step,
                               + wy1 * (wz0 * field_flat[bx1 + by1 + iz0]
                                        + wz1 * field_flat[bx1 + by1 + iz1])))
     return result
-
-
-@njit(parallel=True, cache=True)
-def _trilinear_interp_density_velocity(
-        density_flat, vx_flat, vy_flat, vz_flat,
-        pos_flat, rhat_rep, grid_min, grid_step, ngrid, fill_value):
-    """Fused trilinear interpolation of density + 3 velocity components.
-
-    `rhat_rep` has shape (n_flat, 3) — the unit vector for each query point,
-    tiled to match pos_flat. The LOS velocity is computed inline as the dot
-    product of interpolated velocity with rhat.
-    """
-    n = pos_flat.shape[0]
-    s = np.intp(ngrid)
-    s2 = s * s
-    nmax = s - 2
-    inv_step = np.float32(1.0 / grid_step)
-    gmin = np.float32(grid_min)
-    use_fill = not np.isnan(fill_value)
-
-    out_density = np.empty(n, dtype=np.float32)
-    out_los_vel = np.empty(n, dtype=np.float32)
-
-    for i in prange(n):
-        fx = (pos_flat[i, 0] - gmin) * inv_step
-        fy = (pos_flat[i, 1] - gmin) * inv_step
-        fz = (pos_flat[i, 2] - gmin) * inv_step
-
-        ix0 = np.intp(np.floor(fx))
-        iy0 = np.intp(np.floor(fy))
-        iz0 = np.intp(np.floor(fz))
-
-        oob = ix0 < 0 or iy0 < 0 or iz0 < 0 or \
-            ix0 > nmax or iy0 > nmax or iz0 > nmax
-        if oob and use_fill:
-            out_density[i] = fill_value
-            out_los_vel[i] = np.float32(0.0)
-            continue
-
-        if ix0 < 0:
-            ix0 = np.intp(0)
-        elif ix0 > nmax:
-            ix0 = nmax
-        if iy0 < 0:
-            iy0 = np.intp(0)
-        elif iy0 > nmax:
-            iy0 = nmax
-        if iz0 < 0:
-            iz0 = np.intp(0)
-        elif iz0 > nmax:
-            iz0 = nmax
-
-        wx1 = np.float32(fx - ix0)
-        wy1 = np.float32(fy - iy0)
-        wz1 = np.float32(fz - iz0)
-        wx0 = np.float32(1.0) - wx1
-        wy0 = np.float32(1.0) - wy1
-        wz0 = np.float32(1.0) - wz1
-
-        ix1 = ix0 + np.intp(1)
-        iy1 = iy0 + np.intp(1)
-        iz1 = iz0 + np.intp(1)
-
-        bx0 = ix0 * s2
-        bx1 = ix1 * s2
-        by0 = iy0 * s
-        by1 = iy1 * s
-
-        # 8 corner weights
-        w000 = wx0 * wy0 * wz0
-        w100 = wx1 * wy0 * wz0
-        w010 = wx0 * wy1 * wz0
-        w110 = wx1 * wy1 * wz0
-        w001 = wx0 * wy0 * wz1
-        w101 = wx1 * wy0 * wz1
-        w011 = wx0 * wy1 * wz1
-        w111 = wx1 * wy1 * wz1
-
-        # 8 flat indices
-        i000 = bx0 + by0 + iz0
-        i100 = bx1 + by0 + iz0
-        i010 = bx0 + by1 + iz0
-        i110 = bx1 + by1 + iz0
-        i001 = bx0 + by0 + iz1
-        i101 = bx1 + by0 + iz1
-        i011 = bx0 + by1 + iz1
-        i111 = bx1 + by1 + iz1
-
-        out_density[i] = (w000 * density_flat[i000]
-                          + w100 * density_flat[i100]
-                          + w010 * density_flat[i010]
-                          + w110 * density_flat[i110]
-                          + w001 * density_flat[i001]
-                          + w101 * density_flat[i101]
-                          + w011 * density_flat[i011]
-                          + w111 * density_flat[i111])
-
-        vx_val = (w000 * vx_flat[i000] + w100 * vx_flat[i100]
-                  + w010 * vx_flat[i010] + w110 * vx_flat[i110]
-                  + w001 * vx_flat[i001] + w101 * vx_flat[i101]
-                  + w011 * vx_flat[i011] + w111 * vx_flat[i111])
-        vy_val = (w000 * vy_flat[i000] + w100 * vy_flat[i100]
-                  + w010 * vy_flat[i010] + w110 * vy_flat[i110]
-                  + w001 * vy_flat[i001] + w101 * vy_flat[i101]
-                  + w011 * vy_flat[i011] + w111 * vy_flat[i111])
-        vz_val = (w000 * vz_flat[i000] + w100 * vz_flat[i100]
-                  + w010 * vz_flat[i010] + w110 * vz_flat[i110]
-                  + w001 * vz_flat[i001] + w101 * vz_flat[i101]
-                  + w011 * vz_flat[i011] + w111 * vz_flat[i111])
-
-        out_los_vel[i] = (vx_val * rhat_rep[i, 0]
-                          + vy_val * rhat_rep[i, 1]
-                          + vz_val * rhat_rep[i, 2])
-
-    return out_density, out_los_vel
 
 
 def apply_gaussian_smoothing(field, smooth_scale, boxsize, make_copy=False):
@@ -304,7 +188,7 @@ def interpolate_los_density_velocity(field_loader, r, RA, dec,
     """
     Interpolate the density and velocity fields along the line of sight
     specified by `RA` and `dec` at radial steps `r` from the observer. The
-    former is expected in degrees, while the latter in `Mpc / h`.
+    angular coordinates are expected in degrees, while `r` is in `Mpc / h`.
 
     Fields are loaded and interpolated one component at a time to limit
     peak memory usage (important for large grids like Manticore 1024^3).

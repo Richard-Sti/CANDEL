@@ -20,7 +20,7 @@ import jax.numpy as jnp
 import numpy as np
 from jax import random
 from jax.scipy.linalg import solve_triangular
-from jax.scipy.special import betainc, gammaln, logsumexp
+from jax.scipy.special import gammaln, logsumexp
 from jax.scipy.stats import norm as norm_jax
 from numpy.polynomial.hermite import hermgauss as _hermgauss
 from numpyro.distributions import (Delta, Distribution, Gamma, LogUniform,
@@ -135,16 +135,6 @@ def student_t_logpdf_var(x, mean, var, nu):
     return (gammaln((nu + 1) / 2) - gammaln(nu / 2)
             - 0.5 * jnp.log(nu * jnp.pi * var)
             - (nu + 1) / 2 * jnp.log1p(d * d / (nu * var)))
-
-
-def student_t_logcdf(t, nu):
-    """Log-CDF of a standardized Student-t distribution (loc=0, scale=1)."""
-    t2 = t * t
-    w = nu / (nu + t2)
-    Ix = betainc(nu / 2, 0.5, w)
-    return jnp.where(t < 0,
-                     jnp.log(0.5) + jnp.log(Ix),
-                     jnp.log1p(-0.5 * Ix))
 
 
 ###############################################################################
@@ -293,7 +283,7 @@ class Maxwell(Distribution):
 
 
 def load_priors(config_priors):
-    """Load a dictionary of NumPyro distributions from a TOML file."""
+    """Load NumPyro distributions from a parsed config-priors dictionary."""
     _DIST_MAP = {
         "normal": lambda p: Normal(p["loc"], p["scale"]),
         "truncated_normal": lambda p: TruncatedNormal(p["mean"], p["scale"], low=p.get("low", None), high= p.get("high", None)),  # noqa
@@ -339,7 +329,7 @@ def load_priors(config_priors):
 def log_integral_gauss_pdf_times_cdf(mu, sigma, t, w):
     """
     Log of ∫ N(x|mu, sigma^2) Φ((t - x)/w) dx.
-    Closed form: Φ((mu - t)/sqrt(sigma^2 + w^2))
+    Closed form: Φ((t - mu)/sqrt(sigma^2 + w^2)).
     """
     return norm_jax.logcdf((t - mu) / jnp.sqrt(sigma**2 + w**2))
 
@@ -390,8 +380,3 @@ def logmeanexp(x, axis=None, denom=None):
     """Stable log(mean(exp(x))) with optional explicit denominator."""
     denom = x.shape[axis] if denom is None else denom
     return logsumexp(x, axis=axis) - jnp.log(denom)
-
-
-def logweightedmeanexp(log_x, log_w, axis=-1):
-    """log(sum(W_j * x_j)) where W_j = exp(log_w_j) / sum(exp(log_w_k))."""
-    return logsumexp(log_x + log_w, axis=axis) - logsumexp(log_w, axis=axis)

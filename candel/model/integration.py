@@ -157,6 +157,8 @@ def ln_simpson(ln_y, x, axis=-1):
         Array of log function values to be integrated.
     x : array_like
         The points at which `ln_y` is evaluated.
+    axis : int
+        Axis of `ln_y` to integrate over.
 
     Returns
     -------

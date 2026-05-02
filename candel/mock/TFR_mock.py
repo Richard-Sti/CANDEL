@@ -38,7 +38,8 @@ def gen_TFR_mock(nsamples, r_grid, Vext_mag, Vext_ell, Vext_b, sigma_v, beta,
                  los_oversample=10, verbose=True):
     """
     Generate a mock TFR survey with distances sampled from an empirical
-    distribution, without any further selection effects.
+    distribution. If ``zcmb_max`` is set, objects above that observed-redshift
+    limit are rejected after generation.
     """
     gen = np.random.default_rng(seed)
 

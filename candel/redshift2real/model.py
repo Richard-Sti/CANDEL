@@ -24,7 +24,6 @@ import numpy as np
 from jax import numpy as jnp
 from jax.scipy.stats import norm as jax_norm
 from scipy.integrate import cumulative_trapezoid, simpson
-from scipy.special import logsumexp as logsumexp_np
 from tqdm import trange
 
 from ..cosmo.cosmography import Distance2Redshift
@@ -33,58 +32,6 @@ from ..model.integration import ln_simpson
 from ..model.pv_utils import lp_galaxy_bias
 from ..model.utils import logmeanexp
 from ..util import SPEED_OF_LIGHT, fprint, radec_to_cartesian
-
-###############################################################################
-#                          Utility functions                                  #
-###############################################################################
-
-
-def log_mean_exp_np(logp, axis=-1):
-    """NumPy version of log_mean_exp."""
-    return logsumexp_np(logp, axis=axis) - np.log(logp.shape[axis])
-
-
-def ln_simpson_np(ln_y, x, axis=-1):
-    """
-    Numerically stable log-Simpson integration using scipy.
-
-    Computes log(integral(exp(ln_y), x)) by shifting to avoid overflow.
-    """
-    ln_y = np.asarray(ln_y)
-    max_ln_y = np.max(ln_y, axis=axis, keepdims=True)
-    y_shifted = np.exp(ln_y - max_ln_y)
-    integral = simpson(y_shifted, x=x, axis=axis)
-    return np.log(integral) + np.squeeze(max_ln_y, axis=axis)
-
-
-_LOG_2PI_HALF = 0.5 * np.log(2 * np.pi)
-
-
-def normal_logpdf_np(x, loc, scale):
-    """NumPy implementation of Normal log-pdf."""
-    return -0.5 * ((x - loc) / scale)**2 - _LOG_2PI_HALF - np.log(scale)
-
-
-def smoothclip_nr_np(nr, tau):
-    """Smooth zero-clipping for the number density (NumPy version)."""
-    return 0.5 * (nr + np.sqrt(nr**2 + tau**2))
-
-
-def lp_galaxy_bias_np(delta, log_rho, bias_params, galaxy_bias):
-    """NumPy version of lp_galaxy_bias."""
-    if galaxy_bias == "powerlaw":
-        lp = bias_params[0] * log_rho
-    elif galaxy_bias == "double_powerlaw":
-        alpha_low, alpha_high, log_rho_t = bias_params
-        log_x = log_rho - log_rho_t
-        lp = (alpha_low * log_x
-              + (alpha_high - alpha_low) * np.logaddexp(0.0, log_x))
-    elif "linear" in galaxy_bias or galaxy_bias == "unity":
-        lp = np.log(smoothclip_nr_np(1 + bias_params[0] * delta, tau=0.1))
-    else:
-        raise ValueError(f"Invalid galaxy bias model '{galaxy_bias}'.")
-    return lp
-
 
 ###############################################################################
 #                           Model classes                                     #

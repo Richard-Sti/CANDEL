@@ -134,7 +134,7 @@ def make_mock_config(base_config_path, seed, num_warmup=500,
 
 
 def _load_density_3d_data(config, field_name):
-    """Load cached 3D density data used by reconstruction integrals."""
+    """Load and memoize 3D field data used by reconstruction integrals."""
     if not config["model"].get("use_reconstruction", False):
         return None
     if config["model"].get("which_selection") is None:
@@ -184,7 +184,7 @@ def run_one_mock(seed, base_config_path, true_params, mock_kwargs,
                  which_selection="TRGB_magnitude",
                  infer_selection=True, use_field=False, field_name=None,
                  quiet=True):
-    """Generate one mock, run inference, compute standardised biases."""
+    """Generate one mock, run inference, and return biases and catalogue sizes."""
     config = make_mock_config(
         base_config_path, seed, num_warmup=num_warmup,
         num_samples=num_samples,
@@ -539,7 +539,7 @@ def run_single(seed, true_params, mock_kwargs, config_path,
                which_selection="TRGB_magnitude",
                infer_selection=True, use_field=False, field_name=None,
                outdir=None, plot_only=False):
-    """Generate a single mock, optionally run inference, and plot."""
+    """Generate a single mock, optionally run inference, plot, and return data."""
     print(f"{'='*60}")
     print("Mock configuration")
     print(f"{'='*60}")

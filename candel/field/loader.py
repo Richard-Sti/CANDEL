@@ -42,8 +42,8 @@ class BaseFieldLoader(ABC):
 
     Subclasses must implement:
     - ``load_density()``: Return a 3D ``np.ndarray`` (N, N, N) of
-      mass densities
-      in units of :math:`h^2 M_\odot / \mathrm{kpc}^3`.
+      positive density-like values. The physical units and normalization are
+      loader-specific.
     - ``load_velocity()``: Return a 4D ``np.ndarray`` (3, N, N, N) of Cartesian
       velocity components in :math:`\mathrm{km/s}`.
 
@@ -405,8 +405,8 @@ class Manticore_FieldLoader(BaseFieldLoader):
     ----------
     nsim : int
         Simulation index.
-    paths : Paths, optional
-        Paths object. By default, the paths are set to the `glamdring` paths.
+    fpath_root : str
+        Directory containing ``mcmc_{nsim}.hdf5`` files.
     """
 
     def __init__(self, nsim, fpath_root):

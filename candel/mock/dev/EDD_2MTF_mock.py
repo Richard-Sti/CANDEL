@@ -293,7 +293,8 @@ def gen_EDD_2MTF_mock(nsamples=500, Om=0.3, e_mag=0.04, e_eta=0.01,
     is included in the observed cz.
 
     Selection:
-      - mag_lim: apparent K-band magnitude limit
+      - mag_lim: apparent K-band magnitude limit, hard when
+        mag_lim_width is None and sigmoid otherwise
       - eta_min_sel/eta_max_sel: linewidth cuts on observed eta
     """
     tp = {**DEFAULT_TRUE_PARAMS, **(true_params or {})}

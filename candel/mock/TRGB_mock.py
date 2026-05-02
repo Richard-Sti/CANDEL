@@ -321,7 +321,9 @@ def gen_TRGB_mock(nsamples=480, Om=0.3, e_mag=0.05, e_czcmb=10.0,
     true_params : dict
         True parameter values used.
     n_parent : int
-        Total number of objects drawn before selection.
+        Parent count used for selection accounting. For homogeneous mocks this
+        is the number proposed before selection; for field mocks this is the
+        number accepted by the density sampler before observable selection.
     """
     tp = {**DEFAULT_TRUE_PARAMS, **(true_params or {})}
     anch = {**DEFAULT_ANCHORS, **(anchors or {})}
