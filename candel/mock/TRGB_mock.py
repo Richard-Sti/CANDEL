@@ -44,6 +44,8 @@ DEFAULT_ANCHORS = {
     "e_mag_N4258_TRGB": 0.0443,
 }
 
+SELECTION_TAIL_SIGMA = 7.5
+
 
 def _apply_selection(mag_obs, cz_obs, mag_lim, mag_lim_width,
                      cz_lim, cz_lim_width, gen):
@@ -61,6 +63,16 @@ def _apply_selection(mag_obs, cz_obs, mag_lim, mag_lim_width,
     return np.ones(n, dtype=bool)
 
 
+def _redshift_sampling_radius(cz_lim, cz_lim_width, h, rmax, e_czcmb,
+                              sigma_v, Vext):
+    """Radius enclosing the noisy redshift-selection tail."""
+    width = 0.0 if cz_lim_width is None else cz_lim_width
+    sigma_cz = np.sqrt(e_czcmb**2 + sigma_v**2 + width**2)
+    cz_cutoff = (
+        cz_lim + SELECTION_TAIL_SIGMA * sigma_cz + np.linalg.norm(Vext))
+    return min(cz_cutoff / (h * 100), rmax)
+
+
 def _gen_homogeneous_path(nsamples, h, rmin, rmax, e_mag, e_czcmb,
                           M_TRGB, sigma_int, sigma_v, Vext,
                           mag_lim, mag_lim_width, cz_lim, cz_lim_width,
@@ -71,10 +83,11 @@ def _gen_homogeneous_path(nsamples, h, rmin, rmax, e_mag, e_czcmb,
     if mag_lim is not None:
         mu_max = mag_lim - M_TRGB
         sigma_tot = np.sqrt(sigma_int**2 + e_mag**2 + mag_lim_width**2)
-        mu_cutoff = mu_max + 5 * sigma_tot
+        mu_cutoff = mu_max + SELECTION_TAIL_SIGMA * sigma_tot
         r_sample = min(10**((mu_cutoff - 25) / 5), rmax)
     elif cz_lim is not None:
-        r_sample = min(cz_lim / (h * 100) * 1.5, rmax)
+        r_sample = _redshift_sampling_radius(
+            cz_lim, cz_lim_width, h, rmax, e_czcmb, sigma_v, Vext)
 
     if verbose and r_sample < rmax:
         print(f"Homogeneous mock: tightened r_max from {rmax:.1f} to "
@@ -148,10 +161,11 @@ def _gen_field_path(nsamples, h, b1, beta, rmin, rmax, e_mag, e_czcmb,
     if mag_lim is not None:
         mu_max = mag_lim - M_TRGB
         sigma_tot = np.sqrt(sigma_int**2 + e_mag**2 + mag_lim_width**2)
-        mu_cutoff = mu_max + 5 * sigma_tot
+        mu_cutoff = mu_max + SELECTION_TAIL_SIGMA * sigma_tot
         r_sample_Mpc = min(10**((mu_cutoff - 25) / 5), rmax)
     elif cz_lim is not None:
-        r_sample_Mpc = min(cz_lim / (h * 100) * 1.2, rmax)
+        r_sample_Mpc = _redshift_sampling_radius(
+            cz_lim, cz_lim_width, h, rmax, e_czcmb, sigma_v, Vext)
     r_sphere = r_sample_Mpc * h  # Mpc/h
 
     if verbose:

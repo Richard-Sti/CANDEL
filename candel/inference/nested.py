@@ -632,11 +632,9 @@ def run_nss(model, model_args=(), model_kwargs=None,
     validate : bool
         If True, validate the prior/likelihood decomposition first.
     checkpoint_path : str or None
-        Explicit checkpoint ``.npz`` path. Overrides ``checkpoint_dir`` when
-        set.
+        Explicit checkpoint ``.npz`` path. Required to enable checkpointing.
     checkpoint_dir : str or None
-        Directory for periodic checkpoints. Ignored when ``checkpoint_path``
-        is set. The default checkpoint filename is ``nss_ckpt.npz``.
+        Deprecated; checkpointing now requires ``checkpoint_path``.
     resume_path : str or None
         Path to a checkpoint ``.npz`` to resume from. Resuming restores live
         points, dead points, the evidence integrator, RNG key, and dead count.
@@ -677,6 +675,12 @@ def run_nss(model, model_args=(), model_kwargs=None,
             rng_key, state, log_prior_fn,
             log_likelihood_fn, num_delete, num_mcmc_steps)
 
+    if checkpoint_dir is not None and checkpoint_path is None:
+        raise ValueError(
+            "`checkpoint_path` must be set explicitly; `checkpoint_dir` "
+            "does not imply a checkpoint filename.")
+    _ckpt_path = checkpoint_path
+
     if resume_path is not None:
         state, dead, rng_key, n_dead = _load_nss_checkpoint(resume_path)
         # Warmup JIT with restored state
@@ -711,17 +715,18 @@ def run_nss(model, model_args=(), model_kwargs=None,
         cov = jnp.atleast_2d(
             jnp.cov(particles.position, ddof=0, rowvar=False))
         state = _NSSState(particles, integrator, cov)
+        rng_key = jax.random.PRNGKey(seed + 1)
+
+        if _ckpt_path is not None:
+            _save_nss_checkpoint(_ckpt_path, state, [], rng_key, 0)
 
         # ---- Warmup JIT ----
-        rng_key = jax.random.PRNGKey(seed + 1)
         rng_key, subkey = jax.random.split(rng_key)
-        state, _ = jax.block_until_ready(step_fn(state, subkey))
+        _warmup_state, _ = jax.block_until_ready(step_fn(state, subkey))
+        del _warmup_state
 
         dead = []
         n_dead = 0
-    _ckpt_path = checkpoint_path
-    if _ckpt_path is None and checkpoint_dir is not None:
-        _ckpt_path = os.path.join(checkpoint_dir, "nss_ckpt.npz")
     _last_ckpt_time = timer()
     t0 = timer()
 

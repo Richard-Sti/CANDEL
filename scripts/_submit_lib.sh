@@ -12,6 +12,8 @@
 #                                         # defaults: short=12h, medium=48h
 #              [--name JOB]               # job name (default: candel)
 #              [--logdir DIR]             # log directory (default: logs)
+#              [--default-log]            # use scheduler default log filename
+#              [--runafter JOBIDS]        # dependency list, scheduler syntax
 #              [--dry]                    # print command without submitting
 #              -- <cmd...>
 #
@@ -27,6 +29,7 @@
 #   CANDEL_FROZEN_ROOT  per-cluster frozen-package install root
 #   CANDEL_USE_FROZEN   1 if use_frozen=true in local_config.toml, else 0
 #                       (default 0 when absent)
+#   CANDEL_WATCHER_DIR  shared directory for detached watcher logs
 
 _submit_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CANDEL_ROOT="$(cd "$_submit_lib_dir/.." && pwd)"
@@ -63,8 +66,14 @@ if [[ "$(_toml_get use_frozen "$_local_config")" == "true" ]]; then
 else
     CANDEL_USE_FROZEN=0
 fi
+CANDEL_WATCHER_DIR="$(_toml_get watcher_dir "$_local_config")"
+if [[ -z "$CANDEL_WATCHER_DIR" ]]; then
+    CANDEL_WATCHER_DIR="$CANDEL_ROOT"
+elif [[ "$CANDEL_WATCHER_DIR" != /* ]]; then
+    CANDEL_WATCHER_DIR="$CANDEL_ROOT/$CANDEL_WATCHER_DIR"
+fi
 export CANDEL_CLUSTER CANDEL_PYTHON CANDEL_MODULES CANDEL_MODULES_GPU \
-       CANDEL_USE_FROZEN
+       CANDEL_USE_FROZEN CANDEL_WATCHER_DIR
 
 if [[ -z "$CANDEL_CLUSTER" ]]; then
     echo "[submit_lib] 'machine' not set in $_local_config" >&2
@@ -153,6 +162,7 @@ launch_detached() {
 submit_job() {
     local queue="" mem="" cpus="" time="" name="candel" logdir="logs"
     local gpu=0 dry=0 mpi_n="" gputype="" gpu_mem_min=""
+    local default_log=0 runafter=""
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --queue)   queue="$2"; shift 2 ;;
@@ -162,6 +172,8 @@ submit_job() {
             --time)    time="$2"; shift 2 ;;
             --name)    name="$2"; shift 2 ;;
             --logdir)  logdir="$2"; shift 2 ;;
+            --default-log) default_log=1; shift ;;
+            --runafter) runafter="$2"; shift 2 ;;
             --gpu)     gpu=1; shift ;;
             --gputype) gputype="$2"; shift 2 ;;
             --gpu-mem) gpu_mem_min="$2"; shift 2 ;;
@@ -235,6 +247,9 @@ submit_job() {
             else
                 sbatch_flags+=(--ntasks=1 --cpus-per-task="$cpus")
             fi
+            if [[ -n "$runafter" ]]; then
+                sbatch_flags+=(--dependency="afterok:$runafter")
+            fi
             if [[ -z "$time" ]]; then
                 case "$queue" in
                     short)  time=12 ;;
@@ -302,9 +317,15 @@ SCRIPT
             if [[ -n "$gpu_mem_min" ]]; then
                 echo "[submit_job] glamdring: --gpu-mem not supported; ignoring" >&2
             fi
-            local addqueue_flags=(-s -q "$queue" -m "$mem" -c "$name" -o "logs-%j-${name}.out")
+            local addqueue_flags=(-q "$queue" -m "$mem" -c "$name")
+            if [[ -n "$runafter" ]]; then
+                addqueue_flags+=(--runafter "$runafter")
+            fi
+            if (( ! default_log )); then
+                addqueue_flags+=(-o "logs-%j-${name}.out")
+            fi
             if (( gpu )); then
-                addqueue_flags+=(-s --gpus 1 -n 1x2)
+                addqueue_flags+=(-s --gpus 1 -n "$cpus")
                 [[ -n "$gputype" ]] && addqueue_flags+=(--gputype "$gputype")
             elif [[ -n "$mpi_n" ]]; then
                 addqueue_flags+=(-n "$mpi_n")
@@ -324,7 +345,11 @@ SCRIPT
             local addqueue_prefix=""
             [[ ${#addqueue_env[@]} -gt 0 ]] && addqueue_prefix="${addqueue_env[*]} "
             echo "[submit_job] glamdring: ${addqueue_prefix}addqueue ${addqueue_flags[*]} $cmd_str"
-            echo "[submit_job] log     : $PWD/logs-<jobid>-${name}.out"
+            if (( default_log )); then
+                echo "[submit_job] log     : $PWD/python-<jobid>.out"
+            else
+                echo "[submit_job] log     : $PWD/logs-<jobid>-${name}.out"
+            fi
             if (( dry )); then
                 echo "[submit_job] (dry: not submitting)"
                 return 0

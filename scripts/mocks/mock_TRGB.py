@@ -6,10 +6,10 @@ checking that true parameters are recovered without bias.
 
 Usage:
     # Single mock (no MPI, inspect the sample)
-    python run_mock_TRGB.py --single --seed 42
+    python mock_TRGB.py --single --seed 42
 
     # MPI batch run
-    mpirun -np 8 python run_mock_TRGB.py --n-mocks 100 --outdir results/mocks
+    mpirun -np 8 python mock_TRGB.py --n-mocks 100 --outdir results/mocks
 """
 import argparse
 import os
@@ -79,6 +79,26 @@ def _standardised_bias(samples, true_val, param):
     return (samples.mean() - true_val) / samples.std()
 
 
+def _rhat_warnings(diagnostics, threshold):
+    """Return tracked parameters whose NumPyro R-hat exceeds threshold."""
+    warnings = {}
+    if not diagnostics:
+        return warnings
+    for param in TRACKED_PARAMS:
+        stats = diagnostics.get(param)
+        if not stats or "r_hat" not in stats:
+            continue
+        rhat = float(stats["r_hat"])
+        if np.isfinite(rhat) and rhat > threshold:
+            warnings[param] = rhat
+    return warnings
+
+
+def _format_rhat_warnings(warnings):
+    """Format R-hat warnings for log output."""
+    return ", ".join(f"{p}={v:.3f}" for p, v in sorted(warnings.items()))
+
+
 def _write_tmp_config(config):
     f = tempfile.NamedTemporaryFile(mode="wb", suffix=".toml", delete=False)
     tomli_w.dump(config, f)
@@ -90,7 +110,8 @@ def make_mock_config(base_config_path, seed, num_warmup=500,
                      num_samples=500, which_selection="TRGB_magnitude",
                      mag_lim=None, mag_lim_width=None,
                      cz_lim=None, cz_lim_width=None,
-                     infer_selection=True, use_field=False, rmax=40.0):
+                     infer_selection=True, use_field=False, rmax=40.0,
+                     num_chains=1):
     """Build a config dict for mock inference."""
     config = candel.load_config(base_config_path, replace_los_prior=False)
 
@@ -127,7 +148,7 @@ def make_mock_config(base_config_path, seed, num_warmup=500,
     config["inference"]["seed"] = seed
     config["inference"]["num_warmup"] = num_warmup
     config["inference"]["num_samples"] = num_samples
-    config["inference"]["num_chains"] = 1
+    config["inference"]["num_chains"] = num_chains
     config["inference"]["chain_method"] = "sequential"
 
     return config
@@ -183,8 +204,9 @@ def run_one_mock(seed, base_config_path, true_params, mock_kwargs,
                  num_warmup=500, num_samples=500,
                  which_selection="TRGB_magnitude",
                  infer_selection=True, use_field=False, field_name=None,
-                 quiet=True):
-    """Generate one mock, run inference, and return biases and catalogue sizes."""
+                 quiet=True, progress_bar=False, num_chains=1,
+                 rhat_threshold=1.05):
+    """Generate one mock, run inference, and return diagnostics."""
     config = make_mock_config(
         base_config_path, seed, num_warmup=num_warmup,
         num_samples=num_samples,
@@ -195,12 +217,17 @@ def run_one_mock(seed, base_config_path, true_params, mock_kwargs,
         cz_lim_width=mock_kwargs.get("cz_lim_width"),
         infer_selection=infer_selection,
         use_field=use_field,
-        rmax=mock_kwargs.get("rmax", 40.0))
+        rmax=mock_kwargs.get("rmax", 40.0),
+        num_chains=num_chains)
     density_3d_data = _load_density_3d_data(
         config, field_name) if use_field else None
     data, tp, n_parent = gen_TRGB_mock(
         seed=seed, true_params=true_params, verbose=not quiet,
         density_3d_data=density_3d_data, **mock_kwargs)
+    mock_diag = {
+        "mag_obs": np.asarray(data["mag_obs"]),
+        "czcmb": np.asarray(data["czcmb"]),
+    }
     tp["mu_LMC"] = DEFAULT_ANCHORS["mu_LMC"]
     tp["mu_N4258"] = DEFAULT_ANCHORS["mu_N4258"]
     _ra, _dec = candel.galactic_to_radec(tp["Vext_ell"], tp["Vext_b"])
@@ -219,13 +246,14 @@ def run_one_mock(seed, base_config_path, true_params, mock_kwargs,
             with open(os.devnull, "w") as _devnull, \
                     redirect_stdout(_devnull):
                 model = candel.model.TRGBModel(tmp, data)
-                samples = candel.run_H0_inference(
+                samples, diagnostics = candel.run_H0_inference(
                     model, save_samples=False, print_summary=False,
-                    progress_bar=False)
+                    progress_bar=progress_bar, return_diagnostics=True)
         else:
             model = candel.model.TRGBModel(tmp, data)
-            samples = candel.run_H0_inference(
-                model, save_samples=False, print_summary=True)
+            samples, diagnostics = candel.run_H0_inference(
+                model, save_samples=False, print_summary=True,
+                return_diagnostics=True)
 
         # Reconstruct raw Vext params from postprocessed ell/b
         if "Vext_ell" in samples and "Vext_b" in samples:
@@ -243,7 +271,8 @@ def run_one_mock(seed, base_config_path, true_params, mock_kwargs,
     finally:
         os.unlink(tmp)
 
-    return biases, n_hosts, n_parent
+    return biases, n_hosts, n_parent, mock_diag, _rhat_warnings(
+        diagnostics, rhat_threshold)
 
 
 # ---- MPI master/worker ---------------------------------------------------
@@ -267,11 +296,14 @@ def master(comm, n_workers, config_info):
     n_ok = 0
     n_skipped = 0
     running_biases = {p: [] for p in TRACKED_PARAMS}
+    active_jobs = {}
     status = MPI.Status()
 
     for rank in range(1, n_workers + 1):
         if n_sent < n_mocks:
+            job_num = n_sent + 1
             comm.send(seeds[n_sent], dest=rank, tag=TAG_WORK)
+            active_jobs[rank] = job_num
             n_sent += 1
         else:
             comm.send(None, dest=rank, tag=TAG_DONE)
@@ -283,24 +315,37 @@ def master(comm, n_workers, config_info):
         result = comm.recv(source=MPI.ANY_SOURCE, tag=TAG_RESULT,
                            status=status)
         source = status.Get_source()
+        job_num = active_jobs.pop(source, None)
         n_done += 1
 
         now = datetime.now().strftime("%H:%M:%S")
         elapsed = time.time() - t0
+        job_label = (f"job {job_num}/{n_mocks}"
+                     if job_num is not None else "job ?")
+        next_label = (f"rank {source} starting job {n_sent + 1}/{n_mocks}"
+                      if n_sent < n_mocks
+                      else f"rank {source} has no more jobs")
         if result is None:
             n_skipped += 1
-            print(f"[WARN {now}] {n_done}/{n_mocks} — timed out on "
-                  f"rank {source} ({elapsed:.0f}s)", flush=True)
+            print(f"[WARN {now}] {n_done}/{n_mocks} done: rank {source} "
+                  f"timed out on {job_label}; {next_label} "
+                  f"({elapsed:.0f}s total)", flush=True)
         else:
             results.append(result)
             n_ok += 1
-            b, _, _, dt = result
+            b, _, _, _, rhat_warnings, dt = result
             for p in TRACKED_PARAMS:
                 if p in b:
                     running_biases[p].append(b[p])
-            print(f"[INFO {now}] {n_done}/{n_mocks} done "
+            print(f"[INFO {now}] {n_done}/{n_mocks} done: rank {source} "
+                  f"finished {job_label}; {next_label} "
                   f"({dt:.0f}s worker, {elapsed:.0f}s total)",
                   flush=True)
+            if rhat_warnings:
+                print(f"[WARN {now}] rank {source} {job_label} has "
+                      f"R-hat > {config_info['rhat_threshold']}: "
+                      f"{_format_rhat_warnings(rhat_warnings)}",
+                      flush=True)
             if n_ok % PROGRESS_INTERVAL == 0:
                 _print_bias_table(
                     running_biases,
@@ -308,6 +353,7 @@ def master(comm, n_workers, config_info):
                     show_ks=True)
 
         if n_sent < n_mocks:
+            active_jobs[source] = n_sent + 1
             comm.send(seeds[n_sent], dest=source, tag=TAG_WORK)
             n_sent += 1
         else:
@@ -320,8 +366,12 @@ def master(comm, n_workers, config_info):
     # Collect biases
     biases = {p: [] for p in TRACKED_PARAMS}
     n_hosts_list = []
-    for b, n_hosts, n_parent, _ in results:
+    mock_mag_obs = []
+    mock_czcmb = []
+    for b, n_hosts, n_parent, mock_diag, _, _ in results:
         n_hosts_list.append(n_hosts)
+        mock_mag_obs.append(mock_diag["mag_obs"])
+        mock_czcmb.append(mock_diag["czcmb"])
         for p in TRACKED_PARAMS:
             if p in b:
                 biases[p].append(b[p])
@@ -335,6 +385,9 @@ def master(comm, n_workers, config_info):
     save_dict["n_skipped"] = np.array(n_skipped)
     save_dict["n_hosts"] = np.array(n_hosts_list)
     save_dict["params"] = np.array(TRACKED_PARAMS)
+    if mock_mag_obs:
+        save_dict["mock_mag_obs"] = np.concatenate(mock_mag_obs)
+        save_dict["mock_czcmb"] = np.concatenate(mock_czcmb)
 
     for p in TRACKED_PARAMS:
         val = true_params.get(p)
@@ -344,6 +397,9 @@ def master(comm, n_workers, config_info):
     outfile = os.path.join(outdir, f"mock_TRGB_biases_{mode_tag}.npz")
     np.savez(outfile, **save_dict)
     print(f"[INFO] Saved to {outfile}")
+    plotfile = _plot_bias_summary(save_dict, outfile)
+    if plotfile is not None:
+        print(f"[INFO] Saved plot to {plotfile}")
 
     _print_summary(save_dict, n_skipped, n_mocks)
 
@@ -362,6 +418,8 @@ def worker(comm, config_info):
     infer_selection = config_info["infer_selection"]
     use_field = config_info.get("use_field", False)
     field_name = config_info.get("field_name")
+    num_chains = config_info.get("num_chains", 1)
+    rhat_threshold = config_info.get("rhat_threshold", 1.05)
 
     def _alarm_handler(signum, frame):
         raise TimeoutError
@@ -384,7 +442,8 @@ def worker(comm, config_info):
                 num_warmup=num_warmup, num_samples=num_samples,
                 which_selection=which_selection,
                 infer_selection=infer_selection,
-                use_field=use_field, field_name=field_name, quiet=True)
+                use_field=use_field, field_name=field_name, quiet=True,
+                num_chains=num_chains, rhat_threshold=rhat_threshold)
             result = (*result, time.time() - t_start)
         except TimeoutError:
             result = None
@@ -438,6 +497,39 @@ def _print_summary(save_dict, n_skipped, n_mocks):
         print(f"\n[WARN] {n_skipped}/{n_mocks} mocks timed out")
 
 
+def _plot_bias_summary(save_dict, outfile):
+    """Save a diagnostic plot of standardised biases."""
+    params = [p for p in TRACKED_PARAMS
+              if p in save_dict and len(np.asarray(save_dict[p])) > 0]
+    if not params:
+        return None
+
+    ncols = 3
+    nrows = int(np.ceil(len(params) / ncols))
+    fig, axes = plt.subplots(nrows, ncols, figsize=(4.2 * ncols, 3 * nrows))
+    axes = np.atleast_1d(axes).ravel()
+
+    for ax, param in zip(axes, params):
+        vals = np.asarray(save_dict[param])
+        ax.hist(vals, bins="auto", alpha=0.75, edgecolor="black",
+                linewidth=0.5)
+        ax.axvline(0, color="black", linewidth=1, linestyle="--")
+        ax.set_title(
+            f"{param}: {vals.mean():+.2f} +/- {vals.std():.2f}",
+            fontsize=9)
+        ax.set_xlabel("standardised bias")
+        ax.set_ylabel("mocks")
+
+    for ax in axes[len(params):]:
+        ax.axis("off")
+
+    fig.tight_layout()
+    plotfile = os.path.splitext(outfile)[0] + ".png"
+    fig.savefig(plotfile, dpi=150)
+    plt.close(fig)
+    return plotfile
+
+
 # ---- Sequential mode (no MPI) ---------------------------------------------
 
 def run_sequential(config_info):
@@ -463,6 +555,7 @@ def run_sequential(config_info):
 
     for i, seed in enumerate(seeds):
         t_start = time.time()
+        rhat_warnings = {}
         try:
             result = run_one_mock(
                 seed, config_info["base_config"],
@@ -473,12 +566,15 @@ def run_sequential(config_info):
                 infer_selection=config_info["infer_selection"],
                 use_field=config_info.get("use_field", False),
                 field_name=config_info.get("field_name"),
-                quiet=True)
+                quiet=True,
+                progress_bar=config_info.get("progress_bar", True),
+                num_chains=config_info.get("num_chains", 1),
+                rhat_threshold=config_info.get("rhat_threshold", 1.05))
             dt = time.time() - t_start
             result = (*result, dt)
             results.append(result)
             n_ok += 1
-            b, _, _, _ = result
+            b, _, _, _, rhat_warnings, _ = result
             for p in TRACKED_PARAMS:
                 if p in b:
                     running_biases[p].append(b[p])
@@ -491,6 +587,11 @@ def run_sequential(config_info):
         print(f"[INFO {now}] {i + 1}/{n_mocks} done "
               f"({dt:.0f}s this mock, {elapsed:.0f}s total)",
               flush=True)
+        if "rhat_warnings" in locals() and rhat_warnings:
+            print(f"[WARN {now}] mock {i + 1}/{n_mocks} has "
+                  f"R-hat > {config_info['rhat_threshold']}: "
+                  f"{_format_rhat_warnings(rhat_warnings)}",
+                  flush=True)
         if n_ok > 0 and n_ok % PROGRESS_INTERVAL == 0:
             _print_bias_table(
                 running_biases,
@@ -504,8 +605,12 @@ def run_sequential(config_info):
     # Collect and save (reuse master's logic)
     biases = {p: [] for p in TRACKED_PARAMS}
     n_hosts_list = []
-    for b, n_hosts, n_parent, _ in results:
+    mock_mag_obs = []
+    mock_czcmb = []
+    for b, n_hosts, n_parent, mock_diag, _, _ in results:
         n_hosts_list.append(n_hosts)
+        mock_mag_obs.append(mock_diag["mag_obs"])
+        mock_czcmb.append(mock_diag["czcmb"])
         for p in TRACKED_PARAMS:
             if p in b:
                 biases[p].append(b[p])
@@ -518,6 +623,9 @@ def run_sequential(config_info):
     save_dict["n_skipped"] = np.array(n_skipped)
     save_dict["n_hosts"] = np.array(n_hosts_list)
     save_dict["params"] = np.array(TRACKED_PARAMS)
+    if mock_mag_obs:
+        save_dict["mock_mag_obs"] = np.concatenate(mock_mag_obs)
+        save_dict["mock_czcmb"] = np.concatenate(mock_czcmb)
 
     for p in TRACKED_PARAMS:
         val = config_info["true_params"].get(p)
@@ -528,6 +636,9 @@ def run_sequential(config_info):
         outdir, f"mock_TRGB_biases_{config_info['mode_tag']}.npz")
     np.savez(outfile, **save_dict)
     print(f"[INFO] Saved to {outfile}")
+    plotfile = _plot_bias_summary(save_dict, outfile)
+    if plotfile is not None:
+        print(f"[INFO] Saved plot to {plotfile}")
 
     _print_summary(save_dict, n_skipped, n_mocks)
 
@@ -712,6 +823,15 @@ def main():
                         help="NUTS warmup steps")
     parser.add_argument("--num-samples", type=int, default=500,
                         help="NUTS posterior samples")
+    parser.add_argument("--num-chains", type=int, default=1,
+                        help="NUTS chains per mock")
+    parser.add_argument("--rhat-threshold", type=float, default=1.05,
+                        help="Warn when NumPyro R-hat exceeds this value")
+    parser.add_argument("--no-progress-bar", action="store_false",
+                        dest="progress_bar",
+                        help="Disable NumPyro progress bars in sequential "
+                        "batch mode")
+    parser.set_defaults(progress_bar=True)
 
     # Selection options
     parser.add_argument("--which-selection", type=str,
@@ -828,12 +948,15 @@ def main():
         "timeout": args.timeout,
         "num_warmup": args.num_warmup,
         "num_samples": args.num_samples,
+        "num_chains": args.num_chains,
+        "rhat_threshold": args.rhat_threshold,
         "which_selection": args.which_selection,
         "infer_selection": args.infer_selection,
         "use_field": args.use_field,
         "field_name": args.field_name,
         "mode_tag": _mode_tag(args.which_selection, args.use_field,
                               args.field_name, args.infer_selection),
+        "progress_bar": args.progress_bar,
     }
 
     # Try MPI; fall back to sequential only when no multi-rank scheduler
