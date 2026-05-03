@@ -88,6 +88,9 @@ class CH0Model(H0ModelBase):
         self.use_uniform_mu_host_priors = get_nested(
             config, "model/use_uniform_mu_host_priors", True)
         fprint(f"use_uniform_mu_host_priors set to {self.use_uniform_mu_host_priors}")  # noqa
+        self.use_anchor_volume_prior = get_nested(
+            config, "model/use_anchor_volume_prior", False)
+        fprint(f"use_anchor_volume_prior set to {self.use_anchor_volume_prior}")  # noqa
         self.use_fiducial_Cepheid_host_PV_covariance = get_nested(
             config, "model/use_fiducial_Cepheid_host_PV_covariance", True)
         fprint(f"use_fiducial_Cepheid_host_PV_covariance set to {self.use_fiducial_Cepheid_host_PV_covariance}")  # noqa
@@ -323,12 +326,16 @@ class CH0Model(H0ModelBase):
         if self.use_uniform_mu_host_priors:
             lp_host_dist = jnp.zeros(self.num_hosts)
         else:
-            lp_all_host_dist = self.log_prior_distance(r_host_all)
-            lp_all_host_dist += self.log_grad_distmod2comoving_distance(
-                mu_host_all, h=h)
-            lp_host_dist = lp_all_host_dist[:self.num_hosts]
+            lp_host_dist = self.log_prior_distance(r_host)
+            lp_host_dist += self.log_grad_distmod2comoving_distance(
+                mu_host, h=h)
 
-            lp_anchor_dist = lp_all_host_dist[self.num_hosts:]
+        if self.use_anchor_volume_prior:
+            mu_anchors = mu_host_all[self.num_hosts:]
+            r_anchors = r_host_all[self.num_hosts:]
+            lp_anchor_dist = self.log_prior_distance(r_anchors)
+            lp_anchor_dist += self.log_grad_distmod2comoving_distance(
+                mu_anchors, h=h)
             factor("lp_anchor_dist", lp_anchor_dist)
 
         # SN magnitude likelihood (shared by SN_magnitude* selections)

@@ -21,6 +21,7 @@ which_run = "CH0"
 
 which_selection = "redshift"
 use_uniform_mu_host_priors = false
+use_anchor_volume_prior = false
 
 use_Cepheid_host_redshift = true
 
