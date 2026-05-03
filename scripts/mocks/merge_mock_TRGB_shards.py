@@ -88,28 +88,25 @@ def _print_mock_observable_summary(save_dict):
               f"range=[{vals.min():.3f}, {vals.max():.3f}] {unit}")
 
 
-def _plot_mock_observables(loaded, output):
-    """Save stacked shard histograms of mock magnitudes and redshifts."""
-    mag_arrays = [np.asarray(d["mock_mag_obs"]) for d in loaded
-                  if "mock_mag_obs" in d and len(np.asarray(d["mock_mag_obs"]))]
-    cz_arrays = [np.asarray(d["mock_czcmb"]) for d in loaded
-                 if "mock_czcmb" in d and len(np.asarray(d["mock_czcmb"]))]
-    if not mag_arrays or not cz_arrays:
+def _plot_mock_observables(save_dict, output):
+    """Save histograms of mock magnitudes and redshifts."""
+    if "mock_mag_obs" not in save_dict or "mock_czcmb" not in save_dict:
         return None
 
-    labels = [f"shard {i:02d}" for i in range(len(mag_arrays))]
+    mag_obs = np.asarray(save_dict["mock_mag_obs"]).ravel()
+    czcmb = np.asarray(save_dict["mock_czcmb"]).ravel()
+    if len(mag_obs) == 0 or len(czcmb) == 0:
+        return None
+
     fig, axes = plt.subplots(1, 2, figsize=(11, 4.2))
 
-    axes[0].hist(mag_arrays, bins=40, stacked=True, label=labels)
+    axes[0].hist(mag_obs, bins=40)
     axes[0].set_xlabel("TRGB magnitude")
     axes[0].set_ylabel("hosts")
 
-    axes[1].hist(cz_arrays, bins=40, stacked=True, label=labels)
+    axes[1].hist(czcmb, bins=40)
     axes[1].set_xlabel(r"$cz_{\rm CMB}$ [km/s]")
     axes[1].set_ylabel("hosts")
-
-    if len(labels) <= 20:
-        axes[1].legend(fontsize=6, ncol=2, frameon=False)
 
     fig.tight_layout()
     plotfile = os.path.splitext(output)[0] + "_mock_observables.png"
@@ -196,7 +193,7 @@ def merge(paths, output, delete_inputs=False):
     os.makedirs(os.path.dirname(os.path.abspath(output)), exist_ok=True)
     np.savez(output, **out)
     plotfile = _plot_bias_summary(out, output)
-    mock_plotfile = _plot_mock_observables(loaded, output)
+    mock_plotfile = _plot_mock_observables(out, output)
     _print_bias_table(out)
     _print_mock_observable_summary(out)
     for d in loaded:
