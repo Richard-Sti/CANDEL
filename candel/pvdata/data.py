@@ -304,7 +304,7 @@ def _sphere_voxel_weights(disp, radius, dx):
 
 
 def _warn_coarse_sphere_radius(radius, dx, label):
-    """Warn when the spherical boundary is poorly resolved by the voxel grid."""
+    """Warn when sphere boundaries are poorly resolved by the voxel grid."""
     radius_over_dx = float(radius) / float(dx)
     if radius_over_dx < _SPHERE_RADIUS_DX_WARN_MIN:
         fprint(
@@ -870,11 +870,12 @@ def precompute_pixel_projection(rhat_data, nside, sigma_deg=None):
 
 
 def load_PV_dataframes(config_path):
-    """Load one or more PVDataFrame objects from the given configuration file."""
+    """Load PVDataFrame objects from a configuration file."""
     config = load_config(config_path)
 
     if config["pv_model"]["kind"].startswith("precomputed_los_"):
-        los_reconstruction = config["pv_model"]["kind"].replace("precomputed_los_", "")  # noqa
+        los_reconstruction = config["pv_model"]["kind"].replace(
+            "precomputed_los_", "")
     else:
         los_reconstruction = None
 
