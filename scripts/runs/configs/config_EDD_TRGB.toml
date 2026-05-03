@@ -75,10 +75,8 @@ dist = "maxwell"
 scale = 0.0627
 
 [model.priors.sigma_v]
-dist = "truncated_normal"
-mean = 250
-scale = 10
-low = 0.0
+dist = "maxwell"
+scale = 187.997121  # mean = 300 km/s
 
 [model.priors.beta]
 dist = "truncated_normal"
