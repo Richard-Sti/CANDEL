@@ -47,6 +47,43 @@ def _plot_bias_summary(save_dict, output):
     return plotfile
 
 
+def _plot_ppc_summary(save_dict, output):
+    """Save posterior truth-percentile histograms for tracked parameters."""
+    params = [str(p) for p in save_dict["params"]
+              if f"ppc_{p}" in save_dict
+              and len(np.asarray(save_dict[f"ppc_{p}"])) > 0]
+    if not params:
+        return None
+
+    ncols = 3
+    nrows = int(np.ceil(len(params) / ncols))
+    fig, axes = plt.subplots(nrows, ncols, figsize=(4.2 * ncols, 3 * nrows))
+    axes = np.atleast_1d(axes).ravel()
+    bins = np.linspace(0.0, 1.0, 11)
+
+    for ax, param in zip(axes, params):
+        vals = np.asarray(save_dict[f"ppc_{param}"])
+        ax.hist(vals, bins=bins, alpha=0.75, edgecolor="black",
+                linewidth=0.5)
+        ax.axhline(len(vals) / (len(bins) - 1), color="black",
+                   linewidth=1, linestyle="--")
+        ax.set_xlim(0, 1)
+        ax.set_title(
+            f"{param}: mean={vals.mean():.2f}, std={vals.std():.2f}",
+            fontsize=9)
+        ax.set_xlabel("posterior percentile of truth")
+        ax.set_ylabel("mocks")
+
+    for ax in axes[len(params):]:
+        ax.axis("off")
+
+    fig.tight_layout()
+    plotfile = os.path.splitext(output)[0] + "_ppc.png"
+    fig.savefig(plotfile, dpi=150)
+    plt.close(fig)
+    return plotfile
+
+
 def _print_bias_table(save_dict):
     """Print mean standardised bias and KS p-value against N(0, 1)."""
     params = [str(p) for p in save_dict["params"]
@@ -79,6 +116,26 @@ def _print_bias_table(save_dict):
                 line += f"  {'':>12s}"
         line += f"  {pval:>10.3f}"
         print(line)
+
+
+def _print_ppc_table(save_dict):
+    """Print KS p-values for posterior truth percentiles against U(0, 1)."""
+    params = [str(p) for p in save_dict["params"]
+              if f"ppc_{p}" in save_dict
+              and len(np.asarray(save_dict[f"ppc_{p}"])) >= 2]
+    if not params:
+        return
+
+    print("\nPosterior truth-percentile summary against uniform")
+    print("---------------------------------------------------")
+    print(f"{'param':<20s}  {'n':>5s}  {'mean +/- std':>20s}  "
+          f"{'KS p-value':>10s}")
+    for param in params:
+        vals = np.asarray(save_dict[f"ppc_{param}"])
+        pval = kstest(vals, "uniform").pvalue
+        print(f"{param:<20s}  {len(vals):>5d}  "
+              f"{f'{vals.mean():+.3f} +/- {vals.std():.3f}':>20s}  "
+              f"{pval:>10.3f}")
 
 
 def _print_mock_observable_summary(save_dict):
@@ -200,6 +257,10 @@ def merge(paths, output, delete_inputs=False):
         arrays = [d[key] for d in loaded if key in d]
         if arrays:
             out[key] = np.concatenate(arrays)
+        key = f"ppc_{param}"
+        arrays = [d[key] for d in loaded if key in d]
+        if arrays:
+            out[key] = np.concatenate(arrays)
 
     n_hosts = [d["n_hosts"] for d in loaded if "n_hosts" in d]
     if n_hosts:
@@ -221,14 +282,18 @@ def merge(paths, output, delete_inputs=False):
     os.makedirs(os.path.dirname(os.path.abspath(output)), exist_ok=True)
     np.savez(output, **out)
     plotfile = _plot_bias_summary(out, output)
+    ppc_plotfile = _plot_ppc_summary(out, output)
     mock_plotfile = _plot_mock_observables(out, output)
     _print_bias_table(out)
+    _print_ppc_table(out)
     _print_mock_observable_summary(out)
     for d in loaded:
         d.close()
     print(f"[INFO] Merged {len(files)} shard files into {output}")
     if plotfile is not None:
         print(f"[INFO] Saved plot to {plotfile}")
+    if ppc_plotfile is not None:
+        print(f"[INFO] Saved PPC plot to {ppc_plotfile}")
     if mock_plotfile is not None:
         print(f"[INFO] Saved mock observable plot to {mock_plotfile}")
     if delete_inputs:

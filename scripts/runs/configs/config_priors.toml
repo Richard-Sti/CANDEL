@@ -28,8 +28,8 @@ scale = 10.0
 
 # External bulk flow
 [model.priors.Vext]
-dist = "vector_uniform_fixed"
-low = 0.0
+dist = "vector_components_uniform"
+low = -1000
 high = 1000
 
 # External velocity monopole: constant (1 DOF)

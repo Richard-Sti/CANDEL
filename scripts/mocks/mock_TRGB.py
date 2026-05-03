@@ -102,6 +102,21 @@ def _posterior_uncertainty(samples, param):
     return np.asarray(samples).std()
 
 
+def _truth_percentile(samples, true_val, param):
+    """Posterior percentile of the injected truth.
+
+    For ordinary scalar parameters this is P(sample < truth). For periodic
+    parameters, compare wrapped residuals around the truth so the wrap point
+    does not create an artificial tail.
+    """
+    s = np.asarray(samples)
+    if param in PERIODIC_PARAMS:
+        period = PERIODIC_PARAMS[param]
+        residual = (s - true_val + period / 2) % period - period / 2
+        return np.mean(residual < 0.0)
+    return np.mean(s < true_val)
+
+
 def _rhat_warnings(diagnostics, threshold):
     """Return tracked parameters whose NumPyro R-hat exceeds threshold."""
     warnings = {}
@@ -297,16 +312,19 @@ def run_one_mock(seed, base_config_path, true_params, mock_kwargs,
 
         biases = {}
         uncertainties = {}
+        percentiles = {}
         for param in TRACKED_PARAMS:
             if param in samples:
                 s = np.asarray(samples[param])
                 biases[param] = _standardised_bias(s, tp[param], param)
                 uncertainties[param] = _posterior_uncertainty(s, param)
+                percentiles[param] = _truth_percentile(s, tp[param], param)
     finally:
         os.unlink(tmp)
 
-    return biases, uncertainties, n_hosts, n_parent, mock_diag, _rhat_warnings(
-        diagnostics, rhat_threshold)
+    return (
+        biases, uncertainties, percentiles, n_hosts, n_parent, mock_diag,
+        _rhat_warnings(diagnostics, rhat_threshold))
 
 
 # ---- MPI master/worker ---------------------------------------------------
@@ -367,7 +385,7 @@ def master(comm, n_workers, config_info):
         else:
             results.append(result)
             n_ok += 1
-            b, _, _, _, _, rhat_warnings, dt = result
+            b, _, _, _, _, _, rhat_warnings, dt = result
             for p in TRACKED_PARAMS:
                 if p in b:
                     running_biases[p].append(b[p])
@@ -400,11 +418,12 @@ def master(comm, n_workers, config_info):
     # Collect biases
     biases = {p: [] for p in TRACKED_PARAMS}
     uncertainties = {p: [] for p in TRACKED_PARAMS}
+    percentiles = {p: [] for p in TRACKED_PARAMS}
     n_hosts_list = []
     mock_mag_obs = []
     mock_czcmb = []
     mock_r_true = []
-    for b, u, n_hosts, n_parent, mock_diag, _, _ in results:
+    for b, u, q, n_hosts, n_parent, mock_diag, _, _ in results:
         n_hosts_list.append(n_hosts)
         mock_mag_obs.append(mock_diag["mag_obs"])
         mock_czcmb.append(mock_diag["czcmb"])
@@ -414,6 +433,8 @@ def master(comm, n_workers, config_info):
                 biases[p].append(b[p])
             if p in u:
                 uncertainties[p].append(u[p])
+            if p in q:
+                percentiles[p].append(q[p])
 
     # Save
     save_dict = {}
@@ -422,6 +443,8 @@ def master(comm, n_workers, config_info):
             save_dict[p] = np.array(biases[p])
         if uncertainties[p]:
             save_dict[f"unc_{p}"] = np.array(uncertainties[p])
+        if percentiles[p]:
+            save_dict[f"ppc_{p}"] = np.array(percentiles[p])
     save_dict["n_mocks"] = np.array(n_mocks)
     save_dict["n_skipped"] = np.array(n_skipped)
     save_dict["n_hosts"] = np.array(n_hosts_list)
@@ -442,8 +465,12 @@ def master(comm, n_workers, config_info):
     plotfile = _plot_bias_summary(save_dict, outfile)
     if plotfile is not None:
         print(f"[INFO] Saved plot to {plotfile}")
+    ppc_plotfile = _plot_ppc_summary(save_dict, outfile)
+    if ppc_plotfile is not None:
+        print(f"[INFO] Saved PPC plot to {ppc_plotfile}")
 
     _print_summary(save_dict, n_skipped, n_mocks)
+    _print_ppc_table(save_dict)
 
 
 def worker(comm, config_info):
@@ -554,6 +581,26 @@ def _print_summary(save_dict, n_skipped, n_mocks):
         print(f"\n[WARN] {n_skipped}/{n_mocks} mocks timed out")
 
 
+def _print_ppc_table(save_dict):
+    """Print KS p-values for posterior truth percentiles against U(0, 1)."""
+    params = [p for p in TRACKED_PARAMS
+              if f"ppc_{p}" in save_dict
+              and len(np.asarray(save_dict[f"ppc_{p}"])) >= 2]
+    if not params:
+        return
+
+    print("\nPosterior truth-percentile summary against uniform")
+    print("---------------------------------------------------")
+    print(f"{'param':<20s}  {'n':>5s}  {'mean +/- std':>20s}  "
+          f"{'KS p-value':>10s}")
+    for param in params:
+        vals = np.asarray(save_dict[f"ppc_{param}"])
+        pval = kstest(vals, "uniform").pvalue
+        print(f"{param:<20s}  {len(vals):>5d}  "
+              f"{f'{vals.mean():+.3f} +/- {vals.std():.3f}':>20s}  "
+              f"{pval:>10.3f}")
+
+
 def _plot_bias_summary(save_dict, outfile):
     """Save a diagnostic plot of standardised biases."""
     params = [p for p in TRACKED_PARAMS
@@ -582,6 +629,43 @@ def _plot_bias_summary(save_dict, outfile):
 
     fig.tight_layout()
     plotfile = os.path.splitext(outfile)[0] + ".png"
+    fig.savefig(plotfile, dpi=150)
+    plt.close(fig)
+    return plotfile
+
+
+def _plot_ppc_summary(save_dict, outfile):
+    """Save posterior truth-percentile histograms for tracked parameters."""
+    params = [p for p in TRACKED_PARAMS
+              if f"ppc_{p}" in save_dict
+              and len(np.asarray(save_dict[f"ppc_{p}"])) > 0]
+    if not params:
+        return None
+
+    ncols = 3
+    nrows = int(np.ceil(len(params) / ncols))
+    fig, axes = plt.subplots(nrows, ncols, figsize=(4.2 * ncols, 3 * nrows))
+    axes = np.atleast_1d(axes).ravel()
+    bins = np.linspace(0.0, 1.0, 11)
+
+    for ax, param in zip(axes, params):
+        vals = np.asarray(save_dict[f"ppc_{param}"])
+        ax.hist(vals, bins=bins, alpha=0.75, edgecolor="black",
+                linewidth=0.5)
+        ax.axhline(len(vals) / (len(bins) - 1), color="black",
+                   linewidth=1, linestyle="--")
+        ax.set_xlim(0, 1)
+        ax.set_title(
+            f"{param}: mean={vals.mean():.2f}, std={vals.std():.2f}",
+            fontsize=9)
+        ax.set_xlabel("posterior percentile of truth")
+        ax.set_ylabel("mocks")
+
+    for ax in axes[len(params):]:
+        ax.axis("off")
+
+    fig.tight_layout()
+    plotfile = os.path.splitext(outfile)[0] + "_ppc.png"
     fig.savefig(plotfile, dpi=150)
     plt.close(fig)
     return plotfile
@@ -633,7 +717,7 @@ def run_sequential(config_info):
             result = (*result, dt)
             results.append(result)
             n_ok += 1
-            b, _, _, _, _, rhat_warnings, _ = result
+            b, _, _, _, _, _, rhat_warnings, _ = result
             for p in TRACKED_PARAMS:
                 if p in b:
                     running_biases[p].append(b[p])
@@ -664,11 +748,12 @@ def run_sequential(config_info):
     # Collect and save (reuse master's logic)
     biases = {p: [] for p in TRACKED_PARAMS}
     uncertainties = {p: [] for p in TRACKED_PARAMS}
+    percentiles = {p: [] for p in TRACKED_PARAMS}
     n_hosts_list = []
     mock_mag_obs = []
     mock_czcmb = []
     mock_r_true = []
-    for b, u, n_hosts, n_parent, mock_diag, _, _ in results:
+    for b, u, q, n_hosts, n_parent, mock_diag, _, _ in results:
         n_hosts_list.append(n_hosts)
         mock_mag_obs.append(mock_diag["mag_obs"])
         mock_czcmb.append(mock_diag["czcmb"])
@@ -678,6 +763,8 @@ def run_sequential(config_info):
                 biases[p].append(b[p])
             if p in u:
                 uncertainties[p].append(u[p])
+            if p in q:
+                percentiles[p].append(q[p])
 
     save_dict = {}
     for p in TRACKED_PARAMS:
@@ -685,6 +772,8 @@ def run_sequential(config_info):
             save_dict[p] = np.array(biases[p])
         if uncertainties[p]:
             save_dict[f"unc_{p}"] = np.array(uncertainties[p])
+        if percentiles[p]:
+            save_dict[f"ppc_{p}"] = np.array(percentiles[p])
     save_dict["n_mocks"] = np.array(n_mocks)
     save_dict["n_skipped"] = np.array(n_skipped)
     save_dict["n_hosts"] = np.array(n_hosts_list)
@@ -706,8 +795,12 @@ def run_sequential(config_info):
     plotfile = _plot_bias_summary(save_dict, outfile)
     if plotfile is not None:
         print(f"[INFO] Saved plot to {plotfile}")
+    ppc_plotfile = _plot_ppc_summary(save_dict, outfile)
+    if ppc_plotfile is not None:
+        print(f"[INFO] Saved PPC plot to {ppc_plotfile}")
 
     _print_summary(save_dict, n_skipped, n_mocks)
+    _print_ppc_table(save_dict)
 
 
 # ---- Single-run mode ------------------------------------------------------
