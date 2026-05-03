@@ -54,19 +54,31 @@ def _print_bias_table(save_dict):
     if not params:
         return
 
-    w = 76
+    has_unc = any(f"unc_{p}" in save_dict for p in params)
+    w = 92 if has_unc else 76
     print(f"\n{'=' * w}")
     print("Merged bias summary against standard normal")
     print("=" * w)
-    print(f"{'param':<20s}  {'n':>5s}  {'mean +/- std':>20s}  "
-          f"{'KS p-value':>10s}")
+    if has_unc:
+        print(f"{'param':<20s}  {'n':>5s}  {'mean +/- std':>20s}  "
+              f"{'mean unc.':>12s}  {'KS p-value':>10s}")
+    else:
+        print(f"{'param':<20s}  {'n':>5s}  {'mean +/- std':>20s}  "
+              f"{'KS p-value':>10s}")
     print("-" * w)
     for param in params:
         vals = np.asarray(save_dict[param])
         pval = kstest(vals, "norm").pvalue
-        print(f"{param:<20s}  {len(vals):>5d}  "
-              f"{f'{vals.mean():+.3f} +/- {vals.std():.3f}':>20s}  "
-              f"{pval:>10.3f}")
+        line = (f"{param:<20s}  {len(vals):>5d}  "
+                f"{f'{vals.mean():+.3f} +/- {vals.std():.3f}':>20s}")
+        if has_unc:
+            key = f"unc_{param}"
+            if key in save_dict:
+                line += f"  {np.asarray(save_dict[key]).mean():>12.4g}"
+            else:
+                line += f"  {'':>12s}"
+        line += f"  {pval:>10.3f}"
+        print(line)
 
 
 def _print_mock_observable_summary(save_dict):
@@ -78,7 +90,10 @@ def _print_mock_observable_summary(save_dict):
     print("-----------------------------")
     for key, label, unit in [
             ("mock_mag_obs", "mag_obs", "mag"),
-            ("mock_czcmb", "czcmb", "km/s")]:
+            ("mock_czcmb", "czcmb", "km/s"),
+            ("mock_r_true", "r_true", "Mpc")]:
+        if key not in save_dict:
+            continue
         vals = np.asarray(save_dict[key])
         if len(vals) == 0:
             continue
@@ -89,7 +104,7 @@ def _print_mock_observable_summary(save_dict):
 
 
 def _plot_mock_observables(save_dict, output):
-    """Save histograms of mock magnitudes and redshifts."""
+    """Save histograms of mock magnitudes, redshifts, and true radii."""
     if "mock_mag_obs" not in save_dict or "mock_czcmb" not in save_dict:
         return None
 
@@ -98,7 +113,10 @@ def _plot_mock_observables(save_dict, output):
     if len(mag_obs) == 0 or len(czcmb) == 0:
         return None
 
-    fig, axes = plt.subplots(1, 2, figsize=(11, 4.2))
+    has_r = "mock_r_true" in save_dict and len(save_dict["mock_r_true"]) > 0
+    ncols = 3 if has_r else 2
+    fig, axes = plt.subplots(1, ncols, figsize=(5.5 * ncols, 4.2))
+    axes = np.atleast_1d(axes)
 
     axes[0].hist(mag_obs, bins=40)
     axes[0].set_xlabel("TRGB magnitude")
@@ -107,6 +125,12 @@ def _plot_mock_observables(save_dict, output):
     axes[1].hist(czcmb, bins=40)
     axes[1].set_xlabel(r"$cz_{\rm CMB}$ [km/s]")
     axes[1].set_ylabel("hosts")
+
+    if has_r:
+        r_true = np.asarray(save_dict["mock_r_true"]).ravel()
+        axes[2].hist(r_true, bins=40)
+        axes[2].set_xlabel("true radius [Mpc]")
+        axes[2].set_ylabel("hosts")
 
     fig.tight_layout()
     plotfile = os.path.splitext(output)[0] + "_mock_observables.png"
@@ -172,12 +196,16 @@ def merge(paths, output, delete_inputs=False):
         arrays = [d[param] for d in loaded if param in d]
         if arrays:
             out[param] = np.concatenate(arrays)
+        key = f"unc_{param}"
+        arrays = [d[key] for d in loaded if key in d]
+        if arrays:
+            out[key] = np.concatenate(arrays)
 
     n_hosts = [d["n_hosts"] for d in loaded if "n_hosts" in d]
     if n_hosts:
         out["n_hosts"] = np.concatenate(n_hosts)
 
-    for key in ["mock_mag_obs", "mock_czcmb"]:
+    for key in ["mock_mag_obs", "mock_czcmb", "mock_r_true"]:
         arrays = [d[key] for d in loaded if key in d]
         if arrays:
             out[key] = np.concatenate(arrays)

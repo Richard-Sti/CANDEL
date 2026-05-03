@@ -51,11 +51,23 @@ def _safe_tag(value):
     return "".join(c if c.isalnum() or c in "-_" else "_" for c in str(value))
 
 
-def _mode_tag(which_selection, use_field, field_name, infer_selection):
+def _mode_tag(which_selection, use_field, field_name, infer_selection,
+              fix_Vext=False):
     """Tag output files by the mock/inference mode."""
     field = f"field_{_safe_tag(field_name)}" if use_field else "nofield"
     selection = "infersel" if infer_selection else "fixedsel"
-    return "_".join([_safe_tag(which_selection), field, selection])
+    parts = [_safe_tag(which_selection), field, selection]
+    if fix_Vext:
+        parts.append("fixedVext")
+    return "_".join(parts)
+
+
+def _true_Vext_cartesian(true_params):
+    """Return the injected external velocity as an ICRS Cartesian vector."""
+    tp = {**DEFAULT_TRUE_PARAMS, **(true_params or {})}
+    Vext = tp["Vext_mag"] * candel.galactic_to_radec_cartesian(
+        tp["Vext_ell"], tp["Vext_b"])
+    return [float(v) for v in np.asarray(Vext)]
 
 
 def _expected_mpi_tasks_from_env():
@@ -77,6 +89,17 @@ def _standardised_bias(samples, true_val, param):
         delta = (samples - true_val + period / 2) % period - period / 2
         return delta.mean() / delta.std()
     return (samples.mean() - true_val) / samples.std()
+
+
+def _posterior_uncertainty(samples, param):
+    """Posterior standard deviation, handling periodic parameters."""
+    if param in PERIODIC_PARAMS:
+        period = PERIODIC_PARAMS[param]
+        theta = np.asarray(samples) * (2 * np.pi / period)
+        R = np.hypot(np.sin(theta).mean(), np.cos(theta).mean())
+        return np.sqrt(max(-2 * np.log(max(R, 1e-12)), 0.0)) * (
+            period / (2 * np.pi))
+    return np.asarray(samples).std()
 
 
 def _rhat_warnings(diagnostics, threshold):
@@ -111,7 +134,7 @@ def make_mock_config(base_config_path, seed, num_warmup=500,
                      mag_lim=None, mag_lim_width=None,
                      cz_lim=None, cz_lim_width=None,
                      infer_selection=True, use_field=False, rmax=40.0,
-                     num_chains=1):
+                     num_chains=1, fix_Vext=False, true_params=None):
     """Build a config dict for mock inference."""
     config = candel.load_config(base_config_path, replace_los_prior=False)
 
@@ -144,6 +167,12 @@ def make_mock_config(base_config_path, seed, num_warmup=500,
     # When not using field, fix beta prior to delta(0)
     if not use_field:
         config["model"]["priors"]["beta"] = {"dist": "delta", "value": 0.0}
+
+    if fix_Vext:
+        config["model"]["priors"]["Vext"] = {
+            "dist": "delta",
+            "value": _true_Vext_cartesian(true_params),
+        }
 
     config["inference"]["seed"] = seed
     config["inference"]["num_warmup"] = num_warmup
@@ -205,7 +234,7 @@ def run_one_mock(seed, base_config_path, true_params, mock_kwargs,
                  which_selection="TRGB_magnitude",
                  infer_selection=True, use_field=False, field_name=None,
                  quiet=True, progress_bar=False, num_chains=1,
-                 rhat_threshold=1.05):
+                 rhat_threshold=1.05, fix_Vext=False):
     """Generate one mock, run inference, and return diagnostics."""
     config = make_mock_config(
         base_config_path, seed, num_warmup=num_warmup,
@@ -218,7 +247,9 @@ def run_one_mock(seed, base_config_path, true_params, mock_kwargs,
         infer_selection=infer_selection,
         use_field=use_field,
         rmax=mock_kwargs.get("rmax", 40.0),
-        num_chains=num_chains)
+        num_chains=num_chains,
+        fix_Vext=fix_Vext,
+        true_params=true_params)
     density_3d_data = _load_density_3d_data(
         config, field_name) if use_field else None
     data, tp, n_parent = gen_TRGB_mock(
@@ -227,6 +258,7 @@ def run_one_mock(seed, base_config_path, true_params, mock_kwargs,
     mock_diag = {
         "mag_obs": np.asarray(data["mag_obs"]),
         "czcmb": np.asarray(data["czcmb"]),
+        "r_true": np.asarray(data["r_true"]),
     }
     tp["mu_LMC"] = DEFAULT_ANCHORS["mu_LMC"]
     tp["mu_N4258"] = DEFAULT_ANCHORS["mu_N4258"]
@@ -264,14 +296,16 @@ def run_one_mock(seed, base_config_path, true_params, mock_kwargs,
             samples["Vext_cos_theta"] = np.sin(np.deg2rad(dec))
 
         biases = {}
+        uncertainties = {}
         for param in TRACKED_PARAMS:
             if param in samples:
                 s = np.asarray(samples[param])
                 biases[param] = _standardised_bias(s, tp[param], param)
+                uncertainties[param] = _posterior_uncertainty(s, param)
     finally:
         os.unlink(tmp)
 
-    return biases, n_hosts, n_parent, mock_diag, _rhat_warnings(
+    return biases, uncertainties, n_hosts, n_parent, mock_diag, _rhat_warnings(
         diagnostics, rhat_threshold)
 
 
@@ -333,7 +367,7 @@ def master(comm, n_workers, config_info):
         else:
             results.append(result)
             n_ok += 1
-            b, _, _, _, rhat_warnings, dt = result
+            b, _, _, _, _, rhat_warnings, dt = result
             for p in TRACKED_PARAMS:
                 if p in b:
                     running_biases[p].append(b[p])
@@ -365,22 +399,29 @@ def master(comm, n_workers, config_info):
 
     # Collect biases
     biases = {p: [] for p in TRACKED_PARAMS}
+    uncertainties = {p: [] for p in TRACKED_PARAMS}
     n_hosts_list = []
     mock_mag_obs = []
     mock_czcmb = []
-    for b, n_hosts, n_parent, mock_diag, _, _ in results:
+    mock_r_true = []
+    for b, u, n_hosts, n_parent, mock_diag, _, _ in results:
         n_hosts_list.append(n_hosts)
         mock_mag_obs.append(mock_diag["mag_obs"])
         mock_czcmb.append(mock_diag["czcmb"])
+        mock_r_true.append(mock_diag["r_true"])
         for p in TRACKED_PARAMS:
             if p in b:
                 biases[p].append(b[p])
+            if p in u:
+                uncertainties[p].append(u[p])
 
     # Save
     save_dict = {}
     for p in TRACKED_PARAMS:
         if biases[p]:
             save_dict[p] = np.array(biases[p])
+        if uncertainties[p]:
+            save_dict[f"unc_{p}"] = np.array(uncertainties[p])
     save_dict["n_mocks"] = np.array(n_mocks)
     save_dict["n_skipped"] = np.array(n_skipped)
     save_dict["n_hosts"] = np.array(n_hosts_list)
@@ -388,6 +429,7 @@ def master(comm, n_workers, config_info):
     if mock_mag_obs:
         save_dict["mock_mag_obs"] = np.concatenate(mock_mag_obs)
         save_dict["mock_czcmb"] = np.concatenate(mock_czcmb)
+        save_dict["mock_r_true"] = np.concatenate(mock_r_true)
 
     for p in TRACKED_PARAMS:
         val = true_params.get(p)
@@ -420,6 +462,7 @@ def worker(comm, config_info):
     field_name = config_info.get("field_name")
     num_chains = config_info.get("num_chains", 1)
     rhat_threshold = config_info.get("rhat_threshold", 1.05)
+    fix_Vext = config_info.get("fix_Vext", False)
 
     def _alarm_handler(signum, frame):
         raise TimeoutError
@@ -443,7 +486,8 @@ def worker(comm, config_info):
                 which_selection=which_selection,
                 infer_selection=infer_selection,
                 use_field=use_field, field_name=field_name, quiet=True,
-                num_chains=num_chains, rhat_threshold=rhat_threshold)
+                num_chains=num_chains, rhat_threshold=rhat_threshold,
+                fix_Vext=fix_Vext)
             result = (*result, time.time() - t_start)
         except TimeoutError:
             result = None
@@ -462,23 +506,31 @@ def worker(comm, config_info):
 PROGRESS_INTERVAL = 15
 
 
-def _print_bias_table(biases, header=None, show_ks=False):
+def _print_bias_table(biases, uncertainties=None, header=None, show_ks=False):
     """Print a table of mean bias +/- std for accumulated biases."""
-    w = 55 if not show_ks else 65
+    w = 78 if not show_ks else 88
     if header:
         print(f"\n{'=' * w}")
         print(header)
         print("=" * w)
     if show_ks:
-        print(f"{'param':<20s}  {'mean +/- std':>20s}  {'KS p-value':>10s}")
+        print(f"{'param':<20s}  {'mean +/- std':>20s}  "
+              f"{'mean unc.':>12s}  {'KS p-value':>10s}")
     else:
-        print(f"{'param':<20s}  {'mean +/- std':>20s}")
+        print(f"{'param':<20s}  {'mean +/- std':>20s}  "
+              f"{'mean unc.':>12s}")
     print("-" * w)
     for p in TRACKED_PARAMS:
         if p in biases and len(biases[p]) >= 2:
             b = np.array(biases[p])
             line = (f"{p:<20s}  "
                     f"{f'{b.mean():+.3f} +/- {b.std():.3f}':>20s}")
+            if uncertainties is not None and p in uncertainties \
+                    and len(uncertainties[p]) > 0:
+                u = np.asarray(uncertainties[p])
+                line += f"  {u.mean():>12.4g}"
+            else:
+                line += f"  {'':>12s}"
             if show_ks:
                 pval = kstest(b, "norm").pvalue
                 line += f"  {pval:>10.3f}"
@@ -490,7 +542,12 @@ def _print_summary(save_dict, n_skipped, n_mocks):
     biases = {p: list(save_dict[p])
               for p in TRACKED_PARAMS
               if p in save_dict and isinstance(save_dict[p], np.ndarray)}
+    uncertainties = {p: list(save_dict[f"unc_{p}"])
+                     for p in TRACKED_PARAMS
+                     if f"unc_{p}" in save_dict
+                     and isinstance(save_dict[f"unc_{p}"], np.ndarray)}
     _print_bias_table(biases,
+                      uncertainties=uncertainties,
                       header="Summary: mean standardised bias +/- std",
                       show_ks=True)
     if n_skipped:
@@ -543,6 +600,7 @@ def run_sequential(config_info):
     for p, v in config_info["true_params"].items():
         print(f"         {p:<15s} = {v}")
     print(f"[INFO] use_field = {config_info.get('use_field', False)}")
+    print(f"[INFO] fix_Vext = {config_info.get('fix_Vext', False)}")
     t0 = time.time()
     results = []
     n_ok = 0
@@ -569,12 +627,13 @@ def run_sequential(config_info):
                 quiet=True,
                 progress_bar=config_info.get("progress_bar", True),
                 num_chains=config_info.get("num_chains", 1),
-                rhat_threshold=config_info.get("rhat_threshold", 1.05))
+                rhat_threshold=config_info.get("rhat_threshold", 1.05),
+                fix_Vext=config_info.get("fix_Vext", False))
             dt = time.time() - t_start
             result = (*result, dt)
             results.append(result)
             n_ok += 1
-            b, _, _, _, rhat_warnings, _ = result
+            b, _, _, _, _, rhat_warnings, _ = result
             for p in TRACKED_PARAMS:
                 if p in b:
                     running_biases[p].append(b[p])
@@ -604,21 +663,28 @@ def run_sequential(config_info):
 
     # Collect and save (reuse master's logic)
     biases = {p: [] for p in TRACKED_PARAMS}
+    uncertainties = {p: [] for p in TRACKED_PARAMS}
     n_hosts_list = []
     mock_mag_obs = []
     mock_czcmb = []
-    for b, n_hosts, n_parent, mock_diag, _, _ in results:
+    mock_r_true = []
+    for b, u, n_hosts, n_parent, mock_diag, _, _ in results:
         n_hosts_list.append(n_hosts)
         mock_mag_obs.append(mock_diag["mag_obs"])
         mock_czcmb.append(mock_diag["czcmb"])
+        mock_r_true.append(mock_diag["r_true"])
         for p in TRACKED_PARAMS:
             if p in b:
                 biases[p].append(b[p])
+            if p in u:
+                uncertainties[p].append(u[p])
 
     save_dict = {}
     for p in TRACKED_PARAMS:
         if biases[p]:
             save_dict[p] = np.array(biases[p])
+        if uncertainties[p]:
+            save_dict[f"unc_{p}"] = np.array(uncertainties[p])
     save_dict["n_mocks"] = np.array(n_mocks)
     save_dict["n_skipped"] = np.array(n_skipped)
     save_dict["n_hosts"] = np.array(n_hosts_list)
@@ -626,6 +692,7 @@ def run_sequential(config_info):
     if mock_mag_obs:
         save_dict["mock_mag_obs"] = np.concatenate(mock_mag_obs)
         save_dict["mock_czcmb"] = np.concatenate(mock_czcmb)
+        save_dict["mock_r_true"] = np.concatenate(mock_r_true)
 
     for p in TRACKED_PARAMS:
         val = config_info["true_params"].get(p)
@@ -649,7 +716,7 @@ def run_single(seed, true_params, mock_kwargs, config_path,
                num_warmup=500, num_samples=500,
                which_selection="TRGB_magnitude",
                infer_selection=True, use_field=False, field_name=None,
-               outdir=None, plot_only=False):
+               outdir=None, plot_only=False, fix_Vext=False):
     """Generate a single mock, optionally run inference, plot, and return data."""
     print(f"{'='*60}")
     print("Mock configuration")
@@ -668,6 +735,7 @@ def run_single(seed, true_params, mock_kwargs, config_path,
     if use_field:
         print(f"  field_loader    = {mock_kwargs.get('field_loader')}")
     print(f"  infer_selection = {infer_selection}")
+    print(f"  fix_Vext        = {fix_Vext}")
     print(f"  plot_only       = {plot_only}")
     print(f"\nInjected parameters:")
     for p, v in true_params.items():
@@ -684,7 +752,9 @@ def run_single(seed, true_params, mock_kwargs, config_path,
         cz_lim_width=mock_kwargs.get("cz_lim_width"),
         infer_selection=infer_selection,
         use_field=use_field,
-        rmax=mock_kwargs.get("rmax", 40.0))
+        rmax=mock_kwargs.get("rmax", 40.0),
+        fix_Vext=fix_Vext,
+        true_params=true_params)
     density_3d_data = _load_density_3d_data(
         config, field_name) if use_field else None
     data, tp, n_parent = gen_TRGB_mock(
@@ -781,7 +851,7 @@ def run_single(seed, true_params, mock_kwargs, config_path,
     fname = os.path.join(
         outdir,
         "mock_TRGB_single_"
-        f"{_mode_tag(which_selection, use_field, field_name, infer_selection)}.png")
+        f"{_mode_tag(which_selection, use_field, field_name, infer_selection, fix_Vext)}.png")
     fig.savefig(fname, dpi=150)
     print(f"\nSaved plot to {fname}")
     plt.close(fig)
@@ -853,6 +923,9 @@ def main():
                         help="Fix selection thresholds to true mock values "
                         "instead of inferring them (default: infer)")
     parser.set_defaults(infer_selection=True)
+    parser.add_argument("--fix-Vext", action="store_true",
+                        help="Fix the external velocity prior to the true "
+                        "mock value")
 
     # Field-based mock options
     parser.add_argument("--use-field", action="store_true",
@@ -934,7 +1007,8 @@ def main():
                    use_field=args.use_field,
                    field_name=args.field_name,
                    outdir=args.outdir,
-                   plot_only=args.plot_only)
+                   plot_only=args.plot_only,
+                   fix_Vext=args.fix_Vext)
         return
 
     # Batch mode
@@ -955,8 +1029,10 @@ def main():
         "use_field": args.use_field,
         "field_name": args.field_name,
         "mode_tag": _mode_tag(args.which_selection, args.use_field,
-                              args.field_name, args.infer_selection),
+                              args.field_name, args.infer_selection,
+                              args.fix_Vext),
         "progress_bar": args.progress_bar,
+        "fix_Vext": args.fix_Vext,
     }
 
     # Try MPI; fall back to sequential only when no multi-rank scheduler
@@ -998,6 +1074,7 @@ def main():
                 if p not in skip_params:
                     print(f"         {p:<15s} = {v}")
             print(f"[INFO] use_field = {args.use_field}")
+            print(f"[INFO] fix_Vext = {args.fix_Vext}")
             os.makedirs(args.outdir, exist_ok=True)
 
         bcast_info = config_info if rank == 0 else None

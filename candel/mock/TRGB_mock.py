@@ -297,7 +297,7 @@ def _gen_field_path(nsamples, h, b1, beta, rmin, rmax, e_mag, e_czcmb,
     result = {
         "RA": collected["RA"],
         "dec": collected["dec"],
-        "r": collected["r_h"],
+        "r_h": collected["r_h"],
         "mag_obs": collected["mag_obs"],
         "cz_obs": collected["cz_obs"],
         "n_parent": n_total_density_accepted,
@@ -389,9 +389,14 @@ def gen_TRGB_mock(nsamples=480, Om=0.3, e_mag=0.05, e_czcmb=10.0,
 
     # --- Build data dict ---
     n_kept = len(collected["RA"])
+    if "r_h" in collected:
+        r_true = collected["r_h"] / h
+    else:
+        r_true = collected["r"]
     data = {
         "RA_host": collected["RA"],
         "dec_host": collected["dec"],
+        "r_true": r_true,
         "mag_obs": collected["mag_obs"],
         "e_mag_obs": np.full(n_kept, e_mag),
         "czcmb": collected["cz_obs"],

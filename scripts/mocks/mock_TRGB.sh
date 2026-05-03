@@ -19,6 +19,7 @@ which_selection="TRGB_magnitude"
 use_field=true
 field_name="Carrick2015"
 fix_selection=true
+fix_Vext=false
 config="$ROOT/scripts/runs/configs/config_EDD_TRGB.toml"
 outdir="$ROOT/results/mocks_TRGB"
 extra_args=""
@@ -64,11 +65,26 @@ parse_gpu_queue_specs() {
 detect_gpu_queue_slots() {
     gpu_queue_list=()
     local gpulong_free=0 cmbgpu_free=0 optgpu_free=0 line queue counts free total
-    if command -v gpustat >/dev/null 2>&1; then
+    if command -v showgpus >/dev/null 2>&1; then
+        while IFS= read -r line; do
+            [[ "$line" =~ (gpulong|cmbgpu|optgpu) ]] || continue
+            queue="${BASH_REMATCH[1]}"
+            counts=$(grep -oE '\[[[:space:]]*[0-9]+[[:space:]]*/[[:space:]]*[0-9]+[[:space:]]*\]' <<< "$line" | head -n 1 || true)
+            [[ -n "$counts" ]] || continue
+            free=$(sed -E 's/.*\[ *([0-9]+) *\/ *[0-9]+ *\].*/\1/' <<< "$counts")
+            total=$(sed -E 's/.*\[ *[0-9]+ *\/ *([0-9]+) *\].*/\1/' <<< "$counts")
+            [[ "$free" =~ ^[0-9]+$ && "$total" =~ ^[0-9]+$ ]] || continue
+            case "$queue" in
+                gpulong) gpulong_free=$((gpulong_free + free)) ;;
+                cmbgpu)  cmbgpu_free=$((cmbgpu_free + free)) ;;
+                optgpu)  optgpu_free=$((optgpu_free + free)) ;;
+            esac
+        done < <(showgpus 2>/dev/null || true)
+    elif command -v gpustat >/dev/null 2>&1; then
         while IFS= read -r line; do
             [[ "$line" =~ ^(gpulong|cmbgpu|optgpu)[[:space:]] ]] || continue
             queue="${BASH_REMATCH[1]}"
-            counts=$(grep -oE '\[[0-9]+/[0-9]+\]' <<< "$line" | head -n 1)
+            counts=$(grep -oE '\[[0-9]+/[0-9]+\]' <<< "$line" | head -n 1 || true)
             [[ -n "$counts" ]] || continue
             free="${counts#\[}"
             free="${free%%/*}"
@@ -168,6 +184,7 @@ options:
   --outdir PATH           output dir (default: $outdir)
   --infer-selection       infer selection thresholds instead of fixing truth
   --fix-selection         fix selection thresholds to truth (default)
+  --fix-Vext              fix external velocity to injected truth
   --no-field              disable reconstruction-field sampling
   --use-field             enable reconstruction-field sampling (default)
   --field-name NAME       reconstruction field name (default: $field_name)
@@ -205,6 +222,7 @@ while [[ $# -gt 0 ]]; do
         --outdir)          outdir="$2"; shift 2 ;;
         --infer-selection) fix_selection=false; shift ;;
         --fix-selection)   fix_selection=true; shift ;;
+        --fix-Vext)        fix_Vext=true; shift ;;
         --no-field|--disable-field) use_field=false; shift ;;
         --use-field)       use_field=true; shift ;;
         --field-name)      field_name="$2"; shift 2 ;;
@@ -278,6 +296,7 @@ if $use_field; then
     echo "  Field name:  $field_name"
 fi
 echo "  Sel params:  $($fix_selection && echo fixed-to-truth || echo inferred)"
+echo "  Vext:        $($fix_Vext && echo fixed-to-truth || echo inferred)"
 echo "  Config:      $config"
 echo "  Output:      $outdir"
 [[ -n "$extra_args" ]] && echo "  Extra args: $extra_args"
@@ -292,6 +311,8 @@ mkdir -p "$outdir"
 
 selection_args=""
 $fix_selection && selection_args="--fix-selection"
+vext_args=""
+$fix_Vext && vext_args="--fix-Vext"
 field_args=""
 $use_field && field_args="--use-field --field-name $field_name"
 
@@ -305,6 +326,7 @@ pycmd="$CANDEL_PYTHON -u $ROOT/scripts/mocks/mock_TRGB.py \
     --config $config \
     --outdir $outdir \
     $selection_args \
+    $vext_args \
     $field_args \
     $extra_args"
 
@@ -329,7 +351,9 @@ if $gpu_mode; then
     $use_field && field_tag="field_$(safe_tag "$field_name")"
     selection_tag="fixedsel"
     $fix_selection || selection_tag="infersel"
-    mode_tag="$(safe_tag "$which_selection")_${field_tag}_${selection_tag}"
+    vext_tag=""
+    $fix_Vext && vext_tag="_fixedVext"
+    mode_tag="$(safe_tag "$which_selection")_${field_tag}_${selection_tag}${vext_tag}"
     run_stamp="$(date -u +%Y%m%dT%H%M%SZ)"
     shard_root="$outdir/gpu_shards_${mode_tag}_seed_${master_seed}_${run_stamp}"
     merge_out="$outdir/mock_TRGB_biases_${mode_tag}_gpu_merged.npz"
@@ -360,6 +384,7 @@ if $gpu_mode; then
             --config $config \
             --outdir $shard_dir \
             $selection_args \
+            $vext_args \
             $field_args \
             $extra_args"
         echo "  shard $i: queue=$shard_queue mocks=$shard_mocks seed=$shard_seed"
