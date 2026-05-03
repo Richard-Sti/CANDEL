@@ -279,6 +279,23 @@ if args.f_grid != 1.0:
            f"n_r_global={m.get('n_r_global')}, "
            f"n_r_scan={m.get('n_r_scan')}")
 
+if not is_joint:
+    _model_cfg = config["model"]
+    _gal_cfg = _model_cfg.get("galaxies", {}).get(galaxy, {})
+    _mode = args.mode or _gal_cfg.get("mode") or _model_cfg.get("mode", "mode2")
+    _spot_batch = _gal_cfg.get(
+        "mode2_spot_batch", _model_cfg.get("mode2_spot_batch"))
+    if _mode == "mode2":
+        if _spot_batch is None:
+            print("ERROR: mode2_spot_batch must be set explicitly in "
+                  "config_maser.toml for mode2 runs. Recommended value: 16.",
+                  flush=True)
+            sys.exit(1)
+        if int(_spot_batch) <= 0:
+            print("ERROR: mode2_spot_batch must be a positive integer.",
+                  flush=True)
+            sys.exit(1)
+
 tmp = tempfile.NamedTemporaryFile(mode="wb", suffix=".toml", delete=False)
 tomli_w.dump(config, tmp)
 tmp.close()
