@@ -26,6 +26,7 @@ from jax import numpy as jnp
 from jax import vmap
 from numpyro import handlers, set_platform
 from numpyro.diagnostics import print_summary as print_summary_numpyro
+from numpyro.diagnostics import summary as summary_numpyro
 from numpyro.distributions.transforms import biject_to
 from numpyro.infer import MCMC, NUTS
 from numpyro.infer.initialization import init_to_median, init_to_value
@@ -483,7 +484,7 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
 
 def run_H0_inference(model, model_kwargs=None, print_summary=True,
                      save_samples=True, init_maxiter=None,
-                     progress_bar=True):
+                     progress_bar=True, return_diagnostics=False):
     """
     Run MCMC inference on an H0 model.
 
@@ -506,6 +507,9 @@ def run_H0_inference(model, model_kwargs=None, print_summary=True,
         read from config.
     progress_bar : bool, optional
         Whether to show a progress bar during sampling.
+    return_diagnostics : bool, optional
+        Whether to also return NumPyro summary diagnostics computed from
+        chain-grouped samples.
 
     Returns
     -------
@@ -566,6 +570,14 @@ def run_H0_inference(model, model_kwargs=None, print_summary=True,
     mcmc.run(jax.random.key(kwargs["seed"]), **model_kwargs)
 
     samples = mcmc.get_samples()
+    diagnostic_summary = None
+    if return_diagnostics:
+        samples_by_chain = mcmc.get_samples(group_by_chain=True)
+        samples_by_chain = drop_deterministic(samples_by_chain.copy())
+        samples_by_chain = postprocess_samples(samples_by_chain)
+        diagnostic_summary = summary_numpyro(samples_by_chain,
+                                             group_by_chain=True)
+
     auxiliary = extract_auxiliary(samples, ["Vpec_host_skipZ"])
     samples = drop_deterministic(samples)
     samples = postprocess_samples(samples)
@@ -588,6 +600,8 @@ def run_H0_inference(model, model_kwargs=None, print_summary=True,
                 print_clean_summary(samples)
         fprint(f"saved summary to {fname_summary}")
 
+    if return_diagnostics:
+        return samples, diagnostic_summary
     return samples
 
 
