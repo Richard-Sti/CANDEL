@@ -593,9 +593,14 @@ def _load_h0_volume_data_from_config(config, los_data_path, which_los,
                                      label, velocity_selections):
     """Load the shared 3D selection-integral data for H0 models."""
     which_sel = get_nested(config, "model/which_selection", None)
-    if which_sel is None:
+    use_recon = get_nested(config, "model/use_reconstruction", False)
+    use_ch0_volume_limit = (
+        which_sel is None
+        and get_nested(config, "model/which_run", None) == "CH0"
+        and use_recon)
+    if which_sel is None and not use_ch0_volume_limit:
         return None
-    if not get_nested(config, "model/use_reconstruction", False):
+    if not use_recon:
         return None
     if los_data_path is None or which_los is None:
         raise ValueError(

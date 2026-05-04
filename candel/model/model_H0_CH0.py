@@ -247,6 +247,17 @@ class CH0Model(H0ModelBase):
                 "Cannot use `weight_selection_by_covmat_Neff` without "
                 "`use_fiducial_Cepheid_host_PV_covariance` set to True.")
 
+        if not self.apply_sel:
+            if self.selection_integral_grid_radius is None:
+                raise ValueError(
+                    "No-selection CH0 runs require "
+                    "`model.selection_integral_grid_radius` for the finite "
+                    "volume normalizer.")
+            if self.use_reconstruction and not self.has_volume_density_3d:
+                raise ValueError(
+                    "Reconstructed no-selection CH0 runs require 3D density "
+                    "data for the finite volume normalizer.")
+
     # ------------------------------------------------------------------
     #  Sampling helpers
     # ------------------------------------------------------------------
@@ -327,6 +338,23 @@ class CH0Model(H0ModelBase):
         mask_mag = jnp.arange(self.num_hosts) < n_mag
         return jnp.where(mask_mag[None, :],
                          log_S_mag[:, None], log_S_cz[:, None])
+
+    def _factor_no_selection_volume(self, r_host, H0, bias_params,
+                                    ll_reconstruction=None):
+        """Apply the finite-volume normalizer for no explicit selection."""
+        rh_host = r_host * H0 / 100
+        r_max = self.selection_integral_grid_radius
+        factor("volume_limit", jnp.sum(jnp.where(rh_host <= r_max, 0.0,
+                                                 -jnp.inf)))
+
+        log_S = self._compute_volume_log_S_unity(bias_params, H0)
+        if self.use_reconstruction:
+            if log_S.ndim == 1:
+                log_S = log_S[:, None]
+            return ll_reconstruction - log_S
+
+        factor("neg_log_volume_norm", -log_S[0] * self.num_hosts)
+        return ll_reconstruction
 
     def __call__(self):
         # Hubble constant
@@ -437,6 +465,7 @@ class CH0Model(H0ModelBase):
                     lp_host_dist, r_host, h, bias_params)
             sigma_v_host = map_sigma_v(los_delta_host)
         else:
+            ll_reconstruction = None
             self._no_reconstruction_fallback(lp_host_dist)
             sigma_v_host = map_sigma_v(jnp.zeros((1, self.num_hosts)))
 
@@ -542,6 +571,9 @@ class CH0Model(H0ModelBase):
                            -log_S[0] * self.num_hosts)
                 else:
                     factor("neg_log_S_correction", -jnp.sum(log_S[0]))
+        else:
+            ll_reconstruction = self._factor_no_selection_volume(
+                r_host, H0, bias_params, ll_reconstruction)
 
         # Now assign these host distances to each Cepheid.
         mu_cepheid = (self.L_Cepheid_host_dist @ mu_host_cepheid

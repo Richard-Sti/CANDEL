@@ -68,12 +68,10 @@ Typical output:
 This script is meant to streamline robust, reproducible inference workflows in
 CANDEL.
 """
-import hashlib
 import re
 from argparse import ArgumentParser, RawDescriptionHelpFormatter
 from copy import deepcopy
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from itertools import product
 from os import makedirs
 from os.path import join
@@ -365,50 +363,6 @@ def generate_dynamic_tag(config, base_tag="default"):
     return "_".join(p for p in parts if p)
 
 
-def write_provenance_footer(fh, tasks_index, n_tasks, body_sha256,
-                            local_cfg, files):
-    """Append a `#`-prefixed footer embedding the verbatim contents of
-    ``files`` plus the filtered ``local_config.toml`` dict that fed the
-    override grid, so the task list is fully self-describing. Submission
-    scripts skip any line beginning with `#`, so the footer is inert at
-    runtime.
-    """
-    bar = "# " + "=" * 60
-    fh.write("#\n")
-    fh.write(bar + "\n")
-    fh.write("# == GENERATOR PROVENANCE " + "=" * 36 + "\n")
-    fh.write(bar + "\n")
-    fh.write(f"# generated_utc: {datetime.now(timezone.utc).isoformat()}\n")
-    fh.write(f"# tasks_index:   {tasks_index}\n")
-    fh.write(f"# n_tasks:       {n_tasks}\n")
-    fh.write(f"# body_sha256:   {body_sha256}\n")
-    fh.write("#\n")
-    fh.write("# Verbatim source of the generator and base config template at\n")
-    fh.write("# the time this file was produced. Strip the leading '# ' from\n")
-    fh.write("# each line to recover the originals.\n")
-    fh.write(bar + "\n")
-
-    fh.write("#\n")
-    fh.write("# --- BEGIN local_config (filtered: machine keys excluded) ---\n")
-    if local_cfg:
-        for k, v in local_cfg.items():
-            fh.write(f"# {k} = {v!r}\n")
-    else:
-        fh.write("# <empty>\n")
-    fh.write("# --- END local_config ---\n")
-
-    for label, path in files:
-        fh.write("#\n")
-        fh.write(f"# --- BEGIN FILE: {label} ---\n")
-        try:
-            with open(path, "r") as src:
-                for line in src:
-                    fh.write("# " + line.rstrip("\n") + "\n")
-        except OSError as e:
-            fh.write(f"# <ERROR reading {path}: {e}>\n")
-        fh.write(f"# --- END FILE: {label} ---\n")
-
-
 def expand_override_grid(overrides):
     """Expand override grid into a list of flat key-value combinations."""
     model_key = "inference/model"
@@ -648,7 +602,7 @@ def prepare_generated_tasks(spec, base_config, override_combinations):
     return generated
 
 
-def write_generated_tasks(tasks_index, spec, generated, local_cfg, clean=False):
+def write_generated_tasks(tasks_index, spec, generated, clean=False):
     """Write generated TOML configs and the matching tasks_<index>.txt file."""
     load_toml_writer()
     gen_dir = RUN_DIR / "generated_configs" / tasks_index
@@ -656,8 +610,6 @@ def write_generated_tasks(tasks_index, spec, generated, local_cfg, clean=False):
 
     task_file = RUN_DIR / f"tasks_{tasks_index}.txt"
     task_file_tmp = task_file.with_name(f".{task_file.name}.tmp")
-    body_hash = hashlib.sha256()
-    n_written = 0
     expected_configs = set()
 
     for _, stem, local_config in generated:
@@ -676,22 +628,6 @@ def write_generated_tasks(tasks_index, spec, generated, local_cfg, clean=False):
             rel_path = toml_out.relative_to(CANDEL_ROOT)
             line = f"{idx} {rel_path}\n"
             task_fh.write(line)
-            body_hash.update(line.encode())
-            n_written += 1
-
-        write_provenance_footer(
-            task_fh,
-            tasks_index=tasks_index,
-            n_tasks=n_written,
-            body_sha256=body_hash.hexdigest(),
-            local_cfg=local_cfg,
-            files=[
-                ("scripts/runs/generate_tasks.py", Path(__file__).resolve()),
-                ("scripts/runs/task_specs.py", RUN_DIR / "task_specs.py"),
-                (str(spec.config_path.relative_to(CANDEL_ROOT)),
-                 spec.config_path),
-            ],
-        )
 
     if clean:
         for old_config in gen_dir.glob("*.toml"):
@@ -844,7 +780,7 @@ def main():
         return
 
     write_generated_tasks(
-        tasks_index, spec, generated, local_cfg, clean=args.clean)
+        tasks_index, spec, generated, clean=args.clean)
 
 
 if __name__ == "__main__":

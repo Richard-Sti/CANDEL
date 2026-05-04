@@ -57,9 +57,8 @@ Each task-list row has this format:
 <task_id> <repo-relative-generated-config-path>
 ```
 
-The task file also gets a comment-only provenance footer containing the
-generator source, base config source, timestamp, task count, and body hash.
-`submit.sh` skips comment lines.
+Keep task files lean: they should contain only submission rows. The generated
+TOML files are the authoritative per-task run configs.
 
 ## Autonomous Agent Workflow
 

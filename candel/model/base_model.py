@@ -959,6 +959,37 @@ class H0ModelBase(ModelBase):
             Vpec = Vpec + Vext_mono
         return Vpec
 
+    def _compute_volume_log_S_unity(self, bias_params, H0):
+        """Volume normalizer for a hard ``P_sel = 1`` radial cut."""
+        grid_radius = self.selection_integral_grid_radius
+        if grid_radius is None:
+            raise ValueError(
+                "`model.selection_integral_grid_radius` is required for "
+                "volume-limited no-selection CH0 runs.")
+
+        h = H0 / 100
+        r_low = self.distmod2distance(
+            jnp.asarray([self.distmod_limits[0]]), h=h)[0]
+        if not self.use_reconstruction:
+            r_high = grid_radius / h
+            volume = (r_high**3 - r_low**3) / 3.0
+            return jnp.reshape(jnp.log(volume), (1,))
+
+        log_cell_weight = self._volume_log_cell_weight_phys(H0)
+        rh_low = r_low * h
+        in_volume = (
+            (self.log_r_3d >= jnp.log(rh_low))
+            & (self.log_r_3d <= jnp.log(grid_radius))
+        )
+
+        def _one(density_3d):
+            log_n = self._vol_sel_galaxy_bias(density_3d, bias_params)
+            return logsumexp(jnp.where(in_volume, log_n + log_cell_weight,
+                                       -jnp.inf))
+
+        return lax.map(_one, self.density_3d_fields,
+                       batch_size=self.volume_density_batch_size)
+
     def _compute_no_recon_log_S_cz(self, H0, sigma_v, Vext, Vext_mono,
                                    cz_lim, cz_width, nu_cz=None):
         """No-reconstruction redshift selection with n=1 and v_rec=0."""
