@@ -680,9 +680,51 @@ def write_generated_tasks(tasks_index, spec, generated, local_cfg, clean=False):
 
 def list_specs():
     """Print available task specs for agentic discovery."""
-    for name in sorted(TASK_SPECS):
-        description = TASK_SPECS[name].get("description", "")
-        print(f"{name}: {description}")
+    names = sorted(TASK_SPECS)
+    if not names:
+        print("No task specs registered.")
+        return
+
+    name_width = max(len("task_index"), *(len(name) for name in names))
+    task_width = max(
+        len("tasks"),
+        *(len(str(TASK_SPECS[name].get("expected_tasks", "?")))
+          for name in names),
+    )
+    config_width = max(
+        len("config"),
+        *(len(TASK_SPECS[name].get("config_path", "")) for name in names),
+    )
+
+    print(f"Registered task specs ({len(names)})")
+    print()
+    print(
+        f"{'task_index':<{name_width}}  "
+        f"{'tasks':>{task_width}}  "
+        f"{'config':<{config_width}}  "
+        "description"
+    )
+    print(
+        f"{'-' * name_width}  "
+        f"{'-' * task_width}  "
+        f"{'-' * config_width}  "
+        f"{'-' * 11}"
+    )
+    for name in names:
+        spec = TASK_SPECS[name]
+        description = spec.get("description", "")
+        expected_tasks = spec.get("expected_tasks", "?")
+        config_path = spec.get("config_path", "")
+        print(
+            f"{name:<{name_width}}  "
+            f"{expected_tasks:>{task_width}}  "
+            f"{config_path:<{config_width}}  "
+            f"{description}"
+        )
+
+    print()
+    print("Inspect:  python generate_tasks.py show <task_index>")
+    print("Dry-run:  python generate_tasks.py build <task_index> --dry-run")
 
 
 def show_spec(tasks_index):

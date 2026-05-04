@@ -31,31 +31,12 @@ TASK_SPECS = {
         "datasets": [{}],
         "expected_tasks": 1,
     },
-    "test_foundation_carrick2015_student_t": {
-        "description": "Named alias of task 0 for the Foundation smoke run.",
-        "config_path": "configs/config.toml",
-        "tag": "student_t",
-        "common": FOUNDATION_SMOKE_COMMON,
-        "datasets": [{}],
-        "expected_tasks": 1,
-    },
     "ch0": {
         "description": "SH0ES Cepheid H0 run using config_shoes defaults.",
         "config_path": "configs/config_shoes.toml",
         "tag": "default",
         "common": {
             "io/root_output": "results/CH0",
-        },
-        "datasets": [{}],
-        "expected_tasks": 1,
-    },
-    "ch0_mag": {
-        "description": "SH0ES Cepheid H0 run with SN-magnitude selection.",
-        "config_path": "configs/config_shoes.toml",
-        "tag": "default",
-        "common": {
-            "io/root_output": "results/CH0",
-            "model/which_selection": "SN_magnitude",
         },
         "datasets": [{}],
         "expected_tasks": 1,
