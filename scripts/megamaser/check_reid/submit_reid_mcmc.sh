@@ -37,6 +37,7 @@ FIT_DATA=""
 PLOT_PARAMS=""
 DRY=false
 WORKER=false
+STREAM_CHAIN_OUTPUT=false
 
 usage() {
     cat <<EOF
@@ -82,6 +83,7 @@ Options:
                             wrapper-chosen ~1% cadence)
   --fit-data TTTT           Fit x,y,v,a flags, e.g. TTTT or TTFT
   --plot-params CSV         Parameters to include in global_corner.png
+  --stream-chain-output     Also stream per-chain Reid stdout to batch log
   --dry                     Print submit command without submitting
   -h, --help
 EOF
@@ -113,6 +115,7 @@ while [[ $# -gt 0 ]]; do
         --status-interval) STATUS_INTERVAL="$2"; shift 2 ;;
         --fit-data) FIT_DATA="$2"; shift 2 ;;
         --plot-params) PLOT_PARAMS="$2"; shift 2 ;;
+        --stream-chain-output) STREAM_CHAIN_OUTPUT=true; shift ;;
         --dry) DRY=true; shift ;;
         -h|--help) usage; exit 0 ;;
         *) echo "Unknown arg: $1"; exit 1 ;;
@@ -137,8 +140,14 @@ if $WORKER; then
     echo "  batch_dir=$batch_dir"
     echo "  chains=$CHAINS, trials=$TRIALS, walkers=$WALKERS"
     echo "  init=$INIT"
+    if $STREAM_CHAIN_OUTPUT; then
+        echo "  chain output: streaming to batch log and per-chain wrapper.stdout"
+    else
+        echo "  chain output: per-chain wrapper.stdout only"
+    fi
 
     pids=()
+    log_paths=()
     for ((i = 0; i < CHAINS; i++)); do
         chain_seed=$((SEED + i * SEED_STEP))
         chain_id="$(printf "%02d" "$i")"
@@ -169,21 +178,29 @@ if $WORKER; then
 
         printf "%s\n" "${cmd[*]}" > "$chain_dir/command.txt"
         (
-            set -o pipefail
-            "${cmd[@]}" 2>&1 \
-                | sed -u "s/^/[chain ${chain_id}] /" \
-                | tee "$chain_dir/wrapper.stdout"
+            if $STREAM_CHAIN_OUTPUT; then
+                set -o pipefail
+                "${cmd[@]}" 2>&1 \
+                    | sed -u "s/^/[chain ${chain_id}] /" \
+                    | tee "$chain_dir/wrapper.stdout"
+            else
+                "${cmd[@]}" > "$chain_dir/wrapper.stdout" 2>&1
+            fi
         ) &
         pids+=("$!")
+        log_paths+=("$chain_dir/wrapper.stdout")
         pid="${pids[$((${#pids[@]} - 1))]}"
         echo "$chain_dir" >> "$batch_dir/chain_dirs.txt"
-        echo "  launched chain $chain_id seed=$chain_seed pid=$pid"
+        echo "  launched chain $chain_id seed=$chain_seed pid=$pid log=$chain_dir/wrapper.stdout"
     done
 
     failed=0
-    for pid in "${pids[@]}"; do
+    for idx in "${!pids[@]}"; do
+        pid="${pids[$idx]}"
         if ! wait "$pid"; then
             failed=1
+            echo "[ERROR] chain process failed: pid=$pid log=${log_paths[$idx]}" >&2
+            tail -n 40 "${log_paths[$idx]}" >&2 || true
         fi
     done
 
@@ -211,6 +228,11 @@ if [[ -z "$QUEUE" ]]; then
 fi
 
 MEM_TOTAL=$((CHAINS * MEM_PER_CHAIN))
+MEM_REQUEST="$MEM_TOTAL"
+if [[ "$CANDEL_CLUSTER" == "glamdring" ]]; then
+    # addqueue -m is memory per process/core, while sbatch --mem is total.
+    MEM_REQUEST="$MEM_PER_CHAIN"
+fi
 JOB_NAME="reid_${GALAXY}_${CHAINS}ch"
 
 echo "Submitting Reid MCMC chains -> $CANDEL_CLUSTER:$QUEUE"
@@ -246,13 +268,14 @@ cmd=(
 [[ -n "$H0_HIGH" ]] && cmd+=(--h0-high "$H0_HIGH")
 [[ -n "$FIT_DATA" ]] && cmd+=(--fit-data "$FIT_DATA")
 [[ -n "$PLOT_PARAMS" ]] && cmd+=(--plot-params "$PLOT_PARAMS")
+$STREAM_CHAIN_OUTPUT && cmd+=(--stream-chain-output)
 
 dry_flag=()
 $DRY && dry_flag=(--dry)
 time_flag=()
 [[ -n "$TIME" ]] && time_flag=(--time "$TIME")
 
-submit_job --queue "$QUEUE" --mem "$MEM_TOTAL" --cpus "$CHAINS" \
+submit_job --queue "$QUEUE" --mem "$MEM_REQUEST" --cpus "$CHAINS" \
     --name "$JOB_NAME" \
     "${time_flag[@]}" \
     "${dry_flag[@]}" \
