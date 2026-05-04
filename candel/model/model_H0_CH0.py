@@ -534,16 +534,16 @@ class CH0Model(H0ModelBase):
                         Vext, Vext_mono, cz_lim, cz_width,
                         nu_cz=nu_cz)
                     log_S = jnp.broadcast_to(
-                        log_S_cz[:, None], (log_S_cz.shape[0],
-                                             self.num_hosts))
+                        log_S_cz[:, None],
+                        (log_S_cz.shape[0], self.num_hosts))
                 elif n_mag == self.num_hosts:
                     log_S_mag = self._compute_volume_log_S_mag(
                         bias_params, M_B,
                         self._sn_selection_mag_error(n_mag),
                         H0, mag_lim, mag_width)
                     log_S = jnp.broadcast_to(
-                        log_S_mag[:, None], (log_S_mag.shape[0],
-                                              self.num_hosts))
+                        log_S_mag[:, None],
+                        (log_S_mag.shape[0], self.num_hosts))
                 else:
                     log_S_mag = self._compute_volume_log_S_mag(
                         bias_params, M_B,
