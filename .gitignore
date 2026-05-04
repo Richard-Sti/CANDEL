@@ -39,7 +39,7 @@ local_config.toml
 *.png
 *.pdf
 CLAUDE.md
-background_papers/
+background_info/
 docs/plans/
 remote_logs/
 notebooks/paper_S8/sr_interp_cache/

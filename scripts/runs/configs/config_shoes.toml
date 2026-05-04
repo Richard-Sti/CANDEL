@@ -40,12 +40,16 @@ cz_lim_selection_width = 300
 mag_lim_SN = 14.0
 mag_lim_SN_width = 0.15
 
+# Used only for which_selection = "SN_magnitude_or_redshift_Nmag";
+# the first N Cepheid hosts are treated as SN-magnitude selected.
+num_hosts_selection_mag = 35
+
 distmod_limits = [15, 43]
 
 # 3D selection integral spherical truncation radius in Mpc/h.
 selection_integral_geometry = "sphere"
 selection_integral_grid_radius = 100.0
-density_3d_downsample = 1
+density_3d_downsample = 2
 
 # --- Overrides from default priors ---
 

@@ -499,7 +499,14 @@ class ModelBase(ABC):
 
         which_sel = get_nested(
             self.config, "model/which_selection", None)
-        if which_sel != "redshift":
+        if which_sel == "SN_magnitude_or_redshift_Nmag":
+            n_mag = get_nested(
+                self.config, "model/num_hosts_selection_mag", None)
+            if type(n_mag) is int and n_mag >= self.num_hosts:
+                return
+        if which_sel not in (
+                "redshift", "SN_magnitude_redshift",
+                "SN_magnitude_or_redshift_Nmag"):
             return
 
         num_dirs = get_nested(
@@ -925,6 +932,19 @@ class H0ModelBase(ModelBase):
             Vext_rad = Vext_rad + Vext_mono
         return Vext_rad
 
+    def _vol_sel_sigma_v_fields(self, sigma_v):
+        """Broadcast scalar or voxel-level sigma_v to all 3D fields."""
+        sigma_v = jnp.asarray(sigma_v)
+        target_shape = self.density_3d_fields.shape
+        if sigma_v.ndim == 0:
+            return jnp.broadcast_to(sigma_v, target_shape)
+        if sigma_v.shape == target_shape:
+            return sigma_v
+        if sigma_v.shape == target_shape[:1]:
+            shape = target_shape[:1] + (1,) * (len(target_shape) - 1)
+            return jnp.broadcast_to(sigma_v.reshape(shape), target_shape)
+        return jnp.broadcast_to(sigma_v, target_shape)
+
     def _no_recon_selection_Vpec(self, Vext, Vext_mono):
         """Selection-grid Vpec for no-reconstruction H0 selection."""
         Vext_rad = jnp.sum(
@@ -1012,18 +1032,19 @@ class H0ModelBase(ModelBase):
 
         log_cell_weight = self._volume_log_cell_weight_phys(H0)
         Vext_rad_3d = self._vol_sel_Vext_rad_3d(Vext, Vext_mono, H0 / 100)
+        sigma_v = self._vol_sel_sigma_v_fields(sigma_v)
 
         def _one(inputs):
-            density_3d, vrad_3d = inputs
+            density_3d, vrad_3d, sigma_v_3d = inputs
             log_n = self._vol_sel_galaxy_bias(density_3d, bias_params)
             Vpec = beta * vrad_3d + Vext_rad_3d
             cz_pred = predict_cz(self.zcosmo_3d, Vpec)
             log_P_sel = log_prob_integrand_sel(
-                cz_pred, sigma_v, cz_lim, cz_width, nu_cz=nu_cz)
+                cz_pred, sigma_v_3d, cz_lim, cz_width, nu_cz=nu_cz)
             return logsumexp(log_P_sel + log_n + log_cell_weight)
 
         return lax.map(
-            _one, (self.density_3d_fields, self.vrad_3d_fields),
+            _one, (self.density_3d_fields, self.vrad_3d_fields, sigma_v),
             batch_size=self.volume_density_batch_size)
 
     def _compute_volume_log_S_mag_cz(self, bias_params, M_abs, e_mag, H0,
@@ -1042,17 +1063,18 @@ class H0ModelBase(ModelBase):
             mu_3d + M_abs, e_mag, mag_lim, mag_width)
         log_cell_weight = self._volume_log_cell_weight_phys(H0)
         Vext_rad_3d = self._vol_sel_Vext_rad_3d(Vext, Vext_mono, h)
+        sigma_v = self._vol_sel_sigma_v_fields(sigma_v)
 
         def _one(inputs):
-            density_3d, vrad_3d = inputs
+            density_3d, vrad_3d, sigma_v_3d = inputs
             log_n = self._vol_sel_galaxy_bias(density_3d, bias_params)
             Vpec = beta * vrad_3d + Vext_rad_3d
             cz_pred = predict_cz(self.zcosmo_3d, Vpec)
             log_P_cz = log_prob_integrand_sel(
-                cz_pred, sigma_v, cz_lim, cz_width, nu_cz=nu_cz)
+                cz_pred, sigma_v_3d, cz_lim, cz_width, nu_cz=nu_cz)
             return logsumexp(
                 log_P_mag + log_P_cz + log_n + log_cell_weight)
 
         return lax.map(
-            _one, (self.density_3d_fields, self.vrad_3d_fields),
+            _one, (self.density_3d_fields, self.vrad_3d_fields, sigma_v),
             batch_size=self.volume_density_batch_size)

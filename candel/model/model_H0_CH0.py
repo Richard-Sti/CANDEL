@@ -50,7 +50,14 @@ class CH0Model(H0ModelBase):
         which_selection = get_nested(
             config, "model/which_selection", None)
 
-        if which_selection not in ["SN_magnitude", "SN_magnitude_redshift"]:  # noqa
+        mixed_nmag = get_nested(config, "model/num_hosts_selection_mag", 0)
+        uses_SN_selection = (
+            which_selection in ["SN_magnitude", "SN_magnitude_redshift"]
+            or (which_selection == "SN_magnitude_or_redshift_Nmag"
+                and type(mixed_nmag) is int
+                and mixed_nmag > 0)
+        )
+        if not uses_SN_selection:
             replace_prior_with_delta(config, "M_B", -19.25)
 
         if not use_Cepheid_host_redshift:
@@ -68,6 +75,9 @@ class CH0Model(H0ModelBase):
             "redshift": {"cz_lim_selection", "cz_lim_selection_width"},
             "SN_magnitude": {"mag_lim_SN", "mag_lim_SN_width"},
             "SN_magnitude_redshift": {
+                "cz_lim_selection", "cz_lim_selection_width",
+                "mag_lim_SN", "mag_lim_SN_width"},
+            "SN_magnitude_or_redshift_Nmag": {
                 "cz_lim_selection", "cz_lim_selection_width",
                 "mag_lim_SN", "mag_lim_SN_width"},
         }
@@ -108,12 +118,18 @@ class CH0Model(H0ModelBase):
             config, "model/weight_selection_by_covmat_Neff", False)
         fprint(f"weight_selection_by_covmat_Neff set to "
                f"{self.weight_selection_by_covmat_Neff}")
+        self.num_hosts_selection_mag = get_nested(
+            config, "model/num_hosts_selection_mag", None)
+        if self.which_selection == "SN_magnitude_or_redshift_Nmag":
+            fprint("num_hosts_selection_mag set to "
+                   f"{self.num_hosts_selection_mag}")
 
     # ------------------------------------------------------------------
     #  Phase 2: data loading
     # ------------------------------------------------------------------
 
     def _load_data(self, data):
+        self.config.setdefault("io", {}).setdefault("load_rand_los", False)
         super()._load_data(data)
 
     def _set_data_arrays(self, data):
@@ -183,16 +199,40 @@ class CH0Model(H0ModelBase):
 
         allowed_selection = [
             "redshift", "SN_magnitude",
-            "SN_magnitude_redshift", None]
+            "SN_magnitude_redshift", "SN_magnitude_or_redshift_Nmag",
+            None]
         if self.which_selection not in allowed_selection:
             raise ValueError(
                 f"Unknown `which_selection`: {self.which_selection}. "
                 f"Expected one of {allowed_selection}.")
 
-        if self.which_selection in ["redshift", "SN_magnitude_redshift"] and not self.use_Cepheid_host_redshift:  # noqa
+        mixed_needs_redshift = False
+        if self.which_selection == "SN_magnitude_or_redshift_Nmag":
+            if self.num_hosts_selection_mag is None:
+                raise ValueError(
+                    "`SN_magnitude_or_redshift_Nmag` requires "
+                    "`model.num_hosts_selection_mag`.")
+            if type(self.num_hosts_selection_mag) is not int:
+                raise TypeError(
+                    "`model.num_hosts_selection_mag` must be an int.")
+            if not (0 <= self.num_hosts_selection_mag <= self.num_hosts):
+                raise ValueError(
+                    "`model.num_hosts_selection_mag` must be between 0 and "
+                    f"{self.num_hosts}, got {self.num_hosts_selection_mag}.")
+            if self.weight_selection_by_covmat_Neff:
+                raise ValueError(
+                    "`weight_selection_by_covmat_Neff` is not supported with "
+                    "`SN_magnitude_or_redshift_Nmag`.")
+            mixed_needs_redshift = (
+                self.num_hosts_selection_mag < self.num_hosts)
+
+        selection_needs_redshift = (
+            self.which_selection in ["redshift", "SN_magnitude_redshift"]
+            or mixed_needs_redshift)
+        if selection_needs_redshift and not self.use_Cepheid_host_redshift:
             raise ValueError(
-                "If `which_selection` is set to 'redshift', "
-                "`use_Cepheid_host_redshift` must be set to True.")
+                "Redshift-based selection requires "
+                "`use_Cepheid_host_redshift` to be set to True.")
 
         if self.apply_sel and self.use_uniform_mu_host_priors:
             raise ValueError(
@@ -200,12 +240,7 @@ class CH0Model(H0ModelBase):
                 "`use_uniform_mu_host_priors` must be set to False.")
 
         self._validate_selection_integral(
-            needs_velocity=self.which_selection in (
-                "redshift", "SN_magnitude_redshift"))
-        if self.apply_sel and self.use_density_dependent_sigma_v:
-            raise ValueError(
-                "density_dependent_sigma_v is not supported with "
-                "3D selection integrals.")
+            needs_velocity=selection_needs_redshift)
 
         if not self.use_fiducial_Cepheid_host_PV_covariance and self.weight_selection_by_covmat_Neff:  # noqa
             raise ValueError(
@@ -248,6 +283,51 @@ class CH0Model(H0ModelBase):
         return sigma_v_low + (sigma_v_high - sigma_v_low) / (
             1.0 + jnp.exp(-k * (log_rho - log_rho_t)))
 
+    def _volume_sigma_v_fields(self, sigma_v_low, sigma_v_high,
+                               log_rho_t, k):
+        """Evaluate density-dependent sigma_v on the 3D selection grid."""
+        if self.density_3d_mode == "log_rho":
+            delta_3d = jnp.exp(self.density_3d_fields) - 1.0
+        else:
+            delta_3d = self.density_3d_fields
+        return self.sigma_v_from_density(
+            delta_3d, sigma_v_low, sigma_v_high, log_rho_t, k)
+
+    def _factor_sn_likelihood(self, mu_host_all, M_B, n_mag=None):
+        """Add the SN-magnitude likelihood for all or the first n_mag hosts."""
+        if n_mag == 0:
+            return
+
+        if n_mag is None:
+            mag_obs = self.mag_SN_unique_Cepheid_host
+            L_sn = self.L_SN_unique_Cepheid_host
+            L_dist = self.L_SN_unique_Cepheid_host_dist
+        else:
+            mag_obs = self.mag_SN_unique_Cepheid_host[:n_mag]
+            L_sn = self.L_SN_unique_Cepheid_host[:n_mag, :n_mag]
+            L_dist = self.L_SN_unique_Cepheid_host_dist[:n_mag]
+
+        mag_SN = (L_dist @ mu_host_all) + M_B
+        factor(
+            "ll_SN",
+            mvn_logpdf_cholesky(mag_obs, mag_SN, L_sn))
+
+    def _sn_selection_mag_error(self, n_mag=None):
+        """Representative SN magnitude error for selection integrals."""
+        if n_mag is None:
+            return self.mean_std_mag_SN_unique_Cepheid_host
+        std = jnp.sqrt(jnp.diag(
+            self.C_SN_unique_Cepheid_host[:n_mag, :n_mag]))
+        return jnp.mean(std)
+
+    def _mixed_selection_log_S(self, log_S_mag, log_S_cz):
+        """Per-host log S for a split SN-magnitude/redshift selection."""
+        n_mag = self.num_hosts_selection_mag
+        # The split follows the fixed SH0ES host order: first N are SN-mag.
+        mask_mag = jnp.arange(self.num_hosts) < n_mag
+        return jnp.where(mask_mag[None, :],
+                         log_S_mag[:, None], log_S_cz[:, None])
+
     def __call__(self):
         # Hubble constant
         H0 = rsample("H0", self.priors["H0"])
@@ -289,6 +369,12 @@ class CH0Model(H0ModelBase):
                     delta, sigma_v_low, sigma_v_high, log_sigma_v_rho_t,
                     sigma_v_k)
             return jnp.broadcast_to(sigma_v_base, delta.shape)
+
+        def selection_sigma_v():
+            if self.use_density_dependent_sigma_v:
+                return self._volume_sigma_v_fields(
+                    sigma_v_low, sigma_v_high, log_sigma_v_rho_t, sigma_v_k)
+            return sigma_v_base
 
         h = H0 / 100
         Vext_rad_host = self._host_Vext_radial(
@@ -340,12 +426,10 @@ class CH0Model(H0ModelBase):
 
         # SN magnitude likelihood (shared by SN_magnitude* selections)
         if self.which_selection in ["SN_magnitude", "SN_magnitude_redshift"]:
-            mag_SN = (self.L_SN_unique_Cepheid_host_dist @ mu_host_all) + M_B
-            factor(
-                "ll_SN",
-                mvn_logpdf_cholesky(
-                    self.mag_SN_unique_Cepheid_host, mag_SN,
-                    self.L_SN_unique_Cepheid_host))
+            self._factor_sn_likelihood(mu_host_all, M_B)
+        elif self.which_selection == "SN_magnitude_or_redshift_Nmag":
+            self._factor_sn_likelihood(
+                mu_host_all, M_B, n_mag=self.num_hosts_selection_mag)
 
         if self.use_reconstruction:
             ll_reconstruction, los_delta_host, rh_host = \
@@ -366,7 +450,7 @@ class CH0Model(H0ModelBase):
                         / mag_width)))
                 log_S = self._compute_volume_log_S_mag(
                     bias_params, M_B,
-                    self.mean_std_mag_SN_unique_Cepheid_host,
+                    self._sn_selection_mag_error(),
                     H0, mag_lim, mag_width)
             elif self.which_selection == "redshift":
                 cz_lim = self._resolve_threshold("cz_lim_selection")
@@ -377,7 +461,7 @@ class CH0Model(H0ModelBase):
                         (cz_lim - self.czcmb_cepheid_host)
                         / cz_width)))
                 log_S = self._compute_volume_log_S_cz(
-                    bias_params, H0, sigma_v_base, beta,
+                    bias_params, H0, selection_sigma_v(), beta,
                     Vext, Vext_mono, cz_lim, cz_width,
                     nu_cz=nu_cz)
             elif self.which_selection == "SN_magnitude_redshift":
@@ -394,10 +478,53 @@ class CH0Model(H0ModelBase):
                         / mag_width)))
                 log_S = self._compute_volume_log_S_mag_cz(
                     bias_params, M_B,
-                    self.mean_std_mag_SN_unique_Cepheid_host,
-                    H0, sigma_v_base, beta, Vext, Vext_mono,
+                    self._sn_selection_mag_error(),
+                    H0, selection_sigma_v(), beta, Vext, Vext_mono,
                     mag_lim, mag_width, cz_lim, cz_width,
                     nu_cz=nu_cz)
+            elif self.which_selection == "SN_magnitude_or_redshift_Nmag":
+                n_mag = self.num_hosts_selection_mag
+                cz_lim = self._resolve_threshold("cz_lim_selection")
+                cz_width = self._resolve_threshold(
+                    "cz_lim_selection_width")
+                mag_lim = self._resolve_threshold("mag_lim_SN")
+                mag_width = self._resolve_threshold("mag_lim_SN_width")
+
+                ll_sel_mag = norm_jax.logcdf(
+                    (mag_lim - self.mag_SN_unique_Cepheid_host[:n_mag])
+                    / mag_width)
+                ll_sel_cz = norm_jax.logcdf(
+                    (cz_lim - self.czcmb_cepheid_host[n_mag:])
+                    / cz_width)
+                factor("ll_sel_per_object",
+                       jnp.sum(ll_sel_mag) + jnp.sum(ll_sel_cz))
+
+                if n_mag == 0:
+                    log_S_cz = self._compute_volume_log_S_cz(
+                        bias_params, H0, selection_sigma_v(), beta,
+                        Vext, Vext_mono, cz_lim, cz_width,
+                        nu_cz=nu_cz)
+                    log_S = jnp.broadcast_to(
+                        log_S_cz[:, None], (log_S_cz.shape[0],
+                                             self.num_hosts))
+                elif n_mag == self.num_hosts:
+                    log_S_mag = self._compute_volume_log_S_mag(
+                        bias_params, M_B,
+                        self._sn_selection_mag_error(n_mag),
+                        H0, mag_lim, mag_width)
+                    log_S = jnp.broadcast_to(
+                        log_S_mag[:, None], (log_S_mag.shape[0],
+                                              self.num_hosts))
+                else:
+                    log_S_mag = self._compute_volume_log_S_mag(
+                        bias_params, M_B,
+                        self._sn_selection_mag_error(n_mag),
+                        H0, mag_lim, mag_width)
+                    log_S_cz = self._compute_volume_log_S_cz(
+                        bias_params, H0, selection_sigma_v(), beta,
+                        Vext, Vext_mono, cz_lim, cz_width,
+                        nu_cz=nu_cz)
+                    log_S = self._mixed_selection_log_S(log_S_mag, log_S_cz)
 
             if self.weight_selection_by_covmat_Neff:
                 Neff = (self.Neff_PV_covmat_cepheid_host
@@ -406,9 +533,15 @@ class CH0Model(H0ModelBase):
                         else self.Neff_C_SN_unique_Cepheid_host)
                 log_S = log_S * Neff / self.num_hosts
             if self.use_reconstruction:
-                ll_reconstruction -= log_S[:, None]
+                if log_S.ndim == 1:
+                    log_S = log_S[:, None]
+                ll_reconstruction -= log_S
             else:
-                factor("neg_log_S_correction", -log_S[0] * self.num_hosts)
+                if log_S.ndim == 1:
+                    factor("neg_log_S_correction",
+                           -log_S[0] * self.num_hosts)
+                else:
+                    factor("neg_log_S_correction", -jnp.sum(log_S[0]))
 
         # Now assign these host distances to each Cepheid.
         mu_cepheid = (self.L_Cepheid_host_dist @ mu_host_cepheid

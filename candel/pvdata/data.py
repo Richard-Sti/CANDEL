@@ -2121,14 +2121,26 @@ def load_SH0ES_from_config(config_path):
         los_data_path = None
         rand_los_data_path = None
 
+    data = load_SH0ES_separated(
+        root, cepheid_host_cz_cmb_max,
+        los_data_path=los_data_path, rand_los_data_path=rand_los_data_path)
+
+    velocity_selections = ["redshift", "SN_magnitude_redshift"]
+    if get_nested(config, "model/which_selection", None) \
+            == "SN_magnitude_or_redshift_Nmag":
+        n_mag = get_nested(config, "model/num_hosts_selection_mag", None)
+        if type(n_mag) is int and n_mag < data["num_hosts"]:
+            velocity_selections.append("SN_magnitude_or_redshift_Nmag")
+
     volume_data = _load_h0_volume_data_from_config(
         config, los_data_path, which_host_los, "SH0ES",
-        velocity_selections=("redshift", "SN_magnitude_redshift"))
+        velocity_selections=tuple(velocity_selections))
 
-    return load_SH0ES_separated(
-        root, cepheid_host_cz_cmb_max,
-        los_data_path=los_data_path, rand_los_data_path=rand_los_data_path,
-        volume_data=volume_data)
+    if volume_data is not None:
+        data.update(volume_data)
+        data["has_volume_density_3d"] = True
+
+    return data
 
 
 def load_CCHP_from_config(config_path, ra_dec_only=False):

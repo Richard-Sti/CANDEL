@@ -84,8 +84,6 @@ try:
 except ModuleNotFoundError:
     import tomli as tomllib
 
-import tomli_w
-
 from task_specs import TASK_SPECS
 
 
@@ -98,6 +96,15 @@ fprint = None
 get_nested = None
 load_config = None
 replace_prior_with_delta = None
+tomli_w = None
+
+
+def load_toml_writer():
+    """Import TOML writing support only for commands that need it."""
+    global tomli_w
+    if tomli_w is None:
+        import tomli_w as _tomli_w
+        tomli_w = _tomli_w
 
 
 def load_candel_helpers():
@@ -279,6 +286,9 @@ def generate_dynamic_tag(config, base_tag="default"):
         which_sel = get_nested(config, "model/which_selection", None)
         if _is_active(which_sel):
             parts.append(f"sel-{which_sel}")
+            if which_sel == "SN_magnitude_or_redshift_Nmag":
+                parts.append(
+                    f"Nmag{get_nested(config, 'model/num_hosts_selection_mag', None)}")  # noqa
 
         if get_nested(config, "model/use_uniform_mu_host_priors", False):
             parts.append("uniform_mu_host")
@@ -290,13 +300,26 @@ def generate_dynamic_tag(config, base_tag="default"):
         if not get_nested(config, "model/use_Cepheid_host_redshift", True):
             parts.append("no_Cepheid_redshift")
 
-        if get_nested(config, "model/use_reconstruction", False):
-            parts.append(get_nested(config, "io/SH0ES/which_host_los", None))
+        use_reconstruction = get_nested(
+            config, "model/use_reconstruction", False)
+        use_pv_covmat = get_nested(
+            config, "model/use_fiducial_Cepheid_host_PV_covariance", False)
+        Vext_prior = get_nested(config, "model/priors/Vext", None)
+        if not use_reconstruction and not use_pv_covmat \
+                and not _is_delta_prior(Vext_prior):
+            parts.append("Vext")
+
+        if use_reconstruction:
+            which_los = get_nested(config, "io/SH0ES/which_host_los", None)
+            parts.append(which_los)
+            beta_prior = get_nested(config, "model/priors/beta", None)
+            if isinstance(which_los, str) and "manticore" in which_los.lower():
+                if not _is_delta_prior(beta_prior):
+                    parts.append("beta_free")
             if get_nested(config, "model/use_density_dependent_sigma_v", False):  # noqa
                 parts.append("sigv_rho")
 
-        if get_nested(config, "model/use_fiducial_Cepheid_host_PV_covariance",
-                      False):
+        if use_pv_covmat:
             parts.append("PV_covmat")
 
         if get_nested(config, "model/use_PV_covmat_scaling", False):
@@ -627,6 +650,7 @@ def prepare_generated_tasks(spec, base_config, override_combinations):
 
 def write_generated_tasks(tasks_index, spec, generated, local_cfg, clean=False):
     """Write generated TOML configs and the matching tasks_<index>.txt file."""
+    load_toml_writer()
     gen_dir = RUN_DIR / "generated_configs" / tasks_index
     makedirs(gen_dir, exist_ok=True)
 
@@ -729,6 +753,7 @@ def list_specs():
 
 def show_spec(tasks_index):
     """Print one task spec as TOML-like data."""
+    load_toml_writer()
     spec = get_sweep_spec(tasks_index)
     raw = deepcopy(TASK_SPECS[tasks_index])
     raw["config_path"] = str(spec.config_path)
