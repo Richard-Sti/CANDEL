@@ -51,13 +51,13 @@ Note:
 
 Usage:
 ------
-1. Edit the `common` / `individual_datasets` structures in the
-   ``if __name__ == "__main__":`` block at the bottom of this script to
-   specify your sweep.
+1. Add or edit a named sweep in ``task_specs.py``.
 2. Run the script:
+       $ python generate_tasks.py build 0
+   or, for backward compatibility:
        $ python generate_tasks.py 0
-3. Use the generated `tasks_0.txt` with a SLURM script or manual loop to run
-   the tasks.
+3. Use the generated `tasks_0.txt` with `submit.sh` to run the tasks. Run
+   ``python generate_tasks.py list`` to see registered task indices.
 
 Typical output:
 - One `.toml` file per combination of overrides
@@ -69,8 +69,10 @@ This script is meant to streamline robust, reproducible inference workflows in
 CANDEL.
 """
 import hashlib
-from argparse import ArgumentParser
+import re
+from argparse import ArgumentParser, RawDescriptionHelpFormatter
 from copy import deepcopy
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from itertools import product
 from os import makedirs
@@ -84,7 +86,40 @@ except ModuleNotFoundError:
 
 import tomli_w
 
-from candel import fprint, get_nested, load_config, replace_prior_with_delta  # noqa
+from task_specs import TASK_SPECS
+
+
+RUN_DIR = Path(__file__).resolve().parent
+CANDEL_ROOT = RUN_DIR.parent.parent
+TASK_INDEX_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+VERBOSE = True
+
+fprint = None
+get_nested = None
+load_config = None
+replace_prior_with_delta = None
+
+
+def load_candel_helpers():
+    """Import heavier CANDEL helpers only for build/dry-run commands."""
+    global fprint, get_nested, load_config, replace_prior_with_delta
+    if load_config is None:
+        from candel import (  # noqa
+            fprint as _fprint,
+            get_nested as _get_nested,
+            load_config as _load_config,
+            replace_prior_with_delta as _replace_prior_with_delta,
+        )
+        fprint = _fprint
+        get_nested = _get_nested
+        load_config = _load_config
+        replace_prior_with_delta = _replace_prior_with_delta
+
+
+def log(message):
+    """Emit generator diagnostics when verbose output is enabled."""
+    if VERBOSE and fprint is not None:
+        fprint(message)
 
 
 # Keys that must come from local_config.toml at job runtime, not baked into
@@ -93,7 +128,7 @@ from candel import fprint, get_nested, load_config, replace_prior_with_delta  # 
 _MACHINE_KEYS = {
     "root_main", "root_data", "root_results",
     "python_exec", "machine", "modules", "modules_gpu",
-    "use_frozen", "gpu_ld_library_path",
+    "use_frozen", "gpu_ld_library_path", "watcher_dir",
 }
 
 
@@ -107,8 +142,7 @@ def load_local_config():
     configs — they are injected at job runtime from the executing machine's
     local_config.toml.
     """
-    project_root = Path(__file__).resolve().parent.parent.parent
-    local_config_path = project_root / "local_config.toml"
+    local_config_path = CANDEL_ROOT / "local_config.toml"
     if local_config_path.exists():
         with open(local_config_path, 'rb') as f:
             cfg = tomllib.load(f)
@@ -128,7 +162,7 @@ def overwrite_config(config, key, value):
             d[k] = {}
         d = d[k]
 
-    fprint(f"overwriting config['{'/'.join(keys)}'] = {value}")
+    log(f"overwriting config['{'/'.join(keys)}'] = {value}")
     d[keys[-1]] = value
     return new_config
 
@@ -143,7 +177,7 @@ def overwrite_subtree(config, key_path, subtree):
     for k in keys[:-1]:
         d = d.setdefault(k, {})
     d[keys[-1]] = subtree
-    fprint(f"overwriting subtree config['{'/'.join(keys)}'] = {subtree}")
+    log(f"overwriting subtree config['{'/'.join(keys)}'] = {subtree}")
     return new_config
 
 
@@ -357,13 +391,20 @@ def expand_override_grid(overrides):
     model_key = "inference/model"
     cat_key = "io/catalogue_name"
 
-    is_joint_model = (
+    has_model_catalogue_lists = (
         model_key in overrides
         and cat_key in overrides
         and isinstance(overrides[model_key], list)
         and isinstance(overrides[cat_key], list)
-        and len(overrides[model_key]) == len(overrides[cat_key])
     )
+
+    if has_model_catalogue_lists:
+        if len(overrides[model_key]) != len(overrides[cat_key]):
+            raise ValueError(
+                f"`{model_key}` and `{cat_key}` must have the same length "
+                "when both are lists.")
+
+    is_joint_model = has_model_catalogue_lists
 
     if is_joint_model:
         # Extract grouped keys
@@ -408,192 +449,207 @@ def expand_override_grid(overrides):
     return [dict(zip(keys, combo)) for combo in product(*value_lists)]
 
 
-if __name__ == "__main__":
-    parser = ArgumentParser()
-    parser.add_argument(
-        "tasks_index", type=str, nargs="?", default="S8_FP_student_t",
-        help="Arbitrary tag/index for this task list.")
-    args = parser.parse_args()
+@dataclass(frozen=True)
+class SweepSpec:
+    """Validated task-list sweep definition."""
+    name: str
+    description: str
+    config_path: Path
+    tag: str
+    common: dict
+    datasets: list
+    expected_tasks: int | None = None
 
-    tag = "default"
-    tasks_index = args.tasks_index
 
-    _local_cfg = load_local_config()
+def get_sweep_spec(tasks_index):
+    """Return a validated sweep spec for a named task index."""
+    if not TASK_INDEX_RE.fullmatch(tasks_index):
+        raise ValueError(
+            f"Invalid tasks_index '{tasks_index}'. Use only letters, numbers, "
+            "underscore, dash, and dot.")
+    if tasks_index not in TASK_SPECS:
+        available = ", ".join(sorted(TASK_SPECS))
+        raise ValueError(
+            f"Unknown tasks_index '{tasks_index}'. Available specs: {available}")
 
-    # config_path is set inside each branch and used after.
-    config_path = None
-    if tasks_index in ("0", "test_foundation_carrick2015_student_t"):
-        tag = "student_t"
-        config_path = "./configs/config.toml"
-        overrides = {
-            **{k: v for k, v in _local_cfg.items()},
-            "inference/model": "SNModel",
-            "inference/num_chains": 1,
-            "inference/num_warmup": 500,
-            "inference/num_samples": 1000,
-            "inference/chain_method": "sequential",
-            "inference/compute_evidence": False,
-            "inference/skip_if_exists": True,
-            "pv_model/kind": "precomputed_los_Carrick2015",
-            "pv_model/galaxy_bias": "linear_from_beta",
-            "pv_model/which_distance_prior": "empirical",
-            "model/cz_likelihood": "student_t",
-            "io/catalogue_name": "Foundation",
-            "io/root_output": "results/test_foundation_carrick2015_student_t",
-        }
-        all_override_combinations = expand_override_grid(overrides)
+    raw = TASK_SPECS[tasks_index]
+    config_path = (RUN_DIR / raw["config_path"]).resolve()
+    if not config_path.exists():
+        raise FileNotFoundError(
+            f"Base config for '{tasks_index}' does not exist: {config_path}")
 
-    elif tasks_index in ("ch0", "ch0_mag"):
-        # CH0: SH0ES Cepheid H0, Carrick2015 field.
-        # config_shoes.toml already contains all required settings:
-        #   which_run = "CH0", use_reconstruction = true,
-        #   which_host_los = "Carrick2015",
-        #   selection_integral_grid_radius = 100.0 Mpc/h
-        #   ch0          -> which_selection = "redshift"  (from config)
-        #   ch0_mag      -> which_selection = "SN_magnitude"
-        config_path = "./configs/config_shoes.toml"
-        overrides = {
-            **{k: v for k, v in _local_cfg.items()},
-            "io/root_output": "results/CH0",
-        }
-        if tasks_index == "ch0_mag":
-            overrides["model/which_selection"] = "SN_magnitude"
-        all_override_combinations = expand_override_grid(overrides)
+    datasets = raw.get("datasets") or [{}]
+    return SweepSpec(
+        name=tasks_index,
+        description=raw.get("description", ""),
+        config_path=config_path,
+        tag=raw.get("tag", "default"),
+        common=raw.get("common", {}),
+        datasets=datasets,
+        expected_tasks=raw.get("expected_tasks"),
+    )
 
-    else:
-        tag = "student_t"
-        config_path = "./configs/config.toml"
-        # --- S8 from FP PVs: 2 datasets x 2 galaxy biases, Student-t cz ---
-        bias_models = ["linear", "quadratic"]
-        common = {
-            **{k: v for k, v in _local_cfg.items()},
-            "pv_model/kind": "precomputed_los_Carrick2015",
-            "pv_model/galaxy_bias": bias_models,
-            "pv_model/density_3d_downsample": 1,
-            "model/priors/beta": {"dist": "uniform", "low": 0.0, "high": 2.0},
-            "model/cz_likelihood": "student_t",
-            "inference/num_chains": 1,
-            "inference/num_warmup": 2000,
-            "inference/num_samples": 10000,
-            "io/root_output": "results/S8",
-        }
 
-        datasets = [
-            {"inference/model": "FPModel",  "io/catalogue_name": "6dF_FP"},
-            {"inference/model": "FPModel",  "io/catalogue_name": "SDSS_FP"},
-        ]
+def build_override_combinations(spec, local_cfg):
+    """Build all override combinations for a sweep spec."""
+    all_override_combinations = []
+    for dataset in spec.datasets:
+        overrides = {**local_cfg, **spec.common, **dataset}
+        all_override_combinations.extend(expand_override_grid(overrides))
 
-        all_override_combinations = []
-        for dataset in datasets:
-            all_override_combinations.extend(
-                expand_override_grid({**common, **dataset}))
+    if spec.expected_tasks is not None:
+        n_tasks = len(all_override_combinations)
+        if n_tasks != spec.expected_tasks:
+            raise ValueError(
+                f"Spec '{spec.name}' produced {n_tasks} tasks, expected "
+                f"{spec.expected_tasks}.")
 
-    config = load_config(
-        config_path, replace_none=False, replace_los_prior=False,
-        fill_paths=False)
+    return all_override_combinations
 
-    candel_root = Path(__file__).resolve().parent.parent.parent
-    gen_dir = candel_root / "scripts" / "runs" / "generated_configs" / tasks_index
-    if tasks_index == "0" and gen_dir.exists():
-        for old_config in gen_dir.glob("*.toml"):
-            old_config.unlink()
+
+def apply_pv_kind_rules(config, key, value):
+    """Apply compatibility rules implied by the selected PV model kind."""
+    if key != "pv_model/kind" or value.startswith("precomputed_los"):
+        return config
+
+    # No reconstruction: force unity galaxy bias and delta reconstruction priors.
+    config = overwrite_config(config, "pv_model/galaxy_bias", "unity")
+    config = overwrite_config(config, "model/use_reconstruction", False)
+    for prior_name, prior_value in (
+            ("alpha", 1.), ("beta", 0.), ("b1", 0.), ("b2", 0.),
+            ("b3", 0.), ("delta_b1", 0.)):
+        config = replace_prior_with_delta(config, prior_name, prior_value)
+    return config
+
+
+def apply_overrides(config, override_set):
+    """Apply one flat override dictionary to a loaded base config."""
+    local_config = deepcopy(config)
+    for key, value in override_set.items():
+        local_config = apply_pv_kind_rules(local_config, key, value)
+
+        if isinstance(value, dict):
+            local_config = overwrite_subtree(local_config, key, value)
+        else:
+            local_config = overwrite_config(local_config, key, value)
+
+    return local_config
+
+
+def apply_los_runtime_rules(config, override_set):
+    """Apply LOS-field rules that should be enforced for generated configs."""
+    los_keys = [
+        "io/PV_main/EDD_TRGB/which_host_los",
+        "io/PV_main/EDD_TRGB_grouped/which_host_los",
+        "io/PV_main/EDD_2MTF/which_host_los",
+        "io/SH0ES/which_host_los",
+        "io/which_host_los",
+    ]
+    for key in los_keys:
+        los = get_nested(config, key, None)
+        if not (isinstance(los, str) and "manticore" in los.lower()):
+            continue
+
+        if get_nested(config, "model/run_ppc", False):
+            log("forcing run_ppc=False for Manticore field.")
+            config = overwrite_config(config, "model/run_ppc", False)
+
+        beta_prior = get_nested(config, "model/priors/beta", None)
+        if "model/priors/beta" not in override_set:
+            if not _is_delta_prior(beta_prior):
+                log("defaulting beta=delta(1) for Manticore.")
+                config = overwrite_subtree(
+                    config, "model/priors/beta",
+                    {"dist": "delta", "value": 1.0})
+        break
+
+    return config
+
+
+def validate_generated_config(config):
+    """Validate generated config values that commonly fail late at runtime."""
+    which_run = get_nested(config, "model/which_run", None)
+    valid_runs = (None, "CH0", "CCHP", "CCHP_CSP", "EDD_TRGB",
+                  "EDD_TRGB_grouped")
+    if which_run not in valid_runs:
+        raise ValueError(
+            f"Invalid which_run='{which_run}'. Must be one of {valid_runs}.")
+
+
+def finalize_output_path(config, tag):
+    """Set io/fname_output and return the generated config filename stem."""
+    dynamic_tag = generate_dynamic_tag(config, base_tag=tag)
+    kind = get_nested(config, "pv_model/kind", None)
+    stem = f"{kind}_{dynamic_tag}" if kind else dynamic_tag
+
+    # io/fname_output is relative; load_config resolves it against root_results
+    # from local_config.toml at job runtime.
+    fname_out = join(config["io"]["root_output"], f"{stem}.hdf5")
+    config = overwrite_config(config, "io/fname_output", fname_out)
+    return config, stem, fname_out
+
+
+def drop_machine_keys(config):
+    """Remove machine-local keys before writing a portable generated config."""
+    return {k: v for k, v in config.items() if k not in _MACHINE_KEYS}
+
+
+def prepare_generated_tasks(spec, base_config, override_combinations):
+    """Prepare generated config objects and task-list rows without writing."""
+    generated = []
+    seen_stems = set()
+    seen_outputs = set()
+    seen_output_filenames = set()
+
+    for idx, override_set in enumerate(override_combinations):
+        local_config = apply_overrides(base_config, override_set)
+        local_config = apply_los_runtime_rules(local_config, override_set)
+        validate_generated_config(local_config)
+        local_config, stem, fname_out = finalize_output_path(
+            local_config, spec.tag)
+
+        if stem in seen_stems:
+            raise ValueError(f"Duplicate generated TOML stem: {stem}")
+        if fname_out in seen_outputs:
+            raise ValueError(f"Duplicate io/fname_output: {fname_out}")
+        fname_out_name = Path(fname_out).name
+        if fname_out_name in seen_output_filenames:
+            raise ValueError(
+                f"Duplicate io/fname_output filename: {fname_out_name}")
+        seen_stems.add(stem)
+        seen_outputs.add(fname_out)
+        seen_output_filenames.add(fname_out_name)
+
+        generated.append((idx, stem, local_config))
+
+    return generated
+
+
+def write_generated_tasks(tasks_index, spec, generated, local_cfg, clean=False):
+    """Write generated TOML configs and the matching tasks_<index>.txt file."""
+    gen_dir = RUN_DIR / "generated_configs" / tasks_index
     makedirs(gen_dir, exist_ok=True)
 
-    task_file = f"tasks_{tasks_index}.txt"
+    task_file = RUN_DIR / f"tasks_{tasks_index}.txt"
+    task_file_tmp = task_file.with_name(f".{task_file.name}.tmp")
     body_hash = hashlib.sha256()
     n_written = 0
+    expected_configs = set()
 
-    with open(task_file, "w") as task_fh:
-        for idx, override_set in enumerate(all_override_combinations):
-            local_config = deepcopy(config)
+    for _, stem, local_config in generated:
+        toml_out = gen_dir / f"{stem}.toml"
+        toml_tmp = toml_out.with_name(f".{toml_out.name}.tmp")
+        expected_configs.add(toml_out)
+        log(f"writing the configuration file to `{toml_out}`")
 
-            for key, value in override_set.items():
-                # Special handling for kind: transform before writing
-                if key == "pv_model/kind":
-                    if not value.startswith("precomputed_los"):
-                        # No reconstruction: force unity galaxy bias
-                        local_config = overwrite_config(
-                            local_config, "pv_model/galaxy_bias", "unity")
-                        local_config = overwrite_config(
-                            local_config, "model/use_reconstruction", False)
-                        local_config = replace_prior_with_delta(
-                            local_config, "alpha", 1.)
-                        local_config = replace_prior_with_delta(
-                            local_config, "beta", 0.)
-                        local_config = replace_prior_with_delta(
-                            local_config, "b1", 0.)
-                        local_config = replace_prior_with_delta(
-                            local_config, "b2", 0.)
-                        local_config = replace_prior_with_delta(
-                            local_config, "b3", 0.)
-                        local_config = replace_prior_with_delta(
-                            local_config, "delta_b1", 0.)
+        with open(toml_tmp, "wb") as f:
+            tomli_w.dump(drop_machine_keys(local_config), f)
+        toml_tmp.replace(toml_out)
 
-                if isinstance(value, dict):
-                    local_config = overwrite_subtree(local_config, key, value)
-                else:
-                    local_config = overwrite_config(local_config, key, value)
-
-            # Force PPC off for Manticore (too expensive with many fields)
-            _los_keys = [
-                "io/PV_main/EDD_TRGB/which_host_los",
-                "io/PV_main/EDD_TRGB_grouped/which_host_los",
-                "io/PV_main/EDD_2MTF/which_host_los",
-                "io/SH0ES/which_host_los",
-                "io/which_host_los",
-            ]
-            for _k in _los_keys:
-                _los = get_nested(local_config, _k, None)
-                if isinstance(_los, str) and "manticore" in _los.lower():
-                    if get_nested(local_config, "model/run_ppc", False):
-                        fprint("forcing run_ppc=False for Manticore field.")
-                        local_config = overwrite_config(
-                            local_config, "model/run_ppc", False)
-                    # Default beta to delta(1) for Manticore unless already
-                    # explicitly set to a non-default prior in manual_overrides.
-                    beta_prior = get_nested(
-                        local_config, "model/priors/beta", None)
-                    if "model/priors/beta" not in override_set:
-                        if not _is_delta_prior(beta_prior):
-                            fprint("defaulting beta=delta(1) for Manticore.")
-                            local_config = overwrite_subtree(
-                                local_config, "model/priors/beta",
-                                {"dist": "delta", "value": 1.0})
-                    break
-
-            # Validate which_run
-            which_run = get_nested(local_config, "model/which_run", None)
-            valid_runs = (None, "CH0", "CCHP", "CCHP_CSP", "EDD_TRGB",
-                          "EDD_TRGB_grouped")
-            if which_run not in valid_runs:
-                raise ValueError(
-                    f"Invalid which_run='{which_run}'. "
-                    f"Must be one of {valid_runs}.")
-
-            dynamic_tag = generate_dynamic_tag(local_config, base_tag=tag)
-
-            kind = get_nested(local_config, "pv_model/kind", None)
-            stem = f"{kind}_{dynamic_tag}" if kind else dynamic_tag
-            # io/fname_output is relative; load_config resolves it against
-            # root_results from local_config.toml at job runtime.
-            fname_out = join(local_config["io"]["root_output"],
-                             f"{stem}.hdf5")
-            local_config = overwrite_config(
-                local_config, "io/fname_output", fname_out)
-
+    with open(task_file_tmp, "w") as task_fh:
+        for idx, stem, _ in generated:
             toml_out = gen_dir / f"{stem}.toml"
-            fprint(f"writing the configuration file to `{toml_out}`")
-            # Drop machine-specific keys that load_config injected from
-            # local_config.toml — they must be resolved at job runtime on
-            # the executing machine, not baked in here.
-            to_dump = {
-                k: v for k, v in local_config.items()
-                if k not in _MACHINE_KEYS
-            }
-            with open(toml_out, "wb") as f:
-                tomli_w.dump(to_dump, f)
-
-            rel_path = toml_out.relative_to(candel_root)
+            rel_path = toml_out.relative_to(CANDEL_ROOT)
             line = f"{idx} {rel_path}\n"
             task_fh.write(line)
             body_hash.update(line.encode())
@@ -604,12 +660,128 @@ if __name__ == "__main__":
             tasks_index=tasks_index,
             n_tasks=n_written,
             body_sha256=body_hash.hexdigest(),
-            local_cfg=_local_cfg,
+            local_cfg=local_cfg,
             files=[
                 ("scripts/runs/generate_tasks.py", Path(__file__).resolve()),
-                ("scripts/runs/configs/config.toml",
-                 Path(config_path).resolve()),
+                ("scripts/runs/task_specs.py", RUN_DIR / "task_specs.py"),
+                (str(spec.config_path.relative_to(CANDEL_ROOT)),
+                 spec.config_path),
             ],
         )
 
-    fprint(f"wrote task list to `{task_file}`")
+    if clean:
+        for old_config in gen_dir.glob("*.toml"):
+            if old_config not in expected_configs:
+                old_config.unlink()
+
+    task_file_tmp.replace(task_file)
+    log(f"wrote task list to `{task_file}`")
+
+
+def list_specs():
+    """Print available task specs for agentic discovery."""
+    for name in sorted(TASK_SPECS):
+        description = TASK_SPECS[name].get("description", "")
+        print(f"{name}: {description}")
+
+
+def show_spec(tasks_index):
+    """Print one task spec as TOML-like data."""
+    spec = get_sweep_spec(tasks_index)
+    raw = deepcopy(TASK_SPECS[tasks_index])
+    raw["config_path"] = str(spec.config_path)
+    print(tomli_w.dumps({tasks_index: raw}))
+
+
+def parse_args():
+    parser = ArgumentParser(
+        description=(
+            "Generate CANDEL batch task lists and TOML configs from registered "
+            "task specs."
+        ),
+        epilog=(
+            "Examples:\n"
+            "  python generate_tasks.py\n"
+            "  python generate_tasks.py list\n"
+            "  python generate_tasks.py show S8_FP_student_t\n"
+            "  python generate_tasks.py build S8_FP_student_t --dry-run\n"
+            "  python generate_tasks.py build S8_FP_student_t --clean\n"
+            "  python generate_tasks.py S8_FP_student_t\n\n"
+            "Task specs live in scripts/runs/task_specs.py. Use --dry-run "
+            "before writing configs for a new or edited spec."
+        ),
+        formatter_class=RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "command_or_task", nargs="?",
+        help=("Task index to build, or one of: list, show, build. "
+              "With no arguments, lists registered specs."))
+    parser.add_argument(
+        "task_index", nargs="?",
+        help="Task index for the show/build commands.")
+    parser.add_argument(
+        "--dry-run", action="store_true",
+        help="Prepare tasks and print task rows without writing files.")
+    parser.add_argument(
+        "--clean", action="store_true",
+        help="Remove existing generated TOML files for this task index first.")
+    return parser.parse_args()
+
+
+def resolve_command(args):
+    command = args.command_or_task
+    if command is None:
+        return "list", None
+    if command == "list":
+        return "list", None
+    if command == "show":
+        return "show", args.task_index
+    if command == "build":
+        return "build", args.task_index
+    return "build", command
+
+
+def main():
+    global VERBOSE
+    args = parse_args()
+    command, tasks_index = resolve_command(args)
+
+    if command == "list":
+        list_specs()
+        return
+
+    if not tasks_index:
+        raise ValueError(f"`{command}` requires a task index.")
+
+    if command == "show":
+        show_spec(tasks_index)
+        return
+
+    local_cfg = load_local_config()
+    spec = get_sweep_spec(tasks_index)
+    override_combinations = build_override_combinations(spec, local_cfg)
+    load_candel_helpers()
+    VERBOSE = not args.dry_run
+    base_config = load_config(
+        spec.config_path, replace_none=False, replace_los_prior=False,
+        fill_paths=False)
+    generated = prepare_generated_tasks(spec, base_config, override_combinations)
+
+    if args.dry_run:
+        for idx, stem, _ in generated:
+            rel_path = (
+                RUN_DIR / "generated_configs" / tasks_index / f"{stem}.toml"
+            ).relative_to(CANDEL_ROOT)
+            print(f"{idx} {rel_path}")
+        print(f"# dry_run: {len(generated)} tasks")
+        return
+
+    write_generated_tasks(
+        tasks_index, spec, generated, local_cfg, clean=args.clean)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (FileNotFoundError, ValueError) as e:
+        raise SystemExit(str(e))

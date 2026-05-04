@@ -72,7 +72,8 @@ python scripts/runs/main.py --config path/to/config.toml
 
 To generate a batch of PV/$H_0$ configs from a template with a parameter grid:
 ```bash
-python scripts/runs/generate_tasks.py
+python scripts/runs/generate_tasks.py list
+python scripts/runs/generate_tasks.py build S8_FP_student_t
 ```
 
 **Megamaser disk model:**
