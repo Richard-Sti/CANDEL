@@ -599,6 +599,7 @@ def run_H0_inference(model, model_kwargs=None, print_summary=True,
 
     if print_summary:
         print_clean_summary(samples)
+        print_student_t_nu_warnings(samples)
 
     if save_samples:
         fname_out = model.config["io"]["fname_output"]
@@ -613,6 +614,7 @@ def run_H0_inference(model, model_kwargs=None, print_summary=True,
         with open(fname_summary, "w") as f:
             with contextlib.redirect_stdout(f):
                 print_clean_summary(samples)
+                print_student_t_nu_warnings(samples)
         fprint(f"saved summary to {fname_summary}")
 
     if return_diagnostics:
@@ -772,6 +774,33 @@ def print_clean_summary(samples):
         samples_print[key] = x[None, ...]
 
     print_summary_numpyro(samples_print,)
+
+
+def print_student_t_nu_warnings(samples, threshold=5.0):
+    """Warn when a Student-t degrees-of-freedom posterior is very low."""
+    warned = False
+    for key, x in samples.items():
+        key_base = key.rsplit("/", 1)[-1]
+        if key_base != "nu_cz" and not key_base.endswith("_nu_cz"):
+            continue
+
+        arr = np.asarray(x, dtype=float).ravel()
+        arr = arr[np.isfinite(arr)]
+        if arr.size == 0 or np.min(arr) >= threshold:
+            continue
+
+        warned = True
+        frac = np.mean(arr < threshold)
+        q05, median = np.quantile(arr, [0.05, 0.50])
+        print(
+            f"\n[WARN] {key} posterior samples fall below {threshold:g}: "
+            f"min={np.min(arr):.3g}, q05={q05:.3g}, "
+            f"median={median:.3g}, frac_below={frac:.1%}. "
+            "This indicates a very heavy-tailed Student-t cz likelihood; "
+            "interpret sigma_v cautiously, especially in runs with "
+            "Student-t redshift selection.")
+
+    return warned
 
 
 def save_mcmc_samples(samples, log_density, log_density_per_sample, gof,

@@ -21,7 +21,7 @@ scale = 125
 # Student-t redshift likelihood degrees of freedom.
 [model.priors.nu_cz]
 dist = "truncated_normal"
-low = 5.0
+low = 2.0
 high = 100.0
 mean = 30.0
 scale = 10.0
