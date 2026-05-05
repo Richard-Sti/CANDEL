@@ -1,0 +1,31 @@
+# NGC4258 global initial values from the DE best point.
+#
+# This is a maser-config init fragment for:
+#   run_reid_mcmc.py --init DE_best.toml
+# It is not a Reid-style [globals] file.  Units match config_maser.toml:
+# - D_c: Mpc
+# - positions/error floors: micro-arcseconds
+# - velocities/error floors: km/s
+# - accelerations: km/s/yr
+# - angles and angular derivatives: deg, deg/mas, deg/mas^2
+
+[model.galaxies.NGC4258.init]
+D_c = 7.434
+Omega0 = 88.3038
+dOmega_dr = 2.0858
+d2Omega_dr2 = -0.22
+di_dr = -2.3048
+d2i_dr2 = 0.0
+dv_sys = -192.4736
+eta = 6.7221
+i0 = 93.4017
+e_x = 0.0059452
+e_y = -0.0053530
+dperiapsis_dr = 123.0
+sigma_a_floor = 0.4486
+sigma_v_hv = 4.0128
+sigma_v_sys = 0.0123
+sigma_x_floor = 2.5088
+sigma_y_floor = 5.5806
+x0 = -167.6741
+y0 = 558.5884

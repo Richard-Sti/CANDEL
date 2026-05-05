@@ -17,9 +17,7 @@ GALAXY="NGC4258"
 CHAINS=1
 MEM_PER_CHAIN=7
 TIME=""
-INIT="reid"
-INIT_NPZ="$ROOT/results/Megamaser/de_checkpoints/NGC4258/de_ckpt.npz"
-REID_INIT="$ROOT/scripts/megamaser/check_reid/reid_ngc4258_init.toml"
+INIT="reid_ngc4258_init.toml"
 CONFIG="$ROOT/scripts/megamaser/config_maser.toml"
 DATA="$ROOT/data/Megamaser/N4258_disk_data_MarkReid.final"
 BASE_OUTPUT="$ROOT/results/Megamaser/reid_mcmc"
@@ -60,9 +58,9 @@ Options:
                             chains * mem-per-chain (default: $MEM_PER_CHAIN)
   --time T                  Wall time (arc only; ignored on glamdring)
   --galaxy NAME             Galaxy name passed to the wrapper (default: $GALAXY)
-  --init reid|config|de-npz Initial point source (default: $INIT)
-  --reid-init PATH          TOML globals for --init reid
-  --init-npz PATH           DE checkpoint for --init de-npz
+  --init FILE.toml          Initial point TOML in scripts/megamaser/check_reid
+                            (default: $INIT)
+                            Examples: reid_ngc4258_init.toml, DE_best.toml
   --config PATH             Maser TOML config
   --data PATH               Reid-format maser data file
   --output-dir DIR          Batch output directory root
@@ -104,8 +102,6 @@ while [[ $# -gt 0 ]]; do
         --time) TIME="$2"; shift 2 ;;
         --galaxy) GALAXY="$2"; shift 2 ;;
         --init) INIT="$2"; shift 2 ;;
-        --reid-init) REID_INIT="$2"; shift 2 ;;
-        --init-npz) INIT_NPZ="$2"; shift 2 ;;
         --config) CONFIG="$2"; shift 2 ;;
         --data) DATA="$2"; shift 2 ;;
         --output-dir) BASE_OUTPUT="$2"; shift 2 ;;
@@ -136,8 +132,11 @@ fi
 if [[ "$TRIALS" -lt 500000 ]]; then
     echo "[ERROR] --trials must be >=500000 for Reid v24d"; exit 1
 fi
-if [[ "$INIT" != "reid" && "$INIT" != "config" && "$INIT" != "de-npz" ]]; then
-    echo "[ERROR] --init must be reid, config, or de-npz"; exit 1
+if [[ "$INIT" == */* || "$INIT" != *.toml ]]; then
+    echo "[ERROR] --init must be a .toml filename in scripts/megamaser/check_reid"; exit 1
+fi
+if [[ ! -f "$ROOT/scripts/megamaser/check_reid/$INIT" ]]; then
+    echo "[ERROR] Missing init TOML: $ROOT/scripts/megamaser/check_reid/$INIT"; exit 1
 fi
 
 sanitize_label() {
@@ -197,8 +196,6 @@ if $WORKER; then
             --config "$CONFIG"
             --data "$DATA"
             --init "$INIT"
-            --reid-init "$REID_INIT"
-            --init-npz "$INIT_NPZ"
             --output-dir "$chain_dir"
             --burnin "$BURNIN"
             --trials "$TRIALS"
@@ -271,13 +268,15 @@ if [[ "$CANDEL_CLUSTER" == "glamdring" ]]; then
     # addqueue -m is memory per process/core, while sbatch --mem is total.
     MEM_REQUEST="$MEM_PER_CHAIN"
 fi
-JOB_NAME="reid_${GALAXY}_${CHAINS}ch"
+submit_label="$(sanitize_label "${RUN_LABEL:-${INIT%.toml}}")"
+JOB_NAME="reid_${GALAXY}_${submit_label}_${CHAINS}ch"
 
 echo "Submitting Reid MCMC chains -> $CANDEL_CLUSTER:$QUEUE"
 echo "  chains/CPUs:     $CHAINS"
 echo "  memory:          ${MEM_TOTAL} GB total (${MEM_PER_CHAIN} GB per chain)"
 echo "  trials/chain:    $TRIALS"
 echo "  init:            $INIT"
+echo "  job/log label:   $submit_label"
 echo "  output root:     $BASE_OUTPUT"
 [[ -n "$BATCH_DIR" ]] && echo "  batch dir:       $BATCH_DIR"
 [[ -n "$RUN_LABEL" ]] && echo "  run label:       $RUN_LABEL"
@@ -289,8 +288,6 @@ cmd=(
     --mem-per-chain "$MEM_PER_CHAIN"
     --galaxy "$GALAXY"
     --init "$INIT"
-    --reid-init "$REID_INIT"
-    --init-npz "$INIT_NPZ"
     --config "$CONFIG"
     --data "$DATA"
     --output-dir "$BASE_OUTPUT"
