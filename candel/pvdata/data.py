@@ -57,6 +57,20 @@ _SPHERE_RADIUS_DX_WARN_MIN = 15.0
 ###############################################################################
 
 
+def _field_cache_mpi_comm():
+    """Return an MPI communicator for explicit field-cache warmup jobs."""
+    if os.environ.get("CANDEL_FIELD_CACHE_MPI", "0") != "1":
+        return None
+    try:
+        from mpi4py import MPI
+    except ImportError:
+        fprint("CANDEL_FIELD_CACHE_MPI=1 but mpi4py is unavailable; "
+               "warming field cache serially.")
+        return None
+    comm = MPI.COMM_WORLD
+    return comm if comm.Get_size() > 1 else None
+
+
 def _jsonable(value):
     """Convert loader/config values to stable JSON-compatible data."""
     if isinstance(value, dict):
@@ -329,6 +343,135 @@ def _precompute_cosmo_3d(log_r_3d, Om0):
     return mu_flat.reshape(shape), z_flat.reshape(shape)
 
 
+def _cached_h0_volume_result(cached, source_meta, mode, load_velocity):
+    """Convert cached H0 volume arrays to the data dict used by models."""
+    coord_frame = source_meta[0]["state"]["coordinate_frame"]
+    result = {
+        "density_3d_fields": jnp.asarray(cached["density_3d_fields"]),
+        "log_r_3d": jnp.asarray(cached["log_r_3d"]),
+        "log_dV_3d": float(cached["log_dV_3d"]),
+        "mu_at_h1_3d": jnp.asarray(cached["mu_at_h1_3d"]),
+        "zcosmo_3d": jnp.asarray(cached["zcosmo_3d"]),
+        "density_3d_mode": mode,
+        "volume_density_batch_size": 1,
+        "coordinate_frame_3d": coord_frame,
+    }
+    if "log_volume_weight_3d" in cached:
+        result["log_volume_weight_3d"] = jnp.asarray(
+            cached["log_volume_weight_3d"])
+    if load_velocity:
+        result["vrad_3d_fields"] = jnp.asarray(cached["vrad_3d_fields"])
+        for label in ("rhat_x_3d", "rhat_y_3d", "rhat_z_3d"):
+            result[label] = jnp.asarray(cached[label])
+    return result
+
+
+def _load_volume_data_for_H0_mpi(
+        comm, field_name, field_kwargs, field_indices, galaxy_bias, Om0,
+        subcube_radius, downsample, load_velocity, geometry, cache_path,
+        source_meta, mode, required):
+    """Build one H0 volume cache file with fields split over MPI ranks."""
+    rank = comm.Get_rank()
+    size = comm.Get_size()
+    if rank == 0:
+        fprint(f"MPI field-cache warmup: splitting {len(field_indices)} "
+               f"field(s) over {size} rank(s).")
+
+    local = []
+    for k, nsim in enumerate(field_indices):
+        if k % size != rank:
+            continue
+        fprint(f"rank {rank}: warming field {k} (nsim={int(nsim)}).")
+        partial = _load_volume_data_for_H0(
+            field_name, field_kwargs, [int(nsim)], galaxy_bias, Om0,
+            subcube_radius=subcube_radius,
+            downsample=downsample,
+            load_velocity=load_velocity,
+            geometry=geometry,
+            cache_dir=None,
+            cache_enabled=False)
+        local.append((k, {
+            key: np.asarray(value)
+            for key, value in partial.items()
+            if key not in (
+                "density_3d_mode", "volume_density_batch_size",
+                "coordinate_frame_3d")
+        }))
+
+    gathered = comm.gather(local, root=0)
+    error = None
+    if rank == 0:
+        try:
+            parts = [item for rank_parts in gathered for item in rank_parts]
+            parts.sort(key=lambda item: item[0])
+            if len(parts) != len(field_indices):
+                raise RuntimeError(
+                    f"MPI field-cache warmup produced {len(parts)} field(s), "
+                    f"expected {len(field_indices)}.")
+
+            first = parts[0][1]
+            for _, arrays in parts[1:]:
+                for label in (
+                        "log_r_3d", "mu_at_h1_3d", "zcosmo_3d"):
+                    if not np.array_equal(arrays[label], first[label]):
+                        raise RuntimeError(
+                            "MPI field-cache warmup found inconsistent "
+                            f"`{label}` arrays across fields.")
+                if not np.isclose(arrays["log_dV_3d"], first["log_dV_3d"]):
+                    raise RuntimeError(
+                        "MPI field-cache warmup found inconsistent "
+                        "`log_dV_3d` values across fields.")
+                has_weight = "log_volume_weight_3d" in arrays
+                first_has_weight = "log_volume_weight_3d" in first
+                if has_weight != first_has_weight:
+                    raise RuntimeError(
+                        "MPI field-cache warmup found inconsistent "
+                        "`log_volume_weight_3d` presence across fields.")
+                if has_weight and not np.array_equal(
+                        arrays["log_volume_weight_3d"],
+                        first["log_volume_weight_3d"]):
+                    raise RuntimeError(
+                        "MPI field-cache warmup found inconsistent "
+                        "`log_volume_weight_3d` arrays across fields.")
+                if load_velocity:
+                    for label in ("rhat_x_3d", "rhat_y_3d", "rhat_z_3d"):
+                        if not np.array_equal(arrays[label], first[label]):
+                            raise RuntimeError(
+                                "MPI field-cache warmup found inconsistent "
+                                f"`{label}` arrays across fields.")
+
+            cache_arrays = {
+                "density_3d_fields": np.stack([
+                    arrays["density_3d_fields"][0] for _, arrays in parts]),
+                "log_r_3d": first["log_r_3d"],
+                "log_dV_3d": first["log_dV_3d"],
+                "mu_at_h1_3d": first["mu_at_h1_3d"],
+                "zcosmo_3d": first["zcosmo_3d"],
+            }
+            if "log_volume_weight_3d" in first:
+                cache_arrays["log_volume_weight_3d"] = (
+                    first["log_volume_weight_3d"])
+            if load_velocity:
+                cache_arrays["vrad_3d_fields"] = np.stack([
+                    arrays["vrad_3d_fields"][0] for _, arrays in parts])
+                for label in ("rhat_x_3d", "rhat_y_3d", "rhat_z_3d"):
+                    cache_arrays[label] = first[label]
+
+            _write_field_cache(cache_path, "H0 3D volume data", cache_arrays)
+        except Exception as exc:
+            error = repr(exc)
+
+    error = comm.bcast(error, root=0)
+    if error is not None:
+        raise RuntimeError(f"MPI field-cache warmup failed: {error}")
+
+    cached = _read_field_cache(cache_path, "H0 3D volume data", required)
+    if cached is None:
+        raise RuntimeError(
+            f"failed to read MPI-warmed H0 3D volume cache `{cache_path}`.")
+    return _cached_h0_volume_result(cached, source_meta, mode, load_velocity)
+
+
 def _load_volume_data_for_H0(
         field_name, field_kwargs, field_indices, galaxy_bias, Om0,
         subcube_radius=None, downsample=1, load_velocity=False,
@@ -395,29 +538,16 @@ def _load_volume_data_for_H0(
         cached = _read_field_cache(
             cache_path, "H0 3D volume data", required)
         if cached is not None:
-            coord_frame = source_meta[0]["state"]["coordinate_frame"]
-            result = {
-                "density_3d_fields": jnp.asarray(
-                    cached["density_3d_fields"]),
-                "log_r_3d": jnp.asarray(cached["log_r_3d"]),
-                "log_dV_3d": float(cached["log_dV_3d"]),
-                "mu_at_h1_3d": jnp.asarray(cached["mu_at_h1_3d"]),
-                "zcosmo_3d": jnp.asarray(cached["zcosmo_3d"]),
-                "density_3d_mode": mode,
-                "volume_density_batch_size": 1,
-                "coordinate_frame_3d": coord_frame,
-            }
-            if "log_volume_weight_3d" in cached:
-                result["log_volume_weight_3d"] = jnp.asarray(
-                    cached["log_volume_weight_3d"])
-            if load_velocity:
-                result["vrad_3d_fields"] = jnp.asarray(
-                    cached["vrad_3d_fields"])
-                for label in ("rhat_x_3d", "rhat_y_3d", "rhat_z_3d"):
-                    result[label] = jnp.asarray(cached[label])
-            return result
+            return _cached_h0_volume_result(
+                cached, source_meta, mode, load_velocity)
         fprint("H0 3D volume data cache miss; loading reconstruction "
                f"fields and will cache at `{cache_path}`.")
+        mpi_comm = _field_cache_mpi_comm()
+        if mpi_comm is not None and len(field_indices) > 1:
+            return _load_volume_data_for_H0_mpi(
+                mpi_comm, field_name, field_kwargs, field_indices,
+                galaxy_bias, Om0, subcube_radius, downsample, load_velocity,
+                geometry, cache_path, source_meta, mode, required)
     else:
         cache_path = None
 
@@ -593,13 +723,9 @@ def _load_h0_volume_data_from_config(config, los_data_path, which_los,
                                      label, velocity_selections):
     """Load the shared 3D selection-integral data for H0 models."""
     which_sel = get_nested(config, "model/which_selection", None)
-    use_recon = get_nested(config, "model/use_reconstruction", False)
-    use_ch0_volume_limit = (
-        which_sel is None
-        and get_nested(config, "model/which_run", None) == "CH0"
-        and use_recon)
-    if which_sel is None and not use_ch0_volume_limit:
+    if which_sel is None:
         return None
+    use_recon = get_nested(config, "model/use_reconstruction", False)
     if not use_recon:
         return None
     if los_data_path is None or which_los is None:
