@@ -18,8 +18,6 @@ compute_evidence = true
 track_log_density_per_sample = false
 num_chains_harmonic = 10
 
-skip_if_exists = false
-
 ###############################################################################
 #                           Peculiar velocity model                           #
 ###############################################################################

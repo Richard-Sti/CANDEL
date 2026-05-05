@@ -11,7 +11,6 @@ num_chains = 4
 chain_method = "sequential"
 seed = 44
 num_chains_harmonic = 10
-skip_if_exists = false
 
 ###############################################################################
 #                                 Model                                       #

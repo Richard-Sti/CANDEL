@@ -13,7 +13,6 @@ CH0_PAPER_COMMON = {
     "inference/chain_method": "sequential",
     "inference/num_warmup": 1000,
     "inference/num_samples": 6000,
-    "inference/skip_if_exists": False,
     "model/use_uniform_mu_host_priors": False,
     "model/use_anchor_volume_prior": False,
     "model/selection_integral_geometry": "sphere",
