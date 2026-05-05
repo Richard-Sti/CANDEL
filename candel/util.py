@@ -148,6 +148,7 @@ def convert_to_absolute_paths(config):
         "los_file_random",
         "path_density",
         "path_velocity",
+        "fpath_root",
     }
 
     def _recurse(d):

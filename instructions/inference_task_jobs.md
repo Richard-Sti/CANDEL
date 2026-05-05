@@ -117,12 +117,11 @@ printf 'y\n' | ./submit.sh -q <queue> --tasks <ids-or-ranges> --dry <task_index>
 9. Submit only after the dry run looks correct:
 
 ```bash
-printf 'y\n' | ./submit.sh -q <queue> --tasks <ids-or-ranges> --skip-done <task_index>
+printf 'y\n' | ./submit.sh -q <queue> --tasks <ids-or-ranges> <task_index>
 ```
 
 Use `--tasks 0`, `--tasks 0-3`, or `--tasks 0,2,5-7` to limit submissions.
-Use `--skip-done` for production submissions so completed outputs are not
-resubmitted. Omit `--tasks` only when intentionally submitting the full file.
+Omit `--tasks` only when intentionally submitting the full file.
 For active submissions, `tasks_<task_index>.txt` is authoritative; old
 directories under `generated_configs/` can be stale.
 
@@ -135,7 +134,7 @@ hardware and queue details.
 ```bash
 ./submit.sh --status <task_index>
 printf 'y\n' | ./submit.sh -q cmbgpu -n 4 -m 6 --tasks 0 --dry <task_index>
-printf 'y\n' | ./submit.sh -q cmbgpu -n 4 -m 6 --tasks 0 --skip-done <task_index>
+printf 'y\n' | ./submit.sh -q cmbgpu -n 4 -m 6 --tasks 0 <task_index>
 printf 'y\n' | ./submit.sh -q gpulong --gputype rtx2080with12gb --tasks 0 <task_index>
 ```
 
@@ -145,7 +144,6 @@ printf 'y\n' | ./submit.sh -q gpulong --gputype rtx2080with12gb --tasks 0 <task_
 - `--tasks`: comma-separated task IDs and ranges.
 - `--status`: report done/pending state without submitting.
 - `--dry`: print submit commands without submitting.
-- `--skip-done`: skip configs whose `io/fname_output` already exists.
 - `--local`: run inline instead of submitting to a batch queue.
 
 `submit.sh` reads `machine` and `python_exec` from
