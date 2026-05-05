@@ -10,9 +10,10 @@ CH0_MANTICORE_LOS = "manticore_2MPP_MULTIBIN_N256_DES_V2"
 
 CH0_PAPER_COMMON = {
     "inference/num_chains": 12,
+    "inference/chain_method": "sequential",
     "inference/num_warmup": 1000,
     "inference/num_samples": 6000,
-    "inference/skip_if_exists": True,
+    "inference/skip_if_exists": False,
     "model/use_uniform_mu_host_priors": False,
     "model/use_anchor_volume_prior": False,
     "model/selection_integral_geometry": "sphere",
@@ -145,6 +146,9 @@ TASK_SPECS = {
         "tag": "paper",
         "common": {
             **CH0_PAPER_COMMON,
+            "inference/num_chains": 1,
+            "inference/num_warmup": 1000,
+            "inference/num_samples": 5000,
             **_with_root(f"{CH0_PAPER_ROOT}/table"),
         },
         "datasets": _ch0_main_datasets(),
