@@ -50,7 +50,7 @@ distmod_limits_anchor = [23, 26]
 # 3D selection integral spherical truncation radius in Mpc/h.
 selection_integral_geometry = "sphere"
 selection_integral_grid_radius = 100.0
-density_3d_downsample = 2
+density_3d_downsample = 1
 
 # --- Overrides from default priors ---
 

@@ -552,6 +552,32 @@ def validate_generated_config(config):
         raise ValueError(
             f"Invalid which_run='{which_run}'. Must be one of {valid_runs}.")
 
+    bad_prefixes = ("/mnt/extraspace/", "/mnt/users/rstiskalek/")
+    los_keys = (
+        "io/PV_main/EDD_TRGB/which_host_los",
+        "io/PV_main/EDD_TRGB_grouped/which_host_los",
+        "io/PV_main/EDD_2MTF/which_host_los",
+        "io/SH0ES/which_host_los",
+        "io/which_host_los",
+    )
+    selected_los = {
+        los for los in (get_nested(config, key, None) for key in los_keys)
+        if isinstance(los, str) and los.lower() != "none"
+    }
+    recon_main = get_nested(config, "io/reconstruction_main", {})
+    for los in selected_los:
+        section = recon_main.get(los, {})
+        if not isinstance(section, dict):
+            continue
+        for key, value in section.items():
+            if isinstance(value, str) and value.startswith(bad_prefixes):
+                raise ValueError(
+                    f"Selected reconstruction `{los}` has machine-local "
+                    f"path `io.reconstruction_main.{los}.{key}` = {value!r}. "
+                    "Generated task configs must use paths relative to "
+                    "root_data or portable absolute paths."
+                )
+
 
 def finalize_output_path(config, tag):
     """Set io/fname_output and return the generated config filename stem."""

@@ -263,13 +263,8 @@ def _cache_group_key(config):
     return _json_key({
         "kind": "h0_volume_data",
         "cache_dir": _field_cache_dir_from_config(config),
-        "which_run": which_run,
         "which_los": which_los,
         "los_file": los_file,
-        "field_kwargs": field_kwargs,
-        "which_bias": get_nested(config, "model/which_bias", "linear"),
-        "Om": get_nested(config, "model/Om",
-                         get_nested(config, "model/Om0", 0.3)),
         "selection_integral_geometry": get_nested(
             config, "model/selection_integral_geometry", "sphere"),
         "selection_integral_grid_radius": get_nested(
@@ -333,7 +328,6 @@ def _h0_cache_file_status(config):
         loader = pvdata_mod.name2field_loader(which_los)(**kwargs)
         source_meta.append(pvdata_mod._field_source_metadata(loader))
 
-    galaxy_bias = get_nested(config, "model/which_bias", "linear")
     geometry = get_nested(
         config, "model/selection_integral_geometry", "sphere")
     grid_radius = get_nested(
@@ -343,13 +337,8 @@ def _h0_cache_file_status(config):
     payload = {
         "kind": "h0_volume_data",
         "field_name": which_los,
-        "field_kwargs": field_kwargs,
         "field_indices": pvdata_mod._jsonable(
             pvdata_mod.np.asarray(field_indices)),
-        "galaxy_bias": galaxy_bias,
-        "density_mode": pvdata_mod._volume_density_mode(galaxy_bias),
-        "Om0": float(get_nested(config, "model/Om",
-                                get_nested(config, "model/Om0", 0.3))),
         "subcube_radius": grid_radius,
         "downsample": int(downsample),
         "load_velocity": bool(load_velocity),
@@ -358,9 +347,7 @@ def _h0_cache_file_status(config):
     }
     cache_path = pvdata_mod._field_cache_path(
         _field_cache_dir_from_config(config), "h0_volume_data", payload)
-    required = [
-        "density_3d_fields", "log_r_3d", "log_dV_3d",
-        "mu_at_h1_3d", "zcosmo_3d"]
+    required = ["rho_3d_fields", "r_3d", "log_dV_3d"]
     if geometry == "sphere" and grid_radius is not None:
         required.append("log_volume_weight_3d")
     if load_velocity:

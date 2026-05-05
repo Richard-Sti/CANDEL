@@ -409,7 +409,7 @@ class Manticore_FieldLoader(BaseFieldLoader):
         Directory containing ``mcmc_{nsim}.hdf5`` files.
     """
 
-    def __init__(self, nsim, fpath_root):
+    def __init__(self, nsim, fpath_root, **kwargs):
         self.fname = join(fpath_root, f"mcmc_{nsim}.hdf5")
 
         self.coordinate_frame = "icrs"

@@ -21,6 +21,7 @@ assembly, and catalogue I/O wired to the project config files.
 import hashlib
 import json
 import os
+import re
 import tempfile
 from itertools import chain
 from os.path import abspath, exists, isabs, join
@@ -195,10 +196,57 @@ def _field_cache_dir_from_config(config=None, model_config=None):
     return abspath(cache_dir)
 
 
+def _field_cache_slug(value, max_len=80):
+    text = str(value)
+    text = re.sub(r"[^A-Za-z0-9_.+-]+", "-", text).strip("-")
+    if not text:
+        return "none"
+    return text[:max_len].strip("-") or "none"
+
+
+def _field_cache_float_tag(value):
+    if value is None:
+        return "none"
+    text = f"{float(value):.8g}"
+    return text.replace("-", "m").replace(".", "p")
+
+
+def _field_cache_indices_tag(indices):
+    values = [int(x) for x in indices]
+    if not values:
+        return "none"
+    ranges = []
+    start = prev = values[0]
+    for value in values[1:]:
+        if value == prev + 1:
+            prev = value
+            continue
+        ranges.append(f"{start}-{prev}" if start != prev else str(start))
+        start = prev = value
+    ranges.append(f"{start}-{prev}" if start != prev else str(start))
+    return "_".join(ranges)
+
+
+def _h0_volume_cache_filename(payload):
+    """Readable, cluster-portable filename for H0 3D volume caches."""
+    parts = [
+        f"v{_FIELD_CACHE_VERSION}",
+        _field_cache_slug(payload["field_name"], max_len=70),
+        f"fields-{_field_cache_indices_tag(payload['field_indices'])}",
+        _field_cache_slug(payload["geometry"], max_len=20),
+        f"r-{_field_cache_float_tag(payload['subcube_radius'])}",
+        f"ds-{int(payload['downsample'])}",
+        "vel" if payload["load_velocity"] else "density",
+    ]
+    return "__".join(parts) + ".npz"
+
+
 def _field_cache_path(cache_dir, prefix, payload):
     """Return the cache path for a stable JSON payload."""
     if cache_dir is None:
         return None
+    if prefix == "h0_volume_data" and payload.get("kind") == "h0_volume_data":
+        return join(cache_dir, prefix, _h0_volume_cache_filename(payload))
     payload = _jsonable({"version": _FIELD_CACHE_VERSION, **payload})
     key = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     digest = hashlib.sha256(key.encode("utf-8")).hexdigest()[:24]
@@ -277,6 +325,20 @@ def _density_unit_normalization(source):
     return None
 
 
+def _reconstruction_omega_m(
+        reconstruction_name=None, reconstruction_kwargs=None, fallback=0.3):
+    """Return the matter density assumed by a configured reconstruction."""
+    if reconstruction_kwargs:
+        for key in ("Omega_m", "Om0", "Om", "omega_m"):
+            if key in reconstruction_kwargs:
+                return float(reconstruction_kwargs[key])
+    if reconstruction_name is not None:
+        raise ValueError(
+            f"`io.reconstruction_main.{reconstruction_name}` must define "
+            "`Om0` when that reconstruction is used.")
+    return float(fallback)
+
+
 def _extract_subcube(field_3d, observer_pos, dx, radius):
     """Extract a cubic sub-region centered on the observer.
 
@@ -342,27 +404,56 @@ def _precompute_cosmo_3d(log_r_3d, Om0):
     return mu_flat.reshape(shape), z_flat.reshape(shape)
 
 
-def _cached_h0_volume_result(cached, source_meta, mode, load_velocity):
+def _h0_density_fields_from_rho(rho_fields, mode):
+    """Apply the runtime bias-dependent density representation."""
+    rho_fields = np.asarray(rho_fields, dtype=np.float32)
+    if mode == "log_rho":
+        return np.log(rho_fields).astype(np.float32)
+    return (rho_fields - 1.0).astype(np.float32)
+
+
+def _h0_volume_runtime_result(
+        rho_fields, r_3d, log_dV_3d, source_meta, mode, Om0,
+        load_velocity, vrad_fields=None, log_volume_weight_3d=None,
+        rhat_fields=None):
     """Convert cached H0 volume arrays to the data dict used by models."""
     coord_frame = source_meta[0]["state"]["coordinate_frame"]
+    log_r_3d = jnp.asarray(np.log(np.asarray(r_3d)).astype(np.float32))
+    mu_at_h1_3d, zcosmo_3d = _precompute_cosmo_3d(log_r_3d, Om0)
     result = {
-        "density_3d_fields": jnp.asarray(cached["density_3d_fields"]),
-        "log_r_3d": jnp.asarray(cached["log_r_3d"]),
-        "log_dV_3d": float(cached["log_dV_3d"]),
-        "mu_at_h1_3d": jnp.asarray(cached["mu_at_h1_3d"]),
-        "zcosmo_3d": jnp.asarray(cached["zcosmo_3d"]),
+        "density_3d_fields": jnp.asarray(
+            _h0_density_fields_from_rho(rho_fields, mode)),
+        "log_r_3d": log_r_3d,
+        "log_dV_3d": float(log_dV_3d),
+        "mu_at_h1_3d": mu_at_h1_3d,
+        "zcosmo_3d": zcosmo_3d,
         "density_3d_mode": mode,
         "volume_density_batch_size": 1,
         "coordinate_frame_3d": coord_frame,
     }
-    if "log_volume_weight_3d" in cached:
-        result["log_volume_weight_3d"] = jnp.asarray(
-            cached["log_volume_weight_3d"])
+    if log_volume_weight_3d is not None:
+        result["log_volume_weight_3d"] = jnp.asarray(log_volume_weight_3d)
     if load_velocity:
-        result["vrad_3d_fields"] = jnp.asarray(cached["vrad_3d_fields"])
+        result["vrad_3d_fields"] = jnp.asarray(vrad_fields)
         for label in ("rhat_x_3d", "rhat_y_3d", "rhat_z_3d"):
-            result[label] = jnp.asarray(cached[label])
+            result[label] = jnp.asarray(rhat_fields[label])
     return result
+
+
+def _cached_h0_volume_result(cached, source_meta, mode, Om0, load_velocity):
+    """Convert cached H0 base fields to the data dict used by models."""
+    rhat_fields = None
+    if load_velocity:
+        rhat_fields = {
+            label: cached[label]
+            for label in ("rhat_x_3d", "rhat_y_3d", "rhat_z_3d")
+        }
+    return _h0_volume_runtime_result(
+        cached["rho_3d_fields"], cached["r_3d"], cached["log_dV_3d"],
+        source_meta, mode, Om0, load_velocity,
+        vrad_fields=cached["vrad_3d_fields"] if load_velocity else None,
+        log_volume_weight_3d=cached.get("log_volume_weight_3d"),
+        rhat_fields=rhat_fields)
 
 
 def _load_volume_data_for_H0_mpi(
@@ -388,7 +479,8 @@ def _load_volume_data_for_H0_mpi(
             load_velocity=load_velocity,
             geometry=geometry,
             cache_dir=None,
-            cache_enabled=False)
+            cache_enabled=False,
+            return_cache_fields=True)
         local.append((k, {
             key: np.asarray(value)
             for key, value in partial.items()
@@ -410,8 +502,7 @@ def _load_volume_data_for_H0_mpi(
 
             first = parts[0][1]
             for _, arrays in parts[1:]:
-                for label in (
-                        "log_r_3d", "mu_at_h1_3d", "zcosmo_3d"):
+                for label in ("r_3d",):
                     if not np.array_equal(arrays[label], first[label]):
                         raise RuntimeError(
                             "MPI field-cache warmup found inconsistent "
@@ -440,12 +531,10 @@ def _load_volume_data_for_H0_mpi(
                                 f"`{label}` arrays across fields.")
 
             cache_arrays = {
-                "density_3d_fields": np.stack([
-                    arrays["density_3d_fields"][0] for _, arrays in parts]),
-                "log_r_3d": first["log_r_3d"],
+                "rho_3d_fields": np.stack([
+                    arrays["rho_3d_fields"][0] for _, arrays in parts]),
+                "r_3d": first["r_3d"],
                 "log_dV_3d": first["log_dV_3d"],
-                "mu_at_h1_3d": first["mu_at_h1_3d"],
-                "zcosmo_3d": first["zcosmo_3d"],
             }
             if "log_volume_weight_3d" in first:
                 cache_arrays["log_volume_weight_3d"] = (
@@ -468,13 +557,15 @@ def _load_volume_data_for_H0_mpi(
     if cached is None:
         raise RuntimeError(
             f"failed to read MPI-warmed H0 3D volume cache `{cache_path}`.")
-    return _cached_h0_volume_result(cached, source_meta, mode, load_velocity)
+    return _cached_h0_volume_result(
+        cached, source_meta, mode, Om0, load_velocity)
 
 
 def _load_volume_data_for_H0(
         field_name, field_kwargs, field_indices, galaxy_bias, Om0,
         subcube_radius=None, downsample=1, load_velocity=False,
-        geometry="sphere", cache_dir=None, cache_enabled=True):
+        geometry="sphere", cache_dir=None, cache_enabled=True,
+        return_cache_fields=False):
     """Load 3D voxel data for H0 selection integrals.
 
     Returns a dict to be merged into an H0-model data dict. The density field
@@ -488,7 +579,7 @@ def _load_volume_data_for_H0(
             f"`selection_integral_geometry` must be 'sphere' or 'cube', "
             f"got {geometry!r}.")
     mode = _volume_density_mode(galaxy_bias)
-    density_fields = []
+    rho_fields = []
     vrad_fields = [] if load_velocity else None
     log_r_3d = None
     coord_frame = None
@@ -509,15 +600,19 @@ def _load_volume_data_for_H0(
         loaders.append(loader)
         source_meta.append(_field_source_metadata(loader))
 
+    Om0_model = Om0
+    Om0 = _reconstruction_omega_m(
+        field_name, field_kwargs, fallback=Om0_model)
+    if not np.isclose(Om0, Om0_model):
+        fprint(
+            f"using reconstruction Om0={Om0:g} for `{field_name}` "
+            f"instead of model Om0={Om0_model:g}.")
+
     if cache_enabled:
         cache_payload = {
             "kind": "h0_volume_data",
             "field_name": field_name,
-            "field_kwargs": _jsonable(field_kwargs),
             "field_indices": _jsonable(np.asarray(field_indices)),
-            "galaxy_bias": galaxy_bias,
-            "density_mode": mode,
-            "Om0": float(Om0),
             "subcube_radius": subcube_radius,
             "downsample": int(downsample),
             "load_velocity": bool(load_velocity),
@@ -526,9 +621,7 @@ def _load_volume_data_for_H0(
         }
         cache_path = _field_cache_path(
             cache_dir, "h0_volume_data", cache_payload)
-        required = [
-            "density_3d_fields", "log_r_3d", "log_dV_3d",
-            "mu_at_h1_3d", "zcosmo_3d"]
+        required = ["rho_3d_fields", "r_3d", "log_dV_3d"]
         if geometry == "sphere" and subcube_radius is not None:
             required.append("log_volume_weight_3d")
         if load_velocity:
@@ -538,7 +631,7 @@ def _load_volume_data_for_H0(
             cache_path, "H0 3D volume data", required)
         if cached is not None:
             return _cached_h0_volume_result(
-                cached, source_meta, mode, load_velocity)
+                cached, source_meta, mode, Om0, load_velocity)
         fprint("H0 3D volume data cache miss; loading reconstruction "
                f"fields and will cache at `{cache_path}`.")
         mpi_comm = _field_cache_mpi_comm()
@@ -635,14 +728,10 @@ def _load_volume_data_for_H0(
                     "All 3D volume fields must have the same observer "
                     "position after sub-cube extraction.")
 
-        if mode == "log_rho":
-            density = np.log(rho_sub).astype(np.float32)
-        else:
-            density = (rho_sub - 1.0).astype(np.float32)
         if voxel_mask_ref is None:
-            density_fields.append(density)
+            rho_fields.append(rho_sub.astype(np.float32))
         else:
-            density_fields.append(density[voxel_mask_ref])
+            rho_fields.append(rho_sub[voxel_mask_ref].astype(np.float32))
 
         if load_velocity:
             v_rad = np.zeros(rho_sub.shape, dtype=np.float32)
@@ -683,36 +772,37 @@ def _load_volume_data_for_H0(
                    f"{rho_sub.shape}, {int(np.sum(voxel_mask_ref))} "
                    f"weighted spherical voxels, dx={dx:.4f} Mpc/h.")
 
-    mu_at_h1_3d, zcosmo_3d = _precompute_cosmo_3d(log_r_3d, Om0)
+    r_3d = jnp.asarray(np.exp(np.asarray(log_r_3d)).astype(np.float32))
 
-    result = {
-        "density_3d_fields": jnp.asarray(np.stack(density_fields)),
-        "log_r_3d": log_r_3d,
-        "log_dV_3d": log_dV,
-        "mu_at_h1_3d": mu_at_h1_3d,
-        "zcosmo_3d": zcosmo_3d,
-        "density_3d_mode": mode,
-        "volume_density_batch_size": 1,
-        "coordinate_frame_3d": coord_frame,
-    }
-    if log_volume_weight_3d is not None:
-        result["log_volume_weight_3d"] = log_volume_weight_3d
-
+    rhat_fields = {}
     if load_velocity:
-        result["vrad_3d_fields"] = jnp.asarray(np.stack(vrad_fields))
         for i, label in enumerate(("rhat_x_3d", "rhat_y_3d", "rhat_z_3d")):
             rhat = (disp_ref[i] / r_sub_ref).astype(np.float32)
             if voxel_mask_ref is not None:
                 rhat = rhat[voxel_mask_ref]
-            result[label] = jnp.asarray(rhat)
+            rhat_fields[label] = rhat
+
+    rho_fields = np.stack(rho_fields)
+    vrad_fields = np.stack(vrad_fields) if load_velocity else None
+    result = _h0_volume_runtime_result(
+        rho_fields, r_3d, log_dV, source_meta, mode, Om0, load_velocity,
+        vrad_fields=vrad_fields,
+        log_volume_weight_3d=log_volume_weight_3d,
+        rhat_fields=rhat_fields if load_velocity else None)
+    if return_cache_fields:
+        result["rho_3d_fields"] = jnp.asarray(rho_fields)
 
     if cache_enabled:
         cache_arrays = {
-            key: value for key, value in result.items()
-            if key not in (
-                "density_3d_mode", "volume_density_batch_size",
-                "coordinate_frame_3d")
+            "rho_3d_fields": rho_fields,
+            "r_3d": r_3d,
+            "log_dV_3d": log_dV,
         }
+        if log_volume_weight_3d is not None:
+            cache_arrays["log_volume_weight_3d"] = log_volume_weight_3d
+        if load_velocity:
+            cache_arrays["vrad_3d_fields"] = vrad_fields
+            cache_arrays.update(rhat_fields)
         _write_field_cache(cache_path, "H0 3D volume data", cache_arrays)
 
     return result
@@ -1243,7 +1333,13 @@ class PVDataFrame:
 
         r_limits = config_pv_model["r_limits_malmquist"]
         dr = config_pv_model["dr_malmquist"]
-        Om = config.get("model", {}).get("Om", 0.3)
+        Om_model = config_pv_model.get("Om", config_pv_model.get("Om0", 0.3))
+        Om = _reconstruction_omega_m(
+            reconstruction_name, reconstruction_kwargs, fallback=Om_model)
+        if reconstruction_name is not None and not np.isclose(Om, Om_model):
+            fprint(
+                f"using reconstruction Om0={Om:g} for "
+                f"`{reconstruction_name}` instead of model Om0={Om_model:g}.")
         data["r_grid"] = _compute_r_grid(r_limits, dr, data, Om)
 
         los_decay_scale = config_pv_model.get("los_decay_scale", 5.0)

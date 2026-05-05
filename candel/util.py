@@ -165,6 +165,51 @@ def convert_to_absolute_paths(config):
     return config
 
 
+def _selected_reconstruction_names(config):
+    """Return reconstruction names selected by the loaded config."""
+    names = set()
+    for key_path in (
+            "io/SH0ES/which_host_los",
+            "io/which_host_los"):
+        value = get_nested(config, key_path, None)
+        if isinstance(value, str) and value.lower() != "none":
+            names.add(value)
+
+    for key_path in (
+            "io/PV_main/EDD_TRGB/which_host_los",
+            "io/PV_main/EDD_TRGB_grouped/which_host_los",
+            "io/PV_main/EDD_2MTF/which_host_los"):
+        value = get_nested(config, key_path, None)
+        if isinstance(value, str) and value.lower() != "none":
+            names.add(value)
+
+    return names
+
+
+def _validate_runtime_paths(config):
+    """Catch machine-local reconstruction paths before expensive I/O."""
+    if config.get("machine") != "arc":
+        return
+
+    bad_prefixes = (
+        "/mnt/extraspace/",
+        "/mnt/users/rstiskalek/",
+    )
+    recon_main = get_nested(config, "io/reconstruction_main", {})
+    for name in _selected_reconstruction_names(config):
+        section = recon_main.get(name, {})
+        if not isinstance(section, dict):
+            continue
+        for key, value in section.items():
+            if isinstance(value, str) and value.startswith(bad_prefixes):
+                raise ValueError(
+                    f"ARC config selected `{name}` but "
+                    f"`io.reconstruction_main.{name}.{key}` points to "
+                    f"machine-local path `{value}`. Use a path relative to "
+                    "`root_data` or an ARC-local absolute path."
+                )
+
+
 def _deep_merge(base, override):
     """Recursively merge `override` into `base`. Returns a new dict.
 
@@ -235,6 +280,7 @@ def load_config(config_path, replace_none=True, fill_paths=True,
     # Convert relative paths to absolute paths
     if fill_paths:
         config = convert_to_absolute_paths(config)
+        _validate_runtime_paths(config)
 
     shared_params = config.get("inference", {}).get("shared_params", None)
     if shared_params and str(shared_params).lower() != "none":

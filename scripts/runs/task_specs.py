@@ -16,7 +16,7 @@ CH0_PAPER_COMMON = {
     "model/use_uniform_mu_host_priors": False,
     "model/selection_integral_geometry": "sphere",
     "model/selection_integral_grid_radius": 100.0,
-    "model/density_3d_downsample": 2,
+    "model/density_3d_downsample": 1,
     "model/priors/M_B": {"dist": "uniform", "low": -22.0, "high": -18.0},
     "model/priors/Vext": {
         "dist": "vector_uniform_fixed",
