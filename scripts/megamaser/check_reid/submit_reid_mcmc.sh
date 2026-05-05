@@ -23,6 +23,8 @@ REID_INIT="$ROOT/scripts/megamaser/check_reid/reid_ngc4258_init.toml"
 CONFIG="$ROOT/scripts/megamaser/config_maser.toml"
 DATA="$ROOT/data/Megamaser/N4258_disk_data_MarkReid.final"
 BASE_OUTPUT="$ROOT/results/Megamaser/reid_mcmc"
+BATCH_DIR=""
+RUN_LABEL=""
 BURNIN=1000000
 TRIALS=100000000
 WALKERS=1
@@ -65,6 +67,10 @@ Options:
   --data PATH               Reid-format maser data file
   --output-dir DIR          Batch output directory root
                             (default: $BASE_OUTPUT)
+  --batch-dir DIR           Exact batch directory. Use the same value across
+                            init runs to keep them in one folder.
+  --run-label LABEL         Prefix for chain directories and collected outputs
+                            when sharing a batch directory.
   --burnin N                Reid primary burn-in; <=0 uses generated
                             burnin_values.dat (default: $BURNIN)
   --trials N                Reid final MCMC trials; must be >=500000
@@ -103,6 +109,8 @@ while [[ $# -gt 0 ]]; do
         --config) CONFIG="$2"; shift 2 ;;
         --data) DATA="$2"; shift 2 ;;
         --output-dir) BASE_OUTPUT="$2"; shift 2 ;;
+        --batch-dir) BATCH_DIR="$2"; shift 2 ;;
+        --run-label) RUN_LABEL="$2"; shift 2 ;;
         --burnin) BURNIN="$2"; shift 2 ;;
         --trials) TRIALS="$2"; shift 2 ;;
         --walkers) WALKERS="$2"; shift 2 ;;
@@ -132,12 +140,32 @@ if [[ "$INIT" != "reid" && "$INIT" != "config" && "$INIT" != "de-npz" ]]; then
     echo "[ERROR] --init must be reid, config, or de-npz"; exit 1
 fi
 
+sanitize_label() {
+    local label="$1"
+    label="$(printf "%s" "$label" | tr -c 'A-Za-z0-9_.-' '_' | sed -E 's/^_+//; s/_+$//; s/_+/_/g')"
+    if [[ -z "$label" ]]; then
+        label="run"
+    fi
+    printf "%s" "$label"
+}
+
 if $WORKER; then
+    run_label="$(sanitize_label "${RUN_LABEL:-$INIT}")"
+    shared_names=false
     stamp="$(date +%Y%m%d_%H%M%S)"
-    batch_dir="$BASE_OUTPUT/${GALAXY}_${INIT}_${CHAINS}chains_${stamp}"
+    if [[ -n "$BATCH_DIR" ]]; then
+        batch_dir="$BATCH_DIR"
+        shared_names=true
+    else
+        batch_dir="$BASE_OUTPUT/${GALAXY}_${INIT}_${CHAINS}chains_${stamp}"
+    fi
+    if [[ -n "$RUN_LABEL" ]]; then
+        shared_names=true
+    fi
     mkdir -p "$batch_dir"
     echo "Running Reid chains on $(hostname)"
     echo "  batch_dir=$batch_dir"
+    echo "  run_label=$run_label"
     echo "  chains=$CHAINS, trials=$TRIALS, walkers=$WALKERS"
     echo "  init=$INIT"
     if $STREAM_CHAIN_OUTPUT; then
@@ -148,10 +176,19 @@ if $WORKER; then
 
     pids=()
     log_paths=()
+    chain_dirs_file="$batch_dir/chain_dirs.txt"
+    collect_prefix="global"
+    chain_prefix="chain"
+    if $shared_names; then
+        chain_dirs_file="$batch_dir/chain_dirs_${run_label}.txt"
+        collect_prefix="${run_label}_global"
+        chain_prefix="${run_label}_chain"
+    fi
+    : > "$chain_dirs_file"
     for ((i = 0; i < CHAINS; i++)); do
         chain_seed=$((SEED + i * SEED_STEP))
         chain_id="$(printf "%02d" "$i")"
-        chain_dir="$batch_dir/chain_${chain_id}_seed_${chain_seed}"
+        chain_dir="$batch_dir/${chain_prefix}_${chain_id}_seed_${chain_seed}"
         mkdir -p "$chain_dir"
 
         cmd=(
@@ -190,7 +227,7 @@ if $WORKER; then
         pids+=("$!")
         log_paths+=("$chain_dir/wrapper.stdout")
         pid="${pids[$((${#pids[@]} - 1))]}"
-        echo "$chain_dir" >> "$batch_dir/chain_dirs.txt"
+        echo "$chain_dir" >> "$chain_dirs_file"
         echo "  launched chain $chain_id seed=$chain_seed pid=$pid log=$chain_dir/wrapper.stdout"
     done
 
@@ -210,11 +247,12 @@ if $WORKER; then
         exit 1
     fi
 
-    mapfile -t chain_dirs < "$batch_dir/chain_dirs.txt"
+    mapfile -t chain_dirs < "$chain_dirs_file"
     collect_cmd=(
         "$CANDEL_PYTHON" -u "$RUNNER"
         --collect-chain-dirs "${chain_dirs[@]}"
         --output-dir "$batch_dir"
+        --collect-output-prefix "$collect_prefix"
     )
     [[ -n "$PLOT_PARAMS" ]] && collect_cmd+=(--plot-params "$PLOT_PARAMS")
 
@@ -241,6 +279,8 @@ echo "  memory:          ${MEM_TOTAL} GB total (${MEM_PER_CHAIN} GB per chain)"
 echo "  trials/chain:    $TRIALS"
 echo "  init:            $INIT"
 echo "  output root:     $BASE_OUTPUT"
+[[ -n "$BATCH_DIR" ]] && echo "  batch dir:       $BATCH_DIR"
+[[ -n "$RUN_LABEL" ]] && echo "  run label:       $RUN_LABEL"
 
 cmd=(
     /bin/bash "$THIS" --worker
@@ -262,6 +302,8 @@ cmd=(
     --vcor "$VCOR"
     --step-fraction "$STEP_FRACTION"
 )
+[[ -n "$BATCH_DIR" ]] && cmd+=(--batch-dir "$BATCH_DIR")
+[[ -n "$RUN_LABEL" ]] && cmd+=(--run-label "$RUN_LABEL")
 [[ -n "$STATUS_INTERVAL" ]] && cmd+=(--status-interval "$STATUS_INTERVAL")
 [[ -n "$TIME" ]] && cmd+=(--time "$TIME")
 [[ -n "$H0_LOW" ]] && cmd+=(--h0-low "$H0_LOW")
