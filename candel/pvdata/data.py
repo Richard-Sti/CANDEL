@@ -191,8 +191,7 @@ def _field_cache_dir_from_config(config=None, model_config=None):
             return None
         cache_dir = join(get_root_data(config), "field_cache")
     elif config is not None and not isabs(cache_dir):
-        cache_dir = join(config.get("root_main", get_root_data(config)),
-                         cache_dir)
+        cache_dir = join(get_root_data(config), cache_dir)
     return abspath(cache_dir)
 
 
