@@ -14,6 +14,7 @@
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 """Cepheid-calibrated H0 (CH0) forward model in JAX."""
 import jax.numpy as jnp
+import numpy as np
 from jax import lax
 from jax.scipy.special import logsumexp
 from jax.scipy.stats import norm as norm_jax
@@ -130,10 +131,33 @@ class CH0Model(H0ModelBase):
     def _load_data(self, data):
         self.config.setdefault("io", {}).setdefault("load_rand_los", False)
         super()._load_data(data)
+        self._setup_cepheid_host_index()
 
     def _set_data_arrays(self, data):
         skip = ("q_names", "host_map", "host_names")
         super()._set_data_arrays(data, skip_keys=skip)
+
+    def _setup_cepheid_host_index(self):
+        """Precompute Cepheid host indices from the one-hot design matrix."""
+        L_dist = np.asarray(self.L_Cepheid_host_dist)
+        if L_dist.ndim != 2:
+            raise ValueError(
+                "`L_Cepheid_host_dist` must be a 2D one-hot matrix.")
+
+        nonzero = L_dist != 0
+        row_nnz = np.sum(nonzero, axis=1)
+        if not np.all(row_nnz == 1):
+            raise ValueError(
+                "`L_Cepheid_host_dist` must have exactly one nonzero entry "
+                "per Cepheid row.")
+
+        host_index = np.argmax(nonzero, axis=1)
+        row_values = L_dist[np.arange(L_dist.shape[0]), host_index]
+        if not np.all(row_values == 1):
+            raise ValueError(
+                "`L_Cepheid_host_dist` nonzero entries must all equal one.")
+
+        self._cepheid_host_index = jnp.asarray(host_index)
 
     def _setup_malmquist_grid(self):
         """Set only the selection grid needed by CH0.
@@ -670,9 +694,8 @@ class CH0Model(H0ModelBase):
             ll_reconstruction = self._factor_no_selection_distance_prior_norm(
                 r_host, H0, bias_params, ll_reconstruction)
 
-        # Now assign these host distances to each Cepheid.
-        mu_cepheid = (self.L_Cepheid_host_dist @ mu_host_cepheid
-                      ).at[self.idx_dZP].add(dZP)
+        mu_cepheid = mu_host_cepheid[self._cepheid_host_index]
+        mu_cepheid = mu_cepheid.at[self.idx_dZP].add(dZP)
 
         mag_cepheid = mu_cepheid + M_W + b_W * self.logP + Z_W * self.OH
         factor(
