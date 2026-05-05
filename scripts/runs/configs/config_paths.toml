@@ -110,8 +110,6 @@ dr = 0.5
 path_density = "data/fields/carrick2015_twompp_density.npy"
 path_velocity = "data/fields/carrick2015_twompp_velocity.npy"
 
-# Machine-specific absolute paths below. These can be overridden
-# in local_config.toml if needed.
 [io.reconstruction_main.manticore_2MPP_MULTIBIN_N256_DES_V2]
 fpath_root = "/mnt/extraspace/rstiskalek/MANTICORE/2MPP_MULTIBIN_N256_DES_V2/sph_fields_new_feb/sph_fields"
 

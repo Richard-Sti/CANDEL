@@ -8,9 +8,10 @@ base = ["config_priors.toml", "config_paths.toml"]
 num_warmup = 1000
 num_samples = 5000
 num_chains = 4
-chain_method = "vectorized"
+chain_method = "sequential"
 seed = 44
 num_chains_harmonic = 10
+skip_if_exists = false
 
 ###############################################################################
 #                                 Model                                       #
@@ -44,7 +45,10 @@ mag_lim_SN_width = 0.15
 # the first N Cepheid hosts are treated as SN-magnitude selected.
 num_hosts_selection_mag = 35
 
-distmod_limits = [15, 43]
+distmod_limits = [27.5, 36]
+distmod_limits_LMC = [17, 20]
+distmod_limits_N4258 = [28, 31]
+distmod_limits_anchor = [23, 26]
 
 # 3D selection integral spherical truncation radius in Mpc/h.
 selection_integral_geometry = "sphere"
