@@ -22,6 +22,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import tempfile
 from itertools import chain
 from os.path import abspath, exists, isabs, join
@@ -385,8 +386,8 @@ def _warn_coarse_sphere_radius(radius, dx, label):
             "the radius or decreasing `density_3d_downsample`.")
 
 
-def _precompute_cosmo_3d(log_r_3d, Om0):
-    """Precompute h=1 distance modulus and cosmological redshift on 3D grid.
+def _precompute_cosmo_3d(log_r_3d, Om0, include_redshift=True):
+    """Precompute h=1 distance modulus and optionally redshift on 3D grid.
 
     At runtime: mu(r, h) = mu_at_h1 - 5*log10(h), z_cosmo is h-independent.
     Both depend only on r in Mpc/h, which is fixed by the grid geometry.
@@ -395,39 +396,67 @@ def _precompute_cosmo_3d(log_r_3d, Om0):
 
     r_flat = jnp.exp(jnp.asarray(log_r_3d).ravel())
     mu_flat = Distance2Distmod(Om0=Om0)(r_flat, h=1.0)
-    z_flat = Distance2Redshift(Om0=Om0)(r_flat, h=1.0)
+    if include_redshift:
+        z_flat = Distance2Redshift(Om0=Om0)(r_flat, h=1.0)
+    else:
+        z_flat = None
 
     shape = log_r_3d.shape
-    return mu_flat.reshape(shape), z_flat.reshape(shape)
+    z_3d = None if z_flat is None else z_flat.reshape(shape)
+    return mu_flat.reshape(shape), z_3d
 
 
-def _h0_density_fields_from_rho(rho_fields, mode):
+def _h0_density_fields_from_rho(rho_fields, mode, copy=True):
     """Apply the runtime bias-dependent density representation."""
-    rho_fields = np.asarray(rho_fields, dtype=np.float32)
+    if copy:
+        rho_fields = np.array(rho_fields, dtype=np.float32, copy=True)
+    else:
+        rho_fields = np.asarray(rho_fields, dtype=np.float32)
+        if not rho_fields.flags.writeable:
+            rho_fields = np.array(rho_fields, dtype=np.float32, copy=True)
+
     if mode == "log_rho":
-        return np.log(rho_fields).astype(np.float32)
-    return (rho_fields - 1.0).astype(np.float32)
+        np.log(rho_fields, out=rho_fields)
+    else:
+        np.subtract(rho_fields, 1.0, out=rho_fields)
+    return rho_fields
+
+
+def _h0_log_radius_from_r(r_3d, copy=True):
+    """Return log radius, optionally reusing the input array's memory."""
+    if copy:
+        log_r_3d = np.array(r_3d, dtype=np.float32, copy=True)
+    else:
+        log_r_3d = np.asarray(r_3d, dtype=np.float32)
+        if not log_r_3d.flags.writeable:
+            log_r_3d = np.array(log_r_3d, dtype=np.float32, copy=True)
+    np.log(log_r_3d, out=log_r_3d)
+    return log_r_3d
 
 
 def _h0_volume_runtime_result(
         rho_fields, r_3d, log_dV_3d, source_meta, mode, Om0,
         load_velocity, vrad_fields=None, log_volume_weight_3d=None,
-        rhat_fields=None):
+        rhat_fields=None, copy_inputs=True):
     """Convert cached H0 volume arrays to the data dict used by models."""
     coord_frame = source_meta[0]["state"]["coordinate_frame"]
-    log_r_3d = jnp.asarray(np.log(np.asarray(r_3d)).astype(np.float32))
-    mu_at_h1_3d, zcosmo_3d = _precompute_cosmo_3d(log_r_3d, Om0)
+    log_r_3d = jnp.asarray(_h0_log_radius_from_r(r_3d, copy=copy_inputs))
+    mu_at_h1_3d, zcosmo_3d = _precompute_cosmo_3d(
+        log_r_3d, Om0, include_redshift=load_velocity)
+    density_3d_fields = jnp.asarray(
+        _h0_density_fields_from_rho(rho_fields, mode, copy=copy_inputs))
+    del rho_fields, r_3d
     result = {
-        "density_3d_fields": jnp.asarray(
-            _h0_density_fields_from_rho(rho_fields, mode)),
+        "density_3d_fields": density_3d_fields,
         "log_r_3d": log_r_3d,
         "log_dV_3d": float(log_dV_3d),
         "mu_at_h1_3d": mu_at_h1_3d,
-        "zcosmo_3d": zcosmo_3d,
         "density_3d_mode": mode,
         "volume_density_batch_size": 1,
         "coordinate_frame_3d": coord_frame,
     }
+    if zcosmo_3d is not None:
+        result["zcosmo_3d"] = zcosmo_3d
     if log_volume_weight_3d is not None:
         result["log_volume_weight_3d"] = jnp.asarray(log_volume_weight_3d)
     if load_velocity:
@@ -440,17 +469,49 @@ def _h0_volume_runtime_result(
 def _cached_h0_volume_result(cached, source_meta, mode, Om0, load_velocity):
     """Convert cached H0 base fields to the data dict used by models."""
     rhat_fields = None
+    rho_fields = cached.pop("rho_3d_fields")
+    r_3d = cached.pop("r_3d")
+    log_dV_3d = cached.pop("log_dV_3d")
+    log_volume_weight_3d = cached.pop("log_volume_weight_3d", None)
+    vrad_fields = None
     if load_velocity:
+        vrad_fields = cached.pop("vrad_3d_fields")
         rhat_fields = {
-            label: cached[label]
+            label: cached.pop(label)
             for label in ("rhat_x_3d", "rhat_y_3d", "rhat_z_3d")
         }
     return _h0_volume_runtime_result(
-        cached["rho_3d_fields"], cached["r_3d"], cached["log_dV_3d"],
-        source_meta, mode, Om0, load_velocity,
-        vrad_fields=cached["vrad_3d_fields"] if load_velocity else None,
-        log_volume_weight_3d=cached.get("log_volume_weight_3d"),
-        rhat_fields=rhat_fields)
+        rho_fields, r_3d, log_dV_3d, source_meta, mode, Om0, load_velocity,
+        vrad_fields=vrad_fields, log_volume_weight_3d=log_volume_weight_3d,
+        rhat_fields=rhat_fields, copy_inputs=False)
+
+
+def _write_h0_volume_mpi_part(path, parts):
+    """Write one MPI rank's warmed H0 volume fields to a temporary file."""
+    arrays = {
+        "field_order": np.asarray([k for k, _ in parts], dtype=np.int64),
+    }
+    for i, (_, field_arrays) in enumerate(parts):
+        prefix = f"field_{i}__"
+        for key, value in field_arrays.items():
+            arrays[f"{prefix}{key}"] = np.asarray(value)
+    np.savez(path, **arrays)
+
+
+def _read_h0_volume_mpi_part(path):
+    """Read one MPI rank's temporary H0 volume field file."""
+    parts = []
+    with np.load(path, allow_pickle=False) as f:
+        field_order = [int(k) for k in f["field_order"]]
+        for i, k in enumerate(field_order):
+            prefix = f"field_{i}__"
+            arrays = {
+                key[len(prefix):]: f[key]
+                for key in f.files
+                if key.startswith(prefix)
+            }
+            parts.append((k, arrays))
+    return parts
 
 
 def _load_volume_data_for_H0_mpi(
@@ -463,34 +524,68 @@ def _load_volume_data_for_H0_mpi(
     if rank == 0:
         fprint(f"MPI field-cache warmup: splitting {len(field_indices)} "
                f"field(s) over {size} rank(s).")
+        cache_dir = os.path.dirname(cache_path)
+        os.makedirs(cache_dir, exist_ok=True)
+        part_dir = tempfile.mkdtemp(
+            prefix=f".tmp_{os.path.basename(cache_path)}_mpi_",
+            dir=cache_dir)
+    else:
+        part_dir = None
+    part_dir = comm.bcast(part_dir, root=0)
 
     local = []
-    for k, nsim in enumerate(field_indices):
-        if k % size != rank:
-            continue
-        fprint(f"rank {rank}: warming field {k} (nsim={int(nsim)}).")
-        partial = _load_volume_data_for_H0(
-            field_name, field_kwargs, [int(nsim)], galaxy_bias, Om0,
-            subcube_radius=subcube_radius,
-            downsample=downsample,
-            load_velocity=load_velocity,
-            geometry=geometry,
-            cache_dir=None,
-            cache_enabled=False,
-            return_cache_fields=True)
-        local.append((k, {
-            key: np.asarray(value)
-            for key, value in partial.items()
-            if key not in (
-                "density_3d_mode", "volume_density_batch_size",
-                "coordinate_frame_3d")
-        }))
+    part_path = join(part_dir, f"rank_{rank}.npz")
+    part_keys = {
+        "rho_3d_fields", "r_3d", "log_dV_3d", "log_volume_weight_3d",
+    }
+    if load_velocity:
+        part_keys.update({
+            "vrad_3d_fields", "rhat_x_3d", "rhat_y_3d", "rhat_z_3d",
+        })
+    try:
+        for k, nsim in enumerate(field_indices):
+            if k % size != rank:
+                continue
+            fprint(f"rank {rank}: warming field {k} (nsim={int(nsim)}).")
+            partial = _load_volume_data_for_H0(
+                field_name, field_kwargs, [int(nsim)], galaxy_bias, Om0,
+                subcube_radius=subcube_radius,
+                downsample=downsample,
+                load_velocity=load_velocity,
+                geometry=geometry,
+                cache_dir=None,
+                cache_enabled=False,
+                return_cache_fields=True)
+            local.append((k, {
+                key: np.asarray(value)
+                for key, value in partial.items()
+                if key in part_keys
+            }))
+        _write_h0_volume_mpi_part(part_path, local)
+        manifest = {
+            "rank": rank, "path": part_path, "count": len(local),
+            "error": None,
+        }
+    except Exception as exc:
+        manifest = {
+            "rank": rank, "path": None, "count": 0, "error": repr(exc),
+        }
 
-    gathered = comm.gather(local, root=0)
+    manifests = comm.gather(manifest, root=0)
     error = None
     if rank == 0:
         try:
-            parts = [item for rank_parts in gathered for item in rank_parts]
+            failures = [
+                f"rank {item['rank']}: {item['error']}"
+                for item in manifests
+                if item["error"] is not None
+            ]
+            if failures:
+                raise RuntimeError("; ".join(failures))
+
+            parts = []
+            for item in manifests:
+                parts.extend(_read_h0_volume_mpi_part(item["path"]))
             parts.sort(key=lambda item: item[0])
             if len(parts) != len(field_indices):
                 raise RuntimeError(
@@ -545,6 +640,8 @@ def _load_volume_data_for_H0_mpi(
             _write_field_cache(cache_path, "H0 3D volume data", cache_arrays)
         except Exception as exc:
             error = repr(exc)
+        finally:
+            shutil.rmtree(part_dir, ignore_errors=True)
 
     error = comm.bcast(error, root=0)
     if error is not None:
@@ -781,6 +878,7 @@ def _load_volume_data_for_H0(
         rhat_fields=rhat_fields if load_velocity else None)
     if return_cache_fields:
         result["rho_3d_fields"] = jnp.asarray(rho_fields)
+        result["r_3d"] = r_3d
 
     if cache_enabled:
         cache_arrays = {
