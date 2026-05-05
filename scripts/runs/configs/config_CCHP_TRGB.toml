@@ -26,6 +26,8 @@ which_bias = "linear"
 which_selection = "SN_magnitude"
 
 distmod_limits = [15, 40]
+distmod_limits_LMC = [17, 20]
+distmod_limits_N4258 = [28, 31]
 r_limits_malmquist = [0.01, 150]
 num_points_malmquist = 101
 

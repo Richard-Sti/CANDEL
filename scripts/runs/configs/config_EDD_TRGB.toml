@@ -44,6 +44,8 @@ ppc_factor = 10
 num_rand_los_no_recon = 1000
 # max_rand_los: disabled, use all available random LOS
 distmod_limits = [10, 38]
+distmod_limits_LMC = [17, 20]
+distmod_limits_N4258 = [28, 31]
 r_limits_malmquist = [0.01, 35]
 
 delta_mu = 0.00625

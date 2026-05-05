@@ -14,7 +14,6 @@ CH0_PAPER_COMMON = {
     "inference/num_warmup": 1000,
     "inference/num_samples": 6000,
     "model/use_uniform_mu_host_priors": False,
-    "model/use_anchor_volume_prior": False,
     "model/selection_integral_geometry": "sphere",
     "model/selection_integral_grid_radius": 100.0,
     "model/density_3d_downsample": 2,
