@@ -23,7 +23,6 @@ gpu_flag=false
 no_gpu=false
 walltime=""
 tasks_spec=""
-skip_done=false
 status_only=false
 local_mode=false
 dry=false
@@ -32,7 +31,7 @@ usage() {
     cat <<EOF
 usage: $(basename "$0") -q QUEUE [-n NCPU] [-m MEMORY]
                         [--gpu | --no-gpu] [--gputype TYPE] [--time T]
-                        [--tasks SPEC] [--skip-done]
+                        [--tasks SPEC]
                         [--status] [--local] [--dry] <task_index>
 
 Submit CANDEL inference tasks.
@@ -61,7 +60,6 @@ options:
                            ignored on glamdring)
   --tasks SPEC            Comma-separated task IDs / ranges to submit
                           (e.g. 3,5,7-9). Default: all tasks in the file.
-  --skip-done             Skip tasks whose io/fname_output already exists.
   --status                Report done/pending status for each task and exit
                           (no submission). Respects --tasks SPEC. -q is
                           not required in this mode.
@@ -85,7 +83,6 @@ while [[ $# -gt 0 ]]; do
         --gpu-mem)       gpu_mem="$2"; shift 2 ;;
         --time)          walltime="$2"; shift 2 ;;
         --tasks)         tasks_spec="$2"; shift 2 ;;
-        --skip-done)     skip_done=true; shift ;;
         --status)        status_only=true; shift ;;
         --local)         local_mode=true; shift ;;
         --dry)           dry=true; shift ;;
@@ -188,7 +185,7 @@ if [[ -n "$tasks_spec" ]]; then
 fi
 
 # Walk the task file once, filtering by --tasks and resolving output paths
-# so --skip-done and --status don't need a second pass.
+# for --status.
 task_lines=()
 task_outputs=()
 task_done=()
@@ -229,22 +226,8 @@ if $status_only; then
     exit 0
 fi
 
-# --skip-done: drop the rows whose output exists.
-if $skip_done; then
-    filtered_lines=()
-    for i in "${!task_lines[@]}"; do
-        id=${task_lines[$i]%% *}
-        if [[ "${task_done[$i]}" == 1 ]]; then
-            echo "[SKIP] task $id: output exists (${task_outputs[$i]})"
-            continue
-        fi
-        filtered_lines+=("${task_lines[$i]}")
-    done
-    task_lines=("${filtered_lines[@]}")
-fi
-
 if (( ${#task_lines[@]} == 0 )); then
-    echo "[INFO] No tasks to submit after filtering."; exit 0
+    echo "[INFO] No tasks to submit."; exit 0
 fi
 
 if (( CANDEL_USE_FROZEN )); then

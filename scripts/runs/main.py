@@ -24,7 +24,6 @@ import sys
 import threading
 import time
 from argparse import ArgumentParser
-from os.path import exists
 
 # ---- Pre-parse device args BEFORE importing anything that pulls JAX/NumPyro
 _pre = ArgumentParser(add_help=False)
@@ -177,15 +176,7 @@ if __name__ == "__main__":
     gpu_monitor.start()
 
     config = candel.load_config(args.config, replace_los_prior=False)
-
     fname_out = get_nested(config, "io/fname_output")
-    skip_if_exists = get_nested(config, "inference/skip_if_exists", False)
-    if skip_if_exists and exists(fname_out):
-        fprint(f"Output file `{fname_out}` already exists. "
-               "Skipping inference.")
-        insert_comment_at_top(args.config, "skipped")
-        gpu_monitor.stop()
-        sys.exit(0)
 
     try:
         which_run = get_nested(config, "model/which_run", None)
