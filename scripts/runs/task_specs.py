@@ -140,7 +140,7 @@ def _ch0_mixed_selection_datasets():
 TASK_SPECS = {
     "CH0_main": {
         "description": "CH0 paper Table H0 PV-model x selection grid.",
-        "config_path": "configs/config_shoes.toml",
+        "config_path": "configs/config_CH0.toml",
         "tag": "paper",
         "common": {
             **CH0_PAPER_COMMON,
@@ -154,7 +154,7 @@ TASK_SPECS = {
     },
     "CH0_mixed_selection": {
         "description": "CH0 paper mixed SN-magnitude/redshift split.",
-        "config_path": "configs/config_shoes.toml",
+        "config_path": "configs/config_CH0.toml",
         "tag": "paper_mixed",
         "common": {
             **CH0_PAPER_COMMON,

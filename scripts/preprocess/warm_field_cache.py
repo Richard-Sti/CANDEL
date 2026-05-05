@@ -580,7 +580,7 @@ def main():
             examples:
               warm_field_cache.py scripts/runs/tasks_CH0_main.txt
               warm_field_cache.py scripts/runs/tasks_CH0_main.txt --tasks 12-23
-              warm_field_cache.py scripts/runs/configs/config_shoes.toml --selection SN_magnitude,redshift
+              warm_field_cache.py scripts/runs/configs/config_CH0.toml --selection SN_magnitude,redshift
             """))
     parser.add_argument(
         "inputs", nargs="*", type=Path,

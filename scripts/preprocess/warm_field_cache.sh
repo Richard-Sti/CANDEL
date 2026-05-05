@@ -4,7 +4,7 @@
 #
 # Examples:
 #   ./warm_field_cache.sh \
-#       scripts/runs/configs/config_shoes.toml \
+#       scripts/runs/configs/config_CH0.toml \
 #       --selection SN_magnitude --selection redshift
 #
 #   ./warm_field_cache.sh \
