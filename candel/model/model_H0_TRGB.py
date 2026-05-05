@@ -15,6 +15,7 @@
 """TRGB-calibrated H0 forward model for EDD TRGB distance indicators."""
 import jax.numpy as jnp
 import numpy as np
+from jax import lax
 from jax.scipy.special import logsumexp
 from jax.scipy.stats import norm as norm_jax
 from numpyro import factor, sample
@@ -99,6 +100,24 @@ class TRGBModel(H0ModelBase):
         if self.use_reconstruction and not self.has_host_los:
             raise ValueError(
                 "`use_reconstruction` requires host LOS interpolators.")
+        if (self.use_reconstruction and not self.apply_sel
+                and self.selection_integral_grid_radius is None):
+            raise ValueError(
+                "Reconstructed no-selection TRGB runs require "
+                "`model.selection_integral_grid_radius` for the finite "
+                "3D distance-prior normalizer.")
+        if (self.use_reconstruction and not self.apply_sel
+                and not self.has_volume_density_3d):
+            raise ValueError(
+                "Reconstructed no-selection TRGB runs require 3D density "
+                "data for the finite distance-prior normalizer.")
+        if (self.use_reconstruction and not self.apply_sel
+                and self.has_volume_density_3d
+                and self.density_3d_fields.shape[0] != self.num_fields):
+            raise ValueError(
+                "Number of 3D density fields "
+                f"({self.density_3d_fields.shape[0]}) does not match LOS "
+                f"field realisations ({self.num_fields}).")
 
         allowed_selection = [
             "TRGB_magnitude", "redshift", "SN_magnitude", None]
@@ -153,9 +172,8 @@ class TRGBModel(H0ModelBase):
         h = H0 / 100
 
         # --- Distance moduli ---
-        dist = Uniform(*self.distmod_limits)
-        mu_LMC = sample("mu_LMC", dist)
-        mu_N4258 = sample("mu_N4258", dist)
+        mu_LMC = sample("mu_LMC", Uniform(*self.distmod_limits_LMC))
+        mu_N4258 = sample("mu_N4258", Uniform(*self.distmod_limits_N4258))
 
         # --- Geometric anchor constraints ---
         sample("mu_LMC_ll",
@@ -253,6 +271,28 @@ class TRGBModel(H0ModelBase):
     #  Distance marginalization path
     # ------------------------------------------------------------------
 
+    def _compute_no_selection_volume_log_norm(self, bias_params, H0):
+        """3D normalizer for reconstructed no-selection TRGB runs."""
+        h = H0 / 100
+        log_r_phys_3d = self.log_r_3d - jnp.log(h)
+        r_min = self.r_host_range[0]
+        r_max = self.r_host_range[-1]
+        in_support = (
+            (self.log_r_3d <= jnp.log(self.selection_integral_grid_radius))
+            & (log_r_phys_3d >= jnp.log(r_min))
+            & (log_r_phys_3d <= jnp.log(r_max))
+        )
+        log_cell_weight = self._selection_3d_log_measure(H0)
+
+        def _one(density_3d):
+            log_n = self._vol_sel_galaxy_bias(density_3d, bias_params)
+            return logsumexp(jnp.where(in_support,
+                                       log_n + log_cell_weight,
+                                       -jnp.inf))
+
+        return lax.map(_one, self.density_3d_fields,
+                       batch_size=self.volume_density_batch_size)
+
     def _call_marginalized(self, h, M_TRGB, sigma_int, sigma_v, beta,
                            bias_params, Vext_rad_host, r_grid, lp_r,
                            e2_cz, log_S,
@@ -301,23 +341,28 @@ class TRGBModel(H0ModelBase):
 
             lp_dist_w = lp_dist + log_w
 
-            # Unnormalized distance integral: log ∫ L_i r²(1+b₁δ_i) dr
-            # We do NOT subtract log_normalizer (= log Z_i) because the
-            # angular prior π(ℓ,b) ∝ Z(ℓ,b) cancels it. The b₁ constraint
-            # comes from Z_i variation across hosts.
+            # Unnormalized distance integral. Selected runs subtract the
+            # selection integral; no-selection runs subtract the 3D prior
+            # integral over the finite reconstruction volume.
             integrand = lp_dist_w + ll_mag[None, :, :] + ll_cz
             if ll_sn_host is not None:
                 integrand = integrand + ll_sn_host[None, :, :]
+            if not self.apply_sel:
+                in_volume = rh_grid <= self.selection_integral_grid_radius
+                integrand = jnp.where(in_volume[None, None, :],
+                                      integrand, -jnp.inf)
             ll_host = logsumexp(integrand, axis=-1)
 
             if self.apply_sel:
                 ll_host -= log_S[:, None]
+            else:
+                log_norm = self._compute_no_selection_volume_log_norm(
+                    bias_params, 100 * h)
+                ll_host -= log_norm[:, None]
             ll_host = logmeanexp(ll_host, axis=0)
         else:
             # Distance prior (volume only)
             lp_dist = lp_r[None, :]
-            log_normalizer = ln_simpson_precomputed(
-                lp_dist, log_w, axis=-1)
 
             # Redshift likelihood on grid
             Vpec_no_recon = Vext_rad_host[:, None]
@@ -327,12 +372,13 @@ class TRGBModel(H0ModelBase):
             ll_cz = ll_cz_fn(
                 self.czcmb[:, None], cz_pred, e2_cz[:, None])
 
-            # Marginalize over distance
+            # Marginalize over distance. With explicit selection, keep the
+            # same unnormalized r^2 measure as the selection integral so the
+            # prior normalization cancels.
             integrand = lp_dist + ll_mag + ll_cz
             if ll_sn_host is not None:
                 integrand = integrand + ll_sn_host
-            ll_host = ln_simpson_precomputed(
-                integrand, log_w, axis=-1) - log_normalizer
+            ll_host = ln_simpson_precomputed(integrand, log_w, axis=-1)
 
             if self.apply_sel:
                 ll_host -= log_S[0]

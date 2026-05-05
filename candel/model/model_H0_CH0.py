@@ -14,6 +14,8 @@
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 """Cepheid-calibrated H0 (CH0) forward model in JAX."""
 import jax.numpy as jnp
+from jax import lax
+from jax.scipy.special import logsumexp
 from jax.scipy.stats import norm as norm_jax
 from numpyro import deterministic, factor, plate, sample
 from numpyro.distributions import MultivariateNormal, Normal, Uniform
@@ -98,9 +100,6 @@ class CH0Model(H0ModelBase):
         self.use_uniform_mu_host_priors = get_nested(
             config, "model/use_uniform_mu_host_priors", True)
         fprint(f"use_uniform_mu_host_priors set to {self.use_uniform_mu_host_priors}")  # noqa
-        self.use_anchor_volume_prior = get_nested(
-            config, "model/use_anchor_volume_prior", False)
-        fprint(f"use_anchor_volume_prior set to {self.use_anchor_volume_prior}")  # noqa
         self.use_fiducial_Cepheid_host_PV_covariance = get_nested(
             config, "model/use_fiducial_Cepheid_host_PV_covariance", True)
         fprint(f"use_fiducial_Cepheid_host_PV_covariance set to {self.use_fiducial_Cepheid_host_PV_covariance}")  # noqa
@@ -143,6 +142,18 @@ class CH0Model(H0ModelBase):
         grid. Reconstruction selections use the shared 3D volume integral;
         no-reconstruction selections still need a radial selection grid.
         """
+        if self.apply_sel and self.use_uniform_mu_host_priors:
+            if self.use_reconstruction:
+                if self.selection_integral_grid_radius is not None:
+                    self._cap_uniform_mu_limits_to_selection(
+                        rh_max=self.selection_integral_grid_radius)
+            else:
+                r_min = 0.01
+                r_max_sel = get_nested(
+                    self.config, "model/r_max_selection", 70)
+                self._cap_uniform_mu_limits_to_selection(
+                    r_min=r_min, r_max=r_max_sel)
+
         if not self.use_reconstruction and self.apply_sel:
             r_min = 0.01
             r_max_sel = get_nested(self.config, "model/r_max_selection", 70)
@@ -159,6 +170,58 @@ class CH0Model(H0ModelBase):
             fprint(f"selection grid: {num_pts} points over "
                    f"[{r_min}, {r_max_sel}] Mpc (dr={dr:.3f}).")
         return
+
+    def _H0_support_values(self):
+        """Representative bounded H0 support values for grid coverage."""
+        dist = self.priors["H0"]
+        dist_name = self.prior_dist_name.get("H0")
+        if dist_name == "delta":
+            return jnp.atleast_1d(dist.v)
+        if hasattr(dist, "low") and hasattr(dist, "high"):
+            low = float(dist.low)
+            high = float(dist.high)
+            if jnp.isfinite(low) and jnp.isfinite(high):
+                return jnp.asarray([low, high])
+        raise ValueError(
+            "Selected uniform-mu CH0 runs require a bounded or delta H0 "
+            "prior so the selection grid can cover the distance-modulus "
+            "support.")
+
+    def _cap_uniform_mu_limits_to_selection(self, r_min=None, r_max=None,
+                                            rh_max=None):
+        """Cap uniform-mu host support to the selection-integration reach."""
+        H0_values = self._H0_support_values()
+        h_values = H0_values / 100
+        low, high = map(float, self.distmod_limits)
+
+        if r_min is not None:
+            mu_low_grid = self.distance2distmod(
+                jnp.full_like(H0_values, r_min), h=h_values)
+            low = max(low, float(jnp.max(mu_low_grid)))
+
+        if r_max is not None:
+            mu_high_grid = self.distance2distmod(
+                jnp.full_like(H0_values, r_max), h=h_values)
+            high = min(high, float(jnp.min(mu_high_grid)))
+
+        if rh_max is not None:
+            r_max_grid = rh_max / h_values
+            mu_high_grid = self.distance2distmod(r_max_grid, h=h_values)
+            high = min(high, float(jnp.min(mu_high_grid)))
+
+        if high <= low:
+            raise ValueError(
+                "Selection grid leaves no valid uniform-mu host prior "
+                f"support after capping: [{low:.6g}, {high:.6g}].")
+
+        old_low, old_high = map(float, self.distmod_limits)
+        if low > old_low or high < old_high:
+            fprint("capping distmod_limits from "
+                   f"[{old_low:.6g}, {old_high:.6g}] to "
+                   f"[{low:.6g}, {high:.6g}] to match the selection "
+                   "integration range.")
+            self.distmod_limits = [low, high]
+            self.config["model"]["distmod_limits"] = [low, high]
 
     # ------------------------------------------------------------------
     #  Validation
@@ -234,29 +297,24 @@ class CH0Model(H0ModelBase):
                 "Redshift-based selection requires "
                 "`use_Cepheid_host_redshift` to be set to True.")
 
-        if self.apply_sel and self.use_uniform_mu_host_priors:
-            raise ValueError(
-                "If `which_selection` is set, "
-                "`use_uniform_mu_host_priors` must be set to False.")
-
         self._validate_selection_integral(
             needs_velocity=selection_needs_redshift)
+
+        if not self.apply_sel and self.use_reconstruction:
+            if self.selection_integral_grid_radius is None:
+                raise ValueError(
+                    "Reconstructed no-selection CH0 runs require "
+                    "`model.selection_integral_grid_radius` for the finite "
+                    "3D distance-prior normalizer.")
+            if not self.has_volume_density_3d:
+                raise ValueError(
+                    "Reconstructed no-selection CH0 runs require 3D density "
+                    "data for the finite distance-prior normalizer.")
 
         if not self.use_fiducial_Cepheid_host_PV_covariance and self.weight_selection_by_covmat_Neff:  # noqa
             raise ValueError(
                 "Cannot use `weight_selection_by_covmat_Neff` without "
                 "`use_fiducial_Cepheid_host_PV_covariance` set to True.")
-
-        if not self.apply_sel:
-            if self.selection_integral_grid_radius is None:
-                raise ValueError(
-                    "No-selection CH0 runs require "
-                    "`model.selection_integral_grid_radius` for the finite "
-                    "volume normalizer.")
-            if self.use_reconstruction and not self.has_volume_density_3d:
-                raise ValueError(
-                    "Reconstructed no-selection CH0 runs require 3D density "
-                    "data for the finite volume normalizer.")
 
     # ------------------------------------------------------------------
     #  Sampling helpers
@@ -268,14 +326,12 @@ class CH0Model(H0ModelBase):
         distance modulus. Includes geometric anchor information for NGC 4258,
         the LMC, and M31.
         """
-        dist = Uniform(*self.distmod_limits)
-
         with plate("hosts", self.num_hosts):
-            mu_host = sample("mu_host", dist)
+            mu_host = sample("mu_host", Uniform(*self.distmod_limits))
 
-        mu_N4258 = sample("mu_N4258", dist)
-        mu_LMC = sample("mu_LMC", dist)
-        mu_M31 = sample("mu_M31", dist)
+        mu_N4258 = sample("mu_N4258", Uniform(*self.distmod_limits_N4258))
+        mu_LMC = sample("mu_LMC", Uniform(*self.distmod_limits_LMC))
+        mu_M31 = sample("mu_M31", Uniform(*self.distmod_limits_anchor))
 
         factor("mu_N4258_ll",
                normal_logpdf_var(mu_N4258, self.mu_N4258_anchor,
@@ -339,21 +395,68 @@ class CH0Model(H0ModelBase):
         return jnp.where(mask_mag[None, :],
                          log_S_mag[:, None], log_S_cz[:, None])
 
-    def _factor_no_selection_volume(self, r_host, H0, bias_params,
-                                    ll_reconstruction=None):
-        """Apply the finite-volume normalizer for no explicit selection."""
-        rh_host = r_host * H0 / 100
-        r_max = self.selection_integral_grid_radius
-        factor("volume_limit", jnp.sum(jnp.where(rh_host <= r_max, 0.0,
-                                                 -jnp.inf)))
+    def _selection_radial_log_measure(self, H0):
+        """Selection measure matching the configured host-distance prior."""
+        if not self.use_uniform_mu_host_priors:
+            return super()._selection_radial_log_measure(H0)
 
-        log_S = self._compute_volume_log_S_unity(bias_params, H0)
+        h = H0 / 100
+        mu_grid = self.distance2distmod(self.r_sel_range, h=h)
+        log_dmu_dr = -self.log_grad_distmod2comoving_distance(mu_grid, h=h)
+        in_support = ((mu_grid >= self.distmod_limits[0])
+                      & (mu_grid <= self.distmod_limits[1]))
+        return jnp.where(in_support, log_dmu_dr, -jnp.inf)[None, None, :]
+
+    def _selection_3d_log_measure(self, H0):
+        """3D selection measure matching the configured host-distance prior."""
+        if not self.use_uniform_mu_host_priors:
+            return super()._selection_3d_log_measure(H0)
+
+        h = H0 / 100
+        mu_3d = self.mu_at_h1_3d - 5 * jnp.log10(h)
+        shape = mu_3d.shape
+        log_dmu_dr = -self.log_grad_distmod2comoving_distance(
+            jnp.ravel(mu_3d), h=h).reshape(shape)
+        log_r_phys = self.log_r_3d - jnp.log(h)
+        in_support = ((mu_3d >= self.distmod_limits[0])
+                      & (mu_3d <= self.distmod_limits[1]))
+        log_measure = (self._volume_log_cell_weight_phys(H0)
+                       + log_dmu_dr - 2 * log_r_phys)
+        return jnp.where(in_support, log_measure, -jnp.inf)
+
+    def _compute_no_selection_volume_log_norm(self, bias_params, H0):
+        """3D normalizer for reconstructed no-selection CH0 runs."""
+        h = H0 / 100
+        mu_3d = self.mu_at_h1_3d - 5 * jnp.log10(h)
+        in_support = (
+            (self.log_r_3d <= jnp.log(self.selection_integral_grid_radius))
+            & (mu_3d >= self.distmod_limits[0])
+            & (mu_3d <= self.distmod_limits[1])
+        )
+        log_cell_weight = self._selection_3d_log_measure(H0)
+
+        def _one(density_3d):
+            log_n = self._vol_sel_galaxy_bias(density_3d, bias_params)
+            return logsumexp(jnp.where(in_support,
+                                       log_n + log_cell_weight,
+                                       -jnp.inf))
+
+        return lax.map(_one, self.density_3d_fields,
+                       batch_size=self.volume_density_batch_size)
+
+    def _factor_no_selection_distance_prior_norm(self, r_host, H0,
+                                                 bias_params,
+                                                 ll_reconstruction=None):
+        """Normalize reconstructed no-selection host-distance priors."""
         if self.use_reconstruction:
-            if log_S.ndim == 1:
-                log_S = log_S[:, None]
-            return ll_reconstruction - log_S
+            rh_host = r_host * H0 / 100
+            r_max = self.selection_integral_grid_radius
+            factor("volume_limit", jnp.sum(jnp.where(rh_host <= r_max, 0.0,
+                                                     -jnp.inf)))
+            log_norm = self._compute_no_selection_volume_log_norm(
+                bias_params, H0)
+            return ll_reconstruction - log_norm[:, None]
 
-        factor("neg_log_volume_norm", -log_S[0] * self.num_hosts)
         return ll_reconstruction
 
     def __call__(self):
@@ -443,14 +546,6 @@ class CH0Model(H0ModelBase):
             lp_host_dist = self.log_prior_distance(r_host)
             lp_host_dist += self.log_grad_distmod2comoving_distance(
                 mu_host, h=h)
-
-        if self.use_anchor_volume_prior:
-            mu_anchors = mu_host_all[self.num_hosts:]
-            r_anchors = r_host_all[self.num_hosts:]
-            lp_anchor_dist = self.log_prior_distance(r_anchors)
-            lp_anchor_dist += self.log_grad_distmod2comoving_distance(
-                mu_anchors, h=h)
-            factor("lp_anchor_dist", lp_anchor_dist)
 
         # SN magnitude likelihood (shared by SN_magnitude* selections)
         if self.which_selection in ["SN_magnitude", "SN_magnitude_redshift"]:
@@ -572,7 +667,7 @@ class CH0Model(H0ModelBase):
                 else:
                     factor("neg_log_S_correction", -jnp.sum(log_S[0]))
         else:
-            ll_reconstruction = self._factor_no_selection_volume(
+            ll_reconstruction = self._factor_no_selection_distance_prior_norm(
                 r_host, H0, bias_params, ll_reconstruction)
 
         # Now assign these host distances to each Cepheid.

@@ -401,13 +401,30 @@ class ModelBase(ABC):
 
     def _setup_cosmography(self):
         """Set up cosmography interpolators."""
-        self.distmod2redshift = Distmod2Redshift(Om0=self.Om)
-        self.distmod2distance = Distmod2Distance(Om0=self.Om)
+        zmax_interp = get_nested(
+            self.config, "model/cosmography_zmax_interp", 0.5)
+        self.distance2distmod = Distance2Distmod(
+            Om0=self.Om, zmax_interp=zmax_interp)
+        self.distance2redshift = Distance2Redshift(
+            Om0=self.Om, zmax_interp=zmax_interp)
+        self.redshift2distance = Redshift2Distance(
+            Om0=self.Om, zmax_interp=zmax_interp)
+        self.distmod2redshift = Distmod2Redshift(
+            Om0=self.Om, zmax_interp=zmax_interp)
+        self.distmod2distance = Distmod2Distance(
+            Om0=self.Om, zmax_interp=zmax_interp)
         self.distance2distmod_scalar = Distance2Distmod(
-            Om0=self.Om, is_scalar=True)
+            Om0=self.Om, zmax_interp=zmax_interp, is_scalar=True)
         self.log_grad_distmod2comoving_distance = \
-            LogGrad_Distmod2ComovingDistance(Om0=self.Om)
+            LogGrad_Distmod2ComovingDistance(
+                Om0=self.Om, zmax_interp=zmax_interp)
         self.distmod_limits = self.config["model"]["distmod_limits"]
+        self.distmod_limits_LMC = get_nested(
+            self.config, "model/distmod_limits_LMC", self.distmod_limits)
+        self.distmod_limits_N4258 = get_nested(
+            self.config, "model/distmod_limits_N4258", self.distmod_limits)
+        self.distmod_limits_anchor = get_nested(
+            self.config, "model/distmod_limits_anchor", self.distmod_limits)
 
     def _setup_malmquist_grid(self):
         """Set up the radial grid for Malmquist bias integration."""
@@ -846,8 +863,9 @@ class H0ModelBase(ModelBase):
                                    bias_params):
         """Apply galaxy bias to host LOS (unnormalized).
 
-        The distance prior is NOT normalized because the angular prior
-        π(ℓ,b) ∝ Z_i(ℓ,b) cancels the normalization constant Z_i.
+        The caller handles the population normalizer: selected runs subtract
+        the selection integral, while no-selection runs subtract the 3D prior
+        integral.
         """
         rh_host = r_host * h
         lp_host_dist = lp_host_dist[None, :]
@@ -900,6 +918,14 @@ class H0ModelBase(ModelBase):
         """Log physical voxel volume including fractional boundary weights."""
         return (self._volume_log_dV_phys(H0)
                 + getattr(self, "log_volume_weight_3d", 0.0))
+
+    def _selection_radial_log_measure(self, H0):
+        """Radial log measure for no-reconstruction selection integrals."""
+        return self.log_prior_distance(self.r_sel_range)[None, None, :]
+
+    def _selection_3d_log_measure(self, H0):
+        """Voxel log measure for 3D selection integrals."""
+        return self._volume_log_cell_weight_phys(H0)
 
     def _vol_sel_galaxy_bias(self, density_3d, bias_params):
         """Apply galaxy bias to a 3D density field."""
@@ -959,41 +985,10 @@ class H0ModelBase(ModelBase):
             Vpec = Vpec + Vext_mono
         return Vpec
 
-    def _compute_volume_log_S_unity(self, bias_params, H0):
-        """Volume normalizer for a hard ``P_sel = 1`` radial cut."""
-        grid_radius = self.selection_integral_grid_radius
-        if grid_radius is None:
-            raise ValueError(
-                "`model.selection_integral_grid_radius` is required for "
-                "volume-limited no-selection CH0 runs.")
-
-        h = H0 / 100
-        r_low = self.distmod2distance(
-            jnp.asarray([self.distmod_limits[0]]), h=h)[0]
-        if not self.use_reconstruction:
-            r_high = grid_radius / h
-            volume = (r_high**3 - r_low**3) / 3.0
-            return jnp.reshape(jnp.log(volume), (1,))
-
-        log_cell_weight = self._volume_log_cell_weight_phys(H0)
-        rh_low = r_low * h
-        in_volume = (
-            (self.log_r_3d >= jnp.log(rh_low))
-            & (self.log_r_3d <= jnp.log(grid_radius))
-        )
-
-        def _one(density_3d):
-            log_n = self._vol_sel_galaxy_bias(density_3d, bias_params)
-            return logsumexp(jnp.where(in_volume, log_n + log_cell_weight,
-                                       -jnp.inf))
-
-        return lax.map(_one, self.density_3d_fields,
-                       batch_size=self.volume_density_batch_size)
-
     def _compute_no_recon_log_S_cz(self, H0, sigma_v, Vext, Vext_mono,
                                    cz_lim, cz_width, nu_cz=None):
         """No-reconstruction redshift selection with n=1 and v_rec=0."""
-        lp_r = self.log_prior_distance(self.r_sel_range)[None, None, :]
+        lp_r = self._selection_radial_log_measure(H0)
         Vpec = self._no_recon_selection_Vpec(Vext, Vext_mono)
         log_S = self.log_S_cz(
             lp_r, Vpec, H0, sigma_v, cz_lim, cz_width, nu_cz=nu_cz)
@@ -1006,7 +1001,7 @@ class H0ModelBase(ModelBase):
                                        cz_lim, cz_width, nu_cz=None):
         """No-reconstruction combined magnitude and redshift selection."""
         h = H0 / 100
-        lp_r = self.log_prior_distance(self.r_sel_range)[None, None, :]
+        lp_r = self._selection_radial_log_measure(H0)
         mu_grid = self.distance2distmod(self.r_sel_range, h=h)
         zcosmo = self.distance2redshift(self.r_sel_range, h=h)
         Vpec = self._no_recon_selection_Vpec(Vext, Vext_mono)
@@ -1032,7 +1027,7 @@ class H0ModelBase(ModelBase):
                                   mag_lim, mag_width):
         """3D selection integral for a magnitude-limited sample."""
         if not self.use_reconstruction:
-            lp_r = self.log_prior_distance(self.r_sel_range)[None, None, :]
+            lp_r = self._selection_radial_log_measure(H0)
             log_S = self.log_S_mag(
                 lp_r, M_abs, H0, e_mag, mag_lim, mag_width)
             # `log_S_mag` has already integrated over radius.  Magnitude-only
@@ -1043,7 +1038,7 @@ class H0ModelBase(ModelBase):
         mu_3d = self.mu_at_h1_3d - 5 * jnp.log10(h)
         log_P_sel = log_prob_integrand_sel(
             mu_3d + M_abs, e_mag, mag_lim, mag_width)
-        log_cell_weight = self._volume_log_cell_weight_phys(H0)
+        log_cell_weight = self._selection_3d_log_measure(H0)
 
         def _one(density_3d):
             log_n = self._vol_sel_galaxy_bias(density_3d, bias_params)
@@ -1061,7 +1056,7 @@ class H0ModelBase(ModelBase):
                 H0, sigma_v, Vext, Vext_mono, cz_lim, cz_width,
                 nu_cz=nu_cz)
 
-        log_cell_weight = self._volume_log_cell_weight_phys(H0)
+        log_cell_weight = self._selection_3d_log_measure(H0)
         Vext_rad_3d = self._vol_sel_Vext_rad_3d(Vext, Vext_mono, H0 / 100)
         sigma_v = self._vol_sel_sigma_v_fields(sigma_v)
 
@@ -1092,7 +1087,7 @@ class H0ModelBase(ModelBase):
         mu_3d = self.mu_at_h1_3d - 5 * jnp.log10(h)
         log_P_mag = log_prob_integrand_sel(
             mu_3d + M_abs, e_mag, mag_lim, mag_width)
-        log_cell_weight = self._volume_log_cell_weight_phys(H0)
+        log_cell_weight = self._selection_3d_log_measure(H0)
         Vext_rad_3d = self._vol_sel_Vext_rad_3d(Vext, Vext_mono, h)
         sigma_v = self._vol_sel_sigma_v_fields(sigma_v)
 
