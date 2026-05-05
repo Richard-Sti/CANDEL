@@ -297,7 +297,7 @@ for i in "${!task_lines[@]}"; do
         echo "[WARNING] Config file not found: $config_path"; continue
     fi
 
-    pycmd="$CANDEL_PYTHON $run_main --config $config_path --host-devices $host_devices"
+    pycmd="$CANDEL_PYTHON -u $run_main --config $config_path --host-devices $host_devices"
 
     if $local_mode; then
         echo "[INFO] Running locally..."; echo "  $pycmd"

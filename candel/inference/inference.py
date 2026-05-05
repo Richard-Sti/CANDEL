@@ -166,7 +166,7 @@ def _setup_dense_mass(kwargs, init_params, model, model_kwargs,
 
 
 def find_initial_point(model, model_kwargs, maxiter=100, seed=42,
-                       return_site_names=False):
+                       return_site_names=False, dynamic_model_kwargs=False):
     """Run L-BFGS to find a reasonable MCMC starting point.
 
     Traces the model from the prior, maps to unconstrained space, runs
@@ -230,24 +230,39 @@ def find_initial_point(model, model_kwargs, maxiter=100, seed=42,
         return out
 
     # Negative log-density in unconstrained space (include Jacobian)
-    def neg_log_density(unc_params):
+    def neg_log_density(unc_params, kwargs):
         constrained = {k: transforms[k](v) for k, v in unc_params.items()}
-        ld = log_density(model, (), model_kwargs, constrained)[0]
+        ld = log_density(model, (), kwargs, constrained)[0]
         for k, t in transforms.items():
             ld = ld + jnp.sum(t.log_abs_det_jacobian(
                 unc_params[k], constrained[k]))
         return -ld
 
-    jit_val_grad = jit(jax.value_and_grad(
-        lambda x_flat: neg_log_density(unflatten(x_flat))))
+    if dynamic_model_kwargs:
+        loss_fn = jit(neg_log_density)
+        jit_val_grad = jit(jax.value_and_grad(
+            lambda x_flat, kwargs: neg_log_density(unflatten(x_flat), kwargs),
+            argnums=0))
+    else:
+        loss_fn = jit(lambda unc_params: neg_log_density(
+            unc_params, model_kwargs))
+        jit_val_grad = jit(jax.value_and_grad(
+            lambda x_flat: neg_log_density(
+                unflatten(x_flat), model_kwargs)))
 
     def val_and_grad_numpy(x):
-        v, g = jit_val_grad(jnp.asarray(x))
+        if dynamic_model_kwargs:
+            v, g = jit_val_grad(jnp.asarray(x), model_kwargs)
+        else:
+            v, g = jit_val_grad(jnp.asarray(x))
         return float(v), np.asarray(g, dtype=np.float64)
 
     unc0 = {k: transforms[k].inv(v) for k, v in init_constrained.items()}
     x0 = flatten(unc0)
-    loss0 = float(jit(neg_log_density)(unc0))
+    if dynamic_model_kwargs:
+        loss0 = float(loss_fn(unc0, model_kwargs))
+    else:
+        loss0 = float(loss_fn(unc0))
 
     fprint(f"finding initial point (L-BFGS, maxiter={maxiter}) ...")
     result = sp_minimize(
@@ -384,7 +399,8 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
         kernel, num_warmup=kwargs["num_warmup"],
         num_samples=kwargs["num_samples"], num_chains=kwargs["num_chains"],
         chain_method=kwargs["chain_method"],
-        progress_bar=progress_bar)
+        progress_bar=progress_bar,
+        jit_model_args=dynamic_model_kwargs)
     mcmc.run(jax.random.key(kwargs["seed"]), **model_kwargs)
 
     samples = mcmc.get_samples()
@@ -533,6 +549,23 @@ def run_H0_inference(model, model_kwargs=None, print_summary=True,
     """
     if model_kwargs is None:
         model_kwargs = {}
+    else:
+        model_kwargs = dict(model_kwargs)
+
+    dynamic_model_kwargs = False
+    volume_kwargs_fn = getattr(model, "dynamic_volume_model_kwargs", None)
+    if volume_kwargs_fn is not None:
+        volume_kwargs = volume_kwargs_fn()
+        if volume_kwargs:
+            overlap = sorted(set(model_kwargs).intersection(volume_kwargs))
+            if overlap:
+                raise ValueError(
+                    "H0 dynamic volume model kwargs conflict with existing "
+                    f"model kwargs: {overlap}.")
+            model_kwargs.update(volume_kwargs)
+            dynamic_model_kwargs = True
+            fprint("passing H0 3D volume arrays as dynamic JAX arguments "
+                   f"({len(volume_kwargs)} array(s)).")
 
     fsection("Inference")
     _setup_platform()
@@ -555,7 +588,8 @@ def run_H0_inference(model, model_kwargs=None, print_summary=True,
         if init_maxiter > 0:
             init_params, site_names = find_initial_point(
                 model, model_kwargs, maxiter=init_maxiter,
-                seed=kwargs["seed"], return_site_names=True)
+                seed=kwargs["seed"], return_site_names=True,
+                dynamic_model_kwargs=dynamic_model_kwargs)
             if init_params is not None:
                 fprint("initialising NUTS from L-BFGS solution.")
                 init_strategy = init_to_value(values=init_params)

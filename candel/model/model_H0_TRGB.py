@@ -15,7 +15,7 @@
 """TRGB-calibrated H0 forward model for EDD TRGB distance indicators."""
 import jax.numpy as jnp
 import numpy as np
-from jax import lax
+from jax import checkpoint, lax
 from jax.scipy.special import logsumexp
 from jax.scipy.stats import norm as norm_jax
 from numpyro import factor, sample
@@ -154,7 +154,11 @@ class TRGBModel(H0ModelBase):
                     "`mag_lim_SN` must be set or 'infer' "
                     "for SN_magnitude selection.")
 
-    def __call__(self):
+    def __call__(self, **dynamic_attrs):
+        if dynamic_attrs:
+            with self._temporary_attrs(dynamic_attrs):
+                return self.__call__()
+
         # --- Global parameters ---
         H0 = rsample("H0", self.priors["H0"])
         M_TRGB = rsample("M_TRGB", self.priors["M_TRGB"])
@@ -290,7 +294,7 @@ class TRGBModel(H0ModelBase):
                                        log_n + log_cell_weight,
                                        -jnp.inf))
 
-        return lax.map(_one, self.density_3d_fields,
+        return lax.map(checkpoint(_one), self.density_3d_fields,
                        batch_size=self.volume_density_batch_size)
 
     def _call_marginalized(self, h, M_TRGB, sigma_int, sigma_v, beta,

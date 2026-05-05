@@ -15,7 +15,7 @@
 """Cepheid-calibrated H0 (CH0) forward model in JAX."""
 import jax.numpy as jnp
 import numpy as np
-from jax import lax
+from jax import checkpoint, lax
 from jax.scipy.special import logsumexp
 from jax.scipy.stats import norm as norm_jax
 from numpyro import deterministic, factor, plate, sample
@@ -465,7 +465,7 @@ class CH0Model(H0ModelBase):
                                        log_n + log_cell_weight,
                                        -jnp.inf))
 
-        return lax.map(_one, self.density_3d_fields,
+        return lax.map(checkpoint(_one), self.density_3d_fields,
                        batch_size=self.volume_density_batch_size)
 
     def _factor_no_selection_distance_prior_norm(self, r_host, H0,
@@ -483,7 +483,11 @@ class CH0Model(H0ModelBase):
 
         return ll_reconstruction
 
-    def __call__(self):
+    def __call__(self, **dynamic_attrs):
+        if dynamic_attrs:
+            with self._temporary_attrs(dynamic_attrs):
+                return self.__call__()
+
         # Hubble constant
         H0 = rsample("H0", self.priors["H0"])
 

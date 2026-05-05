@@ -100,10 +100,11 @@ convergence requirement is for posterior-relevant parameter values rather than
 necessarily every extreme point in a deliberately broad prior.
 """
 from abc import ABC, abstractmethod
+from contextlib import contextmanager
 
 import jax.numpy as jnp
 import numpy as np
-from jax import lax
+from jax import checkpoint, lax
 from jax.scipy.special import logsumexp
 from numpyro import factor
 
@@ -295,6 +296,23 @@ class ModelBase(ABC):
 
         fprint("set the following attributes: "
                f"{', '.join(attrs_set)}")
+
+    @contextmanager
+    def _temporary_attrs(self, attrs):
+        """Temporarily override model attributes during one model call."""
+        sentinel = object()
+        old = {}
+        try:
+            for key, value in attrs.items():
+                old[key] = getattr(self, key, sentinel)
+                setattr(self, key, value)
+            yield
+        finally:
+            for key, value in old.items():
+                if value is sentinel:
+                    delattr(self, key)
+                else:
+                    setattr(self, key, value)
 
     def _load_los_interpolator(self, data, which="host",
                                r0_decay_scale=5.):
@@ -598,6 +616,12 @@ class ModelBase(ABC):
 class H0ModelBase(ModelBase):
     """Intermediate base for H0 models."""
 
+    _dynamic_volume_attrs = (
+        "density_3d_fields", "log_r_3d", "mu_at_h1_3d",
+        "log_volume_weight_3d", "zcosmo_3d", "vrad_3d_fields",
+        "rhat_x_3d", "rhat_y_3d", "rhat_z_3d",
+    )
+
     def __init__(self, config_path, data):
         super().__init__(config_path)
         fsection(f"Model: {type(self).__name__}")
@@ -608,6 +632,16 @@ class H0ModelBase(ModelBase):
         fname_out = get_nested(self.config, "io/fname_output", None)
         if fname_out is not None:
             fprint(f"output will be saved to `{fname_out}`.")
+
+    def dynamic_volume_model_kwargs(self):
+        """Return large 3D volume arrays as dynamic JAX model arguments."""
+        if not getattr(self, "has_volume_density_3d", False):
+            return {}
+        return {
+            key: getattr(self, key)
+            for key in self._dynamic_volume_attrs
+            if hasattr(self, key)
+        }
 
     def _configure_physics(self):
         config = self.config
@@ -1044,7 +1078,7 @@ class H0ModelBase(ModelBase):
             log_n = self._vol_sel_galaxy_bias(density_3d, bias_params)
             return logsumexp(log_P_sel + log_n + log_cell_weight)
 
-        return lax.map(_one, self.density_3d_fields,
+        return lax.map(checkpoint(_one), self.density_3d_fields,
                        batch_size=self.volume_density_batch_size)
 
     def _compute_volume_log_S_cz(self, bias_params, H0, sigma_v, beta,
@@ -1070,7 +1104,8 @@ class H0ModelBase(ModelBase):
             return logsumexp(log_P_sel + log_n + log_cell_weight)
 
         return lax.map(
-            _one, (self.density_3d_fields, self.vrad_3d_fields, sigma_v),
+            checkpoint(_one),
+            (self.density_3d_fields, self.vrad_3d_fields, sigma_v),
             batch_size=self.volume_density_batch_size)
 
     def _compute_volume_log_S_mag_cz(self, bias_params, M_abs, e_mag, H0,
@@ -1102,5 +1137,6 @@ class H0ModelBase(ModelBase):
                 log_P_mag + log_P_cz + log_n + log_cell_weight)
 
         return lax.map(
-            _one, (self.density_3d_fields, self.vrad_3d_fields, sigma_v),
+            checkpoint(_one),
+            (self.density_3d_fields, self.vrad_3d_fields, sigma_v),
             batch_size=self.volume_density_batch_size)
