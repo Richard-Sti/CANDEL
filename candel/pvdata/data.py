@@ -47,9 +47,6 @@ from ..util import (SPEED_OF_LIGHT, fprint, fsection, get_nested,
                     radec_to_galactic)
 from .dust import read_dustmap
 
-# Hard cap on the per-axis voxel count — keeps the volume sum cheap and forces
-# the user to coarsen larger native grids.
-_VOLUME_DENSITY_NGRID_MAX = 257
 _FIELD_CACHE_VERSION = 1
 _SPHERE_RADIUS_DX_WARN_MIN = 15.0
 
@@ -682,13 +679,6 @@ def _load_volume_data_for_H0(
             rho_sub, obs_sub, slices = rho, obs, None
         del rho
 
-        if any(n > _VOLUME_DENSITY_NGRID_MAX for n in rho_sub.shape):
-            raise ValueError(
-                f"Volume density grid {rho_sub.shape} exceeds the per-axis "
-                f"cap of {_VOLUME_DENSITY_NGRID_MAX}; set "
-                "`selection_integral_grid_radius` or increase "
-                "`density_3d_downsample`.")
-
         if log_r_3d is None:
             dx_ref = dx
             shape_ref = rho_sub.shape
@@ -956,10 +946,6 @@ def _load_volume_density_3d(loader_name, loader_kwargs, downsample=1,
             extract_radius += 0.5 * np.sqrt(3.0) * dx
         rho, obs, _ = _extract_subcube(rho, obs, dx, extract_radius)
 
-    if any(n > _VOLUME_DENSITY_NGRID_MAX for n in rho.shape):
-        raise ValueError(
-            f"Volume density grid {rho.shape} exceeds the per-axis cap of "
-            f"{_VOLUME_DENSITY_NGRID_MAX}; increase `density_3d_downsample`.")
     rho = rho.astype(np.float32)
     _write_field_cache(
         cache_path, "PV 3D density",
