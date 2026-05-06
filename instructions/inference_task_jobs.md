@@ -3,7 +3,7 @@
 ## Files
 
 - Generator: `/mnt/users/rstiskalek/CANDEL/scripts/runs/generate_tasks.py`
-- Task specs: `/mnt/users/rstiskalek/CANDEL/scripts/runs/task_specs.py`
+- Task specs: `/mnt/users/rstiskalek/CANDEL/scripts/runs/specs_tasks.py`
 - Submitter: `/mnt/users/rstiskalek/CANDEL/scripts/runs/submit.sh`
 - Generated configs: `/mnt/users/rstiskalek/CANDEL/scripts/runs/generated_configs/<task_index>/`
 - Task list: `/mnt/users/rstiskalek/CANDEL/scripts/runs/tasks_<task_index>.txt`
@@ -24,14 +24,14 @@ It can be run from any working directory:
     /mnt/users/rstiskalek/CANDEL/scripts/runs/generate_tasks.py <task_index>
 ```
 
-The `<task_index>` must be registered in `task_specs.py`. Historical generated
+The `<task_index>` must be registered in `specs_tasks.py`. Historical generated
 outputs such as `b1_beta_variation` and `S8_production` may exist under
 `generated_configs/`, but they are not buildable unless listed by
 `generate_tasks.py list`. Frozen historical task files for those runs live in
 `/mnt/users/rstiskalek/CANDEL/scripts/runs/used_configs/`; copy from there only
 when intentionally reproducing an old run instead of generating a new spec.
 
-The sweep is defined in `/mnt/users/rstiskalek/CANDEL/scripts/runs/task_specs.py`.
+The sweep is defined in `/mnt/users/rstiskalek/CANDEL/scripts/runs/specs_tasks.py`.
 To create a new sweep, add a named entry there:
 
 - Choose the base config via `config_path`.
@@ -79,7 +79,7 @@ TOML files are the authoritative per-task run configs.
     show <task_index>
 ```
 
-4. Edit the sweep in `/mnt/users/rstiskalek/CANDEL/scripts/runs/task_specs.py`
+4. Edit the sweep in `/mnt/users/rstiskalek/CANDEL/scripts/runs/specs_tasks.py`
    if the requested task does not already exist.
 5. Dry-run the generated task rows:
 

@@ -472,6 +472,122 @@ def _nss_step(rng_key, state, logprior_fn, loglikelihood_fn,
     return _NSSState(updated, new_integrator, new_cov), _DeadInfo(dead_p)
 
 
+def _adjust_num_delete_for_devices(num_delete, n_devices, n_live):
+    """Scale deletion count so each device gets ``num_delete`` chains."""
+    if n_devices <= 1:
+        return num_delete
+    adjusted = num_delete * n_devices
+    if adjusted >= n_live:
+        raise ValueError(
+            "`num_delete` multiplied by the number of NSS devices must be "
+            f"less than n_live; got {num_delete} * {n_devices} = "
+            f"{adjusted} for n_live={n_live}.")
+    return adjusted
+
+
+def _make_nss_step_pmap(logprior_fn, loglikelihood_fn, num_delete,
+                        num_mcmc_steps, devices, max_steps=10,
+                        max_shrinkage=100):
+    """Build one NSS step with replacement chains sharded over local devices."""
+    n_devices = len(devices)
+    if num_delete % n_devices != 0:
+        raise ValueError("multi-device NSS requires device-divisible num_delete")
+    chains_per_device = num_delete // n_devices
+
+    @jax.jit
+    def _prepare(state, rng_key):
+        particles = state.particles
+
+        _, dead_idx = jax.lax.top_k(
+            -particles.loglikelihood, num_delete)
+        dead_p = jax.tree.map(lambda x: x[dead_idx], particles)
+        logL_0 = dead_p.loglikelihood.max()
+
+        choice_key, mcmc_key = jax.random.split(rng_key)
+        w = (particles.loglikelihood > logL_0).astype(jnp.float32)
+        w = jnp.where(w.sum() > 0.0, w, jnp.ones_like(w))
+        start_idx = jax.random.choice(
+            choice_key, particles.loglikelihood.shape[0],
+            shape=(num_delete,), p=w / w.sum(), replace=True)
+        start_p = jax.tree.map(lambda x: x[start_idx], particles)
+        mcmc_keys = jax.random.split(mcmc_key, n_devices)
+        return dead_idx, dead_p, logL_0, start_p, mcmc_keys
+
+    @partial(jax.pmap, in_axes=(0, 0, None, None), devices=devices)
+    def _run_chains(device_key, p0_device, logL_0, cov):
+        def one_chain(rng_key, p0):
+            def body(p, k):
+                return _hrss_step(
+                    k, p, logprior_fn, loglikelihood_fn,
+                    logL_0, cov, max_steps, max_shrinkage), None
+            keys = jax.random.split(rng_key, num_mcmc_steps)
+            final_p, _ = jax.lax.scan(body, p0, keys)
+            return final_p
+
+        keys = jax.random.split(device_key, chains_per_device)
+        return jax.vmap(one_chain)(keys, p0_device)
+
+    @jax.jit
+    def _finish(state, dead_idx, dead_p, new_p):
+        particles = state.particles
+        updated = jax.tree.map(
+            lambda full, new: full.at[dead_idx].set(new), particles, new_p)
+        new_cov = jnp.atleast_2d(
+            jnp.cov(updated.position, ddof=0, rowvar=False))
+        new_integrator = _update_integrator(
+            state.integrator, updated, dead_p)
+        return _NSSState(updated, new_integrator, new_cov), _DeadInfo(dead_p)
+
+    def _step(state, rng_key):
+        dead_idx, dead_p, logL_0, start_p, mcmc_keys = _prepare(
+            state, rng_key)
+        start_p = jax.tree.map(
+            lambda x: x.reshape(
+                (n_devices, chains_per_device) + x.shape[1:]),
+            start_p)
+        new_p = _run_chains(mcmc_keys, start_p, logL_0, state.cov)
+        new_p = jax.tree.map(
+            lambda x: x.reshape((num_delete,) + x.shape[2:]),
+            new_p)
+        return _finish(state, dead_idx, dead_p, new_p)
+
+    return _step, chains_per_device
+
+
+def _resolve_devices(devices_arg):
+    """Return local devices for NSS chain sharding, or one device fallback."""
+    devices = list(jax.local_devices())
+    if not devices:
+        return []
+
+    if devices_arg is None:
+        devices_arg = "auto"
+    if isinstance(devices_arg, str):
+        value = devices_arg.strip().lower()
+        if value in ("auto", ""):
+            non_cpu = [d for d in devices if d.platform != "cpu"]
+            return non_cpu if len(non_cpu) > 1 else devices[:1]
+        if value in ("1", "one", "single", "false", "off", "none", "no"):
+            return devices[:1]
+        try:
+            n_requested = int(value)
+        except ValueError as exc:
+            raise ValueError(
+                "`devices` must be 'auto', 1, or an integer.") from exc
+    else:
+        n_requested = int(devices_arg)
+
+    if n_requested < 1:
+        raise ValueError("`devices` must be at least 1.")
+    if n_requested == 1:
+        return devices[:1]
+    n_available = len(devices)
+    if n_available < n_requested:
+        fprint(f"NSS: requested {n_requested} local devices but only "
+               f"{n_available} visible; using {n_available}.")
+    return devices[:min(n_requested, n_available)]
+
+
 def _finalise(state, dead_list):
     """Concatenate all dead particles with the final live particles."""
     all_p = [d.particles for d in dead_list] + [state.particles]
@@ -607,7 +723,7 @@ def run_nss(model, model_args=(), model_kwargs=None,
             n_live=500, num_mcmc_steps=50, num_delete=1,
             termination=-3, seed=42, validate=True,
             checkpoint_dir=None, checkpoint_path=None, resume_path=None,
-            checkpoint_interval=1800):
+            checkpoint_interval=1800, devices="auto"):
     """Run the Nested Slice Sampler on a NumPyro model.
 
     Recommended settings (Yallup+2025, arXiv:2601.23252):
@@ -640,6 +756,10 @@ def run_nss(model, model_args=(), model_kwargs=None,
         points, dead points, the evidence integrator, RNG key, and dead count.
     checkpoint_interval : float
         Minimum time in seconds between periodic checkpoint writes.
+    devices : {"auto", int}
+        Number of visible local devices to use for replacement-chain
+        parallelism. ``"auto"`` uses all non-CPU local devices only when more
+        than one is visible; otherwise the original single-device path is used.
 
     Returns
     -------
@@ -665,15 +785,39 @@ def run_nss(model, model_args=(), model_kwargs=None,
     if num_mcmc_steps is None:
         num_mcmc_steps = ndim
 
+    local_devices = _resolve_devices(devices)
+    requested_num_delete = num_delete
+    if len(local_devices) > 1:
+        num_delete = _adjust_num_delete_for_devices(
+            num_delete, len(local_devices), n_live)
+        if num_delete != requested_num_delete:
+            fprint(
+                f"NSS: scaled num_delete from {requested_num_delete} "
+                f"to {num_delete} for {len(local_devices)} local devices "
+                f"({requested_num_delete}/device).")
+
     fprint(f"NSS: ndim={ndim}, num_mcmc_steps={num_mcmc_steps}, "
            f"n_live={n_live}, num_delete={num_delete}")
 
-    # ---- JIT the NSS step ----
-    @jax.jit
-    def step_fn(state, rng_key):
-        return _nss_step(
-            rng_key, state, log_prior_fn,
-            log_likelihood_fn, num_delete, num_mcmc_steps)
+    use_pmap = len(local_devices) > 1 and num_delete > 1
+    if use_pmap:
+        step_fn, chains_per_device = _make_nss_step_pmap(
+            log_prior_fn, log_likelihood_fn, num_delete,
+            num_mcmc_steps, local_devices)
+        fprint("NSS: replacement chains sharded over "
+               f"{len(local_devices)} local devices "
+               f"({chains_per_device}/device).")
+    else:
+        if len(local_devices) > 1 and num_delete <= 1:
+            fprint("NSS: multiple devices visible but num_delete <= 1; "
+                   "using single-device step.")
+
+        # ---- JIT the NSS step ----
+        @jax.jit
+        def step_fn(state, rng_key):
+            return _nss_step(
+                rng_key, state, log_prior_fn,
+                log_likelihood_fn, num_delete, num_mcmc_steps)
 
     if checkpoint_dir is not None and checkpoint_path is None:
         raise ValueError(

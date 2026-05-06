@@ -42,15 +42,13 @@ import argparse
 import tempfile
 import time
 
-# Check per-galaxy use_float64 before importing JAX (must be set pre-init)
-with open(os.path.join(os.path.dirname(__file__), "config_maser.toml"), "rb") as _f:
-    _pre_cfg = tomli.load(_f)
-_galaxy_arg = sys.argv[1] if len(sys.argv) > 1 else ""
-_gal_cfg = _pre_cfg.get("model", {}).get("galaxies", {}).get(_galaxy_arg, {})
-if _gal_cfg.get("use_float64", False):
+# Float64 must be enabled before importing JAX. Keep it opt-in only.
+_enable_f64 = "--f64" in sys.argv
+if _enable_f64:
+    sys.argv.remove("--f64")
     import jax
     jax.config.update("jax_enable_x64", True)
-    print(f"float64 enabled for {_galaxy_arg}", flush=True)
+    print("float64 enabled (--f64)", flush=True)
 
 import jax
 import jax.numpy as jnp
@@ -69,7 +67,7 @@ from candel.model.model_H0_maser import (JointMaserModel, MaserDiskModel,
                                           remap_warp_to_r0)
 from candel.pvdata.megamaser_data import load_megamaser_spots
 from candel.util import (data_path, fprint, fsection, get_nested, plot_corner,
-                         results_path)
+                         results_path, sort_params)
 
 _devs = jax.devices()
 _dev_names = ", ".join(d.device_kind for d in _devs)
@@ -140,6 +138,10 @@ parser.add_argument("--n-live", type=int, default=None)
 parser.add_argument("--num-mcmc-steps", type=int, default=None)
 parser.add_argument("--num-delete", type=int, default=None)
 parser.add_argument("--termination", type=float, default=None)
+parser.add_argument("--devices", type=str, default=None,
+                    help="Local devices used by sampler parallel work: "
+                         "auto, 1, or N. auto uses multiple non-CPU devices "
+                         "only when they are visible.")
 parser.add_argument("--mode", type=str, default=None,
                     choices=["mode1", "mode2"],
                     help="Sampling mode: mode1 samples r and marginalises "
@@ -161,6 +163,8 @@ parser.add_argument("--no-quadratic-warp", action="store_true",
                     help="Disable quadratic warp (override config)")
 parser.add_argument("--resume", action="store_true",
                     help="Resume NSS from latest checkpoint (error for NUTS)")
+parser.add_argument("--f64", action="store_true", default=_enable_f64,
+                    help="Enable JAX float64. Default is float32.")
 args = parser.parse_args()
 
 galaxy = args.galaxy
@@ -713,6 +717,7 @@ elif sampler == "nss":
     num_mcmc_steps = args.num_mcmc_steps or inf_cfg.get("num_mcmc_steps", 0)
     num_delete = args.num_delete or inf_cfg.get("num_delete", 250)
     termination = args.termination or inf_cfg.get("termination", -3)
+    devices = args.devices or inf_cfg.get("devices", "auto")
 
     if num_mcmc_steps == 0:
         num_mcmc_steps = None  # run_nss will use ndim
@@ -721,6 +726,7 @@ elif sampler == "nss":
     fsection(f"Running NSS ({_label}, {n_spots} spots)")
     fprint(f"n_live={n_live}, mcmc_steps={num_mcmc_steps}, "
            f"num_delete={num_delete}")
+    fprint(f"devices={devices}")
 
     _nss_ckpt_dir = results_path(
         master_cfg["io"].get("root_output", "results/Maser"),
@@ -745,6 +751,7 @@ elif sampler == "nss":
         termination=termination, seed=seed,
         checkpoint_dir=_nss_ckpt_dir, checkpoint_path=_nss_ckpt_path,
         resume_path=_nss_resume,
+        devices=devices,
     )
     dt = time.time() - t0
 
@@ -890,8 +897,9 @@ if not is_joint:
 outpath = os.path.abspath(
     os.path.join(outdir, f"{_out_name}_{suffix}.hdf5"))
 with H5File(outpath, 'w') as f:
-    grp = f.create_group("samples")
-    for k, v in samples.items():
+    grp = f.create_group("samples", track_order=True)
+    for k in sort_params(samples.keys()):
+        v = samples[k]
         if k == 'r_ang':
             continue
         grp.create_dataset(k, data=np.asarray(v), dtype=np.float32)

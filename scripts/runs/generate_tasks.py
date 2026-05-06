@@ -51,7 +51,7 @@ Note:
 
 Usage:
 ------
-1. Add or edit a named sweep in ``task_specs.py``.
+1. Add or edit a named sweep in ``specs_tasks.py``.
 2. Run the script:
        $ python generate_tasks.py build 0
    or, for backward compatibility:
@@ -82,7 +82,7 @@ try:
 except ModuleNotFoundError:
     import tomli as tomllib
 
-from task_specs import TASK_SPECS
+from specs_tasks import TASK_SPECS
 
 
 RUN_DIR = Path(__file__).resolve().parent
@@ -343,11 +343,23 @@ def generate_dynamic_tag(config, base_tag="default"):
         which_sel = get_nested(config, "model/which_selection", None)
         if _is_active(which_sel):
             parts.append(f"sel-{which_sel}")
-        if get_nested(config, "model/use_reconstruction", False):
+        use_reconstruction = get_nested(
+            config, "model/use_reconstruction", False)
+        Vext_prior = get_nested(config, "model/priors/Vext", None)
+        if not use_reconstruction and not _is_delta_prior(Vext_prior):
+            parts.append("Vext")
+        if use_reconstruction:
             parts.append(get_nested(
                 config, "io/which_host_los",
                 get_nested(config,
                            f"io/PV_main/{which_run}/which_host_los", None)))
+            beta_prior = get_nested(config, "model/priors/beta", None)
+            if isinstance(beta_prior, dict) and not _is_delta_prior(beta_prior):
+                beta_loc = beta_prior.get("loc", beta_prior.get("mean"))
+                beta_scale = beta_prior.get("scale", beta_prior.get("std"))
+                if not (beta_prior.get("dist") == "normal"
+                        and beta_loc == 0.43 and beta_scale == 0.02):
+                    parts.append("beta_free")
 
     shared = get_nested(config, "inference/shared_params", None)
     if _is_active(shared):
@@ -736,7 +748,7 @@ def parse_args():
             "  python generate_tasks.py build S8_FP_student_t --dry-run\n"
             "  python generate_tasks.py build S8_FP_student_t --clean\n"
             "  python generate_tasks.py S8_FP_student_t\n\n"
-            "Task specs live in scripts/runs/task_specs.py. Use --dry-run "
+            "Task specs live in scripts/runs/specs_tasks.py. Use --dry-run "
             "before writing configs for a new or edited spec."
         ),
         formatter_class=RawDescriptionHelpFormatter,
