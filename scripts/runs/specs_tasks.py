@@ -193,8 +193,7 @@ def _ch0_mixed_selection_datasets():
     ]
 
 
-def _trgbh0_selection_datasets(pv_models, selections=("TRGB_magnitude",
-                                                      "redshift")):
+def _trgbh0_selection_datasets(pv_models, selections=("TRGB_magnitude",)):
     return [
         {
             **pv_model,
@@ -206,7 +205,7 @@ def _trgbh0_selection_datasets(pv_models, selections=("TRGB_magnitude",
 
 
 def _trgbh0_main_datasets():
-    selections = ("TRGB_magnitude", "redshift")
+    selections = ("TRGB_magnitude",)
     main_pv_models = [
         {
             "model/use_reconstruction": True,
@@ -325,7 +324,7 @@ TASK_SPECS = {
             **_with_root(f"{TRGBH0_ROOT}/table"),
         },
         "datasets": _trgbh0_main_datasets(),
-        "expected_tasks": 16,
+        "expected_tasks": 8,
     },
     "S8_FP_student_t": {
         "description": "S8 from FP PVs: 2 catalogues x 2 galaxy biases.",
