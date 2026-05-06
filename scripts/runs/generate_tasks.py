@@ -343,11 +343,23 @@ def generate_dynamic_tag(config, base_tag="default"):
         which_sel = get_nested(config, "model/which_selection", None)
         if _is_active(which_sel):
             parts.append(f"sel-{which_sel}")
-        if get_nested(config, "model/use_reconstruction", False):
+        use_reconstruction = get_nested(
+            config, "model/use_reconstruction", False)
+        Vext_prior = get_nested(config, "model/priors/Vext", None)
+        if not use_reconstruction and not _is_delta_prior(Vext_prior):
+            parts.append("Vext")
+        if use_reconstruction:
             parts.append(get_nested(
                 config, "io/which_host_los",
                 get_nested(config,
                            f"io/PV_main/{which_run}/which_host_los", None)))
+            beta_prior = get_nested(config, "model/priors/beta", None)
+            if isinstance(beta_prior, dict) and not _is_delta_prior(beta_prior):
+                beta_loc = beta_prior.get("loc", beta_prior.get("mean"))
+                beta_scale = beta_prior.get("scale", beta_prior.get("std"))
+                if not (beta_prior.get("dist") == "normal"
+                        and beta_loc == 0.43 and beta_scale == 0.02):
+                    parts.append("beta_free")
 
     shared = get_nested(config, "inference/shared_params", None)
     if _is_active(shared):

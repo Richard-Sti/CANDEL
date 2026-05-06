@@ -8,6 +8,9 @@ generate_tasks.py.
 CH0_PAPER_ROOT = "results/CH0_paper"
 CH0_MANTICORE_LOS = "manticore_2MPP_MULTIBIN_N256_DES_V2"
 CH0_MANTICORE_BIAS = "double_powerlaw"
+TRGBH0_ROOT = "results/TRGBH0"
+TRGBH0_MANTICORE_LOS = "manticore_2MPP_MULTIBIN_N256_DES_V2"
+TRGBH0_MANTICORE_BIAS = "double_powerlaw"
 
 CH0_PAPER_COMMON = {
     "inference/num_chains": 12,
@@ -26,6 +29,21 @@ CH0_PAPER_COMMON = {
     },
 }
 
+TRGBH0_COMMON = {
+    "inference/num_chains": 1,
+    "inference/chain_method": "sequential",
+    "inference/num_warmup": 1000,
+    "inference/num_samples": 5000,
+    "model/selection_integral_geometry": "sphere",
+    "model/selection_integral_grid_radius": 75.0,
+    "model/density_3d_subsample_fraction": 1.0,
+    "model/priors/Vext": {
+        "dist": "vector_uniform_fixed",
+        "low": 0.0,
+        "high": 1000.0,
+    },
+}
+
 
 def _delta(value):
     return {"dist": "delta", "value": value}
@@ -36,6 +54,10 @@ def _normal(loc, scale):
 
 
 def _ch0_selection(selection):
+    return {"model/which_selection": selection}
+
+
+def _trgbh0_selection(selection):
     return {"model/which_selection": selection}
 
 
@@ -171,6 +193,77 @@ def _ch0_mixed_selection_datasets():
     ]
 
 
+def _trgbh0_selection_datasets(pv_models, selections=("TRGB_magnitude",
+                                                      "redshift")):
+    return [
+        {
+            **pv_model,
+            **_trgbh0_selection(selection),
+        }
+        for pv_model in pv_models
+        for selection in selections
+    ]
+
+
+def _trgbh0_main_datasets():
+    selections = ("TRGB_magnitude", "redshift")
+    main_pv_models = [
+        {
+            "model/use_reconstruction": True,
+            "model/use_density_dependent_sigma_v": False,
+            "io/PV_main/EDD_TRGB/which_host_los": "Carrick2015",
+            "model/priors/beta": _normal(0.43, 0.02),
+        },
+        {
+            "model/use_reconstruction": True,
+            "model/use_density_dependent_sigma_v": False,
+            "io/PV_main/EDD_TRGB/which_host_los": TRGBH0_MANTICORE_LOS,
+            "model/which_bias": TRGBH0_MANTICORE_BIAS,
+        },
+        {
+            "model/use_reconstruction": False,
+        },
+    ]
+    extra_pv_models = [
+        {
+            "model/use_reconstruction": False,
+            "model/priors/Vext": _delta([0.0, 0.0, 0.0]),
+        },
+        {
+            "model/use_reconstruction": True,
+            "model/use_density_dependent_sigma_v": False,
+            "io/PV_main/EDD_TRGB/which_host_los": "Carrick2015",
+            "model/priors/beta": _normal(1.0, 0.5),
+        },
+    ]
+    grouped_pv_models = [
+        {
+            "model/which_run": "EDD_TRGB_grouped",
+            "model/use_reconstruction": True,
+            "model/use_density_dependent_sigma_v": False,
+            "io/PV_main/EDD_TRGB_grouped/which_host_los": "Carrick2015",
+            "model/priors/beta": _normal(0.43, 0.02),
+        },
+        {
+            "model/which_run": "EDD_TRGB_grouped",
+            "model/use_reconstruction": True,
+            "model/use_density_dependent_sigma_v": False,
+            "io/PV_main/EDD_TRGB_grouped/which_host_los": TRGBH0_MANTICORE_LOS,
+            "model/which_bias": TRGBH0_MANTICORE_BIAS,
+        },
+        {
+            "model/which_run": "EDD_TRGB_grouped",
+            "model/use_reconstruction": False,
+        },
+    ]
+
+    return (
+        _trgbh0_selection_datasets(main_pv_models, selections)
+        + _trgbh0_selection_datasets(extra_pv_models, selections)
+        + _trgbh0_selection_datasets(grouped_pv_models, selections)
+    )
+
+
 TASK_SPECS = {
     "CH0_main": {
         "description": "CH0 paper H0 grid plus redshift-free distance runs.",
@@ -222,6 +315,17 @@ TASK_SPECS = {
             for selection in ("SN_magnitude", "redshift")
         ],
         "expected_tasks": 2,
+    },
+    "TRGBH0_main": {
+        "description": "TRGB H0 grid: PV-field, Vext-only, no-Vext, and grouped selections.",
+        "config_path": "configs/config_EDD_TRGB.toml",
+        "tag": "main",
+        "common": {
+            **TRGBH0_COMMON,
+            **_with_root(f"{TRGBH0_ROOT}/table"),
+        },
+        "datasets": _trgbh0_main_datasets(),
+        "expected_tasks": 16,
     },
     "S8_FP_student_t": {
         "description": "S8 from FP PVs: 2 catalogues x 2 galaxy biases.",
