@@ -51,6 +51,13 @@ from .dust import read_dustmap
 _FIELD_CACHE_VERSION = 1
 _SPHERE_RADIUS_DX_WARN_MIN = 15.0
 
+
+class _ArrayShapeOnly:
+    """Tiny stand-in used by MPI cache warmup summaries."""
+    def __init__(self, shape):
+        self.shape = tuple(shape)
+
+
 ###############################################################################
 #                            Helper functions                                 #
 ###############################################################################
@@ -544,32 +551,22 @@ def _cached_h0_volume_result(
         rhat_fields=rhat_fields, copy_inputs=False)
 
 
-def _write_h0_volume_mpi_part(path, parts):
-    """Write one MPI rank's warmed H0 volume fields to a temporary file."""
+def _write_h0_volume_mpi_part(path, field_order, field_arrays):
+    """Write one warmed H0 volume field to a temporary MPI part file."""
     arrays = {
-        "field_order": np.asarray([k for k, _ in parts], dtype=np.int64),
+        "field_order": np.asarray(field_order, dtype=np.int64),
     }
-    for i, (_, field_arrays) in enumerate(parts):
-        prefix = f"field_{i}__"
-        for key, value in field_arrays.items():
-            arrays[f"{prefix}{key}"] = np.asarray(value)
+    arrays.update({key: np.asarray(value)
+                   for key, value in field_arrays.items()})
     np.savez(path, **arrays)
 
 
 def _read_h0_volume_mpi_part(path):
-    """Read one MPI rank's temporary H0 volume field file."""
-    parts = []
+    """Read one warmed H0 volume field temporary file."""
     with np.load(path, allow_pickle=False) as f:
-        field_order = [int(k) for k in f["field_order"]]
-        for i, k in enumerate(field_order):
-            prefix = f"field_{i}__"
-            arrays = {
-                key[len(prefix):]: f[key]
-                for key in f.files
-                if key.startswith(prefix)
-            }
-            parts.append((k, arrays))
-    return parts
+        field_order = int(f["field_order"])
+        arrays = {key: f[key] for key in f.files if key != "field_order"}
+    return field_order, arrays
 
 
 def _load_volume_data_for_H0_mpi(
@@ -592,8 +589,7 @@ def _load_volume_data_for_H0_mpi(
         part_dir = None
     part_dir = comm.bcast(part_dir, root=0)
 
-    local = []
-    part_path = join(part_dir, f"rank_{rank}.npz")
+    local_parts = []
     part_keys = {
         "rho_3d_fields", "r_3d", "log_dV_3d", "log_volume_weight_3d",
     }
@@ -616,23 +612,27 @@ def _load_volume_data_for_H0_mpi(
                 cache_dir=None,
                 cache_enabled=False,
                 return_cache_fields=True)
-            local.append((k, {
+            field_arrays = {
                 key: np.asarray(value)
                 for key, value in partial.items()
                 if key in part_keys
-            }))
-        _write_h0_volume_mpi_part(part_path, local)
+            }
+            part_path = join(part_dir, f"field_{k:06d}_rank_{rank}.npz")
+            _write_h0_volume_mpi_part(part_path, k, field_arrays)
+            local_parts.append({"field_order": k, "path": part_path})
+            del partial, field_arrays
         manifest = {
-            "rank": rank, "path": part_path, "count": len(local),
+            "rank": rank, "parts": local_parts, "count": len(local_parts),
             "error": None,
         }
     except Exception as exc:
         manifest = {
-            "rank": rank, "path": None, "count": 0, "error": repr(exc),
+            "rank": rank, "parts": [], "count": 0, "error": repr(exc),
         }
 
     manifests = comm.gather(manifest, root=0)
     error = None
+    cache_meta = None
     if rank == 0:
         try:
             failures = [
@@ -645,15 +645,45 @@ def _load_volume_data_for_H0_mpi(
 
             parts = []
             for item in manifests:
-                parts.extend(_read_h0_volume_mpi_part(item["path"]))
-            parts.sort(key=lambda item: item[0])
+                parts.extend(item["parts"])
+            parts.sort(key=lambda item: item["field_order"])
             if len(parts) != len(field_indices):
                 raise RuntimeError(
                     f"MPI field-cache warmup produced {len(parts)} field(s), "
                     f"expected {len(field_indices)}.")
 
-            first = parts[0][1]
-            for _, arrays in parts[1:]:
+            first_order, first = _read_h0_volume_mpi_part(parts[0]["path"])
+            if first_order != parts[0]["field_order"]:
+                raise RuntimeError(
+                    "MPI field-cache warmup found inconsistent field order "
+                    f"in `{parts[0]['path']}`.")
+
+            density_shape = (
+                (len(field_indices),) + first["rho_3d_fields"].shape[1:])
+            cache_meta = {"density_shape": density_shape}
+            density_stack_path = join(part_dir, "rho_3d_fields.npy")
+            rho_3d_fields = np.lib.format.open_memmap(
+                density_stack_path, mode="w+", dtype=np.float32,
+                shape=density_shape)
+            rho_3d_fields[0] = first["rho_3d_fields"][0]
+
+            vrad_3d_fields = None
+            if load_velocity:
+                velocity_shape = (
+                    (len(field_indices),)
+                    + first["vrad_3d_fields"].shape[1:])
+                velocity_stack_path = join(part_dir, "vrad_3d_fields.npy")
+                vrad_3d_fields = np.lib.format.open_memmap(
+                    velocity_stack_path, mode="w+", dtype=np.float32,
+                    shape=velocity_shape)
+                vrad_3d_fields[0] = first["vrad_3d_fields"][0]
+
+            for out_idx, part in enumerate(parts[1:], start=1):
+                field_order, arrays = _read_h0_volume_mpi_part(part["path"])
+                if field_order != part["field_order"]:
+                    raise RuntimeError(
+                        "MPI field-cache warmup found inconsistent field "
+                        f"order in `{part['path']}`.")
                 for label in ("r_3d",):
                     if not np.array_equal(arrays[label], first[label]):
                         raise RuntimeError(
@@ -681,10 +711,16 @@ def _load_volume_data_for_H0_mpi(
                             raise RuntimeError(
                                 "MPI field-cache warmup found inconsistent "
                                 f"`{label}` arrays across fields.")
+                rho_3d_fields[out_idx] = arrays["rho_3d_fields"][0]
+                if load_velocity:
+                    vrad_3d_fields[out_idx] = arrays["vrad_3d_fields"][0]
+                del arrays
+            rho_3d_fields.flush()
+            if load_velocity:
+                vrad_3d_fields.flush()
 
             density_cache_arrays = {
-                "rho_3d_fields": np.stack([
-                    arrays["rho_3d_fields"][0] for _, arrays in parts]),
+                "rho_3d_fields": rho_3d_fields,
                 "r_3d": first["r_3d"],
                 "log_dV_3d": first["log_dV_3d"],
             }
@@ -696,8 +732,7 @@ def _load_volume_data_for_H0_mpi(
                 density_cache_arrays)
             if load_velocity:
                 velocity_cache_arrays = {
-                    "vrad_3d_fields": np.stack([
-                        arrays["vrad_3d_fields"][0] for _, arrays in parts])
+                    "vrad_3d_fields": vrad_3d_fields,
                 }
                 for label in ("rhat_x_3d", "rhat_y_3d", "rhat_z_3d"):
                     velocity_cache_arrays[label] = first[label]
@@ -712,6 +747,14 @@ def _load_volume_data_for_H0_mpi(
     error = comm.bcast(error, root=0)
     if error is not None:
         raise RuntimeError(f"MPI field-cache warmup failed: {error}")
+    cache_meta = comm.bcast(cache_meta, root=0)
+
+    if os.environ.get("CANDEL_FIELD_CACHE_MPI", "0") == "1":
+        return {
+            "density_3d_fields": _ArrayShapeOnly(cache_meta["density_shape"]),
+            "density_3d_mode": mode,
+            "volume_density_batch_size": 1,
+        }
 
     density_cached = _read_field_cache(
         density_cache_path, "H0 3D volume density", density_required)
@@ -964,8 +1007,31 @@ def _load_volume_data_for_H0(
                 rhat = rhat[voxel_mask_ref]
             rhat_fields[label] = rhat
 
-    rho_fields = np.stack(rho_fields)
-    vrad_fields = np.stack(vrad_fields) if load_velocity else None
+    if len(rho_fields) == 1:
+        rho_fields = rho_fields[0][None, ...]
+    else:
+        rho_fields = np.stack(rho_fields)
+    if load_velocity:
+        if len(vrad_fields) == 1:
+            vrad_fields = vrad_fields[0][None, ...]
+        else:
+            vrad_fields = np.stack(vrad_fields)
+    else:
+        vrad_fields = None
+
+    if return_cache_fields:
+        out = {
+            "rho_3d_fields": rho_fields,
+            "r_3d": r_3d,
+            "log_dV_3d": log_dV,
+        }
+        if log_volume_weight_3d is not None:
+            out["log_volume_weight_3d"] = log_volume_weight_3d
+        if load_velocity:
+            out["vrad_3d_fields"] = vrad_fields
+            out.update(rhat_fields)
+        return out
+
     runtime_arrays = {
         "rho_3d_fields": rho_fields,
         "r_3d": r_3d,
@@ -995,17 +1061,6 @@ def _load_volume_data_for_H0(
         vrad_fields=runtime_arrays.get("vrad_3d_fields"),
         log_volume_weight_3d=runtime_arrays.get("log_volume_weight_3d"),
         rhat_fields=runtime_rhat_fields)
-    if return_cache_fields:
-        result["rho_3d_fields"] = jnp.asarray(rho_fields)
-        result["r_3d"] = r_3d
-        result["log_dV_3d"] = log_dV
-        if log_volume_weight_3d is not None:
-            result["log_volume_weight_3d"] = log_volume_weight_3d
-        if load_velocity:
-            result["vrad_3d_fields"] = jnp.asarray(vrad_fields)
-            for label, value in rhat_fields.items():
-                result[label] = jnp.asarray(value)
-
     if cache_enabled:
         density_cache_arrays = {
             "rho_3d_fields": rho_fields,

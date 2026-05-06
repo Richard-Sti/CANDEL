@@ -28,7 +28,7 @@ python scripts/megamaser/run_maser_disk.py <galaxy> [--sampler nuts|nss] [option
 | `--n-live` | 5000 | NSS live points |
 | `--num-mcmc-steps` | 0 (=ndim) | NSS slice steps |
 | `--num-delete` | 250 | NSS contraction batch |
-| `--nss-devices` | auto | NSS local-device sharding for replacement chains. Use `1` for the original single-device path or numeric `N` for N visible GPUs on one node. |
+| `--devices` | auto | Local-device sharding for NSS replacement chains or DE population fitness evaluations. Use `1` for the original single-device path or numeric `N` for N visible GPUs on one node. |
 | `--termination` | -3 | NSS stopping criterion |
 | `--f-grid` | 1.0 | Scale every phi/r grid size (`n_phi_hv_high`, `n_phi_hv_low`, `n_phi_sys`, their `_mode1` variants, `n_r_local`, `n_r_brute`) by this factor; results rounded to nearest odd integer, min 3. Applies to global `[model]` keys and per-galaxy overrides. |
 | `--no-ecc` | off | Disable eccentricity model |
@@ -118,7 +118,7 @@ On ARC, request multiple GPUs and pass the same count to the runner:
 
 ```bash
 bash scripts/megamaser/submit.sh --sampler nss -q medium \
-    --galaxy NGC5765b --nss-devices 4
+    --galaxy NGC5765b --devices 4
 ```
 
 When more than one local device is used, NSS multiplies `num_delete` by the
@@ -130,12 +130,37 @@ Validation plan:
 
 1. Run a reduced single-GPU NSS job and record log output, wall time, logZ,
    `n_eff`, and any non-finite likelihood warnings.
-2. Run the same reduced job on one ARC node with `--nss-devices 2`, then
-   `--nss-devices 4` if available.
+2. Run the same reduced job on one ARC node with `--devices 2`, then
+   `--devices 4` if available.
 3. Confirm the log prints the scaled `num_delete` and the expected
    replacement-chain count per device.
 4. Compare posterior summaries and logZ against the single-GPU run before
    launching production jobs.
+5. Keep production multi-GPU runs single-node only; do not use MPI or
+   multi-node JAX for this path.
+
+### Single-node multi-GPU DE
+
+DE can shard population-axis fitness evaluations over multiple local JAX
+devices. This is also single-process, single-node parallelism only. The
+configured `optimise/eval_chunk` remains a per-device batch size, so a 4-GPU
+run evaluates `4 * eval_chunk` candidates per compiled fitness call.
+
+On ARC, request multiple GPUs and pass the same count to the runner:
+
+```bash
+bash scripts/megamaser/submit.sh --sampler de -q medium \
+    --galaxy NGC5765b --devices 4
+```
+
+Validation plan:
+
+1. Run a reduced single-GPU DE job and record the MAP logP and wall time.
+2. Run the same reduced job on one ARC node with `--devices 2`, then
+   `--devices 4` if available.
+3. Confirm the log prints population fitness sharding and the expected
+   per-device `eval_chunk`.
+4. Compare the final MAP parameters and logP against the single-GPU run.
 5. Keep production multi-GPU runs single-node only; do not use MPI or
    multi-node JAX for this path.
 

@@ -554,16 +554,16 @@ def _make_nss_step_pmap(logprior_fn, loglikelihood_fn, num_delete,
     return _step, chains_per_device
 
 
-def _resolve_nss_devices(nss_devices):
+def _resolve_devices(devices_arg):
     """Return local devices for NSS chain sharding, or one device fallback."""
     devices = list(jax.local_devices())
     if not devices:
         return []
 
-    if nss_devices is None:
-        nss_devices = "auto"
-    if isinstance(nss_devices, str):
-        value = nss_devices.strip().lower()
+    if devices_arg is None:
+        devices_arg = "auto"
+    if isinstance(devices_arg, str):
+        value = devices_arg.strip().lower()
         if value in ("auto", ""):
             non_cpu = [d for d in devices if d.platform != "cpu"]
             return non_cpu if len(non_cpu) > 1 else devices[:1]
@@ -573,12 +573,12 @@ def _resolve_nss_devices(nss_devices):
             n_requested = int(value)
         except ValueError as exc:
             raise ValueError(
-                "`nss_devices` must be 'auto', 1, or an integer.") from exc
+                "`devices` must be 'auto', 1, or an integer.") from exc
     else:
-        n_requested = int(nss_devices)
+        n_requested = int(devices_arg)
 
     if n_requested < 1:
-        raise ValueError("`nss_devices` must be at least 1.")
+        raise ValueError("`devices` must be at least 1.")
     if n_requested == 1:
         return devices[:1]
     n_available = len(devices)
@@ -723,7 +723,7 @@ def run_nss(model, model_args=(), model_kwargs=None,
             n_live=500, num_mcmc_steps=50, num_delete=1,
             termination=-3, seed=42, validate=True,
             checkpoint_dir=None, checkpoint_path=None, resume_path=None,
-            checkpoint_interval=1800, nss_devices="auto"):
+            checkpoint_interval=1800, devices="auto"):
     """Run the Nested Slice Sampler on a NumPyro model.
 
     Recommended settings (Yallup+2025, arXiv:2601.23252):
@@ -756,7 +756,7 @@ def run_nss(model, model_args=(), model_kwargs=None,
         points, dead points, the evidence integrator, RNG key, and dead count.
     checkpoint_interval : float
         Minimum time in seconds between periodic checkpoint writes.
-    nss_devices : {"auto", int}
+    devices : {"auto", int}
         Number of visible local devices to use for replacement-chain
         parallelism. ``"auto"`` uses all non-CPU local devices only when more
         than one is visible; otherwise the original single-device path is used.
@@ -785,7 +785,7 @@ def run_nss(model, model_args=(), model_kwargs=None,
     if num_mcmc_steps is None:
         num_mcmc_steps = ndim
 
-    local_devices = _resolve_nss_devices(nss_devices)
+    local_devices = _resolve_devices(devices)
     requested_num_delete = num_delete
     if len(local_devices) > 1:
         num_delete = _adjust_num_delete_for_devices(
