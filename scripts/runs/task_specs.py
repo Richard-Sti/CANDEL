@@ -7,6 +7,7 @@ generate_tasks.py.
 
 CH0_PAPER_ROOT = "results/CH0_paper"
 CH0_MANTICORE_LOS = "manticore_2MPP_MULTIBIN_N256_DES_V2"
+CH0_MANTICORE_BIAS = "double_powerlaw"
 
 CH0_PAPER_COMMON = {
     "inference/num_chains": 12,
@@ -86,6 +87,7 @@ def _ch0_main_datasets():
             "model/weight_selection_by_covmat_Neff": False,
             "model/use_density_dependent_sigma_v": False,
             "io/SH0ES/which_host_los": CH0_MANTICORE_LOS,
+            "model/which_bias": CH0_MANTICORE_BIAS,
         },
         {
             "model/use_reconstruction": True,
@@ -94,6 +96,7 @@ def _ch0_main_datasets():
             "model/weight_selection_by_covmat_Neff": False,
             "model/use_density_dependent_sigma_v": True,
             "io/SH0ES/which_host_los": CH0_MANTICORE_LOS,
+            "model/which_bias": CH0_MANTICORE_BIAS,
         },
         {
             "model/use_reconstruction": True,
@@ -102,6 +105,7 @@ def _ch0_main_datasets():
             "model/weight_selection_by_covmat_Neff": False,
             "model/use_density_dependent_sigma_v": False,
             "io/SH0ES/which_host_los": CH0_MANTICORE_LOS,
+            "model/which_bias": CH0_MANTICORE_BIAS,
             "model/priors/beta": _normal(1.0, 0.5),
         },
     ]
@@ -132,6 +136,7 @@ def _ch0_mixed_selection_datasets():
             "model/use_fiducial_Cepheid_host_PV_covariance": False,
             "model/use_density_dependent_sigma_v": False,
             "io/SH0ES/which_host_los": CH0_MANTICORE_LOS,
+            "model/which_bias": CH0_MANTICORE_BIAS,
         }
         for n_mag in range(36)
     ]
