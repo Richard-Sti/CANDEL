@@ -136,7 +136,7 @@ paths.
   `/mnt/users/rstiskalek/CANDEL/instructions/inference_task_jobs.md` before
   editing it or the submission flow.
 
-- `/mnt/users/rstiskalek/CANDEL/scripts/runs/task_specs.py`
+- `/mnt/users/rstiskalek/CANDEL/scripts/runs/specs_tasks.py`
   holds named parameter sweeps for `generate_tasks.py`.
 
 - `/mnt/users/rstiskalek/CANDEL/scripts/runs/configs`
@@ -183,7 +183,7 @@ paths.
   `candel/inference/nested.py`, or `candel/inference/optimise.py`.
 - Changing generated task behavior: read
   `/mnt/users/rstiskalek/CANDEL/instructions/inference_task_jobs.md`, then edit
-  `scripts/runs/generate_tasks.py` or `scripts/runs/task_specs.py`.
+  `scripts/runs/generate_tasks.py` or `scripts/runs/specs_tasks.py`.
 - Changing cluster submission: read
   `/mnt/users/rstiskalek/CANDEL/instructions/glamdring_gpu_jobs.md` first.
 

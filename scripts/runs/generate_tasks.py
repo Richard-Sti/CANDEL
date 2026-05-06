@@ -51,7 +51,7 @@ Note:
 
 Usage:
 ------
-1. Add or edit a named sweep in ``task_specs.py``.
+1. Add or edit a named sweep in ``specs_tasks.py``.
 2. Run the script:
        $ python generate_tasks.py build 0
    or, for backward compatibility:
@@ -82,7 +82,7 @@ try:
 except ModuleNotFoundError:
     import tomli as tomllib
 
-from task_specs import TASK_SPECS
+from specs_tasks import TASK_SPECS
 
 
 RUN_DIR = Path(__file__).resolve().parent
@@ -748,7 +748,7 @@ def parse_args():
             "  python generate_tasks.py build S8_FP_student_t --dry-run\n"
             "  python generate_tasks.py build S8_FP_student_t --clean\n"
             "  python generate_tasks.py S8_FP_student_t\n\n"
-            "Task specs live in scripts/runs/task_specs.py. Use --dry-run "
+            "Task specs live in scripts/runs/specs_tasks.py. Use --dry-run "
             "before writing configs for a new or edited spec."
         ),
         formatter_class=RawDescriptionHelpFormatter,
