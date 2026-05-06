@@ -121,10 +121,10 @@ bash scripts/megamaser/submit.sh --sampler nss -q medium \
     --galaxy NGC5765b --nss-devices 4
 ```
 
-When more than one local device is used, NSS adjusts `num_delete` to the
-nearest value divisible by the device count; ties round upward. This avoids
-computing extra replacement chains and discarding them. If only one local
-device is visible, it falls back to the original single-device behavior.
+When more than one local device is used, NSS multiplies `num_delete` by the
+device count. For example, `num_delete=5` on 4 GPUs deletes 20 live points per
+NSS iteration and runs 5 replacement chains per GPU. If only one local device
+is visible, it falls back to the original single-device behavior.
 
 Validation plan:
 
@@ -132,8 +132,8 @@ Validation plan:
    `n_eff`, and any non-finite likelihood warnings.
 2. Run the same reduced job on one ARC node with `--nss-devices 2`, then
    `--nss-devices 4` if available.
-3. Prefer `num_delete` divisible by the device count for timing tests, but
-   also run one non-divisible case to confirm the adjustment message.
+3. Confirm the log prints the scaled `num_delete` and the expected
+   replacement-chain count per device.
 4. Compare posterior summaries and logZ against the single-GPU run before
    launching production jobs.
 5. Keep production multi-GPU runs single-node only; do not use MPI or

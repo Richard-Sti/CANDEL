@@ -473,24 +473,16 @@ def _nss_step(rng_key, state, logprior_fn, loglikelihood_fn,
 
 
 def _adjust_num_delete_for_devices(num_delete, n_devices, n_live):
-    """Nearest device-divisible deletion count; ties round upward."""
+    """Scale deletion count so each device gets ``num_delete`` chains."""
     if n_devices <= 1:
         return num_delete
-    lower = (num_delete // n_devices) * n_devices
-    upper = lower + n_devices
-
-    candidates = []
-    if lower >= 1:
-        candidates.append(lower)
-    if upper < n_live:
-        candidates.append(upper)
-    if not candidates:
+    adjusted = num_delete * n_devices
+    if adjusted >= n_live:
         raise ValueError(
-            "`num_delete` cannot be adjusted to a positive multiple of "
-            f"{n_devices} below n_live={n_live}.")
-
-    # Sort by distance, then by negative value so exact ties prefer increasing.
-    return min(candidates, key=lambda x: (abs(x - num_delete), -x))
+            "`num_delete` multiplied by the number of NSS devices must be "
+            f"less than n_live; got {num_delete} * {n_devices} = "
+            f"{adjusted} for n_live={n_live}.")
+    return adjusted
 
 
 def _make_nss_step_pmap(logprior_fn, loglikelihood_fn, num_delete,
@@ -800,9 +792,9 @@ def run_nss(model, model_args=(), model_kwargs=None,
             num_delete, len(local_devices), n_live)
         if num_delete != requested_num_delete:
             fprint(
-                f"NSS: adjusted num_delete from {requested_num_delete} "
-                f"to {num_delete} so it is divisible by "
-                f"{len(local_devices)} local devices.")
+                f"NSS: scaled num_delete from {requested_num_delete} "
+                f"to {num_delete} for {len(local_devices)} local devices "
+                f"({requested_num_delete}/device).")
 
     fprint(f"NSS: ndim={ndim}, num_mcmc_steps={num_mcmc_steps}, "
            f"n_live={n_live}, num_delete={num_delete}")

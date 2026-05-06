@@ -127,6 +127,35 @@ def _ch0_main_datasets():
     return datasets
 
 
+def _ch0_distance_only_datasets():
+    base = {
+        "model/use_Cepheid_host_redshift": False,
+        "model/use_reconstruction": False,
+        "model/use_fiducial_Cepheid_host_PV_covariance": False,
+        "model/use_PV_covmat_scaling": False,
+        "model/weight_selection_by_covmat_Neff": False,
+        "model/priors/Vext": _delta([0.0, 0.0, 0.0]),
+        **_with_root(f"{CH0_PAPER_ROOT}/distances"),
+    }
+    return [
+        {
+            **base,
+            **_ch0_selection("none"),
+            "model/use_uniform_mu_host_priors": True,
+        },
+        {
+            **base,
+            **_ch0_selection("none"),
+            "model/use_uniform_mu_host_priors": False,
+        },
+        {
+            **base,
+            **_ch0_selection("SN_magnitude"),
+            "model/use_uniform_mu_host_priors": False,
+        },
+    ]
+
+
 def _ch0_mixed_selection_datasets():
     return [
         {
@@ -144,7 +173,7 @@ def _ch0_mixed_selection_datasets():
 
 TASK_SPECS = {
     "CH0_main": {
-        "description": "CH0 paper Table H0 PV-model x selection grid.",
+        "description": "CH0 paper H0 grid plus redshift-free distance runs.",
         "config_path": "configs/config_CH0.toml",
         "tag": "paper",
         "common": {
@@ -154,8 +183,8 @@ TASK_SPECS = {
             "inference/num_samples": 5000,
             **_with_root(f"{CH0_PAPER_ROOT}/table"),
         },
-        "datasets": _ch0_main_datasets(),
-        "expected_tasks": 24,
+        "datasets": _ch0_main_datasets() + _ch0_distance_only_datasets(),
+        "expected_tasks": 27,
     },
     "CH0_mixed_selection": {
         "description": "CH0 paper mixed SN-magnitude/redshift split.",
