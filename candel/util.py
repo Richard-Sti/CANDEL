@@ -522,12 +522,16 @@ def name2label(name):
         "mu_N4258": r"$\mu_{\rm N4258}$",
         # Maser disk model
         "D_c": r"$D_c$",
+        "D_A": r"$D_A$",
         "eta": r"$\eta$",
         "log_MBH": r"$\log M_{\rm BH}$",
+        "M_BH": r"$M_{\rm BH}$",
         "i0": r"$i_0$",
         "di_dr": r"$\mathrm{d}i/\mathrm{d}r$",
+        "d2i_dr2": r"$\mathrm{d}^2i/\mathrm{d}r^2$",
         "Omega0": r"$\Omega_0$",
         "dOmega_dr": r"$\mathrm{d}\Omega/\mathrm{d}r$",
+        "d2Omega_dr2": r"$\mathrm{d}^2\Omega/\mathrm{d}r^2$",
         "x0": r"$x_0$",
         "y0": r"$y_0$",
         "dv_sys": r"$\Delta v_{\rm sys}$",
@@ -536,7 +540,15 @@ def name2label(name):
         "sigma_v_sys": r"$\sigma_{v,\mathrm{sys}}$",
         "sigma_v_hv": r"$\sigma_{v,\mathrm{hv}}$",
         "sigma_a_floor": r"$\sigma_{a,\mathrm{fl}}$",
+        "ecc": r"$e$",
+        "e_x": r"$e_x$",
+        "e_y": r"$e_y$",
+        "periapsis": r"$\omega$",
+        "periapsis_rad": r"$\omega$",
+        "dperiapsis_dr": r"$\mathrm{d}\omega/\mathrm{d}r$",
         "sigma_pec": r"$\sigma_{\rm pec}~[\mathrm{km/s}]$",
+        "D_lim": r"$D_{\rm lim}$",
+        "D_width": r"$\sigma_{D,\rm lim}$",
     }
 
     if "/" in name:
@@ -600,6 +612,34 @@ def name2labelgetdist(name):
         "mu_M31": r"\mu_{\rm M31}",
         "mu_N4258": r"\mu_{\rm NGC4258}",
         "H0": r"H_0~\left[\mathrm{km}\,\mathrm{s}^{-1}\,\mathrm{Mpc}^{-1}\right]",  # noqa
+        "D_c": r"D_c",
+        "D_A": r"D_A",
+        "eta": r"\eta",
+        "log_MBH": r"\log M_{\rm BH}",
+        "M_BH": r"M_{\rm BH}",
+        "i0": r"i_0",
+        "di_dr": r"\mathrm{d}i/\mathrm{d}r",
+        "d2i_dr2": r"\mathrm{d}^2i/\mathrm{d}r^2",
+        "Omega0": r"\Omega_0",
+        "dOmega_dr": r"\mathrm{d}\Omega/\mathrm{d}r",
+        "d2Omega_dr2": r"\mathrm{d}^2\Omega/\mathrm{d}r^2",
+        "x0": r"x_0",
+        "y0": r"y_0",
+        "dv_sys": r"\Delta v_{\rm sys}",
+        "sigma_x_floor": r"\sigma_{x,\mathrm{fl}}",
+        "sigma_y_floor": r"\sigma_{y,\mathrm{fl}}",
+        "sigma_v_sys": r"\sigma_{v,\mathrm{sys}}",
+        "sigma_v_hv": r"\sigma_{v,\mathrm{hv}}",
+        "sigma_a_floor": r"\sigma_{a,\mathrm{fl}}",
+        "ecc": r"e",
+        "e_x": r"e_x",
+        "e_y": r"e_y",
+        "periapsis": r"\omega",
+        "periapsis_rad": r"\omega",
+        "dperiapsis_dr": r"\mathrm{d}\omega/\mathrm{d}r",
+        "sigma_pec": r"\sigma_{\rm pec}~\left[\mathrm{km}\,\mathrm{s}^{-1}\right]",  # noqa
+        "D_lim": r"D_{\rm lim}",
+        "D_width": r"\sigma_{D,\rm lim}",
         "dZP": r"\Delta_{\rm ZP}",
         "R_dist_emp": r"R~\left[h^{-1}\,\mathrm{Mpc}\right]",
         "q_dist_emp": r"q",
@@ -617,6 +657,18 @@ def name2labelgetdist(name):
 
 def sort_params(keys):
     order = [
+        # Megamaser science parameters, then geometry/warp, nuisance floors,
+        # and eccentricity terms.  Prefixes such as ``NGC5765b/D_c`` are
+        # sorted by their base parameter within this same order.
+        "H0", "D_c", "D_A", "log_MBH", "M_BH", "eta", "dv_sys",
+        "sigma_pec", "D_lim", "D_width",
+        "x0", "y0",
+        "i0", "Omega0", "di_dr", "dOmega_dr",
+        "d2i_dr2", "d2Omega_dr2",
+        "sigma_x_floor", "sigma_y_floor",
+        "sigma_v_sys", "sigma_v_hv", "sigma_a_floor",
+        "ecc", "e_x", "e_y", "periapsis", "periapsis_rad",
+        "dperiapsis_dr",
         "a_TFR", "b_TFR", "c_TFR",
         "alpha", "beta",
         "sigma_int", "sigma_v",
@@ -624,11 +676,12 @@ def sort_params(keys):
     ]
 
     def sort_key(k):
+        prefix, base = k.split("/", 1) if "/" in k else ("", k)
         try:
-            return (order.index(k), k)
+            return (order.index(base), prefix, k)
         except ValueError:
             # Put unlisted keys at the end, alphabetically
-            return (len(order), k)
+            return (len(order), prefix, k)
 
     return sorted(keys, key=sort_key)
 
@@ -638,9 +691,13 @@ def plot_corner(samples, show_fig=True, filename=None, smooth=1, keys=None):
     flat_samples = []
     labels = []
 
-    for k, v in samples.items():
-        if keys is not None and k not in keys:
+    if keys is None:
+        keys = sort_params(list(samples.keys()))
+
+    for k in keys:
+        if k not in samples:
             continue
+        v = np.asarray(samples[k])
 
         if k == "Vext_radmag_mag":
             nbin = v.shape[1]

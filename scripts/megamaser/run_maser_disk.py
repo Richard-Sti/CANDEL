@@ -69,7 +69,7 @@ from candel.model.model_H0_maser import (JointMaserModel, MaserDiskModel,
                                           remap_warp_to_r0)
 from candel.pvdata.megamaser_data import load_megamaser_spots
 from candel.util import (data_path, fprint, fsection, get_nested, plot_corner,
-                         results_path)
+                         results_path, sort_params)
 
 _devs = jax.devices()
 _dev_names = ", ".join(d.device_kind for d in _devs)
@@ -897,8 +897,9 @@ if not is_joint:
 outpath = os.path.abspath(
     os.path.join(outdir, f"{_out_name}_{suffix}.hdf5"))
 with H5File(outpath, 'w') as f:
-    grp = f.create_group("samples")
-    for k, v in samples.items():
+    grp = f.create_group("samples", track_order=True)
+    for k in sort_params(samples.keys()):
+        v = samples[k]
         if k == 'r_ang':
             continue
         grp.create_dataset(k, data=np.asarray(v), dtype=np.float32)
