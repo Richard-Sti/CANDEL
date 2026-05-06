@@ -17,7 +17,7 @@ CH0_PAPER_COMMON = {
     "model/use_uniform_mu_host_priors": False,
     "model/selection_integral_geometry": "sphere",
     "model/selection_integral_grid_radius": 100.0,
-    "model/density_3d_downsample": 1,
+    "model/density_3d_subsample_fraction": 1.0,
     "model/priors/M_B": {"dist": "uniform", "low": -22.0, "high": -18.0},
     "model/priors/Vext": {
         "dist": "vector_uniform_fixed",
@@ -193,9 +193,35 @@ TASK_SPECS = {
         "common": {
             **CH0_PAPER_COMMON,
             **_with_root(f"{CH0_PAPER_ROOT}/mixed_selection"),
+            "model/density_3d_subsample_fraction": 0.25,
         },
         "datasets": _ch0_mixed_selection_datasets(),
         "expected_tasks": 36,
+    },
+    "CH0_test": {
+        "description": "CH0 Manticore SN/redshift selection test with 25% voxel subsampling.",
+        "config_path": "configs/config_CH0.toml",
+        "tag": "test",
+        "common": {
+            **CH0_PAPER_COMMON,
+            "inference/num_chains": 1,
+            **_with_root("results/CH0_test"),
+            "model/density_3d_subsample_fraction": 0.25,
+        },
+        "datasets": [
+            {
+                "model/use_reconstruction": True,
+                "model/use_fiducial_Cepheid_host_PV_covariance": False,
+                "model/use_PV_covmat_scaling": False,
+                "model/weight_selection_by_covmat_Neff": False,
+                "model/use_density_dependent_sigma_v": False,
+                "io/SH0ES/which_host_los": CH0_MANTICORE_LOS,
+                "model/which_bias": "linear",
+                **_ch0_selection(selection),
+            }
+            for selection in ("SN_magnitude", "redshift")
+        ],
+        "expected_tasks": 2,
     },
     "S8_FP_student_t": {
         "description": "S8 from FP PVs: 2 catalogues x 2 galaxy biases.",

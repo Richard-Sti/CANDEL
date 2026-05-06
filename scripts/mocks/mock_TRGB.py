@@ -223,7 +223,8 @@ def _load_density_3d_data(config, field_name):
         config["model"].get("which_bias", "linear"),
         config["model"].get("Om", config["model"].get("Om0", 0.3)),
         config["model"].get("selection_integral_grid_radius"),
-        config["model"].get("density_3d_downsample", 1),
+        config["model"].get("density_3d_subsample_fraction", 1.0),
+        config["model"].get("density_3d_subsample_seed", 42),
         config["model"].get("selection_integral_geometry", "sphere"),
         load_velocity,
     )
@@ -234,7 +235,10 @@ def _load_density_3d_data(config, field_name):
             Om0=config["model"].get("Om", config["model"].get("Om0", 0.3)),
             subcube_radius=config["model"].get(
                 "selection_integral_grid_radius"),
-            downsample=config["model"].get("density_3d_downsample", 1),
+            voxel_subsample_fraction=config["model"].get(
+                "density_3d_subsample_fraction", 1.0),
+            voxel_subsample_seed=config["model"].get(
+                "density_3d_subsample_seed", 42),
             load_velocity=load_velocity,
             geometry=config["model"].get(
                 "selection_integral_geometry", "sphere"),

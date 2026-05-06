@@ -37,6 +37,9 @@ by `model.selection_integral_geometry`:
 The likelihood sums over all loaded voxels in either representation. The
 truncation radius is therefore a numerical accuracy choice, not a physical
 model boundary: it should be increased until `log S` is stable.
+For convergence or memory tests, `model.density_3d_subsample_fraction < 1`
+keeps a deterministic random voxel subset and rescales the voxel measure by
+the inverse kept fraction; the default `1.0` uses every loaded voxel.
 Conceptually, the density outside the loaded reconstruction can be treated as
 mean density (`n_i = 1`), but the practical requirement is stricter: for
 posterior-relevant selection parameters, the selection probability should be

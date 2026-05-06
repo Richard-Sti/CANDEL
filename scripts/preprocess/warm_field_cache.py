@@ -260,6 +260,9 @@ def _cache_group_key(config):
     if which_los is None or field_kwargs is None:
         return None
 
+    sampling = pvdata_mod._h0_volume_cache_sampling_payload(
+        get_nested(config, "model/density_3d_subsample_fraction", 1.0),
+        get_nested(config, "model/density_3d_subsample_seed", 42))
     return _json_key({
         "kind": "h0_volume_data",
         "cache_dir": _field_cache_dir_from_config(config),
@@ -269,8 +272,7 @@ def _cache_group_key(config):
             config, "model/selection_integral_geometry", "sphere"),
         "selection_integral_grid_radius": get_nested(
             config, "model/selection_integral_grid_radius", None),
-        "density_3d_downsample": get_nested(
-            config, "model/density_3d_downsample", 1),
+        "sampling": sampling,
         "velocity": _h0_velocity_key(config),
     })
 
@@ -332,39 +334,60 @@ def _h0_cache_file_status(config):
         config, "model/selection_integral_geometry", "sphere")
     grid_radius = get_nested(
         config, "model/selection_integral_grid_radius", None)
-    downsample = get_nested(config, "model/density_3d_downsample", 1)
+    subsample_fraction = get_nested(
+        config, "model/density_3d_subsample_fraction", 1.0)
+    subsample_seed = get_nested(
+        config, "model/density_3d_subsample_seed", 42)
     load_velocity = _h0_velocity_key(config) == "velocity"
-    payload = {
+    base_payload = {
         "kind": "h0_volume_data",
         "field_name": which_los,
         "field_indices": pvdata_mod._jsonable(
             pvdata_mod.np.asarray(field_indices)),
         "subcube_radius": grid_radius,
-        "downsample": int(downsample),
-        "load_velocity": bool(load_velocity),
         "geometry": geometry,
         "sources": source_meta,
     }
-    cache_path = pvdata_mod._field_cache_path(
-        _field_cache_dir_from_config(config), "h0_volume_data", payload)
-    required = ["rho_3d_fields", "r_3d", "log_dV_3d"]
+    base_payload.update(pvdata_mod._h0_volume_cache_sampling_payload(
+        subsample_fraction, subsample_seed))
+    density_payload = {**base_payload, "load_velocity": False}
+    velocity_payload = {**base_payload, "load_velocity": True}
+    cache_dir = _field_cache_dir_from_config(config)
+    density_cache_path = Path(pvdata_mod._field_cache_path(
+        cache_dir, "h0_volume_data", density_payload))
+    velocity_cache_path = Path(pvdata_mod._field_cache_path(
+        cache_dir, "h0_volume_data", velocity_payload))
+    density_required = ["rho_3d_fields", "r_3d", "log_dV_3d"]
     if geometry == "sphere" and grid_radius is not None:
-        required.append("log_volume_weight_3d")
-    if load_velocity:
-        required.extend([
-            "vrad_3d_fields", "rhat_x_3d", "rhat_y_3d", "rhat_z_3d"])
+        density_required.append("log_volume_weight_3d")
+    velocity_required = [
+        "vrad_3d_fields", "rhat_x_3d", "rhat_y_3d", "rhat_z_3d"]
 
-    cache_path = Path(cache_path)
-    if not cache_path.exists():
-        return "missing", _short_path(cache_path)
+    if not density_cache_path.exists():
+        return "missing", _short_path(density_cache_path)
     try:
-        with pvdata_mod.np.load(cache_path, allow_pickle=False) as f:
-            missing = [key for key in required if key not in f.files]
+        with pvdata_mod.np.load(density_cache_path, allow_pickle=False) as f:
+            missing = [key for key in density_required if key not in f.files]
     except Exception as exc:
         return "unreadable", str(exc)
     if missing:
         return "incomplete", f"missing {missing}"
-    return "cached", _short_path(cache_path)
+
+    if load_velocity:
+        if not velocity_cache_path.exists():
+            return "missing", _short_path(velocity_cache_path)
+        try:
+            with pvdata_mod.np.load(
+                    velocity_cache_path, allow_pickle=False) as f:
+                missing = [
+                    key for key in velocity_required if key not in f.files]
+        except Exception as exc:
+            return "unreadable", str(exc)
+        if missing:
+            return "incomplete", f"missing {missing}"
+    if load_velocity:
+        return "cached", f"{_short_path(density_cache_path)} + velocity"
+    return "cached", _short_path(density_cache_path)
 
 
 def _variant_info(config_path, selection=None):

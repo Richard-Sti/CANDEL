@@ -383,7 +383,57 @@ def _warn_coarse_sphere_radius(radius, dx, label):
         fprint(
             f"warning: `{label}` spans only {radius_over_dx:.1f} voxels; "
             "sphere boundary weights are approximate, so consider increasing "
-            "the radius or decreasing `density_3d_downsample`.")
+            "the radius.")
+
+
+def _validate_voxel_subsample_fraction(value, label):
+    value = float(value)
+    if not 0.0 < value <= 1.0:
+        raise ValueError(f"`{label}` must be in (0, 1], got {value!r}.")
+    return value
+
+
+def _validate_voxel_subsample_seed(value, label):
+    if not isinstance(value, int) or value < 0:
+        raise ValueError(
+            f"`{label}` must be a non-negative int, got {value!r}.")
+    return value
+
+
+def _choose_voxel_subsample_indices(n_voxels, fraction, seed):
+    """Return deterministic random voxel indices and the actual kept fraction."""
+    if np.isclose(fraction, 1.0):
+        return None, 1.0
+    n_keep = int(np.ceil(float(fraction) * n_voxels))
+    n_keep = min(max(n_keep, 1), n_voxels)
+    rng = np.random.default_rng(seed)
+    return np.sort(rng.choice(n_voxels, size=n_keep, replace=False)), (
+        n_keep / n_voxels)
+
+
+def _h0_volume_cache_sampling_payload(fraction, seed):
+    """Cache key entries for full-resolution H0 volume data."""
+    return {"downsample": 1}
+
+
+def _subsample_h0_volume_arrays(arrays, fraction, seed):
+    """Apply random voxel thinning to full cached H0 volume arrays."""
+    idx, actual = _choose_voxel_subsample_indices(
+        int(np.size(arrays["r_3d"])), fraction, seed)
+    if idx is None:
+        return arrays, actual
+
+    out = dict(arrays)
+    for key in ("r_3d", "log_volume_weight_3d",
+                "rhat_x_3d", "rhat_y_3d", "rhat_z_3d"):
+        if key in out:
+            out[key] = np.asarray(out[key]).reshape(-1)[idx]
+    for key in ("rho_3d_fields", "vrad_3d_fields"):
+        if key in out:
+            arr = np.asarray(out[key])
+            out[key] = arr.reshape((arr.shape[0], -1))[:, idx]
+    out["log_dV_3d"] = float(out["log_dV_3d"]) - float(np.log(actual))
+    return out, actual
 
 
 def _precompute_cosmo_3d(log_r_3d, Om0, include_redshift=True):
@@ -466,8 +516,16 @@ def _h0_volume_runtime_result(
     return result
 
 
-def _cached_h0_volume_result(cached, source_meta, mode, Om0, load_velocity):
+def _cached_h0_volume_result(
+        cached, source_meta, mode, Om0, load_velocity,
+        voxel_subsample_fraction=1.0, voxel_subsample_seed=42):
     """Convert cached H0 base fields to the data dict used by models."""
+    cached, actual_fraction = _subsample_h0_volume_arrays(
+        cached, voxel_subsample_fraction, voxel_subsample_seed)
+    if not np.isclose(actual_fraction, 1.0):
+        fprint(
+            f"  applying random voxel subsample f={actual_fraction:.6g} "
+            f"({np.size(cached['r_3d']):,} kept).")
     rhat_fields = None
     rho_fields = cached.pop("rho_3d_fields")
     r_3d = cached.pop("r_3d")
@@ -516,18 +574,19 @@ def _read_h0_volume_mpi_part(path):
 
 def _load_volume_data_for_H0_mpi(
         comm, field_name, field_kwargs, field_indices, galaxy_bias, Om0,
-        subcube_radius, downsample, load_velocity, geometry, cache_path,
-        source_meta, mode, required):
+        subcube_radius, voxel_subsample_fraction, voxel_subsample_seed,
+        load_velocity, geometry, density_cache_path, velocity_cache_path,
+        source_meta, mode, density_required, velocity_required):
     """Build one H0 volume cache file with fields split over MPI ranks."""
     rank = comm.Get_rank()
     size = comm.Get_size()
     if rank == 0:
         fprint(f"MPI field-cache warmup: splitting {len(field_indices)} "
                f"field(s) over {size} rank(s).")
-        cache_dir = os.path.dirname(cache_path)
+        cache_dir = os.path.dirname(density_cache_path)
         os.makedirs(cache_dir, exist_ok=True)
         part_dir = tempfile.mkdtemp(
-            prefix=f".tmp_{os.path.basename(cache_path)}_mpi_",
+            prefix=f".tmp_{os.path.basename(density_cache_path)}_mpi_",
             dir=cache_dir)
     else:
         part_dir = None
@@ -550,7 +609,8 @@ def _load_volume_data_for_H0_mpi(
             partial = _load_volume_data_for_H0(
                 field_name, field_kwargs, [int(nsim)], galaxy_bias, Om0,
                 subcube_radius=subcube_radius,
-                downsample=downsample,
+                voxel_subsample_fraction=voxel_subsample_fraction,
+                voxel_subsample_seed=voxel_subsample_seed,
                 load_velocity=load_velocity,
                 geometry=geometry,
                 cache_dir=None,
@@ -622,22 +682,28 @@ def _load_volume_data_for_H0_mpi(
                                 "MPI field-cache warmup found inconsistent "
                                 f"`{label}` arrays across fields.")
 
-            cache_arrays = {
+            density_cache_arrays = {
                 "rho_3d_fields": np.stack([
                     arrays["rho_3d_fields"][0] for _, arrays in parts]),
                 "r_3d": first["r_3d"],
                 "log_dV_3d": first["log_dV_3d"],
             }
             if "log_volume_weight_3d" in first:
-                cache_arrays["log_volume_weight_3d"] = (
+                density_cache_arrays["log_volume_weight_3d"] = (
                     first["log_volume_weight_3d"])
+            _write_field_cache(
+                density_cache_path, "H0 3D volume density",
+                density_cache_arrays)
             if load_velocity:
-                cache_arrays["vrad_3d_fields"] = np.stack([
-                    arrays["vrad_3d_fields"][0] for _, arrays in parts])
+                velocity_cache_arrays = {
+                    "vrad_3d_fields": np.stack([
+                        arrays["vrad_3d_fields"][0] for _, arrays in parts])
+                }
                 for label in ("rhat_x_3d", "rhat_y_3d", "rhat_z_3d"):
-                    cache_arrays[label] = first[label]
-
-            _write_field_cache(cache_path, "H0 3D volume data", cache_arrays)
+                    velocity_cache_arrays[label] = first[label]
+                _write_field_cache(
+                    velocity_cache_path, "H0 3D volume velocity",
+                    velocity_cache_arrays)
         except Exception as exc:
             error = repr(exc)
         finally:
@@ -647,24 +713,34 @@ def _load_volume_data_for_H0_mpi(
     if error is not None:
         raise RuntimeError(f"MPI field-cache warmup failed: {error}")
 
-    cached = _read_field_cache(cache_path, "H0 3D volume data", required)
-    if cached is None:
+    density_cached = _read_field_cache(
+        density_cache_path, "H0 3D volume density", density_required)
+    velocity_cached = None
+    if load_velocity:
+        velocity_cached = _read_field_cache(
+            velocity_cache_path, "H0 3D volume velocity", velocity_required)
+    if density_cached is None or (load_velocity and velocity_cached is None):
         raise RuntimeError(
-            f"failed to read MPI-warmed H0 3D volume cache `{cache_path}`.")
+            "failed to read MPI-warmed H0 3D volume cache.")
+    cached = density_cached
+    if load_velocity:
+        cached = {**density_cached, **velocity_cached}
     return _cached_h0_volume_result(
-        cached, source_meta, mode, Om0, load_velocity)
+        cached, source_meta, mode, Om0, load_velocity,
+        voxel_subsample_fraction, voxel_subsample_seed)
 
 
 def _load_volume_data_for_H0(
         field_name, field_kwargs, field_indices, galaxy_bias, Om0,
-        subcube_radius=None, downsample=1, load_velocity=False,
-        geometry="sphere", cache_dir=None, cache_enabled=True,
-        return_cache_fields=False):
+        subcube_radius=None, voxel_subsample_fraction=1.0,
+        voxel_subsample_seed=42, load_velocity=False, geometry="sphere",
+        cache_dir=None, cache_enabled=True, return_cache_fields=False):
     """Load 3D voxel data for H0 selection integrals.
 
     Returns a dict to be merged into an H0-model data dict. The density field
     is stored as ``density_3d_fields`` with shape ``(n_fields, n_voxels)`` for
-    spherical geometry or ``(n_fields, nx, ny, nz)`` for cubic geometry.
+    spherical geometry or when voxel subsampling is enabled; unsubsampled
+    cubic geometry keeps ``(n_fields, nx, ny, nz)``.
     Velocity projections and line-of-sight unit vectors are included only when
     ``load_velocity`` is True.
     """
@@ -672,6 +748,10 @@ def _load_volume_data_for_H0(
         raise ValueError(
             f"`selection_integral_geometry` must be 'sphere' or 'cube', "
             f"got {geometry!r}.")
+    voxel_subsample_fraction = _validate_voxel_subsample_fraction(
+        voxel_subsample_fraction, "model.density_3d_subsample_fraction")
+    voxel_subsample_seed = _validate_voxel_subsample_seed(
+        voxel_subsample_seed, "model.density_3d_subsample_seed")
     mode = _volume_density_mode(galaxy_bias)
     rho_fields = []
     vrad_fields = [] if load_velocity else None
@@ -703,39 +783,61 @@ def _load_volume_data_for_H0(
             f"instead of model Om0={Om0_model:g}.")
 
     if cache_enabled:
-        cache_payload = {
+        base_cache_payload = {
             "kind": "h0_volume_data",
             "field_name": field_name,
             "field_indices": _jsonable(np.asarray(field_indices)),
             "subcube_radius": subcube_radius,
-            "downsample": int(downsample),
-            "load_velocity": bool(load_velocity),
             "geometry": geometry,
             "sources": source_meta,
         }
+        base_cache_payload.update(_h0_volume_cache_sampling_payload(
+            voxel_subsample_fraction, voxel_subsample_seed))
+        density_cache_payload = {
+            **base_cache_payload,
+            "load_velocity": False,
+        }
+        velocity_cache_payload = {
+            **base_cache_payload,
+            "load_velocity": True,
+        }
         cache_path = _field_cache_path(
-            cache_dir, "h0_volume_data", cache_payload)
-        required = ["rho_3d_fields", "r_3d", "log_dV_3d"]
+            cache_dir, "h0_volume_data", density_cache_payload)
+        velocity_cache_path = _field_cache_path(
+            cache_dir, "h0_volume_data", velocity_cache_payload)
+        density_required = ["rho_3d_fields", "r_3d", "log_dV_3d"]
         if geometry == "sphere" and subcube_radius is not None:
-            required.append("log_volume_weight_3d")
+            density_required.append("log_volume_weight_3d")
+        velocity_required = [
+            "vrad_3d_fields", "rhat_x_3d", "rhat_y_3d", "rhat_z_3d"]
+        density_cached = _read_field_cache(
+            cache_path, "H0 3D volume density", density_required)
         if load_velocity:
-            required.extend([
-                "vrad_3d_fields", "rhat_x_3d", "rhat_y_3d", "rhat_z_3d"])
-        cached = _read_field_cache(
-            cache_path, "H0 3D volume data", required)
+            velocity_cached = _read_field_cache(
+                velocity_cache_path, "H0 3D volume velocity",
+                velocity_required)
+            cached = None
+            if density_cached is not None and velocity_cached is not None:
+                cached = {**density_cached, **velocity_cached}
+        else:
+            cached = density_cached
         if cached is not None:
             return _cached_h0_volume_result(
-                cached, source_meta, mode, Om0, load_velocity)
+                cached, source_meta, mode, Om0, load_velocity,
+                voxel_subsample_fraction, voxel_subsample_seed)
         fprint("H0 3D volume data cache miss; loading reconstruction "
                f"fields and will cache at `{cache_path}`.")
         mpi_comm = _field_cache_mpi_comm()
         if mpi_comm is not None and len(field_indices) > 1:
             return _load_volume_data_for_H0_mpi(
                 mpi_comm, field_name, field_kwargs, field_indices,
-                galaxy_bias, Om0, subcube_radius, downsample, load_velocity,
-                geometry, cache_path, source_meta, mode, required)
+                galaxy_bias, Om0, subcube_radius,
+                voxel_subsample_fraction, voxel_subsample_seed,
+                load_velocity, geometry, cache_path, velocity_cache_path,
+                source_meta, mode, density_required, velocity_required)
     else:
         cache_path = None
+        velocity_cache_path = None
 
     for k, (nsim, loader) in enumerate(zip(field_indices, loaders)):
         frame = getattr(loader, "coordinate_frame", "icrs")
@@ -756,10 +858,6 @@ def _load_volume_data_for_H0(
 
         obs = np.asarray(loader.observer_pos, dtype=np.float32)
         dx = float(loader.boxsize) / rho.shape[0]
-
-        if downsample > 1:
-            rho = rho[::downsample, ::downsample, ::downsample]
-            dx *= downsample
 
         if k == 0 and geometry == "sphere" and subcube_radius is not None:
             _warn_coarse_sphere_radius(
@@ -816,18 +914,16 @@ def _load_volume_data_for_H0(
                     "position after sub-cube extraction.")
 
         if voxel_mask_ref is None:
-            rho_fields.append(rho_sub.astype(np.float32))
+            rho_out = rho_sub.astype(np.float32)
         else:
-            rho_fields.append(rho_sub[voxel_mask_ref].astype(np.float32))
+            rho_out = rho_sub[voxel_mask_ref].astype(np.float32)
+        rho_fields.append(rho_out)
 
         if load_velocity:
             v_rad = np.zeros(rho_sub.shape, dtype=np.float32)
             if hasattr(loader, "load_velocity_component"):
                 for comp in range(3):
                     v_full = loader.load_velocity_component(comp)
-                    if downsample > 1:
-                        v_full = v_full[::downsample, ::downsample,
-                                        ::downsample]
                     if slices is not None:
                         v_comp = v_full[slices[0], slices[1], slices[2]]
                     else:
@@ -839,9 +935,6 @@ def _load_volume_data_for_H0(
                 v_full = loader.load_velocity()
                 for comp in range(3):
                     v_comp = v_full[comp]
-                    if downsample > 1:
-                        v_comp = v_comp[::downsample, ::downsample,
-                                        ::downsample]
                     if slices is not None:
                         v_comp = v_comp[slices[0], slices[1], slices[2]]
                     v_rad += v_comp * disp_ref[comp] / r_sub_ref
@@ -849,15 +942,17 @@ def _load_volume_data_for_H0(
             if voxel_mask_ref is None:
                 vrad_fields.append(v_rad)
             else:
-                vrad_fields.append(v_rad[voxel_mask_ref])
+                v_rad = v_rad[voxel_mask_ref]
+                vrad_fields.append(v_rad)
 
         if voxel_mask_ref is None:
-            fprint(f"  field {k} (nsim={int(nsim)}): cube {rho_sub.shape}, "
-                   f"dx={dx:.4f} Mpc/h.")
+            msg = (f"  field {k} (nsim={int(nsim)}): cube {rho_sub.shape}, "
+                   f"dx={dx:.4f} Mpc/h")
         else:
-            fprint(f"  field {k} (nsim={int(nsim)}): sub-cube "
+            msg = (f"  field {k} (nsim={int(nsim)}): sub-cube "
                    f"{rho_sub.shape}, {int(np.sum(voxel_mask_ref))} "
-                   f"weighted spherical voxels, dx={dx:.4f} Mpc/h.")
+                   f"weighted spherical voxels, dx={dx:.4f} Mpc/h")
+        fprint(msg + ".")
 
     r_3d = jnp.asarray(np.exp(np.asarray(log_r_3d)).astype(np.float32))
 
@@ -871,27 +966,63 @@ def _load_volume_data_for_H0(
 
     rho_fields = np.stack(rho_fields)
     vrad_fields = np.stack(vrad_fields) if load_velocity else None
+    runtime_arrays = {
+        "rho_3d_fields": rho_fields,
+        "r_3d": r_3d,
+        "log_dV_3d": log_dV,
+    }
+    if log_volume_weight_3d is not None:
+        runtime_arrays["log_volume_weight_3d"] = log_volume_weight_3d
+    if load_velocity:
+        runtime_arrays["vrad_3d_fields"] = vrad_fields
+        runtime_arrays.update(rhat_fields)
+    runtime_arrays, actual_fraction = _subsample_h0_volume_arrays(
+        runtime_arrays, voxel_subsample_fraction, voxel_subsample_seed)
+    if not np.isclose(actual_fraction, 1.0):
+        fprint(
+            f"  applying random voxel subsample f={actual_fraction:.6g} "
+            f"({np.size(runtime_arrays['r_3d']):,} kept).")
+
+    runtime_rhat_fields = None
+    if load_velocity:
+        runtime_rhat_fields = {
+            label: runtime_arrays[label]
+            for label in ("rhat_x_3d", "rhat_y_3d", "rhat_z_3d")
+        }
     result = _h0_volume_runtime_result(
-        rho_fields, r_3d, log_dV, source_meta, mode, Om0, load_velocity,
-        vrad_fields=vrad_fields,
-        log_volume_weight_3d=log_volume_weight_3d,
-        rhat_fields=rhat_fields if load_velocity else None)
+        runtime_arrays["rho_3d_fields"], runtime_arrays["r_3d"],
+        runtime_arrays["log_dV_3d"], source_meta, mode, Om0, load_velocity,
+        vrad_fields=runtime_arrays.get("vrad_3d_fields"),
+        log_volume_weight_3d=runtime_arrays.get("log_volume_weight_3d"),
+        rhat_fields=runtime_rhat_fields)
     if return_cache_fields:
         result["rho_3d_fields"] = jnp.asarray(rho_fields)
         result["r_3d"] = r_3d
+        result["log_dV_3d"] = log_dV
+        if log_volume_weight_3d is not None:
+            result["log_volume_weight_3d"] = log_volume_weight_3d
+        if load_velocity:
+            result["vrad_3d_fields"] = jnp.asarray(vrad_fields)
+            for label, value in rhat_fields.items():
+                result[label] = jnp.asarray(value)
 
     if cache_enabled:
-        cache_arrays = {
+        density_cache_arrays = {
             "rho_3d_fields": rho_fields,
             "r_3d": r_3d,
             "log_dV_3d": log_dV,
         }
         if log_volume_weight_3d is not None:
-            cache_arrays["log_volume_weight_3d"] = log_volume_weight_3d
+            density_cache_arrays["log_volume_weight_3d"] = (
+                log_volume_weight_3d)
+        _write_field_cache(
+            cache_path, "H0 3D volume density", density_cache_arrays)
         if load_velocity:
-            cache_arrays["vrad_3d_fields"] = vrad_fields
-            cache_arrays.update(rhat_fields)
-        _write_field_cache(cache_path, "H0 3D volume data", cache_arrays)
+            velocity_cache_arrays = {"vrad_3d_fields": vrad_fields}
+            velocity_cache_arrays.update(rhat_fields)
+            _write_field_cache(
+                velocity_cache_path, "H0 3D volume velocity",
+                velocity_cache_arrays)
 
     return result
 
@@ -918,11 +1049,19 @@ def _load_h0_volume_data_from_config(config, los_data_path, which_los,
 
     Om0 = get_nested(config, "model/Om", get_nested(config, "model/Om0", 0.3))
     galaxy_bias = get_nested(config, "model/which_bias", "linear")
-    downsample_3d = get_nested(config, "model/density_3d_downsample", 1)
-    if not isinstance(downsample_3d, int) or downsample_3d < 1:
+    legacy_downsample = get_nested(
+        config, "model/density_3d_downsample", None)
+    if legacy_downsample not in (None, 1):
         raise ValueError(
-            "`model.density_3d_downsample` must be a positive int, "
-            f"got {downsample_3d!r}.")
+            "`model.density_3d_downsample` has been replaced by "
+            "`model.density_3d_subsample_fraction`; use a fraction in "
+            f"(0, 1], got legacy downsample {legacy_downsample!r}.")
+    voxel_subsample_fraction = _validate_voxel_subsample_fraction(
+        get_nested(config, "model/density_3d_subsample_fraction", 1.0),
+        "model.density_3d_subsample_fraction")
+    voxel_subsample_seed = _validate_voxel_subsample_seed(
+        get_nested(config, "model/density_3d_subsample_seed", 42),
+        "model.density_3d_subsample_seed")
     geometry = get_nested(
         config, "model/selection_integral_geometry", "sphere")
     if geometry not in ("sphere", "cube"):
@@ -949,7 +1088,8 @@ def _load_h0_volume_data_from_config(config, los_data_path, which_los,
     fprint(f"loading {len(field_indices)} 3D density cube(s) for {label} "
            f"selection integral (geometry={geometry}, "
            f"radius={grid_radius} Mpc/h, "
-           f"downsample={downsample_3d}, velocity={load_vel}).")
+           f"voxel_subsample_fraction={voxel_subsample_fraction:g}, "
+           f"velocity={load_vel}).")
     if cache_enabled:
         fprint(f"field cache enabled: `{cache_dir}`.")
     else:
@@ -958,7 +1098,8 @@ def _load_h0_volume_data_from_config(config, los_data_path, which_los,
         which_los, field_kwargs, field_indices,
         galaxy_bias, Om0,
         subcube_radius=grid_radius,
-        downsample=downsample_3d,
+        voxel_subsample_fraction=voxel_subsample_fraction,
+        voxel_subsample_seed=voxel_subsample_seed,
         load_velocity=load_vel,
         geometry=geometry,
         cache_dir=cache_dir,
