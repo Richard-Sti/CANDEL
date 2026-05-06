@@ -34,6 +34,7 @@ python scripts/megamaser/run_maser_disk.py <galaxy> [--sampler nuts|nss] [option
 | `--no-ecc` | off | Disable eccentricity model |
 | `--no-quadratic-warp` | off | Disable quadratic disk warp |
 | `--save-map`, `--load-map` | — | Dump/load MAP init to TOML |
+| `--f64` | off | Enable JAX float64 explicitly. Default runs use float32, including NGC4258. |
 
 CLI args override config values.
 

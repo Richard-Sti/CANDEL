@@ -42,15 +42,13 @@ import argparse
 import tempfile
 import time
 
-# Check per-galaxy use_float64 before importing JAX (must be set pre-init)
-with open(os.path.join(os.path.dirname(__file__), "config_maser.toml"), "rb") as _f:
-    _pre_cfg = tomli.load(_f)
-_galaxy_arg = sys.argv[1] if len(sys.argv) > 1 else ""
-_gal_cfg = _pre_cfg.get("model", {}).get("galaxies", {}).get(_galaxy_arg, {})
-if _gal_cfg.get("use_float64", False):
+# Float64 must be enabled before importing JAX. Keep it opt-in only.
+_enable_f64 = "--f64" in sys.argv
+if _enable_f64:
+    sys.argv.remove("--f64")
     import jax
     jax.config.update("jax_enable_x64", True)
-    print(f"float64 enabled for {_galaxy_arg}", flush=True)
+    print("float64 enabled (--f64)", flush=True)
 
 import jax
 import jax.numpy as jnp
@@ -165,6 +163,8 @@ parser.add_argument("--no-quadratic-warp", action="store_true",
                     help="Disable quadratic warp (override config)")
 parser.add_argument("--resume", action="store_true",
                     help="Resume NSS from latest checkpoint (error for NUTS)")
+parser.add_argument("--f64", action="store_true", default=_enable_f64,
+                    help="Enable JAX float64. Default is float32.")
 args = parser.parse_args()
 
 galaxy = args.galaxy
