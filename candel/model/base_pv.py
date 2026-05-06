@@ -29,9 +29,14 @@ from numpyro import deterministic, factor, handlers
 from ..util import fprint, get_nested
 from .base_model import ModelBase
 from .integration import simpson_log_weights
-from .pv_utils import (_rsample, compute_Vext_radial, lp_galaxy_bias, rsample,
+from .pv_utils import (_rsample, compute_Vext_radial, convert_cartesian_frame,
+                       lp_galaxy_bias,
+                       missing_mass_at_distance_delta_velocity,
+                       missing_mass_los_delta_velocity,
+                       missing_mass_volume_delta, rsample,
                        sample_distance_prior_volume, sample_galaxy_bias,
-                       sample_Vext, sigma_v_from_density, sumzero_basis)
+                       sample_Vext, sigma_v_from_density, spherical_rhat,
+                       sumzero_basis)
 from .utils import (joint_config_mismatch, normal_logpdf_var, predict_cz,
                     student_t_logpdf_var)
 
@@ -56,6 +61,7 @@ class BasePVModel(ModelBase):
         config = self.config
 
         kind = get_nested(config, "pv_model/kind", "Vext")
+        self.kind = kind
         kind_allowed = ["Vext", "Vext_radial"]
         if kind not in kind_allowed and not kind.startswith("precomputed_los_"):  # noqa
             raise ValueError(
@@ -105,6 +111,40 @@ class BasePVModel(ModelBase):
             self.kwargs_Vext = {}
         else:
             raise ValueError(f"Invalid which_Vext '{self.which_Vext}'.")
+
+        self.use_Mmiss = bool(get_nested(config, "pv_model/use_Mmiss", False))
+        self.Mmiss_model = get_nested(
+            config, "pv_model/Mmiss_model", "gaussian_point")
+        self.Mmiss_sigma = float(get_nested(
+            config, "pv_model/Mmiss_sigma", 5.0))
+        self.Mmiss_coordinate_frame = get_nested(
+            config, "pv_model/Mmiss_coordinate_frame", "galactic")
+        self.Mmiss_growth_index = float(get_nested(
+            config, "pv_model/Mmiss_growth_index", 0.55))
+        if self.use_Mmiss:
+            if self.Mmiss_model != "gaussian_point":
+                raise ValueError(
+                    "`pv_model.Mmiss_model` currently supports only "
+                    "'gaussian_point'.")
+            if self.Mmiss_sigma <= 0.0:
+                raise ValueError(
+                    "`pv_model.Mmiss_sigma` must be positive.")
+            if self.Mmiss_coordinate_frame not in (
+                    "icrs", "galactic", "supergalactic"):
+                raise ValueError(
+                    "`pv_model.Mmiss_coordinate_frame` must be one "
+                    "of 'icrs', 'galactic', or 'supergalactic'.")
+            required = [
+                "logM_miss", "Mmiss_distance", "Mmiss_ell", "Mmiss_b"]
+            missing = [k for k in required if k not in priors]
+            if missing:
+                raise ValueError(
+                    "Missing priors for Mmiss model: "
+                    f"{', '.join(missing)}.")
+            fprint(
+                "using Gaussian Mmiss component "
+                f"(sigma={self.Mmiss_sigma:g} Mpc/h, "
+                f"frame={self.Mmiss_coordinate_frame}).")
 
         self._load_and_set_priors()
         self.marginalize_eta = get_nested(
@@ -176,7 +216,64 @@ class BasePVModel(ModelBase):
         bias_params = sample_galaxy_bias(
             self.priors, self.galaxy_bias, shared_params,
             Om=self.Om, beta=beta)
-        return kwargs_dist, h, Vext, sigma_v, beta, bias_params, nu_cz
+        Mmiss = self._sample_Mmiss(shared_params)
+        return (kwargs_dist, h, Vext, sigma_v, beta, bias_params, nu_cz,
+                Mmiss)
+
+    def _sample_Mmiss(self, shared_params=None):
+        if not self.use_Mmiss:
+            return None
+
+        logM = rsample(
+            "logM_miss", self.priors["logM_miss"], shared_params)
+        distance = rsample(
+            "Mmiss_distance", self.priors["Mmiss_distance"], shared_params)
+        ell = rsample(
+            "Mmiss_ell", self.priors["Mmiss_ell"], shared_params)
+        b = rsample(
+            "Mmiss_b", self.priors["Mmiss_b"], shared_params)
+        rhat = spherical_rhat(ell, b)
+        return {
+            "logM": logM,
+            "distance": distance,
+            "rhat": rhat,
+        }
+
+    def _Mmiss_rhat(self, params, target_frame):
+        return convert_cartesian_frame(
+            params["rhat"], self.Mmiss_coordinate_frame, target_frame)
+
+    def _Mmiss_los_terms(self, data, r_grid, params):
+        rhat_cluster = self._Mmiss_rhat(params, "icrs")
+        Mmiss = 10.0**params["logM"]
+        return missing_mass_los_delta_velocity(
+            r_grid, data["rhat"], params["distance"], rhat_cluster,
+            Mmiss, self.Mmiss_sigma, self.Om,
+            growth_index=self.Mmiss_growth_index)
+
+    def _Mmiss_at_distance_terms(self, data, r, params):
+        rhat_cluster = self._Mmiss_rhat(params, "icrs")
+        Mmiss = 10.0**params["logM"]
+        return missing_mass_at_distance_delta_velocity(
+            r, data["rhat"], params["distance"], rhat_cluster,
+            Mmiss, self.Mmiss_sigma, self.Om,
+            growth_index=self.Mmiss_growth_index)
+
+    def _Mmiss_volume_delta(self, data, params):
+        required = ("rhat_x_3d", "rhat_y_3d", "rhat_z_3d")
+        if any(k not in data.keys() for k in required):
+            raise ValueError(
+                "Mmiss empirical prior requires 3D voxel directions; "
+                "load data with `pv_model.use_Mmiss = true` so the "
+                "volume normalizer stores them.")
+        frame = getattr(data, "coordinate_frame_3d", "icrs")
+        rhat_cluster = self._Mmiss_rhat(params, frame)
+        rhat_3d = jnp.stack([data[k] for k in required], axis=-1)
+        Mmiss = 10.0**params["logM"]
+        return missing_mass_volume_delta(
+            jnp.exp(data["log_r_3d"]), rhat_3d,
+            params["distance"], rhat_cluster, Mmiss,
+            self.Mmiss_sigma, self.Om)
 
     def _get_simpson_log_w(self, data, r_grid):
         """Return pre-computed Simpson log weights, or compute on the fly."""
@@ -207,7 +304,8 @@ class BasePVModel(ModelBase):
                 "3D density representation does not match galaxy bias model: "
                 f"{density_mode} for {self.galaxy_bias}.")
 
-    def _compute_volume_log_N(self, data, kwargs_dist, bias_params):
+    def _compute_volume_log_N(self, data, kwargs_dist, bias_params,
+                              Mmiss=None):
         """Compute the empirical prior 3D normalizer per field realization."""
         self._validate_volume_normalized_prior_data(data)
 
@@ -220,14 +318,20 @@ class BasePVModel(ModelBase):
             data["log_volume_weight_3d"]
             if "log_volume_weight_3d" in data.keys()
             else 0.0)
+        delta_missing = None
+        if Mmiss is not None:
+            delta_missing = self._Mmiss_volume_delta(data, Mmiss)
 
         def _log_N_one(density_3d):
             if density_mode == "log_rho":
-                delta_3d = 0.0
-                log_rho_3d = density_3d
+                rho_3d = jnp.exp(density_3d)
             else:
-                delta_3d = density_3d
-                log_rho_3d = 0.0
+                rho_3d = 1.0 + density_3d
+            if delta_missing is not None:
+                rho_3d = rho_3d + delta_missing
+            rho_3d = jnp.maximum(rho_3d, 1e-8)
+            delta_3d = rho_3d - 1.0
+            log_rho_3d = jnp.log(rho_3d)
             log_n_3d = lp_galaxy_bias(
                 delta_3d, log_rho_3d,
                 bias_params, self.galaxy_bias,
@@ -250,7 +354,7 @@ class BasePVModel(ModelBase):
         return log_N
 
     def _setup_lp_dist_and_Vrad(self, data, r_grid, kwargs_dist, beta,
-                                bias_params):
+                                bias_params, Mmiss=None):
         r"""Volume-normalized empirical distance prior.
 
         Treats each source's 3D position as drawn from
@@ -269,10 +373,21 @@ class BasePVModel(ModelBase):
 
         Vrad = beta * data["los_velocity_r_grid"]
 
+        delta_los = data["los_delta_r_grid"]
+        log_density_los = data["los_log_density_r_grid"]
+        if Mmiss is not None:
+            delta_missing, velocity_missing = self._Mmiss_los_terms(
+                data, r_grid, Mmiss)
+            rho_los = jnp.exp(log_density_los) + delta_missing[None, :, :]
+            rho_los = jnp.maximum(rho_los, 1e-8)
+            delta_los = rho_los - 1.0
+            log_density_los = jnp.log(rho_los)
+            Vrad = Vrad + velocity_missing[None, :, :]
+
         # Per-source LOS integrand: log n(r,θ_s) + log f(r) + 2 log r.
         log_n_los = lp_galaxy_bias(
-            data["los_delta_r_grid"],
-            data["los_log_density_r_grid"],
+            delta_los,
+            log_density_los,
             bias_params, self.galaxy_bias,
             self.quadratic_bias_delta0)
         log_f_los = -jnp.exp(q * (data["log_r_grid"] - log_R))
@@ -283,12 +398,13 @@ class BasePVModel(ModelBase):
         # `lax.map` keeps the reduction chunked over field realisations,
         # avoiding a full-field vmap and its `(nfield, nx, ny, nz)`
         # intermediate.
-        log_N = self._compute_volume_log_N(data, kwargs_dist, bias_params)
+        log_N = self._compute_volume_log_N(
+            data, kwargs_dist, bias_params, Mmiss=Mmiss)
 
-        return lp_los - log_N[:, None, None], Vrad
+        return lp_los - log_N[:, None, None], Vrad, delta_los
 
     def _compute_ll_cz(self, data, r_grid, h, Vext, sigma_v, Vrad,
-                       nu_cz=None):
+                       nu_cz=None, delta_los=None):
         Vext_rad = compute_Vext_radial(
             data, r_grid, Vext, which_Vext=self.which_Vext,
             **self.kwargs_Vext)
@@ -297,10 +413,11 @@ class BasePVModel(ModelBase):
             Vrad + Vext_rad)
 
         if self.density_dependent_sigma_v:
+            if delta_los is None:
+                delta_los = data["los_delta_r_grid"]
             sigma_v_low, sigma_v_high, log_rho_t, k = sigma_v
             sigma_v_grid = sigma_v_from_density(
-                data["los_delta_r_grid"], sigma_v_low, sigma_v_high,
-                log_rho_t, k)
+                delta_los, sigma_v_low, sigma_v_high, log_rho_t, k)
             if nu_cz is not None:
                 return student_t_logpdf_var(
                     data["czcmb"][None, :, None], czpred, sigma_v_grid**2,

@@ -102,6 +102,7 @@ class PantheonPlusModel(BasePVModel):
         bias_params = sample_galaxy_bias(
             self.priors, self.galaxy_bias, shared_params,
             Om=self.Om, beta=beta)
+        Mmiss = self._sample_Mmiss(shared_params)
         self._validate_volume_normalized_prior_data(data)
 
         # For the distance marginalization, h is not sampled. A grid is still
@@ -150,12 +151,23 @@ class PantheonPlusModel(BasePVModel):
         # distances, `(n_field, n_gal,)`, then apply the per-field 3D
         # normalizer shared by all LOS.
         Vrad = beta * data.f_los_velocity(r)
+        delta_at_r = data.f_los_delta(r)
+        log_density_at_r = data.f_los_log_density(r)
+        if Mmiss is not None:
+            delta_missing, velocity_missing = \
+                self._Mmiss_at_distance_terms(data, r, Mmiss)
+            rho_at_r = jnp.exp(log_density_at_r) + delta_missing[None, :]
+            rho_at_r = jnp.maximum(rho_at_r, 1e-8)
+            delta_at_r = rho_at_r - 1.0
+            log_density_at_r = jnp.log(rho_at_r)
+            Vrad = Vrad + velocity_missing[None, :]
         lp_dist += lp_galaxy_bias(
-            data.f_los_delta(r), data.f_los_log_density(r),
+            delta_at_r, log_density_at_r,
             bias_params, self.galaxy_bias,
             self.quadratic_bias_delta0)
         lp_dist -= self._compute_volume_log_N(
-            data, kwargs_dist, bias_params)[:, None]
+            data, kwargs_dist, bias_params,
+            Mmiss=Mmiss)[:, None]
 
         with plate("plate_redshift", nsamples):
             # Predicted redshift, `(n_field, n_galaxies)`
@@ -164,7 +176,6 @@ class PantheonPlusModel(BasePVModel):
                 Vrad + Vext_rad[None, :])
             # Compute the redshift likelihood, and add the distance prior
             if self.density_dependent_sigma_v:
-                delta_at_r = data.f_los_delta(r)
                 sigma_v_r = sigma_v_from_density(
                     delta_at_r, sigma_v_low, sigma_v_high,
                     log_sigma_v_rho_t, sigma_v_k)

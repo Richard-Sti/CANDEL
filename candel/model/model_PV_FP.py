@@ -58,7 +58,7 @@ class FPModel(BasePVModel):
         sigma_log_theta = rsample(
             "sigma_log_theta", self.priors["sigma_log_theta"], shared_params)
 
-        kwargs_dist, h, Vext, sigma_v, beta, bias_params, nu_cz = \
+        kwargs_dist, h, Vext, sigma_v, beta, bias_params, nu_cz, Mmiss = \
             self._sample_common_params(shared_params)
 
         logs_prior_mean = sample(
@@ -78,11 +78,13 @@ class FPModel(BasePVModel):
             r_grid = data["r_grid"] / h
             logda_grid = self.distance2logangdist(r_grid)
 
-            lp_dist, Vrad = self._setup_lp_dist_and_Vrad(
-                data, r_grid, kwargs_dist, beta, bias_params)
+            lp_dist, Vrad, delta_los = self._setup_lp_dist_and_Vrad(
+                data, r_grid, kwargs_dist, beta, bias_params,
+                Mmiss=Mmiss)
 
             ll_cz = self._compute_ll_cz(
-                data, r_grid, h, Vext, sigma_v, Vrad, nu_cz=nu_cz)
+                data, r_grid, h, Vext, sigma_v, Vrad, nu_cz=nu_cz,
+                delta_los=delta_los)
 
             # Marginalise (log σ, log I) analytically; f = (a, b) for FP
             f_dot_mu1, fSf, log_ev_obs = marginalise_2d_latent(

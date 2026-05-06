@@ -121,6 +121,7 @@ printf 'y\n' | ./submit.sh -q <queue> --tasks <ids-or-ranges> <task_index>
 ```
 
 Use `--tasks 0`, `--tasks 0-3`, or `--tasks 0,2,5-7` to limit submissions.
+Add `--skip-done` to omit tasks whose configured output file already exists.
 Omit `--tasks` only when intentionally submitting the full file.
 For active submissions, `tasks_<task_index>.txt` is authoritative; old
 directories under `generated_configs/` can be stale.
@@ -142,6 +143,7 @@ printf 'y\n' | ./submit.sh -q gpulong --gputype rtx2080with12gb --tasks 0 <task_
 - `-n/--ncpu`: CPU cores passed as `--host-devices`.
 - `-m/--memory`: memory per CPU in GB; total request is `memory * ncpu`.
 - `--tasks`: comma-separated task IDs and ranges.
+- `--skip-done`: skip tasks whose `io/fname_output` already exists.
 - `--status`: report done/pending state without submitting.
 - `--dry`: print submit commands without submitting.
 - `--local`: run inline instead of submitting to a batch queue.

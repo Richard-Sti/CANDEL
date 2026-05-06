@@ -75,7 +75,7 @@ paths.
   integral helpers.
 
 - `/mnt/users/rstiskalek/CANDEL/candel/model/base_pv.py`
-  contains shared peculiar-velocity model logic and `JointPVModel`.
+  contains shared PV logic, Mmiss forward terms, and `JointPVModel`.
 
 - `/mnt/users/rstiskalek/CANDEL/candel/model/model_PV_TFR.py`,
   `/mnt/users/rstiskalek/CANDEL/candel/model/model_PV_SN.py`,
@@ -100,8 +100,8 @@ paths.
   `/mnt/users/rstiskalek/CANDEL/candel/model/integration.py`, and
   `/mnt/users/rstiskalek/CANDEL/candel/model/interp.py`
   hold shared numerical primitives: priors/distributions, external velocity
-  fields, galaxy bias, latent marginalization, log-space quadrature, and LOS
-  interpolation.
+  fields, Mmiss kernels, galaxy bias, latent marginalization, log-space
+  quadrature, and LOS interpolation.
 
 - `/mnt/users/rstiskalek/CANDEL/candel/inference`
   contains inference engines and postprocessing: NumPyro NUTS in
@@ -159,6 +159,9 @@ paths.
 
 - `/mnt/users/rstiskalek/CANDEL/scripts/H0_convergence`
   contains selection-integral and posterior subsampling diagnostics.
+
+- `/mnt/users/rstiskalek/CANDEL/scripts/diagnostics`
+  contains standalone diagnostic plotting scripts for model components.
 
 - `/mnt/users/rstiskalek/CANDEL/scripts/mocks`
   contains TRGB mock run and merge scripts.

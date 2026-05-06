@@ -30,6 +30,11 @@ galaxy_bias = "linear_from_beta"  # Ignored unless having an underlying density 
 # galaxy_bias = "linear"  # Ignored unless having an underlying density field
 quadratic_bias_delta0 = 0.0  # Expansion point for quadratic bias
 which_Vext = "constant"
+use_Mmiss = false
+Mmiss_model = "gaussian_point"
+Mmiss_sigma = 5.0  # Gaussian smoothing width, Mpc/h
+Mmiss_coordinate_frame = "galactic"  # priors use (ell, b) in degrees
+Mmiss_growth_index = 0.55
 
 # (Inhomogeneous Malmquist bias settings and extrapolation), in units of Mpc / h.
 r_limits_malmquist = "auto"
@@ -348,6 +353,28 @@ method = "cubic"
 dist = "uniform"
 low = 1
 high = 10_000
+
+# Gaussian Mmiss component. Mmiss is in Msun/h; distance and smoothing
+# width are in the same Mpc/h-like units as the reconstruction grid.
+[model.priors.logM_miss]
+dist = "uniform"
+low = 14.0
+high = 18.0
+
+[model.priors.Mmiss_distance]
+dist = "uniform"
+low = 5.0
+high = 150.0
+
+[model.priors.Mmiss_ell]
+dist = "uniform"
+low = 0.0
+high = 360.0
+
+[model.priors.Mmiss_b]
+dist = "uniform"
+low = -15.0
+high = 15.0
 
 [model.priors.Rdust]
 # 0.19 +- 0.01 for W1. For W2 should be 0.15 +- 0.01. I take it a little bit

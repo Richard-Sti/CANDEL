@@ -376,6 +376,8 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
     if init_maxiter is None:
         init_maxiter = kwargs.get("init_maxiter", 1000)
 
+    dynamic_model_kwargs = False
+
     if init_maxiter > 0:
         init_params, site_names = find_initial_point(
             model, model_kwargs, maxiter=init_maxiter,
