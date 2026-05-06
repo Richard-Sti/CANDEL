@@ -26,6 +26,7 @@ scripts/runs/logs
 scripts/runs/generated_configs/
 scripts/mocks/logs/
 scripts/megamaser/logs/
+scripts/H0_convergence/outputs/
 
 modules_arc.sh
 python.sh
