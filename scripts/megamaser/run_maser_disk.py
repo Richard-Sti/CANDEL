@@ -140,6 +140,10 @@ parser.add_argument("--n-live", type=int, default=None)
 parser.add_argument("--num-mcmc-steps", type=int, default=None)
 parser.add_argument("--num-delete", type=int, default=None)
 parser.add_argument("--termination", type=float, default=None)
+parser.add_argument("--nss-devices", type=str, default=None,
+                    help="Local devices used by NSS replacement chains: "
+                         "auto, 1, or N. auto uses multiple non-CPU devices "
+                         "only when they are visible.")
 parser.add_argument("--mode", type=str, default=None,
                     choices=["mode1", "mode2"],
                     help="Sampling mode: mode1 samples r and marginalises "
@@ -713,6 +717,7 @@ elif sampler == "nss":
     num_mcmc_steps = args.num_mcmc_steps or inf_cfg.get("num_mcmc_steps", 0)
     num_delete = args.num_delete or inf_cfg.get("num_delete", 250)
     termination = args.termination or inf_cfg.get("termination", -3)
+    nss_devices = args.nss_devices or inf_cfg.get("nss_devices", "auto")
 
     if num_mcmc_steps == 0:
         num_mcmc_steps = None  # run_nss will use ndim
@@ -721,6 +726,7 @@ elif sampler == "nss":
     fsection(f"Running NSS ({_label}, {n_spots} spots)")
     fprint(f"n_live={n_live}, mcmc_steps={num_mcmc_steps}, "
            f"num_delete={num_delete}")
+    fprint(f"nss_devices={nss_devices}")
 
     _nss_ckpt_dir = results_path(
         master_cfg["io"].get("root_output", "results/Maser"),
@@ -745,6 +751,7 @@ elif sampler == "nss":
         termination=termination, seed=seed,
         checkpoint_dir=_nss_ckpt_dir, checkpoint_path=_nss_ckpt_path,
         resume_path=_nss_resume,
+        nss_devices=nss_devices,
     )
     dt = time.time() - t0
 

@@ -28,6 +28,7 @@ python scripts/megamaser/run_maser_disk.py <galaxy> [--sampler nuts|nss] [option
 | `--n-live` | 5000 | NSS live points |
 | `--num-mcmc-steps` | 0 (=ndim) | NSS slice steps |
 | `--num-delete` | 250 | NSS contraction batch |
+| `--nss-devices` | auto | NSS local-device sharding for replacement chains. Use `1` for the original single-device path or numeric `N` for N visible GPUs on one node. |
 | `--termination` | -3 | NSS stopping criterion |
 | `--f-grid` | 1.0 | Scale every phi/r grid size (`n_phi_hv_high`, `n_phi_hv_low`, `n_phi_sys`, their `_mode1` variants, `n_r_local`, `n_r_brute`) by this factor; results rounded to nearest odd integer, min 3. Applies to global `[model]` keys and per-galaxy overrides. |
 | `--no-ecc` | off | Disable eccentricity model |
@@ -106,6 +107,37 @@ addqueue -q cmbgpu -s -m 16 --gpus 1 \
     $PYTHON -u $ROOT/scripts/megamaser/run_maser_disk.py NGC6264 \
     --sampler nuts --num-warmup 2000 --num-samples 2000 --mode mode2
 ```
+
+### Single-node multi-GPU NSS
+
+NSS can shard its independent replacement chains over multiple local JAX
+devices. This is single-process, single-node parallelism only; do not use it
+for multi-node MPI-style jobs.
+
+On ARC, request multiple GPUs and pass the same count to the runner:
+
+```bash
+bash scripts/megamaser/submit.sh --sampler nss -q medium \
+    --galaxy NGC5765b --nss-devices 4
+```
+
+When more than one local device is used, NSS adjusts `num_delete` to the
+nearest value divisible by the device count; ties round upward. This avoids
+computing extra replacement chains and discarding them. If only one local
+device is visible, it falls back to the original single-device behavior.
+
+Validation plan:
+
+1. Run a reduced single-GPU NSS job and record log output, wall time, logZ,
+   `n_eff`, and any non-finite likelihood warnings.
+2. Run the same reduced job on one ARC node with `--nss-devices 2`, then
+   `--nss-devices 4` if available.
+3. Prefer `num_delete` divisible by the device count for timing tests, but
+   also run one non-divisible case to confirm the adjustment message.
+4. Compare posterior summaries and logZ against the single-GPU run before
+   launching production jobs.
+5. Keep production multi-GPU runs single-node only; do not use MPI or
+   multi-node JAX for this path.
 
 ## Grid sizes and numerical accuracy
 

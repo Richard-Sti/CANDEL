@@ -6,7 +6,8 @@
 #   submit_job --queue Q --mem GB
 #              [--cpus N]                 # CPU cores (default: 1, or 4 with --gpu)
 #              [--mpi-n N | AxB]          # MPI ranks; mutually exclusive with --gpu
-#              [--gpu] [--gputype TYPE]   # single GPU; TYPE e.g. l40s, h100, a100
+#              [--gpu] [--gpu-count N] [--gputype TYPE]
+#                                           # GPU count/type; TYPE e.g. l40s, h100, a100
 #              [--gpu-mem GB]             # min GPU VRAM; arc-only, queries sinfo
 #              [--time H | D-HH:MM:SS]    # bare integer = hours; required on 'long'
 #                                         # defaults: short=12h, medium=48h
@@ -161,7 +162,7 @@ launch_detached() {
 
 submit_job() {
     local queue="" mem="" cpus="" time="" name="candel" logdir="logs"
-    local gpu=0 dry=0 mpi_n="" gputype="" gpu_mem_min=""
+    local gpu=0 dry=0 mpi_n="" gputype="" gpu_mem_min="" gpu_count=1
     local default_log=0 runafter=""
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -175,6 +176,7 @@ submit_job() {
             --default-log) default_log=1; shift ;;
             --runafter) runafter="$2"; shift 2 ;;
             --gpu)     gpu=1; shift ;;
+            --gpu-count) gpu_count="$2"; shift 2 ;;
             --gputype) gputype="$2"; shift 2 ;;
             --gpu-mem) gpu_mem_min="$2"; shift 2 ;;
             --dry)     dry=1; shift ;;
@@ -202,6 +204,14 @@ submit_job() {
     fi
     if [[ -n "${CANDEL_WATCH_ROUND:-}" && "$CANDEL_WATCH_ROUND" -gt 0 ]] 2>/dev/null; then
         name="${name}_r${CANDEL_WATCH_ROUND}"
+    fi
+    if ! [[ "$gpu_count" =~ ^[0-9]+$ ]] || (( gpu_count < 1 )); then
+        echo "[submit_job] --gpu-count must be a positive integer" >&2
+        return 2
+    fi
+    if (( gpu_count > 1 && ! gpu )); then
+        echo "[submit_job] --gpu-count given without --gpu; ignoring" >&2
+        gpu_count=1
     fi
     if [[ -n "$gputype" ]] && (( ! gpu )); then
         echo "[submit_job] --gputype given without --gpu; ignoring" >&2
@@ -271,9 +281,9 @@ submit_job() {
             sbatch_flags+=(--time="$time")
             if (( gpu )); then
                 if [[ -n "$gputype" ]]; then
-                    sbatch_flags+=(--gres="gpu:${gputype}:1")
+                    sbatch_flags+=(--gres="gpu:${gputype}:${gpu_count}")
                 else
-                    sbatch_flags+=(--gres=gpu:1)
+                    sbatch_flags+=(--gres="gpu:${gpu_count}")
                 fi
                 if [[ -n "$gpu_mem_min" ]]; then
                     local _mem_constraint
@@ -325,7 +335,7 @@ SCRIPT
                 addqueue_flags+=(-o "logs-%j-${name}.out")
             fi
             if (( gpu )); then
-                addqueue_flags+=(-s --gpus 1 -n "$cpus")
+                addqueue_flags+=(-s --gpus "$gpu_count" -n "$cpus")
                 [[ -n "$gputype" ]] && addqueue_flags+=(--gputype "$gputype")
             elif [[ -n "$mpi_n" ]]; then
                 addqueue_flags+=(-n "$mpi_n")

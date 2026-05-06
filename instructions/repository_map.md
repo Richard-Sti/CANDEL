@@ -106,7 +106,9 @@ paths.
 - `/mnt/users/rstiskalek/CANDEL/candel/inference`
   contains inference engines and postprocessing: NumPyro NUTS in
   `inference.py`, nested slice sampling in `nested.py`, MAP optimization in
-  `optimise.py`, and evidence utilities in `evidence.py`.
+  `optimise.py`, and evidence utilities in `evidence.py`. NSS can shard
+  replacement chains over multiple local devices on one node; the single-device
+  path remains the fallback.
 
 - `/mnt/users/rstiskalek/CANDEL/candel/field`
   loads density/velocity reconstructions and interpolates line-of-sight fields.
