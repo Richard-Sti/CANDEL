@@ -19,7 +19,7 @@ CH0_PAPER_COMMON = {
     "inference/num_samples": 6000,
     "model/use_uniform_mu_host_priors": False,
     "model/selection_integral_geometry": "sphere",
-    "model/selection_integral_grid_radius": 100.0,
+    "model/selection_integral_grid_radius": 60.0,
     "model/density_3d_subsample_fraction": 1.0,
     "model/priors/M_B": {"dist": "uniform", "low": -22.0, "high": -18.0},
     "model/priors/Vext": {
@@ -35,7 +35,7 @@ TRGBH0_COMMON = {
     "inference/num_warmup": 1000,
     "inference/num_samples": 5000,
     "model/selection_integral_geometry": "sphere",
-    "model/selection_integral_grid_radius": 75.0,
+    "model/selection_integral_grid_radius": 50.0,
     "model/density_3d_subsample_fraction": 1.0,
     "model/priors/Vext": {
         "dist": "vector_uniform_fixed",

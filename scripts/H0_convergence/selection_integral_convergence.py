@@ -14,7 +14,8 @@ Selection types
 
 Sample presets (--sample)
 --------------------------
-  SH0ES     SN B-band magnitude selection.
+  CH0       Cepheid-calibrated selection. SN magnitude varies M_abs; redshift
+            varies H0.
   EDD_TRGB  TRGB F814W magnitude selection.
 Any individual argument overrides the preset.
 
@@ -22,8 +23,11 @@ Reported quantities
 -------------------
 log S(R)              Integral value at each truncation radius.
 delta_logS(R)         Truncation residual vs R_max  (negative = missing tail).
-bias_proxy(R)         N_hosts * H0-spread(delta_logS) / dH0  [1/(km/s/Mpc)].
+For redshift selection:
+  bias_proxy(R)       N_hosts * H0-spread(delta_logS) / dH0  [1/(km/s/Mpc)].
                       Multiply by sigma_H0 to get approx H0 bias in sigma units.
+For SN magnitude selection:
+  M_abs_spread(R)     N_hosts * M_abs-spread(delta_logS).
 
 All radii are in Mpc/h (matching the production config key
 `model.selection_integral_grid_radius`).
@@ -47,17 +51,15 @@ jax.config.update("jax_enable_x64", True)
 # ---------------------------------------------------------------------------
 
 PRESETS = {
-    "SH0ES": dict(
+    "CH0": dict(
         selection="mag",
-        M_abs=[-19.3],
-        mag_lim=14.5,
+        mag_lim=14.0,
         mag_width=0.15,
         e_mag=0.15,
         cz_lim=3330.0,
         cz_width=300.0,
         sigma_v=200.0,
         N_hosts=37,
-        H0=[60, 70, 80, 90, 100],
         radii=[25, 50, 75, 100, 125, 150, 200],
     ),
     "EDD_TRGB": dict(
@@ -73,6 +75,19 @@ PRESETS = {
         H0=[60, 70, 80, 90, 100],
         radii=[10, 25, 50, 75, 100],
     ),
+}
+
+PRESET_SELECTION_DEFAULTS = {
+    "CH0": {
+        "mag": dict(
+            H0=[70],
+            M_abs=[-19.0, -19.1, -19.2, -19.3, -19.4, -19.5, -19.6],
+        ),
+        "cz": dict(
+            H0=[60, 70, 80, 90, 100],
+            M_abs=[-19.3],
+        ),
+    },
 }
 
 
@@ -170,18 +185,23 @@ def print_table(title, combos, radii, data, selection, fmt="{:10.4f}"):
 
 
 def print_bias_proxy(M_abs_vals, combos, radii, delta, N_hosts, dH0, selection):
-    print(f"\nbias_proxy(R) = N_hosts * H0_spread(delta_logS) / dH0")
-    print(f"  [1/(km/s/Mpc);  bias_in_sigma ~= bias_proxy * sigma_H0]")
-    print(f"  N_hosts={N_hosts}, dH0={dH0:.0f} km/s/Mpc")
     R_hdr = "\t".join(f"R={R:g}" for R in radii)
     if selection == "mag":
+        print(f"\nM_abs_spread(delta_logS):")
+        print(f"  N_hosts={N_hosts}")
+        print(f"{'':>6}  {R_hdr}")
+        spread = N_hosts * (delta.max(axis=0) - delta.min(axis=0))
+        print("      " + "\t".join(f"{v:10.3e}" for v in spread))
         print(f"{'M_abs':>6}  {R_hdr}")
         for M in M_abs_vals:
             idx = [i for i, c in enumerate(combos) if c[1] == M]
             sub = delta[np.ix_(idx, range(len(radii)))]
-            proxy = N_hosts * (sub.max(axis=0) - sub.min(axis=0)) / dH0
-            print(f"{M:+6.2f}  " + "\t".join(f"{v:10.3e}" for v in proxy))
+            print(f"{M:+6.2f}  " + "\t".join(f"{v:10.3e}"
+                                             for v in sub[0] * N_hosts))
     else:
+        print(f"\nbias_proxy(R) = N_hosts * H0_spread(delta_logS) / dH0")
+        print(f"  [1/(km/s/Mpc);  bias_in_sigma ~= bias_proxy * sigma_H0]")
+        print(f"  N_hosts={N_hosts}, dH0={dH0:.0f} km/s/Mpc")
         proxy = N_hosts * (delta.max(axis=0) - delta.min(axis=0)) / dH0
         print("        " + "\t".join(f"{v:10.3e}" for v in proxy))
 
@@ -208,7 +228,7 @@ def main():
     p.add_argument("--H0", type=parse_floats, metavar="H0_1,...")
     p.add_argument("--N_hosts", type=int)
     p.add_argument("--M_abs", type=parse_floats, metavar="M1,...",
-                   help="Absolute magnitude(s). SH0ES: ~-19.3. TRGB: ~-4.05.")
+                   help="Absolute magnitude(s). CH0 mag scans -19.0..-19.6.")
     p.add_argument("--mag_lim", type=float)
     p.add_argument("--mag_width", type=float)
     p.add_argument("--e_mag", type=float)
@@ -227,12 +247,16 @@ def main():
     selection = get("selection")
     if selection is None:
         p.error("--selection is required when --sample is not given.")
+    preset = {
+        **preset,
+        **PRESET_SELECTION_DEFAULTS.get(args.sample, {}).get(selection, {}),
+    }
 
     radii    = get("radii",    [25, 50, 75, 100, 125, 150, 200])
     H0       = get("H0",       [60, 70, 80, 90, 100])
     N_hosts  = get("N_hosts",  1)
     M_abs    = get("M_abs",    [-19.3])
-    mag_lim  = get("mag_lim",  14.5)
+    mag_lim  = get("mag_lim",  14.0)
     mag_width= get("mag_width",0.15)
     e_mag    = get("e_mag",    0.15)
     cz_lim   = get("cz_lim",  3330.0)

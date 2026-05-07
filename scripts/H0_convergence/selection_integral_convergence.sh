@@ -34,8 +34,8 @@ Submit the CH0 selection-integral convergence test to glamdring.
 selection:
   mag, cz                     Backward-compatible positional selection.
   -s, --selection mag|cz      Selection kernel to test.
-  --sample SH0ES|EDD_TRGB     Use a Python preset. Individual Python options
-                              below override preset values.
+  --sample CH0|EDD_TRGB       Use a Python preset (default: CH0). Individual
+                              Python options below override preset values.
 
 submission options:
   -q, --queue QUEUE           Glamdring CPU queue (default: $queue).
@@ -64,7 +64,7 @@ forwarded Python options:
 examples:
   $(basename "$0") --selection mag
   $(basename "$0") cz --dx 0.665 --radii 25,50,75,100,125,150,200
-  $(basename "$0") --sample SH0ES --selection mag --dry-run
+  $(basename "$0") --sample CH0 --selection mag --dry-run
 EOF
 }
 
@@ -146,6 +146,10 @@ done
 if [[ -z "$selection" && -z "$sample" ]]; then
     selection="mag"
     python_args+=(--selection "$selection")
+fi
+if [[ -z "$sample" ]]; then
+    sample="CH0"
+    python_args+=(--sample "$sample")
 fi
 if [[ -n "$selection" && "$selection" != "mag" && "$selection" != "cz" ]]; then
     echo "[ERROR] --selection must be 'mag' or 'cz', got '$selection'" >&2
