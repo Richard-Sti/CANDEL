@@ -23,7 +23,7 @@ num_chains_harmonic = 10
 ###############################################################################
 
 [pv_model]
-# Default kind. This gets overwritten if using a submission script.
+# Default kind. Task specs can override this during config generation.
 kind = "precomputed_los_Carrick2015"
 # kind = "Vext"
 galaxy_bias = "linear_from_beta"  # Ignored unless having an underlying density field
@@ -414,8 +414,8 @@ scale = 5.0
 
 [io]
 root_output = "results"
-# Default catalogue name and output path. This gets overwritten
-# if using a submission script.
+# Default catalogue name and output path. Task specs can override these during
+# config generation.
 # catalogue_name = ["CF4_W1", "CF4_i"]
 catalogue_name = "PantheonPlusLane"
 fname_output = "results/test.hdf5"

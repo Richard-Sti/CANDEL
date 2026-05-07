@@ -30,8 +30,7 @@ from ..util import fprint, get_nested
 from .base_model import ModelBase
 from .integration import simpson_log_weights
 from .pv_utils import (_rsample, compute_Vext_radial, convert_cartesian_frame,
-                       lp_galaxy_bias,
-                       missing_mass_at_distance_delta_velocity,
+                       lp_galaxy_bias, missing_mass_at_distance_delta_velocity,
                        missing_mass_los_delta_velocity,
                        missing_mass_volume_delta, rsample,
                        sample_distance_prior_volume, sample_galaxy_bias,
@@ -50,10 +49,10 @@ class BasePVModel(ModelBase):
     reconstructed density/velocity fields or external dipoles.
 
     It handles:
-    - Loading PV-specific configuration (Vext models, galaxy bias).
-    - Sampling of shared velocity-field parameters (beta, Vext, sigma_v).
-    - Rejection sampling of the distance prior weighted by density.
-    - Integration over the line-of-sight distance.
+    - Loading PV-specific configuration (Vext models, galaxy bias, Mmiss).
+    - Sampling shared velocity-field and missing-mass parameters.
+    - Evaluating density-weighted empirical distance priors.
+    - Integrating or evaluating likelihoods over line-of-sight distance.
     """
 
     def __init__(self, config_path):

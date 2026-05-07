@@ -28,8 +28,7 @@ from .utils import normal_logpdf_var, predict_cz, student_t_logpdf_var
 
 class PantheonPlusModel(BasePVModel):
     """
-    Pantheon+ forward model, the distance is numerically marginalized out at
-    each MCMC step instead of being sampled as a latent variable.
+    Pantheon+ forward model with one latent radial distance per source.
     """
     def __init__(self, config_path):
         super().__init__(config_path)
@@ -105,8 +104,7 @@ class PantheonPlusModel(BasePVModel):
         Mmiss = self._sample_Mmiss(shared_params)
         self._validate_volume_normalized_prior_data(data)
 
-        # For the distance marginalization, h is not sampled. A grid is still
-        # required to normalize the inhomogeneous Malmquist bias distribution.
+        # h is fixed, and the radial grid provides the maximum latent distance.
         h = 1.
         r_grid = data["r_grid"] / h
         Rmax = r_grid[-1]
@@ -133,8 +131,7 @@ class PantheonPlusModel(BasePVModel):
             M_eff = (M - alpha_SN * x1 + beta_SN * c)         # (n_gal,)
             dx = data["mag"] - (mu + M_eff)
 
-            # Compute the magnitude difference vector
-            # [mag_res_i, 0, 0, mag_res_i + 1, 0, 0, etc...]
+            # Compute [mag_res_0, 0, 0, mag_res_1, 0, 0, ...].
             dX = jnp.zeros((3 * dx.size,), dtype=dx.dtype)
             dX = dX.at[0::3].set(dx)
             # Finally, track the likelihood of the magnitudes

@@ -14,7 +14,8 @@
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 """
 PV-specific sampling utilities: vector sampling, galaxy bias, external
-velocity, distance priors, and TFR/SN helpers.
+velocity, distance priors, coordinate-frame transforms, missing-mass kernels,
+and TFR/SN helpers.
 """
 import jax.numpy as jnp
 from interpax import interp1d

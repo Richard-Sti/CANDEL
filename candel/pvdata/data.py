@@ -93,7 +93,7 @@ def _jsonable(value):
 
 
 def _field_source_metadata(loader):
-    """Metadata that invalidates cached field products when inputs change."""
+    """Metadata describing field inputs for cache payloads."""
     state = {}
     paths = []
 
@@ -273,7 +273,7 @@ def _pv_volume_density_cache_filename(payload):
 
 
 def _field_cache_path(cache_dir, prefix, payload):
-    """Return the cache path for a stable JSON payload."""
+    """Return the cache path for a field-cache payload."""
     if cache_dir is None:
         return None
     if prefix == "h0_volume_data" and payload.get("kind") == "h0_volume_data":
@@ -436,7 +436,7 @@ def _validate_voxel_subsample_seed(value, label):
 
 
 def _choose_voxel_subsample_indices(n_voxels, fraction, seed):
-    """Return deterministic random voxel indices and the actual kept fraction."""
+    """Return deterministic voxel indices and the actual kept fraction."""
     if np.isclose(fraction, 1.0):
         return None, 1.0
     n_keep = int(np.ceil(float(fraction) * n_voxels))
@@ -1197,7 +1197,7 @@ def _load_volume_density_3d(loader_name, loader_kwargs, downsample=1,
                             nsim=None, subcube_radius=None,
                             pad_subcube_boundary=False, cache_dir=None,
                             cache_enabled=True, return_coordinate_frame=False):
-    """Load a 3D density cube and return (rho_3d, observer_pos, dx) as NumPy.
+    """Load a 3D density cube and return NumPy arrays.
 
     `rho_3d` is dimensionless (1 + δ) on a regular Cartesian grid of side
     `loader.boxsize` (Mpc/h). `observer_pos` is the observer's position in
@@ -1208,9 +1208,9 @@ def _load_volume_density_3d(loader_name, loader_kwargs, downsample=1,
     boundary weighting has all needed cells.
 
     `downsample` (int ≥ 1) keeps every Nth voxel along each axis (point
-    subsampling); the voxel side `dx` is rescaled by N. The voxel cap is
-    enforced after downsampling so a finely-sampled native cube can be
-    coarsened to fit.
+    subsampling); the voxel side `dx` is rescaled by N. Returns
+    ``(rho_3d, observer_pos, dx)`` unless ``return_coordinate_frame`` is true,
+    in which case the loader coordinate frame is appended.
     """
     if not isinstance(downsample, int) or downsample < 1:
         raise ValueError(
@@ -1534,6 +1534,9 @@ class PVDataFrame:
         `exp(q · (log_r_3d − log R))`, avoiding ~ngrid^3 `log` ops per leapfrog
         step. The `0.25 dx` floor at the central voxel only affects a single
         cell whose `(r/R)^q` is O((dx/R)^q) ≈ 0 anyway.
+
+        If ``store_rhat_3d`` is true, also stores voxel directions in
+        ``coordinate_frame`` for missing-mass volume terms.
         """
         self.attach_volume_density_3d_fields(
             [(rho_3d, observer_pos, dx, coordinate_frame)],
@@ -1550,7 +1553,9 @@ class PVDataFrame:
         avoiding full-field vectorization of intermediates during the
         normalizer calculation. `geometry="sphere"` stores only voxels with
         non-zero fractional volume inside `radius` (Mpc/h) as flattened 1D
-        arrays; `geometry="cube"` stores the full cube/sub-cube.
+        arrays; `geometry="cube"` stores the full cube/sub-cube. If
+        ``store_rhat_3d`` is true, each field item must include a coordinate
+        frame or defaults to ``"icrs"``.
         """
         if geometry not in ("cube", "sphere"):
             raise ValueError(
@@ -1560,6 +1565,7 @@ class PVDataFrame:
             raise ValueError(
                 "`pv_model.density_3d_radius` is required when "
                 "`density_3d_geometry = 'sphere'`.")
+
         def _unpack_field(field):
             if len(field) == 3:
                 rho_3d, obs_pos, dx = field

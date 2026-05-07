@@ -295,7 +295,7 @@ TASK_SPECS = {
                 "mean": 1.2,
                 "scale": 0.4,
             },
-            "io/root_output": "results/Mmiss_CF4_TFR_W1",
+            "io/root_output": "results/test",
         },
         "datasets": [
             {

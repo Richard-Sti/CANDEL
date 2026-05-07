@@ -17,7 +17,7 @@ Nested Slice Sampler (NSS) for NumPyro models — self-contained, no blackjax.
 
 Decomposes a NumPyro model into separate log-prior and log-likelihood
 callables, then runs a faithful reimplementation of the NSS algorithm from
-Yallup+2025 (arXiv:2601.23252) using hit-and-run slice sampling.
+Yallup+2026 (arXiv:2601.23252) using hit-and-run slice sampling.
 
 Algorithm matches the handley-lab blackjax fork exactly:
   - Same stepping-out/shrinking slice kernel (Neal 2003)
@@ -236,7 +236,7 @@ def sample_prior(dists, names, sizes, n, seed=0):
 #
 # Faithful reimplementation of the handley-lab blackjax NSS fork.
 # References:
-#   Yallup+2025  arXiv:2601.23252   (NSS algorithm)
+#   Yallup+2026  arXiv:2601.23252   (NSS algorithm)
 #   Neal (2003)  Ann. Stat. 31(3)   (slice sampling)
 #   Skilling (2006)                 (nested sampling evidence integral)
 
@@ -260,7 +260,7 @@ class _NSSState(NamedTuple):
 
 
 class _DeadInfo(NamedTuple):
-    # leading axis: (num_delete,) per step, (n_total,) after finalise
+    # leading axis: (deletion batch,) per step, (n_total,) after finalise
     particles: _Particle
 
 
@@ -288,8 +288,8 @@ def _init_integrator(particles):
 def _update_integrator(integrator, live_particles, dead_particles):
     """Update evidence integrator after one NS step.
 
-    Treats batch deletion as sequential: when the j-th dead point
-    (j=0..num_delete-1) is removed, there are n_live-j live points.
+    Treats batch deletion as sequential: when the j-th dead point in the
+    current deletion batch is removed, there are n_live-j live points.
     """
     ll_live = live_particles.loglikelihood
     ll_dead = dead_particles.loglikelihood
@@ -473,33 +473,35 @@ def _nss_step(rng_key, state, logprior_fn, loglikelihood_fn,
 
 
 def _adjust_num_delete_for_devices(num_delete, n_devices, n_live):
-    """Scale deletion count so each device gets ``num_delete`` chains."""
+    """Return the total deletion count for ``num_delete`` chains/device."""
     if n_devices <= 1:
         return num_delete
     adjusted = num_delete * n_devices
     if adjusted >= n_live:
         raise ValueError(
-            "`num_delete` multiplied by the number of NSS devices must be "
-            f"less than n_live; got {num_delete} * {n_devices} = "
-            f"{adjusted} for n_live={n_live}.")
+            "The per-device `num_delete` multiplied by the number of NSS "
+            f"devices must be less than n_live; got {num_delete} * "
+            f"{n_devices} = {adjusted} for n_live={n_live}.")
     return adjusted
 
 
-def _make_nss_step_pmap(logprior_fn, loglikelihood_fn, num_delete,
+def _make_nss_step_pmap(logprior_fn, loglikelihood_fn, total_num_delete,
                         num_mcmc_steps, devices, max_steps=10,
                         max_shrinkage=100):
-    """Build one NSS step with replacement chains sharded over local devices."""
+    """Build one NSS step with replacement chains sharded over devices."""
     n_devices = len(devices)
-    if num_delete % n_devices != 0:
-        raise ValueError("multi-device NSS requires device-divisible num_delete")
-    chains_per_device = num_delete // n_devices
+    if total_num_delete % n_devices != 0:
+        raise ValueError(
+            "multi-device NSS requires the total deletion count to be "
+            "divisible by the number of devices.")
+    chains_per_device = total_num_delete // n_devices
 
     @jax.jit
     def _prepare(state, rng_key):
         particles = state.particles
 
         _, dead_idx = jax.lax.top_k(
-            -particles.loglikelihood, num_delete)
+            -particles.loglikelihood, total_num_delete)
         dead_p = jax.tree.map(lambda x: x[dead_idx], particles)
         logL_0 = dead_p.loglikelihood.max()
 
@@ -508,7 +510,7 @@ def _make_nss_step_pmap(logprior_fn, loglikelihood_fn, num_delete,
         w = jnp.where(w.sum() > 0.0, w, jnp.ones_like(w))
         start_idx = jax.random.choice(
             choice_key, particles.loglikelihood.shape[0],
-            shape=(num_delete,), p=w / w.sum(), replace=True)
+            shape=(total_num_delete,), p=w / w.sum(), replace=True)
         start_p = jax.tree.map(lambda x: x[start_idx], particles)
         mcmc_keys = jax.random.split(mcmc_key, n_devices)
         return dead_idx, dead_p, logL_0, start_p, mcmc_keys
@@ -547,7 +549,7 @@ def _make_nss_step_pmap(logprior_fn, loglikelihood_fn, num_delete,
             start_p)
         new_p = _run_chains(mcmc_keys, start_p, logL_0, state.cov)
         new_p = jax.tree.map(
-            lambda x: x.reshape((num_delete,) + x.shape[2:]),
+            lambda x: x.reshape((total_num_delete,) + x.shape[2:]),
             new_p)
         return _finish(state, dead_idx, dead_p, new_p)
 
@@ -726,8 +728,8 @@ def run_nss(model, model_args=(), model_kwargs=None,
             checkpoint_interval=1800, devices="auto"):
     """Run the Nested Slice Sampler on a NumPyro model.
 
-    Recommended settings (Yallup+2025, arXiv:2601.23252):
-      num_mcmc_steps=ndim, num_delete=n_live//10.
+    Recommended settings (Yallup+2026, arXiv:2601.23252):
+      num_mcmc_steps=ndim, total deletions per iteration near n_live//10.
 
     Parameters
     ----------
@@ -740,7 +742,10 @@ def run_nss(model, model_args=(), model_kwargs=None,
     num_mcmc_steps : int
         Number of HRSS steps per dead point (p=d recommended).
     num_delete : int
-        Number of dead points per iteration (10% of n_live recommended).
+        Deletion batch size on one device. In multi-device mode, this is the
+        number of replacement chains run on each device; dead points are still
+        selected globally, so the total deletion count is
+        ``num_delete * n_devices``.
     termination : float
         Termination threshold for ``log(Z_live / Z_dead)``.
     seed : int
@@ -786,29 +791,34 @@ def run_nss(model, model_args=(), model_kwargs=None,
         num_mcmc_steps = ndim
 
     local_devices = _resolve_devices(devices)
-    requested_num_delete = num_delete
+    num_delete_per_device = num_delete
+    total_num_delete = num_delete
     if len(local_devices) > 1:
-        num_delete = _adjust_num_delete_for_devices(
-            num_delete, len(local_devices), n_live)
-        if num_delete != requested_num_delete:
+        total_num_delete = _adjust_num_delete_for_devices(
+            num_delete_per_device, len(local_devices), n_live)
+        if total_num_delete != num_delete_per_device:
             fprint(
-                f"NSS: scaled num_delete from {requested_num_delete} "
-                f"to {num_delete} for {len(local_devices)} local devices "
-                f"({requested_num_delete}/device).")
+                f"NSS: using num_delete={num_delete_per_device}/device "
+                f"across {len(local_devices)} local devices "
+                f"({total_num_delete} total).")
 
-    fprint(f"NSS: ndim={ndim}, num_mcmc_steps={num_mcmc_steps}, "
-           f"n_live={n_live}, num_delete={num_delete}")
+    if len(local_devices) > 1:
+        fprint(f"NSS: ndim={ndim}, num_mcmc_steps={num_mcmc_steps}, "
+               f"n_live={n_live}, num_delete_total={total_num_delete}")
+    else:
+        fprint(f"NSS: ndim={ndim}, num_mcmc_steps={num_mcmc_steps}, "
+               f"n_live={n_live}, num_delete={total_num_delete}")
 
-    use_pmap = len(local_devices) > 1 and num_delete > 1
+    use_pmap = len(local_devices) > 1 and total_num_delete > 1
     if use_pmap:
         step_fn, chains_per_device = _make_nss_step_pmap(
-            log_prior_fn, log_likelihood_fn, num_delete,
+            log_prior_fn, log_likelihood_fn, total_num_delete,
             num_mcmc_steps, local_devices)
         fprint("NSS: replacement chains sharded over "
                f"{len(local_devices)} local devices "
                f"({chains_per_device}/device).")
     else:
-        if len(local_devices) > 1 and num_delete <= 1:
+        if len(local_devices) > 1 and total_num_delete <= 1:
             fprint("NSS: multiple devices visible but num_delete <= 1; "
                    "using single-device step.")
 
@@ -817,7 +827,7 @@ def run_nss(model, model_args=(), model_kwargs=None,
         def step_fn(state, rng_key):
             return _nss_step(
                 rng_key, state, log_prior_fn,
-                log_likelihood_fn, num_delete, num_mcmc_steps)
+                log_likelihood_fn, total_num_delete, num_mcmc_steps)
 
     if checkpoint_dir is not None and checkpoint_path is None:
         raise ValueError(
@@ -845,9 +855,9 @@ def run_nss(model, model_args=(), model_kwargs=None,
         batched_fn = jax.jit(jax.vmap(init_fn))
 
         all_results = []
-        for i in tqdm.tqdm(range(0, n_live, num_delete),
+        for i in tqdm.tqdm(range(0, n_live, total_num_delete),
                            desc="init live pts", unit=" batch"):
-            batch = initial_samples[i:i + num_delete]
+            batch = initial_samples[i:i + total_num_delete]
             result = jax.block_until_ready(batched_fn(batch))
             result = jax.tree.map(lambda x: np.asarray(x), result)
             all_results.append(result)
@@ -880,14 +890,14 @@ def run_nss(model, model_args=(), model_kwargs=None,
             rng_key, subkey = jax.random.split(rng_key)
             state, dead_info = step_fn(state, subkey)
             dead.append(dead_info)
-            n_dead += num_delete
+            n_dead += total_num_delete
 
             logZ = float(state.integrator.logZ)
             gap = float(state.integrator.logZ_live) - logZ
 
             pbar.set_postfix({"logZ": f"{logZ:.2f}",
                               "gap":  f"{gap:.2f}"})
-            pbar.update(num_delete)
+            pbar.update(total_num_delete)
 
             if (_ckpt_path is not None
                     and timer() - _last_ckpt_time >= checkpoint_interval):

@@ -24,7 +24,7 @@ from .pv_utils import marginalise_2d_latent, rsample
 
 class FPModel(BasePVModel):
     """
-    A FP model where the distance modulus μ is integrated out using a grid,
+    A FP model where the radial distance is integrated out using a grid,
     instead of being sampled as a latent variable. The true (log σ, log I)
     are analytically marginalised out using the Gaussian conjugacy of the
     FP relation.
