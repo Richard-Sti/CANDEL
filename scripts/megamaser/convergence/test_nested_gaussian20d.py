@@ -66,7 +66,7 @@ def main():
 
     ndim = 20
     n_live = 5000
-    num_mcmc_steps = ndim  # p = d (Yallup+2025)
+    num_mcmc_steps = ndim  # p = d (Yallup+2026)
     num_delete = 500
     termination = -3
 

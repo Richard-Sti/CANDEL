@@ -376,6 +376,8 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
     if init_maxiter is None:
         init_maxiter = kwargs.get("init_maxiter", 1000)
 
+    dynamic_model_kwargs = False
+
     if init_maxiter > 0:
         init_params, site_names = find_initial_point(
             model, model_kwargs, maxiter=init_maxiter,
@@ -520,8 +522,8 @@ def run_H0_inference(model, model_kwargs=None, print_summary=True,
     Run MCMC inference on an H0 model.
 
     This function sets up the NumPyro NUTS kernel, optionally finds a
-    starting point via L-BFGS, runs the chains, and performs
-    post-processing (including plotting and saving).
+    starting point with the configured MAP initializer, runs the chains, and
+    performs post-processing (including plotting and saving).
 
     Parameters
     ----------
@@ -546,6 +548,8 @@ def run_H0_inference(model, model_kwargs=None, print_summary=True,
     -------
     samples : dict
         Post-processed posterior samples.
+    diagnostic_summary : dict, optional
+        Returned with ``samples`` when ``return_diagnostics`` is True.
     """
     if model_kwargs is None:
         model_kwargs = {}

@@ -487,6 +487,10 @@ def name2label(name):
         "Vext_mag": r"$V_\mathrm{ext}$",
         "Vext_ell": r"$\ell_\mathrm{ext}$",
         "Vext_b": r"$b_\mathrm{ext}$",
+        "logM_miss": r"$\log_{10} M_{\rm miss}$",
+        "Mmiss_distance": r"$r_{\rm miss}$",
+        "Mmiss_ell": r"$\ell_{\rm miss}$",
+        "Mmiss_b": r"$b_{\rm miss}$",
         "h": r"$h$",
         "a": r"$a$",
         "m1": r"$m_1$",
@@ -589,6 +593,10 @@ def name2labelgetdist(name):
         "Vext_ell": r"\ell_\mathrm{ext}~\left[\mathrm{deg}\right]",
         "Vext_ell_offset": r"\ell_\mathrm{ext} - 180~\left[\mathrm{deg}\right]",  # noqa
         "Vext_b":   r"b_\mathrm{ext}~\left[\mathrm{deg}\right]",
+        "logM_miss": r"\log_{10} M_{\rm miss}",
+        "Mmiss_distance": r"r_{\rm miss}~\left[h^{-1}\,\mathrm{Mpc}\right]",
+        "Mmiss_ell": r"\ell_{\rm miss}~\left[\mathrm{deg}\right]",
+        "Mmiss_b": r"b_{\rm miss}~\left[\mathrm{deg}\right]",
         "h": r"h",
         "a": r"a",
         "m1": r"m_1",
@@ -672,6 +680,7 @@ def sort_params(keys):
         "a_TFR", "b_TFR", "c_TFR",
         "alpha", "beta",
         "sigma_int", "sigma_v",
+        "logM_miss", "Mmiss_distance", "Mmiss_ell", "Mmiss_b",
         "Vext", "Vext_mag", "Vext_ell", "Vext_b"
     ]
 

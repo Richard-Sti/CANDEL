@@ -53,11 +53,11 @@ Usage:
 ------
 1. Add or edit a named sweep in ``specs_tasks.py``.
 2. Run the script:
-       $ python generate_tasks.py build 0
+       $ python generate_tasks.py build test
    or, for backward compatibility:
-       $ python generate_tasks.py 0
-3. Use the generated `tasks_0.txt` with `submit.sh` to run the tasks. Run
-   ``python generate_tasks.py list`` to see registered task indices.
+       $ python generate_tasks.py test
+3. Use the generated ``tasks_<task_index>.txt`` with `submit.sh` to run the
+   tasks. Run ``python generate_tasks.py list`` to see registered task indices.
 
 Typical output:
 - One `.toml` file per combination of overrides
@@ -198,13 +198,19 @@ def _is_delta_prior(prior):
     return isinstance(prior, dict) and prior.get("dist") == "delta"
 
 
+def _tag_number(value):
+    """Compact number formatting for generated filename tags."""
+    return f"{float(value):g}".replace("-", "m").replace(".", "p")
+
+
 def generate_dynamic_tag(config, base_tag="default"):
     """Generate a descriptive tag string based on selected config values."""
     parts = []
     which_run = get_nested(config, "model/which_run", None)
 
-    if which_run in ("CH0", "CCHP", "CCHP_CSP", "EDD_TRGB",
-                      "EDD_TRGB_grouped"):
+    if which_run in (
+            "CH0", "CCHP", "CCHP_CSP", "EDD_TRGB",
+            "EDD_TRGB_grouped"):
         model_name = which_run
         catalogue = which_run
         parts.append(which_run)
@@ -263,6 +269,13 @@ def generate_dynamic_tag(config, base_tag="default"):
         config, "pv_model/which_distance_prior", "empirical")
     if which_dist_prior != "empirical":
         parts.append(f"rprior-{which_dist_prior}")
+
+    if get_nested(config, "pv_model/use_Mmiss", False):
+        rmiss_prior = get_nested(config, "model/priors/Mmiss_distance", None)
+        if isinstance(rmiss_prior, dict):
+            rmiss_high = rmiss_prior.get("high", None)
+            if rmiss_high is not None:
+                parts.append(f"Mmiss_rmax{_tag_number(rmiss_high)}")
 
     # Only include beta/b1 info if using precomputed LOS (reconstruction)
     pv_kind = get_nested(config, "pv_model/kind", "")
@@ -354,7 +367,8 @@ def generate_dynamic_tag(config, base_tag="default"):
                 get_nested(config,
                            f"io/PV_main/{which_run}/which_host_los", None)))
             beta_prior = get_nested(config, "model/priors/beta", None)
-            if isinstance(beta_prior, dict) and not _is_delta_prior(beta_prior):
+            if (isinstance(beta_prior, dict)
+                    and not _is_delta_prior(beta_prior)):
                 beta_loc = beta_prior.get("loc", beta_prior.get("mean"))
                 beta_scale = beta_prior.get("scale", beta_prior.get("std"))
                 if not (beta_prior.get("dist") == "normal"
@@ -459,7 +473,8 @@ def get_sweep_spec(tasks_index):
     if tasks_index not in TASK_SPECS:
         available = ", ".join(sorted(TASK_SPECS))
         raise ValueError(
-            f"Unknown tasks_index '{tasks_index}'. Available specs: {available}")
+            f"Unknown tasks_index '{tasks_index}'. Available specs: "
+            f"{available}")
 
     raw = TASK_SPECS[tasks_index]
     config_path = (RUN_DIR / raw["config_path"]).resolve()
@@ -501,7 +516,7 @@ def apply_pv_kind_rules(config, key, value):
     if key != "pv_model/kind" or value.startswith("precomputed_los"):
         return config
 
-    # No reconstruction: force unity galaxy bias and delta reconstruction priors.
+    # No reconstruction: force unity bias and delta reconstruction priors.
     config = overwrite_config(config, "pv_model/galaxy_bias", "unity")
     config = overwrite_config(config, "model/use_reconstruction", False)
     for prior_name, prior_value in (
@@ -737,17 +752,17 @@ def show_spec(tasks_index):
 def parse_args():
     parser = ArgumentParser(
         description=(
-            "Generate CANDEL batch task lists and TOML configs from registered "
-            "task specs."
+            "Generate CANDEL batch task lists and TOML configs from "
+            "registered task specs."
         ),
         epilog=(
             "Examples:\n"
             "  python generate_tasks.py\n"
             "  python generate_tasks.py list\n"
-            "  python generate_tasks.py show S8_FP_student_t\n"
-            "  python generate_tasks.py build S8_FP_student_t --dry-run\n"
-            "  python generate_tasks.py build S8_FP_student_t --clean\n"
-            "  python generate_tasks.py S8_FP_student_t\n\n"
+            "  python generate_tasks.py show test\n"
+            "  python generate_tasks.py build test --dry-run\n"
+            "  python generate_tasks.py build test --clean\n"
+            "  python generate_tasks.py test\n\n"
             "Task specs live in scripts/runs/specs_tasks.py. Use --dry-run "
             "before writing configs for a new or edited spec."
         ),
@@ -806,7 +821,8 @@ def main():
     base_config = load_config(
         spec.config_path, replace_none=False, replace_los_prior=False,
         fill_paths=False)
-    generated = prepare_generated_tasks(spec, base_config, override_combinations)
+    generated = prepare_generated_tasks(
+        spec, base_config, override_combinations)
 
     if args.dry_run:
         for idx, stem, _ in generated:

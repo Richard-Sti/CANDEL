@@ -14,18 +14,32 @@
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 """
 PV-specific sampling utilities: vector sampling, galaxy bias, external
-velocity, distance priors, and TFR/SN helpers.
+velocity, distance priors, coordinate-frame transforms, missing-mass kernels,
+and TFR/SN helpers.
 """
 import jax.numpy as jnp
 from interpax import interp1d
 from jax import vmap
 from jax.lax import cond
+from jax.scipy.special import erf
 from jax.scipy.stats.norm import cdf as jax_norm_cdf
 from numpy.polynomial.hermite import hermgauss
 from numpyro import deterministic, plate, sample
 from numpyro.distributions import Delta, Normal, Uniform
 
 from .utils import smoothclip_nr
+
+RHO_CRIT_H2 = 2.77536627e11  # (Msun / h) / (Mpc / h)^3
+
+_R_ICRS_TO_GAL = jnp.array([
+    [-0.05487565771259163, -0.87343705195561590, -0.48383507361671546],
+    [+0.49410943719272680, -0.44482972122329520, +0.74698218398666760],
+    [-0.86766613755965760, -0.19807633727300053, +0.45598381368730160]])
+
+_R_ICRS_TO_SUPERGAL = jnp.array([
+    [+0.37501555570303163, +0.34135887185624750, +0.86188018516831910],
+    [-0.89832043772761380, -0.09572710024885137, +0.42878516000301936],
+    [+0.22887490937543750, -0.93504569026490690, +0.27075049949244600]])
 
 ###############################################################################
 #                        Vector sampling utilities                            #
@@ -354,6 +368,135 @@ def sigma_v_from_density(delta, sigma_v_low, sigma_v_high, log_rho_t, k):
     log_rho = jnp.log(rho)
     return sigma_v_low + (sigma_v_high - sigma_v_low) / (
         1.0 + jnp.exp(-k * (log_rho - log_rho_t)))
+
+
+def spherical_rhat(lon_deg, lat_deg):
+    """Unit vector from longitude/latitude in degrees in the chosen frame."""
+    lon = jnp.deg2rad(lon_deg)
+    lat = jnp.deg2rad(lat_deg)
+    cos_lat = jnp.cos(lat)
+    return jnp.array([
+        cos_lat * jnp.cos(lon),
+        cos_lat * jnp.sin(lon),
+        jnp.sin(lat),
+    ])
+
+
+def convert_cartesian_frame(rhat, source_frame, target_frame):
+    """Convert a Cartesian unit vector between ICRS/Galactic/Supergalactic."""
+    source_frame = source_frame.lower()
+    target_frame = target_frame.lower()
+    if source_frame == target_frame:
+        out = rhat
+    elif source_frame == "icrs":
+        if target_frame == "galactic":
+            out = _R_ICRS_TO_GAL @ rhat
+        elif target_frame == "supergalactic":
+            out = _R_ICRS_TO_SUPERGAL @ rhat
+        else:
+            raise ValueError(f"Unknown target frame: {target_frame!r}.")
+    elif source_frame == "galactic":
+        rhat_icrs = _R_ICRS_TO_GAL.T @ rhat
+        if target_frame == "icrs":
+            out = rhat_icrs
+        elif target_frame == "supergalactic":
+            out = _R_ICRS_TO_SUPERGAL @ rhat_icrs
+        else:
+            raise ValueError(f"Unknown target frame: {target_frame!r}.")
+    elif source_frame == "supergalactic":
+        rhat_icrs = _R_ICRS_TO_SUPERGAL.T @ rhat
+        if target_frame == "icrs":
+            out = rhat_icrs
+        elif target_frame == "galactic":
+            out = _R_ICRS_TO_GAL @ rhat_icrs
+        else:
+            raise ValueError(f"Unknown target frame: {target_frame!r}.")
+    else:
+        raise ValueError(f"Unknown source frame: {source_frame!r}.")
+    return out / jnp.linalg.norm(out)
+
+
+def gaussian_missing_mass_delta(
+        pos, cluster_pos, mass, sigma, Om, rho_crit=RHO_CRIT_H2):
+    """Gaussian-smoothed matter overdensity of an added mass component.
+
+    Positions and ``sigma`` are in Mpc/h-like reconstruction units, ``mass`` is
+    in Msun/h, and the returned density is dimensionless overdensity.
+    """
+    disp = pos - cluster_pos
+    s2 = jnp.sum(disp * disp, axis=-1)
+    rho_m = rho_crit * Om
+    norm = mass / (rho_m * (2.0 * jnp.pi)**1.5 * sigma**3)
+    return norm * jnp.exp(-0.5 * s2 / sigma**2)
+
+
+def gaussian_missing_mass_velocity(
+        pos, rhat_los, cluster_pos, mass, sigma, Om, growth_index=0.55,
+        rho_crit=RHO_CRIT_H2):
+    r"""Line-of-sight velocity from the smoothed point mass in linear theory.
+
+    The velocity follows from ``div v = -H0 f delta``. For a spherical excess,
+
+        v(s) = -100 f M(<s) / (4 pi rho_m) s_vec / s^3,
+
+    using Mpc/h and Msun/h units, so the Hubble prefactor is 100 km/s per
+    Mpc/h. The Gaussian enclosed-mass fraction regularizes the point-mass
+    singularity at ``s=0``.
+    """
+    disp = pos - cluster_pos
+    s = jnp.sqrt(jnp.sum(disp * disp, axis=-1))
+    x = s / sigma
+    frac = (erf(x / jnp.sqrt(2.0))
+            - jnp.sqrt(2.0 / jnp.pi) * x * jnp.exp(-0.5 * x * x))
+    small = x < 1e-3
+    enclosed_over_s3 = jnp.where(
+        small,
+        jnp.sqrt(2.0 / jnp.pi) / (3.0 * sigma**3),
+        frac / jnp.maximum(s, 1e-12 * sigma)**3)
+
+    rho_m = rho_crit * Om
+    coeff = -100.0 * Om**growth_index * mass / (4.0 * jnp.pi * rho_m)
+    v_vec = coeff * enclosed_over_s3[..., None] * disp
+    return jnp.sum(v_vec * rhat_los, axis=-1)
+
+
+def missing_mass_los_delta_velocity(
+        r_grid, rhat, cluster_r, cluster_rhat, mass, sigma, Om,
+        growth_index=0.55, rho_crit=RHO_CRIT_H2):
+    """Density and radial-velocity contribution on each observed LOS."""
+    pos = r_grid[None, :, None] * rhat[:, None, :]
+    cluster_pos = cluster_r * cluster_rhat
+    rhat_los = jnp.broadcast_to(rhat[:, None, :], pos.shape)
+    delta = gaussian_missing_mass_delta(
+        pos, cluster_pos, mass, sigma, Om, rho_crit=rho_crit)
+    velocity = gaussian_missing_mass_velocity(
+        pos, rhat_los, cluster_pos, mass, sigma, Om,
+        growth_index=growth_index, rho_crit=rho_crit)
+    return delta, velocity
+
+
+def missing_mass_at_distance_delta_velocity(
+        r, rhat, cluster_r, cluster_rhat, mass, sigma, Om,
+        growth_index=0.55, rho_crit=RHO_CRIT_H2):
+    """Density and radial velocity at one latent distance per object."""
+    pos = r[:, None] * rhat
+    cluster_pos = cluster_r * cluster_rhat
+    delta = gaussian_missing_mass_delta(
+        pos, cluster_pos, mass, sigma, Om, rho_crit=rho_crit)
+    velocity = gaussian_missing_mass_velocity(
+        pos, rhat, cluster_pos, mass, sigma, Om,
+        growth_index=growth_index, rho_crit=rho_crit)
+    return delta, velocity
+
+
+def missing_mass_volume_delta(
+        r_3d, rhat_3d, cluster_r, cluster_rhat, mass, sigma, Om,
+        rho_crit=RHO_CRIT_H2):
+    """Density contribution on flattened 3D normalizer voxels."""
+    pos = r_3d[..., None] * rhat_3d
+    cluster_pos = cluster_r * cluster_rhat
+    return gaussian_missing_mass_delta(
+        pos, cluster_pos, mass, sigma, Om, rho_crit=rho_crit)
 
 
 def sample_galaxy_bias(priors, galaxy_bias, shared_params=None, **kwargs):

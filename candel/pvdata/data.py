@@ -93,7 +93,7 @@ def _jsonable(value):
 
 
 def _field_source_metadata(loader):
-    """Metadata that invalidates cached field products when inputs change."""
+    """Metadata describing field inputs for cache payloads."""
     state = {}
     paths = []
 
@@ -232,6 +232,13 @@ def _field_cache_indices_tag(indices):
     return "_".join(ranges)
 
 
+def _field_cache_payload_digest(payload, length=24):
+    """Stable digest for the complete field-cache payload."""
+    payload = _jsonable({"version": _FIELD_CACHE_VERSION, **payload})
+    key = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(key.encode("utf-8")).hexdigest()[:length]
+
+
 def _h0_volume_cache_filename(payload):
     """Readable, cluster-portable filename for H0 3D volume caches."""
     parts = [
@@ -246,15 +253,36 @@ def _h0_volume_cache_filename(payload):
     return "__".join(parts) + ".npz"
 
 
+def _pv_volume_density_cache_filename(payload):
+    """Readable, cluster-portable filename for PV 3D density caches."""
+    nsim = payload.get("nsim")
+    geometry = "sphere" if payload["pad_subcube_boundary"] else "cube"
+    field_tag = "none" if nsim is None else _field_cache_indices_tag([nsim])
+    digest = _field_cache_payload_digest(payload)
+    parts = [
+        f"v{_FIELD_CACHE_VERSION}",
+        _field_cache_slug(payload["loader_name"], max_len=70),
+        f"fields-{field_tag}",
+        geometry,
+        f"r-{_field_cache_float_tag(payload['subcube_radius'])}",
+        f"ds-{int(payload['downsample'])}",
+        "density",
+        digest,
+    ]
+    return "__".join(parts) + ".npz"
+
+
 def _field_cache_path(cache_dir, prefix, payload):
-    """Return the cache path for a stable JSON payload."""
+    """Return the cache path for a field-cache payload."""
     if cache_dir is None:
         return None
     if prefix == "h0_volume_data" and payload.get("kind") == "h0_volume_data":
         return join(cache_dir, prefix, _h0_volume_cache_filename(payload))
-    payload = _jsonable({"version": _FIELD_CACHE_VERSION, **payload})
-    key = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-    digest = hashlib.sha256(key.encode("utf-8")).hexdigest()[:24]
+    if (prefix == "pv_volume_density_3d"
+            and payload.get("kind") == "pv_volume_density_3d"):
+        return join(
+            cache_dir, prefix, _pv_volume_density_cache_filename(payload))
+    digest = _field_cache_payload_digest(payload)
     return join(cache_dir, prefix, f"{digest}.npz")
 
 
@@ -408,7 +436,7 @@ def _validate_voxel_subsample_seed(value, label):
 
 
 def _choose_voxel_subsample_indices(n_voxels, fraction, seed):
-    """Return deterministic random voxel indices and the actual kept fraction."""
+    """Return deterministic voxel indices and the actual kept fraction."""
     if np.isclose(fraction, 1.0):
         return None, 1.0
     n_keep = int(np.ceil(float(fraction) * n_voxels))
@@ -1084,16 +1112,20 @@ def _load_volume_data_for_H0(
 
 def _load_h0_volume_data_from_config(config, los_data_path, which_los,
                                      label, velocity_selections):
-    """Load the shared 3D selection-integral data for H0 models."""
+    """Load shared 3D volume data for H0 normalizers."""
     which_sel = get_nested(config, "model/which_selection", None)
-    if which_sel is None:
+    which_run = get_nested(config, "model/which_run", None)
+    needs_no_selection_volume = (
+        which_sel is None
+        and which_run in ("CH0", "EDD_TRGB", "EDD_TRGB_grouped"))
+    if which_sel is None and not needs_no_selection_volume:
         return None
     use_recon = get_nested(config, "model/use_reconstruction", False)
     if not use_recon:
         return None
     if los_data_path is None or which_los is None:
         raise ValueError(
-            f"{label} selection integral requires host LOS data.")
+            f"{label} 3D volume normalizer requires host LOS data.")
 
     grid_radius = get_nested(
         config, "model/selection_integral_grid_radius", None)
@@ -1128,7 +1160,7 @@ def _load_h0_volume_data_from_config(config, los_data_path, which_los,
     if not field_kwargs:
         raise ValueError(
             f"No `io.reconstruction_main.{which_los}` configuration found "
-            f"for {label} 3D selection integral.")
+            f"for {label} 3D volume normalizer.")
     cache_enabled = _field_cache_enabled_from_config(config)
     cache_dir = (
         _field_cache_dir_from_config(config)
@@ -1141,7 +1173,7 @@ def _load_h0_volume_data_from_config(config, los_data_path, which_los,
             field_indices = np.arange(f["los_density"].shape[0])
 
     fprint(f"loading {len(field_indices)} 3D density cube(s) for {label} "
-           f"selection integral (geometry={geometry}, "
+           f"volume normalizer (geometry={geometry}, "
            f"radius={grid_radius} Mpc/h, "
            f"voxel_subsample_fraction={voxel_subsample_fraction:g}, "
            f"velocity={load_vel}).")
@@ -1164,8 +1196,8 @@ def _load_h0_volume_data_from_config(config, los_data_path, which_los,
 def _load_volume_density_3d(loader_name, loader_kwargs, downsample=1,
                             nsim=None, subcube_radius=None,
                             pad_subcube_boundary=False, cache_dir=None,
-                            cache_enabled=True):
-    """Load a 3D density cube and return (rho_3d, observer_pos, dx) as NumPy.
+                            cache_enabled=True, return_coordinate_frame=False):
+    """Load a 3D density cube and return NumPy arrays.
 
     `rho_3d` is dimensionless (1 + δ) on a regular Cartesian grid of side
     `loader.boxsize` (Mpc/h). `observer_pos` is the observer's position in
@@ -1176,9 +1208,9 @@ def _load_volume_density_3d(loader_name, loader_kwargs, downsample=1,
     boundary weighting has all needed cells.
 
     `downsample` (int ≥ 1) keeps every Nth voxel along each axis (point
-    subsampling); the voxel side `dx` is rescaled by N. The voxel cap is
-    enforced after downsampling so a finely-sampled native cube can be
-    coarsened to fit.
+    subsampling); the voxel side `dx` is rescaled by N. Returns
+    ``(rho_3d, observer_pos, dx)`` unless ``return_coordinate_frame`` is true,
+    in which case the loader coordinate frame is appended.
     """
     if not isinstance(downsample, int) or downsample < 1:
         raise ValueError(
@@ -1206,10 +1238,13 @@ def _load_volume_density_3d(loader_name, loader_kwargs, downsample=1,
         cached = _read_field_cache(
             cache_path, "PV 3D density", ["rho", "observer_pos", "dx"])
         if cached is not None:
-            return (
+            out = (
                 cached["rho"].astype(np.float32, copy=False),
                 cached["observer_pos"].astype(np.float32, copy=False),
                 float(cached["dx"]))
+            if return_coordinate_frame:
+                return out + (getattr(loader, "coordinate_frame", "icrs"),)
+            return out
         fprint("PV 3D density cache miss; loading reconstruction field "
                f"and will cache at `{cache_path}`.")
     else:
@@ -1244,6 +1279,8 @@ def _load_volume_density_3d(loader_name, loader_kwargs, downsample=1,
     _write_field_cache(
         cache_path, "PV 3D density",
         {"rho": rho, "observer_pos": obs, "dx": np.asarray(dx)})
+    if return_coordinate_frame:
+        return rho, obs, dx, getattr(loader, "coordinate_frame", "icrs")
     return rho, obs, dx
 
 
@@ -1484,7 +1521,8 @@ class PVDataFrame:
 
     def attach_volume_density_3d(self, rho_3d, observer_pos, dx,
                                  galaxy_bias="linear", geometry="cube",
-                                 radius=None):
+                                 radius=None, store_rhat_3d=False,
+                                 coordinate_frame="icrs"):
         """Attach 3D density voxels for the volume-normalized empirical prior.
 
         Stores the minimal density representation needed by `galaxy_bias`,
@@ -1496,21 +1534,28 @@ class PVDataFrame:
         `exp(q · (log_r_3d − log R))`, avoiding ~ngrid^3 `log` ops per leapfrog
         step. The `0.25 dx` floor at the central voxel only affects a single
         cell whose `(r/R)^q` is O((dx/R)^q) ≈ 0 anyway.
+
+        If ``store_rhat_3d`` is true, also stores voxel directions in
+        ``coordinate_frame`` for missing-mass volume terms.
         """
         self.attach_volume_density_3d_fields(
-            [(rho_3d, observer_pos, dx)], galaxy_bias=galaxy_bias,
-            geometry=geometry, radius=radius)
+            [(rho_3d, observer_pos, dx, coordinate_frame)],
+            galaxy_bias=galaxy_bias, geometry=geometry, radius=radius,
+            store_rhat_3d=store_rhat_3d)
 
     def attach_volume_density_3d_fields(self, fields, batch_size=1,
                                         galaxy_bias="linear",
-                                        geometry="cube", radius=None):
+                                        geometry="cube", radius=None,
+                                        store_rhat_3d=False):
         """Attach one 3D density field per field realisation.
 
         The model maps over the leading field axis with an explicit batch size,
         avoiding full-field vectorization of intermediates during the
         normalizer calculation. `geometry="sphere"` stores only voxels with
         non-zero fractional volume inside `radius` (Mpc/h) as flattened 1D
-        arrays; `geometry="cube"` stores the full cube/sub-cube.
+        arrays; `geometry="cube"` stores the full cube/sub-cube. If
+        ``store_rhat_3d`` is true, each field item must include a coordinate
+        frame or defaults to ``"icrs"``.
         """
         if geometry not in ("cube", "sphere"):
             raise ValueError(
@@ -1520,24 +1565,42 @@ class PVDataFrame:
             raise ValueError(
                 "`pv_model.density_3d_radius` is required when "
                 "`density_3d_geometry = 'sphere'`.")
+
+        def _unpack_field(field):
+            if len(field) == 3:
+                rho_3d, obs_pos, dx = field
+                coord_frame = "icrs"
+            elif len(field) == 4:
+                rho_3d, obs_pos, dx, coord_frame = field
+            else:
+                raise ValueError(
+                    "3D density fields must be "
+                    "(rho_3d, observer_pos, dx[, coordinate_frame]).")
+            return rho_3d, obs_pos, dx, coord_frame
+
         field_iter = iter(fields)
         try:
-            first = next(field_iter)
+            first = _unpack_field(next(field_iter))
         except StopIteration:
             raise ValueError("At least one 3D density field is required.")
 
         mode = _volume_density_mode(galaxy_bias)
-        rho0, obs0, dx0 = first
+        rho0, obs0, dx0, coord_frame0 = first
         log_r_grid, log_dV = _volume_density_geometry(rho0.shape, obs0, dx0)
-        if geometry == "sphere":
-            _warn_coarse_sphere_radius(
-                radius, dx0, "pv_model.density_3d_radius")
+        rhat_fields = None
+        if geometry == "sphere" or store_rhat_3d:
+            if geometry == "sphere":
+                _warn_coarse_sphere_radius(
+                    radius, dx0, "pv_model.density_3d_radius")
             nsub = rho0.shape
             ax = [(np.arange(nsub[i], dtype=np.float32) + 0.5) * dx0
                   for i in range(3)]
             disp = [ax[0][:, None, None] - obs0[0],
                     ax[1][None, :, None] - obs0[1],
                     ax[2][None, None, :] - obs0[2]]
+            r_sub = np.sqrt(disp[0]**2 + disp[1]**2 + disp[2]**2)
+            r_sub = np.maximum(r_sub, 0.25 * dx0)
+        if geometry == "sphere":
             voxel_weight = _sphere_voxel_weights(disp, radius, dx0)
             voxel_mask = voxel_weight > 0.0
             log_r_3d = log_r_grid[voxel_mask]
@@ -1547,8 +1610,17 @@ class PVDataFrame:
             voxel_mask = None
             log_r_3d = log_r_grid
             log_volume_weight_3d = None
+        if store_rhat_3d:
+            rhat_fields = {}
+            for i, label in enumerate(
+                    ("rhat_x_3d", "rhat_y_3d", "rhat_z_3d")):
+                rhat = (disp[i] / r_sub).astype(np.float32)
+                if voxel_mask is not None:
+                    rhat = rhat[voxel_mask]
+                rhat_fields[label] = jnp.asarray(rhat)
         density_fields = []
-        for rho_3d, obs_pos, dx in chain((first,), field_iter):
+        fields_iter = chain((first,), (_unpack_field(f) for f in field_iter))
+        for rho_3d, obs_pos, dx, coord_frame in fields_iter:
             if rho_3d.shape != rho0.shape:
                 raise ValueError(
                     "All 3D density fields must have the same shape; got "
@@ -1557,6 +1629,10 @@ class PVDataFrame:
                 raise ValueError(
                     "All 3D density fields must share observer position and "
                     "voxel size to reuse the volume geometry.")
+            if coord_frame != coord_frame0:
+                raise ValueError(
+                    "All 3D density fields must share coordinate frame; got "
+                    f"{coord_frame0!r} and {coord_frame!r}.")
             if mode == "log_rho":
                 density = np.log(rho_3d).astype(np.float32)
             else:
@@ -1569,11 +1645,14 @@ class PVDataFrame:
         self.data["log_r_3d"] = log_r_3d
         if log_volume_weight_3d is not None:
             self.data["log_volume_weight_3d"] = log_volume_weight_3d
+        if rhat_fields is not None:
+            self.data.update(rhat_fields)
         self.log_dV_3d = log_dV
         self.density_3d_mode = mode
         self.volume_density_batch_size = int(batch_size)
         self.density_3d_geometry = geometry
         self.density_3d_radius = radius
+        self.coordinate_frame_3d = coord_frame0
         self.has_volume_density_3d = True
 
     @classmethod
@@ -1703,6 +1782,7 @@ class PVDataFrame:
             galaxy_bias = config_pv_model.get("galaxy_bias", "unity")
             geometry = config_pv_model.get("density_3d_geometry", "cube")
             radius = config_pv_model.get("density_3d_radius", None)
+            store_rhat_3d = bool(config_pv_model.get("use_Mmiss", False))
             if geometry not in ("cube", "sphere"):
                 raise ValueError(
                     "`pv_model.density_3d_geometry` must be 'cube' or "
@@ -1730,24 +1810,34 @@ class PVDataFrame:
 
             def _iter_fields_3d():
                 for k, nsim in enumerate(field_indices):
-                    rho_3d, obs_pos, dx = _load_volume_density_3d(
+                    loaded = _load_volume_density_3d(
                         reconstruction_name, reconstruction_kwargs,
                         downsample=downsample, nsim=int(nsim),
                         subcube_radius=radius,
                         pad_subcube_boundary=(geometry == "sphere"),
                         cache_dir=field_cache_dir,
-                        cache_enabled=field_cache_enabled)
+                        cache_enabled=field_cache_enabled,
+                        return_coordinate_frame=store_rhat_3d)
+                    if store_rhat_3d:
+                        rho_3d, obs_pos, dx, coord_frame = loaded
+                    else:
+                        rho_3d, obs_pos, dx = loaded
+                        coord_frame = None
                     fprint(
                         f"  field {k} (nsim={int(nsim)}): "
                         f"cube shape {rho_3d.shape}, "
                         f"dx = {dx:.4f} Mpc/h, "
                         f"observer at {obs_pos.tolist()} Mpc/h.")
-                    yield rho_3d, obs_pos, dx
+                    if store_rhat_3d:
+                        yield rho_3d, obs_pos, dx, coord_frame
+                    else:
+                        yield rho_3d, obs_pos, dx
 
             frame.attach_volume_density_3d_fields(
                 _iter_fields_3d(), batch_size=batch_size,
                 galaxy_bias=galaxy_bias,
-                geometry=geometry, radius=radius)
+                geometry=geometry, radius=radius,
+                store_rhat_3d=store_rhat_3d)
 
         return frame
 
@@ -1782,7 +1872,8 @@ class PVDataFrame:
             "r_grid", "los_delta_r_grid", "los_velocity_r_grid",
             "los_log_density_r_grid", "log_r_grid", "log_jac_los",
             "los_field_indices", "density_3d_fields", "log_r_3d",
-            "log_volume_weight_3d"]
+            "log_volume_weight_3d", "rhat_x_3d", "rhat_y_3d",
+            "rhat_z_3d"]
 
         subsampled = {key: self[key][main_mask]
                       for key in self.keys() if key not in keys_skip}
@@ -1812,6 +1903,8 @@ class PVDataFrame:
                 self, "density_3d_geometry", "cube")
             out.density_3d_radius = getattr(
                 self, "density_3d_radius", None)
+            out.coordinate_frame_3d = getattr(
+                self, "coordinate_frame_3d", "icrs")
         return out
 
     def __getitem__(self, key):
