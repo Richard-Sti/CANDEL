@@ -232,6 +232,13 @@ def _field_cache_indices_tag(indices):
     return "_".join(ranges)
 
 
+def _field_cache_payload_digest(payload, length=24):
+    """Stable digest for the complete field-cache payload."""
+    payload = _jsonable({"version": _FIELD_CACHE_VERSION, **payload})
+    key = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(key.encode("utf-8")).hexdigest()[:length]
+
+
 def _h0_volume_cache_filename(payload):
     """Readable, cluster-portable filename for H0 3D volume caches."""
     parts = [
@@ -246,15 +253,36 @@ def _h0_volume_cache_filename(payload):
     return "__".join(parts) + ".npz"
 
 
+def _pv_volume_density_cache_filename(payload):
+    """Readable, cluster-portable filename for PV 3D density caches."""
+    nsim = payload.get("nsim")
+    geometry = "sphere" if payload["pad_subcube_boundary"] else "cube"
+    field_tag = "none" if nsim is None else _field_cache_indices_tag([nsim])
+    digest = _field_cache_payload_digest(payload)
+    parts = [
+        f"v{_FIELD_CACHE_VERSION}",
+        _field_cache_slug(payload["loader_name"], max_len=70),
+        f"fields-{field_tag}",
+        geometry,
+        f"r-{_field_cache_float_tag(payload['subcube_radius'])}",
+        f"ds-{int(payload['downsample'])}",
+        "density",
+        digest,
+    ]
+    return "__".join(parts) + ".npz"
+
+
 def _field_cache_path(cache_dir, prefix, payload):
     """Return the cache path for a stable JSON payload."""
     if cache_dir is None:
         return None
     if prefix == "h0_volume_data" and payload.get("kind") == "h0_volume_data":
         return join(cache_dir, prefix, _h0_volume_cache_filename(payload))
-    payload = _jsonable({"version": _FIELD_CACHE_VERSION, **payload})
-    key = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-    digest = hashlib.sha256(key.encode("utf-8")).hexdigest()[:24]
+    if (prefix == "pv_volume_density_3d"
+            and payload.get("kind") == "pv_volume_density_3d"):
+        return join(
+            cache_dir, prefix, _pv_volume_density_cache_filename(payload))
+    digest = _field_cache_payload_digest(payload)
     return join(cache_dir, prefix, f"{digest}.npz")
 
 

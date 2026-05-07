@@ -198,6 +198,11 @@ def _is_delta_prior(prior):
     return isinstance(prior, dict) and prior.get("dist") == "delta"
 
 
+def _tag_number(value):
+    """Compact number formatting for generated filename tags."""
+    return f"{float(value):g}".replace("-", "m").replace(".", "p")
+
+
 def generate_dynamic_tag(config, base_tag="default"):
     """Generate a descriptive tag string based on selected config values."""
     parts = []
@@ -263,6 +268,13 @@ def generate_dynamic_tag(config, base_tag="default"):
         config, "pv_model/which_distance_prior", "empirical")
     if which_dist_prior != "empirical":
         parts.append(f"rprior-{which_dist_prior}")
+
+    if get_nested(config, "pv_model/use_Mmiss", False):
+        rmiss_prior = get_nested(config, "model/priors/Mmiss_distance", None)
+        if isinstance(rmiss_prior, dict):
+            rmiss_high = rmiss_prior.get("high", None)
+            if rmiss_high is not None:
+                parts.append(f"Mmiss_rmax{_tag_number(rmiss_high)}")
 
     # Only include beta/b1 info if using precomputed LOS (reconstruction)
     pv_kind = get_nested(config, "pv_model/kind", "")
@@ -744,10 +756,10 @@ def parse_args():
             "Examples:\n"
             "  python generate_tasks.py\n"
             "  python generate_tasks.py list\n"
-            "  python generate_tasks.py show S8_FP_student_t\n"
-            "  python generate_tasks.py build S8_FP_student_t --dry-run\n"
-            "  python generate_tasks.py build S8_FP_student_t --clean\n"
-            "  python generate_tasks.py S8_FP_student_t\n\n"
+            "  python generate_tasks.py show test\n"
+            "  python generate_tasks.py build test --dry-run\n"
+            "  python generate_tasks.py build test --clean\n"
+            "  python generate_tasks.py test\n\n"
             "Task specs live in scripts/runs/specs_tasks.py. Use --dry-run "
             "before writing configs for a new or edited spec."
         ),

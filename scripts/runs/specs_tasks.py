@@ -265,12 +265,12 @@ def _trgbh0_main_datasets():
 
 TASK_SPECS = {
     "test": {
-        "description": "Foundation PV Mmiss convergence test with Vext fixed to zero.",
+        "description": "CF4 TFR W1 Mmiss run with a single NUTS chain.",
         "config_path": "configs/config.toml",
-        "tag": "Mmiss_test",
+        "tag": "Mmiss_single_chain",
         "common": {
-            "inference/model": "SNModel",
-            "inference/num_chains": 4,
+            "inference/model": "TFRModel",
+            "inference/num_chains": 1,
             "inference/chain_method": "sequential",
             "inference/num_warmup": 500,
             "inference/num_samples": 500,
@@ -285,61 +285,9 @@ TASK_SPECS = {
             "pv_model/dr_malmquist": 1.0,
             "pv_model/density_3d_geometry": "sphere",
             "pv_model/density_3d_radius": 150.0,
-            "pv_model/density_3d_downsample": 4,
-            "model/priors/Vext": _delta([0.0, 0.0, 0.0]),
-            "model/priors/b1": {
-                "dist": "truncated_normal",
-                "low": 0.1,
-                "mean": 1.2,
-                "scale": 0.4,
-            },
-            "model/priors/logM_miss": {
-                "dist": "uniform",
-                "low": 14.0,
-                "high": 18.0,
-            },
-            "model/priors/Mmiss_distance": {
-                "dist": "uniform",
-                "low": 5.0,
-                "high": 150.0,
-            },
-            "model/priors/Mmiss_b": {
-                "dist": "uniform",
-                "low": -10.0,
-                "high": 10.0,
-            },
-            "io/root_output": "results/test",
-        },
-        "datasets": [
-            {
-                "io/catalogue_name": "Foundation",
-                "io/Foundation/nsamples_subsample": 40,
-            },
-        ],
-        "expected_tasks": 1,
-    },
-    "Mmiss_CF4_TFR_W1": {
-        "description": "CF4 TFR W1 Mmiss run with a single NUTS chain.",
-        "config_path": "configs/config.toml",
-        "tag": "Mmiss_single_chain",
-        "common": {
-            "inference/model": "TFRModel",
-            "inference/num_chains": 1,
-            "inference/chain_method": "sequential",
-            "inference/num_warmup": 500,
-            "inference/num_samples": 500,
-            "inference/compute_evidence": False,
-            "inference/compute_log_density": False,
-            "inference/target_accept_prob": 0.9,
-            "pv_model/kind": "precomputed_los_CF4",
-            "pv_model/galaxy_bias": "linear",
-            "pv_model/use_Mmiss": True,
-            "pv_model/Mmiss_sigma": 5.0,
-            "pv_model/Mmiss_coordinate_frame": "galactic",
-            "pv_model/dr_malmquist": 1.0,
-            "pv_model/density_3d_geometry": "sphere",
-            "pv_model/density_3d_radius": 150.0,
-            "pv_model/density_3d_downsample": 4,
+            "pv_model/density_3d_downsample": 1,
+            "model/priors/Mmiss_distance/high": [
+                50.0, 100.0, 150.0, 200.0, 250.0],
             "model/priors/Vext": _delta([0.0, 0.0, 0.0]),
             "model/priors/b1": {
                 "dist": "truncated_normal",
@@ -354,7 +302,7 @@ TASK_SPECS = {
                 "io/catalogue_name": "CF4_W1",
             },
         ],
-        "expected_tasks": 1,
+        "expected_tasks": 5,
     },
     "CH0_main": {
         "description": "CH0 paper H0 grid plus redshift-free distance runs.",
@@ -382,31 +330,6 @@ TASK_SPECS = {
         "datasets": _ch0_mixed_selection_datasets(),
         "expected_tasks": 36,
     },
-    "CH0_test": {
-        "description": "CH0 Manticore SN/redshift selection test with 25% voxel subsampling.",
-        "config_path": "configs/config_CH0.toml",
-        "tag": "test",
-        "common": {
-            **CH0_PAPER_COMMON,
-            "inference/num_chains": 1,
-            **_with_root("results/CH0_test"),
-            "model/density_3d_subsample_fraction": 0.25,
-        },
-        "datasets": [
-            {
-                "model/use_reconstruction": True,
-                "model/use_fiducial_Cepheid_host_PV_covariance": False,
-                "model/use_PV_covmat_scaling": False,
-                "model/weight_selection_by_covmat_Neff": False,
-                "model/use_density_dependent_sigma_v": False,
-                "io/SH0ES/which_host_los": CH0_MANTICORE_LOS,
-                "model/which_bias": "linear",
-                **_ch0_selection(selection),
-            }
-            for selection in ("SN_magnitude", "redshift")
-        ],
-        "expected_tasks": 2,
-    },
     "TRGBH0_main": {
         "description": "TRGB H0 grid: PV-field, Vext-only, no-Vext, and grouped selections.",
         "config_path": "configs/config_EDD_TRGB.toml",
@@ -417,33 +340,5 @@ TASK_SPECS = {
         },
         "datasets": _trgbh0_main_datasets(),
         "expected_tasks": 8,
-    },
-    "S8_FP_student_t": {
-        "description": "S8 from FP PVs: 2 catalogues x 2 galaxy biases.",
-        "config_path": "configs/config.toml",
-        "tag": "student_t",
-        "common": {
-            "pv_model/kind": "precomputed_los_Carrick2015",
-            "pv_model/galaxy_bias": ["linear", "quadratic"],
-            "pv_model/density_3d_downsample": 1,
-            "model/priors/beta": {"dist": "uniform", "low": 0.0, "high": 2.0},
-            "model/priors/nu_cz": {
-                "dist": "truncated_normal",
-                "low": 2.0,
-                "high": 100.0,
-                "mean": 30.0,
-                "scale": 10.0,
-            },
-            "model/cz_likelihood": "student_t",
-            "inference/num_chains": 1,
-            "inference/num_warmup": 2000,
-            "inference/num_samples": 10000,
-            "io/root_output": "results/S8",
-        },
-        "datasets": [
-            {"inference/model": "FPModel", "io/catalogue_name": "6dF_FP"},
-            {"inference/model": "FPModel", "io/catalogue_name": "SDSS_FP"},
-        ],
-        "expected_tasks": 4,
     },
 }
