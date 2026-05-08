@@ -8,7 +8,7 @@ generate_tasks.py.
 CH0_PAPER_ROOT = "results/CH0_paper"
 CH0_MANTICORE_LOS = "manticore_2MPP_MULTIBIN_N256_DES_V2"
 CH0_MANTICORE_BIAS = "double_powerlaw"
-TRGBH0_ROOT = "results/TRGBH0"
+TRGBH0_ROOT = "results/TRGBH0_paper"
 TRGBH0_MANTICORE_LOS = "manticore_2MPP_MULTIBIN_N256_DES_V2"
 TRGBH0_MANTICORE_BIAS = "double_powerlaw"
 
@@ -324,8 +324,9 @@ TASK_SPECS = {
         "tag": "paper_mixed",
         "common": {
             **CH0_PAPER_COMMON,
+            "inference/num_chains": 1,
             **_with_root(f"{CH0_PAPER_ROOT}/mixed_selection"),
-            "model/density_3d_subsample_fraction": 0.25,
+            "model/density_3d_subsample_fraction": 0.5,
         },
         "datasets": _ch0_mixed_selection_datasets(),
         "expected_tasks": 36,
