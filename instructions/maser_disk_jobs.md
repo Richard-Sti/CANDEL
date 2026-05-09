@@ -22,6 +22,7 @@ python scripts/megamaser/run_maser_disk.py <galaxy> [--sampler nuts|nss] [option
 |------|---------|-------------|
 | `--sampler` | from config (`nss`) | `nuts` or `nss` |
 | `--mode` | from config | `mode1` / `mode2` — see "Sampling modes" |
+| `--r-ang-init` | from config (`data`) | Mode 1 `r_ang` init: `data` keeps the existing stochastic data-driven draw; `peak` uses the conditional phi-marginal peak from the Mode 2 centring optimiser |
 | `--seed` | 42 | RNG seed |
 | `--num-warmup` | 1000 | NUTS warmup steps |
 | `--num-samples` | 1000 | NUTS sample count |
@@ -91,6 +92,12 @@ lr = 0.1              # Peak learning rate
 lr_end = 0.005        # Minimum learning rate
 n_restarts = 3        # Cosine restart cycles
 ```
+
+For Mode 1 NUTS runs, `r_ang_init_method = "peak"` (or
+`--r-ang-init peak`) initialises each sampled `r_ang_i` at the
+conditional phi-marginal peak, reusing the Mode 2 per-spot radius
+centring optimiser. The default `data` preserves the older stochastic
+initialisation from projected radii / accelerations.
 
 ## Submitting to GPU queue
 

@@ -119,6 +119,96 @@ def _apply_fgrid(cfg, f):
                 g[k] = _round_to_odd(int(g[k]), f)
 # <<< f-grid helpers
 
+
+def _mode1_r_ang_data_init(model, init_params, seed):
+    """Current data-driven stochastic Mode 1 r_ang initialisation."""
+    rng = np.random.default_rng(seed)
+    from scipy.stats import truncnorm as _truncnorm
+
+    D_c = float(init_params["D_c"])
+    H0_ref = float(get_nested(model.config, "model/H0_ref", 73.0))
+    z_cosmo = float(model.distance2redshift(
+        jnp.atleast_1d(jnp.asarray(D_c)), h=H0_ref / 100.0).squeeze())
+    D_A = D_c / (1.0 + z_cosmo)
+    _lo, _hi = model.r_ang_range(D_A)
+    r_lo, r_hi = float(_lo), float(_hi)
+
+    eta = float(init_params["eta"])
+    x0 = float(init_params["x0"])   # μas
+    y0 = float(init_params["y0"])   # μas
+    i0_rad = np.deg2rad(float(init_params["i0"]))
+    sin_i = abs(np.sin(i0_rad))
+    M_BH = 10.0 ** (eta + np.log10(D_A) - 7.0)  # 1e7 Msun
+
+    is_hv = np.asarray(model.is_highvel, dtype=bool)
+    has_accel = np.asarray(model._all_has_accel, dtype=bool)
+
+    # HV: group mean/sd from projected sky radii.
+    x_hv = np.asarray(model._all_x)[is_hv]  # μas
+    y_hv = np.asarray(model._all_y)[is_hv]  # μas
+    r_hv = np.clip(np.sqrt((x_hv - x0)**2 + (y_hv - y0)**2) / 1e3,
+                   r_lo * 1.01, r_hi * 0.99)
+    mu_hv = float(np.mean(r_hv))
+    sd_hv = max(float(np.std(r_hv)), 0.1 * mu_hv)
+
+    # Systemic: group mean/sd from spots with accel measurements.
+    sys_accel = (~is_hv) & has_accel
+    if sys_accel.any():
+        a_sys = np.abs(np.asarray(model._all_a)[sys_accel])
+        r_sys = np.asarray(radius_from_los_acceleration(
+            a_sys + 1e-30, sin_i, D_A, M_BH))
+        r_sys = np.clip(r_sys, r_lo * 1.01, r_hi * 0.99)
+        mu_sys = float(np.mean(r_sys))
+        sd_sys = max(float(np.std(r_sys)), 0.1 * mu_sys)
+    else:
+        mu_sys, sd_sys = mu_hv, sd_hv
+        fprint("  r_ang: no systemic accel, "
+               "using HV distribution for systemic spots")
+
+    r_ang = np.empty(model.n_spots)
+    for mask, mu, sd, label in [
+        (is_hv, mu_hv, sd_hv, "HV"),
+        (~is_hv, mu_sys, sd_sys, "sys"),
+    ]:
+        n = int(mask.sum())
+        if n == 0:
+            continue
+        a = (r_lo - mu) / sd
+        b = (r_hi - mu) / sd
+        r_ang[mask] = _truncnorm.rvs(
+            a, b, loc=mu, scale=sd, size=n, random_state=rng)
+        fprint(f"  r_ang {label}: n={n}, mu={mu:.3f}, "
+               f"sd={sd:.3f} mas")
+
+    fprint(f"  r_ang: data-driven init "
+           f"[{r_ang.min():.3f}, {r_ang.max():.3f}] mas "
+           f"| D_c={D_c:.1f} Mpc")
+    return jnp.asarray(r_ang)
+
+
+def _mode1_r_ang_peak_init(model, init_params):
+    """Initialise Mode 1 r_ang at conditional phi-marginal peaks."""
+    r_ang, diag = model.mode1_r_ang_conditional_peak(init_params)
+    r_np = np.asarray(r_ang)
+    fprint(f"  r_ang: conditional-peak init "
+           f"[{r_np.min():.3f}, {r_np.max():.3f}] mas "
+           f"| D_A={diag['D_A']:.1f} Mpc")
+    return r_ang
+
+
+def _add_mode1_r_ang_init(model, init_params, seed, method):
+    """Attach r_ang to init_params when Mode 1 samples it."""
+    if model.mode != "mode1" or "r_ang" in init_params:
+        return
+    if method == "data":
+        init_params["r_ang"] = _mode1_r_ang_data_init(
+            model, init_params, seed)
+    elif method == "peak":
+        init_params["r_ang"] = _mode1_r_ang_peak_init(
+            model, init_params)
+    else:
+        raise ValueError(f"Unknown r_ang init method: {method!r}")
+
 # ---- Parse args (CLI overrides config) ----
 parser = argparse.ArgumentParser()
 parser.add_argument("galaxy", type=str)
@@ -157,6 +247,12 @@ parser.add_argument("--init-method", type=str, default=None,
                          "config:  globals from config, r_ang data-driven from sky positions / accelerations  "
                          "median:  median of N prior draws for globals, r_ang data-driven  "
                          "sample:  globals sampled from priors, r_ang data-driven")
+parser.add_argument("--r-ang-init", type=str, default=None,
+                    choices=["data", "peak"],
+                    help="Mode 1 r_ang initialisation: data draws from the "
+                         "existing rough data-driven distribution; peak "
+                         "uses the conditional phi-marginal peak from the "
+                         "Mode 2 centring optimiser.")
 parser.add_argument("--no-ecc", action="store_true",
                     help="Disable eccentricity model (override config)")
 parser.add_argument("--no-quadratic-warp", action="store_true",
@@ -351,14 +447,18 @@ if sampler == "nuts":
         fsection(f"Running NUTS ({galaxy}, {n_spots} spots)")
         init_cfg = gcfg.get("init", {})
         init_method = args.init_method or inf_cfg.get("init_method", "config")
+        r_ang_init_method = args.r_ang_init or inf_cfg.get(
+            "r_ang_init_method", "data")
 
         _init_desc = {
-            "config": "globals from config, r_ang data-driven",
-            "median": "median of N prior draws, r_ang data-driven",
-            "sample": "globals from prior, r_ang data-driven",
+            "config": "globals from config",
+            "median": "median of N prior draws for globals",
+            "sample": "globals from prior",
         }
         fprint(f"Initialisation: {init_method} "
                f"({_init_desc.get(init_method, '?')})")
+        if model.mode == "mode1":
+            fprint(f"  r_ang init: {r_ang_init_method}")
 
         if init_method == "config":
             if not init_cfg:
@@ -378,71 +478,8 @@ if sampler == "nuts":
                 for _k in ("d2i_dr2", "d2Omega_dr2"):
                     init_params.pop(_k, None)
 
-            # Mode 1: model samples r_ang, so init needs r_ang.
-            if model.mode == "mode1" and "r_ang" not in init_params:
-                rng = np.random.default_rng(seed)
-                from scipy.stats import truncnorm as _truncnorm
-                D_c = float(init_params["D_c"])
-                H0_ref = float(get_nested(model.config, "model/H0_ref", 73.0))
-                z_cosmo = float(model.distance2redshift(
-                    jnp.atleast_1d(jnp.asarray(D_c)),
-                    h=H0_ref / 100.0).squeeze())
-                D_A = D_c / (1.0 + z_cosmo)
-                _lo, _hi = model.r_ang_range(D_A)
-                r_lo, r_hi = float(_lo), float(_hi)
-
-                eta = float(init_params["eta"])
-                x0 = float(init_params["x0"])   # μas
-                y0 = float(init_params["y0"])   # μas
-                i0_rad = np.deg2rad(float(init_params["i0"]))
-                sin_i = abs(np.sin(i0_rad))
-                M_BH = 10.0 ** (eta + np.log10(D_A) - 7.0)  # 1e7 Msun
-
-                is_hv = np.asarray(model.is_highvel, dtype=bool)
-                has_accel = np.asarray(model._all_has_accel, dtype=bool)
-
-                # HV: group mean/sd from projected sky radii.
-                # Both _all_x/_all_y and x0/y0 are in μas; divide by 1e3 → mas.
-                x_hv = np.asarray(model._all_x)[is_hv]  # μas
-                y_hv = np.asarray(model._all_y)[is_hv]  # μas
-                r_hv = np.clip(np.sqrt((x_hv - x0)**2 + (y_hv - y0)**2) / 1e3,
-                               r_lo * 1.01, r_hi * 0.99)
-                mu_hv = float(np.mean(r_hv))
-                sd_hv = max(float(np.std(r_hv)), 0.1 * mu_hv)
-
-                # Systemic: group mean/sd from spots with accel measurements.
-                sys_accel = (~is_hv) & has_accel
-                if sys_accel.any():
-                    a_sys = np.abs(np.asarray(model._all_a)[sys_accel])
-                    r_sys = np.asarray(radius_from_los_acceleration(
-                        a_sys + 1e-30, sin_i, D_A, M_BH))
-                    r_sys = np.clip(r_sys, r_lo * 1.01, r_hi * 0.99)
-                    mu_sys = float(np.mean(r_sys))
-                    sd_sys = max(float(np.std(r_sys)), 0.1 * mu_sys)
-                else:
-                    mu_sys, sd_sys = mu_hv, sd_hv
-                    fprint("  r_ang: no systemic accel, "
-                           "using HV distribution for systemic spots")
-
-                _r = np.empty(model.n_spots)
-                for mask, mu, sd, label in [
-                    (is_hv, mu_hv, sd_hv, "HV"),
-                    (~is_hv, mu_sys, sd_sys, "sys"),
-                ]:
-                    n = int(mask.sum())
-                    if n == 0:
-                        continue
-                    a = (r_lo - mu) / sd
-                    b = (r_hi - mu) / sd
-                    _r[mask] = _truncnorm.rvs(
-                        a, b, loc=mu, scale=sd,
-                        size=n, random_state=rng)
-                    fprint(f"  r_ang {label}: n={n}, "
-                           f"mu={mu:.3f}, sd={sd:.3f} mas")
-                fprint(f"  r_ang: data-driven init "
-                       f"[{_r.min():.3f}, {_r.max():.3f}] mas "
-                       f"| D_c={D_c:.1f} Mpc")
-                init_params["r_ang"] = jnp.asarray(_r)
+            _add_mode1_r_ang_init(
+                model, init_params, seed, r_ang_init_method)
 
             init_strategy = init_to_value(values=init_params)
             for k, v in sorted(init_params.items()):
@@ -482,71 +519,8 @@ if sampler == "nuts":
                 for k in ("d2i_dr2", "d2Omega_dr2"):
                     rng_key, subkey = random.split(rng_key)
                     init_params[k] = model.priors[k].sample(subkey)
-            if model.mode == "mode1":
-                from scipy.stats import truncnorm as _truncnorm
-                rng = np.random.default_rng(seed)
-
-                D_c = float(init_params["D_c"])
-                H0_ref = float(get_nested(
-                    model.config, "model/H0_ref", 73.0))
-                z_cosmo = float(model.distance2redshift(
-                    jnp.atleast_1d(jnp.asarray(D_c)),
-                    h=H0_ref / 100.0).squeeze())
-                D_A = D_c / (1.0 + z_cosmo)
-                _lo, _hi = model.r_ang_range(D_A)
-                r_lo, r_hi = float(_lo), float(_hi)
-
-                eta = float(init_params["eta"])
-                x0 = float(init_params["x0"])   # μas
-                y0 = float(init_params["y0"])   # μas
-                i0_rad = np.deg2rad(float(init_params["i0"]))
-                sin_i = abs(np.sin(i0_rad))
-                M_BH = 10.0 ** (eta + np.log10(D_A) - 7.0)  # 1e7 Msun
-
-                is_hv = np.asarray(model.is_highvel, dtype=bool)
-                has_accel = np.asarray(model._all_has_accel, dtype=bool)
-
-                # HV: group mean/sd from projected sky radii.
-                x_hv = np.asarray(model._all_x)[is_hv]  # μas
-                y_hv = np.asarray(model._all_y)[is_hv]  # μas
-                r_hv = np.clip(np.sqrt((x_hv - x0)**2 + (y_hv - y0)**2) / 1e3,
-                               r_lo * 1.01, r_hi * 0.99)
-                mu_hv = float(np.mean(r_hv))
-                sd_hv = max(float(np.std(r_hv)), 0.1 * mu_hv)
-
-                # Systemic: group mean/sd from spots with accel measurements.
-                sys_accel = (~is_hv) & has_accel
-                if sys_accel.any():
-                    a_sys = np.abs(np.asarray(model._all_a)[sys_accel])
-                    r_sys = np.asarray(radius_from_los_acceleration(
-                        a_sys + 1e-30, sin_i, D_A, M_BH))
-                    r_sys = np.clip(r_sys, r_lo * 1.01, r_hi * 0.99)
-                    mu_sys = float(np.mean(r_sys))
-                    sd_sys = max(float(np.std(r_sys)), 0.1 * mu_sys)
-                else:
-                    mu_sys, sd_sys = mu_hv, sd_hv
-                    fprint("  r_ang: no systemic accel, "
-                           "using HV distribution for systemic spots")
-
-                _r = np.empty(model.n_spots)
-                for mask, mu, sd, label in [
-                    (is_hv, mu_hv, sd_hv, "HV"),
-                    (~is_hv, mu_sys, sd_sys, "sys"),
-                ]:
-                    n = int(mask.sum())
-                    if n == 0:
-                        continue
-                    a = (r_lo - mu) / sd
-                    b = (r_hi - mu) / sd
-                    _r[mask] = _truncnorm.rvs(
-                        a, b, loc=mu, scale=sd,
-                        size=n, random_state=rng)
-                    fprint(f"  r_ang {label}: n={n}, "
-                           f"mu={mu:.3f}, sd={sd:.3f} mas")
-                fprint(f"  r_ang: data-driven init "
-                       f"[{_r.min():.3f}, {_r.max():.3f}] mas "
-                       f"| D_c={D_c:.1f} Mpc")
-                init_params["r_ang"] = jnp.asarray(_r)
+            _add_mode1_r_ang_init(
+                model, init_params, seed, r_ang_init_method)
             init_strategy = init_to_value(values=init_params)
             for k, v in sorted(init_params.items()):
                 v = jnp.asarray(v)
@@ -590,62 +564,8 @@ if sampler == "nuts":
                     rng_key, subkey = random.split(rng_key)
                     draws = model.priors[k].sample(subkey, sample_shape=(N,))
                     init_params[k] = jnp.median(draws, axis=0)
-            if model.mode == "mode1":
-                from scipy.stats import truncnorm as _truncnorm
-                rng = np.random.default_rng(seed)
-                D_c = float(init_params["D_c"])
-                H0_ref = float(get_nested(model.config, "model/H0_ref", 73.0))
-                z_cosmo = float(model.distance2redshift(
-                    jnp.atleast_1d(jnp.asarray(D_c)),
-                    h=H0_ref / 100.0).squeeze())
-                D_A = D_c / (1.0 + z_cosmo)
-                _lo, _hi = model.r_ang_range(D_A)
-                r_lo, r_hi = float(_lo), float(_hi)
-                eta = float(init_params["eta"])
-                x0 = float(init_params["x0"])
-                y0 = float(init_params["y0"])
-                i0_rad = np.deg2rad(float(init_params["i0"]))
-                sin_i = abs(np.sin(i0_rad))
-                M_BH = 10.0 ** (eta + np.log10(D_A) - 7.0)
-                is_hv = np.asarray(model.is_highvel, dtype=bool)
-                has_accel = np.asarray(model._all_has_accel, dtype=bool)
-                x_hv = np.asarray(model._all_x)[is_hv]
-                y_hv = np.asarray(model._all_y)[is_hv]
-                r_hv = np.clip(np.sqrt((x_hv - x0)**2 + (y_hv - y0)**2) / 1e3,
-                               r_lo * 1.01, r_hi * 0.99)
-                mu_hv = float(np.mean(r_hv))
-                sd_hv = max(float(np.std(r_hv)), 0.1 * mu_hv)
-                sys_accel = (~is_hv) & has_accel
-                if sys_accel.any():
-                    a_sys = np.abs(np.asarray(model._all_a)[sys_accel])
-                    r_sys = np.asarray(radius_from_los_acceleration(
-                        a_sys + 1e-30, sin_i, D_A, M_BH))
-                    r_sys = np.clip(r_sys, r_lo * 1.01, r_hi * 0.99)
-                    mu_sys = float(np.mean(r_sys))
-                    sd_sys = max(float(np.std(r_sys)), 0.1 * mu_sys)
-                else:
-                    mu_sys, sd_sys = mu_hv, sd_hv
-                    fprint("  r_ang: no systemic accel, "
-                           "using HV distribution for systemic spots")
-                _r = np.empty(model.n_spots)
-                for mask, mu, sd, label in [
-                    (is_hv, mu_hv, sd_hv, "HV"),
-                    (~is_hv, mu_sys, sd_sys, "sys"),
-                ]:
-                    n = int(mask.sum())
-                    if n == 0:
-                        continue
-                    a = (r_lo - mu) / sd
-                    b = (r_hi - mu) / sd
-                    _r[mask] = _truncnorm.rvs(
-                        a, b, loc=mu, scale=sd,
-                        size=n, random_state=rng)
-                    fprint(f"  r_ang {label}: n={n}, "
-                           f"mu={mu:.3f}, sd={sd:.3f} mas")
-                fprint(f"  r_ang: data-driven init "
-                       f"[{_r.min():.3f}, {_r.max():.3f}] mas "
-                       f"| D_c={D_c:.1f} Mpc")
-                init_params["r_ang"] = jnp.asarray(_r)
+            _add_mode1_r_ang_init(
+                model, init_params, seed, r_ang_init_method)
             init_strategy = init_to_value(values=init_params)
             for k, v in sorted(init_params.items()):
                 v = jnp.asarray(v)
