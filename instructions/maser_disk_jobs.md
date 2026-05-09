@@ -22,8 +22,9 @@ python scripts/megamaser/run_maser_disk.py <galaxy> [--sampler nuts|nss] [option
 |------|---------|-------------|
 | `--sampler` | from config (`nss`) | `nuts` or `nss` |
 | `--mode` | from config | `mode1` / `mode2` — see "Sampling modes" |
+| `--r-ang-init` | from config (`data`) | Mode 1 `r_ang` init: `data` keeps the existing stochastic data-driven draw; `peak` uses the conditional phi-marginal peak from the Mode 2 centring optimiser |
 | `--seed` | 42 | RNG seed |
-| `--num-warmup` | 1000 | NUTS warmup steps |
+| `--num-warmup` | 2500 | NUTS warmup steps |
 | `--num-samples` | 1000 | NUTS sample count |
 | `--n-live` | 5000 | NSS live points |
 | `--num-mcmc-steps` | 0 (=ndim) | NSS slice steps |
@@ -34,7 +35,7 @@ python scripts/megamaser/run_maser_disk.py <galaxy> [--sampler nuts|nss] [option
 | `--no-ecc` | off | Disable eccentricity model |
 | `--no-quadratic-warp` | off | Disable quadratic disk warp |
 | `--save-map`, `--load-map` | — | Dump/load MAP init to TOML |
-| `--f64` | off | Enable JAX float64 explicitly. Default runs use float32, including NGC4258. |
+| `--f64` | off | Enable JAX float64 explicitly. It is forced automatically for NGC4258 mode1. |
 
 CLI args override config values.
 
@@ -92,6 +93,20 @@ lr_end = 0.005        # Minimum learning rate
 n_restarts = 3        # Cosine restart cycles
 ```
 
+For Mode 1 NUTS runs, `r_ang_init_method = "peak"` (or
+`--r-ang-init peak`) initialises each sampled `r_ang_i` at the
+conditional phi-marginal peak, reusing the Mode 2 per-spot radius
+centring optimiser. The default `data` preserves the older stochastic
+initialisation from projected radii / accelerations.
+
+With `dense_mass_single_block = true`, single-galaxy NUTS runs use one
+dense mass block containing the disk parameters initialised from the
+galaxy config. With `dense_mass_include_r_ang = true`, Mode 1 runs add
+the vector radius site to that same block, i.e. all spot radii; Mode 2
+runs omit it because `r_ang` is marginalised rather than sampled.
+Set `dense_mass = false` in a galaxy block to force a diagonal mass
+matrix for that galaxy.
+
 ## Submitting to GPU queue
 
 ```bash
@@ -106,7 +121,7 @@ ROOT=/mnt/users/$USER/CANDEL
 PYTHON=$ROOT/venv_candel/bin/python
 addqueue -q cmbgpu -s -m 16 --gpus 1 \
     $PYTHON -u $ROOT/scripts/megamaser/run_maser_disk.py NGC6264 \
-    --sampler nuts --num-warmup 2000 --num-samples 2000 --mode mode2
+    --sampler nuts --num-warmup 2500 --num-samples 2000 --mode mode2
 ```
 
 ### Single-node multi-GPU NSS
@@ -204,7 +219,7 @@ residuals) is used for NGC4258.
 ## Dense-mass handling
 
 - **Joint fit** (`galaxy = "joint"`): full dense mass across all sampled parameters.
-- **Single-galaxy, `dense_mass_globals = true`**: one dense block over the global scalars (`D_c, eta, x0, y0, i0, Omega0, dOmega_dr, di_dr, σ-floors, dv_sys, ecc params, quad-warp params`). Per-spot `r_ang` stays diagonal (Mode 1 only).
+- **Single-galaxy, `dense_mass_single_block = true` or `dense_mass_globals = true`**: one dense block over the global scalars (`D_c, eta, x0, y0, i0, Omega0, dOmega_dr, di_dr, σ-floors, dv_sys, ecc params, quad-warp params`). With `dense_mass_include_r_ang = true`, Mode 1 adds the per-spot `r_ang` site.
 - **Otherwise**: `dense_mass_blocks` from `[inference]`.
 
 ## Dense mass blocks (NUTS)
