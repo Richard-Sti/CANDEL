@@ -64,6 +64,13 @@ class TRGBModel(H0ModelBase):
         }
         super()._load_selection_thresholds(active_map, spec)
 
+    def _load_model_flags(self):
+        super()._load_model_flags()
+        self.use_density_dependent_sigma_v = get_nested(
+            self.config, "model/use_density_dependent_sigma_v", False)
+        fprint("use_density_dependent_sigma_v set to "
+               f"{self.use_density_dependent_sigma_v}")
+
     # ------------------------------------------------------------------
     #  Phase 2: data loading
     # ------------------------------------------------------------------
@@ -122,6 +129,18 @@ class TRGBModel(H0ModelBase):
                 "Number of 3D density fields "
                 f"({self.density_3d_fields.shape[0]}) does not match LOS "
                 f"field realisations ({self.num_fields}).")
+        if self.use_density_dependent_sigma_v and not self.use_reconstruction:
+            raise ValueError(
+                "`use_density_dependent_sigma_v` requires "
+                "`use_reconstruction` to be set to True.")
+        if self.use_density_dependent_sigma_v:
+            required = ["sigma_v_low", "sigma_v_high",
+                        "log_sigma_v_rho_t", "sigma_v_k"]
+            missing = [k for k in required if k not in self.priors]
+            if missing:
+                raise ValueError(
+                    "Missing priors for density-dependent sigma_v: "
+                    f"{', '.join(missing)}.")
 
         allowed_selection = [
             "TRGB_magnitude", "redshift", "SN_magnitude", None]
@@ -158,6 +177,24 @@ class TRGBModel(H0ModelBase):
                     "`mag_lim_SN` must be set or 'infer' "
                     "for SN_magnitude selection.")
 
+    def sigma_v_from_density(self, delta, sigma_v_low, sigma_v_high,
+                             log_rho_t, k):
+        """Map overdensity to sigma_v through a sigmoid in log density."""
+        rho = jnp.clip(1.0 + delta, a_min=1e-6)
+        log_rho = jnp.log(rho)
+        return sigma_v_low + (sigma_v_high - sigma_v_low) / (
+            1.0 + jnp.exp(-k * (log_rho - log_rho_t)))
+
+    def _volume_sigma_v_fields(self, sigma_v_low, sigma_v_high,
+                               log_rho_t, k):
+        """Evaluate density-dependent sigma_v on the 3D selection grid."""
+        if self.density_3d_mode == "log_rho":
+            delta_3d = jnp.exp(self.density_3d_fields) - 1.0
+        else:
+            delta_3d = self.density_3d_fields
+        return self.sigma_v_from_density(
+            delta_3d, sigma_v_low, sigma_v_high, log_rho_t, k)
+
     def __call__(self, **dynamic_attrs):
         if dynamic_attrs:
             with self._temporary_attrs(dynamic_attrs):
@@ -169,7 +206,22 @@ class TRGBModel(H0ModelBase):
         c_star = rsample("c_star", self.priors["c_star"])
         sigma_int = rsample("sigma_int", self.priors["sigma_int"])
 
-        sigma_v = rsample("sigma_v", self.priors["sigma_v"])
+        if self.use_density_dependent_sigma_v:
+            sigma_v_low = rsample("sigma_v_low", self.priors["sigma_v_low"])
+            sigma_v_high = rsample(
+                "sigma_v_high", self.priors["sigma_v_high"])
+            log_sigma_v_rho_t = rsample(
+                "log_sigma_v_rho_t", self.priors["log_sigma_v_rho_t"])
+            sigma_v_k = rsample("sigma_v_k", self.priors["sigma_v_k"])
+            sigma_v = (sigma_v_low, sigma_v_high,
+                       log_sigma_v_rho_t, sigma_v_k)
+        else:
+            sigma_v = rsample("sigma_v", self.priors["sigma_v"])
+
+        def selection_sigma_v():
+            if self.use_density_dependent_sigma_v:
+                return self._volume_sigma_v_fields(*sigma_v)
+            return sigma_v
 
         nu_cz = self._sample_nu_cz()
         Vext, Vext_quad, Vext_oct, Vext_mono = \
@@ -240,7 +292,7 @@ class TRGBModel(H0ModelBase):
                 norm_jax.logcdf((cz_lim - self.czcmb) / cz_width)))
 
             log_S = self._compute_volume_log_S_cz(
-                bias_params, H0, sigma_v, beta,
+                bias_params, H0, selection_sigma_v(), beta,
                 Vext, Vext_mono, cz_lim, cz_width,
                 nu_cz=nu_cz)
 
@@ -270,12 +322,9 @@ class TRGBModel(H0ModelBase):
             ll_sn_host = ll_sn_host.at[
                 self._sn_group_index].add(ll_sn_per)
 
-        # --- Per-host distance handling ---
-        e2_cz = self.e2_czcmb + sigma_v**2
-
         self._call_marginalized(
             h, M_TRGB_host, sigma_int, sigma_v, beta, bias_params,
-            Vext_rad_host, r_grid, lp_r, e2_cz, log_S,
+            Vext_rad_host, r_grid, lp_r, log_S,
             mu_grid=mu_grid, z_grid=z_grid,
             ll_sn_host=ll_sn_host,
             Vext_mono_host_grid=Vext_mono_host_grid,
@@ -308,8 +357,7 @@ class TRGBModel(H0ModelBase):
                        batch_size=self.volume_density_batch_size)
 
     def _call_marginalized(self, h, M_TRGB_host, sigma_int, sigma_v, beta,
-                           bias_params, Vext_rad_host, r_grid, lp_r,
-                           e2_cz, log_S,
+                           bias_params, Vext_rad_host, r_grid, lp_r, log_S,
                            mu_grid=None, z_grid=None,
                            ll_sn_host=None,
                            Vext_mono_host_grid=None,
@@ -343,6 +391,12 @@ class TRGBModel(H0ModelBase):
             lp_dist = lp_r[None, None, :] + lp_bias
 
             # Redshift likelihood on grid
+            if self.use_density_dependent_sigma_v:
+                sigma_v_grid = self.sigma_v_from_density(
+                    delta_grid, *sigma_v)
+                e2_cz = self.e2_czcmb[None, :, None] + sigma_v_grid**2
+            else:
+                e2_cz = self.e2_czcmb[None, :, None] + sigma_v**2
             Vpec_grid = beta * self.f_host_los_velocity.interp_many(
                 rh_grid)
             Vpec_grid += Vext_rad_host[None, :, None]
@@ -351,7 +405,7 @@ class TRGBModel(H0ModelBase):
             cz_pred = predict_cz(z_grid[None, None, :], Vpec_grid)
             ll_cz = ll_cz_fn(
                 self.czcmb[None, :, None], cz_pred,
-                e2_cz[None, :, None])
+                e2_cz)
 
             lp_dist_w = lp_dist + log_w
 
@@ -377,6 +431,7 @@ class TRGBModel(H0ModelBase):
         else:
             # Distance prior (volume only)
             lp_dist = lp_r[None, :]
+            e2_cz = self.e2_czcmb[:, None] + sigma_v**2
 
             # Redshift likelihood on grid
             Vpec_no_recon = Vext_rad_host[:, None]
@@ -384,7 +439,7 @@ class TRGBModel(H0ModelBase):
                 Vpec_no_recon = Vpec_no_recon + Vext_mono_host_grid[None, :]
             cz_pred = predict_cz(z_grid[None, :], Vpec_no_recon)
             ll_cz = ll_cz_fn(
-                self.czcmb[:, None], cz_pred, e2_cz[:, None])
+                self.czcmb[:, None], cz_pred, e2_cz)
 
             # Marginalize over distance. With explicit selection, keep the
             # same unnormalized r^2 measure as the selection integral so the

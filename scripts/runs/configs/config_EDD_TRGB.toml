@@ -12,6 +12,7 @@ chain_method = "parallel"
 seed = 44
 dense_mass_params = [
     "H0", "M_TRGB", "c_star", "sigma_int", "sigma_v",
+    "sigma_v_low", "sigma_v_high", "log_sigma_v_rho_t", "sigma_v_k",
     "Vext_phi", "Vext_cos_theta", "Vext_mag",
     "Vext_mono",
     "Vext_mono_left", "Vext_mono_rt", "Vext_mono_angle",
@@ -85,6 +86,25 @@ scale = 0.0627
 [model.priors.sigma_v]
 dist = "maxwell"
 scale = 187.997121  # mean = 300 km/s
+
+[model.priors.sigma_v_low]
+dist = "maxwell"
+scale = 187.997121
+
+[model.priors.sigma_v_high]
+dist = "maxwell"
+scale = 187.997121
+
+[model.priors.log_sigma_v_rho_t]
+dist = "normal"
+loc = 1.0
+scale = 5.0
+
+[model.priors.sigma_v_k]
+dist = "truncated_normal"
+low = 0.0
+mean = 1.0
+scale = 1.0
 
 [model.priors.beta]
 dist = "normal"
