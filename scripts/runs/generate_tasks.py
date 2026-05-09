@@ -370,6 +370,8 @@ def generate_dynamic_tag(config, base_tag="default"):
                 config, "io/which_host_los",
                 get_nested(config,
                            f"io/PV_main/{which_run}/which_host_los", None)))
+            if get_nested(config, "model/use_density_dependent_sigma_v", False):  # noqa
+                parts.append("sigv_rho")
             beta_prior = get_nested(config, "model/priors/beta", None)
             if (isinstance(beta_prior, dict)
                     and not _is_delta_prior(beta_prior)):
