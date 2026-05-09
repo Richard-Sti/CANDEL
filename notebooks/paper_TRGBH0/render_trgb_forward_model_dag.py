@@ -1,4 +1,4 @@
-"""DAG for the forward model of the EDD TRGB H0 inference (TikZ/LaTeX).
+"""Render the TRGB forward-model DAG for the TRGBH0 paper.
 
 Manual TikZ layout. Sized for an MNRAS two-column figure.
 """
@@ -6,9 +6,10 @@ from pathlib import Path
 import subprocess
 
 
-OUTPUT_DIR = Path(__file__).resolve().parent
-TEX_FILE = OUTPUT_DIR / "TRGB_model_DAG.tex"
-PDF_FILE = OUTPUT_DIR / "TRGB_model_DAG.pdf"
+SCRIPT_DIR = Path(__file__).resolve().parent
+OUTPUT_DIR = SCRIPT_DIR / "output"
+TEX_FILE = SCRIPT_DIR / "trgb_forward_model_dag.tex"
+PDF_FILE = OUTPUT_DIR / "trgb_forward_model_dag.pdf"
 
 # =========================================================================
 # Manual node positions (x, y) in cm
@@ -397,6 +398,7 @@ tex = rf"""
 # =========================================================================
 # Compile
 # =========================================================================
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 TEX_FILE.write_text(tex)
 
 result = subprocess.run(
@@ -417,7 +419,7 @@ if result.returncode != 0:
     print(result.stderr[-500:])
 else:
     for ext in [".aux", ".log"]:
-        p = OUTPUT_DIR / f"TRGB_model_DAG{ext}"
+        p = OUTPUT_DIR / f"trgb_forward_model_dag{ext}"
         if p.exists():
             p.unlink()
     print(f"DAG rendered to {PDF_FILE}")

@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Create TRGBH0 result plots and a LaTeX table from posterior samples."""
+"""Write the TRGBH0 variants table from posterior samples."""
 from pathlib import Path
 
 import h5py

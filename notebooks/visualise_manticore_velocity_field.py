@@ -36,7 +36,7 @@ DEFAULT_FIELD_ROOT = (
 )
 DEFAULT_POSTERIOR = (
     ROOT
-    / "results/TRGBH0_main/table/"
+    / "results/TRGBH0_paper/table/"
     / "EDD_TRGB_sel-TRGB_magnitude_manticore_2MPP_MULTIBIN_N256_DES_V2_main.hdf5"
 )
 DEFAULT_CACHE = ROOT / "notebooks/manticore_velocity_field_cache.npz"
