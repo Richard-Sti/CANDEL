@@ -11,7 +11,7 @@ num_chains = 1
 chain_method = "parallel"
 seed = 44
 dense_mass_params = [
-    "H0", "M_TRGB", "sigma_int", "sigma_v",
+    "H0", "M_TRGB", "c_star", "sigma_int", "sigma_v",
     "Vext_phi", "Vext_cos_theta", "Vext_mag",
     "Vext_mono",
     "Vext_mono_left", "Vext_mono_rt", "Vext_mono_angle",
@@ -71,6 +71,12 @@ cz_lim_selection_width = "infer"
 dist = "normal"
 loc = -4.05
 scale = 0.5
+
+# F606W-F814W colour pivot (Anand+22 reference value 1.23)
+[model.priors.c_star]
+dist = "normal"
+loc = 1.23
+scale = 0.1
 
 [model.priors.sigma_int]
 dist = "maxwell"

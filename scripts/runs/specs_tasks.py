@@ -11,6 +11,8 @@ CH0_MANTICORE_BIAS = "double_powerlaw"
 TRGBH0_ROOT = "results/TRGBH0_paper"
 TRGBH0_MANTICORE_LOS = "manticore_2MPP_MULTIBIN_N256_DES_V2"
 TRGBH0_MANTICORE_BIAS = "double_powerlaw"
+TRGBH0_CARRICK_BETA_LOC = 0.461
+TRGBH0_CARRICK_BETA_SCALE = 0.013
 
 CH0_PAPER_COMMON = {
     "inference/num_chains": 12,
@@ -51,6 +53,20 @@ def _delta(value):
 
 def _normal(loc, scale):
     return {"dist": "normal", "loc": loc, "scale": scale}
+
+
+def _nu_cz_student_t_prior():
+    return {
+        "dist": "truncated_normal",
+        "low": 5.0,
+        "high": 100.0,
+        "mean": 30.0,
+        "scale": 10.0,
+    }
+
+
+def _trgbh0_carrick_beta_prior():
+    return _normal(TRGBH0_CARRICK_BETA_LOC, TRGBH0_CARRICK_BETA_SCALE)
 
 
 def _ch0_selection(selection):
@@ -211,7 +227,7 @@ def _trgbh0_main_datasets():
             "model/use_reconstruction": True,
             "model/use_density_dependent_sigma_v": False,
             "io/PV_main/EDD_TRGB/which_host_los": "Carrick2015",
-            "model/priors/beta": _normal(0.43, 0.02),
+            "model/priors/beta": _trgbh0_carrick_beta_prior(),
         },
         {
             "model/use_reconstruction": True,
@@ -231,35 +247,39 @@ def _trgbh0_main_datasets():
         {
             "model/use_reconstruction": True,
             "model/use_density_dependent_sigma_v": False,
+            "model/cz_likelihood": "student_t",
+            "model/priors/nu_cz": _nu_cz_student_t_prior(),
             "io/PV_main/EDD_TRGB/which_host_los": "Carrick2015",
-            "model/priors/beta": _normal(1.0, 0.5),
-        },
-    ]
-    grouped_pv_models = [
-        {
-            "model/which_run": "EDD_TRGB_grouped",
-            "model/use_reconstruction": True,
-            "model/use_density_dependent_sigma_v": False,
-            "io/PV_main/EDD_TRGB_grouped/which_host_los": "Carrick2015",
-            "model/priors/beta": _normal(0.43, 0.02),
+            "model/priors/beta": _trgbh0_carrick_beta_prior(),
         },
         {
-            "model/which_run": "EDD_TRGB_grouped",
             "model/use_reconstruction": True,
             "model/use_density_dependent_sigma_v": False,
-            "io/PV_main/EDD_TRGB_grouped/which_host_los": TRGBH0_MANTICORE_LOS,
+            "model/cz_likelihood": "student_t",
+            "model/priors/nu_cz": _nu_cz_student_t_prior(),
+            "io/PV_main/EDD_TRGB/which_host_los": TRGBH0_MANTICORE_LOS,
             "model/which_bias": TRGBH0_MANTICORE_BIAS,
         },
         {
-            "model/which_run": "EDD_TRGB_grouped",
-            "model/use_reconstruction": False,
+            "model/use_reconstruction": True,
+            "model/use_density_dependent_sigma_v": False,
+            "model/cz_likelihood": "gaussian",
+            "model/use_Vext_quadrupole": True,
+            "io/PV_main/EDD_TRGB/which_host_los": "Carrick2015",
+            "model/priors/beta": _trgbh0_carrick_beta_prior(),
+        },
+        {
+            "model/use_reconstruction": True,
+            "model/use_density_dependent_sigma_v": False,
+            "model/cz_likelihood": "gaussian",
+            "model/use_Vext_quadrupole": True,
+            "io/PV_main/EDD_TRGB/which_host_los": TRGBH0_MANTICORE_LOS,
+            "model/which_bias": TRGBH0_MANTICORE_BIAS,
         },
     ]
-
     return (
         _trgbh0_selection_datasets(main_pv_models, selections)
         + _trgbh0_selection_datasets(extra_pv_models, selections)
-        + _trgbh0_selection_datasets(grouped_pv_models, selections)
     )
 
 
@@ -332,7 +352,7 @@ TASK_SPECS = {
         "expected_tasks": 36,
     },
     "TRGBH0_main": {
-        "description": "TRGB H0 grid: PV-field, Vext-only, no-Vext, and grouped selections.",
+        "description": "TRGB H0 grid: PV-field, Vext-only, no-Vext, and velocity-model variants.",
         "config_path": "configs/config_EDD_TRGB.toml",
         "tag": "main",
         "common": {

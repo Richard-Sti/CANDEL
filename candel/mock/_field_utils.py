@@ -48,7 +48,8 @@ def field_xyz_to_radec(pos_rel, r, coordinate_frame):
 
 def compute_r_max_selection(mag_lim, M_abs, sigma_int, e_mag,
                             mag_lim_width=0.0, cz_lim=None, h=1.0,
-                            r_max=150.0):
+                            r_max=150.0, colour_mean=None, c_star=None,
+                            colour_std=None):
     """Tighten sampling sphere based on selection cuts.
 
     All arguments can be scalars or arrays; worst-case (most permissive)
@@ -56,14 +57,19 @@ def compute_r_max_selection(mag_lim, M_abs, sigma_int, e_mag,
     """
     if mag_lim is not None and not isinstance(mag_lim, str):
         ml = float(np.max(mag_lim))
-        M_min = float(np.min(M_abs))
+        M_eff = M_abs
+        if colour_mean is not None and c_star is not None:
+            M_eff = M_abs + 0.2 * (
+                np.asarray(colour_mean) - np.asarray(c_star))
+        M_min = float(np.min(M_eff))
         sint_max = float(np.max(sigma_int))
         e_max = float(np.max(e_mag))
         mw = float(np.max(mag_lim_width)) if mag_lim_width is not None else 0.0
         if isinstance(mw, str):
             mw = 0.0
+        cstd = 0.0 if colour_std is None else 0.2 * float(np.max(colour_std))
 
-        sigma_tot = np.sqrt(sint_max**2 + e_max**2 + mw**2)
+        sigma_tot = np.sqrt(sint_max**2 + e_max**2 + mw**2 + cstd**2)
         mu_cutoff = ml - M_min + 5 * sigma_tot
         return min(10**((mu_cutoff - 25) / 5), r_max)
     elif cz_lim is not None and not isinstance(cz_lim, str):

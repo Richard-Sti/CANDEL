@@ -925,7 +925,8 @@ class H0ModelBase(ModelBase):
         """Validate common 3D selection-integral requirements."""
         if not self.apply_sel:
             return
-        if self.use_Vext_quadrupole or self.use_Vext_octupole:
+        if needs_velocity and (
+                self.use_Vext_quadrupole or self.use_Vext_octupole):
             raise ValueError(
                 "Vext quadrupole/octupole are not supported with "
                 "selection integrals.")

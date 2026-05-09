@@ -69,6 +69,8 @@ def generate_trgb_ppc(samples, data, config, n_ppc=None, seed=42):
     sigma_int = _flat(samples["sigma_int"])
     sigma_v = _flat(samples["sigma_v"])
     n_post = len(H0)
+    c_star = _flat(samples["c_star"]) if "c_star" in samples \
+        else np.full(n_post, 1.23)
     if "Vext" in samples:
         Vext = _flat(samples["Vext"])
     else:
@@ -97,6 +99,9 @@ def generate_trgb_ppc(samples, data, config, n_ppc=None, seed=42):
     cz_obs = np.asarray(data["czcmb"])
     e_mag_obs_all = np.asarray(data["e_mag_obs"])
     e_czcmb_all = np.asarray(data["e_czcmb"])
+    colour_dered_all = np.asarray(data["colour_dered"])
+    colour_dered_mean = np.mean(colour_dered_all)
+    colour_dered_std = np.std(colour_dered_all)
     n_hosts = len(mag_obs)
 
     if n_ppc is None:
@@ -118,7 +123,9 @@ def generate_trgb_ppc(samples, data, config, n_ppc=None, seed=42):
         M_abs=M_TRGB, sigma_int=sigma_int, e_mag=e_mag_obs_all,
         mag_lim_width=mag_width_samples if mag_width_samples is not None else mag_width_fixed,  # noqa
         cz_lim=cz_lim_samples if cz_lim_samples is not None else cz_lim_fixed,
-        h=H0 / 100, r_max=r_max)
+        h=H0 / 100, r_max=r_max,
+        colour_mean=colour_dered_mean, c_star=c_star,
+        colour_std=colour_dered_std)
     fprint(f"PPC: effective r_max = {r_max_eff:.1f} Mpc "
            f"(config r_max = {r_max:.1f} Mpc)")
 
@@ -127,19 +134,20 @@ def generate_trgb_ppc(samples, data, config, n_ppc=None, seed=42):
 
     if use_reconstruction:
         mag_sim, cz_sim = _ppc_field_path(
-            gen, config, H0, M_TRGB, sigma_int, sigma_v, Vext, beta, b1,
+            gen, config, H0, M_TRGB, c_star, sigma_int, sigma_v, Vext,
+            beta, b1,
             which_sel, mag_lim_samples, mag_lim_fixed,
             mag_width_samples, mag_width_fixed,
             cz_lim_samples, cz_lim_fixed, cz_width_samples, cz_width_fixed,
-            e_mag_obs_all, e_czcmb_all,
+            e_mag_obs_all, e_czcmb_all, colour_dered_all,
             r_min, r_max_eff, r2mu, r2z, n_ppc, n_hosts)
     else:
         mag_sim, cz_sim = _ppc_homogeneous_path(
-            gen, H0, M_TRGB, sigma_int, sigma_v, Vext, beta,
+            gen, H0, M_TRGB, c_star, sigma_int, sigma_v, Vext, beta,
             which_sel, mag_lim_samples, mag_lim_fixed,
             mag_width_samples, mag_width_fixed,
             cz_lim_samples, cz_lim_fixed, cz_width_samples, cz_width_fixed,
-            e_mag_obs_all, e_czcmb_all,
+            e_mag_obs_all, e_czcmb_all, colour_dered_all,
             r_min, r_max_eff, r2mu, r2z, n_ppc, n_hosts)
 
     return {
@@ -155,13 +163,13 @@ def generate_trgb_ppc(samples, data, config, n_ppc=None, seed=42):
 ###############################################################################
 
 
-def _ppc_field_path(gen, config, H0, M_TRGB, sigma_int, sigma_v, Vext,
+def _ppc_field_path(gen, config, H0, M_TRGB, c_star, sigma_int, sigma_v, Vext,
                     beta, b1,
                     which_sel, mag_lim_samples, mag_lim_fixed,
                     mag_width_samples, mag_width_fixed,
                     cz_lim_samples, cz_lim_fixed,
                     cz_width_samples, cz_width_fixed,
-                    e_mag_obs_all, e_czcmb_all,
+                    e_mag_obs_all, e_czcmb_all, colour_dered_all,
                     r_min, r_max, r2mu, r2z, n_ppc, n_hosts):
     """PPC using 3D field sampling (matches mock generator)."""
     n_post = len(H0)
@@ -218,6 +226,7 @@ def _ppc_field_path(gen, config, H0, M_TRGB, sigma_int, sigma_v, Vext,
         # Posterior values
         h = H0[idx_post] / 100
         M = M_TRGB[idx_post]
+        cs = c_star[idx_post]
         sint = sigma_int[idx_post]
         sv = sigma_v[idx_post]
         Vext_cand = Vext[idx_post]
@@ -240,6 +249,7 @@ def _ppc_field_path(gen, config, H0, M_TRGB, sigma_int, sigma_v, Vext,
         r_Mpc = r_Mpc[accept]
         h_acc = h[accept]
         M_acc = M[accept]
+        cs_acc = cs[accept]
         sint_acc = sint[accept]
         sv_acc = sv[accept]
         Vext_acc = Vext_cand[accept]
@@ -251,13 +261,15 @@ def _ppc_field_path(gen, config, H0, M_TRGB, sigma_int, sigma_v, Vext,
         # Distance modulus
         mu = np.asarray(r2mu(r_Mpc, h=h_acc))
 
-        # Measurement errors resampled from observed distribution
+        # Measurement errors and colour resampled from observed distribution
         e_mag = gen.choice(e_mag_obs_all, n_batch)
         e_cz = gen.choice(e_czcmb_all, n_batch)
+        colour = gen.choice(colour_dered_all, n_batch)
 
-        # Apparent magnitude
+        # Apparent magnitude with colour standardisation
         sigma_mag = np.sqrt(e_mag**2 + sint_acc**2)
-        mag_sim = gen.normal(M_acc + mu, sigma_mag)
+        mag_sim = gen.normal(
+            M_acc + 0.2 * (colour - cs_acc) + mu, sigma_mag)
 
         # Redshift with peculiar velocity from field
         z_cosmo = np.asarray(r2z(r_Mpc, h=h_acc))
@@ -292,12 +304,13 @@ def _ppc_field_path(gen, config, H0, M_TRGB, sigma_int, sigma_v, Vext,
 ###############################################################################
 
 
-def _ppc_homogeneous_path(gen, H0, M_TRGB, sigma_int, sigma_v, Vext, beta,
+def _ppc_homogeneous_path(gen, H0, M_TRGB, c_star, sigma_int, sigma_v,
+                          Vext, beta,
                           which_sel, mag_lim_samples, mag_lim_fixed,
                           mag_width_samples, mag_width_fixed,
                           cz_lim_samples, cz_lim_fixed,
                           cz_width_samples, cz_width_fixed,
-                          e_mag_obs_all, e_czcmb_all,
+                          e_mag_obs_all, e_czcmb_all, colour_dered_all,
                           r_min, r_max, r2mu, r2z, n_ppc, n_hosts):
     """PPC with homogeneous distance sampling (no reconstruction)."""
     n_post = len(H0)
@@ -323,6 +336,7 @@ def _ppc_homogeneous_path(gen, H0, M_TRGB, sigma_int, sigma_v, Vext, beta,
 
         h = H0[idx_post] / 100
         M = M_TRGB[idx_post]
+        cs = c_star[idx_post]
         sint = sigma_int[idx_post]
         sv = sigma_v[idx_post]
         Vext_cand = Vext[idx_post]
@@ -335,13 +349,14 @@ def _ppc_homogeneous_path(gen, H0, M_TRGB, sigma_int, sigma_v, Vext, beta,
         # Distance modulus
         mu = np.asarray(r2mu(r, h=h))
 
-        # Measurement errors resampled from observed distribution
+        # Measurement errors and colour resampled from observed distribution
         e_mag = gen.choice(e_mag_obs_all, batch)
         e_cz = gen.choice(e_czcmb_all, batch)
+        colour = gen.choice(colour_dered_all, batch)
 
-        # Apparent magnitude
+        # Apparent magnitude with colour standardisation
         sigma_mag = np.sqrt(e_mag**2 + sint**2)
-        mag_sim = gen.normal(M + mu, sigma_mag)
+        mag_sim = gen.normal(M + 0.2 * (colour - cs) + mu, sigma_mag)
 
         # Redshift (no field velocity, only Vext)
         z_cosmo = np.asarray(r2z(r, h=h))

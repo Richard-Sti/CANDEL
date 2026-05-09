@@ -26,6 +26,7 @@ from ._field_utils import field_xyz_to_radec, smoothclip
 DEFAULT_TRUE_PARAMS = {
     "H0": 73.0,
     "M_TRGB": -4.05,
+    "c_star": 1.23,
     "sigma_int": 0.1,
     "sigma_v": 300.0,
     "Vext_mag": 150.0,
@@ -34,6 +35,8 @@ DEFAULT_TRUE_PARAMS = {
     "beta": 0.43,
     "b1": 1.2,
 }
+
+DEFAULT_COLOUR_STD = 0.2  # spread of dereddened F606W-F814W in mock
 
 DEFAULT_ANCHORS = {
     "mu_LMC": 18.477,
@@ -74,15 +77,19 @@ def _redshift_sampling_radius(cz_lim, cz_lim_width, h, rmax, e_czcmb,
 
 
 def _gen_homogeneous_path(nsamples, h, rmin, rmax, e_mag, e_czcmb,
-                          M_TRGB, sigma_int, sigma_v, Vext,
+                          M_TRGB, c_star, colour_mean, colour_std,
+                          sigma_int, sigma_v, Vext,
                           mag_lim, mag_lim_width, cz_lim, cz_lim_width,
                           r2mu, r2z, gen, verbose):
     """Homogeneous (no field) distance sampling path."""
     # Tighten sampling sphere based on selection
     r_sample = rmax
     if mag_lim is not None:
-        mu_max = mag_lim - M_TRGB
-        sigma_tot = np.sqrt(sigma_int**2 + e_mag**2 + mag_lim_width**2)
+        M_sel = M_TRGB + 0.2 * (colour_mean - c_star)
+        sigma_colour = 0.2 * colour_std
+        mu_max = mag_lim - M_sel
+        sigma_tot = np.sqrt(sigma_int**2 + e_mag**2
+                            + mag_lim_width**2 + sigma_colour**2)
         mu_cutoff = mu_max + SELECTION_TAIL_SIGMA * sigma_tot
         r_sample = min(10**((mu_cutoff - 25) / 5), rmax)
     elif cz_lim is not None:
@@ -93,7 +100,8 @@ def _gen_homogeneous_path(nsamples, h, rmin, rmax, e_mag, e_czcmb,
         print(f"Homogeneous mock: tightened r_max from {rmax:.1f} to "
               f"{r_sample:.1f} Mpc based on selection")
 
-    collected = {k: [] for k in ["RA", "dec", "r", "mag_obs", "cz_obs"]}
+    collected = {k: [] for k in [
+        "RA", "dec", "r", "mag_obs", "cz_obs", "colour_dered"]}
     n_accepted = 0
     n_parent = 0
     batch = max(int(1.5 * nsamples), 100)
@@ -110,8 +118,10 @@ def _gen_homogeneous_path(nsamples, h, rmin, rmax, e_mag, e_czcmb,
         z_cosmo = np.asarray(r2z(r, h=h))
         Vext_rad = rhat @ Vext
 
+        colour = gen.normal(colour_mean, colour_std, batch)
         sigma_mag_tot = np.sqrt(sigma_int**2 + e_mag**2)
-        mag_obs = gen.normal(M_TRGB + mu, sigma_mag_tot)
+        mag_obs = gen.normal(
+            M_TRGB + 0.2 * (colour - c_star) + mu, sigma_mag_tot)
 
         cz_true = SPEED_OF_LIGHT * (
             (1 + z_cosmo) * (1 + Vext_rad / SPEED_OF_LIGHT) - 1)
@@ -124,8 +134,8 @@ def _gen_homogeneous_path(nsamples, h, rmin, rmax, e_mag, e_czcmb,
         n_accepted += mask.sum()
 
         for k, v in zip(
-                ["RA", "dec", "r", "mag_obs", "cz_obs"],
-                [RA, dec, r, mag_obs, cz_obs]):
+                ["RA", "dec", "r", "mag_obs", "cz_obs", "colour_dered"],
+                [RA, dec, r, mag_obs, cz_obs, colour]):
             collected[k].append(v[mask])
 
     for k in collected:
@@ -144,7 +154,8 @@ def _gen_homogeneous_path(nsamples, h, rmin, rmax, e_mag, e_czcmb,
 
 
 def _gen_field_path(nsamples, h, b1, beta, rmin, rmax, e_mag, e_czcmb,
-                    M_TRGB, sigma_int, sigma_v, Vext,
+                    M_TRGB, c_star, colour_mean, colour_std,
+                    sigma_int, sigma_v, Vext,
                     mag_lim, mag_lim_width, cz_lim, cz_lim_width,
                     field_loader, r2mu, r2z, gen, verbose):
     """Field-based (inhomogeneous Malmquist) distance sampling path.
@@ -159,8 +170,11 @@ def _gen_field_path(nsamples, h, b1, beta, rmin, rmax, e_mag, e_czcmb,
     # Sampling sphere: set from selection threshold, not the full rmax
     r_sample_Mpc = rmax
     if mag_lim is not None:
-        mu_max = mag_lim - M_TRGB
-        sigma_tot = np.sqrt(sigma_int**2 + e_mag**2 + mag_lim_width**2)
+        M_sel = M_TRGB + 0.2 * (colour_mean - c_star)
+        sigma_colour = 0.2 * colour_std
+        mu_max = mag_lim - M_sel
+        sigma_tot = np.sqrt(sigma_int**2 + e_mag**2
+                            + mag_lim_width**2 + sigma_colour**2)
         mu_cutoff = mu_max + SELECTION_TAIL_SIGMA * sigma_tot
         r_sample_Mpc = min(10**((mu_cutoff - 25) / 5), rmax)
     elif cz_lim is not None:
@@ -208,7 +222,7 @@ def _gen_field_path(nsamples, h, b1, beta, rmin, rmax, e_mag, e_czcmb,
 
     # --- Loop: sample, compute observables, select ---
     collected = {k: [] for k in [
-        "RA", "dec", "r_h", "mag_obs", "cz_obs"]}
+        "RA", "dec", "r_h", "mag_obs", "cz_obs", "colour_dered"]}
     n_total_proposed = 0
     n_total_density_accepted = 0
     batch_size = 200000
@@ -256,7 +270,9 @@ def _gen_field_path(nsamples, h, b1, beta, rmin, rmax, e_mag, e_czcmb,
         mu = np.asarray(r2mu(r_Mpc, h=h))
         z_cosmo = np.asarray(r2z(r_Mpc, h=h))
 
-        mag_obs = gen.normal(M_TRGB + mu, sigma_mag_tot)
+        colour = gen.normal(colour_mean, colour_std, len(r_Mpc))
+        mag_obs = gen.normal(
+            M_TRGB + 0.2 * (colour - c_star) + mu, sigma_mag_tot)
         cz_true = SPEED_OF_LIGHT * (
             (1 + z_cosmo) * (1 + Vpec / SPEED_OF_LIGHT) - 1)
         cz_obs = gen.normal(cz_true, sigma_cz_tot)
@@ -271,6 +287,7 @@ def _gen_field_path(nsamples, h, b1, beta, rmin, rmax, e_mag, e_czcmb,
         collected["r_h"].append(r_h[sel])
         collected["mag_obs"].append(mag_obs[sel])
         collected["cz_obs"].append(cz_obs[sel])
+        collected["colour_dered"].append(colour[sel])
 
     del f_density_3d, f_vel_3d
 
@@ -300,6 +317,7 @@ def _gen_field_path(nsamples, h, b1, beta, rmin, rmax, e_mag, e_czcmb,
         "r_h": collected["r_h"],
         "mag_obs": collected["mag_obs"],
         "cz_obs": collected["cz_obs"],
+        "colour_dered": collected["colour_dered"],
         "n_parent": n_total_density_accepted,
         # Host LOS data: (1, nsamples, n_r)
         "host_los_density": los_density[None, ...],
@@ -314,6 +332,7 @@ def gen_TRGB_mock(nsamples=480, Om=0.3, e_mag=0.05, e_czcmb=10.0,
                   mag_lim=25.0, mag_lim_width=0.75,
                   cz_lim=None, cz_lim_width=None,
                   true_params=None, anchors=None,
+                  colour_mean=None, colour_std=DEFAULT_COLOUR_STD,
                   noisy_anchors=True, field_loader=None,
                   density_3d_data=None, seed=42, verbose=True):
     """Generate a mock TRGB survey compatible with TRGBModel.
@@ -345,6 +364,7 @@ def gen_TRGB_mock(nsamples=480, Om=0.3, e_mag=0.05, e_czcmb=10.0,
 
     H0 = tp["H0"]
     M_TRGB = tp["M_TRGB"]
+    c_star = tp["c_star"]
     sigma_int = tp["sigma_int"]
     sigma_v = tp["sigma_v"]
 
@@ -355,16 +375,20 @@ def gen_TRGB_mock(nsamples=480, Om=0.3, e_mag=0.05, e_czcmb=10.0,
     Vext = tp["Vext_mag"] * galactic_to_radec_cartesian(
         tp["Vext_ell"], tp["Vext_b"])
 
+    cmean = c_star if colour_mean is None else colour_mean
+
     if field_loader is not None:
         collected = _gen_field_path(
             nsamples, h, tp["b1"], beta, rmin, rmax, e_mag, e_czcmb,
-            M_TRGB, sigma_int, sigma_v, Vext,
+            M_TRGB, c_star, cmean, colour_std,
+            sigma_int, sigma_v, Vext,
             mag_lim, mag_lim_width, cz_lim, cz_lim_width,
             field_loader, r2mu, r2z, gen, verbose)
     else:
         collected = _gen_homogeneous_path(
             nsamples, h, rmin, rmax, e_mag, e_czcmb,
-            M_TRGB, sigma_int, sigma_v, Vext,
+            M_TRGB, c_star, cmean, colour_std,
+            sigma_int, sigma_v, Vext,
             mag_lim, mag_lim_width, cz_lim, cz_lim_width,
             r2mu, r2z, gen, verbose)
     n_parent = collected.pop("n_parent")
@@ -378,9 +402,11 @@ def gen_TRGB_mock(nsamples=480, Om=0.3, e_mag=0.05, e_czcmb=10.0,
     if noisy_anchors:
         mu_LMC_obs = float(gen.normal(mu_LMC_true, anch["e_mu_LMC"]))
         mu_N4258_obs = float(gen.normal(mu_N4258_true, anch["e_mu_N4258"]))
-        mag_LMC_obs = float(gen.normal(mag_LMC_true, anch["e_mag_LMC_TRGB"]))
+        e_mag_LMC = np.sqrt(anch["e_mag_LMC_TRGB"]**2 + sigma_int**2)
+        e_mag_N4258 = np.sqrt(anch["e_mag_N4258_TRGB"]**2 + sigma_int**2)
+        mag_LMC_obs = float(gen.normal(mag_LMC_true, e_mag_LMC))
         mag_N4258_obs = float(gen.normal(
-            mag_N4258_true, anch["e_mag_N4258_TRGB"]))
+            mag_N4258_true, e_mag_N4258))
     else:
         mu_LMC_obs = mu_LMC_true
         mu_N4258_obs = mu_N4258_true
@@ -402,6 +428,7 @@ def gen_TRGB_mock(nsamples=480, Om=0.3, e_mag=0.05, e_czcmb=10.0,
         "czcmb": collected["cz_obs"],
         "e_czcmb": np.full(n_kept, e_czcmb),
         "e_mag_median": float(e_mag),
+        "colour_dered": collected["colour_dered"],
         # Anchors
         "mu_LMC_anchor": mu_LMC_obs,
         "e_mu_LMC_anchor": anch["e_mu_LMC"],

@@ -261,6 +261,10 @@ def generate_dynamic_tag(config, base_tag="default"):
     if get_nested(config, "model/use_Vext_octupole", False):
         parts.append("Voct")
 
+    cz_likelihood = get_nested(config, "model/cz_likelihood", "gaussian")
+    if cz_likelihood != "gaussian":
+        parts.append(f"cz-{cz_likelihood}")
+
     which_Vext = get_nested(config, "pv_model/which_Vext", None)
     if which_Vext is not None and which_Vext != "constant":
         parts.append(f"Vext_{which_Vext}")
@@ -372,7 +376,7 @@ def generate_dynamic_tag(config, base_tag="default"):
                 beta_loc = beta_prior.get("loc", beta_prior.get("mean"))
                 beta_scale = beta_prior.get("scale", beta_prior.get("std"))
                 if not (beta_prior.get("dist") == "normal"
-                        and beta_loc == 0.43 and beta_scale == 0.02):
+                        and beta_loc == 0.461 and beta_scale == 0.013):
                     parts.append("beta_free")
 
     shared = get_nested(config, "inference/shared_params", None)

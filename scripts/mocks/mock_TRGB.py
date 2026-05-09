@@ -32,7 +32,7 @@ from candel.util import results_path
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
-TRACKED_PARAMS = ["H0", "M_TRGB", "sigma_int", "sigma_v",
+TRACKED_PARAMS = ["H0", "M_TRGB", "c_star", "sigma_int", "sigma_v",
                   "Vext_mag", "Vext_phi", "Vext_cos_theta",
                   "beta", "b1", "mu_LMC", "mu_N4258",
                   "mag_lim_TRGB", "mag_lim_TRGB_width"]
@@ -1043,6 +1043,8 @@ def main():
                         help="True H0")
     parser.add_argument("--M-TRGB", type=float, default=tp["M_TRGB"],
                         help="True M_TRGB")
+    parser.add_argument("--c-star", type=float, default=tp["c_star"],
+                        help="True F606W-F814W colour pivot c_star")
     parser.add_argument("--sigma-int", type=float, default=tp["sigma_int"],
                         help="True sigma_int")
     parser.add_argument("--sigma-v", type=float, default=tp["sigma_v"],
@@ -1060,6 +1062,7 @@ def main():
     true_params = {
         "H0": args.H0,
         "M_TRGB": args.M_TRGB,
+        "c_star": args.c_star,
         "sigma_int": args.sigma_int,
         "sigma_v": args.sigma_v,
         "beta": args.beta,

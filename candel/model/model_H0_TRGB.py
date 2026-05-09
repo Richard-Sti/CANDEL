@@ -87,6 +87,10 @@ class TRGBModel(H0ModelBase):
 
         super()._load_data(data)
         self.num_hosts = len(self.mag_obs)
+        if not hasattr(self, "colour_dered"):
+            raise ValueError("TRGB data must include `colour_dered`.")
+        self.colour_dered_mean = jnp.mean(self.colour_dered)
+        self.colour_dered_std = jnp.std(self.colour_dered)
         fprint(f"loaded {self.num_hosts} TRGB host galaxies.")
 
     def _set_data_arrays(self, data):
@@ -162,6 +166,7 @@ class TRGBModel(H0ModelBase):
         # --- Global parameters ---
         H0 = rsample("H0", self.priors["H0"])
         M_TRGB = rsample("M_TRGB", self.priors["M_TRGB"])
+        c_star = rsample("c_star", self.priors["c_star"])
         sigma_int = rsample("sigma_int", self.priors["sigma_int"])
 
         sigma_v = rsample("sigma_v", self.priors["sigma_v"])
@@ -191,11 +196,11 @@ class TRGBModel(H0ModelBase):
         factor("mag_LMC_TRGB_ll",
                normal_logpdf_var(self.mag_LMC_TRGB,
                                  M_TRGB + mu_LMC,
-                                 self.e_mag_LMC_TRGB**2))
+                                 self.e_mag_LMC_TRGB**2 + sigma_int**2))
         factor("mag_N4258_TRGB_ll",
                normal_logpdf_var(self.mag_N4258_TRGB,
                                  M_TRGB + mu_N4258,
-                                 self.e_mag_N4258_TRGB**2))
+                                 self.e_mag_N4258_TRGB**2 + sigma_int**2))
 
         # --- Per-host cosmographic grids (fine grid) ---
         r_grid = self.r_host_range
@@ -210,6 +215,10 @@ class TRGBModel(H0ModelBase):
         log_S = None
         ll_sn_host = None
 
+        M_TRGB_host = M_TRGB + 0.2 * (self.colour_dered - c_star)
+        M_TRGB_sel = M_TRGB + 0.2 * (self.colour_dered_mean - c_star)
+        colour_sel_var = (0.2 * self.colour_dered_std) ** 2
+
         if self.which_selection == "TRGB_magnitude":
             mag_lim = self._resolve_threshold("mag_lim_TRGB")
             mag_width = self._resolve_threshold("mag_lim_TRGB_width")
@@ -217,9 +226,10 @@ class TRGBModel(H0ModelBase):
             factor("ll_sel_per_object", jnp.sum(
                 norm_jax.logcdf((mag_lim - self.mag_obs) / mag_width)))
 
-            e_eff = jnp.sqrt(self.e2_mag_median + sigma_int**2)
+            e_eff = jnp.sqrt(
+                self.e2_mag_median + sigma_int**2 + colour_sel_var)
             log_S = self._compute_volume_log_S_mag(
-                bias_params, M_TRGB, e_eff, H0,
+                bias_params, M_TRGB_sel, e_eff, H0,
                 mag_lim, mag_width)
 
         elif self.which_selection == "redshift":
@@ -264,7 +274,7 @@ class TRGBModel(H0ModelBase):
         e2_cz = self.e2_czcmb + sigma_v**2
 
         self._call_marginalized(
-            h, M_TRGB, sigma_int, sigma_v, beta, bias_params,
+            h, M_TRGB_host, sigma_int, sigma_v, beta, bias_params,
             Vext_rad_host, r_grid, lp_r, e2_cz, log_S,
             mu_grid=mu_grid, z_grid=z_grid,
             ll_sn_host=ll_sn_host,
@@ -297,7 +307,7 @@ class TRGBModel(H0ModelBase):
         return lax.map(checkpoint(_one), self.density_3d_fields,
                        batch_size=self.volume_density_batch_size)
 
-    def _call_marginalized(self, h, M_TRGB, sigma_int, sigma_v, beta,
+    def _call_marginalized(self, h, M_TRGB_host, sigma_int, sigma_v, beta,
                            bias_params, Vext_rad_host, r_grid, lp_r,
                            e2_cz, log_S,
                            mu_grid=None, z_grid=None,
@@ -316,7 +326,7 @@ class TRGBModel(H0ModelBase):
         e2_mag = self.e2_mag_obs + sigma_int**2
         ll_mag = normal_logpdf_var(
             self.mag_obs[:, None],
-            M_TRGB + mu_grid[None, :],
+            M_TRGB_host[:, None] + mu_grid[None, :],
             e2_mag[:, None])
 
         if self.use_reconstruction:

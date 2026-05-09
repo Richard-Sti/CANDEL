@@ -3400,9 +3400,17 @@ def _load_edd_trgb_core(fpath, label, zcmb_min=None, zcmb_max=None,
     T8_lo = _edd_col_float(rows, 46 + off)
     T8_hi = _edd_col_float(rows, 47 + off)
     A_814 = _edd_col_float(rows, 62 + off)
+    M_TRGB_Anand = _edd_col_float(rows, 63 + off)
     names = _edd_col_str(rows, 35 + off)
 
     zcmb_arr = czcmb / SPEED_OF_LIGHT
+
+    # We back out the Anand+22 dereddened colour from their colour-corrected
+    # M_TRGB column via M = -4.06 + 0.2 [(F606W-F814W)_0 - 1.23].  This
+    # keeps the per-host colour consistent with whichever colour (606-814
+    # or transformed V-I) Anand used to compute M_TRGB, and reduces exactly
+    # to Anand's calibration when the inferred colour pivot c_star = 1.23.
+    colour_dered = 1.23 + 5.0 * (M_TRGB_Anand + 4.06)
 
     data = dict(
         RA=RA,
@@ -3411,6 +3419,7 @@ def _load_edd_trgb_core(fpath, label, zcmb_min=None, zcmb_max=None,
         e_zcmb=np.full(n_orig, e_czcmb_default / SPEED_OF_LIGHT),
         mag=T814 - A_814,
         e_mag=(T8_hi - T8_lo) / 2,
+        colour_dered=colour_dered,
     )
 
     if has_group_vcmb:
@@ -3434,6 +3443,13 @@ def _load_edd_trgb_core(fpath, label, zcmb_min=None, zcmb_max=None,
         fprint(f"dropping {np.sum(bad_mag)} galaxies with missing TRGB "
                f"magnitudes.")
     keep &= ~bad_mag
+
+    # Drop galaxies with no Anand+22 M_TRGB column (i.e. no usable colour).
+    bad_colour = keep & ~np.isfinite(data["colour_dered"])
+    if np.any(bad_colour):
+        fprint(f"dropping {np.sum(bad_colour)} galaxies with missing "
+               f"dereddened colour (no Anand M_TRGB).")
+    keep &= ~bad_colour
 
     # Drop galaxies with fill-value Vcmb (9999 = no measured velocity).
     bad_vcmb = keep & (np.abs(czcmb) >= 9999)
