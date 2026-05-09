@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Create the EDD TRGB data-summary figure for the TRGBH0 paper."""
+"""Create EDD TRGB data-summary figures for the TRGBH0 paper."""
 import argparse
 from pathlib import Path
 import shutil
@@ -18,9 +18,9 @@ from trgbh0_plot_style import TRGBH0_COLOURS
 
 ROOT = Path("/mnt/users/rstiskalek/CANDEL")
 DATA_ROOT = ROOT / "data" / "EDD_TRGB"
-OUTDIR = ROOT / "notebooks" / "paper_TRGBH0"
-HIST_OUTNAME = "TRGBH0_data_histograms.pdf"
-SKY_OUTNAME = "TRGBH0_sky_distribution.pdf"
+OUTDIR = ROOT / "notebooks" / "paper_TRGBH0" / "output"
+HIST_OUTNAME = "edd_trgb_velocity_magnitude_histograms.pdf"
+SKY_OUTNAME = "edd_trgb_sky_distribution.pdf"
 SKY_AXIS_FONTSIZE = 8
 SKY_TICK_FONTSIZE = 7
 SKY_ANNOTATION_FONTSIZE = 9

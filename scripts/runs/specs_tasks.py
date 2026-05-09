@@ -276,6 +276,18 @@ def _trgbh0_main_datasets():
             "io/PV_main/EDD_TRGB/which_host_los": TRGBH0_MANTICORE_LOS,
             "model/which_bias": TRGBH0_MANTICORE_BIAS,
         },
+        {
+            "model/use_reconstruction": True,
+            "model/use_density_dependent_sigma_v": True,
+            "io/PV_main/EDD_TRGB/which_host_los": "Carrick2015",
+            "model/priors/beta": _trgbh0_carrick_beta_prior(),
+        },
+        {
+            "model/use_reconstruction": True,
+            "model/use_density_dependent_sigma_v": True,
+            "io/PV_main/EDD_TRGB/which_host_los": TRGBH0_MANTICORE_LOS,
+            "model/which_bias": TRGBH0_MANTICORE_BIAS,
+        },
     ]
     return (
         _trgbh0_selection_datasets(main_pv_models, selections)
@@ -360,6 +372,6 @@ TASK_SPECS = {
             **_with_root(f"{TRGBH0_ROOT}/table"),
         },
         "datasets": _trgbh0_main_datasets(),
-        "expected_tasks": 8,
+        "expected_tasks": 10,
     },
 }
