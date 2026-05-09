@@ -38,18 +38,66 @@ if needed:
 # galaxies with many spots (e.g. UGC3789: 156 spots).
 os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
 
-import argparse
 import tempfile
 import time
 
-# Float64 must be enabled before importing JAX. Keep it opt-in only.
-_enable_f64 = "--f64" in sys.argv
+_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config_maser.toml")
+with open(_CONFIG_PATH, "rb") as f:
+    master_cfg = tomli.load(f)
+
+
+def _cli_value(flag):
+    prefix = f"{flag}="
+    for i, arg in enumerate(sys.argv):
+        if arg.startswith(prefix):
+            return arg[len(prefix):]
+        if arg == flag and i + 1 < len(sys.argv):
+            return sys.argv[i + 1]
+    return None
+
+
+def _cli_galaxy():
+    skip_next = False
+    for arg in sys.argv[1:]:
+        if skip_next:
+            skip_next = False
+            continue
+        if arg in {"--sampler", "--seed", "--num-warmup", "--num-samples",
+                   "--num-chains", "--n-live", "--num-mcmc-steps",
+                   "--num-delete", "--termination", "--devices", "--mode",
+                   "--f-grid", "--init-method", "--r-ang-init"}:
+            skip_next = True
+            continue
+        if arg.startswith("-"):
+            continue
+        return arg
+    return None
+
+
+def _effective_mode_from_argv():
+    galaxy = _cli_galaxy()
+    cli_mode = _cli_value("--mode")
+    model_cfg = master_cfg["model"]
+    gal_cfg = model_cfg.get("galaxies", {}).get(galaxy, {})
+    mode = cli_mode or gal_cfg.get("mode") or model_cfg.get("mode", "mode2")
+    return galaxy, mode
+
+
+# Float64 must be enabled before importing JAX.
+_galaxy_early, _mode_early = _effective_mode_from_argv()
+_force_f64_n4258_mode1 = (_galaxy_early == "NGC4258" and _mode_early == "mode1")
+_enable_f64 = "--f64" in sys.argv or _force_f64_n4258_mode1
 if _enable_f64:
-    sys.argv.remove("--f64")
+    if "--f64" in sys.argv:
+        sys.argv.remove("--f64")
     import jax
     jax.config.update("jax_enable_x64", True)
-    print("float64 enabled (--f64)", flush=True)
+    if _force_f64_n4258_mode1:
+        print("float64 enabled (required for NGC4258 mode1)", flush=True)
+    else:
+        print("float64 enabled (--f64)", flush=True)
 
+import argparse
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
@@ -74,10 +122,6 @@ _dev_names = ", ".join(d.device_kind for d in _devs)
 _precision = "float64" if jax.config.jax_enable_x64 else "float32"
 print(f"JAX platform: {jax.default_backend()}, devices: {_devs} "
       f"({_dev_names}), precision: {_precision}", flush=True)
-
-# ---- Load master config ----
-with open(os.path.join(os.path.dirname(__file__), "config_maser.toml"), "rb") as f:
-    master_cfg = tomli.load(f)
 
 inf_cfg = master_cfg["inference"]
 
@@ -260,7 +304,8 @@ parser.add_argument("--no-quadratic-warp", action="store_true",
 parser.add_argument("--resume", action="store_true",
                     help="Resume NSS from latest checkpoint (error for NUTS)")
 parser.add_argument("--f64", action="store_true", default=_enable_f64,
-                    help="Enable JAX float64. Default is float32.")
+                    help="Enable JAX float64. Automatically enabled for "
+                         "NGC4258 mode1.")
 args = parser.parse_args()
 
 galaxy = args.galaxy
@@ -335,7 +380,7 @@ dense_mass_blocks = inf_cfg.get("dense_mass_blocks", [
 
 config = {
     "inference": {
-        "num_warmup": args.num_warmup or inf_cfg.get("num_warmup", 2000),
+        "num_warmup": args.num_warmup or inf_cfg.get("num_warmup", 2500),
         "num_samples": args.num_samples or inf_cfg.get("num_samples", 2000),
         "num_chains": args.num_chains or inf_cfg.get("num_chains", 1),
         "chain_method": "vectorized",
@@ -424,7 +469,7 @@ if not is_joint:
     n_spots = data["n_spots"]
 
 if sampler == "nuts":
-    num_warmup = args.num_warmup or inf_cfg.get("num_warmup", 2000)
+    num_warmup = args.num_warmup or inf_cfg.get("num_warmup", 2500)
     num_samples = args.num_samples or inf_cfg.get("num_samples", 2000)
     num_chains = args.num_chains or inf_cfg.get("num_chains", 1)
 
@@ -576,12 +621,17 @@ if sampler == "nuts":
         else:
             raise ValueError(f"Unknown init_method: {init_method!r}")
     # Dense mass matrix: joint uses full dense; single-galaxy uses
-    # per-galaxy dense_mass_globals flag for a globals-only block.
+    # per-galaxy dense_mass_globals flag for a single globals block.
     t0 = time.time()
     if is_joint:
         _dense_mass = True
         fprint("Dense mass: full dense (joint mode)")
-    elif not is_joint and gcfg.get("dense_mass_globals", False):
+    elif not is_joint and gcfg.get("dense_mass", True) is False:
+        _dense_mass = False
+        fprint("Dense mass: diagonal (per-galaxy override)")
+    elif not is_joint and (
+            inf_cfg.get("dense_mass_single_block", False)
+            or gcfg.get("dense_mass_globals", False)):
         # Collect all scalar (non-r_ang) param names from init config,
         # excluding params that aren't sampled in single-galaxy mode
         # or that are disabled by CLI overrides.
@@ -591,9 +641,16 @@ if sampler == "nuts":
         if not model.use_quadratic_warp:
             _skip |= {"d2i_dr2", "d2Omega_dr2"}
         _global_names = [k for k in init_cfg if k not in _skip]
-        _dense_mass = [tuple(_global_names)]
-        fprint(f"Dense mass: 1 block with {len(_global_names)} globals: "
-               f"{_global_names}")
+        _block_names = list(_global_names)
+        if (model.mode == "mode1"
+                and (inf_cfg.get("dense_mass_include_r_ang", False)
+                     or gcfg.get("dense_mass_include_r_ang", False))):
+            _block_names.append("r_ang")
+        _dense_mass = [tuple(_block_names)]
+        fprint(f"Dense mass: 1 block with {len(_block_names)} site(s): "
+               f"{_block_names}")
+        if "r_ang" in _block_names:
+            fprint(f"  includes all {model.n_spots} r_ang components")
     else:
         _dense_mass = _setup_dense_mass(
             config["inference"], None, model, model_kwargs={})
@@ -605,11 +662,11 @@ if sampler == "nuts":
             fprint(f"Dense mass: {'full dense' if _dense_mass else 'diagonal'}")
 
     if is_joint:
-        _tap = float(inf_cfg.get("target_accept_prob", 0.8))
+        _tap = float(inf_cfg.get("target_accept_prob", 0.9))
         _init_step_size = float(inf_cfg.get("init_step_size", 1.0))
     else:
         _tap = float(gcfg.get("target_accept_prob",
-                              inf_cfg.get("target_accept_prob", 0.8)))
+                              inf_cfg.get("target_accept_prob", 0.9)))
         _init_step_size = float(gcfg.get(
             "init_step_size", inf_cfg.get("init_step_size", 1.0)))
     fprint(f"NUTS: target_accept_prob={_tap}, init_step_size={_init_step_size}")
