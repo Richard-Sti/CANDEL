@@ -62,6 +62,7 @@ def _block_until_ready(tree):
 
 
 def _atomic_pickle(path, payload):
+    """Write a pickle payload atomically via a same-directory temp file."""
     directory = os.path.dirname(path)
     if directory:
         os.makedirs(directory, exist_ok=True)
@@ -72,6 +73,7 @@ def _atomic_pickle(path, payload):
 
 
 def _load_checkpoint(path):
+    """Load and version-check a NUTS checkpoint pickle."""
     with open(path, "rb") as f:
         checkpoint = pickle.load(f)
     version = checkpoint.get("version")
@@ -84,6 +86,7 @@ def _load_checkpoint(path):
 def _save_checkpoint(path, *, samples_by_chain, extra_fields_by_chain,
                      last_state, completed_warmup, completed_samples,
                      metadata, complete):
+    """Serialise the current NUTS run state and accumulated samples."""
     payload = {
         "version": _CHECKPOINT_VERSION,
         "metadata": dict(metadata),
@@ -102,21 +105,25 @@ def _save_checkpoint(path, *, samples_by_chain, extra_fields_by_chain,
 
 
 def _concatenate_chain_axis(chunks):
+    """Concatenate checkpoint chunks along the per-chain sample axis."""
     chunks = [c for c in chunks if c is not None]
     if not chunks:
         return None
 
     def _concat(*parts):
+        """Concatenate one pytree leaf from all retained chunks."""
         return np.concatenate([np.asarray(part) for part in parts], axis=1)
 
     return jax.tree_util.tree_map(_concat, *chunks)
 
 
 def _flatten_chain_axis(tree):
+    """Flatten leading ``(chain, draw)`` axes to NumPyro sample format."""
     if tree is None:
         return {}
 
     def _flatten(x):
+        """Flatten a single checkpoint leaf if it has chain and draw axes."""
         x = np.asarray(x)
         if x.ndim < 2:
             return x
@@ -126,6 +133,7 @@ def _flatten_chain_axis(tree):
 
 
 def _metadata_diff(old, new):
+    """Return human-readable key differences between metadata mappings."""
     keys = sorted(set(old) | set(new))
     return [
         f"{k}: checkpoint={old.get(k)!r}, current={new.get(k)!r}"
@@ -134,6 +142,7 @@ def _metadata_diff(old, new):
 
 
 def _validate_checkpoint(checkpoint, metadata, checkpoint_path):
+    """Reject checkpoints that are incompatible with the current run."""
     old = checkpoint.get("metadata", {})
     mismatches = _metadata_diff(old, metadata)
     if mismatches:
@@ -151,6 +160,7 @@ def _validate_checkpoint(checkpoint, metadata, checkpoint_path):
 
 
 def _prepare_rng_key(rng_key, num_chains, chain_method):
+    """Prepare a NumPyro RNG key for single-chain or vectorised chains."""
     if num_chains == 1:
         return rng_key
     if chain_method != "vectorized":
@@ -162,6 +172,7 @@ def _prepare_rng_key(rng_key, num_chains, chain_method):
 
 def _initialise_kernel(sampler, rng_key, *, num_warmup, num_chains,
                        chain_method, init_params, run_args, run_kwargs):
+    """Initialise the NumPyro kernel and populate sampler-side caches."""
     rng_key = _prepare_rng_key(rng_key, num_chains, chain_method)
     return sampler.init(
         rng_key, num_warmup, init_params=init_params,
@@ -169,6 +180,7 @@ def _initialise_kernel(sampler, rng_key, *, num_warmup, num_chains,
 
 
 def _get_by_path(obj, path):
+    """Read a dotted attribute/dict path from a sampler state object."""
     out = obj
     for part in path.split("."):
         if isinstance(out, dict):
@@ -179,6 +191,7 @@ def _get_by_path(obj, path):
 
 
 def _unique_fields(fields):
+    """Return fields in first-seen order with duplicates removed."""
     out = []
     for field in fields:
         if field not in out:
@@ -187,7 +200,9 @@ def _unique_fields(fields):
 
 
 def _one_step_chain_first(tree, num_chains):
+    """Add ``(chain, draw)`` axes to one post-warmup transition."""
     def _convert(x):
+        """Convert one transition leaf to checkpoint chunk layout."""
         x = np.asarray(x)
         if num_chains == 1:
             return x[np.newaxis, np.newaxis, ...]
@@ -197,8 +212,10 @@ def _one_step_chain_first(tree, num_chains):
 
 
 def _make_sample_step(sampler, run_args, run_kwargs):
+    """Build a JIT-compiled one-transition sampler step."""
     @jax.jit
     def sample_step(state):
+        """Advance the NumPyro sampler by one transition."""
         return sampler.sample(
             state, model_args=run_args, model_kwargs=run_kwargs)
 
@@ -207,6 +224,7 @@ def _make_sample_step(sampler, run_args, run_kwargs):
 
 def _make_postprocess_fn(sampler, run_args, run_kwargs, num_chains,
                          chain_method):
+    """Create the constrained-space postprocessor for sampled latent states."""
     postprocess_fn = sampler.postprocess_fn(run_args, run_kwargs)
     if num_chains > 1 and chain_method == "vectorized":
         postprocess_fn = jax.vmap(postprocess_fn)
@@ -214,6 +232,7 @@ def _make_postprocess_fn(sampler, run_args, run_kwargs, num_chains,
 
 
 def _format_progress_value(value, *, integer=False, scientific=False):
+    """Format scalar or per-chain values for tqdm postfix output."""
     arr = np.asarray(jax.device_get(value))
     if arr.size == 1:
         val = arr.reshape(-1)[0]
@@ -239,6 +258,7 @@ def _format_progress_value(value, *, integer=False, scientific=False):
 
 
 def _set_nuts_postfix(bar, state):
+    """Display step-size and tree-step diagnostics on a progress bar."""
     if bar.disable:
         return
     step_size = _format_progress_value(

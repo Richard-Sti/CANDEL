@@ -13,6 +13,9 @@ TRGBH0_MANTICORE_LOS = "manticore_2MPP_MULTIBIN_N256_DES_V2"
 TRGBH0_MANTICORE_BIAS = "double_powerlaw"
 TRGBH0_CARRICK_BETA_LOC = 0.461
 TRGBH0_CARRICK_BETA_SCALE = 0.013
+S8_ROOT = "results/S8"
+S8_PV_KIND = "precomputed_los_Carrick2015"
+S8_BIAS_MODELS = ["linear", "quadratic"]
 
 CH0_PAPER_COMMON = {
     "inference/num_chains": 12,
@@ -295,6 +298,41 @@ def _trgbh0_main_datasets():
     )
 
 
+def _s8_production_datasets():
+    return [
+        {
+            "inference/model": "TFRModel",
+            "io/catalogue_name": "CF4_W1",
+        },
+        {
+            "inference/model": "TFRModel",
+            "io/catalogue_name": "CF4_i",
+        },
+        {
+            "inference/model": "FPModel",
+            "io/catalogue_name": "6dF_FP",
+            "pv_model/galaxy_bias": [*S8_BIAS_MODELS, "cubic"],
+        },
+        {
+            "inference/model": "FPModel",
+            "io/catalogue_name": "SDSS_FP",
+            "pv_model/galaxy_bias": [*S8_BIAS_MODELS, "cubic"],
+        },
+        {
+            "inference/model": "PantheonPlusModel",
+            "io/catalogue_name": "PantheonPlus",
+            "inference/init_maxiter": 0,
+        },
+        {
+            "inference/model": [
+                "TFRModel", "TFRModel", "PantheonPlusModel"],
+            "io/catalogue_name": ["CF4_i", "CF4_W1", "PantheonPlus"],
+            "inference/shared_params": "beta,sigma_v",
+            "inference/init_maxiter": 0,
+        },
+    ]
+
+
 TASK_SPECS = {
     "test": {
         "description": "CF4 TFR W1 Mmiss run with a single NUTS chain.",
@@ -373,5 +411,26 @@ TASK_SPECS = {
         },
         "datasets": _trgbh0_main_datasets(),
         "expected_tasks": 10,
+    },
+    "S8_production": {
+        "description": "S8 production PV sweep for individual and joint catalogues.",
+        "config_path": "configs/config.toml",
+        "tag": "default",
+        "common": {
+            "pv_model/kind": S8_PV_KIND,
+            "pv_model/galaxy_bias": S8_BIAS_MODELS,
+            "pv_model/density_3d_downsample": 1,
+            "model/priors/beta": {
+                "dist": "uniform",
+                "low": 0.0,
+                "high": 2.0,
+            },
+            "inference/num_chains": 1,
+            "inference/num_warmup": 2000,
+            "inference/num_samples": 10000,
+            "io/root_output": S8_ROOT,
+        },
+        "datasets": _s8_production_datasets(),
+        "expected_tasks": 14,
     },
 }

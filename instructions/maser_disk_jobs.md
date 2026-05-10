@@ -34,7 +34,8 @@ python scripts/megamaser/run_maser_disk.py <galaxy> [--sampler nuts|nss] [option
 | `--f-grid` | 1.0 | Scale every phi/r grid size (`n_phi_hv_high`, `n_phi_hv_low`, `n_phi_sys`, their `_mode1` variants, `n_r_local`, `n_r_brute`) by this factor; results rounded to nearest odd integer, min 3. Applies to global `[model]` keys and per-galaxy overrides. |
 | `--no-ecc` | off | Disable eccentricity model |
 | `--no-quadratic-warp` | off | Disable quadratic disk warp |
-| `--save-map`, `--load-map` | — | Dump/load MAP init to TOML |
+| `--resume` | off | Resume from the latest NUTS or NSS checkpoint when present |
+| `--checkpoint-interval-minutes` | 15 | Checkpoint interval for NUTS warmup/sampling and NSS |
 | `--f64` | off | Enable JAX float64 explicitly. It is forced automatically for mode1 NUTS. |
 
 CLI args override config values.

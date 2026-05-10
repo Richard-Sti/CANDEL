@@ -79,6 +79,7 @@ def _cli_galaxy():
 
 
 def _effective_run_from_argv():
+    """Infer the early sampler/mode choice before importing JAX."""
     galaxy = _cli_galaxy()
     sampler = _cli_value("--sampler") or master_cfg["inference"].get(
         "sampler", "nss")
@@ -136,6 +137,7 @@ inf_cfg = master_cfg["inference"]
 
 
 def _json_ready(value):
+    """Convert arrays and mappings to JSON-stable Python containers."""
     if isinstance(value, dict):
         return {
             str(k): _json_ready(v)
@@ -153,12 +155,14 @@ def _json_ready(value):
 
 
 def _stable_hash(value):
+    """Return a deterministic SHA256 hash for JSON-compatible metadata."""
     payload = json.dumps(
         _json_ready(value), sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def _file_hash(path):
+    """Return the SHA256 hash of a file, or ``None`` if unreadable."""
     if path is None:
         return None
     h = hashlib.sha256()
@@ -172,6 +176,7 @@ def _file_hash(path):
 
 
 def _package_version(package):
+    """Return an installed package version, or ``None`` if absent."""
     try:
         return importlib_metadata.version(package)
     except importlib_metadata.PackageNotFoundError:
@@ -179,12 +184,14 @@ def _package_version(package):
 
 
 def _dense_mass_metadata(dense_mass):
+    """Normalise NumPyro dense-mass settings for checkpoint metadata."""
     if isinstance(dense_mass, bool):
         return dense_mass
     return _json_ready(dense_mass)
 
 
 def _combine_chain_samples(chain_samples):
+    """Concatenate sequential NUTS chain outputs along the sample axis."""
     keys = chain_samples[0].keys()
     return {
         key: np.concatenate(
