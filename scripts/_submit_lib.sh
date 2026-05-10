@@ -269,6 +269,10 @@ submit_job() {
                         return 2 ;;
                 esac
             fi
+            if [[ "$time" =~ ^[0-9]+[.][0-9]+$ ]]; then
+                echo "[submit_job] invalid --time '$time': decimal hours are not accepted; use HH:MM:SS instead (e.g. 00:12:00 for 0.2 hours)" >&2
+                return 2
+            fi
             # Accept bare hours (e.g. "12" or "36"); emit HH:MM:SS if <24h
             # else D-HH:MM:SS.
             if [[ "$time" =~ ^[0-9]+$ ]]; then

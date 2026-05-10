@@ -370,7 +370,7 @@ parser.add_argument("--resume", action="store_true",
                     help="Resume from latest checkpoint "
                          "(NUTS warmup/sampling, NSS)")
 parser.add_argument("--checkpoint-interval-minutes", type=float, default=15.0,
-                    help="NUTS checkpoint interval in minutes "
+                    help="Checkpoint interval in minutes "
                          "(default: 15). Applies to warmup and sampling.")
 parser.add_argument("--f64", action="store_true", default=_enable_f64,
                     help="Enable JAX float64. Automatically enabled for "
@@ -537,6 +537,8 @@ if sampler == "nuts":
     num_warmup = args.num_warmup or inf_cfg.get("num_warmup", 2500)
     num_samples = args.num_samples or inf_cfg.get("num_samples", 2000)
     num_chains = args.num_chains or inf_cfg.get("num_chains", 1)
+    if num_chains < 1:
+        raise ValueError("num_chains must be positive.")
 
     if is_joint:
         fsection(f"Running NUTS (joint, {n_spots} spots)")
@@ -752,6 +754,8 @@ if sampler == "nuts":
     _checkpoint_interval_seconds = args.checkpoint_interval_minutes * 60.0
     fprint(f"Checkpoint interval: {args.checkpoint_interval_minutes:g} "
            "minutes (warmup and sampling)")
+    fprint(f"NUTS chains: {num_chains} sequential chain(s), each with an "
+           "independent checkpoint file")
 
     _chain_keys = ([random.PRNGKey(seed)] if num_chains == 1
                    else list(random.split(random.PRNGKey(seed), num_chains)))
@@ -866,6 +870,9 @@ elif sampler == "nss":
                "starting fresh")
     fprint(f"Checkpoints: {_nss_ckpt_dir}")
     fprint(f"Checkpoint file: {_nss_ckpt_path}")
+    _checkpoint_interval_seconds = args.checkpoint_interval_minutes * 60.0
+    fprint(f"Checkpoint interval: {args.checkpoint_interval_minutes:g} "
+           "minutes")
 
     t0 = time.time()
     samples = run_nss(
@@ -875,6 +882,7 @@ elif sampler == "nss":
         termination=termination, seed=seed,
         checkpoint_dir=_nss_ckpt_dir, checkpoint_path=_nss_ckpt_path,
         resume_path=_nss_resume,
+        checkpoint_interval=_checkpoint_interval_seconds,
         devices=devices,
     )
     dt = time.time() - t0

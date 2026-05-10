@@ -725,7 +725,7 @@ def run_nss(model, model_args=(), model_kwargs=None,
             n_live=500, num_mcmc_steps=50, num_delete=1,
             termination=-3, seed=42, validate=True,
             checkpoint_dir=None, checkpoint_path=None, resume_path=None,
-            checkpoint_interval=1800, devices="auto"):
+            checkpoint_interval=900, devices="auto"):
     """Run the Nested Slice Sampler on a NumPyro model.
 
     Recommended settings (Yallup+2026, arXiv:2601.23252):
