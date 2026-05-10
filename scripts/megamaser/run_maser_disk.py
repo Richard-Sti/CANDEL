@@ -20,6 +20,8 @@ Usage:
 All settings (priors, sampler config) are read from config_maser.toml.
 CLI args override config values where provided.
 """
+import hashlib
+import json
 import os
 import sys
 
@@ -40,6 +42,7 @@ os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
 
 import tempfile
 import time
+from importlib import metadata as importlib_metadata
 
 _CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config_maser.toml")
 with open(_CONFIG_PATH, "rb") as f:
@@ -65,7 +68,8 @@ def _cli_galaxy():
         if arg in {"--sampler", "--seed", "--num-warmup", "--num-samples",
                    "--num-chains", "--n-live", "--num-mcmc-steps",
                    "--num-delete", "--termination", "--devices", "--mode",
-                   "--f-grid", "--init-method", "--r-ang-init"}:
+                   "--f-grid", "--init-method", "--r-ang-init",
+                   "--checkpoint-interval-minutes"}:
             skip_next = True
             continue
         if arg.startswith("-"):
@@ -102,12 +106,14 @@ import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
+import numpyro
 import tomli_w
 from h5py import File as H5File
 from jax import random
-from numpyro.infer import MCMC, NUTS
+from numpyro.infer import NUTS
 from numpyro.infer.initialization import init_to_value
 
+from candel.inference.checkpointed_nuts import run_checkpointed_nuts
 from candel.inference.inference import print_clean_summary, _setup_dense_mass
 from candel.inference.nested import print_nested_summary, run_nss
 from candel.model.model_H0_maser import (JointMaserModel, MaserDiskModel,
@@ -124,6 +130,65 @@ print(f"JAX platform: {jax.default_backend()}, devices: {_devs} "
       f"({_dev_names}), precision: {_precision}", flush=True)
 
 inf_cfg = master_cfg["inference"]
+
+
+def _json_ready(value):
+    if isinstance(value, dict):
+        return {
+            str(k): _json_ready(v)
+            for k, v in sorted(value.items(), key=lambda item: str(item[0]))
+        }
+    if isinstance(value, (list, tuple)):
+        return [_json_ready(v) for v in value]
+    if isinstance(value, np.ndarray):
+        return _json_ready(value.tolist())
+    if hasattr(value, "tolist"):
+        return _json_ready(value.tolist())
+    if isinstance(value, np.generic):
+        return value.item()
+    return value
+
+
+def _stable_hash(value):
+    payload = json.dumps(
+        _json_ready(value), sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _file_hash(path):
+    if path is None:
+        return None
+    h = hashlib.sha256()
+    try:
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                h.update(chunk)
+    except OSError:
+        return None
+    return h.hexdigest()
+
+
+def _package_version(package):
+    try:
+        return importlib_metadata.version(package)
+    except importlib_metadata.PackageNotFoundError:
+        return None
+
+
+def _dense_mass_metadata(dense_mass):
+    if isinstance(dense_mass, bool):
+        return dense_mass
+    return _json_ready(dense_mass)
+
+
+def _combine_chain_samples(chain_samples):
+    keys = chain_samples[0].keys()
+    return {
+        key: np.concatenate(
+            [np.asarray(samples[key]) for samples in chain_samples], axis=0)
+        for key in keys
+    }
+
 
 # >>> f-grid helpers
 _FGRID_KEYS = (
@@ -266,7 +331,7 @@ parser.add_argument("--num-samples", type=int, default=None,
                     help="Number of NUTS samples per chain (default: from config)")
 parser.add_argument("--num-chains", type=int, default=None,
                     help="Number of NUTS chains (default: from config); "
-                         "chains always run vectorised")
+                         "chains run sequentially")
 # NSS
 parser.add_argument("--n-live", type=int, default=None)
 parser.add_argument("--num-mcmc-steps", type=int, default=None)
@@ -302,7 +367,11 @@ parser.add_argument("--no-ecc", action="store_true",
 parser.add_argument("--no-quadratic-warp", action="store_true",
                     help="Disable quadratic warp (override config)")
 parser.add_argument("--resume", action="store_true",
-                    help="Resume NSS from latest checkpoint (error for NUTS)")
+                    help="Resume from latest checkpoint "
+                         "(NUTS warmup/sampling, NSS)")
+parser.add_argument("--checkpoint-interval-minutes", type=float, default=15.0,
+                    help="NUTS checkpoint interval in minutes "
+                         "(default: 15). Applies to warmup and sampling.")
 parser.add_argument("--f64", action="store_true", default=_enable_f64,
                     help="Enable JAX float64. Automatically enabled for "
                          "NGC4258 mode1.")
@@ -383,7 +452,7 @@ config = {
         "num_warmup": args.num_warmup or inf_cfg.get("num_warmup", 2500),
         "num_samples": args.num_samples or inf_cfg.get("num_samples", 2000),
         "num_chains": args.num_chains or inf_cfg.get("num_chains", 1),
-        "chain_method": "vectorized",
+        "chain_method": "sequential",
         "seed": seed,
         "dense_mass_blocks": dense_mass_blocks,
         "max_tree_depth": inf_cfg.get("max_tree_depth", 10),
@@ -451,10 +520,6 @@ else:
 os.unlink(tmp.name)
 
 # ---- Run sampler ----
-if args.resume and sampler == "nuts":
-    print("ERROR: --resume is not supported for NUTS.", flush=True)
-    sys.exit(1)
-
 if sampler == "nss" and model.mode != "mode2":
     print("ERROR: nested sampling requires mode2 "
           f"(current mode: {model.mode})", flush=True)
@@ -677,14 +742,96 @@ if sampler == "nuts":
                        dense_mass=_dense_mass,
                        init_strategy=init_strategy)
 
-    mcmc = MCMC(nuts_kernel, num_warmup=num_warmup, num_samples=num_samples,
-                num_chains=num_chains, chain_method="vectorized",
-                progress_bar=True)
-    mcmc.run(random.PRNGKey(seed))
+    _nuts_ckpt_dir = results_path(
+        master_cfg["io"].get("root_output", "results/Maser"),
+        "nuts_checkpoints", galaxy if not is_joint else "joint")
+    os.makedirs(_nuts_ckpt_dir, exist_ok=True)
+    _nuts_ckpt_base = os.path.join(_nuts_ckpt_dir, f"nuts_ckpt_{dist_tag}")
+    fprint(f"Checkpoints: {_nuts_ckpt_dir}")
+    fprint(f"Checkpoint file pattern: {_nuts_ckpt_base}_chain<N>.pkl")
+    _checkpoint_interval_seconds = args.checkpoint_interval_minutes * 60.0
+    fprint(f"Checkpoint interval: {args.checkpoint_interval_minutes:g} "
+           "minutes (warmup and sampling)")
+
+    _chain_keys = ([random.PRNGKey(seed)] if num_chains == 1
+                   else list(random.split(random.PRNGKey(seed), num_chains)))
+    _chain_samples = []
+    _chain_extra_fields = []
+    _nuts_settings = {
+        "max_tree_depth": int(inf_cfg.get("max_tree_depth", 10)),
+        "target_accept_prob": _tap,
+        "init_step_size": _init_step_size,
+        "num_warmup": int(num_warmup),
+        "num_samples": int(num_samples),
+        "num_chains": int(num_chains),
+        "chain_method": "sequential",
+    }
+    _init_metadata = {
+        "method": "joint_config" if is_joint else init_method,
+        "r_ang_method": None if is_joint else r_ang_init_method,
+        "init_params_hash": _stable_hash(init_params),
+    }
+    _base_checkpoint_metadata = {
+        "galaxy": galaxy,
+        "mode": model.mode,
+        "dist_tag": dist_tag,
+        "sampler": "nuts",
+        "seed": int(seed),
+        "nuts_settings": _nuts_settings,
+        "dense_mass": _dense_mass_metadata(_dense_mass),
+        "dense_mass_hash": _stable_hash(_dense_mass_metadata(_dense_mass)),
+        "config_hash": _stable_hash(config),
+        "model_config_hash": _stable_hash(config["model"]),
+        "inference_config_hash": _stable_hash(config["inference"]),
+        "data_hash": _stable_hash(data_list if is_joint else data),
+        "init": _init_metadata,
+        "model_class": type(model).__name__,
+        "use_ecc": bool(getattr(model, "use_ecc", False)),
+        "use_quadratic_warp": bool(
+            getattr(model, "use_quadratic_warp", False)),
+        "n_spots": int(n_spots),
+        "package_versions": {
+            "candel": _package_version("candel"),
+            "jax": jax.__version__,
+            "numpyro": numpyro.__version__,
+            "numpy": np.__version__,
+        },
+        "code_hashes": {
+            "run_maser_disk": _file_hash(__file__),
+            "checkpointed_nuts": _file_hash(
+                sys.modules[run_checkpointed_nuts.__module__].__file__),
+            "model_module": _file_hash(
+                sys.modules[type(model).__module__].__file__),
+        },
+    }
+    for _chain_idx, _chain_key in enumerate(_chain_keys):
+        _nuts_ckpt_path = f"{_nuts_ckpt_base}_chain{_chain_idx}.pkl"
+        if args.resume and os.path.isfile(_nuts_ckpt_path):
+            fprint(f"Resuming chain {_chain_idx} from {_nuts_ckpt_path}")
+        elif args.resume:
+            fprint(f"--resume: no NUTS checkpoint found for chain "
+                   f"{_chain_idx} at {_nuts_ckpt_path}, starting fresh")
+
+        _metadata = dict(_base_checkpoint_metadata)
+        _metadata["chain_index"] = int(_chain_idx)
+        _metadata["chain_rng_key"] = np.asarray(_chain_key).tolist()
+        fprint(f"NUTS chain {_chain_idx + 1}/{num_chains}: "
+               f"{_nuts_ckpt_path}")
+        result = run_checkpointed_nuts(
+            nuts_kernel, _chain_key,
+            num_warmup=num_warmup, num_samples=num_samples,
+            num_chains=1, chain_method="sequential",
+            progress_bar=True, checkpoint_path=_nuts_ckpt_path,
+            resume=args.resume,
+            checkpoint_interval_seconds=_checkpoint_interval_seconds,
+            checkpoint_metadata=_metadata)
+        _chain_samples.append(result.samples)
+        _chain_extra_fields.append(result.extra_fields)
     dt = time.time() - t0
 
-    samples = mcmc.get_samples()
-    n_div = int(mcmc.get_extra_fields()['diverging'].sum())
+    samples = _combine_chain_samples(_chain_samples)
+    _extra_fields = _combine_chain_samples(_chain_extra_fields)
+    n_div = int(_extra_fields['diverging'].sum())
     print(f"\nWall time: {dt:.0f}s, Divergences: {n_div}", flush=True)
     suffix = f"nuts_{dist_tag}"
     meta = None

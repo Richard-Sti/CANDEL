@@ -266,11 +266,18 @@ bash scripts/megamaser/submit.sh --sampler de -q cmbgpu --galaxy NGC5765b,NGC626
 # NSS — one galaxy
 bash scripts/megamaser/submit.sh --sampler nss -q cmbgpu --galaxy NGC5765b --max-retries 5
 
-# NUTS — restarts from scratch (no checkpoint support)
+# NUTS — resumes warmup or sampling from checkpoints written every 15 minutes
 bash scripts/megamaser/submit.sh --sampler nuts -q cmbgpu --galaxy NGC5765b --max-retries 3
 
 # Custom poll interval (seconds between squeue checks, default 120)
 bash scripts/megamaser/submit.sh --sampler de -q cmbgpu --galaxy NGC5765b --max-retries 10 --poll 60
 ```
+
+NUTS checkpoint files are per chain, e.g.
+`results/Megamaser/nuts_checkpoints/NGC5765b/nuts_ckpt_Dflat_mode2_chain0.pkl`,
+and include compatibility metadata for the seed, chain index, NUTS settings,
+dense-mass structure, config and data hashes, initialisation hash, package
+versions, and source-file hashes for the runner, checkpoint wrapper, and model
+module.
 
 Without `--max-retries`, the scripts behave exactly as before.

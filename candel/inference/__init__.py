@@ -28,6 +28,8 @@ from .inference import (                                                        
     get_log_density,                                                            # noqa
     )
 
+from .checkpointed_nuts import run_checkpointed_nuts                            # noqa
+
 try:
     from .optimise import find_MAP, sobol_optimize, de_optimize  # noqa
 except ImportError:
