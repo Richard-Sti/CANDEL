@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import scienceplots  # noqa: F401
 from scipy.stats import gaussian_kde, kstest
+from scipy.signal import savgol_filter
 from astropy.cosmology import FlatLambdaCDM
 
 import candel
@@ -70,15 +71,11 @@ def plot_h0_comparison():
             "CH0_sel-redshift_manticore_2MPP_MULTIBIN_N256_DES_V2_paper.hdf5"),
          COLS[3]),
     ]
-    no_sel = h0("CH0_manticore_2MPP_MULTIBIN_N256_DES_V2_paper.hdf5")
-
     rng = np.random.default_rng(42)
     with plt.style.context("science"):
         fig, ax = plt.subplots(figsize=(6.8, 4.0))
         for label, samples, color in curves:
             kde_line(ax, samples, label, color, fill=True, bw=2.0)
-        kde_line(ax, no_sel, "No selection", "gray", fill=False, ls="--",
-                 bw=3.0)
         kde_line(ax, rng.normal(73.04, 1.04, 300000), "SH0ES", COLS[2],
                  fill=False, ls=":", bw=2.0)
         kde_line(ax, rng.normal(67.4, 0.5, 300000), "Planck", COLS[1],
@@ -225,10 +222,14 @@ def plot_h0_proportion():
         xs.append(i)
         means.append(np.mean(samples))
 
+    means = np.asarray(means)
+    means_smoothed = savgol_filter(means, window_length=7, polyorder=2)
+    means_smoothed[[0, -1]] = means[[0, -1]]
+
     with plt.style.context("science"):
         fig, ax = plt.subplots(figsize=(3.35, 3.0))
-        ax.plot(xs, means, c=COLS[1])
-        ax.set_xlabel("Number of hosts selected by SN magnitude")
+        ax.plot(xs, means_smoothed, c=COLS[1])
+        ax.set_xlabel("Number of SN-magnitude-selected hosts")
         ax.set_ylabel(r"$\langle H_0 \rangle ~ [\mathrm{km}\,\mathrm{s}^{-1}\,\mathrm{Mpc}^{-1}]$")
         ax.set_xlim(0, 35)
         fig.tight_layout()
