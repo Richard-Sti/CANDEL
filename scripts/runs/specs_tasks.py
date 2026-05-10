@@ -325,7 +325,7 @@ def _trgbh0_distance_only_datasets():
             "model/priors/H0": _delta(73.04),
             "model/priors/Vext": _delta([0.0, 0.0, 0.0]),
             "model/priors/sigma_v": _delta(100.0),
-            **_trgbh0_selection("none"),
+            **_trgbh0_selection("TRGB_magnitude"),
             **_with_root(f"{TRGBH0_ROOT}/distances"),
         },
     ]
