@@ -213,7 +213,7 @@ def plot_h0_stacked():
 
 
 def plot_h0_proportion():
-    xs, means, stds = [], [], []
+    xs, means = [], []
     for i in range(36):
         fname = (
             MIXED
@@ -223,14 +223,10 @@ def plot_h0_proportion():
         samples = read_samples(fname, "H0")
         xs.append(i)
         means.append(np.mean(samples))
-        stds.append(np.std(samples))
 
     with plt.style.context("science"):
         fig, ax = plt.subplots(figsize=(3.35, 3.0))
         ax.plot(xs, means, c=COLS[1])
-        ax.fill_between(xs, np.array(means) - np.array(stds),
-                        np.array(means) + np.array(stds), color=COLS[1],
-                        alpha=0.18)
         ax.set_xlabel("Number of hosts selected by SN magnitude")
         ax.set_ylabel(r"$\langle H_0 \rangle ~ [\mathrm{km}\,\mathrm{s}^{-1}\,\mathrm{Mpc}^{-1}]$")
         ax.set_xlim(0, 35)
@@ -318,10 +314,8 @@ def plot_mu_host(data):
                     yerr=err_unif[mask], fmt="o", color="black",
                     ecolor="lightgray", capsize=3, ms=1.5,
                     label=r"$\mathcal{U}(V) - \mathcal{U}(\mu)$")
-        ax.errorbar(r2_mean[mask], diff_sn[mask], yerr=err_sn[mask],
-                    fmt="o", color=COLS[1], ecolor="#9fb0ff", capsize=3,
-                    ms=1.5,
-                    label=r"$\mathcal{U}(V),\,m_{\rm SN}~{\rm sel.} - \mathcal{U}(\mu)$")
+        ax.plot(r2_mean[mask], diff_sn[mask], "o", color=COLS[1], ms=1.5,
+                label=r"$\mathcal{U}(V),\,m_{\rm SN}~{\rm sel.} - \mathcal{U}(\mu)$")
         ax.axhline(0, color="red", linestyle="--")
         ax.set_xlabel(r"$\mu_{\rm host}^{\mathcal{U}(V)} ~ [\mathrm{mag}]$")
         ax.set_ylabel(r"$\Delta \mu ~ [\mathrm{mag}]$")
