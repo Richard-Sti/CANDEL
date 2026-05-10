@@ -61,7 +61,7 @@ def _normal(loc, scale):
 def _nu_cz_student_t_prior():
     return {
         "dist": "truncated_normal",
-        "low": 5.0,
+        "low": 0.25,
         "high": 100.0,
         "mean": 30.0,
         "scale": 10.0,

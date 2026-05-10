@@ -783,6 +783,42 @@ class H0ModelBase(ModelBase):
             return rsample(name, self.priors[name])
         return getattr(self, name)
 
+    @staticmethod
+    def _prior_lower_bound(prior):
+        """Return a scalar prior lower support bound when it is explicit."""
+        if prior is None:
+            return None
+        for attr in ("low", "v"):
+            if hasattr(prior, attr):
+                value = np.asarray(getattr(prior, attr))
+                if value.size == 1:
+                    return float(value.reshape(-1)[0])
+        lower = getattr(getattr(prior, "support", None), "lower_bound", None)
+        if lower is None:
+            return None
+        value = np.asarray(lower)
+        if value.size == 1:
+            return float(value.reshape(-1)[0])
+        return None
+
+    def _validate_student_t_redshift_selection(self,
+                                               selection_needs_redshift=None):
+        """Require finite-variance Student-t tails for redshift selection."""
+        if selection_needs_redshift is None:
+            selection = self.which_selection
+            selection_needs_redshift = (
+                selection == "redshift"
+                or (isinstance(selection, str) and "redshift" in selection))
+        if not selection_needs_redshift or self.cz_likelihood != "student_t":
+            return
+
+        lower = self._prior_lower_bound(self.priors.get("nu_cz"))
+        if lower is None or lower < 5.0:
+            raise ValueError(
+                "Student-t redshift selection requires "
+                "`model.priors.nu_cz` to have lower support >= 5. "
+                f"Got lower support {lower}.")
+
     def _sample_nu_cz(self):
         """Sample Student-t cz degrees of freedom when enabled."""
         if self.cz_likelihood == "student_t":

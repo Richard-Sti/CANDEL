@@ -155,8 +155,10 @@ class TRGBModel(H0ModelBase):
                 "SN_magnitude selection requires SN data "
                 "(m_Bprime, e_m_Bprime) in the data dict.")
 
+        selection_needs_redshift = self.which_selection == "redshift"
+        self._validate_student_t_redshift_selection(selection_needs_redshift)
         self._validate_selection_integral(
-            needs_velocity=self.which_selection == "redshift")
+            needs_velocity=selection_needs_redshift)
 
         if self.which_selection == "TRGB_magnitude":
             if self.mag_lim_TRGB is None \

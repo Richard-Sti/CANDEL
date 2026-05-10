@@ -320,6 +320,7 @@ class CH0Model(H0ModelBase):
             raise ValueError(
                 "Redshift-based selection requires "
                 "`use_Cepheid_host_redshift` to be set to True.")
+        self._validate_student_t_redshift_selection(selection_needs_redshift)
 
         self._validate_selection_integral(
             needs_velocity=selection_needs_redshift)
