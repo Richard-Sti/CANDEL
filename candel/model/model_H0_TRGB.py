@@ -42,9 +42,16 @@ class TRGBModel(H0ModelBase):
         config = super()._replace_unused_priors(config)
 
         which_sel = get_nested(config, "model/which_selection", None)
+        use_TRGB_host_redshift = get_nested(
+            config, "model/use_TRGB_host_redshift", True)
         if which_sel != "SN_magnitude":
             replace_prior_with_delta(
                 config, "M_B", -19.0, verbose=False)
+
+        if not use_TRGB_host_redshift:
+            replace_prior_with_delta(config, "H0", 73.04)
+            replace_prior_with_delta(config, "Vext", [0., 0., 0.])
+            replace_prior_with_delta(config, "sigma_v", 100.0)
 
         return config
 
@@ -66,6 +73,10 @@ class TRGBModel(H0ModelBase):
 
     def _load_model_flags(self):
         super()._load_model_flags()
+        self.use_TRGB_host_redshift = get_nested(
+            self.config, "model/use_TRGB_host_redshift", True)
+        fprint(f"use_TRGB_host_redshift set to "
+               f"{self.use_TRGB_host_redshift}")
         self.use_density_dependent_sigma_v = get_nested(
             self.config, "model/use_density_dependent_sigma_v", False)
         fprint("use_density_dependent_sigma_v set to "
@@ -133,6 +144,11 @@ class TRGBModel(H0ModelBase):
             raise ValueError(
                 "`use_density_dependent_sigma_v` requires "
                 "`use_reconstruction` to be set to True.")
+        if (self.use_density_dependent_sigma_v
+                and not self.use_TRGB_host_redshift):
+            raise ValueError(
+                "`use_density_dependent_sigma_v` requires "
+                "`use_TRGB_host_redshift` to be set to True.")
         if self.use_density_dependent_sigma_v:
             required = ["sigma_v_low", "sigma_v_high",
                         "log_sigma_v_rho_t", "sigma_v_k"]
@@ -156,6 +172,10 @@ class TRGBModel(H0ModelBase):
                 "(m_Bprime, e_m_Bprime) in the data dict.")
 
         selection_needs_redshift = self.which_selection == "redshift"
+        if selection_needs_redshift and not self.use_TRGB_host_redshift:
+            raise ValueError(
+                "`which_selection='redshift'` requires "
+                "`use_TRGB_host_redshift` to be set to True.")
         self._validate_student_t_redshift_selection(selection_needs_redshift)
         self._validate_selection_integral(
             needs_velocity=selection_needs_redshift)
@@ -393,21 +413,24 @@ class TRGBModel(H0ModelBase):
             lp_dist = lp_r[None, None, :] + lp_bias
 
             # Redshift likelihood on grid
-            if self.use_density_dependent_sigma_v:
-                sigma_v_grid = self.sigma_v_from_density(
-                    delta_grid, *sigma_v)
-                e2_cz = self.e2_czcmb[None, :, None] + sigma_v_grid**2
+            if self.use_TRGB_host_redshift:
+                if self.use_density_dependent_sigma_v:
+                    sigma_v_grid = self.sigma_v_from_density(
+                        delta_grid, *sigma_v)
+                    e2_cz = self.e2_czcmb[None, :, None] + sigma_v_grid**2
+                else:
+                    e2_cz = self.e2_czcmb[None, :, None] + sigma_v**2
+                Vpec_grid = beta * self.f_host_los_velocity.interp_many(
+                    rh_grid)
+                Vpec_grid += Vext_rad_host[None, :, None]
+                if Vext_mono_host_grid is not None:
+                    Vpec_grid += Vext_mono_host_grid[None, None, :]
+                cz_pred = predict_cz(z_grid[None, None, :], Vpec_grid)
+                ll_cz = ll_cz_fn(
+                    self.czcmb[None, :, None], cz_pred,
+                    e2_cz)
             else:
-                e2_cz = self.e2_czcmb[None, :, None] + sigma_v**2
-            Vpec_grid = beta * self.f_host_los_velocity.interp_many(
-                rh_grid)
-            Vpec_grid += Vext_rad_host[None, :, None]
-            if Vext_mono_host_grid is not None:
-                Vpec_grid += Vext_mono_host_grid[None, None, :]
-            cz_pred = predict_cz(z_grid[None, None, :], Vpec_grid)
-            ll_cz = ll_cz_fn(
-                self.czcmb[None, :, None], cz_pred,
-                e2_cz)
+                ll_cz = 0.0
 
             lp_dist_w = lp_dist + log_w
 
@@ -433,15 +456,18 @@ class TRGBModel(H0ModelBase):
         else:
             # Distance prior (volume only)
             lp_dist = lp_r[None, :]
-            e2_cz = self.e2_czcmb[:, None] + sigma_v**2
-
             # Redshift likelihood on grid
-            Vpec_no_recon = Vext_rad_host[:, None]
-            if Vext_mono_host_grid is not None:
-                Vpec_no_recon = Vpec_no_recon + Vext_mono_host_grid[None, :]
-            cz_pred = predict_cz(z_grid[None, :], Vpec_no_recon)
-            ll_cz = ll_cz_fn(
-                self.czcmb[:, None], cz_pred, e2_cz)
+            if self.use_TRGB_host_redshift:
+                e2_cz = self.e2_czcmb[:, None] + sigma_v**2
+                Vpec_no_recon = Vext_rad_host[:, None]
+                if Vext_mono_host_grid is not None:
+                    Vpec_no_recon = (
+                        Vpec_no_recon + Vext_mono_host_grid[None, :])
+                cz_pred = predict_cz(z_grid[None, :], Vpec_no_recon)
+                ll_cz = ll_cz_fn(
+                    self.czcmb[:, None], cz_pred, e2_cz)
+            else:
+                ll_cz = 0.0
 
             # Marginalize over distance. With explicit selection, keep the
             # same unnormalized r^2 measure as the selection integral so the

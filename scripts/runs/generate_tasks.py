@@ -360,6 +360,8 @@ def generate_dynamic_tag(config, base_tag="default"):
         which_sel = get_nested(config, "model/which_selection", None)
         if _is_active(which_sel):
             parts.append(f"sel-{which_sel}")
+        if not get_nested(config, "model/use_TRGB_host_redshift", True):
+            parts.append("no_TRGB_redshift")
         use_reconstruction = get_nested(
             config, "model/use_reconstruction", False)
         Vext_prior = get_nested(config, "model/priors/Vext", None)

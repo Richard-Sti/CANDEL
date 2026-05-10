@@ -312,7 +312,23 @@ def _trgbh0_main_datasets():
     return (
         _trgbh0_selection_datasets(main_pv_models, selections)
         + _trgbh0_selection_datasets(extra_pv_models, selections)
+        + _trgbh0_distance_only_datasets()
     )
+
+
+def _trgbh0_distance_only_datasets():
+    return [
+        {
+            "model/use_TRGB_host_redshift": False,
+            "model/use_reconstruction": False,
+            "model/use_density_dependent_sigma_v": False,
+            "model/priors/H0": _delta(73.04),
+            "model/priors/Vext": _delta([0.0, 0.0, 0.0]),
+            "model/priors/sigma_v": _delta(100.0),
+            **_trgbh0_selection("none"),
+            **_with_root(f"{TRGBH0_ROOT}/distances"),
+        },
+    ]
 
 
 def _s8_production_datasets():
@@ -419,7 +435,7 @@ TASK_SPECS = {
         "expected_tasks": 36,
     },
     "TRGBH0_main": {
-        "description": "TRGB H0 grid: PV-field, Vext-only, no-Vext, and velocity-model variants.",
+        "description": "TRGB H0 grid plus redshift-free distance run.",
         "config_path": "configs/config_EDD_TRGB.toml",
         "tag": "main",
         "common": {
@@ -427,7 +443,7 @@ TASK_SPECS = {
             **_with_root(f"{TRGBH0_ROOT}/table"),
         },
         "datasets": _trgbh0_main_datasets(),
-        "expected_tasks": 12,
+        "expected_tasks": 13,
     },
     "S8_production": {
         "description": "S8 production PV sweep for individual and joint catalogues.",

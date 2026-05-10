@@ -37,6 +37,7 @@ dense_mass_params = [
 which_run = "EDD_TRGB"
 
 use_reconstruction = true
+use_TRGB_host_redshift = true
 which_bias = "linear"
 which_selection = "TRGB_magnitude"
 
