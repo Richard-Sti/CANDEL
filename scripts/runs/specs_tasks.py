@@ -61,7 +61,7 @@ def _normal(loc, scale):
 def _nu_cz_student_t_prior():
     return {
         "dist": "truncated_normal",
-        "low": 0.25,
+        "low": 1.0,
         "high": 100.0,
         "mean": 30.0,
         "scale": 10.0,
@@ -229,6 +229,7 @@ def _trgbh0_main_datasets():
         {
             "model/use_reconstruction": True,
             "model/use_density_dependent_sigma_v": False,
+            "inference/init_maxiter": 0,
             "io/PV_main/EDD_TRGB/which_host_los": "Carrick2015",
             "model/priors/beta": _trgbh0_carrick_beta_prior(),
         },
@@ -276,6 +277,22 @@ def _trgbh0_main_datasets():
             "model/use_density_dependent_sigma_v": False,
             "model/cz_likelihood": "gaussian",
             "model/use_Vext_quadrupole": True,
+            "io/PV_main/EDD_TRGB/which_host_los": TRGBH0_MANTICORE_LOS,
+            "model/which_bias": TRGBH0_MANTICORE_BIAS,
+        },
+        {
+            "model/use_reconstruction": True,
+            "model/use_density_dependent_sigma_v": False,
+            "model/cz_likelihood": "gaussian",
+            "model/use_Vext_octupole": True,
+            "io/PV_main/EDD_TRGB/which_host_los": "Carrick2015",
+            "model/priors/beta": _trgbh0_carrick_beta_prior(),
+        },
+        {
+            "model/use_reconstruction": True,
+            "model/use_density_dependent_sigma_v": False,
+            "model/cz_likelihood": "gaussian",
+            "model/use_Vext_octupole": True,
             "io/PV_main/EDD_TRGB/which_host_los": TRGBH0_MANTICORE_LOS,
             "model/which_bias": TRGBH0_MANTICORE_BIAS,
         },
@@ -410,7 +427,7 @@ TASK_SPECS = {
             **_with_root(f"{TRGBH0_ROOT}/table"),
         },
         "datasets": _trgbh0_main_datasets(),
-        "expected_tasks": 10,
+        "expected_tasks": 12,
     },
     "S8_production": {
         "description": "S8 production PV sweep for individual and joint catalogues.",
