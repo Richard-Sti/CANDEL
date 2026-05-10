@@ -65,7 +65,7 @@ def plot_h0_comparison():
     curves = [
         ("SN mag. sel.", h0(
             "CH0_sel-SN_magnitude_manticore_2MPP_MULTIBIN_N256_DES_V2_paper.hdf5"),
-         COLS[4]),
+         COLS[0]),
         ("Host redshift sel.", h0(
             "CH0_sel-redshift_manticore_2MPP_MULTIBIN_N256_DES_V2_paper.hdf5"),
          COLS[3]),
@@ -86,6 +86,7 @@ def plot_h0_comparison():
         ax.set_xlabel(r"$H_0 ~ [\mathrm{km}\,\mathrm{s}^{-1}\,\mathrm{Mpc}^{-1}]$")
         ax.set_ylabel("Normalised PDF")
         ax.set_xlim(64, 77.5)
+        ax.set_ylim(bottom=0)
         handles, legend_labels = ax.get_legend_handles_labels()
         main_handles, main_labels = [], []
         ref_handles, ref_labels = [], []
