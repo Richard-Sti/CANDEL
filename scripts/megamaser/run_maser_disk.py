@@ -78,26 +78,29 @@ def _cli_galaxy():
     return None
 
 
-def _effective_mode_from_argv():
+def _effective_run_from_argv():
     galaxy = _cli_galaxy()
+    sampler = _cli_value("--sampler") or master_cfg["inference"].get(
+        "sampler", "nss")
     cli_mode = _cli_value("--mode")
     model_cfg = master_cfg["model"]
     gal_cfg = model_cfg.get("galaxies", {}).get(galaxy, {})
     mode = cli_mode or gal_cfg.get("mode") or model_cfg.get("mode", "mode2")
-    return galaxy, mode
+    return galaxy, sampler, mode
 
 
 # Float64 must be enabled before importing JAX.
-_galaxy_early, _mode_early = _effective_mode_from_argv()
-_force_f64_n4258_mode1 = (_galaxy_early == "NGC4258" and _mode_early == "mode1")
-_enable_f64 = "--f64" in sys.argv or _force_f64_n4258_mode1
+_galaxy_early, _sampler_early, _mode_early = _effective_run_from_argv()
+_force_f64_mode1_nuts = (
+    _sampler_early == "nuts" and _mode_early == "mode1")
+_enable_f64 = "--f64" in sys.argv or _force_f64_mode1_nuts
 if _enable_f64:
     if "--f64" in sys.argv:
         sys.argv.remove("--f64")
     import jax
     jax.config.update("jax_enable_x64", True)
-    if _force_f64_n4258_mode1:
-        print("float64 enabled (required for NGC4258 mode1)", flush=True)
+    if _force_f64_mode1_nuts:
+        print("float64 enabled (required for mode1 NUTS)", flush=True)
     else:
         print("float64 enabled (--f64)", flush=True)
 
@@ -374,7 +377,7 @@ parser.add_argument("--checkpoint-interval-minutes", type=float, default=15.0,
                          "(default: 15). Applies to warmup and sampling.")
 parser.add_argument("--f64", action="store_true", default=_enable_f64,
                     help="Enable JAX float64. Automatically enabled for "
-                         "NGC4258 mode1.")
+                         "mode1 NUTS.")
 args = parser.parse_args()
 
 galaxy = args.galaxy
@@ -539,6 +542,8 @@ if sampler == "nuts":
     num_chains = args.num_chains or inf_cfg.get("num_chains", 1)
     if num_chains < 1:
         raise ValueError("num_chains must be positive.")
+    if model.mode == "mode1" and not jax.config.jax_enable_x64:
+        raise RuntimeError("mode1 NUTS megamaser sampling requires float64.")
 
     if is_joint:
         fsection(f"Running NUTS (joint, {n_spots} spots)")

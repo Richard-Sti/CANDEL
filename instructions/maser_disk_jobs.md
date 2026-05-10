@@ -35,7 +35,7 @@ python scripts/megamaser/run_maser_disk.py <galaxy> [--sampler nuts|nss] [option
 | `--no-ecc` | off | Disable eccentricity model |
 | `--no-quadratic-warp` | off | Disable quadratic disk warp |
 | `--save-map`, `--load-map` | — | Dump/load MAP init to TOML |
-| `--f64` | off | Enable JAX float64 explicitly. It is forced automatically for NGC4258 mode1. |
+| `--f64` | off | Enable JAX float64 explicitly. It is forced automatically for mode1 NUTS. |
 
 CLI args override config values.
 
