@@ -132,8 +132,40 @@ def _flatten_chain_axis(tree):
     return jax.tree_util.tree_map(_flatten, tree)
 
 
+def _user_metadata_for_validation(user):
+    """Return effective run options used for checkpoint validation."""
+    user = dict(user)
+    out = {}
+    for key in (
+            "galaxy", "mode", "dist_tag", "sampler", "seed",
+            "use_ecc", "use_quadratic_warp", "chain_index"):
+        if key in user:
+            out[key] = user[key]
+
+    nuts_settings = dict(user.get("nuts_settings", {}))
+    for key in ("num_warmup", "num_samples", "num_chains", "chain_method"):
+        if key in nuts_settings:
+            out.setdefault("nuts_settings", {})[key] = nuts_settings[key]
+
+    init = dict(user.get("init", {}))
+    init = {k: init[k] for k in ("method", "r_ang_method") if k in init}
+    if init:
+        out["init"] = init
+    return out
+
+
+def _metadata_for_validation(metadata):
+    """Return metadata with diagnostic/non-structural fields removed."""
+    metadata = dict(metadata)
+    if "user" in metadata:
+        metadata["user"] = _user_metadata_for_validation(metadata["user"])
+    return metadata
+
+
 def _metadata_diff(old, new):
     """Return human-readable key differences between metadata mappings."""
+    old = _metadata_for_validation(old)
+    new = _metadata_for_validation(new)
     keys = sorted(set(old) | set(new))
     return [
         f"{k}: checkpoint={old.get(k)!r}, current={new.get(k)!r}"
