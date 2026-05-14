@@ -16,15 +16,17 @@ PDF_FILE = OUTPUT_DIR / "trgb_forward_model_dag.pdf"
 # =========================================================================
 pos = {
     # Global/model-level quantities
-    "Mtrgb": (0.75, 8.20),
-    "sigint": (2.55, 8.20),
-    "H0": (5.20, 8.20),
-    "rho": (6.90, 8.20),
-    "Vfield": (8.60, 8.20),
-    "bias": (10.30, 8.20),
-    "pv": (12.00, 8.20),
-    "sigv": (13.70, 8.20),
-    "selcuts": (15.40, 8.20),
+    "Mtrgb": (0.65, 8.20),
+    "cstar": (2.15, 8.20),
+    "cpars": (3.85, 8.20),
+    "sigint": (5.55, 8.20),
+    "H0": (7.25, 8.20),
+    "rho": (8.95, 8.20),
+    "Vfield": (10.65, 8.20),
+    "bias": (12.35, 8.20),
+    "pv": (14.05, 8.20),
+    "sigv": (15.75, 8.20),
+    "selcuts": (17.45, 8.20),
     # Anchor constraints
     "anchprior": (-0.25, 7.05),
     "anchmu": (-0.25, 6.30),
@@ -39,19 +41,25 @@ pos = {
     "mu": (6.45, 1.40),
     "zcos": (8.75, 1.40),
     "vpec": (11.15, 1.40),
-    # Host-level observables
-    "mtrue": (4.15, 0.40),
+    # Host-level colour and observables
+    "cdist": (2.25, 3.15),
+    "ctrue": (2.25, 2.05),
+    "csamp": (1.65, -0.65),
+    "cobs": (2.25, -1.95),
+    "mtrue": (5.45, 0.45),
     "cztrue": (11.15, 0.40),
-    "msamp": (4.15, -0.65),
+    "msamp": (5.45, -0.65),
     "czsamp": (11.15, -0.65),
-    "mobs": (4.15, -1.75),
-    "czobs": (11.15, -1.75),
-    "selected": (14.20, -1.75),
-    "detfrac": (14.20, -2.80),
+    "mobs": (4.75, -1.95),
+    "czobs": (11.15, -1.95),
+    "selected": (14.70, -1.95),
+    "detfrac": (14.70, -3.05),
 }
 
 latex_labels = {
     "Mtrgb": r"$M_{\rm TRGB}$",
+    "cstar": r"$c_\star$",
+    "cpars": r"$(\bar c,\sigma_c)$",
     "sigint": r"$\sigma_{\rm int}$",
     "H0": r"$H_0$",
     "pv": r"$\mathbf{V}_{\rm ext}$",
@@ -90,6 +98,16 @@ latex_labels = {
     "mu": r"$\mu_i$",
     "zcos": r"$z_{{\rm cos},i}$",
     "vpec": r"$V_{{\rm pec},i}$",
+    "cdist": (
+        r"$c_i \sim$\\"
+        r"$\mathcal{N}(\bar c,\sigma_c^2)$"
+    ),
+    "ctrue": r"$c_i$",
+    "csamp": (
+        r"$c_i^{\rm obs} \sim$\\"
+        r"$\mathcal{N}(c_i,\epsilon_{c,i}^2)$"
+    ),
+    "cobs": r"$c_i^{\rm obs}$",
     "mtrue": r"$m_i$",
     "cztrue": r"$cz_i$",
     "msamp": (
@@ -108,6 +126,8 @@ latex_labels = {
 
 node_styles = {
     "Mtrgb": "global",
+    "cstar": "global",
+    "cpars": "global",
     "sigint": "global",
     "H0": "global",
     "pv": "global",
@@ -128,6 +148,10 @@ node_styles = {
     "mu": "det",
     "zcos": "det",
     "vpec": "det",
+    "cdist": "sample",
+    "ctrue": "latent",
+    "csamp": "sample",
+    "cobs": "data",
     "mtrue": "det",
     "cztrue": "det",
     "msamp": "sample",
@@ -140,6 +164,10 @@ node_styles = {
 
 edges = [
     ("Mtrgb", "anchmtrue"),
+    ("cpars", "cdist"),
+    ("cdist", "ctrue"),
+    ("ctrue", "csamp"),
+    ("csamp", "cobs"),
     ("anchprior", "anchmu"),
     ("anchmu", "anchgeom"),
     ("anchmu", "anchmtrue"),
@@ -158,6 +186,8 @@ edges = [
     ("skydelta", "vpec"),
     ("rtrue", "vpec"),
     ("Mtrgb", "mtrue"),
+    ("cstar", "mtrue"),
+    ("ctrue", "mtrue"),
     ("mu", "mtrue"),
     ("mtrue", "msamp"),
     ("sigint", "msamp"),
@@ -179,6 +209,8 @@ def node_style(name):
     style = node_styles[name]
     if name in {"msamp", "czsamp"}:
         style = f"{style}, text width=3.35cm"
+    if name in {"cdist", "csamp"}:
+        style = f"{style}, text width=2.15cm"
     if name in {"skydelta"}:
         style = f"{style}, text width=2.55cm"
     if name in {"anchprior", "anchgeom", "anchsky", "anchmobs", "rdist"}:
@@ -209,15 +241,30 @@ for a, b in edges:
             "\\draw[dag edge] (Mtrgb.south east) "
             ".. controls (1.45, 7.1) and (1.85, 5.95) .. (anchmtrue.north);"
         )
+    elif key == "cpars_cdist":
+        edge_lines.append(
+            "\\draw[dag edge] (cpars.south) "
+            ".. controls (4.15, 6.30) and (3.55, 4.10) .. (cdist.north east);"
+        )
     elif key == "Mtrgb_mtrue":
         edge_lines.append(
             "\\draw[dag edge] (Mtrgb.south east) "
-            ".. controls (2.20, 5.00) and (3.20, 1.15) .. (mtrue.north west);"
+            ".. controls (2.10, 5.00) and (3.65, 1.10) .. (mtrue.north west);"
+        )
+    elif key == "cstar_mtrue":
+        edge_lines.append(
+            "\\draw[dag edge] (cstar.south east) "
+            ".. controls (3.00, 5.65) and (4.05, 1.35) .. (mtrue.north);"
+        )
+    elif key == "ctrue_mtrue":
+        edge_lines.append(
+            "\\draw[dag edge] (ctrue.south east) "
+            ".. controls (3.25, 1.50) and (4.55, 0.95) .. (mtrue.north west);"
         )
     elif key == "sigint_msamp":
         edge_lines.append(
             "\\draw[dag edge] (sigint.south) "
-            ".. controls (2.55, 6.25) and (3.70, 0.20) .. ([xshift=1.05cm]msamp.north west);"
+            ".. controls (5.55, 5.75) and (6.25, 0.10) .. ([xshift=1.05cm]msamp.north);"
         )
     elif key == "rho_rdist":
         edge_lines.append(
@@ -269,17 +316,17 @@ for a, b in edges:
     elif key == "selcuts_selected":
         edge_lines.append(
             "\\draw[sel edge] (selcuts.south) "
-            ".. controls (14.2, 5.05) and (14.2, -0.20) .. (selected.north);"
+            ".. controls (14.95, 5.05) and (14.70, -0.20) .. (selected.north);"
         )
     elif key == "mobs_selected":
         edge_lines.append(
             "\\draw[sel edge] (mobs.south east) "
-            ".. controls (6.90, -2.45) and (11.70, -2.45) .. (selected.south west);"
+            ".. controls (7.20, -2.65) and (12.00, -2.65) .. (selected.south west);"
         )
     elif key == "selcuts_detfrac":
         edge_lines.append(
             "\\draw[sel edge] (selcuts.south east) "
-            ".. controls (15.65, 5.05) and (15.65, -2.80) .. (detfrac.east);"
+            ".. controls (17.75, 5.05) and (17.20, -3.05) .. (detfrac.east);"
         )
     else:
         edge_lines.append(f"\\draw[dag edge] ({a}) -- ({b});")
@@ -357,7 +404,7 @@ tex = rf"""
 
 % ===== LEGEND =====
 \begin{{scope}}[on background layer]
-    \fill[black!6, rounded corners=3pt] (-1.35, 9.02) rectangle (16.65, 9.82);
+    \fill[black!6, rounded corners=3pt] (-1.35, 9.02) rectangle (18.25, 9.82);
 \end{{scope}}
 \node[global, minimum width=1.35cm] at (-0.55, 9.42) {{Global}};
 \node[input, minimum width=1.55cm] at (1.45, 9.42) {{Fixed\\input}};
@@ -375,7 +422,7 @@ tex = rf"""
 % ===== PLATES =====
 \begin{{scope}}[on background layer]
     \node[plate, fit=(anchprior)(anchmu)(anchgeom)(anchmtrue)(anchsky)(anchmobs)] {{}};
-    \node[plate, inner ysep=6pt, fit=(skydelta)(rdist)(rtrue)(mu)(zcos)(vpec)(mtrue)(cztrue)(msamp)(czsamp)(mobs)(czobs)(selected)] {{}};
+    \node[plate, inner ysep=6pt, fit=(skydelta)(rdist)(rtrue)(mu)(zcos)(vpec)(cdist)(ctrue)(csamp)(cobs)(mtrue)(cztrue)(msamp)(czsamp)(mobs)(czobs)(selected)] {{}};
 \end{{scope}}
 
 % ===== EDGES =====
@@ -389,7 +436,7 @@ tex = rf"""
 \node[font=\scriptsize, fill=white, inner sep=1.2pt, anchor=west]
     at (-1.16, 7.56) {{Anchor $a\in\{{\rm LMC,N4258\}}$}};
 \node[font=\scriptsize, fill=white, inner sep=1.2pt, anchor=east]
-    at (15.00, 3.95) {{TRGB host $i=1,\ldots,N_{{\rm host}}$}};
+    at (15.70, 3.95) {{TRGB host $i=1,\ldots,N_{{\rm host}}$}};
 
 \end{{tikzpicture}}
 \end{{document}}

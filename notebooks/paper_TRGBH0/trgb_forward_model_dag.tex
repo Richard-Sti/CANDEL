@@ -47,11 +47,11 @@
 \begin{document}
 \begin{tikzpicture}
 
-\useasboundingbox (-2.25, -3.40) rectangle (17.15, 10.00);
+\useasboundingbox (-2.25, -3.40) rectangle (19.20, 10.00);
 
 % ===== LEGEND =====
 \begin{scope}[on background layer]
-    \fill[black!6, rounded corners=3pt] (-1.35, 9.02) rectangle (16.65, 9.82);
+    \fill[black!6, rounded corners=3pt] (-1.35, 9.02) rectangle (18.25, 9.82);
 \end{scope}
 \node[global, minimum width=1.35cm] at (-0.55, 9.42) {Global};
 \node[input, minimum width=1.55cm] at (1.45, 9.42) {Fixed\\input};
@@ -64,15 +64,17 @@
 \node[selection, minimum width=1.65cm] at (15.80, 9.42) {Detection\\fraction};
 
 % ===== NODES =====
-\node[global] (Mtrgb) at (0.75, 8.20) {$M_{\rm TRGB}$};
-\node[global, minimum width=1.15cm] (sigint) at (2.55, 8.20) {$\sigma_{\rm int}$};
-\node[global] (H0) at (5.20, 8.20) {$H_0$};
-\node[input] (rho) at (6.90, 8.20) {$\rho(\bm{r})$};
-\node[input] (Vfield) at (8.60, 8.20) {$\bm{V}(\bm{r})$};
-\node[global] (bias) at (10.30, 8.20) {$\bm{b}$};
-\node[global] (pv) at (12.00, 8.20) {$\mathbf{V}_{\rm ext}$};
-\node[global, minimum width=1.05cm] (sigv) at (13.70, 8.20) {$\sigma_v$};
-\node[global] (selcuts) at (15.40, 8.20) {TRGB\\selection};
+\node[global] (Mtrgb) at (0.65, 8.20) {$M_{\rm TRGB}$};
+\node[global] (cstar) at (2.15, 8.20) {$c_\star$};
+\node[global] (cpars) at (3.85, 8.20) {$(\bar c,\sigma_c)$};
+\node[global, minimum width=1.15cm] (sigint) at (5.55, 8.20) {$\sigma_{\rm int}$};
+\node[global] (H0) at (7.25, 8.20) {$H_0$};
+\node[input] (rho) at (8.95, 8.20) {$\rho(\bm{r})$};
+\node[input] (Vfield) at (10.65, 8.20) {$\bm{V}(\bm{r})$};
+\node[global] (bias) at (12.35, 8.20) {$\bm{b}$};
+\node[global] (pv) at (14.05, 8.20) {$\mathbf{V}_{\rm ext}$};
+\node[global, minimum width=1.05cm] (sigv) at (15.75, 8.20) {$\sigma_v$};
+\node[global] (selcuts) at (17.45, 8.20) {TRGB\\selection};
 \node[popdist, text width=2.20cm] (anchprior) at (-0.25, 7.05) {$\mu_a \sim p(\mu_a)$};
 \node[latent] (anchmu) at (-0.25, 6.30) {$\mu_a$};
 \node[sample, text width=2.20cm] (anchgeom) at (-0.25, 5.45) {$\mu_{a,\rm obs} \sim$\\$\mathcal{N}(\mu_a,\epsilon_{\mu,a}^2)$};
@@ -85,24 +87,32 @@
 \node[det] (mu) at (6.45, 1.40) {$\mu_i$};
 \node[det] (zcos) at (8.75, 1.40) {$z_{{\rm cos},i}$};
 \node[det] (vpec) at (11.15, 1.40) {$V_{{\rm pec},i}$};
-\node[det] (mtrue) at (4.15, 0.40) {$m_i$};
+\node[sample, text width=2.15cm] (cdist) at (2.25, 3.15) {$c_i \sim$\\$\mathcal{N}(\bar c,\sigma_c^2)$};
+\node[latent] (ctrue) at (2.25, 2.05) {$c_i$};
+\node[sample, text width=2.15cm] (csamp) at (1.65, -0.65) {$c_i^{\rm obs} \sim$\\$\mathcal{N}(c_i,\epsilon_{c,i}^2)$};
+\node[data] (cobs) at (2.25, -1.95) {$c_i^{\rm obs}$};
+\node[det] (mtrue) at (5.45, 0.45) {$m_i$};
 \node[det] (cztrue) at (11.15, 0.40) {$cz_i$};
-\node[sample, text width=3.35cm] (msamp) at (4.15, -0.65) {$m_{{\rm obs},i} \sim$\\$\mathcal{N}(m_i,\epsilon_{m,i}^2+\sigma_{\rm int}^2)$};
+\node[sample, text width=3.35cm] (msamp) at (5.45, -0.65) {$m_{{\rm obs},i} \sim$\\$\mathcal{N}(m_i,\epsilon_{m,i}^2+\sigma_{\rm int}^2)$};
 \node[sample, text width=3.35cm] (czsamp) at (11.15, -0.65) {$cz_{{\rm CMB},i} \sim$\\$\mathcal{N}(cz_i,\epsilon_{cz,i}^2+\sigma_v^2)$};
-\node[data] (mobs) at (4.15, -1.75) {$m_{{\rm obs},i}$};
-\node[data] (czobs) at (11.15, -1.75) {$cz_{{\rm CMB},i}$};
-\node[conditioned] (selected) at (14.20, -1.75) {$S_i=1$};
-\node[selection] (detfrac) at (14.20, -2.80) {$p(S=1\mid\Lambda)$};
+\node[data] (mobs) at (4.75, -1.95) {$m_{{\rm obs},i}$};
+\node[data] (czobs) at (11.15, -1.95) {$cz_{{\rm CMB},i}$};
+\node[conditioned] (selected) at (14.70, -1.95) {$S_i=1$};
+\node[selection] (detfrac) at (14.70, -3.05) {$p(S=1\mid\Lambda)$};
 
 % ===== PLATES =====
 \begin{scope}[on background layer]
     \node[plate, fit=(anchprior)(anchmu)(anchgeom)(anchmtrue)(anchsky)(anchmobs)] {};
-    \node[plate, inner ysep=6pt, fit=(skydelta)(rdist)(rtrue)(mu)(zcos)(vpec)(mtrue)(cztrue)(msamp)(czsamp)(mobs)(czobs)(selected)] {};
+    \node[plate, inner ysep=6pt, fit=(skydelta)(rdist)(rtrue)(mu)(zcos)(vpec)(cdist)(ctrue)(csamp)(cobs)(mtrue)(cztrue)(msamp)(czsamp)(mobs)(czobs)(selected)] {};
 \end{scope}
 
 % ===== EDGES =====
 \begin{scope}[on background layer]
 \draw[dag edge] (Mtrgb.south east) .. controls (1.45, 7.1) and (1.85, 5.95) .. (anchmtrue.north);
+\draw[dag edge] (cpars.south) .. controls (4.15, 6.30) and (3.55, 4.10) .. (cdist.north east);
+\draw[dag edge] (cdist) -- (ctrue);
+\draw[dag edge] (ctrue) -- (csamp);
+\draw[dag edge] (csamp) -- (cobs);
 \draw[dag edge] (anchprior) -- (anchmu);
 \draw[dag edge] (anchmu) -- (anchgeom);
 \draw[dag edge] (anchmu) -- (anchmtrue);
@@ -119,19 +129,21 @@
 \draw[dag edge] (pv.south) .. controls (12.10, 5.00) and (12.30, 1.55) .. (vpec.east);
 \draw[dag edge] (skydelta.east) .. controls (7.0, 3.25) and (10.20, 1.65) .. (vpec.west);
 \draw[dag edge] (rtrue.east) .. controls (9.65, 2.35) and (10.75, 2.20) .. (vpec.north);
-\draw[dag edge] (Mtrgb.south east) .. controls (2.20, 5.00) and (3.20, 1.15) .. (mtrue.north west);
+\draw[dag edge] (Mtrgb.south east) .. controls (2.10, 5.00) and (3.65, 1.10) .. (mtrue.north west);
+\draw[dag edge] (cstar.south east) .. controls (3.00, 5.65) and (4.05, 1.35) .. (mtrue.north);
+\draw[dag edge] (ctrue.south east) .. controls (3.25, 1.50) and (4.55, 0.95) .. (mtrue.north west);
 \draw[dag edge] (mu) -- (mtrue);
 \draw[dag edge] (mtrue) -- (msamp);
-\draw[dag edge] (sigint.south) .. controls (2.55, 6.25) and (3.70, 0.20) .. ([xshift=1.05cm]msamp.north west);
+\draw[dag edge] (sigint.south) .. controls (5.55, 5.75) and (6.25, 0.10) .. ([xshift=1.05cm]msamp.north);
 \draw[dag edge] (msamp) -- (mobs);
 \draw[dag edge] (zcos) -- (cztrue);
 \draw[dag edge] (vpec) -- (cztrue);
 \draw[dag edge] (cztrue) -- (czsamp);
 \draw[dag edge] (sigv.south) .. controls (13.75, 4.10) and (12.65, -0.65) .. (czsamp.east);
 \draw[dag edge] (czsamp) -- (czobs);
-\draw[sel edge] (selcuts.south) .. controls (14.2, 5.05) and (14.2, -0.20) .. (selected.north);
-\draw[sel edge] (mobs.south east) .. controls (6.90, -2.45) and (11.70, -2.45) .. (selected.south west);
-\draw[sel edge] (selcuts.south east) .. controls (15.65, 5.05) and (15.65, -2.80) .. (detfrac.east);
+\draw[sel edge] (selcuts.south) .. controls (14.95, 5.05) and (14.70, -0.20) .. (selected.north);
+\draw[sel edge] (mobs.south east) .. controls (7.20, -2.65) and (12.00, -2.65) .. (selected.south west);
+\draw[sel edge] (selcuts.south east) .. controls (17.75, 5.05) and (17.20, -3.05) .. (detfrac.east);
 \end{scope}
 \draw[dag edge, draw=black!70]
     (rdist.west) -- (skydelta.east);
@@ -140,7 +152,7 @@
 \node[font=\scriptsize, fill=white, inner sep=1.2pt, anchor=west]
     at (-1.16, 7.56) {Anchor $a\in\{\rm LMC,N4258\}$};
 \node[font=\scriptsize, fill=white, inner sep=1.2pt, anchor=east]
-    at (15.00, 3.95) {TRGB host $i=1,\ldots,N_{\rm host}$};
+    at (15.70, 3.95) {TRGB host $i=1,\ldots,N_{\rm host}$};
 
 \end{tikzpicture}
 \end{document}
