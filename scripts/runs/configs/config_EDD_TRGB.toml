@@ -11,7 +11,8 @@ num_chains = 1
 chain_method = "parallel"
 seed = 44
 dense_mass_params = [
-    "H0", "M_TRGB", "c_star", "sigma_int", "sigma_v",
+    "H0", "M_TRGB", "alpha_c", "c_star", "c_bar", "w_c",
+    "sigma_int", "sigma_v",
     "sigma_v_low", "sigma_v_high", "log_sigma_v_rho_t", "sigma_v_k",
     "Vext_phi", "Vext_cos_theta", "Vext_mag",
     "Vext_mono",
@@ -79,6 +80,21 @@ scale = 0.5
 dist = "normal"
 loc = 1.23
 scale = 0.1
+
+[model.priors.alpha_c]
+dist = "normal"
+loc = 0.0
+scale = 1.0
+
+[model.priors.c_bar]
+dist = "uniform"
+low = 0.0
+high = 3.0
+
+[model.priors.w_c]
+dist = "uniform"
+low = 0.001
+high = 1.0
 
 [model.priors.sigma_int]
 dist = "maxwell"

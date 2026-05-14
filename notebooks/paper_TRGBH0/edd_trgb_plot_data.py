@@ -37,7 +37,7 @@ def _data_rows():
 
 
 def load_edd_trgb_plot_data(include_sky=True):
-    """Load the 394-host TRGB sample used by the paper summary plots."""
+    """Load the EDD/Rizzi-standardized TRGB sample used by the paper plots."""
     rows = []
     for row in _data_rows():
         try:
@@ -49,13 +49,13 @@ def load_edd_trgb_plot_data(include_sky=True):
         vcmb = _float_or_nan(row["Vcmb"])
         t814 = _float_or_nan(row["T814"])
         a814 = _float_or_nan(row["A_814"])
-        colour = _float_or_nan(row["606-814"])
+        m_trgb = _float_or_nan(row["M_TRGB"])
 
         if name in DROP_NAMES:
             continue
         if not math.isfinite(t814 - a814):
             continue
-        if not math.isfinite(colour):
+        if not math.isfinite(m_trgb):
             continue
         if abs(vcmb) >= 9999:
             continue
