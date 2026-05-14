@@ -37,8 +37,8 @@ CH0_PAPER_COMMON = {
 TRGBH0_COMMON = {
     "inference/num_chains": 1,
     "inference/chain_method": "sequential",
-    "inference/num_warmup": 1000,
-    "inference/num_samples": 5000,
+    "inference/num_warmup": 2500,
+    "inference/num_samples": 7500,
     "model/selection_integral_geometry": "sphere",
     "model/selection_integral_grid_radius": 50.0,
     "model/density_3d_subsample_fraction": 1.0,
@@ -239,46 +239,29 @@ def _trgbh0_main_datasets():
             "io/PV_main/EDD_TRGB/which_host_los": TRGBH0_MANTICORE_LOS,
             "model/which_bias": TRGBH0_MANTICORE_BIAS,
         },
-        {
-            "model/use_reconstruction": False,
-        },
     ]
     extra_pv_models = [
         {
+            "model/use_reconstruction": True,
+            "model/use_density_dependent_sigma_v": False,
+            "model/cz_likelihood": "student_t",
+            "model/priors/nu_cz": _nu_cz_student_t_prior(),
+            "io/PV_main/EDD_TRGB/which_host_los": "Carrick2015",
+            "model/priors/beta": _trgbh0_carrick_beta_prior(),
+        },
+        {
+            "model/use_reconstruction": True,
+            "model/use_density_dependent_sigma_v": False,
+            "model/cz_likelihood": "student_t",
+            "model/priors/nu_cz": _nu_cz_student_t_prior(),
+            "io/PV_main/EDD_TRGB/which_host_los": TRGBH0_MANTICORE_LOS,
+            "model/which_bias": TRGBH0_MANTICORE_BIAS,
+        },
+        {
             "model/use_reconstruction": False,
-            "model/priors/Vext": _delta([0.0, 0.0, 0.0]),
-        },
-        {
-            "model/use_reconstruction": True,
             "model/use_density_dependent_sigma_v": False,
             "model/cz_likelihood": "student_t",
             "model/priors/nu_cz": _nu_cz_student_t_prior(),
-            "io/PV_main/EDD_TRGB/which_host_los": "Carrick2015",
-            "model/priors/beta": _trgbh0_carrick_beta_prior(),
-        },
-        {
-            "model/use_reconstruction": True,
-            "model/use_density_dependent_sigma_v": False,
-            "model/cz_likelihood": "student_t",
-            "model/priors/nu_cz": _nu_cz_student_t_prior(),
-            "io/PV_main/EDD_TRGB/which_host_los": TRGBH0_MANTICORE_LOS,
-            "model/which_bias": TRGBH0_MANTICORE_BIAS,
-        },
-        {
-            "model/use_reconstruction": True,
-            "model/use_density_dependent_sigma_v": False,
-            "model/cz_likelihood": "gaussian",
-            "model/use_Vext_quadrupole": True,
-            "io/PV_main/EDD_TRGB/which_host_los": "Carrick2015",
-            "model/priors/beta": _trgbh0_carrick_beta_prior(),
-        },
-        {
-            "model/use_reconstruction": True,
-            "model/use_density_dependent_sigma_v": False,
-            "model/cz_likelihood": "gaussian",
-            "model/use_Vext_quadrupole": True,
-            "io/PV_main/EDD_TRGB/which_host_los": TRGBH0_MANTICORE_LOS,
-            "model/which_bias": TRGBH0_MANTICORE_BIAS,
         },
         {
             "model/use_reconstruction": True,
@@ -443,7 +426,7 @@ TASK_SPECS = {
             **_with_root(f"{TRGBH0_ROOT}/table"),
         },
         "datasets": _trgbh0_main_datasets(),
-        "expected_tasks": 13,
+        "expected_tasks": 10,
     },
     "S8_production": {
         "description": "S8 production PV sweep for individual and joint catalogues.",
