@@ -232,6 +232,23 @@ def _field_cache_indices_tag(indices):
     return "_".join(ranges)
 
 
+def _parse_field_cache_indices_tag(tag):
+    """Parse a compact field-index tag.
+
+    This reverses `_field_cache_indices_tag`.
+    """
+    if tag == "none":
+        return []
+    values = []
+    for part in tag.split("_"):
+        if "-" in part:
+            start, stop = part.split("-", 1)
+            values.extend(range(int(start), int(stop) + 1))
+        else:
+            values.append(int(part))
+    return values
+
+
 def _field_cache_payload_digest(payload, length=24):
     """Stable digest for the complete field-cache payload."""
     payload = _jsonable({"version": _FIELD_CACHE_VERSION, **payload})
@@ -303,6 +320,67 @@ def _read_field_cache(cache_path, label, required_keys):
         return None
     fprint(f"loaded {label} cache from `{cache_path}`.")
     return out
+
+
+def _slice_h0_volume_cache_fields(cached, cached_indices, requested_indices):
+    """Slice field-axis arrays in a cached H0 volume product."""
+    requested_indices = [int(x) for x in requested_indices]
+    cached_indices = [int(x) for x in cached_indices]
+    rows = [cached_indices.index(x) for x in requested_indices]
+    out = dict(cached)
+    for key in ("rho_3d_fields", "vrad_3d_fields"):
+        if key in out:
+            out[key] = np.asarray(out[key])[rows]
+    return out
+
+
+def _read_h0_volume_cache_superset(cache_dir, payload, label, required_keys,
+                                   requested_indices):
+    """Load a cached H0 volume product whose field set contains the request."""
+    if cache_dir is None:
+        return None
+    cache_subdir = join(cache_dir, "h0_volume_data")
+    if not exists(cache_subdir):
+        return None
+
+    requested = [int(x) for x in requested_indices]
+    field_slug = _field_cache_slug(payload["field_name"], max_len=70)
+    geometry = _field_cache_slug(payload["geometry"], max_len=20)
+    radius_tag = _field_cache_float_tag(payload["subcube_radius"])
+    downsample_tag = f"ds-{int(payload['downsample'])}"
+    kind_tag = "vel" if payload["load_velocity"] else "density"
+
+    candidates = []
+    for fname in os.listdir(cache_subdir):
+        parts = fname[:-4].split("__") if fname.endswith(".npz") else []
+        if len(parts) != 7:
+            continue
+        version, cached_field, fields_part, cached_geometry, cached_radius, \
+            cached_downsample, cached_kind = parts
+        if version != f"v{_FIELD_CACHE_VERSION}":
+            continue
+        if cached_field != field_slug or cached_geometry != geometry:
+            continue
+        if cached_radius != f"r-{radius_tag}":
+            continue
+        if cached_downsample != downsample_tag or cached_kind != kind_tag:
+            continue
+        if not fields_part.startswith("fields-"):
+            continue
+        cached_indices = _parse_field_cache_indices_tag(
+            fields_part.removeprefix("fields-"))
+        if all(index in cached_indices for index in requested):
+            candidates.append((len(cached_indices), cached_indices,
+                               join(cache_subdir, fname)))
+
+    for _, cached_indices, path in sorted(candidates):
+        cached = _read_field_cache(path, f"{label} superset", required_keys)
+        if cached is not None:
+            fprint(f"using {label} cache `{path}` sliced to field indices "
+                   f"{requested}.")
+            return _slice_h0_volume_cache_fields(
+                cached, cached_indices, requested)
+    return None
 
 
 def _write_field_cache(cache_path, label, arrays):
@@ -883,10 +961,26 @@ def _load_volume_data_for_H0(
             "vrad_3d_fields", "rhat_x_3d", "rhat_y_3d", "rhat_z_3d"]
         density_cached = _read_field_cache(
             cache_path, "H0 3D volume density", density_required)
+        if density_cached is None:
+            density_cached = _read_h0_volume_cache_superset(
+                cache_dir, density_cache_payload, "H0 3D volume density",
+                density_required, field_indices)
+            if density_cached is not None:
+                _write_field_cache(
+                    cache_path, "H0 3D volume density", density_cached)
         if load_velocity:
             velocity_cached = _read_field_cache(
                 velocity_cache_path, "H0 3D volume velocity",
                 velocity_required)
+            if velocity_cached is None:
+                velocity_cached = _read_h0_volume_cache_superset(
+                    cache_dir, velocity_cache_payload,
+                    "H0 3D volume velocity", velocity_required,
+                    field_indices)
+                if velocity_cached is not None:
+                    _write_field_cache(
+                        velocity_cache_path, "H0 3D volume velocity",
+                        velocity_cached)
             cached = None
             if density_cached is not None and velocity_cached is not None:
                 cached = {**density_cached, **velocity_cached}
@@ -1111,7 +1205,8 @@ def _load_volume_data_for_H0(
 
 
 def _load_h0_volume_data_from_config(config, los_data_path, which_los,
-                                     label, velocity_selections):
+                                     label, velocity_selections,
+                                     field_indices=None):
     """Load shared 3D volume data for H0 normalizers."""
     which_sel = get_nested(config, "model/which_selection", None)
     which_run = get_nested(config, "model/which_run", None)
@@ -1166,11 +1261,14 @@ def _load_h0_volume_data_from_config(config, los_data_path, which_los,
         _field_cache_dir_from_config(config)
         if cache_enabled else None)
 
-    with File(los_data_path, "r") as f:
-        if "field_indices" in f:
-            field_indices = f["field_indices"][:]
-        else:
-            field_indices = np.arange(f["los_density"].shape[0])
+    if field_indices is None:
+        with File(los_data_path, "r") as f:
+            if "field_indices" in f:
+                field_indices = f["field_indices"][:]
+            else:
+                field_indices = np.arange(f["los_density"].shape[0])
+    else:
+        field_indices = np.asarray(field_indices, dtype=np.int32)
 
     fprint(f"loading {len(field_indices)} 3D density cube(s) for {label} "
            f"volume normalizer (geometry={geometry}, "
@@ -1985,7 +2083,8 @@ class PVDataFrame:
 ###############################################################################
 
 
-def load_los(los_data_path, data, mask=None, verbose=True):
+def load_los(los_data_path, data, mask=None, verbose=True,
+             field_indices=None):
     with File(los_data_path, 'r') as f:
         if mask is None:
             data["los_density"] = f['los_density'][...].astype(np.float32)
@@ -2005,7 +2104,11 @@ def load_los(los_data_path, data, mask=None, verbose=True):
 
         assert np.all(data["los_density"] > 0)
         assert np.all(np.isfinite(data["los_velocity"]))
-        los_field_indices = np.arange(data["los_density"].shape[0])
+        if "field_indices" in f:
+            los_field_indices = f["field_indices"][:].astype(np.int32)
+        else:
+            los_field_indices = np.arange(
+                data["los_density"].shape[0], dtype=np.int32)
 
         norm = _density_unit_normalization(los_data_path)
         if norm is not None:
@@ -2027,6 +2130,31 @@ def load_los(los_data_path, data, mask=None, verbose=True):
             data["los_density"] = data["los_density"][::5]
             data["los_velocity"] = data["los_velocity"][::5]
             los_field_indices = los_field_indices[::5]
+
+        if field_indices is not None:
+            requested = np.asarray(field_indices, dtype=np.int32)
+            if requested.ndim == 0:
+                requested = requested[None]
+            if requested.ndim != 1 or len(requested) == 0:
+                raise ValueError(
+                    "`io.field_indices` must be an int or non-empty 1D list.")
+
+            rows = []
+            for nsim in requested:
+                match = np.where(los_field_indices == nsim)[0]
+                if len(match) != 1:
+                    available = ", ".join(map(str, los_field_indices.tolist()))
+                    raise ValueError(
+                        f"Requested LOS field index {int(nsim)} is not "
+                        f"available in `{los_data_path}`. Available: "
+                        f"{available}.")
+                rows.append(int(match[0]))
+
+            data["los_density"] = data["los_density"][rows]
+            data["los_velocity"] = data["los_velocity"][rows]
+            los_field_indices = los_field_indices[rows]
+            fprint("selected LOS field indices: "
+                   f"{los_field_indices.tolist()}", verbose=verbose)
 
         data["los_field_indices"] = los_field_indices.astype(np.int32)
 
@@ -2446,7 +2574,7 @@ def load_SH0ES(root):
 
 def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
                          los_data_path=None, rand_los_data_path=None,
-                         volume_data=None):
+                         volume_data=None, field_indices=None):
     """
     Load the separated SH0ES data, separating the Cepheid and supernovae and
     covariance matrices.
@@ -2547,13 +2675,15 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
     def _load_los_or_none(path, keys):
         if path is None:
             return {k: None for k in keys}
-        d = load_los(path, {})
+        d = load_los(path, {}, field_indices=field_indices)
         return {k: d[k] for k in keys}
 
-    host_los_keys = ["los_density", "los_velocity", "los_r"]
+    host_los_keys = [
+        "los_density", "los_velocity", "los_r", "los_field_indices"]
     host_los = _load_los_or_none(los_data_path, host_los_keys)
 
-    rand_los_keys = host_los_keys + ["los_RA", "los_dec"]
+    rand_los_keys = [
+        "los_density", "los_velocity", "los_r", "los_RA", "los_dec"]
     rand_los = _load_los_or_none(rand_los_data_path, rand_los_keys)
 
     # Keep the brightest (lowest magnitude) SN per Cepheid host galaxy
@@ -2615,6 +2745,7 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
         "host_los_density": host_los["los_density"],
         "host_los_velocity": host_los["los_velocity"],
         "host_los_r": host_los["los_r"],
+        "host_los_field_indices": host_los["los_field_indices"],
         # Random LOS for modelling selection
         "has_rand_los": rand_los_data_path is not None,
         "num_rand_los": rand_los["los_density"].shape[1] if rand_los["los_density"] is not None else 1,  # noqa
@@ -2703,6 +2834,7 @@ def load_SH0ES_from_config(config_path):
     root = d["root"]
     cepheid_host_cz_cmb_max = d.get("cepheid_host_cz_cmb_max", None)
     which_host_los = d.get("which_host_los", None)
+    field_indices = get_nested(config, "io/field_indices", None)
     if which_host_los is not None:
         if config["io"]["load_host_los"]:
             los_data_path = config["io"]["PV_main"]["SH0ES"]["los_file"].replace(  # noqa
@@ -2722,7 +2854,8 @@ def load_SH0ES_from_config(config_path):
 
     data = load_SH0ES_separated(
         root, cepheid_host_cz_cmb_max,
-        los_data_path=los_data_path, rand_los_data_path=rand_los_data_path)
+        los_data_path=los_data_path, rand_los_data_path=rand_los_data_path,
+        field_indices=field_indices)
 
     velocity_selections = ["redshift", "SN_magnitude_redshift"]
     if get_nested(config, "model/which_selection", None) \
@@ -2733,7 +2866,8 @@ def load_SH0ES_from_config(config_path):
 
     volume_data = _load_h0_volume_data_from_config(
         config, los_data_path, which_host_los, "SH0ES",
-        velocity_selections=tuple(velocity_selections))
+        velocity_selections=tuple(velocity_selections),
+        field_indices=data.get("host_los_field_indices", None))
 
     if volume_data is not None:
         data.update(volume_data)
@@ -3399,18 +3533,17 @@ def _load_edd_trgb_core(fpath, label, zcmb_min=None, zcmb_max=None,
     T814 = _edd_col_float(rows, 45 + off)
     T8_lo = _edd_col_float(rows, 46 + off)
     T8_hi = _edd_col_float(rows, 47 + off)
+    colour_606_814 = _edd_col_float(rows, 48 + off)
+    colour_lo = _edd_col_float(rows, 49 + off)
+    colour_hi = _edd_col_float(rows, 50 + off)
     A_814 = _edd_col_float(rows, 62 + off)
     M_TRGB_Anand = _edd_col_float(rows, 63 + off)
     names = _edd_col_str(rows, 35 + off)
 
     zcmb_arr = czcmb / SPEED_OF_LIGHT
-
-    # We back out the Anand+22 dereddened colour from their colour-corrected
-    # M_TRGB column via M = -4.06 + 0.2 [(F606W-F814W)_0 - 1.23].  This
-    # keeps the per-host colour consistent with whichever colour (606-814
-    # or transformed V-I) Anand used to compute M_TRGB, and reduces exactly
-    # to Anand's calibration when the inferred colour pivot c_star = 1.23.
-    colour_dered = 1.23 + 5.0 * (M_TRGB_Anand + 4.06)
+    colour_edd = 1.23 + (M_TRGB_Anand + 4.06) / 0.20
+    e_colour_edd = np.abs(colour_hi - colour_lo) / 2
+    e_colour_edd = np.where(np.isfinite(e_colour_edd), e_colour_edd, 0.0)
 
     data = dict(
         RA=RA,
@@ -3419,7 +3552,9 @@ def _load_edd_trgb_core(fpath, label, zcmb_min=None, zcmb_max=None,
         e_zcmb=np.full(n_orig, e_czcmb_default / SPEED_OF_LIGHT),
         mag=T814 - A_814,
         e_mag=(T8_hi - T8_lo) / 2,
-        colour_dered=colour_dered,
+        colour_dered=colour_edd,
+        colour_606_814=colour_606_814,
+        e_colour_dered=e_colour_edd,
     )
 
     if has_group_vcmb:
@@ -3444,11 +3579,14 @@ def _load_edd_trgb_core(fpath, label, zcmb_min=None, zcmb_max=None,
                f"magnitudes.")
     keep &= ~bad_mag
 
-    # Drop galaxies with no Anand+22 M_TRGB column (i.e. no usable colour).
-    bad_colour = keep & ~np.isfinite(data["colour_dered"])
+    # Drop galaxies without the EDD/Rizzi colour-standardization term.
+    bad_colour = keep & (
+        ~np.isfinite(data["colour_dered"])
+        | ~np.isfinite(data["e_colour_dered"])
+    )
     if np.any(bad_colour):
         fprint(f"dropping {np.sum(bad_colour)} galaxies with missing "
-               f"dereddened colour (no Anand M_TRGB).")
+               f"EDD/Rizzi colour-standardization term.")
     keep &= ~bad_colour
 
     # Drop galaxies with fill-value Vcmb (9999 = no measured velocity).
@@ -3523,6 +3661,7 @@ def _load_EDD_TRGB_from_config_common(config_path, config_key, loader):
     which_los = get_nested(
         config, "io/which_host_los",
         get_nested(config, f"io/PV_main/{config_key}/which_host_los", None))
+    field_indices = get_nested(config, "io/field_indices", None)
 
     def _resolve_los_path(path):
         if path is not None and which_los is not None:
@@ -3540,10 +3679,12 @@ def _load_EDD_TRGB_from_config_common(config_path, config_key, loader):
     fprint(f"reconstruction: {which_los or 'none'}")
     if los_data_path is not None:
         fprint(f"  host LOS path: {los_data_path}")
-        host_los = load_los(los_data_path, {}, mask=mask)
+        host_los = load_los(
+            los_data_path, {}, mask=mask, field_indices=field_indices)
         data["host_los_density"] = host_los["los_density"]
         data["host_los_velocity"] = host_los["los_velocity"]
         data["host_los_r"] = host_los["los_r"]
+        data["host_los_field_indices"] = host_los["los_field_indices"]
         fprint(f"  host LOS shape: {host_los['los_density'].shape}")
 
     if rand_los_data_path is not None:
@@ -3563,7 +3704,8 @@ def _load_EDD_TRGB_from_config_common(config_path, config_key, loader):
 
     volume_data = _load_h0_volume_data_from_config(
         config, los_data_path, which_los, config_key,
-        velocity_selections=("redshift",))
+        velocity_selections=("redshift",),
+        field_indices=data.get("host_los_field_indices", None))
 
     if volume_data is not None:
         data.update(volume_data)
