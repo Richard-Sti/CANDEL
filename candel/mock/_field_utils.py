@@ -80,7 +80,7 @@ def compute_r_max_selection(mag_lim, M_abs, sigma_int, e_mag,
 
 
 def build_field_pool(field_loader, r_sphere, pool_size, gen,
-                     rmin_h=0.1, verbose=True):
+                     rmin_h=0.1, density_divisor=None, verbose=True):
     """Pre-sample 3D positions and evaluate density/velocity in one batch.
 
     Returns dict with keys: r_h, rho, v_los, RA, dec, rhat_icrs, delta_max.
@@ -91,6 +91,8 @@ def build_field_pool(field_loader, r_sphere, pool_size, gen,
     eps = 1e-4
     fprint("loading density field for pool...", verbose=verbose)
     density_raw = field_loader.load_density()
+    if density_divisor is not None:
+        density_raw = density_raw / density_divisor
     density_log = np.log(density_raw + eps).astype(np.float32)
     f_density = build_regular_interpolator(
         density_log, field_loader.boxsize,
