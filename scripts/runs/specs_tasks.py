@@ -242,6 +242,21 @@ def _trgbh0_main_datasets():
     ]
     extra_pv_models = [
         {
+            "model/which_run": "EDD_TRGB_grouped",
+            "model/use_reconstruction": True,
+            "model/use_density_dependent_sigma_v": False,
+            "io/PV_main/EDD_TRGB_grouped/which_host_los": "Carrick2015",
+            "model/priors/beta": _trgbh0_carrick_beta_prior(),
+        },
+        {
+            "model/which_run": "EDD_TRGB_grouped",
+            "model/use_reconstruction": True,
+            "model/use_density_dependent_sigma_v": False,
+            "io/PV_main/EDD_TRGB_grouped/which_host_los":
+                TRGBH0_MANTICORE_LOS,
+            "model/which_bias": TRGBH0_MANTICORE_BIAS,
+        },
+        {
             "model/use_reconstruction": True,
             "model/use_density_dependent_sigma_v": False,
             "model/cz_likelihood": "student_t",
@@ -311,6 +326,21 @@ def _trgbh0_distance_only_datasets():
             **_trgbh0_selection("TRGB_magnitude"),
             **_with_root(f"{TRGBH0_ROOT}/distances"),
         },
+    ]
+
+
+def _trgbh0_manticore_field_datasets():
+    return [
+        {
+            "model/use_reconstruction": True,
+            "model/use_density_dependent_sigma_v": False,
+            "model/cz_likelihood": "gaussian",
+            "io/PV_main/EDD_TRGB/which_host_los": TRGBH0_MANTICORE_LOS,
+            "model/which_bias": TRGBH0_MANTICORE_BIAS,
+            "io/field_indices": field,
+            **_trgbh0_selection("TRGB_magnitude"),
+        }
+        for field in range(30)
     ]
 
 
@@ -426,7 +456,18 @@ TASK_SPECS = {
             **_with_root(f"{TRGBH0_ROOT}/table"),
         },
         "datasets": _trgbh0_main_datasets(),
-        "expected_tasks": 10,
+        "expected_tasks": 12,
+    },
+    "TRGBH0_manticore_fields_const_sigv": {
+        "description": "TRGB H0 one-Manticore-field runs with Gaussian constant sigma_v.",
+        "config_path": "configs/config_EDD_TRGB.toml",
+        "tag": "manticore_field_const_sigv",
+        "common": {
+            **TRGBH0_COMMON,
+            **_with_root(f"{TRGBH0_ROOT}/manticore_fields_const_sigv"),
+        },
+        "datasets": _trgbh0_manticore_field_datasets(),
+        "expected_tasks": 30,
     },
     "S8_production": {
         "description": "S8 production PV sweep for individual and joint catalogues.",

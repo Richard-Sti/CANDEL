@@ -391,6 +391,16 @@ def generate_dynamic_tag(config, base_tag="default"):
             shared_str = str(shared).replace(",", "+")
         parts.append(f"shared-{shared_str}")
 
+    field_indices = get_nested(config, "io/field_indices", None)
+    if field_indices is not None:
+        if not isinstance(field_indices, list):
+            field_indices = [field_indices]
+        if len(field_indices) == 1:
+            parts.append(f"field{int(field_indices[0]):02d}")
+        else:
+            field_str = "+".join(f"{int(i):02d}" for i in field_indices)
+            parts.append(f"fields{field_str}")
+
     if base_tag != "default":
         parts.append(base_tag)
 
