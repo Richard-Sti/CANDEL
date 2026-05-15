@@ -103,12 +103,29 @@ class BaseRedshift2Real(ABC):
         elif which_bias == "double_powerlaw":
             self._bias_interp = LOSInterpolator(
                 los_r, np.log(los_density), r0_decay_scale=r0_decay_scale)
+            log_rho_t = np.asarray(calibration_samples["log_rho_t"])
             self._bias_params = [
                 np.asarray(calibration_samples["alpha_low"]),
                 np.asarray(calibration_samples["alpha_high"]),
-                np.asarray(calibration_samples["log_rho_t"]),
+                log_rho_t,
+                np.asarray(calibration_samples.get(
+                    "log_rho_width", np.ones_like(log_rho_t))),
             ]
-            self._bias_param_names = ["alpha_low", "alpha_high", "log_rho_t"]
+            self._bias_param_names = [
+                "alpha_low", "alpha_high", "log_rho_t", "log_rho_width"]
+        elif which_bias == "manticore_stdp":
+            self._bias_interp = LOSInterpolator(
+                los_r, np.log(los_density), r0_decay_scale=r0_decay_scale)
+            self._bias_params = [
+                np.asarray(calibration_samples["stdp_gamma_t"]),
+                np.asarray(calibration_samples["stdp_gamma_s"]),
+                np.asarray(calibration_samples["stdp_alpha"]),
+                np.asarray(calibration_samples["stdp_beta"]),
+                np.asarray(calibration_samples["stdp_beta0"]),
+            ]
+            self._bias_param_names = [
+                "stdp_gamma_t", "stdp_gamma_s", "stdp_alpha",
+                "stdp_beta", "stdp_beta0"]
         else:
             raise ValueError(f"Unknown bias model: {which_bias}")
 
@@ -189,8 +206,7 @@ class Redshift2Real(BaseRedshift2Real):
         if which_bias == "linear":
             intg = lp_galaxy_bias(field, None, bias_params, "linear")
         else:
-            intg = lp_galaxy_bias(None, field, bias_params,
-                                  "double_powerlaw")
+            intg = lp_galaxy_bias(None, field, bias_params, which_bias)
         # Pad x to match intg's ndim for ln_simpson
         x = los_grid_r[(None,) * (intg.ndim - 1)]
         return ln_simpson(intg, x, axis=-1)
@@ -208,7 +224,7 @@ class Redshift2Real(BaseRedshift2Real):
             else:
                 lp_bias = lp_galaxy_bias(
                     None, bias_field[:, :, None, :], bias_params,
-                    "double_powerlaw")
+                    which_bias)
             lp_r_full = (lp_r[None, None, None, :]
                          + lp_bias - lp_norm[..., None])
         else:

@@ -173,7 +173,8 @@ class BasePVModel(ModelBase):
         if self.galaxy_bias not in ["unity", "powerlaw", "linear",
                                     "linear_from_beta",
                                     "linear_from_beta_stochastic",
-                                    "double_powerlaw", "quadratic", "cubic"]:
+                                    "double_powerlaw", "manticore_stdp",
+                                    "quadratic", "cubic"]:
             raise ValueError(
                 f"Invalid galaxy bias model '{self.galaxy_bias}'.")
         self.quadratic_bias_delta0 = get_nested(
@@ -300,7 +301,8 @@ class BasePVModel(ModelBase):
 
     def _expected_volume_density_mode(self):
         return ("log_rho" if self.galaxy_bias in
-                ("powerlaw", "double_powerlaw") else "delta")
+                ("powerlaw", "double_powerlaw", "manticore_stdp")
+                else "delta")
 
     def _validate_volume_normalized_prior_data(self, data):
         if not data.has_precomputed_los:

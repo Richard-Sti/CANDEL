@@ -523,7 +523,18 @@ def sample_galaxy_bias(priors, galaxy_bias, shared_params=None, **kwargs):
         alpha_low = rsample("alpha_low", priors["alpha_low"], shared_params)
         alpha_high = rsample("alpha_high", priors["alpha_high"], shared_params)
         log_rho_t = rsample("log_rho_t", priors["log_rho_t"], shared_params)
-        bias_params = [alpha_low, alpha_high, log_rho_t]
+        log_rho_width = rsample(
+            "log_rho_width", priors["log_rho_width"], shared_params)
+        bias_params = [alpha_low, alpha_high, log_rho_t, log_rho_width]
+    elif galaxy_bias == "manticore_stdp":
+        gamma_t = rsample(
+            "stdp_gamma_t", priors["stdp_gamma_t"], shared_params)
+        gamma_s = rsample(
+            "stdp_gamma_s", priors["stdp_gamma_s"], shared_params)
+        alpha = rsample("stdp_alpha", priors["stdp_alpha"], shared_params)
+        beta = rsample("stdp_beta", priors["stdp_beta"], shared_params)
+        beta0 = rsample("stdp_beta0", priors["stdp_beta0"], shared_params)
+        bias_params = [gamma_t, gamma_s, alpha, beta, beta0]
     elif galaxy_bias == "quadratic":
         b1 = rsample("b1", priors["b1"], shared_params)
         b2 = rsample("b2", priors["b2"], shared_params)
@@ -547,10 +558,17 @@ def lp_galaxy_bias(delta, log_rho, bias_params, galaxy_bias,
     if galaxy_bias == "powerlaw":
         lp = bias_params[0] * log_rho
     elif galaxy_bias == "double_powerlaw":
-        alpha_low, alpha_high, log_rho_t = bias_params
+        alpha_low, alpha_high, log_rho_t, log_rho_width = bias_params
         log_x = log_rho - log_rho_t
+        z = log_x / log_rho_width
         lp = (alpha_low * log_x
-              + (alpha_high - alpha_low) * jnp.logaddexp(0.0, log_x))
+              + ((alpha_high - alpha_low) * log_rho_width
+                 * jnp.logaddexp(0.0, z)))
+    elif galaxy_bias == "manticore_stdp":
+        gamma_t, gamma_s, alpha, beta, beta0 = bias_params
+        lp = (-jnp.logaddexp(0.0, (gamma_t - log_rho) / gamma_s)
+              + alpha * log_rho
+              - beta * jnp.logaddexp(0.0, beta * (log_rho - beta0)))
     elif "linear" in galaxy_bias or galaxy_bias == "unity":
         lp = jnp.log(smoothclip_nr(1 + bias_params[0] * delta, tau=0.1))
     elif galaxy_bias == "quadratic":

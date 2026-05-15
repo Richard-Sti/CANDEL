@@ -249,7 +249,6 @@ def _pv_volume_density_cache_filename(payload):
     """Readable, cluster-portable filename for PV 3D density caches."""
     geometry = "sphere" if payload["pad_subcube_boundary"] else "cube"
     field_indices = payload.get("field_indices", None)
-    cache_kind = "grouped" if field_indices is not None else "raw"
     if field_indices is None:
         nsim = payload.get("nsim", None)
         field_tag = "none" if nsim is None else _field_cache_indices_tag(
@@ -261,11 +260,9 @@ def _pv_volume_density_cache_filename(payload):
         _field_cache_float_tag(subsample_fraction),
         int(payload.get("voxel_subsample_seed", 42)))
     rhat_tag = "rhat" if payload.get("store_rhat_3d", False) else "norhat"
-    digest = _field_cache_payload_digest(payload)
     parts = [
         f"v{_FIELD_CACHE_VERSION}",
         _field_cache_slug(payload["loader_name"], max_len=70),
-        cache_kind,
         f"fields-{field_tag}",
         geometry,
         f"r-{_field_cache_float_tag(payload['subcube_radius'])}",
@@ -273,7 +270,6 @@ def _pv_volume_density_cache_filename(payload):
         subsample_tag,
         rhat_tag,
         "density",
-        digest,
     ]
     return "__".join(parts) + ".npz"
 
@@ -294,7 +290,10 @@ def _field_cache_path(cache_dir, prefix, payload):
 
 def _read_field_cache(cache_path, label, required_keys):
     """Load an `.npz` cache file if present and complete."""
-    if cache_path is None or not exists(cache_path):
+    if cache_path is None:
+        return None
+    fprint(f"checking {label} cache at `{cache_path}`.")
+    if not exists(cache_path):
         return None
     try:
         with np.load(cache_path, allow_pickle=False) as f:

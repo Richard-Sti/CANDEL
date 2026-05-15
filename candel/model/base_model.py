@@ -904,7 +904,11 @@ class H0ModelBase(ModelBase):
             "linear": {"b1"},
             "linear_from_beta": set(),
             "linear_from_beta_stochastic": {"delta_b1"},
-            "double_powerlaw": {"alpha_low", "alpha_high", "log_rho_t"},
+            "double_powerlaw": {
+                "alpha_low", "alpha_high", "log_rho_t", "log_rho_width"},
+            "manticore_stdp": {
+                "stdp_gamma_t", "stdp_gamma_s", "stdp_alpha",
+                "stdp_beta", "stdp_beta0"},
             "quadratic": {"b1", "b2"},
             "cubic": {"b1", "b2", "b3"},
         }
@@ -918,7 +922,11 @@ class H0ModelBase(ModelBase):
                         f"[model.priors.{param}] but none was found.")
 
         bias_defaults = {"b1": 1.0, "b2": 0.0, "b3": 0.0, "alpha": 1.0,
-                         "delta_b1": 0.0}
+                         "delta_b1": 0.0, "alpha_low": 1.0,
+                         "alpha_high": 1.0, "log_rho_t": 0.0,
+                         "log_rho_width": 1.0, "stdp_gamma_t": -1.0,
+                         "stdp_gamma_s": 0.5, "stdp_alpha": 1.0,
+                         "stdp_beta": 0.7, "stdp_beta0": 1.0}
         for param, default in bias_defaults.items():
             if param not in priors:
                 priors[param] = {"dist": "delta",

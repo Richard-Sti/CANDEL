@@ -119,6 +119,14 @@ def _bias_samples(samples, config, beta, n_post):
         out["alpha_low"] = _flat(samples["alpha_low"])
         out["alpha_high"] = _flat(samples["alpha_high"])
         out["log_rho_t"] = _flat(samples["log_rho_t"])
+        out["log_rho_width"] = _sample_or_default(
+            samples, "log_rho_width", n_post, 1.0)
+    elif which_bias == "manticore_stdp":
+        out["stdp_gamma_t"] = _flat(samples["stdp_gamma_t"])
+        out["stdp_gamma_s"] = _flat(samples["stdp_gamma_s"])
+        out["stdp_alpha"] = _flat(samples["stdp_alpha"])
+        out["stdp_beta"] = _flat(samples["stdp_beta"])
+        out["stdp_beta0"] = _flat(samples["stdp_beta0"])
     elif which_bias == "quadratic":
         out["b1"] = _sample_or_default(samples, "b1", n_post, 1.0)
         out["b2"] = _sample_or_default(samples, "b2", n_post, 0.0)
@@ -143,10 +151,25 @@ def _bias_values(rho, bias, idx_post):
         alpha_low = bias["alpha_low"][idx_post]
         alpha_high = bias["alpha_high"][idx_post]
         log_rho_t = bias["log_rho_t"][idx_post]
+        log_rho_width = bias["log_rho_width"][idx_post]
         log_x = np.log(np.clip(rho, 1e-6, None)) - log_rho_t
+        z = log_x / log_rho_width
         log_weight = (
             alpha_low * log_x
-            + (alpha_high - alpha_low) * np.logaddexp(0.0, log_x))
+            + ((alpha_high - alpha_low) * log_rho_width
+               * np.logaddexp(0.0, z)))
+        return np.exp(np.clip(log_weight, -50.0, 50.0))
+    if which_bias == "manticore_stdp":
+        gamma_t = bias["stdp_gamma_t"][idx_post]
+        gamma_s = bias["stdp_gamma_s"][idx_post]
+        alpha = bias["stdp_alpha"][idx_post]
+        beta = bias["stdp_beta"][idx_post]
+        beta0 = bias["stdp_beta0"][idx_post]
+        log_rho = np.log(np.clip(rho, 1e-6, None))
+        log_weight = (
+            -np.logaddexp(0.0, (gamma_t - log_rho) / gamma_s)
+            + alpha * log_rho
+            - beta * np.logaddexp(0.0, beta * (log_rho - beta0)))
         return np.exp(np.clip(log_weight, -50.0, 50.0))
     if which_bias == "quadratic":
         b1 = bias["b1"][idx_post]
@@ -158,6 +181,56 @@ def _bias_values(rho, bias, idx_post):
         b3 = bias["b3"][idx_post]
         return smoothclip(1.0 + b1 * delta + b2 * delta**2 + b3 * delta**3)
     raise ValueError(f"Unsupported PPC galaxy-bias model: {which_bias}")
+
+
+def _sigmoid(x):
+    return np.exp(-np.logaddexp(0.0, -x))
+
+
+def _manticore_stdp_log_weight(log_rho, gamma_t, gamma_s, alpha, beta, beta0):
+    return (
+        -np.logaddexp(0.0, (gamma_t - log_rho) / gamma_s)
+        + alpha * log_rho
+        - beta * np.logaddexp(0.0, beta * (log_rho - beta0)))
+
+
+def _manticore_stdp_dlog_weight(log_rho, gamma_t, gamma_s, alpha, beta, beta0):
+    return (
+        alpha
+        + _sigmoid((gamma_t - log_rho) / gamma_s) / gamma_s
+        - beta**2 * _sigmoid(beta * (log_rho - beta0)))
+
+
+def _manticore_stdp_upper_bound(rho_min, rho_max, bias, idx_post):
+    """Analytic maximum over the sampled density interval."""
+    gamma_t = bias["stdp_gamma_t"][idx_post]
+    gamma_s = bias["stdp_gamma_s"][idx_post]
+    alpha = bias["stdp_alpha"][idx_post]
+    beta = bias["stdp_beta"][idx_post]
+    beta0 = bias["stdp_beta0"][idx_post]
+
+    lo = np.full_like(gamma_t, np.log(max(rho_min, 1e-6)), dtype=float)
+    hi = np.full_like(gamma_t, np.log(max(rho_max, 1e-6)), dtype=float)
+    d_lo = _manticore_stdp_dlog_weight(
+        lo, gamma_t, gamma_s, alpha, beta, beta0)
+    d_hi = _manticore_stdp_dlog_weight(
+        hi, gamma_t, gamma_s, alpha, beta, beta0)
+
+    root_lo = lo.copy()
+    root_hi = hi.copy()
+    for _ in range(48):
+        mid = 0.5 * (root_lo + root_hi)
+        d_mid = _manticore_stdp_dlog_weight(
+            mid, gamma_t, gamma_s, alpha, beta, beta0)
+        root_lo = np.where(d_mid > 0.0, mid, root_lo)
+        root_hi = np.where(d_mid > 0.0, root_hi, mid)
+
+    root = 0.5 * (root_lo + root_hi)
+    log_rho_max = np.where(d_lo <= 0.0, lo,
+                           np.where(d_hi >= 0.0, hi, root))
+    log_weight = _manticore_stdp_log_weight(
+        log_rho_max, gamma_t, gamma_s, alpha, beta, beta0)
+    return np.exp(np.clip(log_weight, -50.0, 50.0))
 
 
 def _bias_upper_bound(rho_support, bias, idx_post):
@@ -182,7 +255,8 @@ def _bias_upper_bound(rho_support, bias, idx_post):
         ])
         idx = idx_post[None, :]
         return np.max(_bias_values(rho_eval, bias, idx), axis=0)
-
+    if which_bias == "manticore_stdp":
+        return _manticore_stdp_upper_bound(rho_min, rho_max, bias, idx_post)
     rho = rho_support[:, None]
     idx = idx_post[None, :]
     return np.max(_bias_values(rho, bias, idx), axis=0)

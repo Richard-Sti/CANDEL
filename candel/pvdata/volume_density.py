@@ -1435,6 +1435,6 @@ def _volume_density_geometry(shape, observer_pos, dx):
 
 def _volume_density_mode(galaxy_bias):
     """Minimal density representation needed by the 3D bias normalizer."""
-    if galaxy_bias in ("powerlaw", "double_powerlaw"):
+    if galaxy_bias in ("powerlaw", "double_powerlaw", "manticore_stdp"):
         return "log_rho"
     return "delta"
