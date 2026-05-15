@@ -591,8 +591,12 @@ def name2labelgetdist(name):
         "SN_beta": r"\mathcal{B}",
         "sigma_int": r"\sigma_{\rm int}",
         "sigma_v": r"\sigma_v~\left[\mathrm{km}\,\mathrm{s}^{-1}\right]",
-        "sigma_v_low": r"\sigma_{v,\rm low}~\left[\mathrm{km}\,\mathrm{s}^{-1}\right]",
-        "sigma_v_high": r"\sigma_{v,\rm high}~\left[\mathrm{km}\,\mathrm{s}^{-1}\right]",
+        "sigma_v_low": (
+            r"\sigma_{v,\rm low}~\left[\mathrm{km}\,\mathrm{s}^{-1}\right]"
+        ),
+        "sigma_v_high": (
+            r"\sigma_{v,\rm high}~\left[\mathrm{km}\,\mathrm{s}^{-1}\right]"
+        ),
         "log_sigma_v_rho_t": r"\ln\rho_{v,t}",
         "sigma_v_k": r"k_v",
         "alpha": r"\alpha",
