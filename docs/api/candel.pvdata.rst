@@ -1,7 +1,7 @@
 candel.pvdata
 =============
 
-.. automodule:: candel.pvdata.data
+.. automodule:: candel.pvdata
    :members:
    :undoc-members:
    :show-inheritance:

@@ -2,11 +2,8 @@ from pathlib import Path
 
 import numpy as np
 
-from candel.pvdata.data import (
-    SPEED_OF_LIGHT,
-    load_EDD_TRGB,
-    load_EDD_TRGB_grouped,
-)
+from candel.pvdata import load_EDD_TRGB, load_EDD_TRGB_grouped
+from candel.util import SPEED_OF_LIGHT
 
 
 DATA_ROOT = Path(__file__).resolve().parents[1] / "data" / "EDD_TRGB"

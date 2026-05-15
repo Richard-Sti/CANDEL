@@ -3,7 +3,7 @@
 Warm field-derived cache files without running inference.
 
 Loading the model-ready data is enough to trigger the cache writers in
-``candel.pvdata.data``.  This script is intentionally thin: it reuses the same
+``candel.pvdata``.  This script is intentionally thin: it reuses the same
 config loaders as production runs, so the generated cache keys match inference.
 """
 import argparse
@@ -11,6 +11,7 @@ import json
 import os
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from textwrap import dedent
 
 # This is a CPU cache-prep script; set before importing candel/JAX.
@@ -27,8 +28,31 @@ import tomli_w  # noqa: E402
 
 import candel  # noqa: E402
 from candel import get_nested  # noqa: E402
-import candel.pvdata.data as pvdata_mod  # noqa: E402
-from candel.pvdata.data import _field_cache_dir_from_config  # noqa: E402
+import numpy as np  # noqa: E402
+from h5py import File  # noqa: E402
+
+from candel.field.loader import name2field_loader  # noqa: E402
+from candel.pvdata import catalogues as catalogues_mod  # noqa: E402
+from candel.pvdata import field_cache as field_cache_mod  # noqa: E402
+from candel.pvdata import frame as frame_mod  # noqa: E402
+from candel.pvdata import los as los_mod  # noqa: E402
+from candel.pvdata import volume_density as volume_density_mod  # noqa: E402
+from candel.pvdata.field_cache import _field_cache_dir_from_config  # noqa: E402
+from candel.util import SPEED_OF_LIGHT  # noqa: E402
+
+pvdata_mod = SimpleNamespace(
+    File=File,
+    SPEED_OF_LIGHT=SPEED_OF_LIGHT,
+    _field_cache_enabled_from_config=(
+        field_cache_mod._field_cache_enabled_from_config),
+    _field_cache_path=field_cache_mod._field_cache_path,
+    _field_source_metadata=field_cache_mod._field_source_metadata,
+    _h0_volume_cache_sampling_payload=(
+        volume_density_mod._h0_volume_cache_sampling_payload),
+    _jsonable=field_cache_mod._jsonable,
+    name2field_loader=name2field_loader,
+    np=np,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -88,7 +112,10 @@ def _cache_fprint(*args, verbose=True, **kwargs):
 
 def _install_quiet_reader_logs():
     """Silence catalogue-reader chatter while preserving cache messages."""
-    pvdata_mod.fprint = _cache_fprint
+    for module in (
+            catalogues_mod, field_cache_mod, frame_mod, los_mod,
+            volume_density_mod):
+        module.fprint = _cache_fprint
 
 
 def _resolve_cli_path(path):

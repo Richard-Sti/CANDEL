@@ -207,7 +207,7 @@ def _load_density_3d_data(config, field_name):
     if field_name is None:
         raise ValueError("`field_name` is required for field-based mocks.")
 
-    from candel.pvdata.data import _load_volume_data_for_H0
+    from candel.pvdata.volume_density import _load_volume_data_for_H0
 
     recon = config.get("io", {}).get("reconstruction_main", {})
     field_kwargs = recon.get(field_name)

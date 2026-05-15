@@ -13,7 +13,7 @@
 # with this program; if not, write to the Free Software Foundation, Inc.,
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
-from .data import (                                                             # noqa
+from .catalogues import (                                                       # noqa
     load_CF4_data,                                                              # noqa
     load_CF4_mock,                                                              # noqa
     load_2MTF,                                                                  # noqa
@@ -38,6 +38,9 @@ from .data import (                                                             
     load_CSP,                                                                   # noqa
     load_CSP_from_config,                                                       # noqa
     match_cchp_to_csp,                                                          # noqa
+    )
+
+from .frame import (                                                            # noqa
     PVDataFrame,                                                                # noqa
     load_PV_dataframes,                                                         # noqa
     )
