@@ -16,6 +16,8 @@ TRGBH0_CARRICK_BETA_SCALE = 0.013
 S8_ROOT = "results/S8"
 S8_PV_KIND = "precomputed_los_Carrick2015"
 S8_BIAS_MODELS = ["linear", "quadratic"]
+VFO_ROOT = "results/VFO"
+VFO_MANTICORE_LOS = "manticore_2MPP_MULTIBIN_N256_DES_V2"
 
 CH0_PAPER_COMMON = {
     "inference/num_chains": 12,
@@ -37,8 +39,8 @@ CH0_PAPER_COMMON = {
 TRGBH0_COMMON = {
     "inference/num_chains": 1,
     "inference/chain_method": "sequential",
-    "inference/num_warmup": 2500,
-    "inference/num_samples": 7500,
+    "inference/num_warmup": 1000,
+    "inference/num_samples": 1000,
     "model/selection_integral_geometry": "sphere",
     "model/selection_integral_grid_radius": 50.0,
     "model/density_3d_subsample_fraction": 1.0,
@@ -273,6 +275,31 @@ def _trgbh0_main_datasets():
             "model/which_bias": TRGBH0_MANTICORE_BIAS,
         },
         {
+            "model/use_reconstruction": True,
+            "model/use_density_dependent_sigma_v": False,
+            "model/cz_likelihood": "gaussian",
+            "io/PV_main/EDD_TRGB/which_host_los": TRGBH0_MANTICORE_LOS,
+            "model/which_bias": TRGBH0_MANTICORE_BIAS,
+            "model/priors/beta": {
+                "dist": "uniform",
+                "low": 0.0,
+                "high": 2.0,
+            },
+        },
+        {
+            "model/use_reconstruction": True,
+            "model/use_density_dependent_sigma_v": False,
+            "model/cz_likelihood": "student_t",
+            "model/priors/nu_cz": _nu_cz_student_t_prior(),
+            "io/PV_main/EDD_TRGB/which_host_los": TRGBH0_MANTICORE_LOS,
+            "model/which_bias": TRGBH0_MANTICORE_BIAS,
+            "model/priors/beta": {
+                "dist": "uniform",
+                "low": 0.0,
+                "high": 2.0,
+            },
+        },
+        {
             "model/use_reconstruction": False,
             "model/use_density_dependent_sigma_v": False,
             "model/cz_likelihood": "student_t",
@@ -291,6 +318,22 @@ def _trgbh0_main_datasets():
             "model/use_density_dependent_sigma_v": False,
             "model/cz_likelihood": "gaussian",
             "model/use_Vext_octupole": True,
+            "io/PV_main/EDD_TRGB/which_host_los": TRGBH0_MANTICORE_LOS,
+            "model/which_bias": TRGBH0_MANTICORE_BIAS,
+        },
+        {
+            "model/use_reconstruction": True,
+            "model/use_density_dependent_sigma_v": False,
+            "model/cz_likelihood": "gaussian",
+            "model/which_Vext_monopole": "sigmoid",
+            "io/PV_main/EDD_TRGB/which_host_los": "Carrick2015",
+            "model/priors/beta": _trgbh0_carrick_beta_prior(),
+        },
+        {
+            "model/use_reconstruction": True,
+            "model/use_density_dependent_sigma_v": False,
+            "model/cz_likelihood": "gaussian",
+            "model/which_Vext_monopole": "sigmoid",
             "io/PV_main/EDD_TRGB/which_host_los": TRGBH0_MANTICORE_LOS,
             "model/which_bias": TRGBH0_MANTICORE_BIAS,
         },
@@ -422,6 +465,61 @@ def _s8_production_datasets():
     ]
 
 
+def _vfo_datasets():
+    catalogues = [
+        {
+            "inference/model": "SNModel",
+            "io/catalogue_name": "LOSS",
+        },
+        {
+            "inference/model": "SNModel",
+            "io/catalogue_name": "Foundation",
+        },
+        {
+            "inference/model": "TFRModel",
+            "io/catalogue_name": "CF4_W1",
+        },
+        {
+            "inference/model": "TFRModel",
+            "io/catalogue_name": "CF4_i",
+        },
+        {
+            "inference/model": "TFRModel",
+            "io/catalogue_name": "2MTF",
+        },
+        {
+            "inference/model": "TFRModel",
+            "io/catalogue_name": "SFI",
+        },
+    ]
+    pv_models = [
+        {
+            "pv_model/kind": "precomputed_los_Carrick2015",
+            "pv_model/galaxy_bias": "linear",
+            "pv_model/density_3d_subsample_fraction": 0.5,
+            "model/priors/beta": {
+                "dist": "uniform",
+                "low": 0.0,
+                "high": 1.0,
+            },
+        },
+        {
+            "pv_model/kind": f"precomputed_los_{VFO_MANTICORE_LOS}",
+            "pv_model/galaxy_bias": "double_powerlaw",
+            "pv_model/density_3d_subsample_fraction": 0.1,
+            "model/priors/beta": _delta(1.0),
+        },
+    ]
+    return [
+        {
+            **catalogue,
+            **pv_model,
+        }
+        for catalogue in catalogues
+        for pv_model in pv_models
+    ]
+
+
 TASK_SPECS = {
     "test": {
         "description": "CF4 TFR W1 Mmiss run with a single NUTS chain.",
@@ -443,7 +541,7 @@ TASK_SPECS = {
             "pv_model/Mmiss_coordinate_frame": "galactic",
             "pv_model/dr_malmquist": 1.0,
             "pv_model/density_3d_geometry": "sphere",
-            "pv_model/density_3d_radius": 150.0,
+            "pv_model/density_3d_radius": 200.0,
             "pv_model/density_3d_downsample": 1,
             "model/priors/Mmiss_distance/high": [
                 50.0, 100.0, 150.0, 200.0, 250.0],
@@ -502,7 +600,7 @@ TASK_SPECS = {
             **_with_root(f"{TRGBH0_ROOT}/table"),
         },
         "datasets": _trgbh0_main_datasets(),
-        "expected_tasks": 22,
+        "expected_tasks": 26,
     },
     "TRGBH0_manticore_fields_const_sigv": {
         "description": (
@@ -512,6 +610,8 @@ TASK_SPECS = {
         "tag": "manticore_field_const_sigv",
         "common": {
             **TRGBH0_COMMON,
+            "inference/num_warmup": 1000,
+            "inference/num_samples": 1000,
             **_with_root(f"{TRGBH0_ROOT}/manticore_fields_const_sigv"),
         },
         "datasets": _trgbh0_manticore_field_datasets(),
@@ -538,5 +638,22 @@ TASK_SPECS = {
         },
         "datasets": _s8_production_datasets(),
         "expected_tasks": 14,
+    },
+    "VFO": {
+        "description": (
+            "VFO PV catalogue Carrick2015/Manticore comparison."),
+        "config_path": "configs/config.toml",
+        "tag": "paper",
+        "common": {
+            "pv_model/density_3d_geometry": "sphere",
+            "pv_model/density_3d_radius": 150.0,
+            "pv_model/density_3d_downsample": 1,
+            "inference/num_chains": 1,
+            "inference/num_warmup": 1000,
+            "inference/num_samples": 5000,
+            "io/root_output": VFO_ROOT,
+        },
+        "datasets": _vfo_datasets(),
+        "expected_tasks": 12,
     },
 }

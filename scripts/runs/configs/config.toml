@@ -614,3 +614,5 @@ which_reconstruction = "Carrick2015"
 # Override reconstruction grid (rmin differs from default)
 [io.reconstruction_main]
 rmin = 0.001
+rmax = 201
+num_steps = 251
