@@ -1,0 +1,211 @@
+#!/usr/bin/env python
+"""Plot H0 posteriors across one-Manticore-field TRGBH0 runs."""
+import csv
+import re
+import shutil
+from pathlib import Path
+
+import h5py
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt  # noqa: E402
+import numpy as np  # noqa: E402
+import scienceplots  # noqa: F401
+from matplotlib.lines import Line2D  # noqa: E402
+from scipy.stats import gaussian_kde  # noqa: E402
+
+from trgbh0_plot_style import trgbh0_cmap  # noqa: E402
+
+
+ROOT = Path("/mnt/users/rstiskalek/CANDEL")
+RESULTS = (
+    ROOT / "results" / "TRGBH0_paper" / "manticore_fields_const_sigv"
+)
+OUTDIR = ROOT / "notebooks" / "paper_TRGBH0" / "output"
+
+PATTERN = (
+    "EDD_TRGB_sel-TRGB_magnitude_"
+    "manticore_2MPP_MULTIBIN_N256_DES_V2_field*_"
+    "manticore_field_const_sigv.hdf5"
+)
+FIELD_RE = re.compile(r"_field(\d+)_")
+
+
+def field_index(path):
+    match = FIELD_RE.search(path.name)
+    if match is None:
+        raise ValueError(f"Could not parse field index from `{path}`.")
+    return int(match.group(1))
+
+
+def read_h0(path):
+    with h5py.File(path, "r") as handle:
+        h0 = np.asarray(handle["samples/H0"], dtype=float).reshape(-1)
+    h0 = h0[np.isfinite(h0)]
+    if h0.size == 0:
+        raise ValueError(f"`{path}` has no finite H0 samples.")
+    return h0
+
+
+def load_samples():
+    paths = sorted(RESULTS.glob(PATTERN), key=field_index)
+    if not paths:
+        raise FileNotFoundError(f"No HDF5 files matching `{PATTERN}`.")
+    rows = []
+    for path in paths:
+        samples = read_h0(path)
+        rows.append((field_index(path), path, samples))
+    return rows
+
+
+def h0_summary(samples):
+    q16, q50, q84 = np.percentile(samples, [16.0, 50.0, 84.0])
+    return {
+        "mean": float(np.mean(samples)),
+        "std": float(np.std(samples, ddof=1)),
+        "q16": float(q16),
+        "q50": float(q50),
+        "q84": float(q84),
+    }
+
+
+def write_summary(rows, path):
+    with path.open("w", newline="") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=[
+                "field", "n_samples", "mean", "std", "q16", "q50", "q84",
+                "source",
+            ],
+        )
+        writer.writeheader()
+        for field, source, samples in rows:
+            summary = h0_summary(samples)
+            writer.writerow({
+                "field": field,
+                "n_samples": samples.size,
+                **summary,
+                "source": str(source),
+            })
+
+
+def kde_on_grid(samples, x_grid, bw=1.2):
+    kde = gaussian_kde(samples)
+    kde.set_bandwidth(kde.factor * bw)
+    return kde(x_grid)
+
+
+def make_plot(rows, out_pdf):
+    fields = np.asarray([field for field, _, _ in rows], dtype=int)
+    summaries = [h0_summary(samples) for _, _, samples in rows]
+    medians = np.asarray([item["q50"] for item in summaries])
+    all_samples = np.concatenate([samples for _, _, samples in rows])
+    x_min, x_max = np.percentile(all_samples, [0.2, 99.8])
+    pad = 0.15 * (x_max - x_min)
+    x_grid = np.linspace(x_min - pad, x_max + pad, 600)
+
+    missing = [i for i in range(30) if i not in set(fields)]
+    cmap = trgbh0_cmap("trgbh0_manticore_fields")
+    norm = plt.Normalize(vmin=0, vmax=29)
+
+    with plt.style.context("science"):
+        plt.rcParams.update({
+            "font.size": 8.0,
+            "axes.labelsize": 8.0,
+            "axes.titlesize": 8.0,
+            "xtick.labelsize": 7.0,
+            "ytick.labelsize": 7.0,
+            "legend.fontsize": 6.4,
+        })
+        fig, ax = plt.subplots(figsize=(4.7, 3.1))
+        ax.hist(
+            medians,
+            bins=min(9, max(4, int(np.sqrt(len(medians))) + 2)),
+            density=True,
+            color="#b8b8b8",
+            alpha=0.45,
+            label=r"Field median $H_0$",
+            zorder=0,
+        )
+
+        for field, _, samples in rows:
+            ax.plot(
+                x_grid,
+                kde_on_grid(samples, x_grid),
+                color=cmap(norm(field)),
+                lw=0.9,
+                alpha=0.72,
+                zorder=2,
+            )
+
+        ax.plot(
+            x_grid,
+            kde_on_grid(all_samples, x_grid),
+            color="black",
+            lw=1.35,
+            label=r"Stacked posterior",
+            zorder=4,
+        )
+        ax.axvline(
+            np.median(medians), color="black", lw=1.0, ls=":",
+            label=r"Median of field medians")
+        ax.set_xlabel(
+            r"$H_0 ~ [\mathrm{km}\,\mathrm{s}^{-1}\,\mathrm{Mpc}^{-1}]$")
+        ax.set_ylabel("Posterior density")
+        ax.set_xlim(x_grid[0], x_grid[-1])
+        ax.set_ylim(bottom=0)
+
+        note = f"{len(rows)} fields"
+        if missing:
+            note += "; missing " + ", ".join(str(i) for i in missing)
+        ax.set_title(note, loc="left")
+
+        curve_proxy = Line2D(
+            [0], [0], color=cmap(norm(15)), lw=1.0,
+            label=r"Individual field posterior")
+        handles, labels = ax.get_legend_handles_labels()
+        handles.insert(1, curve_proxy)
+        labels.insert(1, curve_proxy.get_label())
+        ax.legend(
+            handles, labels,
+            loc="upper right",
+            fontsize=6.5,
+            frameon=False,
+            handlelength=1.7,
+        )
+
+        sm = plt.cm.ScalarMappable(norm=norm, cmap=cmap)
+        sm.set_array([])
+        cbar = fig.colorbar(sm, ax=ax, pad=0.015, fraction=0.055)
+        cbar.set_label("Manticore field")
+        cbar.ax.tick_params(labelsize=7.0)
+
+        fig.tight_layout()
+        fig.savefig(out_pdf, dpi=500, bbox_inches="tight")
+        png = out_pdf.with_suffix(".png")
+        fig.savefig(png, dpi=500, bbox_inches="tight")
+        plt.close(fig)
+    return png
+
+
+def main():
+    OUTDIR.mkdir(parents=True, exist_ok=True)
+    rows = load_samples()
+    summary_csv = RESULTS / "manticore_field_h0_summary.csv"
+    write_summary(rows, summary_csv)
+
+    out_pdf = OUTDIR / "trgbh0_manticore_field_h0_posteriors.pdf"
+    out_png = make_plot(rows, out_pdf)
+    for path in (out_pdf, out_png):
+        shutil.copyfile(path, RESULTS / path.name)
+
+    fields = [field for field, _, _ in rows]
+    missing = [i for i in range(30) if i not in set(fields)]
+    print(f"Wrote {out_pdf}")
+    print(f"Wrote {out_png}")
+    print(f"Wrote {summary_csv}")
+    print(f"Fields plotted: {len(fields)}; missing: {missing}")
+
+
+if __name__ == "__main__":
+    main()
