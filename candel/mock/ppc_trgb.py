@@ -202,7 +202,8 @@ def _cached_volume_pool(config, field_name, field_index):
     Om = get_nested(config, "model/Om", get_nested(config, "model/Om0", 0.3))
     which_bias = get_nested(config, "model/which_bias", "linear")
     grid_radius = get_nested(config, "model/selection_integral_grid_radius")
-    geometry = get_nested(config, "model/selection_integral_geometry", "sphere")
+    geometry = get_nested(
+        config, "model/selection_integral_geometry", "sphere")
     loaded = _load_volume_data_for_H0(
         field_name, field_config, [field_index], which_bias, Om,
         subcube_radius=grid_radius,
