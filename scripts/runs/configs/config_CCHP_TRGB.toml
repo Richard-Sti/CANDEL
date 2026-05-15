@@ -58,6 +58,10 @@ dist = "normal"
 loc = -19.0
 scale = 1.0
 
+[model.priors.sigma_int_SN]
+dist = "maxwell"
+scale = 0.0627
+
 # Selection thresholds
 [model.priors.mag_lim_SN]
 dist = "uniform"
