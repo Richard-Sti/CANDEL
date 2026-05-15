@@ -15,6 +15,13 @@ from textwrap import dedent
 
 # This is a CPU cache-prep script; set before importing candel/JAX.
 os.environ.setdefault("JAX_PLATFORMS", "cpu")
+_USER = os.environ.get("USER") or "user"
+os.environ.setdefault(
+    "MPLCONFIGDIR", os.path.join(tempfile.gettempdir(),
+                                 f"candel_mpl_{_USER}"))
+os.environ.setdefault(
+    "NUMBA_CACHE_DIR", os.path.join(tempfile.gettempdir(),
+                                    f"candel_numba_{_USER}"))
 
 import tomli_w  # noqa: E402
 
@@ -250,7 +257,14 @@ def _cache_group_key(config):
     which_run = get_nested(config, "model/which_run", None)
     if which_run not in ("CH0", "CCHP", "CCHP_CSP", "EDD_TRGB",
                          "EDD_TRGB_grouped"):
-        return None
+        entries, _ = _pv_volume_cache_entries(config)
+        if not entries:
+            return None
+        return _json_key({
+            "kind": "pv_volume_density_3d_set",
+            "cache_dir": _field_cache_dir_from_config(config),
+            "entries": [entry["payload"] for entry in entries],
+        })
     if _variant_action(config) != "check/cache":
         return None
 
@@ -275,6 +289,85 @@ def _cache_group_key(config):
         "sampling": sampling,
         "velocity": _h0_velocity_key(config),
     })
+
+
+def _pv_volume_cache_entries(config):
+    kind = get_nested(config, "pv_model/kind", "")
+    if not isinstance(kind, str) or not kind.startswith("precomputed_los_"):
+        return [], "no precomputed LOS"
+    if get_nested(config, "pv_model/which_distance_prior",
+                  "empirical") != "empirical":
+        return [], "no empirical prior"
+    if not pvdata_mod._field_cache_enabled_from_config(
+            config, get_nested(config, "pv_model", {})):
+        return [], "cache off"
+
+    reconstruction = kind.replace("precomputed_los_", "")
+    recon_kwargs = get_nested(
+        config, f"io/reconstruction_main/{reconstruction}", None)
+    if recon_kwargs is None:
+        return [], f"missing reconstruction: {reconstruction}"
+
+    names = get_nested(config, "io/catalogue_name", [])
+    if isinstance(names, str):
+        names = [names]
+    cache_dir = _field_cache_dir_from_config(
+        config, get_nested(config, "pv_model", {}))
+    downsample = int(get_nested(config, "pv_model/density_3d_downsample", 1))
+    geometry = get_nested(config, "pv_model/density_3d_geometry", "cube")
+    radius = get_nested(config, "pv_model/density_3d_radius", None)
+    pad_boundary = geometry == "sphere"
+    voxel_subsample_fraction = get_nested(
+        config, "pv_model/density_3d_subsample_fraction", 1.0)
+    voxel_subsample_seed = get_nested(
+        config, "pv_model/density_3d_subsample_seed", 42)
+    store_rhat_3d = bool(get_nested(config, "pv_model/use_Mmiss", False))
+
+    entries = {}
+    for name in names:
+        io_name = "CF4_mock" if str(name).startswith("CF4_mock") else name
+        io_section = get_nested(config, f"io/{io_name}", None)
+        if io_section is None or "los_file" not in io_section:
+            return [], f"missing LOS config: {name}"
+        los_path = _resolve_los_path(io_section["los_file"], reconstruction)
+        los_read_path = _resolve_repo_path(los_path)
+        if not los_read_path.exists():
+            return [], f"missing LOS: {_short_path(los_read_path)}"
+        with pvdata_mod.File(los_read_path, "r") as f:
+            if "field_indices" in f:
+                field_indices = f["field_indices"][:]
+            else:
+                field_indices = pvdata_mod.np.arange(f["los_density"].shape[0])
+
+        source_meta = []
+        for nsim in field_indices:
+            loader_kwargs = dict(recon_kwargs)
+            loader_kwargs["nsim"] = int(nsim)
+            loader = pvdata_mod.name2field_loader(
+                reconstruction)(**loader_kwargs)
+            source_meta.append(pvdata_mod._field_source_metadata(loader))
+        payload = {
+            "kind": "pv_volume_density_3d",
+            "loader_name": reconstruction,
+            "loader_kwargs": pvdata_mod._jsonable(recon_kwargs),
+            "field_indices": pvdata_mod._jsonable(
+                pvdata_mod.np.asarray(field_indices)),
+            "downsample": downsample,
+            "subcube_radius": radius,
+            "pad_subcube_boundary": bool(pad_boundary),
+            "voxel_subsample_fraction": float(voxel_subsample_fraction),
+            "voxel_subsample_seed": int(voxel_subsample_seed),
+            "store_rhat_3d": store_rhat_3d,
+            "sources": source_meta,
+        }
+        cache_path = Path(pvdata_mod._field_cache_path(
+            cache_dir, "pv_volume_density_3d", payload))
+        entries[str(cache_path)] = {
+            "payload": payload,
+            "path": cache_path,
+        }
+
+    return list(entries.values()), ""
 
 
 def _variant_action(config):
@@ -390,12 +483,59 @@ def _h0_cache_file_status(config):
     return "cached", _short_path(density_cache_path)
 
 
+def _pv_cache_file_status(config):
+    entries, note = _pv_volume_cache_entries(config)
+    if note:
+        return None, note
+    if not entries:
+        return None, "no PV 3D cache"
+
+    missing = 0
+    for entry in entries:
+        path = entry["path"]
+        payload = entry["payload"]
+        geometry = "sphere" if payload["pad_subcube_boundary"] else "cube"
+        store_rhat_3d = bool(payload.get("store_rhat_3d", False))
+        if not path.exists():
+            missing += 1
+            continue
+        try:
+            with pvdata_mod.np.load(path, allow_pickle=False) as f:
+                missing_keys = [
+                    key for key in (
+                        "rho_fields", "log_r_3d", "log_dV_3d",
+                        "observer_pos", "dx")
+                    if key not in f.files]
+                if geometry == "sphere" and (
+                        "log_volume_weight_3d" not in f.files):
+                    missing_keys.append("log_volume_weight_3d")
+                if store_rhat_3d:
+                    missing_keys.extend(
+                        key for key in (
+                            "rhat_x_3d", "rhat_y_3d", "rhat_z_3d")
+                        if key not in f.files)
+        except Exception as exc:
+            return "unreadable", str(exc)
+        if missing_keys:
+            return "incomplete", f"missing {missing_keys}"
+
+    if missing:
+        return "missing", f"missing {missing}/{len(entries)}"
+    return "cached", f"{len(entries)} file(s)"
+
+
 def _variant_info(config_path, selection=None):
     config = candel.load_config(config_path, replace_los_prior=False)
     if selection is not None:
         config.setdefault("model", {})["which_selection"] = selection
-    which_run = get_nested(config, "model/which_run", "?")
-    which_selection = get_nested(config, "model/which_selection", "-")
+    which_run = get_nested(config, "model/which_run", None)
+    which_selection = get_nested(config, "model/which_selection", None)
+    if which_run is None:
+        which_run = get_nested(config, "io/catalogue_name", "?")
+        if isinstance(which_run, list):
+            which_run = "+".join(which_run)
+    if which_selection is None:
+        which_selection = get_nested(config, "pv_model/kind", "-")
     cache_dir = _field_cache_dir_from_config(config)
     action = _variant_action(config)
     return {
@@ -413,14 +553,29 @@ def _set_cache_status(info, config_path, selection):
     config = candel.load_config(config_path, replace_los_prior=False)
     if selection is not None:
         config.setdefault("model", {})["which_selection"] = selection
-    status, note = _h0_cache_file_status(config)
+    if get_nested(config, "model/which_run", None) in (
+            "CH0", "CCHP", "CCHP_CSP", "EDD_TRGB", "EDD_TRGB_grouped"):
+        status, note = _h0_cache_file_status(config)
+    else:
+        status, note = _pv_cache_file_status(config)
     if status == "cached":
         info["action"] = "cached"
-        info["note"] = "exists"
+        info["note"] = note or "exists"
     elif status in ("incomplete", "unreadable"):
         info["note"] = status
+    elif status == "missing":
+        info["note"] = note
     elif note and status is None:
         info["note"] = note
+
+
+def _set_uncacheable_status(info, config_path, selection):
+    """Mark check/cache variants with no cache key as non-runnable."""
+    if info["cache_group"] is not None or info["action"] != "check/cache":
+        return
+    _set_cache_status(info, config_path, selection)
+    if info["action"] == "check/cache":
+        info["action"] = "skip cache"
 
 
 def _plan_variants(configs, selections):
@@ -431,7 +586,9 @@ def _plan_variants(configs, selections):
             for selection in selections:
                 info = _variant_info(config_path, selection)
                 group = info["cache_group"]
-                if group in seen_groups:
+                if group is None:
+                    _set_uncacheable_status(info, config_path, selection)
+                elif group in seen_groups:
                     first = seen_groups[group]
                     if first["action"] == "cached":
                         info["action"] = "cached"
@@ -453,7 +610,9 @@ def _plan_variants(configs, selections):
         else:
             info = _variant_info(config_path)
             group = info["cache_group"]
-            if group in seen_groups:
+            if group is None:
+                _set_uncacheable_status(info, config_path, None)
+            elif group in seen_groups:
                 first = seen_groups[group]
                 if first["action"] == "cached":
                     info["action"] = "cached"
@@ -499,6 +658,7 @@ def _read_requested_variants(args):
 def _print_plan(variants):
     if _RANK != 0:
         return
+    size_display = int(os.environ.get("CANDEL_FIELD_CACHE_PLAN_SIZE", _SIZE))
     _log("")
     _log("Field-cache warmup plan")
     rows = []
@@ -522,8 +682,8 @@ def _print_plan(variants):
     cached = sum(row["action"] == "cached" for row in variants)
     skipped = sum(str(row["action"]).startswith("skip") for row in variants)
     _log(f"summary: {queued} unique check/cache, {cached} cached, "
-         f"{duplicates} duplicate(s), {skipped} skip 3D, "
-         f"{_SIZE} MPI rank(s).")
+         f"{duplicates} duplicate(s), {skipped} skip(s), "
+         f"{size_display} MPI rank(s).")
 
 
 def _runnable_variants(variants):
@@ -590,7 +750,8 @@ def main():
             examples:
               warm_field_cache.py scripts/runs/tasks_CH0_main.txt
               warm_field_cache.py scripts/runs/tasks_CH0_main.txt --tasks 12-23
-              warm_field_cache.py scripts/runs/configs/config_CH0.toml --selection SN_magnitude,redshift
+              warm_field_cache.py scripts/runs/configs/config_CH0.toml \
+--selection SN_magnitude,redshift
             """))
     parser.add_argument(
         "inputs", nargs="*", type=Path,
@@ -605,6 +766,9 @@ def main():
         "--selection", action="append", default=[],
         help=("Override model.which_selection for H0 configs. May be repeated "
               "or comma-separated, e.g. --selection SN_magnitude,redshift."))
+    parser.add_argument(
+        "--plan-only", action="store_true",
+        help="Print the cache warmup plan and exit without loading data.")
     args = parser.parse_args()
 
     if _RANK == 0:
@@ -623,6 +787,11 @@ def main():
 
     _print_plan(variants)
     variants = _runnable_variants(variants)
+
+    if args.plan_only:
+        if not variants:
+            raise SystemExit(3)
+        return
 
     if not variants:
         _log("")
