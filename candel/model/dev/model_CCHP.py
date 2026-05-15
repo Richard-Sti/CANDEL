@@ -947,9 +947,8 @@ class CCHPTRGBModel(BaseCCHPModel):
         # =====================================================================
         # Combine host and SN likelihoods
         # =====================================================================
-        # Average host likelihood over field realisations, sum over hosts
-        logp_host = logmeanexp(logp_host, axis=0)
-        logp_host = jnp.sum(logp_host)
+        # Take the product over hosts, then average over field realisations.
+        logp_host = logmeanexp(jnp.sum(logp_host, axis=1), axis=0)
 
         # Sum SN likelihoods (product over independent SNe)
         # No field averaging needed for SN likelihood (no reconstruction dep)

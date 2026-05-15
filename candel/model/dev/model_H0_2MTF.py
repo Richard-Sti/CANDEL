@@ -299,7 +299,7 @@ class EDD2MTFModel(H0ModelBase):
             ll_host = logsumexp(
                 lp_dist_w + ll_eta[None, :, :] + ll_cz,
                 axis=-1) - log_S[:, None]
-            ll_host = logmeanexp(ll_host, axis=0)
+            ll_host = logmeanexp(jnp.sum(ll_host, axis=1), axis=0)
         else:
             # Homogeneous selection (same for all hosts)
             log_S = self._log_S_selection(
