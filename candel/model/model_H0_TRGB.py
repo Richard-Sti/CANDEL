@@ -115,17 +115,28 @@ class TRGBModel(H0ModelBase):
     # ------------------------------------------------------------------
 
     def _load_data(self, data):
-        # Extract SN-level data before super() processes the data dict
+        # Read SN-level data before super() processes the data dict.
         self._has_sn_data = ("m_Bprime" in data
                              and data["m_Bprime"] is not None)
         if self._has_sn_data:
+            required = (
+                "sn_group_index", "m_Bprime",
+                "e_m_Bprime", "e_m_Bprime_median")
+            missing = [
+                key for key in required
+                if key not in data or data[key] is None
+            ]
+            if missing:
+                raise ValueError(
+                    "SN magnitude data are incomplete; missing "
+                    f"{', '.join(missing)}.")
             self._sn_group_index = jnp.asarray(
-                data.pop("sn_group_index"))
-            self._m_Bprime = jnp.asarray(data.pop("m_Bprime"))
-            self._e_m_Bprime = jnp.asarray(data.pop("e_m_Bprime"))
+                data["sn_group_index"])
+            self._m_Bprime = jnp.asarray(data["m_Bprime"])
+            self._e_m_Bprime = jnp.asarray(data["e_m_Bprime"])
             self._e2_m_Bprime = self._e_m_Bprime ** 2
             self._e_m_Bprime_median = float(
-                data.pop("e_m_Bprime_median"))
+                data["e_m_Bprime_median"])
             n_sn = len(self._m_Bprime)
             n_hosts = len(np.unique(np.asarray(self._sn_group_index)))
             fprint(f"loaded {n_sn} SNe across {n_hosts} hosts "
@@ -142,11 +153,70 @@ class TRGBModel(H0ModelBase):
         fprint(f"loaded {self.num_hosts} TRGB host galaxies.")
 
     def _set_data_arrays(self, data):
-        super()._set_data_arrays(data, skip_keys=("host_names",))
+        skip = ("host_names", "sn_group_index", "m_Bprime",
+                "e_m_Bprime", "e_m_Bprime_median")
+        super()._set_data_arrays(data, skip_keys=skip)
 
     # ------------------------------------------------------------------
     #  Validation
     # ------------------------------------------------------------------
+
+    def _validate_sn_data(self):
+        if not self._has_sn_data:
+            return
+        group_index = np.asarray(self._sn_group_index)
+        m_Bprime = np.asarray(self._m_Bprime)
+        e_m_Bprime = np.asarray(self._e_m_Bprime)
+
+        if group_index.ndim != 1:
+            raise ValueError("`sn_group_index` must be one-dimensional.")
+        if not np.issubdtype(group_index.dtype, np.integer):
+            raise ValueError("`sn_group_index` must contain integer indices.")
+        if m_Bprime.ndim != 1 or e_m_Bprime.ndim != 1:
+            raise ValueError("SN magnitude arrays must be one-dimensional.")
+        if not (len(group_index) == len(m_Bprime) == len(e_m_Bprime)):
+            raise ValueError(
+                "`sn_group_index`, `m_Bprime`, and `e_m_Bprime` must have "
+                "the same length.")
+        if len(group_index) == 0:
+            raise ValueError("SN magnitude data must contain at least one SN.")
+        if np.any(group_index < 0) or np.any(group_index >= self.num_hosts):
+            raise ValueError(
+                "`sn_group_index` entries must be in [0, num_hosts).")
+        if not np.all(np.isfinite(m_Bprime)):
+            raise ValueError("`m_Bprime` contains non-finite values.")
+        if not np.all(np.isfinite(e_m_Bprime)):
+            raise ValueError("`e_m_Bprime` contains non-finite values.")
+        if np.any(e_m_Bprime <= 0):
+            raise ValueError("`e_m_Bprime` entries must be positive.")
+        if not np.isfinite(self._e_m_Bprime_median) \
+                or self._e_m_Bprime_median <= 0:
+            raise ValueError("`e_m_Bprime_median` must be positive.")
+
+    def _validate_selection_width(self, name):
+        """Require fixed selection widths to be present and positive."""
+        if getattr(self, f"_infer_{name}", False):
+            return
+        value = getattr(self, name)
+        if value is None:
+            raise ValueError(
+                f"`{name}` must be set or 'infer' for "
+                f"{self.which_selection} selection.")
+        try:
+            value_arr = np.asarray(value, dtype=float)
+        except (TypeError, ValueError):
+            raise ValueError(f"`{name}` must be numeric, got {value!r}.")
+        if np.any(~np.isfinite(value_arr)) or np.any(value_arr <= 0):
+            raise ValueError(f"`{name}` must be positive, got {value!r}.")
+
+    def _validate_active_selection_widths(self):
+        width_names = {
+            "TRGB_magnitude": ("mag_lim_TRGB_width",),
+            "redshift": ("cz_lim_selection_width",),
+            "SN_magnitude": ("mag_lim_SN_width",),
+        }.get(self.which_selection, ())
+        for name in width_names:
+            self._validate_selection_width(name)
 
     def _validate_config(self):
         if self._has_trgb_colour:
@@ -204,6 +274,8 @@ class TRGBModel(H0ModelBase):
             raise ValueError(
                 f"Unknown `which_selection`: {self.which_selection}. "
                 f"Expected one of {allowed_selection}.")
+        self._validate_active_selection_widths()
+        self._validate_sn_data()
 
         if self.which_selection == "SN_magnitude" \
                 and not self._has_sn_data:

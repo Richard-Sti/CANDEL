@@ -251,6 +251,34 @@ class CH0Model(H0ModelBase):
     #  Validation
     # ------------------------------------------------------------------
 
+    def _validate_selection_width(self, name):
+        """Require fixed selection widths to be present and positive."""
+        if getattr(self, f"_infer_{name}", False):
+            return
+        value = getattr(self, name)
+        if value is None:
+            raise ValueError(
+                f"`{name}` must be set or 'infer' for "
+                f"{self.which_selection} selection.")
+        try:
+            value_arr = np.asarray(value, dtype=float)
+        except (TypeError, ValueError):
+            raise ValueError(f"`{name}` must be numeric, got {value!r}.")
+        if np.any(~np.isfinite(value_arr)) or np.any(value_arr <= 0):
+            raise ValueError(f"`{name}` must be positive, got {value!r}.")
+
+    def _validate_active_selection_widths(self):
+        width_names = {
+            "redshift": ("cz_lim_selection_width",),
+            "SN_magnitude": ("mag_lim_SN_width",),
+            "SN_magnitude_redshift": (
+                "cz_lim_selection_width", "mag_lim_SN_width"),
+            "SN_magnitude_or_redshift_Nmag": (
+                "cz_lim_selection_width", "mag_lim_SN_width"),
+        }.get(self.which_selection, ())
+        for name in width_names:
+            self._validate_selection_width(name)
+
     def _validate_config(self):
         if self.use_reconstruction and self.use_fiducial_Cepheid_host_PV_covariance:  # noqa
             raise ValueError(
@@ -292,6 +320,7 @@ class CH0Model(H0ModelBase):
             raise ValueError(
                 f"Unknown `which_selection`: {self.which_selection}. "
                 f"Expected one of {allowed_selection}.")
+        self._validate_active_selection_widths()
 
         mixed_needs_redshift = False
         if self.which_selection == "SN_magnitude_or_redshift_Nmag":
