@@ -40,6 +40,11 @@ from .utils import (joint_config_mismatch, normal_logpdf_var, predict_cz,
                     student_t_logpdf_var)
 
 
+def field_product_logmeanexp(ll, num_fields):
+    """Average field-realisation products over independent objects."""
+    return logsumexp(jnp.sum(ll, axis=1), axis=0) - jnp.log(num_fields)
+
+
 class BasePVModel(ModelBase):
     """
     Base class for Peculiar Velocity (PV) forward models.
@@ -436,11 +441,16 @@ class BasePVModel(ModelBase):
 
     def _average_fields_and_factor(self, ll, data,
                                    log_density_per_sample=None):
-        ll = logsumexp(ll, axis=0) - jnp.log(data.num_fields)
-        factor("ll_obs", ll.sum())
+        ll_total = field_product_logmeanexp(ll, data.num_fields)
+        factor("ll_obs", ll_total)
 
         if self.track_log_density_per_sample and log_density_per_sample is not None:  # noqa
-            log_density_per_sample += ll
+            if data.num_fields != 1:
+                raise NotImplementedError(
+                    "`track_log_density_per_sample` is not defined for "
+                    "multi-field PV likelihoods after marginalizing field "
+                    "realisations over the product of object likelihoods.")
+            log_density_per_sample += ll[0]
             deterministic("log_density_per_sample", log_density_per_sample)
 
 

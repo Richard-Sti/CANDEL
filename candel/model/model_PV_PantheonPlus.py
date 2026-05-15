@@ -14,12 +14,11 @@
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 """Pantheon+ forward model."""
 import jax.numpy as jnp
-from jax.scipy.special import logsumexp
 from numpyro import factor, plate, sample
 from numpyro.distributions import MultivariateNormal, Uniform
 
 from ..util import fprint
-from .base_pv import BasePVModel
+from .base_pv import BasePVModel, field_product_logmeanexp
 from .pv_utils import (add_sigma_mag_to_lane_cov, lp_galaxy_bias, rsample,
                        sample_distance_prior_volume, sample_galaxy_bias,
                        sigma_v_from_density)
@@ -166,30 +165,28 @@ class PantheonPlusModel(BasePVModel):
             data, kwargs_dist, bias_params,
             Mmiss=Mmiss)[:, None]
 
-        with plate("plate_redshift", nsamples):
-            # Predicted redshift, `(n_field, n_galaxies)`
-            czpred = predict_cz(
-                self.distance2redshift(r, h=h)[None, :],
-                Vrad + Vext_rad[None, :])
-            # Compute the redshift likelihood, and add the distance prior
-            if self.density_dependent_sigma_v:
-                sigma_v_r = sigma_v_from_density(
-                    delta_at_r, sigma_v_low, sigma_v_high,
-                    log_sigma_v_rho_t, sigma_v_k)
-                if nu_cz is not None:
-                    ll = student_t_logpdf_var(
-                        data["czcmb"][None, :], czpred, sigma_v_r**2,
-                        nu_cz)
-                else:
-                    ll = normal_logpdf_var(
-                        data["czcmb"][None, :], czpred, sigma_v_r**2)
+        # Predicted redshift, `(n_field, n_galaxies)`
+        czpred = predict_cz(
+            self.distance2redshift(r, h=h)[None, :],
+            Vrad + Vext_rad[None, :])
+        # Compute the redshift likelihood, and add the distance prior.
+        if self.density_dependent_sigma_v:
+            sigma_v_r = sigma_v_from_density(
+                delta_at_r, sigma_v_low, sigma_v_high,
+                log_sigma_v_rho_t, sigma_v_k)
+            if nu_cz is not None:
+                ll = student_t_logpdf_var(
+                    data["czcmb"][None, :], czpred, sigma_v_r**2,
+                    nu_cz)
             else:
-                if nu_cz is not None:
-                    ll = student_t_logpdf_var(
-                        data["czcmb"][None, :], czpred, sigma_v**2, nu_cz)
-                else:
-                    ll = normal_logpdf_var(
-                        data["czcmb"][None, :], czpred, sigma_v**2)
-            ll += lp_dist
-            # Average over field realizations and track
-            factor("ll_obs", logsumexp(ll, axis=0) - jnp.log(data.num_fields))
+                ll = normal_logpdf_var(
+                    data["czcmb"][None, :], czpred, sigma_v_r**2)
+        else:
+            if nu_cz is not None:
+                ll = student_t_logpdf_var(
+                    data["czcmb"][None, :], czpred, sigma_v**2, nu_cz)
+            else:
+                ll = normal_logpdf_var(
+                    data["czcmb"][None, :], czpred, sigma_v**2)
+        ll += lp_dist
+        factor("ll_obs", field_product_logmeanexp(ll, data.num_fields))
