@@ -41,7 +41,20 @@ from .utils import (joint_config_mismatch, normal_logpdf_var, predict_cz,
 
 
 def field_product_logmeanexp(ll, num_fields):
-    """Average field-realisation products over independent objects."""
+    """Average field-realisation products over independent objects.
+
+    Parameters
+    ----------
+    ll : array, shape (num_fields, num_objects)
+        Log likelihood after marginalising each object over distance.
+    num_fields : int
+        Number of field realisations in the first axis of ``ll``.
+
+    Returns
+    -------
+    scalar
+        Log mean over fields of the product likelihood over objects.
+    """
     return logsumexp(jnp.sum(ll, axis=1), axis=0) - jnp.log(num_fields)
 
 
