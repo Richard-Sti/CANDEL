@@ -14,7 +14,6 @@
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 """Running the MCMC inference for the model and some postprocessing."""
 import contextlib
-from copy import deepcopy
 from os import makedirs
 from os.path import dirname, splitext
 
@@ -119,7 +118,15 @@ def _parse_dense_mass(kwargs, site_names=None):
 
         fprint(f"using dense mass matrix for {len(dense_mass_params)} "
                f"parameters: {list(dense_mass_params)}")
-        return [tuple(dense_mass_params)]
+        if len(dense_mass_params) >= 2:
+            return [tuple(dense_mass_params)]
+        if len(dense_mass_params) == 1:
+            fprint(f"dropped single-site dense_mass_params block: "
+                   f"{list(dense_mass_params)}")
+        else:
+            fprint("using diagonal mass matrix (no dense_mass_params "
+                   "remain after filtering).")
+        return False
 
     if not bool(kwargs.get("dense_mass", True)):
         fprint("using diagonal mass matrix.")
@@ -334,6 +341,58 @@ def print_evidence(bic, aic, lnZ_laplace, err_lnZ_laplace,
     fprint(f"Harmonic lnZ: {lnZ_harmonic:.2f} +- {err_lnZ_harmonic:.2f}")
 
 
+def _print_gof(gof):
+    print_evidence(
+        gof["BIC"], gof["AIC"], gof["lnZ_laplace"],
+        gof["err_lnZ_laplace"], gof["lnZ_harmonic"],
+        gof["err_lnZ_harmonic"])
+
+
+def _post_sampling_flags(kwargs, model, require_config_evidence=False):
+    """Return whether to compute log density and optional evidence."""
+    compute_evidence = bool(getattr(model, "compute_evidence", False))
+    if require_config_evidence:
+        compute_evidence = (
+            bool(kwargs.get("compute_evidence", False)) and compute_evidence)
+    compute_log_density = (
+        bool(kwargs.get("compute_log_density", False)) or compute_evidence)
+
+    if compute_evidence and not _harmonic_available():
+        fprint("[WARN] `harmonic` not installed — disabling evidence "
+               "computation. Install with `pip install harmonic` to "
+               "re-enable.")
+        compute_evidence = False
+
+    return compute_log_density, compute_evidence
+
+
+def _compute_gof(samples, log_density, ndata, kwargs):
+    """Compute BIC/AIC and Laplace/harmonic evidence summaries."""
+    bic, aic = BIC_AIC(samples, log_density, ndata)
+
+    samples_arr, names = dict_samples_to_array(samples)
+    fprint(f"computing harmonic evidence from {len(names)} "
+           f"parameters: {names}")
+
+    samples_arr = samples_arr.reshape(
+        kwargs["num_chains_harmonic"], -1, len(names))
+    log_density_arr = log_density.reshape(kwargs["num_chains_harmonic"], -1)
+    lnZ_laplace, err_lnZ_laplace = laplace_evidence(
+        samples_arr, log_density_arr)
+    lnZ_harmonic, err_lnZ_harmonic = harmonic_evidence(
+        samples_arr, log_density_arr, epochs_num=50,
+        return_flow_samples=False)
+    err_lnZ_harmonic = np.mean(np.abs(err_lnZ_harmonic))
+
+    gof = {"BIC": bic, "AIC": aic,
+           "lnZ_laplace": lnZ_laplace,
+           "err_lnZ_laplace": err_lnZ_laplace,
+           "lnZ_harmonic": lnZ_harmonic,
+           "err_lnZ_harmonic": err_lnZ_harmonic}
+    _print_gof(gof)
+    return gof
+
+
 def run_pv_inference(model, model_kwargs, print_summary=True,
                      save_samples=True, return_original_samples=False,
                      init_maxiter=None, progress_bar=True):
@@ -421,14 +480,7 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
     auxiliary = extract_auxiliary(samples, ["Vpec_host_skipZ"])
     log_density_per_sample = samples.pop("log_density_per_sample", None)
 
-    compute_log_density = kwargs["compute_log_density"]
-    compute_evidence = model.compute_evidence
-    if (compute_log_density or compute_evidence) and not _harmonic_available():
-        fprint("[WARN] `harmonic` not installed — disabling post-sampling "
-               "log-density and evidence computation. Install with "
-               "`pip install harmonic` to re-enable.")
-        compute_log_density = False
-        compute_evidence = False
+    compute_log_density, compute_evidence = _post_sampling_flags(kwargs, model)
 
     if compute_log_density:
         log_density = get_log_density(samples, model, model_kwargs)
@@ -436,37 +488,13 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
         log_density = None
 
     if return_original_samples:
-        original_samples = deepcopy(samples)
+        original_samples = dict(samples)
 
     samples = drop_deterministic(samples)
 
     if compute_evidence:
         ndata = len(model_kwargs["data"])
-        bic, aic = BIC_AIC(samples, log_density, ndata)
-
-        samples_arr, names = dict_samples_to_array(samples)
-        fprint(f"computing harmonic evidence from {len(names)} "
-               f"parameters: {names}")
-
-        samples_arr = samples_arr.reshape(
-            kwargs["num_chains_harmonic"], -1, len(names))
-        log_density_arr = log_density.reshape(
-            kwargs["num_chains_harmonic"], -1)
-        lnZ_laplace, err_lnZ_laplace = laplace_evidence(
-            samples_arr, log_density_arr)
-        lnZ_harmonic, err_lnZ_harmonic = harmonic_evidence(
-            samples_arr, log_density_arr, epochs_num=50,
-            return_flow_samples=False)
-        err_lnZ_harmonic = np.mean(np.abs(err_lnZ_harmonic))
-
-        print_evidence(bic, aic, lnZ_laplace, err_lnZ_laplace,
-                       lnZ_harmonic, err_lnZ_harmonic)
-
-        gof = {"BIC": bic, "AIC": aic,
-               "lnZ_laplace": lnZ_laplace,
-               "err_lnZ_laplace": err_lnZ_laplace,
-               "lnZ_harmonic": lnZ_harmonic,
-               "err_lnZ_harmonic": err_lnZ_harmonic}
+        gof = _compute_gof(samples, log_density, ndata, kwargs)
     else:
         gof = None
 
@@ -490,9 +518,7 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
             with contextlib.redirect_stdout(f):
                 print_clean_summary(samples)
                 if compute_evidence:
-                    print_evidence(
-                        bic, aic, lnZ_laplace, err_lnZ_laplace,
-                        lnZ_harmonic, err_lnZ_harmonic)
+                    _print_gof(gof)
         fprint(f"saved summary to {fname_summary}")
 
         if model.which_Vext == "radial":
@@ -644,18 +670,8 @@ def run_H0_inference(model, model_kwargs=None, print_summary=True,
                                              group_by_chain=True)
 
     auxiliary = extract_auxiliary(samples, ["Vpec_host_skipZ"])
-    compute_evidence = (
-        bool(kwargs.get("compute_evidence", False))
-        and model.compute_evidence)
-    compute_log_density = (
-        bool(kwargs.get("compute_log_density", False))
-        or compute_evidence)
-    if (compute_log_density or compute_evidence) and not _harmonic_available():
-        fprint("[WARN] `harmonic` not installed — disabling post-sampling "
-               "log-density and evidence computation. Install with "
-               "`pip install harmonic` to re-enable.")
-        compute_log_density = False
-        compute_evidence = False
+    compute_log_density, compute_evidence = _post_sampling_flags(
+        kwargs, model, require_config_evidence=True)
 
     if compute_log_density:
         log_density = get_log_density(samples, model, model_kwargs)
@@ -666,31 +682,7 @@ def run_H0_inference(model, model_kwargs=None, print_summary=True,
 
     if compute_evidence:
         ndata = _h0_ndata(model, model_kwargs)
-        bic, aic = BIC_AIC(samples, log_density, ndata)
-
-        samples_arr, names = dict_samples_to_array(samples)
-        fprint(f"computing harmonic evidence from {len(names)} "
-               f"parameters: {names}")
-
-        samples_arr = samples_arr.reshape(
-            kwargs["num_chains_harmonic"], -1, len(names))
-        log_density_arr = log_density.reshape(
-            kwargs["num_chains_harmonic"], -1)
-        lnZ_laplace, err_lnZ_laplace = laplace_evidence(
-            samples_arr, log_density_arr)
-        lnZ_harmonic, err_lnZ_harmonic = harmonic_evidence(
-            samples_arr, log_density_arr, epochs_num=50,
-            return_flow_samples=False)
-        err_lnZ_harmonic = np.mean(np.abs(err_lnZ_harmonic))
-
-        print_evidence(bic, aic, lnZ_laplace, err_lnZ_laplace,
-                       lnZ_harmonic, err_lnZ_harmonic)
-
-        gof = {"BIC": bic, "AIC": aic,
-               "lnZ_laplace": lnZ_laplace,
-               "err_lnZ_laplace": err_lnZ_laplace,
-               "lnZ_harmonic": lnZ_harmonic,
-               "err_lnZ_harmonic": err_lnZ_harmonic}
+        gof = _compute_gof(samples, log_density, ndata, kwargs)
     else:
         gof = None
 
@@ -715,9 +707,7 @@ def run_H0_inference(model, model_kwargs=None, print_summary=True,
                 print_clean_summary(samples)
                 print_student_t_nu_warnings(samples)
                 if compute_evidence:
-                    print_evidence(
-                        bic, aic, lnZ_laplace, err_lnZ_laplace,
-                        lnZ_harmonic, err_lnZ_harmonic)
+                    _print_gof(gof)
         fprint(f"saved summary to {fname_summary}")
 
     if return_diagnostics:
@@ -780,8 +770,8 @@ def drop_deterministic(samples, check_all_equals=True):
             continue
 
         # Remove samples fixed to a single value (delta prior)
-        x = samples[key]
-        if check_all_equals and np.all(x.flatten()[0] == x):
+        x = np.asarray(samples[key])
+        if check_all_equals and x.size and np.all(x.reshape(-1)[0] == x):
             samples.pop(key)
             continue
 
