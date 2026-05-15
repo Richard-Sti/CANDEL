@@ -65,9 +65,16 @@ class TRGBModel(H0ModelBase):
         which_sel = get_nested(config, "model/which_selection", None)
         use_TRGB_host_redshift = get_nested(
             config, "model/use_TRGB_host_redshift", True)
-        if which_sel != "SN_magnitude":
+        if which_sel == "SN_magnitude":
+            priors.setdefault("sigma_int_SN", {
+                "dist": "maxwell",
+                "scale": 0.0627,
+            })
+        else:
             replace_prior_with_delta(
                 config, "M_B", -19.0, verbose=False)
+            replace_prior_with_delta(
+                config, "sigma_int_SN", 0.0, verbose=False)
 
         if not use_TRGB_host_redshift:
             replace_prior_with_delta(config, "H0", 73.04)
@@ -375,6 +382,8 @@ class TRGBModel(H0ModelBase):
 
         elif self.which_selection == "SN_magnitude":
             M_B = rsample("M_B", self.priors["M_B"])
+            sigma_int_SN = rsample(
+                "sigma_int_SN", self.priors["sigma_int_SN"])
             mag_lim = self._resolve_threshold("mag_lim_SN")
             mag_width = self._resolve_threshold("mag_lim_SN_width")
 
@@ -384,7 +393,8 @@ class TRGBModel(H0ModelBase):
                     (mag_lim - self._m_Bprime) / mag_width)))
 
             log_S = self._compute_volume_log_S_mag(
-                bias_params, M_B, self._e_m_Bprime_median,
+                bias_params, M_B,
+                jnp.sqrt(self._e_m_Bprime_median**2 + sigma_int_SN**2),
                 H0, mag_lim, mag_width)
 
             # SN magnitude likelihood on distance grid
@@ -392,7 +402,7 @@ class TRGBModel(H0ModelBase):
             ll_sn_per = normal_logpdf_var(
                 self._m_Bprime[:, None],
                 M_B + mu_grid[None, :],
-                self._e2_m_Bprime[:, None])
+                self._e2_m_Bprime[:, None] + sigma_int_SN**2)
             # Sum SNe per host: (n_hosts, n_grid)
             ll_sn_host = jnp.zeros(
                 (self.num_hosts, len(r_grid)))
