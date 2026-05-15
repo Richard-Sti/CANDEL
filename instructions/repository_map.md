@@ -60,10 +60,11 @@ paths.
   handles config loading and path resolution, coordinate transforms, plotting
   helpers, sample readers, labels, and local root helpers.
 
-- `/mnt/users/rstiskalek/CANDEL/candel/pvdata`
-  contains peculiar-velocity data loading. `data.py` is a compatibility facade;
-  implementation lives in `frame.py`, `catalogues.py`, `los.py`,
-  `volume_density.py`, and `field_cache.py`.
+- `/mnt/users/rstiskalek/CANDEL/candel/pvdata/data.py`
+  is the central catalogue loader module. It defines `PVDataFrame`, PV/H0 data
+  loading from configs, line-of-sight loading, selection masks, field-cache
+  helpers, and loaders for CF4, 2MTF, SFI, SN, SH0ES, CCHP, EDD TRGB, CSP, FP,
+  and generic catalogues.
 
 - `/mnt/users/rstiskalek/CANDEL/candel/pvdata/megamaser_data.py`
   loads spot-level megamaser data and velocity-frame conversions.
