@@ -363,10 +363,28 @@ def _trgbh0_cchp_subset_datasets():
             "config_path": "configs/config_CCHP_TRGB.toml",
             "model/use_reconstruction": True,
             "model/use_density_dependent_sigma_v": False,
+            "model/cz_likelihood": "student_t",
+            "model/priors/nu_cz": _nu_cz_student_t_prior(),
+            "io/which_host_los": "Carrick2015",
+            "model/priors/beta": _trgbh0_carrick_beta_prior(),
+        },
+        {
+            "config_path": "configs/config_CCHP_TRGB.toml",
+            "model/use_reconstruction": True,
+            "model/use_density_dependent_sigma_v": False,
             "io/which_host_los": TRGBH0_MANTICORE_LOS,
             "model/which_bias": TRGBH0_MANTICORE_BIAS,
         },
-    ], selections=("SN_magnitude",))
+        {
+            "config_path": "configs/config_CCHP_TRGB.toml",
+            "model/use_reconstruction": True,
+            "model/use_density_dependent_sigma_v": False,
+            "model/cz_likelihood": "student_t",
+            "model/priors/nu_cz": _nu_cz_student_t_prior(),
+            "io/which_host_los": TRGBH0_MANTICORE_LOS,
+            "model/which_bias": TRGBH0_MANTICORE_BIAS,
+        },
+    ], selections=("SN_magnitude", "TRGB_magnitude"))
 
 
 def _s8_production_datasets():
@@ -484,7 +502,7 @@ TASK_SPECS = {
             **_with_root(f"{TRGBH0_ROOT}/table"),
         },
         "datasets": _trgbh0_main_datasets(),
-        "expected_tasks": 15,
+        "expected_tasks": 22,
     },
     "TRGBH0_manticore_fields_const_sigv": {
         "description": (
