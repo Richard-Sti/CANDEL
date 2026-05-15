@@ -310,6 +310,7 @@ def _trgbh0_main_datasets():
     return (
         _trgbh0_selection_datasets(main_pv_models, selections)
         + _trgbh0_selection_datasets(extra_pv_models, selections)
+        + _trgbh0_cchp_subset_datasets()
         + _trgbh0_distance_only_datasets()
     )
 
@@ -342,6 +343,30 @@ def _trgbh0_manticore_field_datasets():
         }
         for field in range(30)
     ]
+
+
+def _trgbh0_cchp_subset_datasets():
+    return _trgbh0_selection_datasets([
+        {
+            "config_path": "configs/config_CCHP_TRGB.toml",
+            "model/use_reconstruction": False,
+            "model/use_density_dependent_sigma_v": False,
+        },
+        {
+            "config_path": "configs/config_CCHP_TRGB.toml",
+            "model/use_reconstruction": True,
+            "model/use_density_dependent_sigma_v": False,
+            "io/which_host_los": "Carrick2015",
+            "model/priors/beta": _trgbh0_carrick_beta_prior(),
+        },
+        {
+            "config_path": "configs/config_CCHP_TRGB.toml",
+            "model/use_reconstruction": True,
+            "model/use_density_dependent_sigma_v": False,
+            "io/which_host_los": TRGBH0_MANTICORE_LOS,
+            "model/which_bias": TRGBH0_MANTICORE_BIAS,
+        },
+    ], selections=("SN_magnitude",))
 
 
 def _s8_production_datasets():
@@ -453,13 +478,18 @@ TASK_SPECS = {
         "tag": "main",
         "common": {
             **TRGBH0_COMMON,
+            "inference/compute_log_density": True,
+            "inference/compute_evidence": True,
+            "inference/num_chains_harmonic": 10,
             **_with_root(f"{TRGBH0_ROOT}/table"),
         },
         "datasets": _trgbh0_main_datasets(),
-        "expected_tasks": 12,
+        "expected_tasks": 15,
     },
     "TRGBH0_manticore_fields_const_sigv": {
-        "description": "TRGB H0 one-Manticore-field runs with Gaussian constant sigma_v.",
+        "description": (
+            "TRGB H0 one-Manticore-field runs with Gaussian constant "
+            "sigma_v."),
         "config_path": "configs/config_EDD_TRGB.toml",
         "tag": "manticore_field_const_sigv",
         "common": {
@@ -470,7 +500,8 @@ TASK_SPECS = {
         "expected_tasks": 30,
     },
     "S8_production": {
-        "description": "S8 production PV sweep for individual and joint catalogues.",
+        "description": (
+            "S8 production PV sweep for individual and joint catalogues."),
         "config_path": "configs/config.toml",
         "tag": "default",
         "common": {

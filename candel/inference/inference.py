@@ -48,6 +48,18 @@ def _harmonic_available():
     return importlib.util.find_spec("harmonic") is not None
 
 
+def _h0_ndata(model, model_kwargs):
+    """Best-effort data count for H0 information criteria."""
+    if "data" in model_kwargs:
+        return len(model_kwargs["data"])
+
+    for name in ("ndata", "num_data", "num_hosts"):
+        if hasattr(model, name):
+            return int(getattr(model, name))
+
+    return 1
+
+
 def _setup_platform():
     """Detect devices and set NumPyro platform."""
     devices = jax.devices()
@@ -632,7 +644,56 @@ def run_H0_inference(model, model_kwargs=None, print_summary=True,
                                              group_by_chain=True)
 
     auxiliary = extract_auxiliary(samples, ["Vpec_host_skipZ"])
+    compute_evidence = (
+        bool(kwargs.get("compute_evidence", False))
+        and model.compute_evidence)
+    compute_log_density = (
+        bool(kwargs.get("compute_log_density", False))
+        or compute_evidence)
+    if (compute_log_density or compute_evidence) and not _harmonic_available():
+        fprint("[WARN] `harmonic` not installed — disabling post-sampling "
+               "log-density and evidence computation. Install with "
+               "`pip install harmonic` to re-enable.")
+        compute_log_density = False
+        compute_evidence = False
+
+    if compute_log_density:
+        log_density = get_log_density(samples, model, model_kwargs)
+    else:
+        log_density = None
+
     samples = drop_deterministic(samples)
+
+    if compute_evidence:
+        ndata = _h0_ndata(model, model_kwargs)
+        bic, aic = BIC_AIC(samples, log_density, ndata)
+
+        samples_arr, names = dict_samples_to_array(samples)
+        fprint(f"computing harmonic evidence from {len(names)} "
+               f"parameters: {names}")
+
+        samples_arr = samples_arr.reshape(
+            kwargs["num_chains_harmonic"], -1, len(names))
+        log_density_arr = log_density.reshape(
+            kwargs["num_chains_harmonic"], -1)
+        lnZ_laplace, err_lnZ_laplace = laplace_evidence(
+            samples_arr, log_density_arr)
+        lnZ_harmonic, err_lnZ_harmonic = harmonic_evidence(
+            samples_arr, log_density_arr, epochs_num=50,
+            return_flow_samples=False)
+        err_lnZ_harmonic = np.mean(np.abs(err_lnZ_harmonic))
+
+        print_evidence(bic, aic, lnZ_laplace, err_lnZ_laplace,
+                       lnZ_harmonic, err_lnZ_harmonic)
+
+        gof = {"BIC": bic, "AIC": aic,
+               "lnZ_laplace": lnZ_laplace,
+               "err_lnZ_laplace": err_lnZ_laplace,
+               "lnZ_harmonic": lnZ_harmonic,
+               "err_lnZ_harmonic": err_lnZ_harmonic}
+    else:
+        gof = None
+
     samples = postprocess_samples(samples)
 
     if print_summary:
@@ -642,7 +703,7 @@ def run_H0_inference(model, model_kwargs=None, print_summary=True,
     if save_samples:
         fname_out = model.config["io"]["fname_output"]
         fprint(f"output directory is {dirname(fname_out)}.")
-        save_mcmc_samples(samples, None, None, None, fname_out,
+        save_mcmc_samples(samples, log_density, None, gof, fname_out,
                           auxiliary=auxiliary)
 
         fname_plot = splitext(fname_out)[0] + ".png"
@@ -653,6 +714,10 @@ def run_H0_inference(model, model_kwargs=None, print_summary=True,
             with contextlib.redirect_stdout(f):
                 print_clean_summary(samples)
                 print_student_t_nu_warnings(samples)
+                if compute_evidence:
+                    print_evidence(
+                        bic, aic, lnZ_laplace, err_lnZ_laplace,
+                        lnZ_harmonic, err_lnZ_harmonic)
         fprint(f"saved summary to {fname_summary}")
 
     if return_diagnostics:

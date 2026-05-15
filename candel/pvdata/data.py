@@ -3020,6 +3020,7 @@ def load_CCHP_from_config(config_path, ra_dec_only=False):
     which_host_los = get_nested(
         config, "io/which_host_los",
         get_nested(config, "io/CCHP/which_host_los", None))
+    field_indices = get_nested(config, "io/field_indices", None)
     if get_nested(config, "io/load_host_los", False):
         los_file = get_nested(config, "io/CCHP/los_file", None)
         if los_file is not None and which_host_los is not None:
@@ -3035,7 +3036,8 @@ def load_CCHP_from_config(config_path, ra_dec_only=False):
             rand_los_data_path = rand_file
 
     if los_data_path is not None:
-        host_los = load_los(los_data_path, {}, mask=None)
+        host_los = load_los(
+            los_data_path, {}, mask=None, field_indices=field_indices)
         # LOS file has one entry per row in the original TSV (25 entries).
         # Select valid SN entries, then extract host-level via first_idx.
         los_density = host_los["los_density"][:, sn_mask]
@@ -3043,6 +3045,7 @@ def load_CCHP_from_config(config_path, ra_dec_only=False):
         data["host_los_density"] = los_density[:, first_idx]
         data["host_los_velocity"] = los_velocity[:, first_idx]
         data["host_los_r"] = host_los["los_r"]
+        data["host_los_field_indices"] = host_los["los_field_indices"]
 
     if rand_los_data_path is not None:
         rand_los = load_los(rand_los_data_path, {}, mask=None, verbose=False)
@@ -3058,7 +3061,8 @@ def load_CCHP_from_config(config_path, ra_dec_only=False):
 
     volume_data = _load_h0_volume_data_from_config(
         config, los_data_path, which_host_los, "CCHP",
-        velocity_selections=("redshift",))
+        velocity_selections=("redshift",),
+        field_indices=data.get("host_los_field_indices", None))
     if volume_data is not None:
         data.update(volume_data)
         data["has_volume_density_3d"] = True

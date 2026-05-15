@@ -40,6 +40,27 @@ class TRGBModel(H0ModelBase):
 
     def _replace_unused_priors(self, config):
         config = super()._replace_unused_priors(config)
+        priors = config.setdefault("model", {}).setdefault("priors", {})
+        priors.setdefault("c_star", {
+            "dist": "normal",
+            "loc": 1.23,
+            "scale": 0.1,
+        })
+        priors.setdefault("alpha_c", {
+            "dist": "normal",
+            "loc": 0.0,
+            "scale": 1.0,
+        })
+        priors.setdefault("c_bar", {
+            "dist": "uniform",
+            "low": 0.0,
+            "high": 3.0,
+        })
+        priors.setdefault("w_c", {
+            "dist": "uniform",
+            "low": 0.001,
+            "high": 1.0,
+        })
 
         which_sel = get_nested(config, "model/which_selection", None)
         use_TRGB_host_redshift = get_nested(
@@ -105,10 +126,12 @@ class TRGBModel(H0ModelBase):
 
         super()._load_data(data)
         self.num_hosts = len(self.mag_obs)
-        if not hasattr(self, "colour_dered"):
-            raise ValueError("TRGB data must include `colour_dered`.")
-        self.colour_dered_mean = jnp.mean(self.colour_dered)
-        self.colour_dered_std = jnp.std(self.colour_dered)
+        self._has_trgb_colour = (
+            hasattr(self, "colour_dered")
+            and hasattr(self, "e_colour_dered"))
+        if not self._has_trgb_colour:
+            fprint("TRGB colour data not found; treating tip magnitudes as "
+                   "pivot-standardized.")
         fprint(f"loaded {self.num_hosts} TRGB host galaxies.")
 
     def _set_data_arrays(self, data):
@@ -119,6 +142,16 @@ class TRGBModel(H0ModelBase):
     # ------------------------------------------------------------------
 
     def _validate_config(self):
+        if self._has_trgb_colour:
+            fixed_colour_params = [
+                name for name in ("alpha_c", "c_star", "c_bar", "w_c")
+                if self.prior_dist_name.get(name) == "delta"
+            ]
+            if fixed_colour_params:
+                raise ValueError(
+                    "TRGB colour-calibration parameters must be sampled; "
+                    "use non-delta priors for "
+                    f"{', '.join(fixed_colour_params)}.")
         if self.use_reconstruction and not self.has_host_los:
             raise ValueError(
                 "`use_reconstruction` requires host LOS interpolators.")
@@ -225,7 +258,6 @@ class TRGBModel(H0ModelBase):
         # --- Global parameters ---
         H0 = rsample("H0", self.priors["H0"])
         M_TRGB = rsample("M_TRGB", self.priors["M_TRGB"])
-        c_star = rsample("c_star", self.priors["c_star"])
         sigma_int = rsample("sigma_int", self.priors["sigma_int"])
 
         if self.use_density_dependent_sigma_v:
@@ -289,9 +321,32 @@ class TRGBModel(H0ModelBase):
         log_S = None
         ll_sn_host = None
 
-        M_TRGB_host = M_TRGB + 0.2 * (self.colour_dered - c_star)
-        M_TRGB_sel = M_TRGB + 0.2 * (self.colour_dered_mean - c_star)
-        colour_sel_var = (0.2 * self.colour_dered_std) ** 2
+        if self._has_trgb_colour:
+            alpha_c = rsample("alpha_c", self.priors["alpha_c"])
+            c_star = rsample("c_star", self.priors["c_star"])
+            c_bar = rsample("c_bar", self.priors["c_bar"])
+            w_c = rsample("w_c", self.priors["w_c"])
+
+            e2_colour = self.e2_colour_dered
+            colour_var = w_c**2 + e2_colour
+            ll_colour_host = normal_logpdf_var(
+                self.colour_dered, c_bar, colour_var)
+            colour_post_mean = (
+                e2_colour * c_bar + w_c**2 * self.colour_dered) / colour_var
+            colour_post_var = (w_c**2 * e2_colour) / colour_var
+
+            M_TRGB_host = M_TRGB + alpha_c * (colour_post_mean - c_star)
+            e2_mag_host = (
+                self.e2_mag_obs + sigma_int**2
+                + alpha_c**2 * colour_post_var)
+            M_TRGB_sel = M_TRGB + alpha_c * (c_bar - c_star)
+            colour_sel_var = (alpha_c * w_c) ** 2
+        else:
+            ll_colour_host = jnp.zeros(self.num_hosts)
+            M_TRGB_host = jnp.broadcast_to(M_TRGB, (self.num_hosts,))
+            e2_mag_host = self.e2_mag_obs + sigma_int**2
+            M_TRGB_sel = M_TRGB
+            colour_sel_var = 0.0
 
         if self.which_selection == "TRGB_magnitude":
             mag_lim = self._resolve_threshold("mag_lim_TRGB")
@@ -345,7 +400,8 @@ class TRGBModel(H0ModelBase):
                 self._sn_group_index].add(ll_sn_per)
 
         self._call_marginalized(
-            h, M_TRGB_host, sigma_int, sigma_v, beta, bias_params,
+            h, M_TRGB_host, e2_mag_host, ll_colour_host,
+            sigma_v, beta, bias_params,
             Vext_rad_host, r_grid, lp_r, log_S,
             mu_grid=mu_grid, z_grid=z_grid,
             ll_sn_host=ll_sn_host,
@@ -378,8 +434,9 @@ class TRGBModel(H0ModelBase):
         return lax.map(checkpoint(_one), self.density_3d_fields,
                        batch_size=self.volume_density_batch_size)
 
-    def _call_marginalized(self, h, M_TRGB_host, sigma_int, sigma_v, beta,
-                           bias_params, Vext_rad_host, r_grid, lp_r, log_S,
+    def _call_marginalized(self, h, M_TRGB_host, e2_mag_host,
+                           ll_colour_host, sigma_v, beta, bias_params,
+                           Vext_rad_host, r_grid, lp_r, log_S,
                            mu_grid=None, z_grid=None,
                            ll_sn_host=None,
                            Vext_mono_host_grid=None,
@@ -393,11 +450,10 @@ class TRGBModel(H0ModelBase):
 
         ll_cz_fn = self._cz_logpdf_fn(nu_cz)
 
-        e2_mag = self.e2_mag_obs + sigma_int**2
         ll_mag = normal_logpdf_var(
             self.mag_obs[:, None],
             M_TRGB_host[:, None] + mu_grid[None, :],
-            e2_mag[:, None])
+            e2_mag_host[:, None])
 
         if self.use_reconstruction:
             rh_grid = r_grid * h
@@ -452,7 +508,10 @@ class TRGBModel(H0ModelBase):
                 log_norm = self._compute_no_selection_volume_log_norm(
                     bias_params, 100 * h)
                 ll_host -= log_norm[:, None]
-            ll_host = logmeanexp(ll_host, axis=0)
+            ll_host += ll_colour_host[None, :]
+            # Take the product over host likelihoods, then average over
+            # field realizations.
+            ll_host = logmeanexp(jnp.sum(ll_host, axis=1), axis=0)
         else:
             # Distance prior (volume only)
             lp_dist = lp_r[None, :]
@@ -479,5 +538,6 @@ class TRGBModel(H0ModelBase):
 
             if self.apply_sel:
                 ll_host -= log_S[0]
+            ll_host += ll_colour_host
 
         factor("ll_host", jnp.sum(ll_host))

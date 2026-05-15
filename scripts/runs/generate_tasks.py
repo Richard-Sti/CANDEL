@@ -516,8 +516,19 @@ def build_override_combinations(spec, local_cfg):
     """Build all override combinations for a sweep spec."""
     all_override_combinations = []
     for dataset in spec.datasets:
+        dataset = dict(dataset)
+        dataset_config_path = dataset.pop("config_path", None)
         overrides = {**local_cfg, **spec.common, **dataset}
-        all_override_combinations.extend(expand_override_grid(overrides))
+        combinations = expand_override_grid(overrides)
+        if dataset_config_path is not None:
+            config_path = (RUN_DIR / dataset_config_path).resolve()
+            if not config_path.exists():
+                raise FileNotFoundError(
+                    f"Dataset config for '{spec.name}' does not exist: "
+                    f"{config_path}")
+            for combo in combinations:
+                combo["_config_path"] = str(config_path)
+        all_override_combinations.extend(combinations)
 
     if spec.expected_tasks is not None:
         n_tasks = len(all_override_combinations)
@@ -648,8 +659,16 @@ def prepare_generated_tasks(spec, base_config, override_combinations):
     seen_stems = set()
     seen_outputs = set()
     seen_output_filenames = set()
+    base_configs = {str(spec.config_path): base_config}
 
     for idx, override_set in enumerate(override_combinations):
+        override_set = dict(override_set)
+        config_path = override_set.pop("_config_path", str(spec.config_path))
+        if config_path not in base_configs:
+            base_configs[config_path] = load_config(
+                config_path, replace_none=False, replace_los_prior=False,
+                fill_paths=False)
+        base_config = base_configs[config_path]
         local_config = apply_overrides(base_config, override_set)
         local_config = apply_los_runtime_rules(local_config, override_set)
         validate_generated_config(local_config)

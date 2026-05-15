@@ -736,11 +736,15 @@ class CH0Model(H0ModelBase):
 
                 ll_reconstruction += ll_cz_fn(
                     self.czcmb_cepheid_host[None, :], cz_pred, e2_cz)
-
-                ll_reconstruction = logmeanexp(ll_reconstruction, axis=0)
-                factor("ll_reconstruction", ll_reconstruction)
             else:
                 cz_pred = predict_cz(z_cosmo, Vext_rad_host)
                 factor("cz_pred",
                        ll_cz_fn(self.czcmb_cepheid_host,
                                 cz_pred, e2_cz).sum())
+
+        if self.use_reconstruction:
+            # Take the product over host likelihoods, then average over
+            # field realizations.
+            ll_reconstruction = logmeanexp(
+                jnp.sum(ll_reconstruction, axis=1), axis=0)
+            factor("ll_reconstruction", ll_reconstruction)

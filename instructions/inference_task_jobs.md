@@ -37,6 +37,9 @@ To create a new sweep, add a named entry there:
 - Choose the base config via `config_path`.
 - Put shared settings in `common`.
 - Put per-dataset settings in `datasets`.
+- Set `config_path` inside a dataset only when that dataset needs a different
+  base TOML from the sweep default; this key is consumed by the generator and
+  is not written into generated configs.
 - Use slash-delimited keys for nested TOML values, e.g.
   `model/priors/beta` or `io/catalogue_name`.
 - Scalar values are used as-is.
