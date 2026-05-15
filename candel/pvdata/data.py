@@ -2886,8 +2886,8 @@ def load_CCHP_from_config(config_path, ra_dec_only=False):
 
     Returns data in EDD-TRGB-compatible format (host-level arrays with
     ``mag_obs``, ``e_mag_obs``, ``czcmb``, ``e_czcmb``, ``RA_host``,
-    ``dec_host``) plus SN-level arrays (``m_Bprime``, ``e_m_Bprime``,
-    ``sn_group_index``) for SN magnitude selection.
+    ``dec_host``). For SN magnitude selection it also returns one SN per host
+    (``m_Bprime``, ``e_m_Bprime``, ``sn_group_index``).
 
     Expects the TSV to contain at least the columns:
     SN, Galaxy, cz_cmb, e_czcmb, mu_TRGB_CCHP, sigma_TRGB_CCHP,
@@ -2895,6 +2895,8 @@ def load_CCHP_from_config(config_path, ra_dec_only=False):
     """
     config = load_config(config_path, replace_los_prior=False)
     use_recon = get_nested(config, "model/use_reconstruction", False)
+    which_sel = get_nested(config, "model/which_selection", None)
+    use_sn_selection = which_sel == "SN_magnitude"
     config["io"]["load_host_los"] = use_recon
     config["io"]["load_rand_los"] = False
     path = config["io"]["CCHP"]["path"]
@@ -2960,28 +2962,41 @@ def load_CCHP_from_config(config_path, ra_dec_only=False):
             "e_czcmb": e_czcmb,
         }
 
-    # Mask entries with non-finite SN photometry
-    sn_mask = np.isfinite(m_Bprime) & np.isfinite(e_m_Bprime)
-    n_masked = int(np.sum(~sn_mask))
-    if n_masked > 0:
-        fprint(f"CCHP: masking {n_masked}/{len(sn_mask)} entries "
-               "without finite SN photometry.")
-    mag_trgb = mag_trgb[sn_mask]
-    e_mag_trgb = e_mag_trgb[sn_mask]
-    cz_cmb = cz_cmb[sn_mask]
-    e_czcmb = e_czcmb[sn_mask]
-    m_Bprime = m_Bprime[sn_mask]
-    e_m_Bprime = e_m_Bprime[sn_mask]
-    ra = ra[sn_mask]
-    dec = dec[sn_mask]
-    galaxies = galaxies[sn_mask]
+    row_mask = np.ones(len(galaxies), dtype=bool)
+    if use_sn_selection:
+        row_mask = np.isfinite(m_Bprime) & np.isfinite(e_m_Bprime)
+        n_masked = int(np.sum(~row_mask))
+        if n_masked > 0:
+            fprint(f"CCHP: masking {n_masked}/{len(row_mask)} entries "
+                   "without finite SN photometry.")
+    mag_trgb = mag_trgb[row_mask]
+    e_mag_trgb = e_mag_trgb[row_mask]
+    cz_cmb = cz_cmb[row_mask]
+    e_czcmb = e_czcmb[row_mask]
+    m_Bprime = m_Bprime[row_mask]
+    e_m_Bprime = e_m_Bprime[row_mask]
+    ra = ra[row_mask]
+    dec = dec[row_mask]
+    galaxies = galaxies[row_mask]
 
-    # Group by Galaxy (multiple SNe per host)
+    # Group by Galaxy. For SN selection keep the most precise CSP SN per host;
+    # otherwise keep one TRGB row per host without using SN data.
     galaxies_unique, inverse = np.unique(galaxies, return_inverse=True)
     n_hosts = len(galaxies_unique)
-    first_idx = np.array([np.where(inverse == i)[0][0]
-                          for i in range(n_hosts)])
-    fprint(f"CCHP: {len(galaxies)} SNe across {n_hosts} unique hosts.")
+    if use_sn_selection:
+        selected_idx = np.array([
+            idx[np.argmin(e_m_Bprime[idx])]
+            for i in range(n_hosts)
+            for idx in [np.where(inverse == i)[0]]
+        ])
+        fprint(f"CCHP: selected {len(selected_idx)} lowest-uncertainty SNe "
+               f"across {n_hosts} unique hosts from "
+               f"{len(galaxies)} finite SNe.")
+    else:
+        selected_idx = np.array([np.where(inverse == i)[0][0]
+                                 for i in range(n_hosts)])
+        fprint(f"CCHP: selected {n_hosts} unique TRGB hosts from "
+               f"{len(galaxies)} table rows.")
 
     # Anchor calibration from config (with CCHP defaults)
     anchors = get_nested(config, "model/anchors", {})
@@ -2989,18 +3004,13 @@ def load_CCHP_from_config(config_path, ra_dec_only=False):
     # Build output dict with EDD-compatible host-level keys
     data = {
         # Host-level arrays (one per unique host)
-        "mag_obs": mag_trgb[first_idx],
-        "e_mag_obs": e_mag_trgb[first_idx],
-        "czcmb": cz_cmb[first_idx],
-        "e_czcmb": e_czcmb[first_idx],
-        "RA_host": ra[first_idx],
-        "dec_host": dec[first_idx],
-        "e_mag_median": float(np.median(e_mag_trgb[first_idx])),
-        # SN-level arrays (one per SN)
-        "m_Bprime": m_Bprime,
-        "e_m_Bprime": e_m_Bprime,
-        "e_m_Bprime_median": float(np.median(e_m_Bprime)),
-        "sn_group_index": inverse.astype(np.int32),
+        "mag_obs": mag_trgb[selected_idx],
+        "e_mag_obs": e_mag_trgb[selected_idx],
+        "czcmb": cz_cmb[selected_idx],
+        "e_czcmb": e_czcmb[selected_idx],
+        "RA_host": ra[selected_idx],
+        "dec_host": dec[selected_idx],
+        "e_mag_median": float(np.median(e_mag_trgb[selected_idx])),
         # Anchors
         "mu_LMC_anchor": anchors.get("mu_LMC", mu_LMC_anchor),
         "e_mu_LMC_anchor": anchors.get("e_mu_LMC", e_mu_LMC_anchor),
@@ -3012,6 +3022,14 @@ def load_CCHP_from_config(config_path, ra_dec_only=False):
         "e_mag_N4258_TRGB": anchors.get(
             "e_mag_N4258_TRGB", e_mag_N4258_TRGB),
     }
+    if use_sn_selection:
+        data.update({
+            # SN-level arrays (one selected SN per host)
+            "m_Bprime": m_Bprime[selected_idx],
+            "e_m_Bprime": e_m_Bprime[selected_idx],
+            "e_m_Bprime_median": float(np.median(e_m_Bprime[selected_idx])),
+            "sn_group_index": np.arange(n_hosts, dtype=np.int32),
+        })
 
     # Load LOS data (host and/or random)
     los_data_path = None
@@ -3039,11 +3057,11 @@ def load_CCHP_from_config(config_path, ra_dec_only=False):
         host_los = load_los(
             los_data_path, {}, mask=None, field_indices=field_indices)
         # LOS file has one entry per row in the original TSV (25 entries).
-        # Select valid SN entries, then extract host-level via first_idx.
-        los_density = host_los["los_density"][:, sn_mask]
-        los_velocity = host_los["los_velocity"][:, sn_mask]
-        data["host_los_density"] = los_density[:, first_idx]
-        data["host_los_velocity"] = los_velocity[:, first_idx]
+        # Apply the same row mask as above, then extract selected host rows.
+        los_density = host_los["los_density"][:, row_mask]
+        los_velocity = host_los["los_velocity"][:, row_mask]
+        data["host_los_density"] = los_density[:, selected_idx]
+        data["host_los_velocity"] = los_velocity[:, selected_idx]
         data["host_los_r"] = host_los["los_r"]
         data["host_los_field_indices"] = host_los["los_field_indices"]
 
