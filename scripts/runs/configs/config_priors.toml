@@ -103,6 +103,46 @@ dist = "normal"
 loc = 0.0
 scale = 2.0
 
+[model.priors.log_rho_width]
+dist = "truncated_normal"
+low = 0.05
+high = 3.0
+mean = 1.0
+scale = 0.5
+
+# Manticore STDP bias. The paper's beta parameter is prefixed here to avoid
+# clashing with the velocity beta.
+[model.priors.stdp_gamma_t]
+dist = "normal"
+loc = -1.0
+scale = 1.0
+
+[model.priors.stdp_gamma_s]
+dist = "truncated_normal"
+low = 0.05
+high = 3.0
+mean = 0.5
+scale = 0.5
+
+[model.priors.stdp_alpha]
+dist = "truncated_normal"
+low = 0.0
+high = 3.0
+mean = 1.0
+scale = 0.75
+
+[model.priors.stdp_beta]
+dist = "truncated_normal"
+low = 0.0
+high = 2.0
+mean = 0.7
+scale = 0.5
+
+[model.priors.stdp_beta0]
+dist = "normal"
+loc = 1.0
+scale = 1.5
+
 # Intrinsic scatter (generic)
 [model.priors.sigma_int]
 dist = "jeffreys"

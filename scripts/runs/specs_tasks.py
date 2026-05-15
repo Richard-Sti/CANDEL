@@ -244,21 +244,6 @@ def _trgbh0_main_datasets():
     ]
     extra_pv_models = [
         {
-            "model/which_run": "EDD_TRGB_grouped",
-            "model/use_reconstruction": True,
-            "model/use_density_dependent_sigma_v": False,
-            "io/PV_main/EDD_TRGB_grouped/which_host_los": "Carrick2015",
-            "model/priors/beta": _trgbh0_carrick_beta_prior(),
-        },
-        {
-            "model/which_run": "EDD_TRGB_grouped",
-            "model/use_reconstruction": True,
-            "model/use_density_dependent_sigma_v": False,
-            "io/PV_main/EDD_TRGB_grouped/which_host_los":
-                TRGBH0_MANTICORE_LOS,
-            "model/which_bias": TRGBH0_MANTICORE_BIAS,
-        },
-        {
             "model/use_reconstruction": True,
             "model/use_density_dependent_sigma_v": False,
             "model/cz_likelihood": "student_t",
@@ -304,50 +289,6 @@ def _trgbh0_main_datasets():
             "model/use_density_dependent_sigma_v": False,
             "model/cz_likelihood": "student_t",
             "model/priors/nu_cz": _nu_cz_student_t_prior(),
-        },
-        {
-            "model/use_reconstruction": True,
-            "model/use_density_dependent_sigma_v": False,
-            "model/cz_likelihood": "gaussian",
-            "model/use_Vext_octupole": True,
-            "io/PV_main/EDD_TRGB/which_host_los": "Carrick2015",
-            "model/priors/beta": _trgbh0_carrick_beta_prior(),
-        },
-        {
-            "model/use_reconstruction": True,
-            "model/use_density_dependent_sigma_v": False,
-            "model/cz_likelihood": "gaussian",
-            "model/use_Vext_octupole": True,
-            "io/PV_main/EDD_TRGB/which_host_los": TRGBH0_MANTICORE_LOS,
-            "model/which_bias": TRGBH0_MANTICORE_BIAS,
-        },
-        {
-            "model/use_reconstruction": True,
-            "model/use_density_dependent_sigma_v": False,
-            "model/cz_likelihood": "gaussian",
-            "model/which_Vext_monopole": "sigmoid",
-            "io/PV_main/EDD_TRGB/which_host_los": "Carrick2015",
-            "model/priors/beta": _trgbh0_carrick_beta_prior(),
-        },
-        {
-            "model/use_reconstruction": True,
-            "model/use_density_dependent_sigma_v": False,
-            "model/cz_likelihood": "gaussian",
-            "model/which_Vext_monopole": "sigmoid",
-            "io/PV_main/EDD_TRGB/which_host_los": TRGBH0_MANTICORE_LOS,
-            "model/which_bias": TRGBH0_MANTICORE_BIAS,
-        },
-        {
-            "model/use_reconstruction": True,
-            "model/use_density_dependent_sigma_v": True,
-            "io/PV_main/EDD_TRGB/which_host_los": "Carrick2015",
-            "model/priors/beta": _trgbh0_carrick_beta_prior(),
-        },
-        {
-            "model/use_reconstruction": True,
-            "model/use_density_dependent_sigma_v": True,
-            "io/PV_main/EDD_TRGB/which_host_los": TRGBH0_MANTICORE_LOS,
-            "model/which_bias": TRGBH0_MANTICORE_BIAS,
         },
     ]
     return (
@@ -427,7 +368,7 @@ def _trgbh0_cchp_subset_datasets():
             "io/which_host_los": TRGBH0_MANTICORE_LOS,
             "model/which_bias": TRGBH0_MANTICORE_BIAS,
         },
-    ], selections=("SN_magnitude", "TRGB_magnitude"))
+    ], selections=("redshift", "TRGB_magnitude"))
 
 
 def _s8_production_datasets():
@@ -506,6 +447,18 @@ def _vfo_datasets():
         {
             "pv_model/kind": f"precomputed_los_{VFO_MANTICORE_LOS}",
             "pv_model/galaxy_bias": "double_powerlaw",
+            "pv_model/density_3d_subsample_fraction": 0.1,
+            "model/priors/beta": _delta(1.0),
+        },
+        {
+            "pv_model/kind": f"precomputed_los_{VFO_MANTICORE_LOS}",
+            "pv_model/galaxy_bias": "powerlaw",
+            "pv_model/density_3d_subsample_fraction": 0.1,
+            "model/priors/beta": _delta(1.0),
+        },
+        {
+            "pv_model/kind": f"precomputed_los_{VFO_MANTICORE_LOS}",
+            "pv_model/galaxy_bias": "manticore_stdp",
             "pv_model/density_3d_subsample_fraction": 0.1,
             "model/priors/beta": _delta(1.0),
         },
@@ -600,7 +553,7 @@ TASK_SPECS = {
             **_with_root(f"{TRGBH0_ROOT}/table"),
         },
         "datasets": _trgbh0_main_datasets(),
-        "expected_tasks": 26,
+        "expected_tasks": 18,
     },
     "TRGBH0_manticore_fields_const_sigv": {
         "description": (
@@ -654,6 +607,6 @@ TASK_SPECS = {
             "io/root_output": VFO_ROOT,
         },
         "datasets": _vfo_datasets(),
-        "expected_tasks": 12,
+        "expected_tasks": 24,
     },
 }
