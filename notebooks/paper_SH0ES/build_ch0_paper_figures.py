@@ -84,7 +84,7 @@ def plot_h0_comparison():
     rng = np.random.default_rng(42)
     with plt.style.context("science"):
         fig, ax = plt.subplots(figsize=(6.8, 4.0))
-        x_grid = np.linspace(62, 80, 1000)
+        x_grid = np.linspace(65, 78, 1000)
         for label, samples, color in curves:
             kde_line(ax, samples, label, color, fill=True, bw=2.0,
                      x_grid=x_grid)
@@ -94,7 +94,7 @@ def plot_h0_comparison():
                  fill=False, ls=":", bw=2.0, x_grid=x_grid)
         ax.set_xlabel(r"$H_0 ~ [\mathrm{km}\,\mathrm{s}^{-1}\,\mathrm{Mpc}^{-1}]$")
         ax.set_ylabel("Normalised PDF")
-        ax.set_xlim(62, 80)
+        ax.set_xlim(65, 78)
         ax.set_ylim(bottom=0)
         handles, legend_labels = ax.get_legend_handles_labels()
         main_handles, main_labels = [], []
