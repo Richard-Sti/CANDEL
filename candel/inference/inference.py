@@ -35,7 +35,8 @@ from tqdm import trange
 
 from ..util import (fprint, fsection, galactic_to_radec, plot_corner,
                     plot_radial_profiles, plot_Vext_moll, plot_Vext_rad_corner,
-                    plot_Vext_radmag, radec_cartesian_to_galactic,
+                    plot_Vext_radial_bulkflow, plot_Vext_radmag,
+                    radec_cartesian_to_galactic,
                     radec_to_cartesian, radec_to_galactic)
 from .evidence import (BIC_AIC, dict_samples_to_array, harmonic_evidence,
                        laplace_evidence)
@@ -350,12 +351,11 @@ def _print_gof(gof):
 
 def _post_sampling_flags(kwargs, model, require_config_evidence=False):
     """Return whether to compute log density and optional evidence."""
+    compute_log_density = bool(kwargs.get("compute_log_density", False))
     compute_evidence = bool(getattr(model, "compute_evidence", False))
     if require_config_evidence:
         compute_evidence = (
             bool(kwargs.get("compute_evidence", False)) and compute_evidence)
-    compute_log_density = (
-        bool(kwargs.get("compute_log_density", False)) or compute_evidence)
 
     if compute_evidence and not _harmonic_available():
         fprint("[WARN] `harmonic` not installed — disabling evidence "
@@ -363,6 +363,7 @@ def _post_sampling_flags(kwargs, model, require_config_evidence=False):
                "re-enable.")
         compute_evidence = False
 
+    compute_log_density = compute_log_density or compute_evidence
     return compute_log_density, compute_evidence
 
 
@@ -528,10 +529,18 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
             fname_plot = splitext(fname_out)[0] + "_profile_Vext_rad.png"
             plot_radial_profiles(samples, model, show_fig=False,
                                  filename=fname_plot)
+
+            fname_plot = splitext(fname_out)[0] + "_bulkflow_Vext_rad.png"
+            plot_Vext_radial_bulkflow(
+                samples, model, show_fig=False, filename=fname_plot)
         elif model.which_Vext == "radial_magnitude":
             fname_plot = splitext(fname_out)[0] + "_profile_Vext_radmag.png"
             plot_Vext_radmag(
                 samples, model, show_fig=False, filename=fname_plot,)
+
+            fname_plot = splitext(fname_out)[0] + "_bulkflow_Vext_radmag.png"
+            plot_Vext_radial_bulkflow(
+                samples, model, show_fig=False, filename=fname_plot)
 
         if model.which_Vext == "per_pix":
             npix = samples["Vext_pix"].shape[1]
