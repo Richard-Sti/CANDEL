@@ -20,7 +20,6 @@ and TFR/SN helpers.
 import jax.numpy as jnp
 from interpax import interp1d
 from jax import vmap
-from jax.lax import cond
 from jax.scipy.special import erf
 from jax.scipy.stats.norm import cdf as jax_norm_cdf
 from numpy.polynomial.hermite import hermgauss
@@ -157,55 +156,24 @@ def sample_radial_vector(name, nval, low, high):
 
 
 ###############################################################################
-#                        SLERP / vector interpolation                         #
+#                        Vector interpolation                                 #
 ###############################################################################
 
 
-def _slerp(u0, u1, t, eps=1e-8):
-    dot = jnp.clip(jnp.dot(u0, u1), -1.0, 1.0)
-    theta = jnp.arccos(dot)
-    sin_th = jnp.sin(theta)
-
-    def slerp_core(_):
-        a = jnp.sin((1.0 - t) * theta) / sin_th
-        b = jnp.sin(t * theta) / sin_th
-        return a * u0 + b * u1
-
-    def lerp_norm(_):
-        v = (1.0 - t) * u0 + t * u1
-        n = jnp.linalg.norm(v)
-        return jnp.where(n > 0.0, v / n, u0)
-
-    return cond(sin_th < eps, lerp_norm, slerp_core, operand=None)
-
-
 def interp_cartesian_vector(rq, rknot, v_knot, method="cubic"):
-    """Magnitude via interpax; direction via SLERP; constant extrapolation."""
+    """Interpolate Cartesian vector components with constant extrapolation."""
     rq = jnp.asarray(rq)
     x = jnp.asarray(rknot)
     y = jnp.asarray(v_knot)            # (K, 3)
-    K = y.shape[0]
-
-    mk = jnp.linalg.norm(y, axis=-1)   # (K,)
-    mk_safe = jnp.where(mk > 0.0, mk, 1.0)
-    uk = y / mk_safe[:, None]
-
-    m_r = interp1d(rq, x, mk, method=method)
     x0, x1 = x[0], x[-1]
-    m_r = jnp.where(rq < x0, mk[0], m_r)
-    m_r = jnp.where(rq > x1, mk[-1], m_r)
 
-    def dir_at_r(r):
-        i = jnp.clip(jnp.searchsorted(x, r, side="right") - 1, 0, K - 2)
-        xl, xr = x[i], x[i + 1]
-        t = jnp.where(xr > xl, (r - xl) / (xr - xl), 0.0)
-        return _slerp(uk[i], uk[i + 1], t)
+    def interp_component(vals):
+        out = interp1d(rq, x, vals, method=method)
+        out = jnp.where(rq < x0, vals[0], out)
+        out = jnp.where(rq > x1, vals[-1], out)
+        return out
 
-    u_r = vmap(dir_at_r)(rq)           # (R, 3)
-    u_r = jnp.where((rq < x0)[:, None], uk[0], u_r)
-    u_r = jnp.where((rq > x1)[:, None], uk[-1], u_r)
-
-    return m_r[:, None] * u_r          # (R, 3)
+    return vmap(interp_component, in_axes=1, out_axes=1)(y)  # (R, 3)
 
 
 ###############################################################################
