@@ -71,9 +71,6 @@ def kde_line(ax, samples, label, color, fill=False, ls="-", bw=1.0,
 
 def plot_h0_comparison():
     curves = [
-        ("No selection", h0(
-            "CH0_manticore_2MPP_MULTIBIN_N256_DES_V2_paper.hdf5"),
-         "#666666"),
         ("SN mag. sel.", h0(
             "CH0_sel-SN_magnitude_manticore_2MPP_MULTIBIN_N256_DES_V2_paper.hdf5"),
          COLS[0]),
