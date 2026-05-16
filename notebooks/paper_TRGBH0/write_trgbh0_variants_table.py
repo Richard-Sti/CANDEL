@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Write the TRGBH0 H0 summary table from task-list posterior summaries."""
+"""Write the TRGBH0 summary table from task-list posterior summaries."""
 from pathlib import Path
 
 
@@ -10,12 +10,26 @@ PAPERDIR = Path("/mnt/users/rstiskalek/Papers/TRGBH0")
 TABLE = PAPERDIR / "TRGBH0_variants_table.tex"
 
 
-def parse_h0_summary(path):
+def parse_summary(path):
+    summary = {}
     for line in path.read_text().splitlines():
         fields = line.split()
-        if fields[:1] == ["H0"]:
-            return float(fields[3]), float(fields[2])
-    raise ValueError(f"Could not find H0 row in {path}")
+        if len(fields) >= 6:
+            try:
+                summary[fields[0]] = {
+                    "std": float(fields[2]),
+                    "median": float(fields[3]),
+                }
+            except ValueError:
+                continue
+    return summary
+
+
+def format_parameter(summary, name, fmt):
+    if name not in summary:
+        raise ValueError(f"Could not find {name} row in summary")
+    values = summary[name]
+    return f"${values['median']:{fmt}}\\pm{values['std']:{fmt}}$"
 
 
 def task_stems():
@@ -66,14 +80,17 @@ def discover_rows():
         summary = RESULTS / f"{stem}_summary.txt"
         if not summary.exists():
             continue
-        h0_median, h0_std = parse_h0_summary(summary)
+        values = parse_summary(summary)
         rows.append(
             {
                 "section": section_label(stem),
                 "reconstruction": reconstruction_label(stem),
                 "selection": selection_label(stem),
                 "redshift_likelihood": redshift_likelihood_label(stem),
-                "h0": f"${h0_median:.2f}\\pm{h0_std:.2f}$",
+                "h0": format_parameter(values, "H0", ".2f"),
+                "m_trgb": format_parameter(values, "M_TRGB", ".2f"),
+                "sigma_int": format_parameter(values, "sigma_int", ".2f"),
+                "sigma_v": format_parameter(values, "sigma_v", ".0f"),
             }
         )
     return sorted(rows, key=lambda row: (row["section"] != r"\ac{CCHP}"))
@@ -84,11 +101,11 @@ def write_table(rows):
         r"\begin{table*}",
         r"\centering",
         r"\scriptsize",
-        r"\setlength{\tabcolsep}{5pt}",
-        r"\begin{tabular}{lllc}",
+        r"\setlength{\tabcolsep}{3pt}",
+        r"\begin{tabularx}{\textwidth}{Xllcccc}",
         r"\toprule",
-        r"Reconstruction & Selection & Redshift likelihood & $H_0$ \\",
-        r" & & & $[\kmsecMpc]$ \\",
+        r"Reconstruction & Selection & Redshift likelihood & $H_0$ & $M_{\rm TRGB}$ & $\sigma_{\rm int}$ & $\sigma_v$ \\",
+        r" & & & $[\kmsecMpc]$ & $[\rm mag]$ & $[\rm mag]$ & $[\kmsec]$ \\",
         r"\midrule",
     ]
     current_section = None
@@ -97,18 +114,20 @@ def write_table(rows):
         if section != current_section:
             if current_section is not None:
                 lines.extend([r"\addlinespace", r"\midrule"])
-            lines.append(rf"\multicolumn{{4}}{{l}}{{\textbf{{{section}}}}} \\")
+            lines.append(rf"\multicolumn{{7}}{{l}}{{\textbf{{{section}}}}} \\")
             current_section = section
         lines.append(
             f"{row['reconstruction']} & {row['selection']} & "
-            f"{row['redshift_likelihood']} & {row['h0']} \\\\"
+            f"{row['redshift_likelihood']} & {row['h0']} & "
+            f"{row['m_trgb']} & {row['sigma_int']} & {row['sigma_v']} \\\\"
         )
     lines.extend(
         [
             r"\bottomrule",
-            r"\end{tabular}",
-            r"\caption{Posterior constraints on $H_0$ for the \ac{CCHP} and \ac{EDD} \ac{TRGB} run sets.",
+            r"\end{tabularx}",
+            r"\caption{Posterior constraints on $H_0$ and leading nuisance parameters for the \ac{CCHP} and \ac{EDD} \ac{TRGB} run sets.",
             r"Entries are posterior medians with standard deviations.",
+            r"For Student-$t$ redshift-likelihood rows, $\sigma_v$ is the Gaussian core scale of the residual-velocity likelihood.",
             r"Rows are restricted to \texttt{TRGBH0\_main} task-list entries with matching posterior summaries in the table output directory.}",
             r"\label{tab:trgb_h0_variants}",
             r"\end{table*}",
