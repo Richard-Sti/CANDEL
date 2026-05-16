@@ -15,11 +15,44 @@ TRGBH0_CARRICK_BETA_LOC = 0.461
 TRGBH0_CARRICK_BETA_SCALE = 0.013
 S8_ROOT = "results/S8"
 S8_PV_KIND = "precomputed_los_Carrick2015"
-S8_BIAS_MODELS = ["linear", "quadratic"]
+S8_BIAS_MODELS = ["linear", "quadratic", "double_powerlaw"]
+VEXT_RAD_ROOT = "results/Vext_rad"
+VEXT_RAD_SDSS_FP_VEXT_KNOTS = [0, 100, 200, 300, 400]
+VEXT_RAD_SDSS_FP_CARRICK_KNOTS = [0, 20, 40, 60, 80, 100, 120, 140]
+VEXT_RAD_SDSS_FP_VEXT_PRIOR = {
+    "dist": "vector_radial_uniform",
+    "low": 0.0,
+    "high": 500,
+    "rknot": VEXT_RAD_SDSS_FP_VEXT_KNOTS,
+    "method": "cubic",
+}
+VEXT_RADMAG_SDSS_FP_VEXT_PRIOR = {
+    "dist": "vector_radialmag_uniform",
+    "low": 0.0,
+    "high": 500,
+    "rknot": VEXT_RAD_SDSS_FP_VEXT_KNOTS,
+    "method": "cubic",
+}
+VEXT_RAD_SDSS_FP_CARRICK_PRIOR = {
+    "dist": "vector_radial_uniform",
+    "low": 0.0,
+    "high": 500,
+    "rknot": VEXT_RAD_SDSS_FP_CARRICK_KNOTS,
+    "method": "cubic",
+}
+VEXT_RADMAG_SDSS_FP_CARRICK_PRIOR = {
+    "dist": "vector_radialmag_uniform",
+    "low": 0.0,
+    "high": 500,
+    "rknot": VEXT_RAD_SDSS_FP_CARRICK_KNOTS,
+    "method": "cubic",
+}
 VFO_ROOT = "results/VFO"
 VFO_MANTICORE_LOS = "manticore_2MPP_MULTIBIN_N256_DES_V2"
 
 CH0_PAPER_COMMON = {
+    "inference/compute_log_density": False,
+    "inference/compute_evidence": False,
     "inference/num_chains": 12,
     "inference/chain_method": "sequential",
     "inference/num_warmup": 1000,
@@ -37,6 +70,8 @@ CH0_PAPER_COMMON = {
 }
 
 TRGBH0_COMMON = {
+    "inference/compute_log_density": True,
+    "inference/compute_evidence": True,
     "inference/num_chains": 1,
     "inference/chain_method": "sequential",
     "inference/num_warmup": 1000,
@@ -330,7 +365,7 @@ def _trgbh0_manticore_field_datasets():
 
 
 def _trgbh0_cchp_subset_datasets():
-    return _trgbh0_selection_datasets([
+    main_models = [
         {
             "config_path": "configs/config_CCHP_TRGB.toml",
             "model/use_reconstruction": False,
@@ -347,6 +382,15 @@ def _trgbh0_cchp_subset_datasets():
             "config_path": "configs/config_CCHP_TRGB.toml",
             "model/use_reconstruction": True,
             "model/use_density_dependent_sigma_v": False,
+            "io/which_host_los": TRGBH0_MANTICORE_LOS,
+            "model/which_bias": TRGBH0_MANTICORE_BIAS,
+        },
+    ]
+    student_t_models = [
+        {
+            "config_path": "configs/config_CCHP_TRGB.toml",
+            "model/use_reconstruction": True,
+            "model/use_density_dependent_sigma_v": False,
             "model/cz_likelihood": "student_t",
             "model/priors/nu_cz": _nu_cz_student_t_prior(),
             "io/which_host_los": "Carrick2015",
@@ -356,19 +400,18 @@ def _trgbh0_cchp_subset_datasets():
             "config_path": "configs/config_CCHP_TRGB.toml",
             "model/use_reconstruction": True,
             "model/use_density_dependent_sigma_v": False,
-            "io/which_host_los": TRGBH0_MANTICORE_LOS,
-            "model/which_bias": TRGBH0_MANTICORE_BIAS,
-        },
-        {
-            "config_path": "configs/config_CCHP_TRGB.toml",
-            "model/use_reconstruction": True,
-            "model/use_density_dependent_sigma_v": False,
             "model/cz_likelihood": "student_t",
             "model/priors/nu_cz": _nu_cz_student_t_prior(),
             "io/which_host_los": TRGBH0_MANTICORE_LOS,
             "model/which_bias": TRGBH0_MANTICORE_BIAS,
         },
-    ], selections=("redshift", "TRGB_magnitude"))
+    ]
+    return (
+        _trgbh0_selection_datasets(
+            main_models, selections=("redshift", "TRGB_magnitude"))
+        + _trgbh0_selection_datasets(
+            student_t_models, selections=("TRGB_magnitude",))
+    )
 
 
 def _s8_production_datasets():
@@ -463,6 +506,110 @@ def _vfo_datasets():
             "model/priors/beta": _delta(1.0),
         },
     ]
+    manticore_linear_models = [
+        {
+            "pv_model/kind": f"precomputed_los_{VFO_MANTICORE_LOS}",
+            "pv_model/galaxy_bias": "linear",
+            "pv_model/density_3d_subsample_fraction": 0.1,
+            "model/priors/beta": _delta(1.0),
+        },
+        {
+            "pv_model/kind": f"precomputed_los_{VFO_MANTICORE_LOS}",
+            "pv_model/galaxy_bias": "quadratic",
+            "pv_model/density_3d_subsample_fraction": 0.1,
+            "model/priors/beta": _delta(1.0),
+        },
+    ]
+    manticore_beta_free_models = [
+        {
+            "pv_model/kind": f"precomputed_los_{VFO_MANTICORE_LOS}",
+            "pv_model/galaxy_bias": "double_powerlaw",
+            "pv_model/density_3d_subsample_fraction": 0.1,
+            "model/priors/beta": _normal(1.0, 0.1),
+        },
+    ]
+    carrick_double_powerlaw_models = [
+        {
+            "pv_model/kind": "precomputed_los_Carrick2015",
+            "pv_model/galaxy_bias": "double_powerlaw",
+            "pv_model/density_3d_subsample_fraction": 0.5,
+            "model/priors/beta": {
+                "dist": "uniform",
+                "low": 0.0,
+                "high": 1.0,
+            },
+        },
+    ]
+    fp_catalogues = [
+        {
+            "inference/model": "FPModel",
+            "io/catalogue_name": "SDSS_FP",
+        },
+        {
+            "inference/model": "FPModel",
+            "io/catalogue_name": "6dF_FP",
+        },
+    ]
+    fp_pv_models = [
+        {
+            "pv_model/kind": "precomputed_los_Carrick2015",
+            "pv_model/galaxy_bias": "linear",
+            "pv_model/density_3d_subsample_fraction": 0.5,
+            "model/priors/beta": {
+                "dist": "uniform",
+                "low": 0.0,
+                "high": 1.0,
+            },
+        },
+        {
+            "pv_model/kind": "precomputed_los_Carrick2015",
+            "pv_model/galaxy_bias": "double_powerlaw",
+            "pv_model/density_3d_subsample_fraction": 0.5,
+            "model/priors/beta": {
+                "dist": "uniform",
+                "low": 0.0,
+                "high": 1.0,
+            },
+        },
+        {
+            "pv_model/kind": f"precomputed_los_{VFO_MANTICORE_LOS}",
+            "pv_model/galaxy_bias": "double_powerlaw",
+            "pv_model/density_3d_subsample_fraction": 0.1,
+            "model/priors/beta": _delta(1.0),
+        },
+        {
+            "pv_model/kind": f"precomputed_los_{VFO_MANTICORE_LOS}",
+            "pv_model/galaxy_bias": "double_powerlaw",
+            "pv_model/density_3d_subsample_fraction": 0.1,
+            "model/priors/beta": {
+                "dist": "uniform",
+                "low": 0.0,
+                "high": 2.0,
+            },
+        },
+    ]
+    student_t_pv_models = [
+        {
+            "pv_model/kind": f"precomputed_los_{VFO_MANTICORE_LOS}",
+            "pv_model/galaxy_bias": "double_powerlaw",
+            "pv_model/density_3d_subsample_fraction": 0.1,
+            "model/priors/beta": _delta(1.0),
+            "model/cz_likelihood": "student_t",
+            "model/priors/nu_cz": _nu_cz_student_t_prior(),
+        },
+        {
+            "pv_model/kind": "precomputed_los_Carrick2015",
+            "pv_model/galaxy_bias": "linear",
+            "pv_model/density_3d_subsample_fraction": 0.5,
+            "model/priors/beta": {
+                "dist": "uniform",
+                "low": 0.0,
+                "high": 1.0,
+            },
+            "model/cz_likelihood": "student_t",
+            "model/priors/nu_cz": _nu_cz_student_t_prior(),
+        },
+    ]
     return [
         {
             **catalogue,
@@ -470,6 +617,41 @@ def _vfo_datasets():
         }
         for catalogue in catalogues
         for pv_model in pv_models
+    ] + [
+        {
+            **catalogue,
+            **pv_model,
+        }
+        for catalogue in catalogues
+        for pv_model in manticore_linear_models
+    ] + [
+        {
+            **catalogue,
+            **pv_model,
+        }
+        for catalogue in catalogues
+        for pv_model in manticore_beta_free_models
+    ] + [
+        {
+            **catalogue,
+            **pv_model,
+        }
+        for catalogue in catalogues
+        for pv_model in carrick_double_powerlaw_models
+    ] + [
+        {
+            **catalogue,
+            **pv_model,
+        }
+        for catalogue in fp_catalogues
+        for pv_model in fp_pv_models
+    ] + [
+        {
+            **catalogue,
+            **pv_model,
+        }
+        for catalogue in catalogues + fp_catalogues
+        for pv_model in student_t_pv_models
     ]
 
 
@@ -541,19 +723,72 @@ TASK_SPECS = {
         "datasets": _ch0_mixed_selection_datasets(),
         "expected_tasks": 36,
     },
+    "Vext_rad": {
+        "description": (
+            "CF4 W1 and SDSS FP radial Vext comparison."),
+        "config_path": "configs/config.toml",
+        "common": {
+            "inference/model": "TFRModel",
+            "inference/num_chains": 1,
+            "inference/chain_method": "sequential",
+            "inference/compute_log_density": False,
+            "inference/compute_evidence": False,
+            "pv_model/which_Vext": [
+                "constant", "radial", "radial_magnitude"],
+            "io/root_output": VEXT_RAD_ROOT,
+        },
+        "datasets": [
+            {
+                "io/catalogue_name": "CF4_W1",
+                "pv_model/kind": "Vext",
+            },
+            {
+                "io/catalogue_name": "CF4_W1",
+                "pv_model/kind": "precomputed_los_Carrick2015",
+                "pv_model/galaxy_bias": "linear",
+                "model/priors/beta": {
+                    "dist": "uniform",
+                    "low": 0.0,
+                    "high": 2.0,
+                },
+            },
+            {
+                "inference/model": "FPModel",
+                "io/catalogue_name": "SDSS_FP",
+                "io/SDSS_FP/zcmb_max": 0.1,
+                "pv_model/kind": "Vext",
+                "model/priors/Vext_radial": VEXT_RAD_SDSS_FP_VEXT_PRIOR,
+                "model/priors/Vext_radial_magnitude": (
+                    VEXT_RADMAG_SDSS_FP_VEXT_PRIOR),
+            },
+            {
+                "inference/model": "FPModel",
+                "io/catalogue_name": "SDSS_FP",
+                "pv_model/kind": "precomputed_los_Carrick2015",
+                "pv_model/galaxy_bias": "linear",
+                "model/priors/Vext_radial": VEXT_RAD_SDSS_FP_CARRICK_PRIOR,
+                "model/priors/Vext_radial_magnitude": (
+                    VEXT_RADMAG_SDSS_FP_CARRICK_PRIOR),
+                "model/priors/beta": {
+                    "dist": "uniform",
+                    "low": 0.0,
+                    "high": 2.0,
+                },
+            },
+        ],
+        "expected_tasks": 12,
+    },
     "TRGBH0_main": {
         "description": "TRGB H0 grid plus redshift-free distance run.",
         "config_path": "configs/config_EDD_TRGB.toml",
         "tag": "main",
         "common": {
             **TRGBH0_COMMON,
-            "inference/compute_log_density": True,
-            "inference/compute_evidence": True,
             "inference/num_chains_harmonic": 10,
             **_with_root(f"{TRGBH0_ROOT}/table"),
         },
         "datasets": _trgbh0_main_datasets(),
-        "expected_tasks": 18,
+        "expected_tasks": 16,
     },
     "TRGBH0_manticore_fields_const_sigv": {
         "description": (
@@ -590,7 +825,7 @@ TASK_SPECS = {
             "io/root_output": S8_ROOT,
         },
         "datasets": _s8_production_datasets(),
-        "expected_tasks": 14,
+        "expected_tasks": 20,
     },
     "VFO": {
         "description": (
@@ -607,6 +842,6 @@ TASK_SPECS = {
             "io/root_output": VFO_ROOT,
         },
         "datasets": _vfo_datasets(),
-        "expected_tasks": 24,
+        "expected_tasks": 72,
     },
 }
