@@ -340,8 +340,9 @@ class PVDataFrame:
 
         if (
                 config_pv_model.get("which_distance_prior", "empirical")
-                == "empirical"):
-            if reconstruction_kwargs is None or reconstruction_name is None:
+                == "empirical"
+                and reconstruction_name is not None):
+            if reconstruction_kwargs is None:
                 raise ValueError(
                     "The volume-normalized empirical distance prior requires "
                     "a precomputed reconstruction; set "
