@@ -1,6 +1,9 @@
 #!/usr/bin/env python
 """Write the TRGBH0 summary table from task-list posterior summaries."""
+import math
 from pathlib import Path
+
+import h5py
 
 
 ROOT = Path("/mnt/users/rstiskalek/CANDEL")
@@ -30,6 +33,19 @@ def format_parameter(summary, name, fmt):
         raise ValueError(f"Could not find {name} row in summary")
     values = summary[name]
     return f"${values['median']:{fmt}}\\pm{values['std']:{fmt}}$"
+
+
+def log10_evidence(path):
+    with h5py.File(path, "r") as handle:
+        try:
+            ln_z = float(handle["gof/lnZ_harmonic"][()])
+        except KeyError as err:
+            raise ValueError(f"Could not find gof/lnZ_harmonic in {path}") from err
+    return ln_z / math.log(10.0)
+
+
+def format_delta_log10_evidence(value):
+    return f"${value:.2f}$"
 
 
 def task_stems():
@@ -78,7 +94,8 @@ def discover_rows():
     rows = []
     for stem in task_stems():
         summary = RESULTS / f"{stem}_summary.txt"
-        if not summary.exists():
+        samples = RESULTS / f"{stem}.hdf5"
+        if not summary.exists() or not samples.exists():
             continue
         values = parse_summary(summary)
         rows.append(
@@ -91,8 +108,16 @@ def discover_rows():
                 "m_trgb": format_parameter(values, "M_TRGB", ".2f"),
                 "sigma_int": format_parameter(values, "sigma_int", ".2f"),
                 "sigma_v": format_parameter(values, "sigma_v", ".0f"),
+                "log10_evidence": log10_evidence(samples),
             }
         )
+    for section in {row["section"] for row in rows}:
+        best = max(row["log10_evidence"] for row in rows
+                   if row["section"] == section)
+        for row in rows:
+            if row["section"] == section:
+                row["delta_log10_evidence"] = format_delta_log10_evidence(
+                    row["log10_evidence"] - best)
     return sorted(rows, key=lambda row: (row["section"] != r"\ac{CCHP}"))
 
 
@@ -101,11 +126,11 @@ def write_table(rows):
         r"\begin{table*}",
         r"\centering",
         r"\scriptsize",
-        r"\setlength{\tabcolsep}{3pt}",
-        r"\begin{tabularx}{\textwidth}{Xllcccc}",
+        r"\setlength{\tabcolsep}{2pt}",
+        r"\begin{tabularx}{\textwidth}{Xllccccc}",
         r"\toprule",
-        r"Reconstruction & Selection & Redshift likelihood & $H_0$ & $M_{\rm TRGB}$ & $\sigma_{\rm int}$ & $\sigma_v$ \\",
-        r" & & & $[\kmsecMpc]$ & $[\rm mag]$ & $[\rm mag]$ & $[\kmsec]$ \\",
+        r"Reconstruction & Selection & Redshift likelihood & $H_0$ & $M_{\rm TRGB}$ & $\sigma_{\rm int}$ & $\sigma_v$ & $\Delta\log_{10} Z_{\rm harm}$ \\",
+        r" & & & $[\kmsecMpc]$ & $[\rm mag]$ & $[\rm mag]$ & $[\kmsec]$ & \\",
         r"\midrule",
     ]
     current_section = None
@@ -114,12 +139,13 @@ def write_table(rows):
         if section != current_section:
             if current_section is not None:
                 lines.extend([r"\addlinespace", r"\midrule"])
-            lines.append(rf"\multicolumn{{7}}{{l}}{{\textbf{{{section}}}}} \\")
+            lines.append(rf"\multicolumn{{8}}{{l}}{{\textbf{{{section}}}}} \\")
             current_section = section
         lines.append(
             f"{row['reconstruction']} & {row['selection']} & "
             f"{row['redshift_likelihood']} & {row['h0']} & "
-            f"{row['m_trgb']} & {row['sigma_int']} & {row['sigma_v']} \\\\"
+            f"{row['m_trgb']} & {row['sigma_int']} & {row['sigma_v']} & "
+            f"{row['delta_log10_evidence']} \\\\"
         )
     lines.extend(
         [
@@ -128,6 +154,7 @@ def write_table(rows):
             r"\caption{Posterior constraints on $H_0$ and leading nuisance parameters for the \ac{CCHP} and \ac{EDD} \ac{TRGB} run sets.",
             r"Entries are posterior medians with standard deviations.",
             r"For Student-$t$ redshift-likelihood rows, $\sigma_v$ is the Gaussian core scale of the residual-velocity likelihood.",
+            r"The evidence column reports the harmonic-estimator evidence stored in the run output, converted from natural logs to $\log_{10}$ and quoted relative to the highest-evidence row within each catalogue block.",
             r"Rows are restricted to \texttt{TRGBH0\_main} task-list entries with matching posterior summaries in the table output directory.}",
             r"\label{tab:trgb_h0_variants}",
             r"\end{table*}",
