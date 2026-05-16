@@ -322,6 +322,17 @@ def _slice_h0_volume_cache_fields(cached, cached_indices, requested_indices):
     return out
 
 
+def _slice_pv_volume_cache_fields(cached, cached_indices, requested_indices):
+    """Slice field-axis arrays in a cached PV volume-density product."""
+    requested_indices = [int(x) for x in requested_indices]
+    cached_indices = [int(x) for x in cached_indices]
+    rows = [cached_indices.index(x) for x in requested_indices]
+    out = dict(cached)
+    if "rho_fields" in out:
+        out["rho_fields"] = np.asarray(out["rho_fields"])[rows]
+    return out
+
+
 def _read_h0_volume_cache_superset(cache_dir, payload, label, required_keys,
                                    requested_indices):
     """Load a cached H0 volume product whose field set contains the request."""
@@ -367,6 +378,60 @@ def _read_h0_volume_cache_superset(cache_dir, payload, label, required_keys,
             fprint(f"using {label} cache `{path}` sliced to field indices "
                    f"{requested}.")
             return _slice_h0_volume_cache_fields(
+                cached, cached_indices, requested)
+    return None
+
+
+def _read_pv_volume_cache_superset(cache_dir, payload, label, required_keys,
+                                   requested_indices):
+    """Load a cached PV volume-density product containing the request."""
+    if cache_dir is None:
+        return None
+    cache_subdir = join(cache_dir, "pv_volume_density_3d")
+    if not exists(cache_subdir):
+        return None
+
+    requested = [int(x) for x in requested_indices]
+    loader_slug = _field_cache_slug(payload["loader_name"], max_len=70)
+    geometry = "sphere" if payload["pad_subcube_boundary"] else "cube"
+    radius_tag = _field_cache_float_tag(payload["subcube_radius"])
+    downsample_tag = f"ds-{int(payload['downsample'])}"
+    subsample_tag = "sub-{}-seed-{}".format(
+        _field_cache_float_tag(payload.get("voxel_subsample_fraction", 1.0)),
+        int(payload.get("voxel_subsample_seed", 42)))
+    rhat_tag = "rhat" if payload.get("store_rhat_3d", False) else "norhat"
+
+    candidates = []
+    for fname in os.listdir(cache_subdir):
+        parts = fname[:-4].split("__") if fname.endswith(".npz") else []
+        if len(parts) != 9:
+            continue
+        version, cached_loader, fields_part, cached_geometry, cached_radius, \
+            cached_downsample, cached_subsample, cached_rhat, cached_kind = parts
+        if version != f"v{_FIELD_CACHE_VERSION}":
+            continue
+        if cached_loader != loader_slug or cached_geometry != geometry:
+            continue
+        if cached_radius != f"r-{radius_tag}":
+            continue
+        if cached_downsample != downsample_tag:
+            continue
+        if cached_subsample != subsample_tag or cached_rhat != rhat_tag:
+            continue
+        if cached_kind != "density" or not fields_part.startswith("fields-"):
+            continue
+        cached_indices = _parse_field_cache_indices_tag(
+            fields_part.removeprefix("fields-"))
+        if all(index in cached_indices for index in requested):
+            candidates.append((len(cached_indices), cached_indices,
+                               join(cache_subdir, fname)))
+
+    for _, cached_indices, path in sorted(candidates):
+        cached = _read_field_cache(path, f"{label} superset", required_keys)
+        if cached is not None:
+            fprint(f"using {label} cache `{path}` sliced to field indices "
+                   f"{requested}.")
+            return _slice_pv_volume_cache_fields(
                 cached, cached_indices, requested)
     return None
 

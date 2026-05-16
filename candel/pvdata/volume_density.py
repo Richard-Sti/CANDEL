@@ -41,6 +41,7 @@ from .field_cache import (
     _read_field_cache,
     _read_field_cache_mpi_part,
     _read_h0_volume_cache_superset,
+    _read_pv_volume_cache_superset,
     _write_field_cache,
     _write_field_cache_mpi_part,
 )
@@ -1360,6 +1361,11 @@ def _load_volume_density_3d_fields(
             cache_dir, "pv_volume_density_3d", cache_payload)
         cached = _read_field_cache(
             cache_path, "PV 3D density", required)
+        if cached is not None:
+            return _cached_pv_volume_density_result(cached)
+        cached = _read_pv_volume_cache_superset(
+            cache_dir, cache_payload, "PV 3D density", required,
+            field_indices)
         if cached is not None:
             return _cached_pv_volume_density_result(cached)
         fprint("PV 3D density cache miss; loading reconstruction fields "
