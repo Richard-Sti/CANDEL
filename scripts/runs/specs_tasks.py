@@ -655,6 +655,15 @@ def _vfo_datasets():
     ]
 
 
+def _vfo_single_datasets():
+    return [
+        {
+            "io/field_indices": field,
+        }
+        for field in range(30)
+    ]
+
+
 TASK_SPECS = {
     "test": {
         "description": "CF4 TFR W1 Mmiss run with a single NUTS chain.",
@@ -843,5 +852,28 @@ TASK_SPECS = {
         },
         "datasets": _vfo_datasets(),
         "expected_tasks": 72,
+    },
+    "VFO_single": {
+        "description": (
+            "CF4 W1 TFR one-Manticore-field runs for the VFO setup."),
+        "config_path": "configs/config.toml",
+        "tag": "single",
+        "common": {
+            "inference/model": "TFRModel",
+            "io/catalogue_name": "CF4_W1",
+            "pv_model/kind": f"precomputed_los_{VFO_MANTICORE_LOS}",
+            "pv_model/galaxy_bias": "double_powerlaw",
+            "pv_model/density_3d_subsample_fraction": 0.1,
+            "pv_model/density_3d_geometry": "sphere",
+            "pv_model/density_3d_radius": 150.0,
+            "pv_model/density_3d_downsample": 1,
+            "model/priors/beta": _delta(1.0),
+            "inference/num_chains": 1,
+            "inference/num_warmup": 1000,
+            "inference/num_samples": 5000,
+            "io/root_output": f"{VFO_ROOT}/single_fields",
+        },
+        "datasets": _vfo_single_datasets(),
+        "expected_tasks": 30,
     },
 }

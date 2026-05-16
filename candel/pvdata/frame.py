@@ -73,6 +73,9 @@ def load_PV_dataframes(config_path):
                 "<X>", los_reconstruction)
             fprint(
                 f"loading existing LOS data from {kwargs['los_data_path']}.")
+            field_indices = config_io.get("field_indices", None)
+            if field_indices is not None:
+                kwargs["field_indices"] = field_indices
 
         recon_kwargs = None
         if los_reconstruction is not None:

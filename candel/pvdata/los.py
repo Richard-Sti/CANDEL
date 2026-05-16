@@ -41,7 +41,7 @@ def _zcmb_blat_mask(zcmb, RA, dec, zcmb_min=None, zcmb_max=None, b_min=None):
     return mask
 
 
-def _filter_data(data, mask, los_data_path=None):
+def _filter_data(data, mask, los_data_path=None, field_indices=None):
     """Apply boolean mask to data arrays, report counts, and load LOS."""
     n_total = len(mask)
     n_kept = int(np.sum(mask))
@@ -50,7 +50,8 @@ def _filter_data(data, mask, los_data_path=None):
         if isinstance(data[k], np.ndarray):
             data[k] = data[k][mask]
     if los_data_path:
-        data = load_los(los_data_path, data, mask=mask)
+        data = load_los(
+            los_data_path, data, mask=mask, field_indices=field_indices)
     return data
 
 
