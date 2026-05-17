@@ -13,12 +13,13 @@ fi
 usage() {
   cat <<'EOF'
 Usage:
-  download_manticore_chain.sh [download options]              # submits to berg
-  download_manticore_chain.sh -locally [download options]     # runs here
+  download_manticore_chain.sh [download options]                 # submits to berg
+  download_manticore_chain.sh -locally [download options]        # runs here
+  download_manticore_chain.sh --locally [download options]       # runs here
   download_manticore_chain.sh --submit [submit options] [download options]
 
 Default behaviour:
-  Without -locally, this wrapper submits one berg job with one CPU.
+  Without -locally/--locally, this wrapper submits one berg job with one CPU.
 
 Submit options:
   --queue QUEUE          Default: berg
@@ -30,7 +31,8 @@ Submit options:
 Download examples:
   download_manticore_chain.sh --steps 0
   download_manticore_chain.sh --steps 0:50
-  download_manticore_chain.sh -locally --steps 0 --dry-run
+  download_manticore_chain.sh --locally --steps 0 --dry-run
+  download_manticore_chain.sh --locally --steps 50-79 --access-json public-keys.json
 EOF
 }
 
@@ -43,17 +45,39 @@ quote_cmd() {
   printf "%s\n" "${quoted[*]}"
 }
 
-if [[ $# -gt 0 && ( "${1:-}" == "-h" || "${1:-}" == "--help" ) ]]; then
+has_help_arg() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -h|--help)
+        return 0
+        ;;
+    esac
+    shift
+  done
+  return 1
+}
+
+if has_help_arg "$@"; then
   usage
   "$BORG_PYTHON" -u "$SCRIPT_DIR/download_manticore_chain.py" --help
   exit 0
 fi
 
 LOCAL_RUN="false"
-if [[ "${1:-}" == "-locally" || "${1:-}" == "--locally" ]]; then
-  LOCAL_RUN="true"
-  shift
-fi
+ARGS=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -locally|--locally)
+      LOCAL_RUN="true"
+      shift
+      ;;
+    *)
+      ARGS+=("$1")
+      shift
+      ;;
+  esac
+done
+set -- "${ARGS[@]}"
 
 if [[ "${1:-}" == "--submit" ]]; then
   shift

@@ -12,6 +12,7 @@ import json
 import re
 import sys
 from pathlib import Path
+from urllib.error import URLError
 from urllib.request import urlopen
 
 
@@ -95,6 +96,19 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Print planned downloads without contacting S3.",
     )
+    parser.add_argument(
+        "--access-json",
+        type=Path,
+        help=(
+            "Local copy of public-keys.json. Use this when the key server "
+            "is not reachable from the current machine."
+        ),
+    )
+    parser.add_argument(
+        "--save-access-json",
+        type=Path,
+        help="Write public-keys.json here after fetching it successfully.",
+    )
     return parser.parse_args()
 
 
@@ -110,9 +124,36 @@ def require_boto3():
     return boto3, Config
 
 
-def get_access_data(generation: str) -> dict:
-    with urlopen(KEY_URL, timeout=30) as response:
-        keys = json.load(response)
+def get_access_data(
+    generation: str,
+    access_json: Path | None = None,
+    save_access_json: Path | None = None,
+) -> dict:
+    if access_json is not None:
+        path = access_json.expanduser().resolve()
+        with path.open("r") as handle:
+            keys = json.load(handle)
+    else:
+        try:
+            with urlopen(KEY_URL, timeout=30) as response:
+                keys = json.load(response)
+        except (OSError, URLError, TimeoutError) as exc:
+            raise SystemExit(
+                "Could not reach the Manticore key server:\n"
+                f"  {KEY_URL}\n"
+                f"  {exc}\n\n"
+                "`--locally` only avoids queue submission; downloads still "
+                "need network access. If this machine cannot reach the key "
+                "server, fetch public-keys.json elsewhere and rerun with:\n"
+                "  --access-json /path/to/public-keys.json"
+            ) from exc
+
+        if save_access_json is not None:
+            path = save_access_json.expanduser().resolve()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("w") as handle:
+                json.dump(keys, handle)
+
     return keys["manticores"][generation]
 
 
@@ -283,7 +324,11 @@ def main() -> int:
         return 0
 
     boto3, Config = require_boto3()
-    access = get_access_data(args.generation)
+    access = get_access_data(
+        args.generation,
+        access_json=args.access_json,
+        save_access_json=args.save_access_json,
+    )
     s3 = boto3.client(
         "s3",
         endpoint_url=access["url"],
