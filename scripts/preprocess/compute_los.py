@@ -161,8 +161,11 @@ def main():
     recon = args.reconstruction
     if recon in nreal_map:
         nsims = list(range(nreal_map[recon]))
-    elif recon.lower().startswith("manticore"):
-        nsims = list(range(30))
+    elif (recon == candel.field.COLA_MANTICORE_NAME
+          or recon.lower().startswith("manticore")):
+        field_kwargs = config["io"]["reconstruction_main"][recon]
+        nsims = candel.field.available_mcmc_field_indices(
+            field_kwargs["fpath_root"])
     else:
         if rank == 0:
             raise ValueError(f"Reconstruction `{recon}` not supported.")
@@ -266,6 +269,8 @@ def main():
             f.create_dataset("r", data=r, dtype=dt)
             f.create_dataset("los_density", data=los_density, dtype=dt)
             f.create_dataset("los_velocity", data=los_velocity, dtype=dt16)
+            f.create_dataset(
+                "field_indices", data=np.asarray(nsims, dtype=np.int32))
 
         fprint("all finished.")
 

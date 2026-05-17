@@ -22,7 +22,7 @@ from numpyro import deterministic, factor, plate, sample
 from numpyro.distributions import MultivariateNormal, Normal, Uniform
 
 from ..util import fprint, get_nested, replace_prior_with_delta
-from .base_model import H0ModelBase
+from .base_model import H0ModelBase, LOG_4PI
 from .integration import simpson_log_weights
 from .pv_utils import rsample, sample_galaxy_bias
 from .utils import (logmeanexp, mvn_logpdf_cholesky, normal_logpdf_var,
@@ -459,7 +459,8 @@ class CH0Model(H0ModelBase):
         log_dmu_dr = -self.log_grad_distmod2comoving_distance(mu_grid, h=h)
         in_support = ((mu_grid >= self.distmod_limits[0])
                       & (mu_grid <= self.distmod_limits[1]))
-        return jnp.where(in_support, log_dmu_dr, -jnp.inf)[None, None, :]
+        return jnp.where(
+            in_support, log_dmu_dr + LOG_4PI, -jnp.inf)[None, None, :]
 
     def _selection_3d_log_measure(self, H0):
         """3D selection measure matching the configured host-distance prior."""

@@ -336,17 +336,17 @@ high = 2500
 [model.priors.Vext_radial]
 dist = "vector_radial_uniform"
 low = 0.0
-high = 5000
+high = 500
 
-rknot = [0, 250, 600]
+rknot = [0, 20, 40, 60, 80, 100]
 method = "cubic"
 
 [model.priors.Vext_radial_magnitude]
 dist = "vector_radialmag_uniform"
 low = 0.0
-high = 5000
+high = 500
 
-rknot = [0, 50, 150]
+rknot = [0, 20, 40, 60, 80, 100]
 method = "cubic"
 
 [model.priors.Vext_sigma]

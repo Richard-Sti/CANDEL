@@ -1,0 +1,7 @@
+__pycache__/
+logs/
+*.out
+*.sh.sh
+allocation_stats_*.txt
+timing_stats_*.txt
+fft_wisdom

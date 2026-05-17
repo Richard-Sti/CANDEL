@@ -15,12 +15,34 @@
 Scripts to load the existing 3D density and velocity fields so that they can
 be interpolated along the line of sight of galaxies.
 """
+import re
 from abc import ABC, abstractmethod
 from os.path import join
+from pathlib import Path
 
 import numpy as np
 from astropy.io import fits
 from h5py import File
+
+
+COLA_MANTICORE_NAME = "COLA_manticore_2MPP_MULTIBIN_N256_DES_V2"
+_MCMC_FIELD_RE = re.compile(r"mcmc_(\d+)\.hdf5$")
+
+
+def available_mcmc_field_indices(fpath_root):
+    """Return sorted field indices from ``mcmc_<index>.hdf5`` files."""
+    root = Path(fpath_root)
+    indices = []
+    for path in root.glob("mcmc_*.hdf5"):
+        match = _MCMC_FIELD_RE.fullmatch(path.name)
+        if match is not None:
+            indices.append(int(match.group(1)))
+
+    if not indices:
+        raise FileNotFoundError(
+            f"No `mcmc_*.hdf5` field files found in `{root}`.")
+
+    return sorted(indices)
 
 
 def smooth_clip(x, eps=1e-3):
@@ -443,6 +465,42 @@ class Manticore_FieldLoader(BaseFieldLoader):
         return v.astype(np.float32)
 
 
+class ManticoreCOLA_FieldLoader(BaseFieldLoader):
+    """
+    Manticore-box COLA density and velocity field loader, in the ICRS frame.
+
+    Parameters
+    ----------
+    nsim : int
+        Simulation index.
+    fpath_root : str
+        Directory containing ``mcmc_{nsim}.hdf5`` files with ``overdensity``
+        and ``velocity`` datasets.
+    """
+
+    def __init__(self, nsim, fpath_root, **kwargs):
+        self.fname = join(fpath_root, f"mcmc_{nsim}.hdf5")
+
+        self.coordinate_frame = "icrs"
+        self.boxsize = 681.1  # Mpc / h
+        self.Omega_m = 0.306
+
+    def load_density(self):
+        with File(self.fname, "r") as f:
+            field = 1 + f["overdensity"][:]
+        return field.astype(np.float32)
+
+    def load_velocity(self):
+        with File(self.fname, "r") as f:
+            field = f["velocity"][:]
+        return np.moveaxis(field, -1, 0).astype(np.float32)
+
+    def load_velocity_component(self, component):
+        with File(self.fname, "r") as f:
+            field = f["velocity"][..., component]
+        return field.astype(np.float32)
+
+
 ###############################################################################
 #             Shortcut to get the appropriate field class.                    #
 ###############################################################################
@@ -455,6 +513,7 @@ _FIELD_LOADERS = {
     "CLONES": CLONES_FieldLoader,
     "CB1": CSiBORG_FieldLoader,
     "CB2": CSiBORG_FieldLoader,
+    COLA_MANTICORE_NAME: ManticoreCOLA_FieldLoader,
 }
 
 

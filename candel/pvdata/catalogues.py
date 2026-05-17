@@ -70,8 +70,8 @@ def load_SH0ES_calibration(calibration_path, pgc_CF4):
 def load_CF4_data(root, which_band, best_mag_quality=True, eta_min=-0.3,
                   zcmb_min=None, zcmb_max=None, b_min=7.5,
                   remove_outliers=True, calibration=None, los_data_path=None,
-                  return_all=False, dust_model=None, exclude_W1=False,
-                  **kwargs):
+                  field_indices=None, return_all=False, dust_model=None,
+                  exclude_W1=False, **kwargs):
     """
     Load CF4 TFR data and apply optional filters and dust correction removal.
     """
@@ -147,7 +147,7 @@ def load_CF4_data(root, which_band, best_mag_quality=True, eta_min=-0.3,
         exclude = (w1_quality == 5) | (w1_mag > 5)
         mask &= ~exclude
 
-    _filter_data(data, mask, los_data_path)
+    _filter_data(data, mask, los_data_path, field_indices=field_indices)
     pgc = pgc[mask]
 
     if calibration == "SH0ES":

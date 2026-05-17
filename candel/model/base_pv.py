@@ -19,11 +19,13 @@ For empirical PV distance priors, the 3D normalizer can be evaluated on either
 the full cubic reconstruction sub-grid or on flattened spherical voxels loaded
 with `pv_model.density_3d_geometry = "sphere"`. This geometry is a numerical
 truncation of the prior normalizer; the radial taper `exp(-(r/R)^q)` remains
-part of the prior itself.
+part of the prior itself. Without a reconstruction, the analytic radial
+normalizer includes the full-sky angular factor because observed sky positions
+enter through delta-function angular likelihoods.
 """
 import jax.numpy as jnp
 from jax import lax
-from jax.scipy.special import logsumexp
+from jax.scipy.special import gammaln, logsumexp
 from numpyro import deterministic, factor, handlers
 
 from ..util import fprint, get_nested
@@ -38,6 +40,8 @@ from .pv_utils import (_rsample, compute_Vext_radial, convert_cartesian_frame,
                        sumzero_basis)
 from .utils import (joint_config_mismatch, normal_logpdf_var, predict_cz,
                     student_t_logpdf_var)
+
+LOG_4PI = jnp.log(4.0 * jnp.pi)
 
 
 def field_product_logmeanexp(ll, num_fields):
@@ -103,6 +107,7 @@ class BasePVModel(ModelBase):
 
         if self.which_Vext in ["radial", "radial_magnitude"]:
             d = priors[f"Vext_{self.which_Vext}"]
+            self._validate_Vext_knots(d, f"Vext_{self.which_Vext}")
             fprint(
                 f"using {self.which_Vext} with spline knots at {d['rknot']}")
             self.kwargs_Vext = {
@@ -197,12 +202,57 @@ class BasePVModel(ModelBase):
 
         self.which_distance_prior = get_nested(
             config, "pv_model/which_distance_prior", "empirical")
+        if self.which_distance_prior != "empirical":
+            raise ValueError(
+                f"Invalid distance prior '{self.which_distance_prior}'. "
+                "Expected 'empirical'.")
 
         fprint(f"Om={self.Om}, Vext={self.which_Vext}, "
                f"galaxy_bias={self.galaxy_bias}, "
                f"distance_prior={self.which_distance_prior}, "
                f"density_dependent_sigma_v="
                f"{self.density_dependent_sigma_v}")
+
+    @staticmethod
+    def _validate_Vext_knots(prior, name):
+        """Validate radial external-velocity knot configuration."""
+        if "rknot" not in prior:
+            raise ValueError(f"`model.priors.{name}` must define `rknot`.")
+        if "method" not in prior:
+            raise ValueError(f"`model.priors.{name}` must define `method`.")
+
+        rknot = jnp.asarray(prior["rknot"])
+        if rknot.ndim != 1 or len(rknot) < 2:
+            raise ValueError(
+                f"`model.priors.{name}.rknot` must be a 1D sequence with "
+                "at least two knots.")
+        if not bool(jnp.all(jnp.isfinite(rknot))):
+            raise ValueError(
+                f"`model.priors.{name}.rknot` must contain finite values.")
+        if not bool(jnp.all(jnp.diff(rknot) > 0.0)):
+            raise ValueError(
+                f"`model.priors.{name}.rknot` must be strictly increasing.")
+
+        method = prior["method"]
+        if not isinstance(method, str):
+            raise ValueError(
+                f"`model.priors.{name}.method` must be a string.")
+        allowed_methods = {
+            "nearest",
+            "linear",
+            "cubic",
+            "cubic2",
+            "catmull-rom",
+            "cardinal",
+            "monotonic",
+            "monotonic-0",
+            "akima",
+        }
+        if method not in allowed_methods:
+            allowed = "', '".join(sorted(allowed_methods))
+            raise ValueError(
+                f"`model.priors.{name}.method` must be one of "
+                f"'{allowed}'.")
 
     def _sample_common_params(self, shared_params):
         kwargs_dist = sample_distance_prior_volume(self.priors)
@@ -231,9 +281,12 @@ class BasePVModel(ModelBase):
             nu_cz = rsample("nu_cz", self.priors["nu_cz"], shared_params)
 
         beta = rsample("beta", self.priors["beta"], shared_params)
-        bias_params = sample_galaxy_bias(
-            self.priors, self.galaxy_bias, shared_params,
-            Om=self.Om, beta=beta)
+        if not self.kind.startswith("precomputed_los_"):
+            bias_params = None
+        else:
+            bias_params = sample_galaxy_bias(
+                self.priors, self.galaxy_bias, shared_params,
+                Om=self.Om, beta=beta)
         Mmiss = self._sample_Mmiss(shared_params)
         return (kwargs_dist, h, Vext, sigma_v, beta, bias_params, nu_cz,
                 Mmiss)
@@ -372,6 +425,21 @@ class BasePVModel(ModelBase):
 
         return log_N
 
+    def _setup_no_recon_lp_dist_and_Vrad(self, data, r_grid, kwargs_dist):
+        """Empirical radial prior without inhomogeneous Malmquist correction."""
+        R = kwargs_dist["R"]
+        q = kwargs_dist["q"]
+        log_R = jnp.log(R)
+
+        log_f_los = -jnp.exp(q * (data["log_r_grid"] - log_R))
+        lp_los = (log_f_los + data["log_jac_los"])[None, None, :]
+        log_N = LOG_4PI + 3.0 * log_R - jnp.log(q) + gammaln(3.0 / q)
+
+        Vrad = jnp.zeros((1, len(data), len(r_grid)))
+        delta_los = None
+
+        return lp_los - log_N, Vrad, delta_los
+
     def _setup_lp_dist_and_Vrad(self, data, r_grid, kwargs_dist, beta,
                                 bias_params, Mmiss=None):
         r"""Volume-normalized empirical distance prior.
@@ -384,6 +452,14 @@ class BasePVModel(ModelBase):
         realization), and the per-LOS integrand picks up the radial Jacobian
         :math:`r^2`.
         """
+        if not data.has_precomputed_los:
+            if Mmiss is not None:
+                raise ValueError(
+                    "Mmiss is not supported without a reconstructed density "
+                    "field.")
+            return self._setup_no_recon_lp_dist_and_Vrad(
+                data, r_grid, kwargs_dist)
+
         self._validate_volume_normalized_prior_data(data)
 
         R = kwargs_dist["R"]

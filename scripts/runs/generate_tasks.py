@@ -89,6 +89,7 @@ RUN_DIR = Path(__file__).resolve().parent
 CANDEL_ROOT = RUN_DIR.parent.parent
 TASK_INDEX_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 VERBOSE = True
+MANTICORE_COLA_LOS = "COLA_manticore_2MPP_MULTIBIN_N256_DES_V2"
 
 fprint = None
 get_nested = None
@@ -125,6 +126,13 @@ def log(message):
     """Emit generator diagnostics when verbose output is enabled."""
     if VERBOSE and fprint is not None:
         fprint(message)
+
+
+def _is_manticore_box_los(value):
+    return (
+        isinstance(value, str)
+        and ("manticore" in value.lower() or value == MANTICORE_COLA_LOS)
+    )
 
 
 # Keys that must come from local_config.toml at job runtime, not baked into
@@ -328,7 +336,7 @@ def generate_dynamic_tag(config, base_tag="default"):
             which_los = get_nested(config, "io/SH0ES/which_host_los", None)
             parts.append(which_los)
             beta_prior = get_nested(config, "model/priors/beta", None)
-            if isinstance(which_los, str) and "manticore" in which_los.lower():
+            if _is_manticore_box_los(which_los):
                 if not _is_delta_prior(beta_prior):
                     parts.append("beta_free")
             if get_nested(config, "model/use_density_dependent_sigma_v", False):  # noqa
@@ -580,7 +588,7 @@ def apply_los_runtime_rules(config, override_set):
     ]
     for key in los_keys:
         los = get_nested(config, key, None)
-        if not (isinstance(los, str) and "manticore" in los.lower()):
+        if not _is_manticore_box_los(los):
             continue
 
         if get_nested(config, "model/run_ppc", False):

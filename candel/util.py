@@ -37,6 +37,7 @@ from h5py import File
 from interpax import interp1d
 from jax import vmap
 from matplotlib.ticker import FuncFormatter
+from scipy.integrate import cumulative_simpson
 
 SPEED_OF_LIGHT = 299_792.458  # km / s
 
@@ -1083,6 +1084,16 @@ def interpolate_scalar_field(V, r, rbins, method="cubic"):
     return out.reshape(*V.shape[:-1], r.shape[0])
 
 
+def interpolate_cartesian_vector_field(V, r, rbins, method="cubic"):
+    """Interpolate Cartesian vector components along the radial knot axis."""
+    V = jnp.asarray(V)
+    comps = [
+        interpolate_scalar_field(V[..., i], r, rbins, method)
+        for i in range(3)
+    ]
+    return jnp.stack(comps, axis=-1)
+
+
 def interpolate_latitude_field(b_deg, r, rbins, method="cubic"):
     """Interpolate latitude via sin(b); return degrees."""
     b_rad = jnp.deg2rad(jnp.asarray(b_deg)).reshape(-1, rbins.size)
@@ -1116,18 +1127,200 @@ def interpolate_longitude_field(l_deg, r, rbins, method="cubic"):
     return jnp.rad2deg(jnp.arctan2(sin_l_i, cos_l_i)) % 360.0
 
 
+def radial_knots_to_cartesian(Vmag, ell, b):
+    """Convert sampled Galactic radial Vext knots to ICRS Cartesian vectors."""
+    Vmag = np.asarray(Vmag)
+    ell = np.asarray(ell)
+    b = np.asarray(b)
+    if Vmag.shape != ell.shape or Vmag.shape != b.shape:
+        raise ValueError(
+            "`Vmag`, `ell`, and `b` must have matching shapes.")
+
+    unit = galactic_to_radec_cartesian(ell.ravel(), b.ravel())
+    unit = unit.reshape(*Vmag.shape, 3)
+    return Vmag[..., None] * unit
+
+
+def cartesian_vectors_to_galactic_profiles(V):
+    """Return magnitude and Galactic direction for Cartesian vector profiles."""
+    V = np.asarray(V)
+    shape = V.shape[:-1]
+    flat = V.reshape(-1, 3)
+    mag = np.linalg.norm(flat, axis=1)
+    safe = np.empty_like(flat)
+    nonzero = mag > 0.0
+    safe[nonzero] = flat[nonzero] / mag[nonzero, None]
+    safe[~nonzero] = [1.0, 0.0, 0.0]
+    _, ell, b = radec_cartesian_to_galactic(
+        safe[:, 0], safe[:, 1], safe[:, 2])
+    ell = np.where(nonzero, ell, np.nan)
+    b = np.where(nonzero, b, np.nan)
+    return mag.reshape(shape), ell.reshape(shape), b.reshape(shape)
+
+
 def interpolate_all_radial_fields(model, Vmag, ell, b, r_eval_size=1000,
-                                  method="cubic"):
+                                  method=None):
     rknot = jnp.asarray(model.kwargs_Vext["rknot"])
+    if method is None:
+        method = model.kwargs_Vext["method"]
     rmin, rmax = 0.0, jnp.max(rknot)
 
     r = jnp.linspace(rmin, rmax, r_eval_size)
-
-    Vmag_interp = interpolate_scalar_field(Vmag, r, rknot, method=method)
-    ell_interp = interpolate_longitude_field(ell, r, rknot, method=method)
-    b_interp = interpolate_latitude_field(b, r, rknot, method=method)
+    V_knot = radial_knots_to_cartesian(Vmag, ell, b)
+    V_interp = interpolate_cartesian_vector_field(V_knot, r, rknot, method)
+    Vmag_interp, ell_interp, b_interp = cartesian_vectors_to_galactic_profiles(
+        V_interp)
 
     return r, Vmag_interp, ell_interp, b_interp
+
+
+def _radial_vext_cartesian_profile(samples, model, r):
+    rknot = jnp.asarray(model.kwargs_Vext["rknot"])
+    method = model.kwargs_Vext["method"]
+
+    if model.which_Vext == "radial":
+        Vmag = samples["Vext_rad_mag"]
+        ell = samples["Vext_rad_ell"]
+        b = samples["Vext_rad_b"]
+        V_knot = radial_knots_to_cartesian(Vmag, ell, b)
+        return np.asarray(
+            interpolate_cartesian_vector_field(V_knot, r, rknot, method))
+
+    if model.which_Vext == "radial_magnitude":
+        Vmag = interpolate_scalar_field(
+            samples["Vext_radmag_mag"], r, rknot, method)
+        Vmag = np.clip(np.asarray(Vmag), 0.0, None)
+        rhat = galactic_to_radec_cartesian(
+            samples["Vext_radmag_ell"], samples["Vext_radmag_b"])
+        return Vmag[..., None] * rhat[:, None, :]
+
+    raise ValueError(
+        "`plot_Vext_radial_bulkflow` requires a radial Vext model.")
+
+
+def _enclosed_average_vectors(r, V):
+    r = np.asarray(r)
+    V = np.asarray(V)
+    integrand = r[None, :, None]**2 * V
+    integral = cumulative_simpson(integrand, x=r, axis=1, initial=0)
+
+    out = np.empty_like(V)
+    out[:, 0, :] = V[:, 0, :]
+    np.divide(
+        3.0 * integral[:, 1:, :],
+        r[None, 1:, None]**3,
+        out=out[:, 1:, :],
+        where=r[None, 1:, None] > 0.0)
+    return out
+
+
+def _load_reconstruction_bulkflow(model, r):
+    kind = getattr(model, "kind", "")
+    prefix = "precomputed_los_"
+    if not isinstance(kind, str) or not kind.startswith(prefix):
+        return None
+
+    reconstruction_name = kind[len(prefix):]
+    rel = ("fields", "field_shells",
+           f"enclosed_mass_{reconstruction_name}.npz")
+    candidates = [data_path(*rel), data_path("data", *rel)]
+    fname = next((p for p in candidates if exists(p)), None)
+    if fname is None:
+        fprint(
+            "[WARN] skipping reconstructed bulk-flow curve; "
+            f"`{candidates[0]}` is missing.")
+        return None
+
+    with np.load(fname) as f:
+        r_shell = f["distances"]
+        B_shell = f["cumulative_velocity"]
+
+    B = np.empty((B_shell.shape[0], len(r), 3), dtype=float)
+    for i in range(B_shell.shape[0]):
+        for j in range(3):
+            B[i, :, j] = np.interp(
+                r, r_shell, B_shell[i, :, j],
+                left=B_shell[i, 0, j], right=B_shell[i, -1, j])
+    return B
+
+
+def _bulkflow_reference_band(rmax):
+    rel = ("fields", "field_shells", "BulkFlowPlot.npy")
+    candidates = [data_path(*rel), data_path("data", *rel)]
+    fname = next((p for p in candidates if exists(p)), None)
+    if fname is None:
+        return None
+
+    Rs, _mean, _std, _mode, _p05, p16, p84, _p95 = np.load(fname)
+    mask = Rs <= rmax
+    return Rs[mask], p16[mask], p84[mask]
+
+
+def plot_Vext_radial_bulkflow(samples, model, r_eval_size=500, Rmax=125.0,
+                              show_fig=True, filename=None):
+    """Plot radial Vext magnitude and enclosed bulk-flow magnitude."""
+    rknot = np.asarray(model.kwargs_Vext["rknot"])
+    rmax = max(float(np.max(rknot)), float(Rmax))
+    r = np.linspace(0.0, rmax, r_eval_size)
+
+    V = _radial_vext_cartesian_profile(samples, model, r)
+    Vmag = np.linalg.norm(V, axis=-1)
+    Vbulk = _enclosed_average_vectors(r, V)
+
+    B_recon = _load_reconstruction_bulkflow(model, r)
+    if B_recon is None:
+        B = Vbulk
+    else:
+        beta = np.asarray(samples.get("beta", np.ones(V.shape[0])))
+        B = (
+            beta[None, :, None, None] * B_recon[:, None, :, :]
+            + Vbulk[None, :, :, :])
+        B = B.reshape(-1, len(r), 3)
+    Bmag = np.linalg.norm(B, axis=-1)
+
+    def band(x):
+        return np.percentile(x, [16, 50, 84], axis=0)
+
+    V16, V50, V84 = band(Vmag)
+    B16, B50, B84 = band(Bmag)
+
+    fig, axes = plt.subplots(2, 1, figsize=(6.0, 6.0), sharex=True)
+    fig.subplots_adjust(hspace=0.08)
+    c_vext, c_bulk = plt.rcParams["axes.prop_cycle"].by_key()["color"][:2]
+
+    axes[0].fill_between(r, V16, V84, alpha=0.35, color=c_vext)
+    axes[0].plot(r, V50, color=c_vext)
+    axes[0].set_ylabel(r"$|{\bf V}_{\rm ext}(r)|~[\mathrm{km/s}]$")
+    axes[0].set_ylim(0, None)
+
+    ref = _bulkflow_reference_band(rmax)
+    if ref is not None:
+        Rs, lo, hi = ref
+        axes[1].fill_between(
+            Rs, lo, hi, color="0.5", alpha=0.25,
+            label=r"$\Lambda\mathrm{CDM}$")
+    axes[1].fill_between(
+        r, B16, B84, alpha=0.35, color=c_bulk,
+        label="model")
+    axes[1].plot(r, B50, color=c_bulk)
+    axes[1].set_ylabel(r"$|{\bf B}(<R)|~[\mathrm{km/s}]$")
+    axes[1].set_xlabel(r"$R~[h^{-1}\,\mathrm{Mpc}]$")
+    axes[1].set_ylim(0, None)
+    if ref is not None:
+        axes[1].legend(frameon=False)
+
+    for ax in axes:
+        ax.set_xlim(0.0, rmax)
+        _plot_knot_lines(ax, rknot, 0.0, rmax)
+
+    if filename is not None:
+        fprint(f"saving a radial Vext/bulk-flow plot to {filename}")
+        fig.savefig(filename, bbox_inches="tight", dpi=450)
+
+    if show_fig:
+        fig.show()
+    else:
+        plt.close(fig)
 
 
 def get_percentiles_circ_along_r(lon_deg_samples, qs=(2.5, 16, 50, 84, 97.5),

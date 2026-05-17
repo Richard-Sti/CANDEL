@@ -73,6 +73,9 @@ def load_PV_dataframes(config_path):
                 "<X>", los_reconstruction)
             fprint(
                 f"loading existing LOS data from {kwargs['los_data_path']}.")
+            field_indices = config_io.get("field_indices", None)
+            if field_indices is not None:
+                kwargs["field_indices"] = field_indices
 
         recon_kwargs = None
         if los_reconstruction is not None:
@@ -340,8 +343,9 @@ class PVDataFrame:
 
         if (
                 config_pv_model.get("which_distance_prior", "empirical")
-                == "empirical"):
-            if reconstruction_kwargs is None or reconstruction_name is None:
+                == "empirical"
+                and reconstruction_name is not None):
+            if reconstruction_kwargs is None:
                 raise ValueError(
                     "The volume-normalized empirical distance prior requires "
                     "a precomputed reconstruction; set "

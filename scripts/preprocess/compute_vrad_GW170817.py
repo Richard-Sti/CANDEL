@@ -25,7 +25,8 @@ from mpi4py import MPI
 
 import candel
 from candel import fprint
-from candel.field import name2field_loader
+from candel.field import (
+    COLA_MANTICORE_NAME, available_mcmc_field_indices, name2field_loader)
 from candel.field.field_interp import build_regular_interpolator
 from candel.util import (radec_to_cartesian, radec_to_galactic,
                          radec_to_supergalactic)
@@ -118,11 +119,16 @@ def main():
     recon = args.reconstruction
 
     # Number of realisations per reconstruction
-    nreal_map = {"Carrick2015": 1, "Lilow2024": 1, "CF4": 100}
+    nreal_map = {
+        "Carrick2015": 1,
+        "Lilow2024": 1,
+        "CF4": 100,
+    }
     if recon in nreal_map:
         nsims = list(range(nreal_map[recon]))
-    elif recon.lower().startswith("manticore"):
-        nsims = list(range(30))
+    elif recon == COLA_MANTICORE_NAME or recon.lower().startswith("manticore"):
+        field_kwargs = config["io"]["reconstruction_main"][recon]
+        nsims = available_mcmc_field_indices(field_kwargs["fpath_root"])
     else:
         raise ValueError(f"Reconstruction `{recon}` not supported.")
 
@@ -180,6 +186,8 @@ def main():
         with File(outfile, "w") as f:
             f.create_dataset("density", data=density_all)
             f.create_dataset("vrad", data=vrad_all)
+            f.create_dataset(
+                "field_indices", data=np.asarray(nsims, dtype=np.int32))
             f.create_dataset("RA_deg", data=RA_deg.astype(np.float32))
             f.create_dataset("dec_deg", data=dec_deg.astype(np.float32))
             f.create_dataset("luminosity_distance_Mpc",

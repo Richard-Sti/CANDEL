@@ -24,6 +24,7 @@ import sys
 import threading
 import time
 from argparse import ArgumentParser
+from os.path import exists
 
 # ---- Pre-parse device args BEFORE importing anything that pulls JAX/NumPyro
 _pre = ArgumentParser(add_help=False)
@@ -126,6 +127,9 @@ class GPUMonitor:
 
 
 def insert_comment_at_top(path: str, label: str):
+    if not exists(path):
+        fprint(f"[WARN] cannot mark config as {label}: `{path}` is missing.")
+        return
     timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
     comment = f"# Job {label} at: {timestamp}\n"
     with open(path, "r") as f:

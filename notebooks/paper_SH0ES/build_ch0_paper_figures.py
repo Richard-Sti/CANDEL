@@ -50,10 +50,17 @@ def mean_std(x):
     return float(np.mean(x)), float(np.std(x))
 
 
-def kde_line(ax, samples, label, color, fill=False, ls="-", bw=1.0):
+def kde_line(ax, samples, label, color, fill=False, ls="-", bw=1.0,
+             x_grid=None):
     samples = np.asarray(samples).reshape(-1)
-    x = np.linspace(np.percentile(samples, 0.1), np.percentile(samples, 99.9),
-                    500)
+    if x_grid is None:
+        x = np.linspace(
+            np.percentile(samples, 0.1),
+            np.percentile(samples, 99.9),
+            500,
+        )
+    else:
+        x = np.asarray(x_grid)
     kde = gaussian_kde(samples)
     kde.set_bandwidth(kde.factor * bw)
     y = kde(x)
@@ -74,15 +81,17 @@ def plot_h0_comparison():
     rng = np.random.default_rng(42)
     with plt.style.context("science"):
         fig, ax = plt.subplots(figsize=(6.8, 4.0))
+        x_grid = np.linspace(65, 78, 1000)
         for label, samples, color in curves:
-            kde_line(ax, samples, label, color, fill=True, bw=2.0)
+            kde_line(ax, samples, label, color, fill=True, bw=2.0,
+                     x_grid=x_grid)
         kde_line(ax, rng.normal(73.04, 1.04, 300000), "SH0ES", COLS[2],
-                 fill=False, ls=":", bw=2.0)
+                 fill=False, ls=":", bw=2.0, x_grid=x_grid)
         kde_line(ax, rng.normal(67.4, 0.5, 300000), "Planck", COLS[1],
-                 fill=False, ls=":", bw=2.0)
+                 fill=False, ls=":", bw=2.0, x_grid=x_grid)
         ax.set_xlabel(r"$H_0 ~ [\mathrm{km}\,\mathrm{s}^{-1}\,\mathrm{Mpc}^{-1}]$")
         ax.set_ylabel("Normalised PDF")
-        ax.set_xlim(64, 77.5)
+        ax.set_xlim(65, 78)
         ax.set_ylim(bottom=0)
         handles, legend_labels = ax.get_legend_handles_labels()
         main_handles, main_labels = [], []
@@ -418,7 +427,6 @@ def main():
     plot_mu_host_cz(data)
     plot_h0_comparison()
     plot_h0_stacked()
-    plot_h0_proportion()
     plot_manticore_corner()
 
 

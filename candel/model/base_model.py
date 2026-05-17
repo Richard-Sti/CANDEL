@@ -20,8 +20,8 @@ H0 selection-integral convention
 For H0 models with an explicit sample selection (`which_selection` is set)
 and a reconstruction, the population selection normalizer is evaluated
 directly on the 3D reconstruction grid. Without a reconstruction, the model
-falls back to the radial volume integral with n = 1 and no reconstructed
-peculiar-velocity field.
+falls back to the full-sky radial volume integral with n = 1 and no
+reconstructed peculiar-velocity field.
 
 The ideal target is an integral over all space. In practice, the reconstruction
 field is finite, so the model uses a fixed computational truncation specified
@@ -124,6 +124,8 @@ from .pv_utils import (lp_galaxy_bias, octupole_radial, quadrupole_radial,
                        sigmoid_monopole_radial)
 from .utils import (load_priors, log_prob_integrand_sel, logmeanexp,
                     normal_logpdf_var, predict_cz, student_t_logpdf_var)
+
+LOG_4PI = jnp.log(4.0 * jnp.pi)
 
 # ICRS equatorial → Galactic Cartesian rotation matrix.
 # Computed via astropy: SkyCoord(basis, frame='icrs').galactic.
@@ -1002,8 +1004,9 @@ class H0ModelBase(ModelBase):
                 + getattr(self, "log_volume_weight_3d", 0.0))
 
     def _selection_radial_log_measure(self, H0):
-        """Radial log measure for no-reconstruction selection integrals."""
-        return self.log_prior_distance(self.r_sel_range)[None, None, :]
+        """Full-sky radial measure for no-reconstruction selection integrals."""
+        return (self.log_prior_distance(self.r_sel_range) + LOG_4PI
+                )[None, None, :]
 
     def _selection_3d_log_measure(self, H0):
         """Voxel log measure for 3D selection integrals."""

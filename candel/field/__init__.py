@@ -19,5 +19,7 @@ from .field_interp import (                                                     
     )
 
 from .loader import (                                                           # noqa
+    COLA_MANTICORE_NAME,                                                        # noqa
+    available_mcmc_field_indices,                                               # noqa
     name2field_loader,                                                          # noqa
     )
