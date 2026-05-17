@@ -106,6 +106,9 @@ dr = 0.5
 [io.reconstruction_rand_los.manticore_2MPP_MULTIBIN_N256_DES_V2]
 dr = 0.5
 
+[io.reconstruction_rand_los."2MPP_MULTIBIN_N256_DES_V2_COLA"]
+dr = 0.5
+
 [io.reconstruction_main.Carrick2015]
 path_density = "data/fields/carrick2015_twompp_density.npy"
 path_velocity = "data/fields/carrick2015_twompp_velocity.npy"
@@ -113,6 +116,10 @@ Om0 = 0.3
 
 [io.reconstruction_main.manticore_2MPP_MULTIBIN_N256_DES_V2]
 fpath_root = "data/MANTICORE/2MPP_MULTIBIN_N256_DES_V2/sph_fields_new_feb/sph_fields"
+Om0 = 0.306
+
+[io.reconstruction_main."2MPP_MULTIBIN_N256_DES_V2_COLA"]
+fpath_root = "data/MANTICORE/2MPP_MULTIBIN_N256_DES_V2/forward_sph_fields"
 Om0 = 0.306
 
 [io.reconstruction_main.Lilow2024]

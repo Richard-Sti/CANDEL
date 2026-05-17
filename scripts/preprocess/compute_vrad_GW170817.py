@@ -118,7 +118,12 @@ def main():
     recon = args.reconstruction
 
     # Number of realisations per reconstruction
-    nreal_map = {"Carrick2015": 1, "Lilow2024": 1, "CF4": 100}
+    nreal_map = {
+        "Carrick2015": 1,
+        "Lilow2024": 1,
+        "CF4": 100,
+        "2MPP_MULTIBIN_N256_DES_V2_COLA": 30,
+    }
     if recon in nreal_map:
         nsims = list(range(nreal_map[recon]))
     elif recon.lower().startswith("manticore"):

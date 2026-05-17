@@ -443,6 +443,42 @@ class Manticore_FieldLoader(BaseFieldLoader):
         return v.astype(np.float32)
 
 
+class ManticoreCOLA_FieldLoader(BaseFieldLoader):
+    """
+    Manticore-box COLA density and velocity field loader, in the ICRS frame.
+
+    Parameters
+    ----------
+    nsim : int
+        Simulation index.
+    fpath_root : str
+        Directory containing ``mcmc_{nsim}.hdf5`` files with ``overdensity``
+        and ``velocity`` datasets.
+    """
+
+    def __init__(self, nsim, fpath_root, **kwargs):
+        self.fname = join(fpath_root, f"mcmc_{nsim}.hdf5")
+
+        self.coordinate_frame = "icrs"
+        self.boxsize = 681.1  # Mpc / h
+        self.Omega_m = 0.306
+
+    def load_density(self):
+        with File(self.fname, "r") as f:
+            field = 1 + f["overdensity"][:]
+        return field.astype(np.float32)
+
+    def load_velocity(self):
+        with File(self.fname, "r") as f:
+            field = f["velocity"][:]
+        return np.moveaxis(field, -1, 0).astype(np.float32)
+
+    def load_velocity_component(self, component):
+        with File(self.fname, "r") as f:
+            field = f["velocity"][..., component]
+        return field.astype(np.float32)
+
+
 ###############################################################################
 #             Shortcut to get the appropriate field class.                    #
 ###############################################################################
@@ -455,6 +491,7 @@ _FIELD_LOADERS = {
     "CLONES": CLONES_FieldLoader,
     "CB1": CSiBORG_FieldLoader,
     "CB2": CSiBORG_FieldLoader,
+    "2MPP_MULTIBIN_N256_DES_V2_COLA": ManticoreCOLA_FieldLoader,
 }
 
 

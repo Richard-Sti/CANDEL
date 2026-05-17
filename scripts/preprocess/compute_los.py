@@ -156,6 +156,7 @@ def main():
         "CF4": 100,
         "HAMLET_V0": 20,
         "HAMLET_V1": 20,
+        "2MPP_MULTIBIN_N256_DES_V2_COLA": 30,
         }
 
     recon = args.reconstruction
