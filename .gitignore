@@ -45,5 +45,6 @@ docs/plans/
 remote_logs/
 notebooks/paper_S8/sr_interp_cache/
 notebooks/paper_TRGBH0/TRGBH0_variants_table.tex
+notebooks/paper_VFO/output/
 notebooks/manticore_velocity_field/
 notebooks/manticore_velocity_field_cache.npz
