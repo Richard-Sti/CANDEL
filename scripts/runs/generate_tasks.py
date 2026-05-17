@@ -89,7 +89,7 @@ RUN_DIR = Path(__file__).resolve().parent
 CANDEL_ROOT = RUN_DIR.parent.parent
 TASK_INDEX_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 VERBOSE = True
-MANTICORE_COLA_LOS = "2MPP_MULTIBIN_N256_DES_V2_COLA"
+MANTICORE_COLA_LOS = "COLA_manticore_2MPP_MULTIBIN_N256_DES_V2"
 
 fprint = None
 get_nested = None

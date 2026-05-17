@@ -15,12 +15,34 @@
 Scripts to load the existing 3D density and velocity fields so that they can
 be interpolated along the line of sight of galaxies.
 """
+import re
 from abc import ABC, abstractmethod
 from os.path import join
+from pathlib import Path
 
 import numpy as np
 from astropy.io import fits
 from h5py import File
+
+
+COLA_MANTICORE_NAME = "COLA_manticore_2MPP_MULTIBIN_N256_DES_V2"
+_MCMC_FIELD_RE = re.compile(r"mcmc_(\d+)\.hdf5$")
+
+
+def available_mcmc_field_indices(fpath_root):
+    """Return sorted field indices from ``mcmc_<index>.hdf5`` files."""
+    root = Path(fpath_root)
+    indices = []
+    for path in root.glob("mcmc_*.hdf5"):
+        match = _MCMC_FIELD_RE.fullmatch(path.name)
+        if match is not None:
+            indices.append(int(match.group(1)))
+
+    if not indices:
+        raise FileNotFoundError(
+            f"No `mcmc_*.hdf5` field files found in `{root}`.")
+
+    return sorted(indices)
 
 
 def smooth_clip(x, eps=1e-3):
@@ -491,7 +513,7 @@ _FIELD_LOADERS = {
     "CLONES": CLONES_FieldLoader,
     "CB1": CSiBORG_FieldLoader,
     "CB2": CSiBORG_FieldLoader,
-    "2MPP_MULTIBIN_N256_DES_V2_COLA": ManticoreCOLA_FieldLoader,
+    COLA_MANTICORE_NAME: ManticoreCOLA_FieldLoader,
 }
 
 

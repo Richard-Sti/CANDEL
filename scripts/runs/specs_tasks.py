@@ -49,6 +49,7 @@ VEXT_RADMAG_SDSS_FP_CARRICK_PRIOR = {
 }
 VFO_ROOT = "results/VFO"
 VFO_MANTICORE_LOS = "manticore_2MPP_MULTIBIN_N256_DES_V2"
+VFO_MANTICORE_COLA_LOS = "COLA_manticore_2MPP_MULTIBIN_N256_DES_V2"
 
 CH0_PAPER_COMMON = {
     "inference/compute_log_density": False,
@@ -610,6 +611,15 @@ def _vfo_datasets():
             "model/priors/nu_cz": _nu_cz_student_t_prior(),
         },
     ]
+    cola_manticore_pv_models = [
+        {
+            "pv_model/kind": f"precomputed_los_{VFO_MANTICORE_COLA_LOS}",
+            "pv_model/galaxy_bias": "double_powerlaw",
+            "pv_model/density_3d_subsample_fraction": 0.1,
+            "model/priors/beta": _delta(1.0),
+            "model/cz_likelihood": "gaussian",
+        },
+    ]
     return [
         {
             **catalogue,
@@ -652,6 +662,13 @@ def _vfo_datasets():
         }
         for catalogue in catalogues + fp_catalogues
         for pv_model in student_t_pv_models
+    ] + [
+        {
+            **catalogue,
+            **pv_model,
+        }
+        for catalogue in catalogues + fp_catalogues
+        for pv_model in cola_manticore_pv_models
     ]
 
 
@@ -838,7 +855,7 @@ TASK_SPECS = {
     },
     "VFO": {
         "description": (
-            "VFO PV catalogue Carrick2015/Manticore comparison."),
+            "VFO PV catalogue Carrick2015/Manticore/COLA comparison."),
         "config_path": "configs/config.toml",
         "tag": "paper",
         "common": {
@@ -851,7 +868,7 @@ TASK_SPECS = {
             "io/root_output": VFO_ROOT,
         },
         "datasets": _vfo_datasets(),
-        "expected_tasks": 72,
+        "expected_tasks": 80,
     },
     "VFO_single": {
         "description": (

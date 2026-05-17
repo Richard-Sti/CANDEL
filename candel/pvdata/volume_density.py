@@ -55,6 +55,8 @@ def _density_unit_normalization(source):
     source_lower = source_str.lower()
     source_upper = source_str.upper()
 
+    if "cola_manticore" in source_lower:
+        return None
     if "manticore" in source_lower:
         return 0.306 * 275.4, "Manticore", "Om = 0.306"
     if source_upper == "CB1" or "_CB1" in source_upper:
