@@ -1409,7 +1409,8 @@ def _edd_col_str(rows, idx):
 
 def _load_edd_trgb_core(fpath, label, zcmb_min=None, zcmb_max=None,
                         b_min=None, los_data_path=None, return_all=False,
-                        return_mask=False, e_czcmb_default=20.0):
+                        return_mask=False, e_czcmb_default=20.0,
+                        mag_min_TRGB=22.1):
     """Shared loader for ungrouped and grouped EDD TRGB files.
 
     The grouped file has an extra CF4 group Vcmb at column 1 (detected
@@ -1472,6 +1473,14 @@ def _load_edd_trgb_core(fpath, label, zcmb_min=None, zcmb_max=None,
         fprint(f"dropping {np.sum(bad_mag)} galaxies with missing TRGB "
                f"magnitudes.")
     keep &= ~bad_mag
+
+    if mag_min_TRGB is not None:
+        bright_mag = keep & (data["mag"] < mag_min_TRGB)
+        if np.any(bright_mag):
+            fprint(
+                f"dropping {np.sum(bright_mag)} galaxies brighter than "
+                f"mag_min_TRGB={mag_min_TRGB}.")
+        keep &= ~bright_mag
 
     # Drop galaxies without the EDD/Rizzi colour-standardization term.
     bad_colour = keep & (
@@ -1536,8 +1545,10 @@ def _load_EDD_TRGB_from_config_common(config_path, config_key, loader):
     zcmb_max = get_nested(config, f"io/PV_main/{config_key}/zcmb_max", None)
     b_min = get_nested(config, f"io/PV_main/{config_key}/b_min", None)
 
+    mag_min_TRGB = get_nested(config, "model/mag_min_TRGB", 22.1)
     data, mask = loader(root, zcmb_min=zcmb_min, zcmb_max=zcmb_max,
-                        b_min=b_min, return_mask=True)
+                        b_min=b_min, return_mask=True,
+                        mag_min_TRGB=mag_min_TRGB)
 
     data["RA_host"] = data.pop("RA")
     data["dec_host"] = data.pop("dec")

@@ -12,7 +12,8 @@ DATA_ROOT = Path(__file__).resolve().parents[1] / "data" / "EDD_TRGB"
 def test_edd_trgb_loader_matches_sample_summary():
     data = load_EDD_TRGB(str(DATA_ROOT))
 
-    assert len(data["mag"]) == 445
+    assert len(data["mag"]) == 401
+    assert np.all(data["mag"] >= 22.1)
     assert np.all(np.isfinite(data["mag"]))
     assert np.all(np.isfinite(data["colour_dered"]))
     assert np.all(np.isfinite(data["e_colour_dered"]))
@@ -34,8 +35,9 @@ def test_edd_trgb_loader_matches_sample_summary():
 def test_edd_trgb_grouped_loader_matches_sample_summary():
     data = load_EDD_TRGB_grouped(str(DATA_ROOT))
 
-    assert len(data["mag"]) == 273
-    assert len(data["czcmb_group"]) == 273
+    assert len(data["mag"]) == 257
+    assert len(data["czcmb_group"]) == 257
+    assert np.all(data["mag"] >= 22.1)
     assert np.all(np.isfinite(data["mag"]))
     assert np.all(np.isfinite(data["colour_dered"]))
     assert np.all(np.isfinite(data["e_colour_dered"]))
