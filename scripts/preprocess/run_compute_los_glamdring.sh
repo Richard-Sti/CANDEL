@@ -9,9 +9,11 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=../_submit_lib.sh
 source "$ROOT/scripts/_submit_lib.sh"
+cache_root="${XDG_CACHE_HOME:-$HOME/.cache}/candel"
+export MPLCONFIGDIR="${MPLCONFIGDIR:-$cache_root/matplotlib}"
 tmp_root="${TMPDIR:-/tmp}"
-export MPLCONFIGDIR="${MPLCONFIGDIR:-$tmp_root/candel_mpl_${USER:-user}}"
 export NUMBA_CACHE_DIR="${NUMBA_CACHE_DIR:-$tmp_root/candel_numba_${USER:-user}}"
+mkdir -p "$MPLCONFIGDIR" "$NUMBA_CACHE_DIR"
 
 # Extract a TOML key from a config file, with fallback to local_config.toml
 get_toml_key() {
@@ -392,6 +394,9 @@ for i in "${!job_catalogues[@]}"; do
     reconstruction_i="${job_reconstructions[$i]}"
     config_i="${job_configs[$i]}"
     cmd=(
+        env
+        "MPLCONFIGDIR=$MPLCONFIGDIR"
+        "NUMBA_CACHE_DIR=$NUMBA_CACHE_DIR"
         "$python_exec" -u "$ROOT/scripts/preprocess/compute_los.py"
         --catalogue "$catalogue"
         --reconstruction "$reconstruction_i"
