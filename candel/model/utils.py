@@ -334,6 +334,43 @@ def log_integral_gauss_pdf_times_cdf(mu, sigma, t, w):
     return norm_jax.logcdf((t - mu) / jnp.sqrt(sigma**2 + w**2))
 
 
+def log1mexp(x):
+    """Compute log(1 - exp(x)) stably for x <= 0."""
+    return jnp.where(
+        x < -jnp.log(2.0),
+        jnp.log1p(-jnp.exp(x)),
+        jnp.log(-jnp.expm1(x)),
+    )
+
+
+def log_ndtr_diff(hi, lo):
+    """Compute log(Phi(hi) - Phi(lo)) stably for hi > lo."""
+    delta = hi - lo
+    safe_delta = jnp.maximum(delta, jnp.finfo(jnp.asarray(delta).dtype).tiny)
+    mid = 0.5 * (hi + lo)
+    log_small = (jnp.log(safe_delta)
+                 - 0.5 * mid**2 - 0.5 * jnp.log(2.0 * jnp.pi))
+    flip = lo > 0.0
+    log_hi = jnp.where(flip, norm_jax.logcdf(-lo), norm_jax.logcdf(hi))
+    log_lo = jnp.where(flip, norm_jax.logcdf(-hi), norm_jax.logcdf(lo))
+    log_ratio = jnp.minimum(log_lo - log_hi, 0.0)
+    log_exact = log_hi + log1mexp(log_ratio)
+    return jnp.where(delta < 1e-3, log_small, log_exact)
+
+
+def log_prob_integrand_window_sel(x, e_x, low, high, lim_width=None):
+    """Log probability for a smoothed finite selection interval."""
+    x = jnp.asarray(x)
+    e_x = jnp.asarray(e_x)
+    if lim_width is None:
+        scale = e_x
+    else:
+        scale = jnp.sqrt(e_x**2 + lim_width**2)
+    z_hi = (high - x) / scale
+    z_lo = (low - x) / scale
+    return jnp.where(high > low, log_ndtr_diff(z_hi, z_lo), -jnp.inf)
+
+
 def _student_t_sel_gh_weights(nu):
     """GH quadrature nodes (tau) and log-weights for Student-t selection.
 

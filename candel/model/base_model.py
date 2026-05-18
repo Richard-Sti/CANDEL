@@ -127,7 +127,8 @@ from .interp import LOSInterpolator
 from .pv_utils import (lp_galaxy_bias, octupole_radial, quadrupole_radial,
                        rsample, sample_octupole, sample_quadrupole,
                        sigmoid_monopole_radial)
-from .utils import (load_priors, log_prob_integrand_sel, logmeanexp,
+from .utils import (load_priors, log_prob_integrand_sel,
+                    log_prob_integrand_window_sel, logmeanexp,
                     normal_logpdf_var, predict_cz, student_t_logpdf_var)
 
 LOG_4PI = jnp.log(4.0 * jnp.pi)
@@ -1178,6 +1179,32 @@ class H0ModelBase(ModelBase):
         mu_3d = self.mu_at_h1_3d - 5 * jnp.log10(h)
         log_P_sel = log_prob_integrand_sel(
             mu_3d + M_abs, e_mag, mag_lim, mag_width)
+        log_cell_weight = self._selection_3d_log_measure(H0)
+
+        def _one(density_3d):
+            log_n = self._vol_sel_galaxy_bias(density_3d, bias_params)
+            return logsumexp(log_P_sel + log_n + log_cell_weight)
+
+        return lax.map(checkpoint(_one), self.density_3d_fields,
+                       batch_size=self.volume_density_batch_size)
+
+    def _compute_volume_log_S_mag_window(self, bias_params, M_abs, e_mag,
+                                         H0, mag_min, mag_lim, mag_width):
+        """3D selection integral for a finite magnitude window."""
+        if not self.use_reconstruction:
+            lp_r = self._selection_radial_log_measure(H0)
+            mu_grid = self.distance2distmod(self.r_sel_range, h=H0 / 100)
+            log_prob = log_prob_integrand_window_sel(
+                (mu_grid + M_abs)[None, None, :],
+                e_mag, mag_min, mag_lim, mag_width)
+            log_S = ln_simpson_precomputed(
+                lp_r + log_prob, self._simpson_log_w_sel, axis=-1)
+            return logmeanexp(log_S, axis=-1).reshape(-1)
+
+        h = H0 / 100
+        mu_3d = self.mu_at_h1_3d - 5 * jnp.log10(h)
+        log_P_sel = log_prob_integrand_window_sel(
+            mu_3d + M_abs, e_mag, mag_min, mag_lim, mag_width)
         log_cell_weight = self._selection_3d_log_measure(H0)
 
         def _one(density_3d):

@@ -25,7 +25,8 @@ from ..util import fprint, get_nested, replace_prior_with_delta
 from .base_model import H0ModelBase
 from .integration import ln_simpson_precomputed
 from .pv_utils import lp_galaxy_bias, rsample, sample_galaxy_bias
-from .utils import logmeanexp, normal_logpdf_var, predict_cz
+from .utils import (logmeanexp, log_prob_integrand_window_sel,
+                    normal_logpdf_var, predict_cz)
 
 
 class TRGBModel(H0ModelBase):
@@ -33,6 +34,7 @@ class TRGBModel(H0ModelBase):
     TRGB-calibrated H0 model for EDD TRGB distance indicators with
     inhomogeneous Malmquist bias correction and peculiar velocity modeling.
     """
+    _MAG_WINDOW_MIN_WIDTH = 1e-3
 
     # ------------------------------------------------------------------
     #  Phase 1: model physics
@@ -65,6 +67,10 @@ class TRGBModel(H0ModelBase):
         which_sel = get_nested(config, "model/which_selection", None)
         use_TRGB_host_redshift = get_nested(
             config, "model/use_TRGB_host_redshift", True)
+        if (which_sel == "TRGB_magnitude"
+                and get_nested(config, "model/mag_lim_TRGB", None)
+                == "infer"):
+            self._constrain_mag_lim_prior(config)
         if which_sel == "SN_magnitude":
             priors.setdefault("sigma_int_SN", {
                 "dist": "maxwell",
@@ -82,6 +88,48 @@ class TRGBModel(H0ModelBase):
             replace_prior_with_delta(config, "sigma_v", 100.0)
 
         return config
+
+    def _constrain_mag_lim_prior(self, config):
+        """Keep the inferred upper magnitude threshold above mag_min_TRGB."""
+        priors = config.setdefault("model", {}).setdefault("priors", {})
+        mag_min = float(get_nested(config, "model/mag_min_TRGB", 22.0))
+        low_bound = mag_min + self._MAG_WINDOW_MIN_WIDTH
+        spec = priors.setdefault("mag_lim_TRGB", {
+            "dist": "truncated_normal",
+            "mean": max(24.0, low_bound + 1.0),
+            "scale": 1.0,
+            "low": low_bound,
+        })
+        dist = spec.get("dist")
+        if dist == "normal":
+            loc = spec["loc"]
+            scale = spec["scale"]
+            spec.clear()
+            spec.update({
+                "dist": "truncated_normal",
+                "mean": loc,
+                "scale": scale,
+                "low": low_bound,
+            })
+        elif dist == "truncated_normal":
+            low = spec.get("low", None)
+            if low is None or low < low_bound:
+                spec["low"] = low_bound
+            if (spec.get("high", None) is not None
+                    and spec["high"] <= spec["low"]):
+                raise ValueError(
+                    "`mag_lim_TRGB` prior high must exceed mag_min_TRGB.")
+        elif dist == "uniform":
+            if spec["low"] < low_bound:
+                spec["low"] = low_bound
+            if spec["high"] <= spec["low"]:
+                raise ValueError(
+                    "`mag_lim_TRGB` prior high must exceed mag_min_TRGB.")
+        else:
+            raise ValueError(
+                "Inferred TRGB magnitude-window selection requires "
+                "`mag_lim_TRGB` prior to be normal, truncated_normal, "
+                f"or uniform, got {dist!r}.")
 
     def _load_selection_thresholds(self):
         active_map = {
@@ -109,6 +157,10 @@ class TRGBModel(H0ModelBase):
             self.config, "model/use_density_dependent_sigma_v", False)
         fprint("use_density_dependent_sigma_v set to "
                f"{self.use_density_dependent_sigma_v}")
+        self.mag_min_TRGB = get_nested(
+            self.config, "model/mag_min_TRGB", 22.0)
+        if self.which_selection == "TRGB_magnitude":
+            fprint(f"mag_min_TRGB set to {self.mag_min_TRGB}")
 
     # ------------------------------------------------------------------
     #  Phase 2: data loading
@@ -293,11 +345,20 @@ class TRGBModel(H0ModelBase):
             needs_velocity=selection_needs_redshift)
 
         if self.which_selection == "TRGB_magnitude":
+            if not np.isfinite(float(self.mag_min_TRGB)):
+                raise ValueError("`mag_min_TRGB` must be finite.")
             if self.mag_lim_TRGB is None \
                     and not self._infer_mag_lim_TRGB:
                 raise ValueError(
                     "`mag_lim_TRGB` must be set or 'infer' "
                     "for TRGB_magnitude selection.")
+            if (self.mag_lim_TRGB is not None
+                    and not self._infer_mag_lim_TRGB
+                    and self.mag_lim_TRGB <= (
+                        self.mag_min_TRGB + self._MAG_WINDOW_MIN_WIDTH)):
+                raise ValueError(
+                    "`mag_lim_TRGB` must exceed `mag_min_TRGB` for "
+                    "TRGB_magnitude selection.")
         if self.which_selection == "redshift":
             if self.cz_lim_selection is None \
                     and not self._infer_cz_lim_selection:
@@ -432,13 +493,15 @@ class TRGBModel(H0ModelBase):
             mag_width = self._resolve_threshold("mag_lim_TRGB_width")
 
             factor("ll_sel_per_object", jnp.sum(
-                norm_jax.logcdf((mag_lim - self.mag_obs) / mag_width)))
+                log_prob_integrand_window_sel(
+                    self.mag_obs, 0.0, self.mag_min_TRGB,
+                    mag_lim, mag_width)))
 
             e_eff = jnp.sqrt(
                 self.e2_mag_median + sigma_int**2 + colour_sel_var)
-            log_S = self._compute_volume_log_S_mag(
+            log_S = self._compute_volume_log_S_mag_window(
                 bias_params, M_TRGB_sel, e_eff, H0,
-                mag_lim, mag_width)
+                self.mag_min_TRGB, mag_lim, mag_width)
 
         elif self.which_selection == "redshift":
             cz_lim = self._resolve_threshold("cz_lim_selection")
