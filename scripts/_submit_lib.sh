@@ -311,17 +311,21 @@ submit_job() {
             local mods="$CANDEL_MODULES"
             (( gpu )) && [[ -n "$CANDEL_MODULES_GPU" ]] && mods="$CANDEL_MODULES_GPU"
             local _sbatch_out
-            _sbatch_out=$(sbatch "${sbatch_flags[@]}" <<SCRIPT
+            if ! _sbatch_out=$(sbatch "${sbatch_flags[@]}" <<SCRIPT
 #!/bin/bash -l
 export CANDEL_MODULES_ACTIVE="$mods"
 export PYTHONPATH="$CANDEL_ROOT\${PYTHONPATH:+:\$PYTHONPATH}"
 source "$_cluster_profile"
 $cmd_str
 SCRIPT
-            )
+            ); then
+                echo "$_sbatch_out"
+                return 1
+            fi
             echo "$_sbatch_out"
             local _jid
-            _jid=$(echo "$_sbatch_out" | grep -oP 'Submitted batch job \K[0-9]+')
+            _jid=$(echo "$_sbatch_out" \
+                | grep -oP 'Submitted batch job \K[0-9]+' || true)
             [[ -n "$_jid" ]] && echo "JOBID=$_jid"
             ;;
         glamdring)
@@ -370,13 +374,20 @@ SCRIPT
             fi
             local _aq_out
             if [[ ${#addqueue_env[@]} -gt 0 ]]; then
-                _aq_out=$(env "${addqueue_env[@]}" addqueue --sbatch "${addqueue_flags[@]}" $cmd_str 2>&1)
+                if ! _aq_out=$(env "${addqueue_env[@]}" addqueue --sbatch "${addqueue_flags[@]}" $cmd_str 2>&1); then
+                    echo "$_aq_out"
+                    return 1
+                fi
             else
-                _aq_out=$(addqueue --sbatch "${addqueue_flags[@]}" $cmd_str 2>&1)
+                if ! _aq_out=$(addqueue --sbatch "${addqueue_flags[@]}" $cmd_str 2>&1); then
+                    echo "$_aq_out"
+                    return 1
+                fi
             fi
             echo "$_aq_out"
             local _jid
-            _jid=$(echo "$_aq_out" | grep -oP 'Submitted batch job \K[0-9]+')
+            _jid=$(echo "$_aq_out" \
+                | grep -oP 'Submitted batch job \K[0-9]+' || true)
             [[ -n "$_jid" ]] && echo "JOBID=$_jid"
             ;;
         local)
