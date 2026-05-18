@@ -40,6 +40,11 @@ model boundary: it should be increased until `log S` is stable.
 For convergence or memory tests, `model.density_3d_subsample_fraction < 1`
 keeps a deterministic random voxel subset and rescales the voxel measure by
 the inverse kept fraction; the default `1.0` uses every loaded voxel.
+Optionally, `model.selection_integral_supersample_radius > 0` and
+`model.selection_integral_supersample_target_dx > 0` split parent voxels
+intersecting that inner radius into subcells when building the cached volume
+integral. Density and velocity are trilinearly interpolated to the subcell
+centres.
 Conceptually, the density outside the loaded reconstruction can be treated as
 mean density (`n_i = 1`), but the practical requirement is stricter: for
 posterior-relevant selection parameters, the selection probability should be
@@ -740,8 +745,58 @@ class H0ModelBase(ModelBase):
             raise ValueError(
                 "`model.selection_integral_geometry` must be 'sphere' "
                 "or 'cube'.")
+        factor = get_nested(
+            config, "model/selection_integral_supersample_factor", 1)
+        if isinstance(factor, bool) or int(factor) != factor:
+            raise ValueError(
+                "`model.selection_integral_supersample_factor` must be an "
+                f"integer >= 1, got {factor!r}.")
+        self.selection_integral_supersample_factor = int(factor)
+        if self.selection_integral_supersample_factor < 1:
+            raise ValueError(
+                "`model.selection_integral_supersample_factor` must be >= 1, "
+                f"got {factor!r}.")
+        self.selection_integral_supersample_radius = float(get_nested(
+            config, "model/selection_integral_supersample_radius", 0.0))
+        if self.selection_integral_supersample_radius < 0.0:
+            raise ValueError(
+                "`model.selection_integral_supersample_radius` must be >= 0, "
+                f"got {self.selection_integral_supersample_radius!r}.")
+        target_dx = get_nested(
+            config, "model/selection_integral_supersample_target_dx", None)
+        if target_dx is not None:
+            target_dx = float(target_dx)
+            if target_dx < 0.0:
+                raise ValueError(
+                    "`model.selection_integral_supersample_target_dx` must "
+                    f"be >= 0, got {target_dx!r}.")
+            if np.isclose(target_dx, 0.0):
+                target_dx = None
+        self.selection_integral_supersample_target_dx = target_dx
         if self.apply_sel and self.use_reconstruction:
             fprint("using 3D selection integral")
+            if (self.selection_integral_supersample_target_dx is not None
+                    and self.selection_integral_supersample_radius > 0.0):
+                fprint(
+                    "3D selection integral supersampling enabled: "
+                    f"target_dx="
+                    f"{self.selection_integral_supersample_target_dx:g} "
+                    "Mpc/h for parent voxels intersecting r < "
+                    f"{self.selection_integral_supersample_radius:g} Mpc/h; "
+                    "using trilinear interpolation.")
+            elif (self.selection_integral_supersample_factor > 1
+                  and self.selection_integral_supersample_radius > 0.0):
+                fprint(
+                    "3D selection integral supersampling enabled: "
+                    f"factor={self.selection_integral_supersample_factor} "
+                    "per axis "
+                    f"({self.selection_integral_supersample_factor ** 3:,} "
+                    "subcells/voxel) for parent voxels intersecting "
+                    "r < "
+                    f"{self.selection_integral_supersample_radius:g} Mpc/h, "
+                    "using trilinear interpolation.")
+            else:
+                fprint("3D selection integral supersampling disabled.")
 
         # Robust velocity-error modelling options
         self.cz_likelihood = get_nested(
