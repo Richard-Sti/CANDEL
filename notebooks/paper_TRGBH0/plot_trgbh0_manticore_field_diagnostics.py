@@ -29,15 +29,24 @@ PATTERN = (
     "manticore_field_const_sigv.hdf5"
 )
 FIELD_RE = re.compile(r"_field(\d+)_")
-PARAMS = ("H0", "sigma_int", "sigma_v")
+PARAMS = ("H0", "sigma_int", "sigma_v", "mag_lim_TRGB",
+          "mag_lim_TRGB_width")
 
 PLOT_CHOICES = (
     "sigma-v-posterior",
     "h0-sigma-v",
     "h0-sigma-int",
     "sigma-int-sigma-v",
+    "h0-mag-lim-trgb",
     "all",
 )
+PLOT_PARAMS = {
+    "sigma-v-posterior": ("sigma_v",),
+    "h0-sigma-v": ("sigma_v", "H0"),
+    "h0-sigma-int": ("sigma_int", "H0"),
+    "sigma-int-sigma-v": ("sigma_int", "sigma_v", "H0"),
+    "h0-mag-lim-trgb": ("mag_lim_TRGB", "H0", "mag_lim_TRGB_width"),
+}
 
 
 def parse_args():
@@ -47,7 +56,8 @@ def parse_args():
         nargs="*",
         help=(
             "Diagnostics to plot: sigma-v-posterior, h0-sigma-v, "
-            "h0-sigma-int, sigma-int-sigma-v, or all. Default: all."
+            "h0-sigma-int, sigma-int-sigma-v, h0-mag-lim-trgb, or all. "
+            "Default: all."
         ),
     )
     return parser.parse_args()
@@ -79,7 +89,7 @@ def summary(samples):
     }
 
 
-def load_rows():
+def load_rows(params=PARAMS):
     paths = sorted(RESULTS.glob(PATTERN), key=field_index)
     if not paths:
         raise FileNotFoundError(f"No HDF5 files matching `{PATTERN}`.")
@@ -87,12 +97,12 @@ def load_rows():
     rows = []
     for path in paths:
         with h5py.File(path, "r") as handle:
-            samples = {name: finite_samples(handle, name, path) for name in PARAMS}
+            samples = {name: finite_samples(handle, name, path) for name in params}
         rows.append({
             "field": field_index(path),
             "source": str(path),
-            **{f"n_{name}": samples[name].size for name in PARAMS},
-            **{name: summary(samples[name]) for name in PARAMS},
+            **{f"n_{name}": samples[name].size for name in params},
+            **{name: summary(samples[name]) for name in params},
             "samples": samples,
         })
     return rows
@@ -281,6 +291,7 @@ def plot_two_parameter_scatter(
     out_basename,
     summary_basename,
     colour_by=None,
+    colour_stat="mean",
     colourbar_label="Manticore field",
 ):
     params = (x_name, y_name) if colour_by is None else (x_name, y_name, colour_by)
@@ -297,7 +308,7 @@ def plot_two_parameter_scatter(
         colour_values = fields
         norm = plt.Normalize(vmin=0, vmax=29)
     else:
-        colour_values = np.asarray([row[colour_by]["mean"] for row in rows])
+        colour_values = np.asarray([row[colour_by][colour_stat] for row in rows])
         norm = plt.Normalize(vmin=np.min(colour_values), vmax=np.max(colour_values))
 
     with plt.style.context("science"):
@@ -375,9 +386,12 @@ def requested_plots(items):
 def main():
     args = parse_args()
     OUTDIR.mkdir(parents=True, exist_ok=True)
-    rows = load_rows()
+    plots = requested_plots(args.plots)
+    params = tuple(dict.fromkeys(
+        param for item in plots for param in PLOT_PARAMS[item]))
+    rows = load_rows(params)
 
-    for item in requested_plots(args.plots):
+    for item in plots:
         if item == "sigma-v-posterior":
             plot_sigma_v_posterior(rows)
         elif item == "h0-sigma-v":
@@ -426,6 +440,24 @@ def main():
                     r"Mean $H_0 ~ [\mathrm{km}\,\mathrm{s}^{-1}\,"
                     r"\mathrm{Mpc}^{-1}]$"
                 ),
+            )
+        elif item == "h0-mag-lim-trgb":
+            plot_two_parameter_scatter(
+                rows,
+                name=item,
+                x_name="mag_lim_TRGB",
+                y_name="H0",
+                x_label=r"$m_{\rm lim}^{\rm TRGB} ~ [\mathrm{mag}]$",
+                y_label=(
+                    r"$H_0 ~ [\mathrm{km}\,\mathrm{s}^{-1}\,"
+                    r"\mathrm{Mpc}^{-1}]$"
+                ),
+                cmap_name="trgbh0_h0_mag_lim_trgb_width",
+                out_basename="trgbh0_manticore_field_h0_mag_lim_trgb",
+                summary_basename="manticore_field_h0_mag_lim_trgb_summary",
+                colour_by="mag_lim_TRGB_width",
+                colour_stat="q50",
+                colourbar_label=r"Median $m_{\rm lim}^{\rm TRGB}$ width [mag]",
             )
         else:
             raise ValueError(f"Unhandled plot `{item}`.")
