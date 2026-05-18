@@ -35,6 +35,14 @@ def generate_random_sky(npoints, seed):
     return RA, dec
 
 
+def pv_main_los_config(config, catalogue):
+    """Return the LOS template and raw catalogue-loader kwargs."""
+    d = config["io"]["PV_main"][catalogue].copy()
+    los_file = d.pop("los_file")
+    d.pop("which_host_los", None)
+    return los_file, d
+
+
 def load_los(catalogue, config, filepath=None, config_path=None):
     if "random_" in catalogue:
         d = config["io"].copy()
@@ -44,63 +52,51 @@ def load_los(catalogue, config, filepath=None, config_path=None):
         # This could, in principle, account for the ZoA mask.
         RA, dec = generate_random_sky(npoints, seed=42)
     elif catalogue == "CF4":
-        d = config["io"]["PV_main"][catalogue].copy()
-        los_file = d.pop("los_file")
+        los_file, d = pv_main_los_config(config, catalogue)
         data = candel.pvdata.load_CF4_data(**d)
         RA, dec = data["RA"], data["dec"]
     elif catalogue == "2MTF":
-        d = config["io"]["PV_main"][catalogue].copy()
-        los_file = d.pop("los_file")
+        los_file, d = pv_main_los_config(config, catalogue)
         data = candel.pvdata.load_2MTF(**d)
         RA, dec = data["RA"], data["dec"]
     elif catalogue == "SFI":
-        d = config["io"]["PV_main"][catalogue].copy()
-        los_file = d.pop("los_file")
+        los_file, d = pv_main_los_config(config, catalogue)
         data = candel.pvdata.load_SFI(**d)
         RA, dec = data["RA"], data["dec"]
     elif catalogue == "PantheonPlus":
-        d = config["io"]["PV_main"][catalogue].copy()
-        los_file = d.pop("los_file")
+        los_file, d = pv_main_los_config(config, catalogue)
         data = candel.pvdata.load_PantheonPlus(**d)
         RA, dec = data["RA"], data["dec"]
     elif catalogue == "PantheonPlusLane":
-        d = config["io"]["PV_main"][catalogue].copy()
-        los_file = d.pop("los_file")
+        los_file, d = pv_main_los_config(config, catalogue)
         data = candel.pvdata.load_PantheonPlus_Lane(**d)
         RA, dec = data["RA"], data["dec"]
     elif catalogue == "Foundation":
-        d = config["io"]["PV_main"][catalogue].copy()
-        los_file = d.pop("los_file")
+        los_file, d = pv_main_los_config(config, catalogue)
         data = candel.pvdata.load_Foundation(**d)
         RA, dec = data["RA"], data["dec"]
     elif catalogue == "LOSS":
-        d = config["io"]["PV_main"][catalogue].copy()
-        los_file = d.pop("los_file")
+        los_file, d = pv_main_los_config(config, catalogue)
         data = candel.pvdata.load_LOSS(**d)
         RA, dec = data["RA"], data["dec"]
     elif catalogue == "SDSS_FP":
-        d = config["io"]["PV_main"][catalogue].copy()
-        los_file = d.pop("los_file")
+        los_file, d = pv_main_los_config(config, catalogue)
         data = candel.pvdata.load_SDSS_FP(**d)
         RA, dec = data["RA"], data["dec"]
     elif catalogue == "6dF_FP":
-        d = config["io"]["PV_main"][catalogue].copy()
-        los_file = d.pop("los_file")
+        los_file, d = pv_main_los_config(config, catalogue)
         data = candel.pvdata.load_6dF_FP(**d)
         RA, dec = data["RA"], data["dec"]
     elif catalogue == "EDD_TRGB":
-        d = config["io"]["PV_main"][catalogue].copy()
-        los_file = d.pop("los_file")
+        los_file, d = pv_main_los_config(config, catalogue)
         data = candel.pvdata.load_EDD_TRGB(return_all=True, **d)
         RA, dec = data["RA"], data["dec"]
     elif catalogue == "EDD_TRGB_grouped":
-        d = config["io"]["PV_main"][catalogue].copy()
-        los_file = d.pop("los_file")
+        los_file, d = pv_main_los_config(config, catalogue)
         data = candel.pvdata.load_EDD_TRGB_grouped(return_all=True, **d)
         RA, dec = data["RA"], data["dec"]
     elif catalogue == "SH0ES":
-        d = config["io"]["PV_main"][catalogue].copy()
-        los_file = d.pop("los_file")
+        los_file, d = pv_main_los_config(config, catalogue)
         data = candel.pvdata.load_SH0ES_separated(**d)
         RA, dec = data["RA_host"], data["dec_host"]
     elif catalogue == "CCHP":
