@@ -28,8 +28,13 @@ which_selection = "SN_magnitude"
 distmod_limits = [15, 40]
 distmod_limits_LMC = [17, 20]
 distmod_limits_N4258 = [28, 31]
-r_limits_malmquist = [0.01, 150]
+r_limits_malmquist = [0.15, 150]
 num_points_malmquist = 101
+
+# Optional inner-region supersampling for the 3D selection integral.
+# target_dx=0 or radius=0 disables inner-region supersampling.
+selection_integral_supersample_radius = 30.0
+selection_integral_supersample_target_dx = 0.3
 
 mag_lim_SN = "infer"
 mag_lim_SN_width = "infer"
@@ -119,11 +124,11 @@ fname_output = "results/CCHP/test_sn_sel.hdf5"
 path = "data/CCHP/cchp_processed_data.tsv"
 los_file = "data/CCHP/los_CCHP_<X>.hdf5"
 
-# Override the default reconstruction grid to match EDD TRGB
+# Override reconstruction grid for CCHP TRGB.
 [io.reconstruction_main]
 rmin = 0.1
-rmax = 51
-num_steps = 301
+rmax = 75
+num_steps = 401
 
 [io.CCHP_redshift_source]
 kind = "cz_cmb"

@@ -49,7 +49,7 @@ num_rand_los_no_recon = 1000
 distmod_limits = [10, 38]
 distmod_limits_LMC = [17, 20]
 distmod_limits_N4258 = [28, 31]
-r_limits_malmquist = [0.01, 35]
+r_limits_malmquist = [0.15, 35]
 
 delta_mu = 0.00625
 dr_max = 0.05
@@ -61,7 +61,12 @@ dr_max_sel = 0.375
 selection_integral_geometry = "sphere"
 selection_integral_grid_radius = 50.0
 density_3d_subsample_fraction = 1.0
+# Optional inner-region supersampling for the 3D selection integral.
+# target_dx=0 or radius=0 disables inner-region supersampling.
+selection_integral_supersample_radius = 15.0
+selection_integral_supersample_target_dx = 0.325
 
+mag_min_TRGB = 22.1
 mag_lim_TRGB = "infer"
 mag_lim_TRGB_width = "infer"
 cz_lim_selection = "infer"
@@ -138,7 +143,7 @@ high = 5.0
 # Selection thresholds
 [model.priors.mag_lim_TRGB]
 dist = "uniform"
-low = 20.0
+low = 22.101
 high = 29.0
 
 [model.priors.mag_lim_TRGB_width]
@@ -193,6 +198,7 @@ fname_output = "results/EDD_TRGB/test.hdf5"
 
 # Override reconstruction grid for TRGB (shorter range, finer grid)
 [io.reconstruction_main]
+rmin = 0.1
 rmax = 51
 num_steps = 301
 

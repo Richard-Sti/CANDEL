@@ -19,6 +19,8 @@ TRGBH0_EDD_MAG_LIM_LOW = 22.101
 TRGBH0_EDD_MAG_LIM_HIGH = 29.0
 TRGBH0_SELECTION_SUPERSAMPLE_RADIUS = 15.0
 TRGBH0_SELECTION_SUPERSAMPLE_TARGET_DX = 0.325
+TRGBH0_CCHP_SELECTION_SUPERSAMPLE_RADIUS = 30.0
+TRGBH0_CCHP_SELECTION_SUPERSAMPLE_TARGET_DX = 0.3
 S8_ROOT = "results/S8"
 S8_PV_KIND = "precomputed_los_Carrick2015"
 S8_BIAS_MODELS = ["linear", "quadratic", "double_powerlaw"]
@@ -121,6 +123,16 @@ def _trgbh0_edd_mag_lim_prior():
         "dist": "uniform",
         "low": TRGBH0_EDD_MAG_LIM_LOW,
         "high": TRGBH0_EDD_MAG_LIM_HIGH,
+    }
+
+
+def _trgbh0_cchp_config():
+    return {
+        "config_path": "configs/config_CCHP_TRGB.toml",
+        "model/selection_integral_supersample_radius": (
+            TRGBH0_CCHP_SELECTION_SUPERSAMPLE_RADIUS),
+        "model/selection_integral_supersample_target_dx": (
+            TRGBH0_CCHP_SELECTION_SUPERSAMPLE_TARGET_DX),
     }
 
 
@@ -412,19 +424,19 @@ def _trgbh0_manticore_field_datasets():
 def _trgbh0_cchp_subset_datasets():
     main_models = [
         {
-            "config_path": "configs/config_CCHP_TRGB.toml",
+            **_trgbh0_cchp_config(),
             "model/use_reconstruction": False,
             "model/use_density_dependent_sigma_v": False,
         },
         {
-            "config_path": "configs/config_CCHP_TRGB.toml",
+            **_trgbh0_cchp_config(),
             "model/use_reconstruction": True,
             "model/use_density_dependent_sigma_v": False,
             "io/which_host_los": "Carrick2015",
             "model/priors/beta": _trgbh0_carrick_beta_prior(),
         },
         {
-            "config_path": "configs/config_CCHP_TRGB.toml",
+            **_trgbh0_cchp_config(),
             "model/use_reconstruction": True,
             "model/use_density_dependent_sigma_v": False,
             "io/which_host_los": TRGBH0_MANTICORE_LOS,
@@ -433,7 +445,7 @@ def _trgbh0_cchp_subset_datasets():
     ]
     student_t_models = [
         {
-            "config_path": "configs/config_CCHP_TRGB.toml",
+            **_trgbh0_cchp_config(),
             "model/use_reconstruction": True,
             "model/use_density_dependent_sigma_v": False,
             "model/cz_likelihood": "student_t",
@@ -442,7 +454,7 @@ def _trgbh0_cchp_subset_datasets():
             "model/priors/beta": _trgbh0_carrick_beta_prior(),
         },
         {
-            "config_path": "configs/config_CCHP_TRGB.toml",
+            **_trgbh0_cchp_config(),
             "model/use_reconstruction": True,
             "model/use_density_dependent_sigma_v": False,
             "model/cz_likelihood": "student_t",

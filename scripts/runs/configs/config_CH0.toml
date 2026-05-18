@@ -51,6 +51,10 @@ distmod_limits_anchor = [23, 26]
 selection_integral_geometry = "sphere"
 selection_integral_grid_radius = 60.0
 density_3d_subsample_fraction = 1.0
+# Optional inner-region supersampling for the 3D selection integral.
+# target_dx=0 or radius=0 disables inner-region supersampling.
+selection_integral_supersample_radius = 30.0
+selection_integral_supersample_target_dx = 0.3
 
 # --- Overrides from default priors ---
 
@@ -150,6 +154,12 @@ root_output = "results/CH0"
 fname_output = "results/CH0/test.hdf5"
 los_file_random = "data/los_random_<X>.hdf5"
 los_r0_decay_scale = 5
+
+# Override reconstruction grid for Cepheid H0.
+[io.reconstruction_main]
+rmin = 0.1
+rmax = 75
+num_steps = 401
 
 [io.SH0ES]
 root = "data/SH0ES"
