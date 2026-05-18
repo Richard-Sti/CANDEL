@@ -181,7 +181,8 @@ PY
 }
 
 los_grid_values() {
-    "$python_exec" - "$config" <<'PY'
+    local grid_config="$1"
+    "$python_exec" - "$grid_config" <<'PY'
 import sys
 import tomllib
 from pathlib import Path
@@ -225,7 +226,10 @@ PY
 
 los_file_status() {
     local path="$1"
-    "$python_exec" - "$path" "$los_rmin" "$los_rmax" "$los_num_steps" <<'PY'
+    local rmin="$2"
+    local rmax="$3"
+    local num_steps="$4"
+    "$python_exec" - "$path" "$rmin" "$rmax" "$num_steps" <<'PY'
 import sys
 from pathlib import Path
 
@@ -353,14 +357,12 @@ if [[ -z "$python_exec" ]]; then
     python_exec="$CANDEL_PYTHON"
 fi
 
-IFS=$'\t' read -r los_rmin los_rmax los_num_steps < <(los_grid_values)
-los_grid_display="r=[$los_rmin, $los_rmax] Mpc/h, num_steps=$los_num_steps"
-
 # ---- submit jobs ----
 job_catalogues=()
 job_reconstructions=()
 job_configs=()
 job_los_paths=()
+job_grid_displays=()
 skipped_los=()
 stale_los=()
 
@@ -370,13 +372,19 @@ if [[ ! -f "$task_file" ]]; then
 fi
 while IFS=$'\t' read -r catalogue reconstruction_i config_i los_path; do
     [[ -z "$catalogue" ]] && continue
+    IFS=$'\t' read -r los_rmin los_rmax los_num_steps < <(
+        los_grid_values "$config_i")
+    los_grid_display="r=[$los_rmin, $los_rmax] Mpc/h, num_steps=$los_num_steps"
     los_check_path="$los_path"
     if [[ "$los_check_path" != /* ]]; then
         los_check_path="$ROOT/$los_check_path"
     fi
     if [[ -f "$los_check_path" && $force_los == false ]]; then
-        if status=$(los_file_status "$los_check_path"); then
-            skipped_los+=("$catalogue / $reconstruction_i -> $los_path")
+        if status=$(
+            los_file_status "$los_check_path" \
+                "$los_rmin" "$los_rmax" "$los_num_steps"); then
+            skipped_los+=(
+                "$catalogue / $reconstruction_i -> $los_path ($los_grid_display)")
             continue
         else
             stale_los+=(
@@ -387,6 +395,7 @@ while IFS=$'\t' read -r catalogue reconstruction_i config_i los_path; do
     job_reconstructions+=("$reconstruction_i")
     job_configs+=("$config_i")
     job_los_paths+=("$los_path")
+    job_grid_displays+=("$los_grid_display")
 done < <(infer_los_jobs "$task_file" "$task_ids")
 
 echo "LOS compute plan:"
@@ -396,6 +405,7 @@ if [[ ${#job_catalogues[@]} -gt 0 ]]; then
         if [[ -n "${job_los_paths[$i]}" ]]; then
             echo "      ${job_los_paths[$i]}"
         fi
+        echo "      ${job_grid_displays[$i]}"
     done
 else
     echo "  none"
@@ -424,8 +434,7 @@ echo "  Queue: $queue"
 echo "  CPUs: $ncpu"
 echo "  Memory: ${memory} GB"
 echo "  Python: $python_exec"
-echo "  LOS config: $config"
-echo "  LOS grid: $los_grid_display"
+echo "  Default config: $config"
 echo "  Force LOS recompute: $force_los"
 echo
 
@@ -455,6 +464,7 @@ for i in "${!job_catalogues[@]}"; do
     )
 
     echo "Submitting catalogue: $catalogue / $reconstruction_i"
+    echo "  LOS grid: ${job_grid_displays[$i]}"
     submit_out=$(
         submit_job --queue "$queue" --mem "$memory" --mpi-n "$ncpu" \
             --name "compute_los_${catalogue}_${reconstruction_i}" \
