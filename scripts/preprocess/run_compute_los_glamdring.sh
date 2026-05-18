@@ -104,22 +104,72 @@ def compute_catalogue(catalogue, los_template):
     return catalogue
 
 
+def get_nested(config, path, default=None):
+    out = config
+    for part in path.split("/"):
+        if not isinstance(out, dict) or part not in out:
+            return default
+        out = out[part]
+    return out
+
+
+def h0_los_job(config, cfg_path):
+    if not get_nested(config, "model/use_reconstruction", False):
+        return None
+    which_run = get_nested(config, "model/which_run", None)
+    if which_run == "CH0":
+        catalogue = "SH0ES"
+        reconstruction = get_nested(config, "io/SH0ES/which_host_los", None)
+        los_template = get_nested(config, "io/PV_main/SH0ES/los_file", None)
+    elif which_run in {"CCHP", "CCHP_CSP"}:
+        catalogue = "CCHP"
+        reconstruction = get_nested(
+            config, "io/which_host_los",
+            get_nested(config, "io/CCHP/which_host_los", None))
+        los_template = get_nested(config, "io/CCHP/los_file", None)
+    elif which_run in {"EDD_TRGB", "EDD_TRGB_grouped"}:
+        catalogue = which_run
+        reconstruction = get_nested(
+            config, "io/which_host_los",
+            get_nested(
+                config,
+                f"io/PV_main/{which_run}/which_host_los", None))
+        los_template = get_nested(
+            config, f"io/PV_main/{which_run}/los_file", None)
+    else:
+        return None
+
+    if reconstruction is None or los_template is None:
+        raise KeyError(
+            f"{cfg_path}: no LOS reconstruction/template for {which_run}")
+    return catalogue, reconstruction, los_template
+
+
+def iter_los_jobs(config, cfg_path):
+    kind = get_nested(config, "pv_model/kind", "")
+    if isinstance(kind, str) and kind.startswith("precomputed_los_"):
+        reconstruction = kind.removeprefix("precomputed_los_")
+        catalogues = config["io"]["catalogue_name"]
+        if isinstance(catalogues, str):
+            catalogues = [catalogues]
+        for catalogue in catalogues:
+            io_section = config["io"].get(catalogue)
+            if io_section is None or "los_file" not in io_section:
+                raise KeyError(
+                    f"{cfg_path}: no io.{catalogue}.los_file section")
+            yield catalogue, reconstruction, io_section["los_file"]
+        return
+
+    h0_job = h0_los_job(config, cfg_path)
+    if h0_job is not None:
+        yield h0_job
+
+
 seen = {}
 for idx, cfg_path in task_rows(task_file):
     config = tomllib.loads(cfg_path.read_text())
-    kind = config["pv_model"]["kind"]
-    if not kind.startswith("precomputed_los_"):
-        continue
-    reconstruction = kind.removeprefix("precomputed_los_")
-    catalogues = config["io"]["catalogue_name"]
-    if isinstance(catalogues, str):
-        catalogues = [catalogues]
-    for catalogue in catalogues:
-        io_section = config["io"].get(catalogue)
-        if io_section is None or "los_file" not in io_section:
-            raise KeyError(
-                f"{cfg_path}: no io.{catalogue}.los_file section")
-        los_template = io_section["los_file"]
+    for catalogue, reconstruction, los_template in iter_los_jobs(
+            config, cfg_path):
         los_path = los_template.replace("<X>", reconstruction)
         catalogue_compute = compute_catalogue(catalogue, los_template)
         key = (catalogue_compute, reconstruction, los_path)
