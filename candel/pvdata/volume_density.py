@@ -161,6 +161,297 @@ def _h0_volume_cache_sampling_payload(fraction, seed):
     return {"downsample": 1}
 
 
+def _validate_h0_volume_supersampling(factor, radius, target_dx=None):
+    """Validate inner-region supersampling settings for H0 volume data."""
+    if isinstance(factor, bool) or int(factor) != factor:
+        raise ValueError(
+            "`model.selection_integral_supersample_factor` must be an "
+            f"integer >= 1, got {factor!r}.")
+    factor = int(factor)
+    if factor < 1:
+        raise ValueError(
+            "`model.selection_integral_supersample_factor` must be >= 1, "
+            f"got {factor!r}.")
+    radius = float(radius)
+    if radius < 0.0:
+        raise ValueError(
+            "`model.selection_integral_supersample_radius` must be >= 0, "
+            f"got {radius!r}.")
+    if target_dx is not None:
+        target_dx = float(target_dx)
+        if target_dx < 0.0:
+            raise ValueError(
+                "`model.selection_integral_supersample_target_dx` must be "
+                f">= 0, got {target_dx!r}.")
+        if np.isclose(target_dx, 0.0):
+            target_dx = None
+    return factor, radius, target_dx
+
+
+def _h0_volume_supersampling_from_config(config):
+    """Return validated H0 inner-region supersampling config."""
+    return _validate_h0_volume_supersampling(
+        get_nested(config, "model/selection_integral_supersample_factor", 1),
+        get_nested(config, "model/selection_integral_supersample_radius", 0.0),
+        get_nested(
+            config, "model/selection_integral_supersample_target_dx", None))
+
+
+def _h0_volume_resolved_supersample_factor(dx, factor, target_dx=None):
+    """Resolve a target subcell size to the nearest integer split factor."""
+    factor, _, target_dx = _validate_h0_volume_supersampling(
+        factor, 0.0, target_dx)
+    if target_dx is None:
+        return factor
+    dx = float(dx)
+    if dx <= 0.0:
+        raise ValueError(f"Native voxel size must be positive, got {dx!r}.")
+    ratio = dx / target_dx
+    lo = max(1, int(np.floor(ratio)))
+    candidates = sorted({1, lo, lo + 1})
+    return min(candidates, key=lambda f: (abs(dx / f - target_dx), -f))
+
+
+def _field_loader_native_dx(loader):
+    """Return a loader's native Cartesian voxel size in Mpc/h."""
+    boxsize = float(loader.boxsize)
+    if hasattr(loader, "ngrid"):
+        return boxsize / int(loader.ngrid)
+    if hasattr(loader, "effective_resolution"):
+        return float(loader.effective_resolution)
+
+    for path_attr, keys in (
+            ("fname", ("density", "overdensity")),
+            ("file_path", ("density",))):
+        if not hasattr(loader, path_attr):
+            continue
+        with File(getattr(loader, path_attr), "r") as f:
+            for key in keys:
+                if key in f:
+                    return boxsize / int(f[key].shape[0])
+
+    if hasattr(loader, "path_density"):
+        arr = np.load(loader.path_density, mmap_mode="r")
+        try:
+            return boxsize / int(arr.shape[0])
+        finally:
+            del arr
+
+    if hasattr(loader, "_density_path"):
+        from astropy.io import fits
+        with fits.open(loader._density_path, memmap=True) as hdul:
+            return boxsize / int(hdul[0].data.shape[0])
+
+    raise ValueError(
+        f"Cannot infer native voxel size for {type(loader).__name__}. "
+        "Set `model.selection_integral_supersample_target_dx = 0` to disable "
+        "target-resolution supersampling for this field.")
+
+
+def _h0_volume_cache_supersampling_payload(factor, radius, target_dx=None):
+    """Cache key entries for H0 inner-region supersampling."""
+    factor, radius, target_dx = _validate_h0_volume_supersampling(
+        factor, radius, target_dx)
+    if factor == 1 or np.isclose(radius, 0.0):
+        return {}
+    return {
+        "supersample": {
+            "factor": factor,
+            "radius": radius,
+            "method": "linear",
+        },
+    }
+
+
+def _supersample_offsets_3d(factor, dx):
+    """Return subcell centre offsets for a regular factor^3 subgrid."""
+    one_d = ((np.arange(factor, dtype=np.float32) + 0.5) / factor
+             - 0.5) * np.float32(dx)
+    ox, oy, oz = np.meshgrid(one_d, one_d, one_d, indexing="ij")
+    return np.column_stack((
+        ox.reshape(-1), oy.reshape(-1), oz.reshape(-1))).astype(np.float32)
+
+
+def _supersample_linear_interpolator(shape, sup_flat, offsets, dx):
+    """Precompute trilinear interpolation indices for supersampled cells."""
+    parent = np.unravel_index(sup_flat, shape)
+    pos = [
+        parent[axis][:, None] + offsets[None, :, axis] / dx
+        for axis in range(3)
+    ]
+
+    indices = []
+    weights = []
+    for axis, n_axis in enumerate(shape):
+        x = np.clip(pos[axis].reshape(-1), 0.0, n_axis - 1.0)
+        lo = np.floor(x).astype(np.intp)
+        hi = np.minimum(lo + 1, n_axis - 1)
+        indices.extend([lo, hi])
+        weights.append((x - lo).astype(np.float32))
+    return tuple(indices), tuple(weights)
+
+
+def _trilinear_interpolate_3d(field, indices, weights):
+    """Evaluate a regular 3D field at precomputed trilinear positions."""
+    i0, i1, j0, j1, k0, k1 = indices
+    wx, wy, wz = weights
+    field = np.asarray(field)
+
+    c00 = field[i0, j0, k0] * (1.0 - wx) + field[i1, j0, k0] * wx
+    c01 = field[i0, j0, k1] * (1.0 - wx) + field[i1, j0, k1] * wx
+    c10 = field[i0, j1, k0] * (1.0 - wx) + field[i1, j1, k0] * wx
+    c11 = field[i0, j1, k1] * (1.0 - wx) + field[i1, j1, k1] * wx
+    c0 = c00 * (1.0 - wy) + c10 * wy
+    c1 = c01 * (1.0 - wy) + c11 * wy
+    return (c0 * (1.0 - wz) + c1 * wz).astype(np.float32)
+
+
+def _h0_volume_quadrature_geometry(
+        log_r_grid, disp_ref, r_sub_ref, dx, geometry, radius,
+        supersample_factor=1, supersample_radius=0.0, store_rhat=False):
+    """Build flattened H0 volume-quadrature geometry arrays."""
+    factor, supersample_radius, _ = _validate_h0_volume_supersampling(
+        supersample_factor, supersample_radius)
+    use_supersampling = factor > 1 and supersample_radius > 0.0
+
+    if geometry == "sphere" and radius is not None:
+        voxel_weight = _sphere_voxel_weights(disp_ref, radius, dx)
+        voxel_mask = voxel_weight > 0.0
+    else:
+        voxel_weight = np.ones(r_sub_ref.shape, dtype=np.float32)
+        voxel_mask = np.ones(r_sub_ref.shape, dtype=bool)
+
+    flat_mask = voxel_mask.reshape(-1)
+    if not use_supersampling:
+        if geometry == "sphere" and radius is not None:
+            flat_idx = np.flatnonzero(flat_mask)
+            log_r_3d = np.asarray(log_r_grid).reshape(-1)[flat_idx]
+            log_volume_weight_3d = np.log(
+                voxel_weight.reshape(-1)[flat_idx]).astype(np.float32)
+            rhat_fields = None
+            if store_rhat:
+                rhat_fields = []
+                for comp in range(3):
+                    rhat = (np.broadcast_to(
+                        disp_ref[comp], r_sub_ref.shape) / r_sub_ref)
+                    rhat_fields.append(rhat.reshape(-1)[flat_idx].astype(
+                        np.float32))
+        else:
+            flat_idx = None
+            log_r_3d = log_r_grid
+            log_volume_weight_3d = None
+            rhat_fields = None
+            if store_rhat:
+                rhat_fields = []
+                for comp in range(3):
+                    rhat = (np.broadcast_to(
+                        disp_ref[comp], r_sub_ref.shape) / r_sub_ref)
+                    rhat_fields.append(rhat.astype(np.float32))
+        return {
+            "voxel_mask": voxel_mask,
+            "unsup_flat": flat_idx,
+            "sup_flat": np.empty(0, dtype=np.int64),
+            "n_subcells": 1,
+            "log_r_3d": log_r_3d,
+            "log_volume_weight_3d": log_volume_weight_3d,
+            "rhat_fields": rhat_fields,
+        }
+
+    supersample_weight = _sphere_voxel_weights(
+        disp_ref, supersample_radius, dx)
+    supersample_mask = (supersample_weight > 0.0) & voxel_mask
+    unsup_mask = voxel_mask & ~supersample_mask
+
+    unsup_flat = np.flatnonzero(unsup_mask.reshape(-1))
+    sup_flat = np.flatnonzero(supersample_mask.reshape(-1))
+    n_offsets = factor ** 3
+    n_unsup = len(unsup_flat)
+    n_sup = len(sup_flat)
+    n_out = n_unsup + n_sup * n_offsets
+
+    flat_log_r = np.asarray(log_r_grid).reshape(-1)
+    flat_weight = voxel_weight.reshape(-1)
+    log_r_3d = np.empty(n_out, dtype=np.float32)
+    log_volume_weight_3d = np.empty(n_out, dtype=np.float32)
+    log_r_3d[:n_unsup] = flat_log_r[unsup_flat]
+    log_volume_weight_3d[:n_unsup] = np.log(
+        flat_weight[unsup_flat]).astype(np.float32)
+
+    rhat_fields = None
+    if store_rhat:
+        rhat_fields = [
+            np.empty(n_out, dtype=np.float32) for _ in range(3)]
+        for comp in range(3):
+            rhat = (np.broadcast_to(
+                disp_ref[comp], r_sub_ref.shape) / r_sub_ref)
+            rhat_fields[comp][:n_unsup] = rhat.reshape(-1)[unsup_flat]
+
+    offsets = _supersample_offsets_3d(factor, dx)
+    interp_indices, interp_weights = _supersample_linear_interpolator(
+        r_sub_ref.shape, sup_flat, offsets, dx)
+    sub_dx = dx / factor
+    log_subcell_fraction = -3.0 * np.log(factor)
+    flat_disp = [
+        np.broadcast_to(d, r_sub_ref.shape).reshape(-1)
+        for d in disp_ref]
+    write = n_unsup
+    chunk_size = max(1, min(n_sup, 64))
+    for start in range(0, n_sup, chunk_size):
+        stop = min(start + chunk_size, n_sup)
+        parent_idx = sup_flat[start:stop]
+        n_parent = len(parent_idx)
+        sl = slice(write, write + n_parent * n_offsets)
+        x = flat_disp[0][parent_idx, None] + offsets[None, :, 0]
+        y = flat_disp[1][parent_idx, None] + offsets[None, :, 1]
+        z = flat_disp[2][parent_idx, None] + offsets[None, :, 2]
+        r = np.sqrt(x**2 + y**2 + z**2)
+        r_safe = np.maximum(r, 0.25 * sub_dx)
+        log_r_3d[sl] = np.log(r_safe).reshape(-1).astype(np.float32)
+        if geometry == "sphere" and radius is not None:
+            sub_weight = _sphere_voxel_weights((x, y, z), radius, sub_dx)
+            log_weight = np.full(
+                sub_weight.shape, -np.inf, dtype=np.float32)
+            keep = sub_weight > 0.0
+            log_weight[keep] = (
+                np.log(sub_weight[keep]) + log_subcell_fraction)
+            log_volume_weight_3d[sl] = log_weight.reshape(-1)
+        else:
+            log_volume_weight_3d[sl] = log_subcell_fraction
+        if store_rhat:
+            rhat_fields[0][sl] = (x / r_safe).reshape(-1).astype(np.float32)
+            rhat_fields[1][sl] = (y / r_safe).reshape(-1).astype(np.float32)
+            rhat_fields[2][sl] = (z / r_safe).reshape(-1).astype(np.float32)
+        write = sl.stop
+
+    return {
+        "voxel_mask": voxel_mask,
+        "unsup_flat": unsup_flat,
+        "sup_flat": sup_flat,
+        "n_subcells": n_offsets,
+        "sup_interp_indices": interp_indices,
+        "sup_interp_weights": interp_weights,
+        "log_r_3d": log_r_3d,
+        "log_volume_weight_3d": log_volume_weight_3d,
+        "rhat_fields": rhat_fields,
+    }
+
+
+def _h0_volume_apply_quadrature(field, quad):
+    """Map a 3D field onto the H0 quadrature geometry."""
+    if len(quad["sup_flat"]) == 0:
+        if quad["unsup_flat"] is None:
+            return np.asarray(field, dtype=np.float32)
+        flat = np.asarray(field).reshape(-1)
+        return flat[quad["unsup_flat"]].astype(np.float32)
+    flat = np.asarray(field).reshape(-1)
+    sup_values = _trilinear_interpolate_3d(
+        field, quad["sup_interp_indices"], quad["sup_interp_weights"])
+    return np.concatenate((
+        flat[quad["unsup_flat"]],
+        sup_values,
+    )).astype(np.float32)
+
+
 def _subsample_h0_volume_arrays(arrays, fraction, seed):
     """Apply random voxel thinning to full cached H0 volume arrays."""
     idx, actual = _choose_voxel_subsample_indices(
@@ -293,7 +584,8 @@ def _load_volume_data_for_H0_mpi(
         comm, field_name, field_kwargs, field_indices, galaxy_bias, Om0,
         subcube_radius, voxel_subsample_fraction, voxel_subsample_seed,
         load_velocity, geometry, density_cache_path, velocity_cache_path,
-        source_meta, mode, density_required, velocity_required):
+        source_meta, mode, density_required, velocity_required,
+        supersample_factor=1, supersample_radius=0.0):
     """Build one H0 volume cache file with fields split over MPI ranks."""
     rank = comm.Get_rank()
     size = comm.Get_size()
@@ -331,7 +623,9 @@ def _load_volume_data_for_H0_mpi(
                 geometry=geometry,
                 cache_dir=None,
                 cache_enabled=False,
-                return_cache_fields=True)
+                return_cache_fields=True,
+                supersample_factor=supersample_factor,
+                supersample_radius=supersample_radius)
             field_arrays = {
                 key: np.asarray(value)
                 for key, value in partial.items()
@@ -498,7 +792,9 @@ def _load_volume_data_for_H0(
         field_name, field_kwargs, field_indices, galaxy_bias, Om0,
         subcube_radius=None, voxel_subsample_fraction=1.0,
         voxel_subsample_seed=42, load_velocity=False, geometry="sphere",
-        cache_dir=None, cache_enabled=True, return_cache_fields=False):
+        cache_dir=None, cache_enabled=True, return_cache_fields=False,
+        supersample_factor=1, supersample_radius=0.0,
+        supersample_target_dx=None):
     """Load 3D voxel data for H0 selection integrals.
 
     Returns a dict to be merged into an H0-model data dict. The density field
@@ -516,6 +812,9 @@ def _load_volume_data_for_H0(
         voxel_subsample_fraction, "model.density_3d_subsample_fraction")
     voxel_subsample_seed = _validate_voxel_subsample_seed(
         voxel_subsample_seed, "model.density_3d_subsample_seed")
+    supersample_factor, supersample_radius, supersample_target_dx = \
+        _validate_h0_volume_supersampling(
+            supersample_factor, supersample_radius, supersample_target_dx)
     mode = _volume_density_mode(galaxy_bias)
     rho_fields = []
     vrad_fields = [] if load_velocity else None
@@ -527,6 +826,7 @@ def _load_volume_data_for_H0(
     dx_ref = None
     shape_ref = None
     voxel_mask_ref = None
+    quad_ref = None
     log_volume_weight_3d = None
     loaders = []
     source_meta = []
@@ -537,6 +837,20 @@ def _load_volume_data_for_H0(
         loader = name2field_loader(field_name)(**kwargs)
         loaders.append(loader)
         source_meta.append(_field_source_metadata(loader))
+
+    native_dx = None
+    if supersample_target_dx is not None:
+        native_dx = _field_loader_native_dx(loaders[0])
+        supersample_factor = _h0_volume_resolved_supersample_factor(
+            native_dx, supersample_factor, supersample_target_dx)
+    use_supersampling = (
+        supersample_factor > 1 and supersample_radius > 0.0)
+    if use_supersampling and supersample_target_dx is not None:
+        fprint(
+            "  H0 volume supersampling target: "
+            f"native_dx={native_dx:g} Mpc/h, "
+            f"target_dx={supersample_target_dx:g} Mpc/h, "
+            f"resolved_dx={native_dx / supersample_factor:g} Mpc/h.")
 
     Om0_model = Om0
     Om0 = _reconstruction_omega_m(
@@ -557,6 +871,8 @@ def _load_volume_data_for_H0(
         }
         base_cache_payload.update(_h0_volume_cache_sampling_payload(
             voxel_subsample_fraction, voxel_subsample_seed))
+        base_cache_payload.update(_h0_volume_cache_supersampling_payload(
+            supersample_factor, supersample_radius))
         density_cache_payload = {
             **base_cache_payload,
             "load_velocity": False,
@@ -570,7 +886,8 @@ def _load_volume_data_for_H0(
         velocity_cache_path = _field_cache_path(
             cache_dir, "h0_volume_data", velocity_cache_payload)
         density_required = ["rho_3d_fields", "r_3d", "log_dV_3d"]
-        if geometry == "sphere" and subcube_radius is not None:
+        if ((geometry == "sphere" and subcube_radius is not None)
+                or use_supersampling):
             density_required.append("log_volume_weight_3d")
         velocity_required = [
             "vrad_3d_fields", "rhat_x_3d", "rhat_y_3d", "rhat_z_3d"]
@@ -614,7 +931,8 @@ def _load_volume_data_for_H0(
                 galaxy_bias, Om0, subcube_radius,
                 voxel_subsample_fraction, voxel_subsample_seed,
                 load_velocity, geometry, cache_path, velocity_cache_path,
-                source_meta, mode, density_required, velocity_required)
+                source_meta, mode, density_required, velocity_required,
+                supersample_factor, supersample_radius)
     else:
         cache_path = None
         velocity_cache_path = None
@@ -669,16 +987,31 @@ def _load_volume_data_for_H0(
             r_sub_ref = np.sqrt(
                 disp_ref[0]**2 + disp_ref[1]**2 + disp_ref[2]**2)
             r_sub_ref = np.maximum(r_sub_ref, 0.25 * dx)
-            if geometry == "sphere" and subcube_radius is not None:
-                voxel_weight = _sphere_voxel_weights(
-                    disp_ref, subcube_radius, dx)
-                voxel_mask_ref = voxel_weight > 0.0
-                log_r_3d = log_r_grid[voxel_mask_ref]
-                log_volume_weight_3d = jnp.asarray(
-                    np.log(voxel_weight[voxel_mask_ref]).astype(np.float32))
-            else:
-                voxel_mask_ref = None
-                log_r_3d = log_r_grid
+            quad_ref = _h0_volume_quadrature_geometry(
+                log_r_grid, disp_ref, r_sub_ref, dx, geometry,
+                subcube_radius, supersample_factor, supersample_radius,
+                store_rhat=load_velocity)
+            voxel_mask_ref = quad_ref["voxel_mask"]
+            log_r_3d = quad_ref["log_r_3d"]
+            log_volume_weight_3d = quad_ref["log_volume_weight_3d"]
+            if use_supersampling:
+                n_base = int(np.sum(voxel_mask_ref))
+                n_super = len(quad_ref["sup_flat"])
+                n_out = len(log_r_3d)
+                if supersample_target_dx is None:
+                    target_msg = ""
+                else:
+                    target_msg = (
+                        f", target_dx={supersample_target_dx:g} Mpc/h, "
+                        f"native_dx={native_dx:g} Mpc/h, "
+                        f"resolved_dx={dx / supersample_factor:g} Mpc/h")
+                fprint(
+                    "  H0 volume supersampling: "
+                    f"{n_super:,}/{n_base:,} parent voxels intersect "
+                    f"r < {supersample_radius:g} Mpc/h; "
+                    "trilinear interpolation, "
+                    f"{n_out:,} quadrature points total"
+                    f"{target_msg}.")
         else:
             if rho_sub.shape != shape_ref:
                 raise ValueError(
@@ -693,14 +1026,12 @@ def _load_volume_data_for_H0(
                     "All 3D volume fields must have the same observer "
                     "position after sub-cube extraction.")
 
-        if voxel_mask_ref is None:
-            rho_out = rho_sub.astype(np.float32)
-        else:
-            rho_out = rho_sub[voxel_mask_ref].astype(np.float32)
+        rho_out = _h0_volume_apply_quadrature(rho_sub, quad_ref)
         rho_fields.append(rho_out)
 
         if load_velocity:
-            v_rad = np.zeros(rho_sub.shape, dtype=np.float32)
+            v_rad_out = np.zeros(np.asarray(log_r_3d).shape,
+                                 dtype=np.float32)
             if hasattr(loader, "load_velocity_component"):
                 for comp in range(3):
                     v_full = loader.load_velocity_component(comp)
@@ -709,7 +1040,8 @@ def _load_volume_data_for_H0(
                     else:
                         v_comp = v_full
                     del v_full
-                    v_rad += v_comp * disp_ref[comp] / r_sub_ref
+                    v_comp = _h0_volume_apply_quadrature(v_comp, quad_ref)
+                    v_rad_out += v_comp * quad_ref["rhat_fields"][comp]
                     del v_comp
             else:
                 v_full = loader.load_velocity()
@@ -717,21 +1049,19 @@ def _load_volume_data_for_H0(
                     v_comp = v_full[comp]
                     if slices is not None:
                         v_comp = v_comp[slices[0], slices[1], slices[2]]
-                    v_rad += v_comp * disp_ref[comp] / r_sub_ref
+                    v_comp = _h0_volume_apply_quadrature(v_comp, quad_ref)
+                    v_rad_out += v_comp * quad_ref["rhat_fields"][comp]
+                    del v_comp
                 del v_full
-            if voxel_mask_ref is None:
-                vrad_fields.append(v_rad)
-            else:
-                v_rad = v_rad[voxel_mask_ref]
-                vrad_fields.append(v_rad)
+            vrad_fields.append(v_rad_out)
 
-        if voxel_mask_ref is None:
+        if not np.any(~voxel_mask_ref):
             msg = (f"  field {k} (nsim={int(nsim)}): cube {rho_sub.shape}, "
                    f"dx={dx:.4f} Mpc/h")
         else:
             msg = (f"  field {k} (nsim={int(nsim)}): sub-cube "
-                   f"{rho_sub.shape}, {int(np.sum(voxel_mask_ref))} "
-                   f"weighted spherical voxels, dx={dx:.4f} Mpc/h")
+                   f"{rho_sub.shape}, {len(log_r_3d)} "
+                   f"weighted volume points, dx={dx:.4f} Mpc/h")
         fprint(msg + ".")
 
     r_3d = jnp.asarray(np.exp(np.asarray(log_r_3d)).astype(np.float32))
@@ -739,10 +1069,7 @@ def _load_volume_data_for_H0(
     rhat_fields = {}
     if load_velocity:
         for i, label in enumerate(("rhat_x_3d", "rhat_y_3d", "rhat_z_3d")):
-            rhat = (disp_ref[i] / r_sub_ref).astype(np.float32)
-            if voxel_mask_ref is not None:
-                rhat = rhat[voxel_mask_ref]
-            rhat_fields[label] = rhat
+            rhat_fields[label] = quad_ref["rhat_fields"][i]
 
     if len(rho_fields) == 1:
         rho_fields = rho_fields[0][None, ...]
@@ -859,6 +1186,8 @@ def _load_h0_volume_data_from_config(config, los_data_path, which_los,
     voxel_subsample_seed = _validate_voxel_subsample_seed(
         get_nested(config, "model/density_3d_subsample_seed", 42),
         "model.density_3d_subsample_seed")
+    supersample_factor, supersample_radius, supersample_target_dx = (
+        _h0_volume_supersampling_from_config(config))
     geometry = get_nested(
         config, "model/selection_integral_geometry", "sphere")
     if geometry not in ("sphere", "cube"):
@@ -889,7 +1218,22 @@ def _load_h0_volume_data_from_config(config, los_data_path, which_los,
            f"volume normalizer (geometry={geometry}, "
            f"radius={grid_radius} Mpc/h, "
            f"voxel_subsample_fraction={voxel_subsample_fraction:g}, "
+           f"supersample_radius={supersample_radius:g} Mpc/h, "
+           f"supersample_target_dx={supersample_target_dx}, "
            f"velocity={load_vel}).")
+    if supersample_target_dx is not None and supersample_radius > 0.0:
+        fprint(
+            f"{label} 3D volume supersampling enabled: "
+            f"target_dx={supersample_target_dx:g} Mpc/h for parent voxels "
+            f"intersecting r < {supersample_radius:g} Mpc/h; "
+            "trilinear interpolation.")
+    elif supersample_factor > 1 and supersample_radius > 0.0:
+        fprint(
+            f"{label} 3D volume supersampling enabled for parent voxels "
+            f"intersecting r < {supersample_radius:g} Mpc/h; "
+            "trilinear interpolation.")
+    else:
+        fprint(f"{label} 3D volume supersampling disabled.")
     if cache_enabled:
         fprint(f"field cache enabled: `{cache_dir}`.")
     else:
@@ -903,7 +1247,10 @@ def _load_h0_volume_data_from_config(config, los_data_path, which_los,
         load_velocity=load_vel,
         geometry=geometry,
         cache_dir=cache_dir,
-        cache_enabled=cache_enabled)
+        cache_enabled=cache_enabled,
+        supersample_factor=supersample_factor,
+        supersample_radius=supersample_radius,
+        supersample_target_dx=supersample_target_dx)
 
 
 def _load_volume_density_3d(loader_name, loader_kwargs, downsample=1,

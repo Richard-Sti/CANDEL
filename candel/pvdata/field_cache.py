@@ -233,6 +233,7 @@ def _field_cache_payload_digest(payload, length=24):
 
 def _h0_volume_cache_filename(payload):
     """Readable, cluster-portable filename for H0 3D volume caches."""
+    supersample = payload.get("supersample", None)
     parts = [
         f"v{_FIELD_CACHE_VERSION}",
         _field_cache_slug(payload["field_name"], max_len=70),
@@ -240,9 +241,22 @@ def _h0_volume_cache_filename(payload):
         _field_cache_slug(payload["geometry"], max_len=20),
         f"r-{_field_cache_float_tag(payload['subcube_radius'])}",
         f"ds-{int(payload['downsample'])}",
-        "vel" if payload["load_velocity"] else "density",
     ]
+    if supersample is not None:
+        parts.append(_h0_volume_supersample_tag(supersample))
+    parts.append("vel" if payload["load_velocity"] else "density")
     return "__".join(parts) + ".npz"
+
+
+def _h0_volume_supersample_tag(supersample):
+    """Readable filename tag for H0 supersampling settings."""
+    tag = "ss-f{}-r{}".format(
+        int(supersample["factor"]),
+        _field_cache_float_tag(supersample["radius"]))
+    method = supersample.get("method", None)
+    if method is not None:
+        tag = f"{tag}-{_field_cache_slug(method, max_len=20)}"
+    return tag
 
 
 def _pv_volume_density_cache_filename(payload):
@@ -347,15 +361,25 @@ def _read_h0_volume_cache_superset(cache_dir, payload, label, required_keys,
     geometry = _field_cache_slug(payload["geometry"], max_len=20)
     radius_tag = _field_cache_float_tag(payload["subcube_radius"])
     downsample_tag = f"ds-{int(payload['downsample'])}"
+    supersample = payload.get("supersample", None)
+    supersample_tag = None
+    if supersample is not None:
+        supersample_tag = _h0_volume_supersample_tag(supersample)
     kind_tag = "vel" if payload["load_velocity"] else "density"
 
     candidates = []
     for fname in os.listdir(cache_subdir):
         parts = fname[:-4].split("__") if fname.endswith(".npz") else []
-        if len(parts) != 7:
+        if len(parts) == 7:
+            version, cached_field, fields_part, cached_geometry, \
+                cached_radius, cached_downsample, cached_kind = parts
+            cached_supersample = None
+        elif len(parts) == 8:
+            version, cached_field, fields_part, cached_geometry, \
+                cached_radius, cached_downsample, cached_supersample, \
+                cached_kind = parts
+        else:
             continue
-        version, cached_field, fields_part, cached_geometry, cached_radius, \
-            cached_downsample, cached_kind = parts
         if version != f"v{_FIELD_CACHE_VERSION}":
             continue
         if cached_field != field_slug or cached_geometry != geometry:
@@ -363,6 +387,8 @@ def _read_h0_volume_cache_superset(cache_dir, payload, label, required_keys,
         if cached_radius != f"r-{radius_tag}":
             continue
         if cached_downsample != downsample_tag or cached_kind != kind_tag:
+            continue
+        if cached_supersample != supersample_tag:
             continue
         if not fields_part.startswith("fields-"):
             continue

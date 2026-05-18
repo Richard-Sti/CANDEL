@@ -617,6 +617,9 @@ def validate_generated_config(config):
             f"Invalid which_run='{which_run}'. Must be one of {valid_runs}.")
 
     bad_prefixes = ("/mnt/extraspace/", "/mnt/users/rstiskalek/")
+    allowed_absolute_prefixes = (
+        "/mnt/extraspace/rstiskalek/MANTICORE/2MPP_MULTIBIN_N256_DES_V2/",
+    )
     los_keys = (
         "io/PV_main/EDD_TRGB/which_host_los",
         "io/PV_main/EDD_TRGB_grouped/which_host_los",
@@ -634,7 +637,9 @@ def validate_generated_config(config):
         if not isinstance(section, dict):
             continue
         for key, value in section.items():
-            if isinstance(value, str) and value.startswith(bad_prefixes):
+            if (isinstance(value, str)
+                    and value.startswith(bad_prefixes)
+                    and not value.startswith(allowed_absolute_prefixes)):
                 raise ValueError(
                     f"Selected reconstruction `{los}` has machine-local "
                     f"path `io.reconstruction_main.{los}.{key}` = {value!r}. "
