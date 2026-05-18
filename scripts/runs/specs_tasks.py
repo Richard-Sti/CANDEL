@@ -903,10 +903,6 @@ TASK_SPECS = {
             "model/selection_integral_supersample_target_dx": (
                 TRGBH0_SELECTION_SUPERSAMPLE_TARGET_DX),
             "model/priors/mag_lim_TRGB_width/low": 0.15,
-            "model/priors/sigma_int": {
-                "dist": "delta",
-                "value": 0.1,
-            },
             **_with_root(f"{TRGBH0_ROOT}/manticore_fields_const_sigv"),
         },
         "datasets": _trgbh0_manticore_field_datasets(),

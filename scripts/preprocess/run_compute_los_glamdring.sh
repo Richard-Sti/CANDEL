@@ -453,7 +453,7 @@ for i in "${!job_catalogues[@]}"; do
     reconstruction_i="${job_reconstructions[$i]}"
     config_i="${job_configs[$i]}"
     cmd=(
-        env
+        /usr/bin/env
         "MPLCONFIGDIR=$MPLCONFIGDIR"
         "NUMBA_CACHE_DIR=$NUMBA_CACHE_DIR"
         "$python_exec" -u "$ROOT/scripts/preprocess/compute_los.py"
@@ -465,11 +465,14 @@ for i in "${!job_catalogues[@]}"; do
 
     echo "Submitting catalogue: $catalogue / $reconstruction_i"
     echo "  LOS grid: ${job_grid_displays[$i]}"
-    submit_out=$(
+    if ! submit_out=$(
         submit_job --queue "$queue" --mem "$memory" --mpi-n "$ncpu" \
             --name "compute_los_${catalogue}_${reconstruction_i}" \
             "${dry_flag[@]}" -- "${cmd[@]}" 2>&1
-    )
+    ); then
+        echo "$submit_out"
+        exit 1
+    fi
     echo "$submit_out"
     echo
 done
