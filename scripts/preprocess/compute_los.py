@@ -17,6 +17,7 @@ A script to compute the LOS density and radial velocity from an existing
 reconstruction and a catalogue of galaxies.
 """
 from argparse import ArgumentParser
+from os import replace
 from os.path import basename, dirname, join, splitext
 
 import numpy as np
@@ -211,43 +212,16 @@ def main():
     # Assign work: indices in nsims handled by this rank
     my_idxs = [i for i in range(n_sims) if (i % size) == rank]
 
-    local_results = []
-    for i in my_idxs:
-        nsim = nsims[i]
-        print(f"[rank {rank}] loading `{args.reconstruction}` for sim {nsim}.")
-        loader = candel.field.name2field_loader(args.reconstruction)(
-            nsim=nsim,
-            **config["io"]["reconstruction_main"][args.reconstruction])
-        if is_random_multireal:
-            RA_i, dec_i = generate_random_sky(n_gal, seed=42 + nsim)
-        else:
-            RA_i, dec_i = RA, dec
-        dens_i, vel_i = candel.field.interpolate_los_density_velocity(
-            loader, r, RA_i, dec_i, args.smooth_target)
+    loader_cls = candel.field.name2field_loader(args.reconstruction)
+    loader_kwargs = config["io"]["reconstruction_main"][args.reconstruction]
+    fixed_los_geometry = None
+    if not is_random_multireal:
+        geometry_loader = loader_cls(nsim=nsims[0], **loader_kwargs)
+        fixed_los_geometry = candel.field.prepare_los_geometry(
+            geometry_loader, r, RA, dec)
 
-        # store with the global slot index so root can place it
-        local_results.append(
-            (i, dens_i.astype(np.float32), vel_i.astype(np.float32),
-             RA_i.astype(np.float32), dec_i.astype(np.float32)))
-
-    # Gather lists of (i, dens, vel, RA, dec) to root
-    all_results = comm.gather(local_results, root=0)
-
+    fout = None
     if rank == 0:
-        los_density = np.full((n_sims, n_gal, n_r), np.nan, dtype=np.float32)
-        los_velocity = np.full_like(los_density, np.nan, dtype=np.float32)
-        if is_random_multireal:
-            all_RA = np.empty((n_sims, n_gal), dtype=np.float32)
-            all_dec = np.empty((n_sims, n_gal), dtype=np.float32)
-
-        for rank_results in all_results:
-            for i, dens_i, vel_i, RA_i, dec_i in rank_results:
-                los_density[i] = dens_i
-                los_velocity[i] = vel_i
-                if is_random_multireal:
-                    all_RA[i] = RA_i
-                    all_dec[i] = dec_i
-
         los_file = los_file.replace("<X>", args.reconstruction)
         if args.smooth_target is not None:
             los_file = los_file.replace(
@@ -255,23 +229,80 @@ def main():
                 f"_smooth_to_{args.smooth_target}.hdf5")
 
         fprint(f"saving the line of sight data to `{los_file}`.")
+        los_tmp_file = f"{los_file}.tmp"
         dt = np.dtype(np.float32)
         dt16 = np.dtype(np.float16)
-        with File(los_file, "w") as f:
-            if is_random_multireal:
-                # RA/dec shape (n_sims, n_gal): each realisation has its own
-                # independent random sky positions.
-                f.create_dataset("RA", data=all_RA, dtype=dt)
-                f.create_dataset("dec", data=all_dec, dtype=dt)
-            else:
-                f.create_dataset("RA", data=RA, dtype=dt)
-                f.create_dataset("dec", data=dec, dtype=dt)
-            f.create_dataset("r", data=r, dtype=dt)
-            f.create_dataset("los_density", data=los_density, dtype=dt)
-            f.create_dataset("los_velocity", data=los_velocity, dtype=dt16)
-            f.create_dataset(
-                "field_indices", data=np.asarray(nsims, dtype=np.int32))
+        fout = File(los_tmp_file, "w")
+        if is_random_multireal:
+            ra_dataset = fout.create_dataset(
+                "RA", shape=(n_sims, n_gal), dtype=dt)
+            dec_dataset = fout.create_dataset(
+                "dec", shape=(n_sims, n_gal), dtype=dt)
+        else:
+            fout.create_dataset("RA", data=RA, dtype=dt)
+            fout.create_dataset("dec", data=dec, dtype=dt)
+        fout.create_dataset("r", data=r, dtype=dt)
+        density_dataset = fout.create_dataset(
+            "los_density", shape=(n_sims, n_gal, n_r), dtype=dt,
+            fillvalue=np.nan)
+        velocity_dataset = fout.create_dataset(
+            "los_velocity", shape=(n_sims, n_gal, n_r), dtype=dt16,
+            fillvalue=np.nan)
+        fout.create_dataset(
+            "field_indices", data=np.asarray(nsims, dtype=np.int32))
 
+        def write_result(result):
+            i, dens_i, vel_i, RA_i, dec_i = result
+            density_dataset[i] = dens_i
+            velocity_dataset[i] = vel_i
+            if is_random_multireal:
+                ra_dataset[i] = RA_i
+                dec_dataset[i] = dec_i
+
+        n_received = 0
+
+        def drain_results():
+            nonlocal n_received
+            while comm.Iprobe(source=MPI.ANY_SOURCE, tag=0):
+                write_result(comm.recv(source=MPI.ANY_SOURCE, tag=0))
+                n_received += 1
+
+    try:
+        for i in my_idxs:
+            nsim = nsims[i]
+            print(f"[rank {rank}] loading `{args.reconstruction}` "
+                  f"for sim {nsim}.")
+            loader = loader_cls(nsim=nsim, **loader_kwargs)
+            if is_random_multireal:
+                RA_i, dec_i = generate_random_sky(n_gal, seed=42 + nsim)
+                los_geometry = None
+            else:
+                RA_i, dec_i = RA, dec
+                los_geometry = fixed_los_geometry
+            dens_i, vel_i = candel.field.interpolate_los_density_velocity(
+                loader, r, RA_i, dec_i, args.smooth_target,
+                los_geometry=los_geometry)
+
+            result = (i, dens_i.astype(np.float32), vel_i.astype(np.float16),
+                      RA_i.astype(np.float32) if is_random_multireal else None,
+                      dec_i.astype(np.float32) if is_random_multireal else None)
+            if rank == 0:
+                write_result(result)
+                drain_results()
+            else:
+                comm.send(result, dest=0, tag=0)
+
+        if rank == 0:
+            while n_received < n_sims - len(my_idxs):
+                write_result(comm.recv(source=MPI.ANY_SOURCE, tag=0))
+                n_received += 1
+            fout.close()
+            replace(los_tmp_file, los_file)
+    finally:
+        if rank == 0 and fout is not None:
+            fout.close()
+
+    if rank == 0:
         fprint("all finished.")
 
 

@@ -615,7 +615,7 @@ def _vfo_datasets():
         {
             "pv_model/kind": f"precomputed_los_{VFO_MANTICORE_COLA_LOS}",
             "pv_model/galaxy_bias": "double_powerlaw",
-            "pv_model/density_3d_subsample_fraction": 0.1,
+            "pv_model/density_3d_subsample_fraction": 0.5,
             "model/priors/beta": _delta(1.0),
             "model/cz_likelihood": "gaussian",
         },

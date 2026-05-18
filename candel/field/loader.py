@@ -437,6 +437,7 @@ class Manticore_FieldLoader(BaseFieldLoader):
         self.coordinate_frame = "icrs"
         self.boxsize = 681.1  # Mpc / h
         self.Omega_m = 0.306
+        self._velocity_density = None
 
     def load_density(self):
         with File(self.fname, "r") as f:
@@ -459,10 +460,13 @@ class Manticore_FieldLoader(BaseFieldLoader):
     def load_velocity_component(self, component):
         key = f"p{component}"
         with File(self.fname, "r") as f:
-            density = f["density"][:]
-            v = f[key][:] / density
-        del density
+            if self._velocity_density is None:
+                self._velocity_density = f["density"][:]
+            v = f[key][:] / self._velocity_density
         return v.astype(np.float32)
+
+    def clear_velocity_cache(self):
+        self._velocity_density = None
 
 
 class ManticoreCOLA_FieldLoader(BaseFieldLoader):

@@ -148,7 +148,7 @@ def build_regular_interpolator(field, boxsize, fill_value=None):
         method="linear",)
 
 
-def _prepare_los_geometry(field_loader, r, RA, dec):
+def prepare_los_geometry(field_loader, r, RA, dec):
     """Compute LOS positions and unit vectors for interpolation."""
     if field_loader.coordinate_frame == "icrs":
         rhat = radec_to_cartesian(RA, dec)
@@ -168,8 +168,7 @@ def _prepare_los_geometry(field_loader, r, RA, dec):
     pos = (field_loader.observer_pos[None, None, :]
            + r[:, None, None] * rhat[None, :, :]).astype(np.float32)
     pos_flat = pos.reshape(-1, 3)
-    rhat_rep = np.tile(rhat, (n_r, 1))
-    return pos_flat, rhat_rep, n_r, n_gal
+    return pos_flat, rhat, n_r, n_gal
 
 
 def _get_grid_params(field_loader, ngrid):
@@ -184,7 +183,8 @@ def _get_grid_params(field_loader, ngrid):
 
 
 def interpolate_los_density_velocity(field_loader, r, RA, dec,
-                                     smooth_target=None, verbose=True):
+                                     smooth_target=None, verbose=True,
+                                     los_geometry=None):
     """
     Interpolate the density and velocity fields along the line of sight
     specified by `RA` and `dec` at radial steps `r` from the observer. The
@@ -193,9 +193,11 @@ def interpolate_los_density_velocity(field_loader, r, RA, dec,
     Fields are loaded and interpolated one component at a time to limit
     peak memory usage (important for large grids like Manticore 1024^3).
     """
-    pos_flat, rhat_rep, n_r, n_gal = _prepare_los_geometry(
-        field_loader, r, RA, dec)
-    n_flat = pos_flat.shape[0]
+    if los_geometry is None:
+        pos_flat, rhat, n_r, n_gal = prepare_los_geometry(
+            field_loader, r, RA, dec)
+    else:
+        pos_flat, rhat, n_r, n_gal = los_geometry
     eps = np.float32(1e-4)
     fill_value = np.float32(np.log(1 + eps))
 
@@ -231,7 +233,7 @@ def interpolate_los_density_velocity(field_loader, r, RA, dec,
     assert np.all(los_density > 0)
 
     # --- Velocity (one component at a time) ---
-    los_velocity_flat = np.zeros(n_flat, dtype=np.float32)
+    los_velocity = np.zeros((n_r, n_gal), dtype=np.float32)
     can_load_component = hasattr(field_loader, 'load_velocity_component')
 
     if can_load_component:
@@ -248,8 +250,12 @@ def interpolate_los_density_velocity(field_loader, r, RA, dec,
             los_v_comp = _trilinear_interp_field(
                 v_flat, pos_flat, grid_min, cellsize, ngrid, np.float32(0.0))
             del v_flat
-            los_velocity_flat += los_v_comp * rhat_rep[:, comp]
+            los_v_comp = los_v_comp.reshape(n_r, n_gal)
+            los_v_comp *= rhat[None, :, comp]
+            los_velocity += los_v_comp
             del los_v_comp
+        if hasattr(field_loader, 'clear_velocity_cache'):
+            field_loader.clear_velocity_cache()
     else:
         fprint("interpolating the velocity field...", verbose=verbose)
         velocity = field_loader.load_velocity()
@@ -264,10 +270,12 @@ def interpolate_los_density_velocity(field_loader, r, RA, dec,
             los_v_comp = _trilinear_interp_field(
                 v_flat, pos_flat, grid_min, cellsize, ngrid,
                 np.float32(0.0))
-            los_velocity_flat += los_v_comp * rhat_rep[:, comp]
+            los_v_comp = los_v_comp.reshape(n_r, n_gal)
+            los_v_comp *= rhat[None, :, comp]
+            los_velocity += los_v_comp
+            del los_v_comp
         del velocity
 
-    los_velocity = los_velocity_flat.reshape(n_r, n_gal)
     assert np.all(np.isfinite(los_velocity))
 
     return los_density.T, los_velocity.T

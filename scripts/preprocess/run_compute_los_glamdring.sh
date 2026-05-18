@@ -1,10 +1,8 @@
 #!/bin/bash -l
 #
-# Submit compute_los.py jobs to the Glamdring queue system and optionally
-# warm the matching field cache afterwards.
+# Submit compute_los.py jobs to the Glamdring queue system.
 #
-# Machine-specific settings (python_exec, root_main) are read from
-# local_config.toml at the project root.
+# Machine-specific settings are read from local_config.toml at the project root.
 
 set -euo pipefail
 
@@ -130,25 +128,44 @@ for (catalogue, reconstruction, los_path), cfg_path in sorted(seen.items()):
 PY
 }
 
-los_grid_summary() {
-    "$python_exec" - "$config" <<'PY'
-import sys
-import candel
-
-config = candel.load_config(sys.argv[1])
-grid = config["io"]["reconstruction_main"]
-print(
-    f"r=[{grid['rmin']}, {grid['rmax']}] Mpc/h, "
-    f"num_steps={grid['num_steps']}")
-PY
-}
-
 los_grid_values() {
     "$python_exec" - "$config" <<'PY'
 import sys
-import candel
+import tomllib
+from pathlib import Path
 
-config = candel.load_config(sys.argv[1])
+
+def deep_merge(base, override):
+    out = dict(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(out.get(key), dict):
+            out[key] = deep_merge(out[key], value)
+        else:
+            out[key] = value
+    return out
+
+
+def load_config(path):
+    path = Path(path).resolve()
+    with path.open("rb") as f:
+        config = tomllib.load(f)
+
+    base_paths = config.pop("base", None)
+    if base_paths is None:
+        return config
+    if isinstance(base_paths, str):
+        base_paths = [base_paths]
+
+    merged = {}
+    for base in base_paths:
+        base_path = Path(base)
+        if not base_path.is_absolute():
+            base_path = path.parent / base_path
+        merged = deep_merge(merged, load_config(base_path))
+    return deep_merge(merged, config)
+
+
+config = load_config(sys.argv[1])
 grid = config["io"]["reconstruction_main"]
 print(f"{grid['rmin']}\t{grid['rmax']}\t{grid['num_steps']}")
 PY
@@ -198,12 +215,8 @@ queue="cmb"
 ncpu=10
 memory=32
 smooth_target=0
-warm_cache=true
 task_file=""
 task_ids=""
-cache_queue=""
-cache_ncpu=""
-cache_memory=""
 dry=false
 force_los=false
 
@@ -212,8 +225,7 @@ usage() {
 Usage: $(basename "$0") [OPTIONS] [TASK_FILE]
 
 Submit compute_los.py jobs to the Glamdring queue for LOS files required by a
-task file. By default, also submit a field-cache warmup job for the same task
-file.
+task file.
 
 One task file is required, either positionally or via --task-file.
 
@@ -227,10 +239,6 @@ Options:
       --task-file PATH        Task file to inspect
       --tasks IDS             Task ids/ranges to inspect, e.g. 0,3-5
       --force-los             Submit LOS jobs even when output files exist
-      --cache-queue NAME      Cache warmup queue (default: LOS queue)
-      --cache-ncpu N          Cache warmup MPI ranks (default: LOS CPUs)
-      --cache-memory GB       Cache warmup memory per rank (default: LOS memory)
-      --no-warm-cache         Only submit LOS jobs
       --dry                   Print submission commands without submitting
   -h, --help                  Show this help message
 
@@ -251,13 +259,9 @@ while [[ $# -gt 0 ]]; do
         -n|--ncpu)             ncpu="$2"; shift 2 ;;
         -m|--memory)           memory="$2"; shift 2 ;;
         -s|--smooth-target)    smooth_target="$2"; shift 2 ;;
-        --task-file|--cache-task-file) task_file="$2"; shift 2 ;;
+        --task-file)           task_file="$2"; shift 2 ;;
         --tasks)               task_ids="$2"; shift 2 ;;
         --force-los)           force_los=true; shift ;;
-        --cache-queue)         cache_queue="$2"; shift 2 ;;
-        --cache-ncpu)          cache_ncpu="$2"; shift 2 ;;
-        --cache-memory)        cache_memory="$2"; shift 2 ;;
-        --no-warm-cache)       warm_cache=false; shift ;;
         --dry)                 dry=true; shift ;;
         -*)
             echo "[ERROR] Unknown option: $1" >&2
@@ -290,26 +294,15 @@ if ! looks_like_task_file "$task_file"; then
     exit 1
 fi
 
-# Resolve python_exec and root_main from config / local_config.toml
+# Resolve python_exec from config / local_config.toml
 python_exec=$(get_toml_key "python_exec" "$config")
-root_main=$(get_toml_key "root_main" "$config")
 
 if [[ -z "$python_exec" ]]; then
     python_exec="$CANDEL_PYTHON"
 fi
 
-if [[ -z "$cache_queue" ]]; then
-    cache_queue="$queue"
-fi
-if [[ -z "$cache_ncpu" ]]; then
-    cache_ncpu="$ncpu"
-fi
-if [[ -z "$cache_memory" ]]; then
-    cache_memory="$memory"
-fi
-
-los_grid_display="$(los_grid_summary)"
 IFS=$'\t' read -r los_rmin los_rmax los_num_steps < <(los_grid_values)
+los_grid_display="r=[$los_rmin, $los_rmax] Mpc/h, num_steps=$los_num_steps"
 
 # ---- submit jobs ----
 job_catalogues=()
@@ -371,9 +364,7 @@ echo
 
 if [[ ${#job_catalogues[@]} -eq 0 ]]; then
     echo "No LOS jobs to submit."
-    if ! $warm_cache; then
-        exit 0
-    fi
+    exit 0
 fi
 
 echo "Settings:"
@@ -384,14 +375,6 @@ echo "  Python: $python_exec"
 echo "  LOS config: $config"
 echo "  LOS grid: $los_grid_display"
 echo "  Force LOS recompute: $force_los"
-echo "  Warm cache: $warm_cache"
-if $warm_cache; then
-    echo "  Cache task file: $task_file"
-    [[ -n "$task_ids" ]] && echo "  Cache task ids: $task_ids"
-    echo "  Cache queue: $cache_queue"
-    echo "  Cache CPUs: $cache_ncpu"
-    echo "  Cache memory: ${cache_memory} GB"
-fi
 echo
 
 if [[ -t 0 && $dry == false ]]; then
@@ -402,7 +385,6 @@ if [[ -t 0 && $dry == false ]]; then
     fi
 fi
 
-jobids=()
 dry_flag=()
 $dry && dry_flag=(--dry)
 for i in "${!job_catalogues[@]}"; do
@@ -424,44 +406,5 @@ for i in "${!job_catalogues[@]}"; do
             "${dry_flag[@]}" -- "${cmd[@]}" 2>&1
     )
     echo "$submit_out"
-    jobid=$(
-        echo "$submit_out" \
-            | grep -oE 'JOBID=[0-9]+' \
-            | tail -1 \
-            | cut -d= -f2 \
-            || true
-    )
-    if [[ -n "$jobid" ]]; then
-        jobids+=("$jobid")
-    fi
     echo
 done
-
-if $warm_cache; then
-    if [[ ! -f "$task_file" ]]; then
-        echo "[ERROR] Cache task file not found: $task_file" >&2
-        exit 1
-    fi
-
-    cache_cmd=(
-        "$python_exec" -u "$ROOT/scripts/preprocess/warm_field_cache.py"
-        "$task_file"
-    )
-    if [[ -n "$task_ids" ]]; then
-        cache_cmd+=(--tasks "$task_ids")
-    fi
-    runafter_args=()
-    if [[ ${#jobids[@]} -gt 0 ]]; then
-        runafter=$(IFS=:; echo "${jobids[*]}")
-        runafter_args=(--runafter "$runafter")
-    elif [[ ${#job_catalogues[@]} -gt 0 ]] && ! $dry; then
-        echo "[WARN] Could not parse LOS job IDs; submitting cache warmup without dependency." >&2
-    fi
-
-    echo "Submitting field-cache warmup:"
-    echo "  CANDEL_FIELD_CACHE_MPI=1"
-    export CANDEL_FIELD_CACHE_MPI=1
-    submit_job --queue "$cache_queue" --mem "$cache_memory" \
-        --mpi-n "$cache_ncpu" --name "warm_field_cache_VFO" \
-        "${runafter_args[@]}" "${dry_flag[@]}" -- "${cache_cmd[@]}"
-fi
