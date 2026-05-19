@@ -23,7 +23,7 @@ from trgbh0_plot_style import trgbh0_cmap  # noqa: E402
 
 ROOT = Path("/mnt/users/rstiskalek/CANDEL")
 RESULTS = ROOT / "results" / "TRGBH0_paper" / "manticore_fields_const_sigv"
-DEFAULT_OUTDIR = ROOT / "notebooks" / "paper_TRGBH0" / "output"
+DEFAULT_OUTDIR = RESULTS / "plots"
 MANTICORE_SCHEDULE = (
     Path("/mnt/extraspace/rstiskalek/MANTICORE")
     / "2MPP_MULTIBIN_N256_DES_V2"
@@ -72,6 +72,7 @@ PLOT_CHOICES = (
     "sigma-int-sigma-v",
     "h0-mag-lim-trgb",
     "sigma-int-mag-lim-trgb",
+    "h0-lnz-harmonic",
     "h0-alpha-c",
     "h0-alpha-low",
     "h0-alpha-high",
@@ -80,11 +81,13 @@ PLOT_CHOICES = (
 )
 FIELD_NUMBER_COLOURED_PLOTS = (
     "sigma-v-posterior",
-    "h0-alpha-c",
-    "h0-alpha-low",
-    "h0-alpha-high",
 )
-DEFAULT_EXCLUDED_PLOTS = ("all", "evidence-comparison", "h0-alpha-c")
+DEFAULT_PLOTS = (
+    "h0-lnz-harmonic",
+    "h0-sigma-v",
+    "h0-mag-lim-trgb",
+    "sigma-int-mag-lim-trgb",
+)
 SCATTER_PLOT_SPECS = {
     "h0-sigma-v": {
         "x_name": "sigma_v",
@@ -94,9 +97,6 @@ SCATTER_PLOT_SPECS = {
         "cmap_name": "trgbh0_manticore_fields_h0_sigma_v",
         "out_basename": "trgbh0_manticore_field_h0_sigma_v",
         "summary_basename": "manticore_field_h0_sigma_v_summary",
-        "colour_by": "sigma_int",
-        "colour_stat": "q50",
-        "colourbar_label": r"Median $\sigma_{\rm int}$ [mag]",
     },
     "h0-sigma-int": {
         "x_name": "sigma_int",
@@ -106,9 +106,6 @@ SCATTER_PLOT_SPECS = {
         "cmap_name": "trgbh0_manticore_fields_h0_sigma_int",
         "out_basename": "trgbh0_manticore_field_h0_sigma_int",
         "summary_basename": "manticore_field_h0_sigma_int_summary",
-        "colour_by": "sigma_v",
-        "colour_stat": "q50",
-        "colourbar_label": r"Median $\sigma_v ~ [\mathrm{km}\,\mathrm{s}^{-1}]$",
     },
     "sigma-int-sigma-v": {
         "x_name": "sigma_int",
@@ -118,12 +115,6 @@ SCATTER_PLOT_SPECS = {
         "cmap_name": "trgbh0_manticore_fields_sigma_int_sigma_v",
         "out_basename": "trgbh0_manticore_field_sigma_int_sigma_v",
         "summary_basename": "manticore_field_sigma_int_sigma_v_summary",
-        "colour_by": "H0",
-        "colour_stat": "q50",
-        "colourbar_label": (
-            r"Median $H_0 ~ [\mathrm{km}\,\mathrm{s}^{-1}\,"
-            r"\mathrm{Mpc}^{-1}]$"
-        ),
     },
     "h0-mag-lim-trgb": {
         "x_name": "mag_lim_TRGB",
@@ -133,9 +124,6 @@ SCATTER_PLOT_SPECS = {
         "cmap_name": "trgbh0_h0_mag_lim_trgb_width",
         "out_basename": "trgbh0_manticore_field_h0_mag_lim_trgb",
         "summary_basename": "manticore_field_h0_mag_lim_trgb_summary",
-        "colour_by": "mag_lim_TRGB_width",
-        "colour_stat": "q50",
-        "colourbar_label": r"Median $m_{\rm lim}^{\rm TRGB}$ width [mag]",
     },
     "sigma-int-mag-lim-trgb": {
         "x_name": "sigma_int",
@@ -145,12 +133,6 @@ SCATTER_PLOT_SPECS = {
         "cmap_name": "trgbh0_sigma_int_mag_lim_trgb_h0",
         "out_basename": "trgbh0_manticore_field_sigma_int_mag_lim_trgb",
         "summary_basename": "manticore_field_sigma_int_mag_lim_trgb_summary",
-        "colour_by": "H0",
-        "colour_stat": "q50",
-        "colourbar_label": (
-            r"Median $H_0 ~ [\mathrm{km}\,\mathrm{s}^{-1}\,"
-            r"\mathrm{Mpc}^{-1}]$"
-        ),
     },
     "h0-alpha-c": {
         "x_name": "alpha_c",
@@ -182,11 +164,10 @@ SCATTER_PLOT_SPECS = {
 }
 PLOT_PARAMS = {
     "sigma-v-posterior": ("sigma_v",),
+    "h0-lnz-harmonic": ("H0",),
     **{
         name: tuple(dict.fromkeys(
-            param for param in (
-                spec["x_name"], spec["y_name"], spec.get("colour_by"))
-            if param is not None))
+            param for param in (spec["x_name"], spec["y_name"])))
         for name, spec in SCATTER_PLOT_SPECS.items()
     },
     "evidence-comparison": (),
@@ -263,10 +244,11 @@ def parse_args():
         help=(
             "Diagnostics to plot: sigma-v-posterior, h0-sigma-v, "
             "h0-sigma-int, sigma-int-sigma-v, h0-mag-lim-trgb, "
-            "sigma-int-mag-lim-trgb, h0-alpha-c, h0-alpha-low, "
-            "h0-alpha-high, evidence-comparison, or all. "
-            "Default: all. Without a colour-mode flag, plots whose only "
-            "colour axis is the Manticore field number are skipped."
+            "sigma-int-mag-lim-trgb, h0-lnz-harmonic, h0-alpha-c, "
+            "h0-alpha-low, h0-alpha-high, evidence-comparison, or all. "
+            "Default: h0-lnz-harmonic, h0-sigma-v, h0-mag-lim-trgb, "
+            "and sigma-int-mag-lim-trgb. Scatter plots are coloured by "
+            "harmonic lnZ."
         ),
     )
     parser.add_argument(
@@ -279,8 +261,8 @@ def parse_args():
         "--colour-by-chain",
         action="store_true",
         help=(
-            "Colour diagnostics by the Manticore source chain from the "
-            "schedule YAML and write separate *_by_chain outputs."
+            "Colour non-scatter diagnostics by the Manticore source chain "
+            "from the schedule YAML and write separate *_by_chain outputs."
         ),
     )
     parser.add_argument(
@@ -289,8 +271,8 @@ def parse_args():
         dest="colour_by_lnz_harmonic",
         action="store_true",
         help=(
-            "Colour diagnostics by gof/lnZ_harmonic from each result HDF5 "
-            "and write separate *_by_lnz_harmonic outputs."
+            "Colour non-scatter diagnostics by gof/lnZ_harmonic from each "
+            "result HDF5 and write separate *_by_lnz_harmonic outputs."
         ),
     )
     parser.add_argument(
@@ -510,7 +492,7 @@ def write_evidence_comparison_summary(rows_by_field_set, path):
 def p_label(value):
     if value < 1e-3:
         return r"<10^{-3}"
-    return f"{value:.2f}"
+    return f"={value:.2f}"
 
 
 def kde_on_grid(samples, x_grid, bw=1.2):
@@ -690,6 +672,15 @@ def lnz_colour_values(rows):
     return np.asarray([row["lnZ_harmonic"] for row in rows], dtype=float)
 
 
+def evidence_norm(values):
+    vmin = float(np.min(values))
+    vmax = float(np.max(values))
+    if vmin == vmax:
+        vmin -= 1.0
+        vmax += 1.0
+    return plt.Normalize(vmin=vmin, vmax=vmax)
+
+
 def plot_sigma_v_posterior(rows, config):
     summary_csv = (
         config.summary_dir
@@ -841,41 +832,21 @@ def plot_two_parameter_scatter(
     cmap_name,
     out_basename,
     summary_basename,
-    colour_by=None,
-    colour_stat="mean",
-    colourbar_label="Manticore field",
 ):
-    params = (x_name, y_name) if colour_by is None else (x_name, y_name, colour_by)
+    params = (x_name, y_name)
     summary_csv = (
-        config.summary_dir / f"{summary_basename}{config.output_suffix}.csv"
+        config.summary_dir / f"{summary_basename}{config.field_suffix}.csv"
     )
-    write_summary(
-        rows, params, summary_csv, extra_fields=config.extra_summary_fields)
+    write_summary(rows, params, summary_csv, extra_fields=("lnZ_harmonic",))
 
-    fields = np.asarray([row["field"] for row in rows], dtype=int)
     x, x_lo, x_hi, y, y_lo, y_hi = scatter_arrays(rows, x_name, y_name)
     pearson_r, pearson_p = pearsonr(x, y)
     spearman_r, spearman_p = spearmanr(x, y)
 
-    if config.colour_by_chain:
-        chain_colours = chain_colour_map(rows, f"{cmap_name}_chains")
-        colours = [chain_colours[row["chain"]] for row in rows]
-    else:
-        cmap = trgbh0_cmap(cmap_name)
-        if config.colour_by_lnz_harmonic:
-            colour_values = lnz_colour_values(rows)
-            norm = plt.Normalize(vmin=np.min(colour_values),
-                                 vmax=np.max(colour_values))
-            colourbar_label = r"Harmonic $\ln Z$"
-        elif colour_by is None:
-            colour_values = fields
-            norm = plt.Normalize(vmin=0, vmax=config.expected_field_count - 1)
-        else:
-            colour_values = np.asarray(
-                [row[colour_by][colour_stat] for row in rows])
-            norm = plt.Normalize(
-                vmin=np.min(colour_values), vmax=np.max(colour_values))
-        colours = cmap(norm(colour_values))
+    cmap = trgbh0_cmap(cmap_name)
+    colour_values = lnz_colour_values(rows)
+    norm = evidence_norm(colour_values)
+    colours = cmap(norm(colour_values))
 
     with plt.style.context("science"):
         set_paper_rc()
@@ -913,38 +884,101 @@ def plot_two_parameter_scatter(
             fontsize=6.8,
         )
 
-        if config.colour_by_chain:
-            handles = [
-                Line2D([0], [0], marker="o", color="none",
-                       markerfacecolor=chain_colours[chain],
-                       markeredgecolor=chain_colours[chain],
-                       markersize=4.0, label=chain)
-                for chain in chain_order(rows)
-            ]
-            ax.legend(
-                handles=handles,
-                loc="upper right",
-                title="Manticore chain",
-                title_fontsize=6.5,
-                fontsize=6.2,
-                frameon=False,
-                handlelength=1.0,
-            )
-        else:
-            sm = plt.cm.ScalarMappable(norm=norm, cmap=cmap)
-            sm.set_array([])
-            cbar = fig.colorbar(sm, ax=ax, pad=0.015, fraction=0.055)
-            cbar.set_label(colourbar_label)
-            cbar.ax.tick_params(labelsize=7.0)
+        sm = plt.cm.ScalarMappable(norm=norm, cmap=cmap)
+        sm.set_array([])
+        cbar = fig.colorbar(sm, ax=ax, pad=0.015, fraction=0.055)
+        cbar.set_label(r"Harmonic $\ln Z$")
+        cbar.ax.tick_params(labelsize=7.0)
 
         out_pdf = (
-            config.output_dir / f"{out_basename}{config.output_suffix}.pdf"
+            config.output_dir / f"{out_basename}{config.field_suffix}.pdf"
         )
         out_png = save_pdf_png(fig, out_pdf)
 
     copy_outputs(config, out_pdf, out_png)
     print_outputs(
-        f"{name}{config.diagnostic_name_suffix}",
+        f"{name}",
+        out_pdf,
+        out_png,
+        summary_csv,
+        rows,
+        config,
+        corr=(pearson_r, pearson_p, spearman_r, spearman_p),
+    )
+
+
+def plot_h0_lnz_harmonic_scatter(rows, config):
+    summary_csv = (
+        config.summary_dir
+        / f"manticore_field_h0_lnz_harmonic_summary{config.field_suffix}.csv"
+    )
+    write_summary(
+        rows, ("H0",), summary_csv,
+        extra_fields=("lnZ_harmonic", "err_lnZ_harmonic"))
+
+    x = lnz_colour_values(rows)
+    xerr = np.asarray([row["err_lnZ_harmonic"] for row in rows], dtype=float)
+    y = np.asarray([row["H0"]["q50"] for row in rows])
+    y_lo = np.asarray([row["H0"]["q16"] for row in rows])
+    y_hi = np.asarray([row["H0"]["q84"] for row in rows])
+    pearson_r, pearson_p = pearsonr(x, y)
+    spearman_r, spearman_p = spearmanr(x, y)
+
+    cmap = trgbh0_cmap("trgbh0_manticore_fields_h0_lnz_harmonic")
+    norm = evidence_norm(x)
+    colours = cmap(norm(x))
+
+    with plt.style.context("science"):
+        set_paper_rc()
+        fig, ax = plt.subplots(figsize=(4.45, 3.25))
+        for i in range(len(rows)):
+            ax.errorbar(
+                x[i],
+                y[i],
+                xerr=abs(xerr[i]),
+                yerr=[[y[i] - y_lo[i]], [y_hi[i] - y[i]]],
+                fmt="o",
+                ms=3.9,
+                lw=0.75,
+                elinewidth=0.55,
+                capsize=1.6,
+                color=colours[i],
+                ecolor=colours[i],
+                alpha=0.82,
+                zorder=2,
+            )
+
+        ax.set_xlabel(r"Harmonic $\ln Z$")
+        ax.set_ylabel(H0_LABEL)
+        ax.set_title(f"{config.field_label}; {len(rows)} fields", loc="left")
+        ax.text(
+            0.03,
+            0.97,
+            (
+                rf"$r={pearson_r:.2f}$, $p{p_label(pearson_p)}$" "\n"
+                rf"$\rho={spearman_r:.2f}$, $p{p_label(spearman_p)}$"
+            ),
+            transform=ax.transAxes,
+            ha="left",
+            va="top",
+            fontsize=6.8,
+        )
+
+        sm = plt.cm.ScalarMappable(norm=norm, cmap=cmap)
+        sm.set_array([])
+        cbar = fig.colorbar(sm, ax=ax, pad=0.015, fraction=0.055)
+        cbar.set_label(r"Harmonic $\ln Z$")
+        cbar.ax.tick_params(labelsize=7.0)
+
+        out_pdf = (
+            config.output_dir
+            / f"trgbh0_manticore_field_h0_lnz_harmonic{config.field_suffix}.pdf"
+        )
+        out_png = save_pdf_png(fig, out_pdf)
+
+    copy_outputs(config, out_pdf, out_png)
+    print_outputs(
+        "h0-lnz-harmonic",
         out_pdf,
         out_png,
         summary_csv,
@@ -960,10 +994,12 @@ def requested_plots(items, allow_field_number_colour=False):
         if invalid:
             raise ValueError(f"Unknown plot choice(s): {invalid}.")
 
-    if not items or "all" in items:
+    if not items:
+        plots = list(DEFAULT_PLOTS)
+    elif "all" in items:
         plots = [
             item for item in PLOT_CHOICES
-            if item not in DEFAULT_EXCLUDED_PLOTS
+            if item != "all"
         ]
     else:
         plots = list(items)
@@ -1018,15 +1054,23 @@ def main():
     if diagnostic_plots:
         params = tuple(dict.fromkeys(
             param for item in diagnostic_plots for param in PLOT_PARAMS[item]))
+        include_lnz_harmonic = (
+            any(item in SCATTER_PLOT_SPECS for item in diagnostic_plots)
+            or "h0-lnz-harmonic" in diagnostic_plots
+            or config.colour_by_lnz_harmonic
+        )
         rows = load_rows(
-            config, params,
-            include_lnz_harmonic=config.colour_by_lnz_harmonic)
-        if config.colour_by_chain:
+            config, params, include_lnz_harmonic=include_lnz_harmonic)
+        if (config.colour_by_chain
+                and any(item in FIELD_NUMBER_COLOURED_PLOTS
+                        for item in diagnostic_plots)):
             add_chain_metadata(rows, args.manticore_schedule)
 
     for item in plots:
         if item == "sigma-v-posterior":
             plot_sigma_v_posterior(rows, config)
+        elif item == "h0-lnz-harmonic":
+            plot_h0_lnz_harmonic_scatter(rows, config)
         elif item in SCATTER_PLOT_SPECS:
             plot_two_parameter_scatter(
                 rows, config, name=item, **SCATTER_PLOT_SPECS[item])

@@ -205,13 +205,11 @@ def main():
     # positions drawn with seed = 42 + nsim instead of sharing seed=42.
     is_random_multireal = "random_" in args.catalogue and n_sims > 1
 
-    # Assign work: indices in nsims handled by this rank
-    my_idxs = [i for i in range(n_sims) if (i % size) == rank]
-
     loader_cls = candel.field.name2field_loader(args.reconstruction)
     loader_kwargs = config["io"]["reconstruction_main"][args.reconstruction]
     fixed_los_geometry = None
-    if not is_random_multireal:
+    does_interpolate = size == 1 or rank != 0
+    if not is_random_multireal and does_interpolate:
         geometry_loader = loader_cls(nsim=nsims[0], **loader_kwargs)
         fixed_los_geometry = candel.field.prepare_los_geometry(
             geometry_loader, r, RA, dec)
@@ -255,45 +253,70 @@ def main():
                 ra_dataset[i] = RA_i
                 dec_dataset[i] = dec_i
 
-        n_received = 0
+    TAG_WORK = 1
+    TAG_DONE = 2
+    TAG_RESULT = 3
 
-        def drain_results():
-            nonlocal n_received
-            while comm.Iprobe(source=MPI.ANY_SOURCE, tag=0):
-                write_result(comm.recv(source=MPI.ANY_SOURCE, tag=0))
-                n_received += 1
+    def compute_result(i):
+        nsim = nsims[i]
+        print(f"[rank {rank}] loading `{args.reconstruction}` "
+              f"for sim {nsim}.")
+        loader = loader_cls(nsim=nsim, **loader_kwargs)
+        if is_random_multireal:
+            RA_i, dec_i = generate_random_sky(n_gal, seed=42 + nsim)
+            los_geometry = None
+        else:
+            RA_i, dec_i = RA, dec
+            los_geometry = fixed_los_geometry
+        dens_i, vel_i = candel.field.interpolate_los_density_velocity(
+            loader, r, RA_i, dec_i, args.smooth_target,
+            los_geometry=los_geometry)
+
+        return (
+            i,
+            dens_i.astype(np.float32),
+            vel_i.astype(np.float16),
+            RA_i.astype(np.float32) if is_random_multireal else None,
+            dec_i.astype(np.float32) if is_random_multireal else None,
+            )
 
     try:
-        for i in my_idxs:
-            nsim = nsims[i]
-            print(f"[rank {rank}] loading `{args.reconstruction}` "
-                  f"for sim {nsim}.")
-            loader = loader_cls(nsim=nsim, **loader_kwargs)
-            if is_random_multireal:
-                RA_i, dec_i = generate_random_sky(n_gal, seed=42 + nsim)
-                los_geometry = None
-            else:
-                RA_i, dec_i = RA, dec
-                los_geometry = fixed_los_geometry
-            dens_i, vel_i = candel.field.interpolate_los_density_velocity(
-                loader, r, RA_i, dec_i, args.smooth_target,
-                los_geometry=los_geometry)
-
-            result = (i, dens_i.astype(np.float32), vel_i.astype(np.float16),
-                      RA_i.astype(np.float32) if is_random_multireal else None,
-                      dec_i.astype(np.float32) if is_random_multireal else None)
-            if rank == 0:
-                write_result(result)
-                drain_results()
-            else:
-                comm.send(result, dest=0, tag=0)
-
         if rank == 0:
-            while n_received < n_sims - len(my_idxs):
-                write_result(comm.recv(source=MPI.ANY_SOURCE, tag=0))
-                n_received += 1
+            if size == 1:
+                for i in range(n_sims):
+                    write_result(compute_result(i))
+            else:
+                next_i = 0
+                for worker_rank in range(1, size):
+                    if next_i < n_sims:
+                        comm.send(next_i, dest=worker_rank, tag=TAG_WORK)
+                        next_i += 1
+                    else:
+                        comm.send(None, dest=worker_rank, tag=TAG_DONE)
+
+                status = MPI.Status()
+                for __ in range(n_sims):
+                    result = comm.recv(
+                        source=MPI.ANY_SOURCE, tag=TAG_RESULT,
+                        status=status)
+                    write_result(result)
+                    worker_rank = status.Get_source()
+                    if next_i < n_sims:
+                        comm.send(next_i, dest=worker_rank, tag=TAG_WORK)
+                        next_i += 1
+                    else:
+                        comm.send(None, dest=worker_rank, tag=TAG_DONE)
+
             fout.close()
             replace(los_tmp_file, los_file)
+        else:
+            status = MPI.Status()
+            while True:
+                i = comm.recv(source=0, status=status)
+                if status.Get_tag() == TAG_DONE:
+                    break
+                result = compute_result(i)
+                comm.send(result, dest=0, tag=TAG_RESULT)
     finally:
         if rank == 0 and fout is not None:
             fout.close()
