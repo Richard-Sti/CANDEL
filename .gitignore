@@ -10,12 +10,14 @@ data_heavy/
 field_cache/
 results/
 results_test/
+plots/
 tasks_list*/
 
 
 notebooks/test.ipynb
 .DS_Store
 scripts/sync_from_rusty*
+scripts/preprocess/env.sh
 
 logs_*/
 slurm-*
