@@ -808,16 +808,44 @@ def _load_for_cache(config_path):
     cache_dir = _field_cache_dir_from_config(config)
     _log(f"field cache directory: `{cache_dir}`.")
 
-    if which_run == "CH0":
-        loaded = candel.pvdata.load_SH0ES_from_config(config_path)
-    elif which_run in ("CCHP", "CCHP_CSP"):
-        loaded = candel.pvdata.load_CCHP_from_config(config_path)
-    elif which_run == "EDD_TRGB":
-        loaded = candel.pvdata.load_EDD_TRGB_from_config(config_path)
-    elif which_run == "EDD_TRGB_grouped":
-        loaded = candel.pvdata.load_EDD_TRGB_grouped_from_config(config_path)
-    else:
-        loaded = candel.pvdata.load_PV_dataframes(config_path)
+    run_config_path = config_path
+    tmp_config_path = None
+    if (which_run in ("CH0", "CCHP", "CCHP_CSP", "EDD_TRGB",
+                     "EDD_TRGB_grouped")
+            and "field_indices" in config.get("io", {})):
+        config["io"].pop("field_indices", None)
+        tmp = tempfile.NamedTemporaryFile(
+            mode="wb", prefix="warm_field_cache_", suffix=".toml",
+            delete=False)
+        with tmp:
+            tomli_w.dump(config, tmp)
+        tmp_config_path = Path(tmp.name)
+        run_config_path = tmp_config_path
+
+    old_warmup = os.environ.get("CANDEL_FIELD_CACHE_WARMUP", None)
+    os.environ["CANDEL_FIELD_CACHE_WARMUP"] = "1"
+    try:
+        if which_run == "CH0":
+            loaded = candel.pvdata.load_SH0ES_from_config(run_config_path)
+        elif which_run in ("CCHP", "CCHP_CSP"):
+            loaded = candel.pvdata.load_CCHP_from_config(run_config_path)
+        elif which_run == "EDD_TRGB":
+            loaded = candel.pvdata.load_EDD_TRGB_from_config(run_config_path)
+        elif which_run == "EDD_TRGB_grouped":
+            loaded = candel.pvdata.load_EDD_TRGB_grouped_from_config(
+                run_config_path)
+        else:
+            loaded = candel.pvdata.load_PV_dataframes(run_config_path)
+    finally:
+        if old_warmup is None:
+            os.environ.pop("CANDEL_FIELD_CACHE_WARMUP", None)
+        else:
+            os.environ["CANDEL_FIELD_CACHE_WARMUP"] = old_warmup
+        if tmp_config_path is not None:
+            try:
+                tmp_config_path.unlink()
+            except OSError:
+                pass
 
     summary = _summarise_loaded(loaded)
     _log(summary)

@@ -5,18 +5,13 @@ the source code, `README.md`, or the workflow guides in this folder.
 
 ## First Read
 
-Start with these files when joining a task:
+Start with `/mnt/users/rstiskalek/CANDEL/AGENTS.md`,
+`/mnt/users/rstiskalek/CANDEL/README.md`, this map, and the relevant guide in
+`/mnt/users/rstiskalek/CANDEL/instructions` before changing job generation,
+cluster submission, field-cache warming, or maser workflows.
 
-1. `/mnt/users/rstiskalek/CANDEL/AGENTS.md` for operating rules.
-2. `/mnt/users/rstiskalek/CANDEL/README.md` for the scientific and package
-   overview.
-3. This file for code navigation.
-4. A workflow guide in `/mnt/users/rstiskalek/CANDEL/instructions` before
-   changing or running job generation, cluster submission, or maser workflows.
-
-Avoid treating `/mnt/users/rstiskalek/CANDEL/data`,
-`/mnt/users/rstiskalek/CANDEL/results`, and
-`/mnt/users/rstiskalek/CANDEL/field_cache` as normal source directories.
+Avoid treating `/mnt/users/rstiskalek/CANDEL/data`, `results`, and
+`field_cache` as normal source directories.
 
 ## Runtime Shape
 
@@ -31,9 +26,8 @@ TOML config
   -> HDF5 samples, diagnostics, plots under results/
 ```
 
-`local_config.toml` is machine-local and not versioned. Reusable configs should
-not bake in local paths, queue names, Python executables, or generated output
-paths.
+`local_config.toml` is machine-local and not versioned. Reusable configs
+should not bake in local paths, queue names, Python executables, or outputs.
 
 ## Top-Level Layout
 
@@ -62,12 +56,10 @@ paths.
 
 - `/mnt/users/rstiskalek/CANDEL/candel/pvdata`
   contains peculiar-velocity data loading. `frame.py` defines `PVDataFrame`
-  and config-driven PV dataframe loading; `catalogues.py`, `los.py`,
-  `volume_density.py`, and `field_cache.py` hold catalogue readers, LOS
-  helpers, 3D density loading, and field-cache utilities.
-
-- `/mnt/users/rstiskalek/CANDEL/candel/pvdata/megamaser_data.py`
-  loads spot-level megamaser data and velocity-frame conversions.
+  and config-driven PV dataframe loading; `catalogues.py`, `dust.py`,
+  `los.py`, `volume_density.py`, `field_cache.py`, and `megamaser_data.py`
+  hold catalogue readers, dust corrections, LOS helpers, 3D density loading,
+  field-cache utilities, and spot-level maser data loading.
 
 - `/mnt/users/rstiskalek/CANDEL/candel/model/base_model.py`
   contains shared model setup: priors, data arrays, cosmography, Malmquist and
@@ -103,25 +95,24 @@ paths.
   fields, Mmiss kernels, galaxy bias, latent marginalization, log-space
   quadrature, and LOS interpolation.
 
+- `/mnt/users/rstiskalek/CANDEL/candel/model/optim1d.py` and
+  `/mnt/users/rstiskalek/CANDEL/candel/model/maser_convergence.py`
+  support one-dimensional numerical optimization and maser convergence checks.
+
 - `/mnt/users/rstiskalek/CANDEL/candel/inference`
   contains inference engines and postprocessing: NumPyro NUTS in
-  `inference.py`, nested slice sampling in `nested.py`, MAP optimization in
-  `optimise.py`, and evidence utilities in `evidence.py`. NSS can shard
-  replacement chains over multiple local devices on one node; the single-device
-  path remains the fallback.
+  `inference.py`, checkpointed NUTS helpers in `checkpointed_nuts.py`, nested
+  slice sampling in `nested.py`, MAP optimization in `optimise.py`, and
+  evidence utilities in `evidence.py`. NSS can shard replacement chains over
+  multiple local devices on one node; the single-device path remains the
+  fallback.
 
-- `/mnt/users/rstiskalek/CANDEL/candel/field`
-  loads density/velocity reconstructions and interpolates line-of-sight fields.
-
-- `/mnt/users/rstiskalek/CANDEL/candel/cosmo`
-  contains cosmography converters, beta-to-cosmology helpers, and PV covariance
-  calculations.
-
-- `/mnt/users/rstiskalek/CANDEL/candel/redshift2real`
-  maps observed redshift to cosmological redshift given LOS fields.
-
-- `/mnt/users/rstiskalek/CANDEL/candel/mock`
-  generates synthetic catalogues and posterior predictive checks.
+- `/mnt/users/rstiskalek/CANDEL/candel/field`,
+  `/mnt/users/rstiskalek/CANDEL/candel/cosmo`,
+  `/mnt/users/rstiskalek/CANDEL/candel/redshift2real`, and
+  `/mnt/users/rstiskalek/CANDEL/candel/mock`
+  cover reconstruction-field loading, cosmography/PV covariance, redshift to
+  real-space mapping, synthetic catalogues, and posterior predictive checks.
 
 ## Script Map
 
@@ -154,26 +145,29 @@ paths.
   this workflow.
 
 - `/mnt/users/rstiskalek/CANDEL/scripts/preprocess`
-  precomputes line-of-sight density and velocity products and warms field
-  caches.
+  precomputes line-of-sight density/velocity products and warms H0 volume
+  field caches. `warm_field_cache.py` reuses production config loaders and can
+  read generated task files.
 
-- `/mnt/users/rstiskalek/CANDEL/scripts/H0_convergence`
-  contains selection-integral and posterior subsampling diagnostics.
-
-- `/mnt/users/rstiskalek/CANDEL/scripts/diagnostics`
-  contains standalone diagnostic plotting scripts for model components.
-
-- `/mnt/users/rstiskalek/CANDEL/scripts/mocks`
-  contains TRGB mock run and merge scripts.
-
+- `/mnt/users/rstiskalek/CANDEL/scripts/H0_convergence`,
+  `/mnt/users/rstiskalek/CANDEL/scripts/diagnostics`, and
+  `/mnt/users/rstiskalek/CANDEL/scripts/mocks`
+  contain H0 diagnostics, standalone model-component plots, and TRGB mock run
+  helpers.
+- `/mnt/users/rstiskalek/CANDEL/scripts/BORG_fields`,
+  `/mnt/users/rstiskalek/CANDEL/scripts/data`, and
+  `/mnt/users/rstiskalek/CANDEL/scripts/sharing`
+  contain reconstruction-product helpers, one-off data parsers, and posterior
+  sharing utilities.
 - `/mnt/users/rstiskalek/CANDEL/scripts/sync`
   contains machine sync helpers; avoid changing host-specific behavior without
   checking the relevant cluster guide.
 
 ## Common Edit Paths
 
-- Adding a new catalogue: start in `candel/pvdata/data.py`, then wire config
-  keys and runner behavior only if existing loaders cannot cover it.
+- Adding a new catalogue: start in `candel/pvdata/catalogues.py` or
+  `candel/pvdata/frame.py`, then wire config keys and runner behavior only if
+  existing loaders cannot cover it.
 - Adding or changing a PV model: start in `candel/model/base_pv.py` and the
   closest `model_PV_*.py` implementation; register production PV models in
   `candel/model/__init__.py`.

@@ -20,7 +20,10 @@ setup(
     version="0.1.0",
     author="Richard Stiskalek",
     author_email="richard.stiskalek@protonmail.com",
-    description="Calibration And Normalization of the DistancE Ladder",
+    description=(
+        "JAX framework for peculiar-velocity inference, distance-ladder "
+        "calibration, and megamaser disk modelling"
+    ),
     long_description=open("README.md").read(),
     long_description_content_type="text/markdown",
     url="https://github.com/richard-sti/candel",

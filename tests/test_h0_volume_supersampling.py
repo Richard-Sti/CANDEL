@@ -1,13 +1,18 @@
+from pathlib import Path
+
 import numpy as np
 from scipy.integrate import simpson
 from scipy.special import ndtr
 
+import candel.pvdata.volume_density as volume_density_mod
 from candel.cosmo.cosmography import Distance2Distmod
 from candel.pvdata.field_cache import (
+    _field_cache_path,
     _h0_volume_cache_filename,
     _pv_volume_density_cache_filename,
 )
 from candel.pvdata.volume_density import (
+    _load_volume_data_for_H0,
     _h0_volume_cache_supersampling_payload,
     _h0_volume_apply_quadrature,
     _h0_volume_quadrature_geometry,
@@ -188,3 +193,183 @@ def test_h0_volume_supersampling_handles_bright_homogeneous_limit():
 
     assert coarse_relerr > 0.99
     assert supersampled_relerr < 2e-3
+
+
+def test_h0_volume_component_loader_cache_is_cleared():
+    class FakeLoader:
+        clear_calls = 0
+
+        def __init__(self, nsim, **kwargs):
+            self.nsim = nsim
+            self.boxsize = 3.0
+            self.coordinate_frame = "icrs"
+            self.observer_pos = np.array([1.5, 1.5, 1.5],
+                                         dtype=np.float32)
+
+        def load_density(self):
+            return np.ones((3, 3, 3), dtype=np.float32)
+
+        def load_velocity_component(self, component):
+            return np.full((3, 3, 3), component + 1, dtype=np.float32)
+
+        def clear_velocity_cache(self):
+            type(self).clear_calls += 1
+
+    original = volume_density_mod.name2field_loader
+    try:
+        volume_density_mod.name2field_loader = lambda name: FakeLoader
+        _load_volume_data_for_H0(
+            "fake", {"Om0": 0.3}, [0], "linear", 0.3,
+            load_velocity=True, geometry="cube", cache_enabled=False,
+            return_cache_fields=True)
+    finally:
+        volume_density_mod.name2field_loader = original
+
+    assert FakeLoader.clear_calls == 1
+
+
+def test_h0_volume_uses_warmed_superset_without_writing_slice(
+        tmp_path, monkeypatch):
+    class FakeLoader:
+        def __init__(self, nsim, **kwargs):
+            self.nsim = nsim
+            self.boxsize = 16.0
+            self.ngrid = 4
+            self.coordinate_frame = "icrs"
+            self.observer_pos = np.array([8.0, 8.0, 8.0],
+                                         dtype=np.float32)
+
+        def load_density(self):
+            raise AssertionError("raw field should not be loaded")
+
+    payload = {
+        "kind": "h0_volume_data",
+        "field_name": "fake_manticore",
+        "field_indices": [0, 1, 2],
+        "subcube_radius": 50.0,
+        "geometry": "sphere",
+        "sources": [],
+        "downsample": 1,
+        "supersample": {
+            "factor": 4,
+            "radius": 15.0,
+            "method": "linear",
+        },
+        "load_velocity": False,
+    }
+    cache_path = Path(_field_cache_path(
+        tmp_path, "h0_volume_data", payload))
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    np.savez(
+        cache_path,
+        rho_3d_fields=np.asarray([[10.0, 10.0],
+                                  [20.0, 20.0],
+                                  [30.0, 30.0]], dtype=np.float32),
+        r_3d=np.asarray([1.0, 2.0], dtype=np.float32),
+        log_dV_3d=np.asarray(0.0, dtype=np.float32),
+        log_volume_weight_3d=np.asarray([0.0, 0.0], dtype=np.float32))
+
+    monkeypatch.setattr(
+        volume_density_mod, "name2field_loader", lambda name: FakeLoader)
+    loaded = _load_volume_data_for_H0(
+        "fake_manticore", {"Om0": 0.3}, [1], "linear", 0.3,
+        subcube_radius=50.0, geometry="sphere", cache_dir=tmp_path,
+        cache_enabled=True, supersample_radius=15.0,
+        supersample_target_dx=1.0)
+
+    np.testing.assert_allclose(
+        np.asarray(loaded["density_3d_fields"]), [[19.0, 19.0]])
+    assert not Path(_field_cache_path(
+        tmp_path, "h0_volume_data",
+        {**payload, "field_indices": [1]})).exists()
+
+
+def test_h0_volume_target_dx_warmed_superset_matches_resolved_factor(
+        tmp_path, monkeypatch):
+    class FakeLoader:
+        def __init__(self, nsim, **kwargs):
+            self.nsim = nsim
+            self.boxsize = 16.0
+            self.ngrid = 4
+            self.coordinate_frame = "icrs"
+            self.observer_pos = np.array([8.0, 8.0, 8.0],
+                                         dtype=np.float32)
+
+        def load_density(self):
+            raise AssertionError("raw field should not be loaded")
+
+    payload = {
+        "kind": "h0_volume_data",
+        "field_name": "fake_manticore",
+        "field_indices": [0, 1, 2],
+        "subcube_radius": 50.0,
+        "geometry": "sphere",
+        "sources": [],
+        "downsample": 1,
+        "load_velocity": False,
+    }
+    for factor, value in ((4, 40.0), (8, 80.0)):
+        cache_payload = {
+            **payload,
+            "supersample": {
+                "factor": factor,
+                "radius": 15.0,
+                "method": "linear",
+            },
+        }
+        cache_path = Path(_field_cache_path(
+            tmp_path, "h0_volume_data", cache_payload))
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        np.savez(
+            cache_path,
+            rho_3d_fields=np.asarray([[10.0, 10.0],
+                                      [value, value],
+                                      [30.0, 30.0]], dtype=np.float32),
+            r_3d=np.asarray([1.0, 2.0], dtype=np.float32),
+            log_dV_3d=np.asarray(0.0, dtype=np.float32),
+            log_volume_weight_3d=np.asarray([0.0, 0.0],
+                                            dtype=np.float32))
+
+    monkeypatch.setattr(
+        volume_density_mod, "name2field_loader", lambda name: FakeLoader)
+    loaded = _load_volume_data_for_H0(
+        "fake_manticore", {"Om0": 0.3}, [1], "linear", 0.3,
+        subcube_radius=50.0, geometry="sphere", cache_dir=tmp_path,
+        cache_enabled=True, supersample_radius=15.0,
+        supersample_target_dx=1.0)
+
+    np.testing.assert_allclose(
+        np.asarray(loaded["density_3d_fields"]), [[39.0, 39.0]])
+
+
+def test_h0_volume_missing_warmed_cache_errors_before_raw_load(
+        tmp_path, monkeypatch):
+    class FakeLoader:
+        def __init__(self, nsim, **kwargs):
+            self.nsim = nsim
+            self.boxsize = 16.0
+            self.ngrid = 4
+            self.coordinate_frame = "icrs"
+            self.observer_pos = np.array([8.0, 8.0, 8.0],
+                                         dtype=np.float32)
+
+        def load_density(self):
+            raise AssertionError("raw field should not be loaded")
+
+    monkeypatch.setattr(
+        volume_density_mod, "name2field_loader", lambda name: FakeLoader)
+    monkeypatch.delenv("CANDEL_FIELD_CACHE_WARMUP", raising=False)
+
+    try:
+        _load_volume_data_for_H0(
+            "fake_manticore", {"Om0": 0.3}, [1], "linear", 0.3,
+            subcube_radius=50.0, geometry="sphere", cache_dir=tmp_path,
+            cache_enabled=True, supersample_radius=15.0,
+            supersample_target_dx=1.0)
+    except RuntimeError as exc:
+        msg = str(exc)
+    else:
+        raise AssertionError("expected missing warmed-cache error")
+
+    assert "missing required warmed H0 3D volume data cache" in msg
+    assert "field_indices containing [1]" in msg

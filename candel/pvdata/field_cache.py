@@ -347,8 +347,16 @@ def _slice_pv_volume_cache_fields(cached, cached_indices, requested_indices):
     return out
 
 
-def _read_h0_volume_cache_superset(cache_dir, payload, label, required_keys,
-                                   requested_indices):
+def _h0_volume_supersample_tag_matches(cached_tag, supersample):
+    """Return whether a cached supersampling tag satisfies a request."""
+    if supersample is None:
+        return cached_tag is None
+    return cached_tag == _h0_volume_supersample_tag(supersample)
+
+
+def _read_h0_volume_cache_superset(
+        cache_dir, payload, label, required_keys, requested_indices,
+        require_superset=False):
     """Load a cached H0 volume product whose field set contains the request."""
     if cache_dir is None:
         return None
@@ -362,9 +370,6 @@ def _read_h0_volume_cache_superset(cache_dir, payload, label, required_keys,
     radius_tag = _field_cache_float_tag(payload["subcube_radius"])
     downsample_tag = f"ds-{int(payload['downsample'])}"
     supersample = payload.get("supersample", None)
-    supersample_tag = None
-    if supersample is not None:
-        supersample_tag = _h0_volume_supersample_tag(supersample)
     kind_tag = "vel" if payload["load_velocity"] else "density"
 
     candidates = []
@@ -388,17 +393,21 @@ def _read_h0_volume_cache_superset(cache_dir, payload, label, required_keys,
             continue
         if cached_downsample != downsample_tag or cached_kind != kind_tag:
             continue
-        if cached_supersample != supersample_tag:
+        if not _h0_volume_supersample_tag_matches(
+                cached_supersample, supersample):
             continue
         if not fields_part.startswith("fields-"):
             continue
         cached_indices = _parse_field_cache_indices_tag(
             fields_part.removeprefix("fields-"))
+        if require_superset and len(cached_indices) <= len(requested):
+            continue
         if all(index in cached_indices for index in requested):
             candidates.append((len(cached_indices), cached_indices,
                                join(cache_subdir, fname)))
 
-    for _, cached_indices, path in sorted(candidates):
+    for _, cached_indices, path in sorted(
+            candidates, reverse=require_superset):
         cached = _read_field_cache(path, f"{label} superset", required_keys)
         if cached is not None:
             fprint(f"using {label} cache `{path}` sliced to field indices "

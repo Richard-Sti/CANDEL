@@ -49,6 +49,24 @@ from .field_cache import (
 _SPHERE_RADIUS_DX_WARN_MIN = 15.0
 
 
+def _field_cache_warmup_active():
+    """Return whether a dedicated cache-warming command is running."""
+    return os.environ.get("CANDEL_FIELD_CACHE_WARMUP", "0") == "1"
+
+
+def _h0_volume_missing_cache_error(label, density_path,
+                                   velocity_path=None):
+    """Build an explicit error for required H0 field-cache misses."""
+    tried = [f"density: {density_path}"]
+    if velocity_path is not None:
+        tried.append(f"velocity: {velocity_path}")
+    return RuntimeError(
+        f"missing required warmed {label} cache. Tried "
+        + "; ".join(tried)
+        + ". Run scripts/preprocess/warm_field_cache.py for this task "
+          "set before inference.")
+
+
 def _density_unit_normalization(source):
     """Return the raw-density divisor needed to get dimensionless 1 + delta."""
     source_str = str(source)
@@ -839,18 +857,13 @@ def _load_volume_data_for_H0(
         source_meta.append(_field_source_metadata(loader))
 
     native_dx = None
-    if supersample_target_dx is not None:
+    target_dx_requested = supersample_target_dx is not None
+    if target_dx_requested:
         native_dx = _field_loader_native_dx(loaders[0])
         supersample_factor = _h0_volume_resolved_supersample_factor(
             native_dx, supersample_factor, supersample_target_dx)
     use_supersampling = (
         supersample_factor > 1 and supersample_radius > 0.0)
-    if use_supersampling and supersample_target_dx is not None:
-        fprint(
-            "  H0 volume supersampling target: "
-            f"native_dx={native_dx:g} Mpc/h, "
-            f"target_dx={supersample_target_dx:g} Mpc/h, "
-            f"resolved_dx={native_dx / supersample_factor:g} Mpc/h.")
 
     Om0_model = Om0
     Om0 = _reconstruction_omega_m(
@@ -891,28 +904,25 @@ def _load_volume_data_for_H0(
             density_required.append("log_volume_weight_3d")
         velocity_required = [
             "vrad_3d_fields", "rhat_x_3d", "rhat_y_3d", "rhat_z_3d"]
-        density_cached = _read_field_cache(
-            cache_path, "H0 3D volume density", density_required)
-        if density_cached is None:
-            density_cached = _read_h0_volume_cache_superset(
-                cache_dir, density_cache_payload, "H0 3D volume density",
-                density_required, field_indices)
-            if density_cached is not None:
-                _write_field_cache(
-                    cache_path, "H0 3D volume density", density_cached)
+        require_superset_cache = (
+            len(field_indices) == 1
+            and "manticore" in str(field_name).lower())
+        density_cached = _read_h0_volume_cache_superset(
+            cache_dir, density_cache_payload, "H0 3D volume density",
+            density_required, field_indices,
+            require_superset=require_superset_cache)
+        if density_cached is None and not require_superset_cache:
+            density_cached = _read_field_cache(
+                cache_path, "H0 3D volume density", density_required)
         if load_velocity:
-            velocity_cached = _read_field_cache(
-                velocity_cache_path, "H0 3D volume velocity",
-                velocity_required)
-            if velocity_cached is None:
-                velocity_cached = _read_h0_volume_cache_superset(
-                    cache_dir, velocity_cache_payload,
-                    "H0 3D volume velocity", velocity_required,
-                    field_indices)
-                if velocity_cached is not None:
-                    _write_field_cache(
-                        velocity_cache_path, "H0 3D volume velocity",
-                        velocity_cached)
+            velocity_cached = _read_h0_volume_cache_superset(
+                cache_dir, velocity_cache_payload,
+                "H0 3D volume velocity", velocity_required,
+                field_indices, require_superset=require_superset_cache)
+            if velocity_cached is None and not require_superset_cache:
+                velocity_cached = _read_field_cache(
+                    velocity_cache_path, "H0 3D volume velocity",
+                    velocity_required)
             cached = None
             if density_cached is not None and velocity_cached is not None:
                 cached = {**density_cached, **velocity_cached}
@@ -922,6 +932,29 @@ def _load_volume_data_for_H0(
             return _cached_h0_volume_result(
                 cached, source_meta, mode, Om0, load_velocity,
                 voxel_subsample_fraction, voxel_subsample_seed)
+        if not _field_cache_warmup_active():
+            density_attempt = (
+                cache_path if cache_path is not None
+                and not require_superset_cache else
+                f"{cache_dir}/h0_volume_data cache matching "
+                f"field_name={field_name!r}, field_indices containing "
+                f"{_jsonable(np.asarray(field_indices))}, "
+                f"geometry={geometry!r}, radius={subcube_radius!r}, "
+                f"supersample_radius={supersample_radius:g}, "
+                f"supersample_factor={supersample_factor}, kind='density'")
+            velocity_attempt = None
+            if load_velocity:
+                velocity_attempt = (
+                    velocity_cache_path if velocity_cache_path is not None
+                    and not require_superset_cache else
+                    f"{cache_dir}/h0_volume_data cache matching "
+                    f"field_name={field_name!r}, field_indices containing "
+                    f"{_jsonable(np.asarray(field_indices))}, "
+                    f"geometry={geometry!r}, radius={subcube_radius!r}, "
+                    f"supersample_radius={supersample_radius:g}, "
+                    f"supersample_factor={supersample_factor}, kind='vel'")
+            raise _h0_volume_missing_cache_error(
+                "H0 3D volume data", density_attempt, velocity_attempt)
         fprint("H0 3D volume data cache miss; loading reconstruction "
                f"fields and will cache at `{cache_path}`.")
         mpi_comm = _field_cache_mpi_comm()
@@ -936,6 +969,13 @@ def _load_volume_data_for_H0(
     else:
         cache_path = None
         velocity_cache_path = None
+
+    if use_supersampling and target_dx_requested:
+        fprint(
+            "  H0 volume supersampling target: "
+            f"native_dx={native_dx:g} Mpc/h, "
+            f"target_dx={supersample_target_dx:g} Mpc/h, "
+            f"resolved_dx={native_dx / supersample_factor:g} Mpc/h.")
 
     for k, (nsim, loader) in enumerate(zip(field_indices, loaders)):
         frame = getattr(loader, "coordinate_frame", "icrs")
@@ -1033,16 +1073,21 @@ def _load_volume_data_for_H0(
             v_rad_out = np.zeros(np.asarray(log_r_3d).shape,
                                  dtype=np.float32)
             if hasattr(loader, "load_velocity_component"):
-                for comp in range(3):
-                    v_full = loader.load_velocity_component(comp)
-                    if slices is not None:
-                        v_comp = v_full[slices[0], slices[1], slices[2]]
-                    else:
-                        v_comp = v_full
-                    del v_full
-                    v_comp = _h0_volume_apply_quadrature(v_comp, quad_ref)
-                    v_rad_out += v_comp * quad_ref["rhat_fields"][comp]
-                    del v_comp
+                try:
+                    for comp in range(3):
+                        v_full = loader.load_velocity_component(comp)
+                        if slices is not None:
+                            v_comp = v_full[slices[0], slices[1], slices[2]]
+                        else:
+                            v_comp = v_full
+                        del v_full
+                        v_comp = _h0_volume_apply_quadrature(
+                            v_comp, quad_ref)
+                        v_rad_out += v_comp * quad_ref["rhat_fields"][comp]
+                        del v_comp
+                finally:
+                    if hasattr(loader, "clear_velocity_cache"):
+                        loader.clear_velocity_cache()
             else:
                 v_full = loader.load_velocity()
                 for comp in range(3):
