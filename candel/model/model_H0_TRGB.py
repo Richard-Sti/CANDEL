@@ -92,7 +92,7 @@ class TRGBModel(H0ModelBase):
     def _constrain_mag_lim_prior(self, config):
         """Keep the inferred upper magnitude threshold above mag_min_TRGB."""
         priors = config.setdefault("model", {}).setdefault("priors", {})
-        mag_min = float(get_nested(config, "model/mag_min_TRGB", 22.0))
+        mag_min = float(get_nested(config, "model/mag_min_TRGB", 22.1))
         low_bound = mag_min + self._MAG_WINDOW_MIN_WIDTH
         spec = priors.setdefault("mag_lim_TRGB", {
             "dist": "truncated_normal",
@@ -158,7 +158,7 @@ class TRGBModel(H0ModelBase):
         fprint("use_density_dependent_sigma_v set to "
                f"{self.use_density_dependent_sigma_v}")
         self.mag_min_TRGB = get_nested(
-            self.config, "model/mag_min_TRGB", 22.0)
+            self.config, "model/mag_min_TRGB", 22.1)
         if self.which_selection == "TRGB_magnitude":
             fprint(f"mag_min_TRGB set to {self.mag_min_TRGB}")
 
@@ -273,7 +273,7 @@ class TRGBModel(H0ModelBase):
     def _validate_config(self):
         if self._has_trgb_colour:
             fixed_colour_params = [
-                name for name in ("alpha_c", "c_star", "c_bar", "w_c")
+                name for name in ("c_star", "c_bar", "w_c")
                 if self.prior_dist_name.get(name) == "delta"
             ]
             if fixed_colour_params:
