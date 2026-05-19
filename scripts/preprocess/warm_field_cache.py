@@ -419,10 +419,13 @@ def _variant_action(config):
         return "check/cache"
 
     which_sel = get_nested(config, "model/which_selection", None)
-    if which_sel in (None, "none"):
-        return "skip 3D"
     if not get_nested(config, "model/use_reconstruction", False):
         return "skip recon"
+    needs_no_selection_volume = (
+        which_sel in (None, "none")
+        and which_run in ("CH0", "EDD_TRGB", "EDD_TRGB_grouped"))
+    if which_sel in (None, "none") and not needs_no_selection_volume:
+        return "skip 3D"
     if not pvdata_mod._field_cache_enabled_from_config(config):
         return "cache off"
     return "check/cache"
