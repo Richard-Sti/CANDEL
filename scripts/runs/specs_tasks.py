@@ -85,6 +85,7 @@ TRGBH0_COMMON = {
     "inference/chain_method": "sequential",
     "inference/num_warmup": 1000,
     "inference/num_samples": 1000,
+    "inference/num_chains_harmonic": 10,
     "model/selection_integral_geometry": "sphere",
     "model/selection_integral_grid_radius": 50.0,
     "model/density_3d_subsample_fraction": 1.0,
@@ -118,12 +119,54 @@ def _trgbh0_carrick_beta_prior():
     return _normal(TRGBH0_CARRICK_BETA_LOC, TRGBH0_CARRICK_BETA_SCALE)
 
 
-def _trgbh0_edd_mag_lim_prior():
+def _trgbh0_edd_mag_lim_uninformative_prior():
     return {
         "dist": "uniform",
         "low": TRGBH0_EDD_MAG_LIM_LOW,
         "high": TRGBH0_EDD_MAG_LIM_HIGH,
     }
+
+
+def _trgbh0_edd_mag_lim_informative_prior():
+    return {
+        "dist": "truncated_normal",
+        "mean": 24.1,
+        "scale": 0.5,
+        "low": TRGBH0_EDD_MAG_LIM_LOW,
+    }
+
+
+def _trgbh0_edd_mag_lim_prior():
+    prior = _trgbh0_edd_mag_lim_informative_prior()
+    # prior = _trgbh0_edd_mag_lim_uninformative_prior()
+    return prior
+
+
+def _trgbh0_sigma_int_uninformative_prior():
+    return {
+        "dist": "maxwell",
+        "scale": 0.0627,
+    }
+
+
+def _trgbh0_sigma_int_informative_prior():
+    return {
+        "dist": "truncated_normal",
+        "mean": 0.1,
+        "scale": 0.01,
+        "low": 0.01,
+    }
+
+
+def _trgbh0_sigma_int_prior():
+    prior = _trgbh0_sigma_int_informative_prior()
+    # prior = _trgbh0_sigma_int_uninformative_prior()
+    return prior
+
+
+TRGBH0_COMMON["model/priors/sigma_int"] = _trgbh0_sigma_int_prior()
+TRGBH0_COMMON["model/priors/alpha_c"] = _delta(-0.2)
+TRGBH0_COMMON["model/priors/alpha_high/low"] = 0.0
 
 
 def _trgbh0_cchp_config():
@@ -276,6 +319,23 @@ def _ch0_mixed_selection_datasets():
     ]
 
 
+def _ch0_manticore_field_datasets():
+    return [
+        {
+            "model/which_selection": "SN_magnitude",
+            "model/use_reconstruction": True,
+            "model/use_fiducial_Cepheid_host_PV_covariance": False,
+            "model/use_PV_covmat_scaling": False,
+            "model/weight_selection_by_covmat_Neff": False,
+            "model/use_density_dependent_sigma_v": False,
+            "io/SH0ES/which_host_los": CH0_MANTICORE_LOS,
+            "model/which_bias": CH0_MANTICORE_BIAS,
+            "io/field_indices": field,
+        }
+        for field in range(30)
+    ]
+
+
 def _trgbh0_selection_datasets(pv_models, selections=("TRGB_magnitude",)):
     return [
         {
@@ -412,7 +472,8 @@ def _trgbh0_manticore_field_datasets():
                 "model/use_density_dependent_sigma_v": False,
                 "model/cz_likelihood": "gaussian",
                 "model/mag_min_TRGB": TRGBH0_EDD_MAG_MIN,
-                "model/priors/mag_lim_TRGB": _trgbh0_edd_mag_lim_prior(),
+                "model/priors/mag_lim_TRGB": (
+                    _trgbh0_edd_mag_lim_uninformative_prior()),
                 "io/PV_main/EDD_TRGB/which_host_los": los,
                 "model/which_bias": TRGBH0_MANTICORE_BIAS,
                 "io/field_indices": field,
@@ -815,6 +876,22 @@ TASK_SPECS = {
         "datasets": _ch0_mixed_selection_datasets(),
         "expected_tasks": 36,
     },
+    "CH0_single": {
+        "description": (
+            "CH0 SN-magnitude one-Manticore-field runs without evidence."),
+        "config_path": "configs/config_CH0.toml",
+        "tag": "single",
+        "common": {
+            **CH0_PAPER_COMMON,
+            "inference/compute_evidence": False,
+            "inference/num_chains": 1,
+            "inference/num_warmup": 1000,
+            "inference/num_samples": 5000,
+            **_with_root(f"{CH0_PAPER_ROOT}/single_fields"),
+        },
+        "datasets": _ch0_manticore_field_datasets(),
+        "expected_tasks": 30,
+    },
     "Vext_rad": {
         "description": (
             "CF4 W1 and SDSS FP radial Vext comparison."),
@@ -876,11 +953,11 @@ TASK_SPECS = {
         "tag": "main",
         "common": {
             **TRGBH0_COMMON,
-            "inference/num_chains_harmonic": 10,
             "model/selection_integral_supersample_radius": (
                 TRGBH0_SELECTION_SUPERSAMPLE_RADIUS),
             "model/selection_integral_supersample_target_dx": (
                 TRGBH0_SELECTION_SUPERSAMPLE_TARGET_DX),
+            "model/priors/mag_lim_TRGB": _trgbh0_edd_mag_lim_prior(),
             **_with_root(f"{TRGBH0_ROOT}/table"),
         },
         "datasets": _trgbh0_main_datasets(),

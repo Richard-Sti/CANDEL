@@ -764,25 +764,21 @@ def list_specs():
     print(
         f"{'task_index':<{name_width}}  "
         f"{'tasks':>{task_width}}  "
-        f"{'config':<{config_width}}  "
-        "description"
+        "config"
     )
     print(
         f"{'-' * name_width}  "
         f"{'-' * task_width}  "
-        f"{'-' * config_width}  "
-        f"{'-' * 11}"
+        f"{'-' * config_width}"
     )
     for name in names:
         spec = TASK_SPECS[name]
-        description = spec.get("description", "")
         expected_tasks = spec.get("expected_tasks", "?")
         config_path = spec.get("config_path", "")
         print(
             f"{name:<{name_width}}  "
             f"{expected_tasks:>{task_width}}  "
-            f"{config_path:<{config_width}}  "
-            f"{description}"
+            f"{config_path}"
         )
 
     print()
