@@ -436,6 +436,7 @@ class Manticore_FieldLoader(BaseFieldLoader):
 
         self.coordinate_frame = "icrs"
         self.boxsize = 681.1  # Mpc / h
+        self.ngrid = 1024
         self.Omega_m = 0.306
         self._velocity_density = None
 
@@ -487,6 +488,7 @@ class ManticoreCOLA_FieldLoader(BaseFieldLoader):
 
         self.coordinate_frame = "icrs"
         self.boxsize = 681.1  # Mpc / h
+        self.ngrid = 256
         self.Omega_m = 0.306
 
     def load_density(self):
