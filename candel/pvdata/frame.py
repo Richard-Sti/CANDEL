@@ -24,7 +24,7 @@ from jax import numpy as jnp
 
 from ..model.integration import simpson_log_weights
 from ..model.interp import LOSInterpolator
-from ..util import (SPEED_OF_LIGHT, fprint, fsection, get_nested, load_config,
+from ..util import (SPEED_OF_LIGHT, fprint, fsection, load_config,
                     radec_to_cartesian)
 from .catalogues import _CATALOGUE_LOADERS, load_CF4_data, load_CF4_mock
 from .field_cache import (_field_cache_dir_from_config,

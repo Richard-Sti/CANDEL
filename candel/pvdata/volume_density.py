@@ -28,23 +28,20 @@ import numpy as np
 from h5py import File
 from jax import numpy as jnp
 
+from ..field.field_interp import apply_gaussian_smoothing
 from ..field.loader import name2field_loader
 from ..util import fprint, get_nested
-from .field_cache import (
-    _ArrayShapeOnly,
-    _field_cache_dir_from_config,
-    _field_cache_enabled_from_config,
-    _field_cache_mpi_comm,
-    _field_cache_path,
-    _field_source_metadata,
-    _jsonable,
-    _read_field_cache,
-    _read_field_cache_mpi_part,
-    _read_h0_volume_cache_superset,
-    _read_pv_volume_cache_superset,
-    _write_field_cache,
-    _write_field_cache_mpi_part,
-)
+from .field_cache import (_ArrayShapeOnly, _field_cache_dir_from_config,
+                          _field_cache_enabled_from_config,
+                          _field_cache_mpi_comm, _field_cache_path,
+                          _field_source_metadata, _jsonable, _read_field_cache,
+                          _read_field_cache_mpi_part,
+                          _read_h0_volume_cache_superset,
+                          _read_pv_volume_cache_superset, _write_field_cache,
+                          _write_field_cache_mpi_part)
+from .field_products import (density_smoothing_cache_payload,
+                             density_smoothing_scale_from_config,
+                             validate_density_smoothing_scale)
 
 _SPHERE_RADIUS_DX_WARN_MIN = 15.0
 
@@ -603,7 +600,8 @@ def _load_volume_data_for_H0_mpi(
         subcube_radius, voxel_subsample_fraction, voxel_subsample_seed,
         load_velocity, geometry, density_cache_path, velocity_cache_path,
         source_meta, mode, density_required, velocity_required,
-        supersample_factor=1, supersample_radius=0.0):
+        supersample_factor=1, supersample_radius=0.0,
+        density_smoothing_scale=None):
     """Build one H0 volume cache file with fields split over MPI ranks."""
     rank = comm.Get_rank()
     size = comm.Get_size()
@@ -643,7 +641,8 @@ def _load_volume_data_for_H0_mpi(
                 cache_enabled=False,
                 return_cache_fields=True,
                 supersample_factor=supersample_factor,
-                supersample_radius=supersample_radius)
+                supersample_radius=supersample_radius,
+                density_smoothing_scale=density_smoothing_scale)
             field_arrays = {
                 key: np.asarray(value)
                 for key, value in partial.items()
@@ -812,7 +811,7 @@ def _load_volume_data_for_H0(
         voxel_subsample_seed=42, load_velocity=False, geometry="sphere",
         cache_dir=None, cache_enabled=True, return_cache_fields=False,
         supersample_factor=1, supersample_radius=0.0,
-        supersample_target_dx=None):
+        supersample_target_dx=None, density_smoothing_scale=None):
     """Load 3D voxel data for H0 selection integrals.
 
     Returns a dict to be merged into an H0-model data dict. The density field
@@ -833,6 +832,8 @@ def _load_volume_data_for_H0(
     supersample_factor, supersample_radius, supersample_target_dx = \
         _validate_h0_volume_supersampling(
             supersample_factor, supersample_radius, supersample_target_dx)
+    density_smoothing_scale = validate_density_smoothing_scale(
+        density_smoothing_scale)
     mode = _volume_density_mode(galaxy_bias)
     rho_fields = []
     vrad_fields = [] if load_velocity else None
@@ -862,6 +863,13 @@ def _load_volume_data_for_H0(
         native_dx = _field_loader_native_dx(loaders[0])
         supersample_factor = _h0_volume_resolved_supersample_factor(
             native_dx, supersample_factor, supersample_target_dx)
+    if density_smoothing_scale is not None:
+        native_dx = native_dx or _field_loader_native_dx(loaders[0])
+        if density_smoothing_scale <= native_dx:
+            raise ValueError(
+                f"`model.density_3d_smoothing_scale` must exceed the "
+                f"native field voxel size {native_dx:g} Mpc/h; got "
+                f"{density_smoothing_scale:g} Mpc/h.")
     use_supersampling = (
         supersample_factor > 1 and supersample_radius > 0.0)
 
@@ -888,6 +896,7 @@ def _load_volume_data_for_H0(
             supersample_factor, supersample_radius))
         density_cache_payload = {
             **base_cache_payload,
+            **density_smoothing_cache_payload(density_smoothing_scale),
             "load_velocity": False,
         }
         velocity_cache_payload = {
@@ -965,7 +974,8 @@ def _load_volume_data_for_H0(
                 voxel_subsample_fraction, voxel_subsample_seed,
                 load_velocity, geometry, cache_path, velocity_cache_path,
                 source_meta, mode, density_required, velocity_required,
-                supersample_factor, supersample_radius)
+                supersample_factor, supersample_radius,
+                density_smoothing_scale=density_smoothing_scale)
     else:
         cache_path = None
         velocity_cache_path = None
@@ -996,6 +1006,15 @@ def _load_volume_data_for_H0(
 
         obs = np.asarray(loader.observer_pos, dtype=np.float32)
         dx = float(loader.boxsize) / rho.shape[0]
+        if density_smoothing_scale is not None:
+            if k == 0:
+                fprint(
+                    "  applying real-space Gaussian smoothing to the 3D "
+                    f"density field with scale {density_smoothing_scale:g} "
+                    "Mpc/h.")
+            rho = apply_gaussian_smoothing(
+                rho.astype(np.float32, copy=False),
+                density_smoothing_scale, loader.boxsize, make_copy=True)
 
         if k == 0 and geometry == "sphere" and subcube_radius is not None:
             _warn_coarse_sphere_radius(
@@ -1233,6 +1252,7 @@ def _load_h0_volume_data_from_config(config, los_data_path, which_los,
         "model.density_3d_subsample_seed")
     supersample_factor, supersample_radius, supersample_target_dx = (
         _h0_volume_supersampling_from_config(config))
+    density_smoothing_scale = density_smoothing_scale_from_config(config)
     geometry = get_nested(
         config, "model/selection_integral_geometry", "sphere")
     if geometry not in ("sphere", "cube"):
@@ -1265,6 +1285,7 @@ def _load_h0_volume_data_from_config(config, los_data_path, which_los,
            f"voxel_subsample_fraction={voxel_subsample_fraction:g}, "
            f"supersample_radius={supersample_radius:g} Mpc/h, "
            f"supersample_target_dx={supersample_target_dx}, "
+           f"density_smoothing_scale={density_smoothing_scale}, "
            f"velocity={load_vel}).")
     if supersample_target_dx is not None and supersample_radius > 0.0:
         fprint(
@@ -1295,7 +1316,8 @@ def _load_h0_volume_data_from_config(config, los_data_path, which_los,
         cache_enabled=cache_enabled,
         supersample_factor=supersample_factor,
         supersample_radius=supersample_radius,
-        supersample_target_dx=supersample_target_dx)
+        supersample_target_dx=supersample_target_dx,
+        density_smoothing_scale=density_smoothing_scale)
 
 
 def _load_volume_density_3d(loader_name, loader_kwargs, downsample=1,

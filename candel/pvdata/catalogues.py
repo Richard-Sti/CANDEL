@@ -32,6 +32,8 @@ from scipy.linalg import cholesky
 from ..util import (SPEED_OF_LIGHT, fprint, get_nested, get_root_data,
                     load_config)
 from .dust import read_dustmap
+from .field_products import (density_smoothing_scale_from_config,
+                             resolve_los_data_path)
 from .los import (_compute_r_grid, _filter_data, _zcmb_blat_mask,
                   effective_rank_entropy, load_los)
 from .volume_density import _load_h0_volume_data_from_config
@@ -711,16 +713,19 @@ def load_SH0ES_from_config(config_path):
     cepheid_host_cz_cmb_max = d.get("cepheid_host_cz_cmb_max", None)
     which_host_los = d.get("which_host_los", None)
     field_indices = get_nested(config, "io/field_indices", None)
+    density_smoothing_scale = density_smoothing_scale_from_config(config)
     if which_host_los is not None:
         if config["io"]["load_host_los"]:
-            los_data_path = config["io"]["PV_main"]["SH0ES"]["los_file"].replace(  # noqa
-                "<X>", which_host_los)
+            los_data_path = resolve_los_data_path(
+                config["io"]["PV_main"]["SH0ES"]["los_file"],
+                which_host_los, density_smoothing_scale)
         else:
             los_data_path = None
 
         if config["io"]["load_rand_los"]:
-            rand_los_data_path = config["io"]["los_file_random"].replace(
-                "<X>", which_host_los)
+            rand_los_data_path = resolve_los_data_path(
+                config["io"]["los_file_random"], which_host_los,
+                density_smoothing_scale)
         else:
             rand_los_data_path = None
 
@@ -915,19 +920,16 @@ def load_CCHP_from_config(config_path, ra_dec_only=False):
         config, "io/which_host_los",
         get_nested(config, "io/CCHP/which_host_los", None))
     field_indices = get_nested(config, "io/field_indices", None)
+    density_smoothing_scale = density_smoothing_scale_from_config(config)
     if get_nested(config, "io/load_host_los", False):
         los_file = get_nested(config, "io/CCHP/los_file", None)
-        if los_file is not None and which_host_los is not None:
-            los_data_path = los_file.replace("<X>", which_host_los)
-        else:
-            los_data_path = los_file
+        los_data_path = resolve_los_data_path(
+            los_file, which_host_los, density_smoothing_scale)
 
     if get_nested(config, "io/load_rand_los", False):
         rand_file = get_nested(config, "io/los_file_random", None)
-        if rand_file is not None and which_host_los is not None:
-            rand_los_data_path = rand_file.replace("<X>", which_host_los)
-        else:
-            rand_los_data_path = rand_file
+        rand_los_data_path = resolve_los_data_path(
+            rand_file, which_host_los, density_smoothing_scale)
 
     if los_data_path is not None:
         host_los = load_los(
@@ -1568,11 +1570,11 @@ def _load_EDD_TRGB_from_config_common(config_path, config_key, loader):
         config, "io/which_host_los",
         get_nested(config, f"io/PV_main/{config_key}/which_host_los", None))
     field_indices = get_nested(config, "io/field_indices", None)
+    density_smoothing_scale = density_smoothing_scale_from_config(config)
 
     def _resolve_los_path(path):
-        if path is not None and which_los is not None:
-            return path.replace("<X>", which_los)
-        return path
+        return resolve_los_data_path(
+            path, which_los, density_smoothing_scale)
 
     los_data_path = None
     rand_los_data_path = None
@@ -1746,22 +1748,19 @@ def load_EDD_2MTF_from_config(config_path):
 
     # LOS data
     which_host_los = d.get("which_host_los", None)
+    density_smoothing_scale = density_smoothing_scale_from_config(config)
     los_data_path = None
     rand_los_data_path = None
 
     if get_nested(config, "io/load_host_los", False):
         los_file = d.get("los_file", None)
-        if los_file is not None and which_host_los is not None:
-            los_data_path = los_file.replace("<X>", which_host_los)
-        else:
-            los_data_path = los_file
+        los_data_path = resolve_los_data_path(
+            los_file, which_host_los, density_smoothing_scale)
 
     if get_nested(config, "io/load_rand_los", False):
         rand_file = get_nested(config, "io/los_file_random", None)
-        if rand_file is not None and which_host_los is not None:
-            rand_los_data_path = rand_file.replace("<X>", which_host_los)
-        else:
-            rand_los_data_path = rand_file
+        rand_los_data_path = resolve_los_data_path(
+            rand_file, which_host_los, density_smoothing_scale)
 
     if los_data_path is not None:
         host_los = load_los(los_data_path, {}, mask=mask)

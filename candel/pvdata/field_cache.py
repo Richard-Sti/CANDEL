@@ -234,6 +234,7 @@ def _field_cache_payload_digest(payload, length=24):
 def _h0_volume_cache_filename(payload):
     """Readable, cluster-portable filename for H0 3D volume caches."""
     supersample = payload.get("supersample", None)
+    density_smoothing = payload.get("density_smoothing_scale", None)
     parts = [
         f"v{_FIELD_CACHE_VERSION}",
         _field_cache_slug(payload["field_name"], max_len=70),
@@ -244,6 +245,8 @@ def _h0_volume_cache_filename(payload):
     ]
     if supersample is not None:
         parts.append(_h0_volume_supersample_tag(supersample))
+    if density_smoothing is not None:
+        parts.append(_h0_volume_density_smoothing_tag(density_smoothing))
     parts.append("vel" if payload["load_velocity"] else "density")
     return "__".join(parts) + ".npz"
 
@@ -257,6 +260,12 @@ def _h0_volume_supersample_tag(supersample):
     if method is not None:
         tag = f"{tag}-{_field_cache_slug(method, max_len=20)}"
     return tag
+
+
+def _h0_volume_density_smoothing_tag(density_smoothing_scale):
+    """Readable filename tag for H0 density smoothing."""
+    return "smooth-R{}".format(
+        _field_cache_float_tag(density_smoothing_scale))
 
 
 def _pv_volume_density_cache_filename(payload):
@@ -354,6 +363,15 @@ def _h0_volume_supersample_tag_matches(cached_tag, supersample):
     return cached_tag == _h0_volume_supersample_tag(supersample)
 
 
+def _h0_volume_density_smoothing_tag_matches(
+        cached_tag, density_smoothing_scale):
+    """Return whether a cached density-smoothing tag satisfies a request."""
+    if density_smoothing_scale is None:
+        return cached_tag is None
+    return cached_tag == _h0_volume_density_smoothing_tag(
+        density_smoothing_scale)
+
+
 def _read_h0_volume_cache_superset(
         cache_dir, payload, label, required_keys, requested_indices,
         require_superset=False):
@@ -370,21 +388,26 @@ def _read_h0_volume_cache_superset(
     radius_tag = _field_cache_float_tag(payload["subcube_radius"])
     downsample_tag = f"ds-{int(payload['downsample'])}"
     supersample = payload.get("supersample", None)
+    density_smoothing = payload.get("density_smoothing_scale", None)
     kind_tag = "vel" if payload["load_velocity"] else "density"
 
     candidates = []
     for fname in os.listdir(cache_subdir):
         parts = fname[:-4].split("__") if fname.endswith(".npz") else []
-        if len(parts) == 7:
-            version, cached_field, fields_part, cached_geometry, \
-                cached_radius, cached_downsample, cached_kind = parts
-            cached_supersample = None
-        elif len(parts) == 8:
-            version, cached_field, fields_part, cached_geometry, \
-                cached_radius, cached_downsample, cached_supersample, \
-                cached_kind = parts
-        else:
+        if len(parts) < 7:
             continue
+        version, cached_field, fields_part, cached_geometry, \
+            cached_radius, cached_downsample = parts[:6]
+        cached_kind = parts[-1]
+        cached_supersample = None
+        cached_density_smoothing = None
+        for tag in parts[6:-1]:
+            if tag.startswith("ss-"):
+                cached_supersample = tag
+            elif tag.startswith("smooth-"):
+                cached_density_smoothing = tag
+            else:
+                cached_supersample = tag
         if version != f"v{_FIELD_CACHE_VERSION}":
             continue
         if cached_field != field_slug or cached_geometry != geometry:
@@ -395,6 +418,9 @@ def _read_h0_volume_cache_superset(
             continue
         if not _h0_volume_supersample_tag_matches(
                 cached_supersample, supersample):
+            continue
+        if not _h0_volume_density_smoothing_tag_matches(
+                cached_density_smoothing, density_smoothing):
             continue
         if not fields_part.startswith("fields-"):
             continue
@@ -441,8 +467,9 @@ def _read_pv_volume_cache_superset(cache_dir, payload, label, required_keys,
         parts = fname[:-4].split("__") if fname.endswith(".npz") else []
         if len(parts) != 9:
             continue
-        version, cached_loader, fields_part, cached_geometry, cached_radius, \
-            cached_downsample, cached_subsample, cached_rhat, cached_kind = parts
+        version, cached_loader, fields_part, cached_geometry, \
+            cached_radius, cached_downsample, cached_subsample, \
+            cached_rhat, cached_kind = parts
         if version != f"v{_FIELD_CACHE_VERSION}":
             continue
         if cached_loader != loader_slug or cached_geometry != geometry:
