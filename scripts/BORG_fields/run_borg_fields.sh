@@ -37,8 +37,8 @@ Schedule options:
   --pm-nsteps N         Override [gravity_chain_2] pm_nsteps. Default: 10
 
 Submit options:
-  --queue QUEUE          Default: berg
-  --nprocs N            BORG MPI ranks. Default: 28
+  -q, --queue QUEUE      Default: berg
+  -n, --nprocs N         BORG MPI ranks. Default: 28
   --omp-threads N       BORG OpenMP threads per MPI rank. Default: 1
   --mem-gb GB           Default: 7
   --nodes N             Split --steps over N single-node jobs. Default: 1
@@ -58,7 +58,7 @@ BORG forward scalars, observer_position as the box centre, and frame=icrs.
 Slice plots are optional diagnostics; pass --plots to write them to
 PRODUCT_PARENT/plots.
 For --steps runs, packed products are written to
-BORG_RUN_DIR/forward_borg_fields/mcmc_<schedule-step>.hdf5.
+BORG_RUN_DIR/forward_fields/mcmc_<schedule-step>.hdf5.
 For --steps runs, one requested sample is also run in RSD mode for validation
 against /scalars/BORG_final_density, including a non-fatal Pylians
 cross-correlation check.
@@ -117,6 +117,22 @@ has_option_arg() {
     shift
   done
   return 1
+}
+
+normalize_run_args() {
+  NORMALIZED_ARGS=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -n)
+        NORMALIZED_ARGS+=(--nprocs "$2")
+        shift 2
+        ;;
+      *)
+        NORMALIZED_ARGS+=("$1")
+        shift
+        ;;
+    esac
+  done
 }
 
 get_steps_arg() {
@@ -319,6 +335,11 @@ run_schedule_steps() {
         borg_run_dir="$2"
         shift 2
         ;;
+      -n)
+        run_args+=("--nprocs" "$2")
+        validation_args+=("--nprocs" "$2")
+        shift 2
+        ;;
       --params|--state|--output-root|--borg-forward|--mpirun|--mpi-launcher|--nprocs|--omp-threads|--plot-python|--pm-nsteps)
         run_args+=("$1" "$2")
         validation_args+=("$1" "$2")
@@ -365,7 +386,7 @@ run_schedule_steps() {
     echo "Running schedule step ${step}: ${mcmc}"
     step_run_args=("${run_args[@]}")
     if [[ "$explicit_single_output" != "true" ]]; then
-      step_run_args+=("--single-output" "${borg_run_dir}/forward_borg_fields/mcmc_${step}.hdf5")
+      step_run_args+=("--single-output" "${borg_run_dir}/forward_fields/mcmc_${step}.hdf5")
     fi
     if ! "$SCRIPT_DIR/run_borg_fields.sh" -locally "$mcmc" "${step_run_args[@]}"; then
       status=1
@@ -418,8 +439,8 @@ if [[ "${1:-}" == "--submit" ]]; then
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --queue) QUEUE="$2"; shift 2 ;;
-      --nprocs) NPROCS="$2"; shift 2 ;;
+      -q|--queue) QUEUE="$2"; shift 2 ;;
+      -n|--nprocs) NPROCS="$2"; shift 2 ;;
       --omp-threads) OMP_THREADS="$2"; shift 2 ;;
       --mem-gb) MEM_GB="$2"; shift 2 ;;
       --nodes) NODES="$2"; shift 2 ;;
@@ -537,6 +558,8 @@ fi
 if [[ "${1:-}" != "run" && "${1:-}" != "validate-rsd" ]]; then
   set -- run "$@"
 fi
+normalize_run_args "$@"
+set -- "${NORMALIZED_ARGS[@]}"
 
 ulimit -l unlimited 2>/dev/null || true
 

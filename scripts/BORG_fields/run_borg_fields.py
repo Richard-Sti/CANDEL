@@ -928,6 +928,43 @@ def remove_particle_datasets(product: Path, group_name: str) -> None:
         print(f"Removed particle datasets from final product: {', '.join(removed)}", flush=True)
 
 
+def cleanup_forward_workdirs(work_dirs: list[Path], product: Path) -> list[Path]:
+    product = product.resolve()
+    removed = []
+    parents = []
+    for work_dir in work_dirs:
+        work_dir = work_dir.resolve()
+        if product == work_dir or work_dir in product.parents:
+            print(f"[WARN] Skipping cleanup for work directory containing product: {work_dir}", flush=True)
+            continue
+        parents.append(work_dir.parent)
+        if work_dir.exists():
+            shutil.rmtree(work_dir)
+            removed.append(work_dir)
+    if removed:
+        print(
+            "Removed BORG forward work directories: "
+            + ", ".join(str(path) for path in removed),
+            flush=True,
+        )
+    pruned = []
+    for parent in parents:
+        if product == parent or parent in product.parents:
+            continue
+        try:
+            parent.rmdir()
+        except OSError:
+            continue
+        pruned.append(parent)
+    if pruned:
+        print(
+            "Removed empty BORG forward parent directories: "
+            + ", ".join(str(path) for path in pruned),
+            flush=True,
+        )
+    return removed
+
+
 def slim_field_product(product: Path, group_name: str, mas: str) -> None:
     import h5py
     import numpy as np
@@ -1338,6 +1375,7 @@ def main() -> None:
                     slim_field_product(product, plotted_groups[0], args.mas)
             print(f"Single HDF5 product: {product}", flush=True)
             print_run_summary(mcmc, product, plotted_groups, split_dirs, plot_paths, args)
+            cleanup_forward_workdirs(split_dirs, product)
         elif not args.dry_run:
             mode = "rsd" if args.rsd else "realspace"
             print_run_summary(mcmc, None, [mode], [out_dir], [], args)

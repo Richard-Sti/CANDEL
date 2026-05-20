@@ -33,7 +33,7 @@ def parse_args():
 
 def default_paths(step):
     return (
-        DEFAULT_ROOT / "forward_sph_fields" / f"mcmc_{step}.hdf5",
+        DEFAULT_ROOT / "forward_fields" / f"mcmc_{step}.hdf5",
         DEFAULT_ROOT / "sph_fields_new_feb" / "sph_fields" / f"mcmc_{step}.hdf5",
     )
 
