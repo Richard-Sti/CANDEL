@@ -18,6 +18,8 @@ import yaml  # noqa: E402
 from matplotlib.lines import Line2D  # noqa: E402
 from scipy.stats import gaussian_kde, ks_2samp, pearsonr, spearmanr  # noqa: E402
 
+import plot_trgbh0_manticore_evidence_drivers as evidence_drivers  # noqa: E402
+import plot_trgbh0_manticore_tempered_evidence_h0 as tempered_evidence_h0  # noqa: E402
 from trgbh0_plot_style import trgbh0_cmap  # noqa: E402
 
 
@@ -76,8 +78,16 @@ PLOT_CHOICES = (
     "h0-alpha-c",
     "h0-alpha-low",
     "h0-alpha-high",
+    "h0-c-star",
     "evidence-comparison",
+    "evidence-drivers",
+    "tempered-evidence-h0",
     "all",
+)
+SELF_CONTAINED_PLOTS = (
+    "evidence-comparison",
+    "evidence-drivers",
+    "tempered-evidence-h0",
 )
 FIELD_NUMBER_COLOURED_PLOTS = (
     "sigma-v-posterior",
@@ -160,6 +170,15 @@ SCATTER_PLOT_SPECS = {
         "cmap_name": "trgbh0_manticore_fields_h0_alpha_high",
         "out_basename": "trgbh0_manticore_field_h0_alpha_high",
         "summary_basename": "manticore_field_h0_alpha_high_summary",
+    },
+    "h0-c-star": {
+        "x_name": "c_star",
+        "y_name": "H0",
+        "x_label": r"$c_\star$",
+        "y_label": H0_LABEL,
+        "cmap_name": "trgbh0_manticore_fields_h0_c_star",
+        "out_basename": "trgbh0_manticore_field_h0_c_star",
+        "summary_basename": "manticore_field_h0_c_star_summary",
     },
 }
 PLOT_PARAMS = {
@@ -245,7 +264,9 @@ def parse_args():
             "Diagnostics to plot: sigma-v-posterior, h0-sigma-v, "
             "h0-sigma-int, sigma-int-sigma-v, h0-mag-lim-trgb, "
             "sigma-int-mag-lim-trgb, h0-lnz-harmonic, h0-alpha-c, "
-            "h0-alpha-low, h0-alpha-high, evidence-comparison, or all. "
+            "h0-alpha-low, h0-alpha-high, h0-c-star, "
+            "evidence-comparison, evidence-drivers, "
+            "tempered-evidence-h0, or all. "
             "Default: h0-lnz-harmonic, h0-sigma-v, h0-mag-lim-trgb, "
             "and sigma-int-mag-lim-trgb. Scatter plots are coloured by "
             "harmonic lnZ."
@@ -299,6 +320,57 @@ def parse_args():
         "--no-copy-to-results",
         action="store_true",
         help="Do not copy figure outputs to the results root.",
+    )
+    parser.add_argument(
+        "--top-galaxies",
+        type=int,
+        default=20,
+        help=(
+            "Number of top galaxies to list and plot for evidence-drivers."
+        ),
+    )
+    parser.add_argument(
+        "--heatmap-galaxies",
+        type=int,
+        default=40,
+        help=(
+            "Number of galaxies to include in the evidence-drivers heatmap."
+        ),
+    )
+    parser.add_argument(
+        "--likelihood",
+        choices=sorted(tempered_evidence_h0.PATTERNS),
+        default="gaussian",
+        help="Redshift likelihood result set for tempered-evidence-h0.",
+    )
+    parser.add_argument(
+        "--num-beta",
+        type=int,
+        default=201,
+        help="Number of beta values for tempered-evidence-h0.",
+    )
+    parser.add_argument(
+        "--num-bootstrap",
+        type=int,
+        default=20000,
+        help="Number of bootstrap draws for tempered-evidence-h0.",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=53721,
+        help="Random seed for tempered-evidence-h0.",
+    )
+    parser.add_argument(
+        "--field-subset-fraction",
+        type=float,
+        default=0.8,
+        help="Field-subset fraction for tempered-evidence-h0.",
+    )
+    parser.add_argument(
+        "--target-neff",
+        default="5,10,15",
+        help="Comma-separated target effective field counts.",
     )
     args = parser.parse_args()
     if args.colour_by_chain and args.colour_by_lnz_harmonic:
@@ -521,6 +593,14 @@ def copy_outputs(config, *paths):
             shutil.copyfile(path, destination)
 
 
+def copy_figure_outputs(config, outputs):
+    figure_paths = [
+        path for path in outputs.values()
+        if path.suffix in {".pdf", ".png"}
+    ]
+    copy_outputs(config, *figure_paths)
+
+
 def save_pdf_png(fig, out_pdf):
     fig.tight_layout()
     fig.savefig(out_pdf, dpi=FIGURE_DPI, bbox_inches="tight")
@@ -647,6 +727,38 @@ def plot_evidence_comparison(config):
     print(
         "[evidence-comparison] "
         f"KS D={ks_stat:.3f}, p={ks_p:.3g}")
+
+
+def plot_evidence_drivers(config, args):
+    outputs = evidence_drivers.run_analysis(
+        results_dir=RESULTS,
+        output_dir=config.output_dir,
+        summary_dir=config.summary_dir,
+        field_set=config.field_set,
+        top_galaxies=args.top_galaxies,
+        heatmap_galaxies=args.heatmap_galaxies,
+    )
+    copy_figure_outputs(config, outputs)
+
+
+def plot_tempered_evidence_h0(config, args):
+    if config.field_set != "cola":
+        raise ValueError(
+            "`tempered-evidence-h0` is currently defined for the COLA "
+            "Manticore field set. Use `--field-set cola`."
+        )
+    outputs = tempered_evidence_h0.run_analysis(
+        likelihood=args.likelihood,
+        results_dir=RESULTS,
+        output_dir=config.output_dir,
+        summary_dir=config.summary_dir,
+        num_beta=args.num_beta,
+        num_bootstrap=args.num_bootstrap,
+        seed=args.seed,
+        field_subset_fraction=args.field_subset_fraction,
+        target_neff=args.target_neff,
+    )
+    copy_figure_outputs(config, outputs)
 
 
 def chain_order(rows):
@@ -1035,8 +1147,13 @@ def explain_blocked_field_number_plots(items):
 def plot_items_for_args(args, config):
     if not config.has_colour_mode:
         explain_blocked_field_number_plots(args.plots)
-    return requested_plots(
+    plots = requested_plots(
         args.plots, allow_field_number_colour=config.has_colour_mode)
+    if "tempered-evidence-h0" in plots and config.field_set != "cola":
+        raise ValueError(
+            "`tempered-evidence-h0` is currently defined for the COLA "
+            "Manticore field set. Use `--field-set cola`.")
+    return plots
 
 
 def main():
@@ -1049,7 +1166,7 @@ def main():
     config.output_dir.mkdir(parents=True, exist_ok=True)
     config.summary_dir.mkdir(parents=True, exist_ok=True)
     diagnostic_plots = [
-        item for item in plots if item != "evidence-comparison"]
+        item for item in plots if item not in SELF_CONTAINED_PLOTS]
     rows = None
     if diagnostic_plots:
         params = tuple(dict.fromkeys(
@@ -1076,6 +1193,10 @@ def main():
                 rows, config, name=item, **SCATTER_PLOT_SPECS[item])
         elif item == "evidence-comparison":
             plot_evidence_comparison(config)
+        elif item == "evidence-drivers":
+            plot_evidence_drivers(config, args)
+        elif item == "tempered-evidence-h0":
+            plot_tempered_evidence_h0(config, args)
         else:
             raise ValueError(f"Unhandled plot `{item}`.")
 
