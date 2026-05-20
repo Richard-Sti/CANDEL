@@ -21,6 +21,7 @@ except ModuleNotFoundError:
     # Backport for <=3.10
     import tomli as tomllib
 
+from datetime import datetime
 from os.path import abspath, exists, isabs, join
 from pathlib import Path
 
@@ -42,6 +43,16 @@ def fprint(*args, verbose=True, **kwargs):
     """Print an indented status message."""
     if verbose:
         print("  ", *args, **kwargs)
+
+
+def file_last_edited(path):
+    """Return a local ISO timestamp for a file mtime, or ``None``."""
+    try:
+        timestamp = Path(path).stat().st_mtime
+    except OSError:
+        return None
+    return datetime.fromtimestamp(timestamp).astimezone().isoformat(
+        timespec="seconds")
 
 
 def patch_tqdm(mininterval=5):
