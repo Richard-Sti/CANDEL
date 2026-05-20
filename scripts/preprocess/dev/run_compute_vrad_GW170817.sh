@@ -13,7 +13,7 @@ python_exec="$ROOT/venv_candel/bin/python"
 script="$ROOT/scripts/preprocess/dev/compute_vrad_GW170817.py"
 # ------------------------
 
-reconstructions=("manticore_2MPP_MULTIBIN_N256_DES_V2")
+reconstructions=("ManticoreLocalSWIFT")
 # reconstructions=("Carrick2015")
 
 echo "Reconstructions to process:"

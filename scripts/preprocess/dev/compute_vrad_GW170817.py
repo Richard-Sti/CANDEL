@@ -25,8 +25,7 @@ from mpi4py import MPI
 
 import candel
 from candel import fprint
-from candel.field import (
-    COLA_MANTICORE_NAME, available_mcmc_field_indices, name2field_loader)
+from candel.field import available_mcmc_field_indices, name2field_loader
 from candel.field.field_interp import build_regular_interpolator
 from candel.util import (radec_to_cartesian, radec_to_galactic,
                          radec_to_supergalactic)
@@ -126,7 +125,7 @@ def main():
     }
     if recon in nreal_map:
         nsims = list(range(nreal_map[recon]))
-    elif recon == COLA_MANTICORE_NAME or recon.lower().startswith("manticore"):
+    elif recon in {"ManticoreLocalCOLA", "ManticoreLocalSWIFT"}:
         field_kwargs = config["io"]["reconstruction_main"][recon]
         nsims = available_mcmc_field_indices(field_kwargs["fpath_root"])
     else:
