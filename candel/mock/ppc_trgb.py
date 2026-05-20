@@ -89,11 +89,10 @@ def _selected_field_index(data, gen, field_index=None):
 
 def _field_name_config(config):
     field_name = get_nested(
-        config, "io/which_host_los",
-        get_nested(config, "io/PV_main/EDD_TRGB/which_host_los", None))
+        config, "io/PV_main/EDD_TRGB/reconstruction", None)
     if field_name is None:
         raise ValueError(
-            "use_reconstruction=True but no which_host_los specified")
+            "use_reconstruction=True but no reconstruction specified")
     field_config = dict(config["io"]["reconstruction_main"][field_name])
     return field_name, field_config
 
