@@ -25,7 +25,7 @@ from ..util import fprint, get_nested, replace_prior_with_delta
 from .base_model import H0ModelBase
 from .integration import ln_simpson_precomputed
 from .pv_utils import lp_galaxy_bias, rsample, sample_galaxy_bias
-from .utils import (logmeanexp, log_prob_integrand_window_sel,
+from .utils import (log_prob_integrand_window_sel, logmeanexp,
                     normal_logpdf_var, predict_cz)
 
 

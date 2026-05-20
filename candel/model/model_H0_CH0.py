@@ -22,7 +22,7 @@ from numpyro import deterministic, factor, plate, sample
 from numpyro.distributions import MultivariateNormal, Normal, Uniform
 
 from ..util import fprint, get_nested, replace_prior_with_delta
-from .base_model import H0ModelBase, LOG_4PI
+from .base_model import LOG_4PI, H0ModelBase
 from .integration import simpson_log_weights
 from .pv_utils import rsample, sample_galaxy_bias
 from .utils import (logmeanexp, mvn_logpdf_cholesky, normal_logpdf_var,
@@ -114,6 +114,10 @@ class CH0Model(H0ModelBase):
         self.track_host_velocity = get_nested(
             config, "model/track_host_velocity", False)
         fprint(f"track_host_velocity set to {self.track_host_velocity}")
+        self.save_log_likelihood_per_galaxy = bool(get_nested(
+            config, "inference/save_log_likelihood_per_galaxy", False))
+        if self.save_log_likelihood_per_galaxy:
+            fprint("saving total and per-host CH0 log likelihood diagnostics.")
         self.weight_selection_by_covmat_Neff = get_nested(
             config, "model/weight_selection_by_covmat_Neff", False)
         fprint(f"weight_selection_by_covmat_Neff set to "
@@ -134,6 +138,8 @@ class CH0Model(H0ModelBase):
         self._setup_cepheid_host_index()
 
     def _set_data_arrays(self, data):
+        if data.get("host_names") is not None:
+            self.host_names = np.asarray(data["host_names"], dtype=str)
         skip = ("q_names", "host_map", "host_names")
         super()._set_data_arrays(data, skip_keys=skip)
 
@@ -354,6 +360,26 @@ class CH0Model(H0ModelBase):
         self._validate_selection_integral(
             needs_velocity=selection_needs_redshift)
 
+        if self.save_log_likelihood_per_galaxy:
+            if not self.use_reconstruction:
+                raise ValueError(
+                    "Per-host CH0 log likelihood saving requires "
+                    "`use_reconstruction` to be set to True.")
+            if not self.apply_sel:
+                raise ValueError(
+                    "Per-host CH0 log likelihood saving requires an explicit "
+                    "`which_selection`.")
+            if self.num_fields != 1:
+                raise ValueError(
+                    "Per-host CH0 log likelihood saving is defined only for "
+                    "single-field runs.")
+            if (hasattr(self, "host_names")
+                    and self.host_names.shape != (self.num_hosts,)):
+                raise ValueError(
+                    "`host_names` must be one-dimensional with length "
+                    "matching the number of Cepheid hosts when saving "
+                    "per-host log likelihoods.")
+
         if not self.apply_sel and self.use_reconstruction:
             if self.selection_integral_grid_radius is None:
                 raise ValueError(
@@ -387,14 +413,14 @@ class CH0Model(H0ModelBase):
         mu_LMC = sample("mu_LMC", Uniform(*self.distmod_limits_LMC))
         mu_M31 = sample("mu_M31", Uniform(*self.distmod_limits_anchor))
 
-        factor("mu_N4258_ll",
-               normal_logpdf_var(mu_N4258, self.mu_N4258_anchor,
-                                 self.e2_mu_N4258_anchor))
-        factor("mu_LMC_ll",
-               normal_logpdf_var(mu_LMC, self.mu_LMC_anchor,
-                                 self.e2_mu_LMC_anchor))
+        ll_mu_N4258 = normal_logpdf_var(
+            mu_N4258, self.mu_N4258_anchor, self.e2_mu_N4258_anchor)
+        ll_mu_LMC = normal_logpdf_var(
+            mu_LMC, self.mu_LMC_anchor, self.e2_mu_LMC_anchor)
+        factor("mu_N4258_ll", ll_mu_N4258)
+        factor("mu_LMC_ll", ll_mu_LMC)
 
-        return mu_host, mu_N4258, mu_LMC, mu_M31
+        return mu_host, mu_N4258, mu_LMC, mu_M31, ll_mu_N4258 + ll_mu_LMC
 
     def sigma_v_from_density(self, delta, sigma_v_low, sigma_v_high,
                              log_rho_t, k):
@@ -417,7 +443,7 @@ class CH0Model(H0ModelBase):
     def _factor_sn_likelihood(self, mu_host_all, M_B, n_mag=None):
         """Add the SN-magnitude likelihood for all or the first n_mag hosts."""
         if n_mag == 0:
-            return
+            return 0.0
 
         if n_mag is None:
             mag_obs = self.mag_SN_unique_Cepheid_host
@@ -429,9 +455,9 @@ class CH0Model(H0ModelBase):
             L_dist = self.L_SN_unique_Cepheid_host_dist[:n_mag]
 
         mag_SN = (L_dist @ mu_host_all) + M_B
-        factor(
-            "ll_SN",
-            mvn_logpdf_cholesky(mag_obs, mag_SN, L_sn))
+        ll_SN = mvn_logpdf_cholesky(mag_obs, mag_SN, L_sn)
+        factor("ll_SN", ll_SN)
+        return ll_SN
 
     def _sn_selection_mag_error(self, n_mag=None):
         """Representative SN magnitude error for selection integrals."""
@@ -448,6 +474,37 @@ class CH0Model(H0ModelBase):
         mask_mag = jnp.arange(self.num_hosts) < n_mag
         return jnp.where(mask_mag[None, :],
                          log_S_mag[:, None], log_S_cz[:, None])
+
+    def _sn_selection_terms_by_host(self, terms, n_mag=None):
+        """Map unique-SN selection terms onto Cepheid-host bins."""
+        if n_mag is None:
+            L_dist = self.L_SN_unique_Cepheid_host_dist[:, :self.num_hosts]
+        else:
+            L_dist = self.L_SN_unique_Cepheid_host_dist[:n_mag,
+                                                        :self.num_hosts]
+        if L_dist.shape[0] == 0:
+            return jnp.zeros(self.num_hosts)
+        return L_dist.T @ terms
+
+    def _record_per_galaxy_log_likelihood(
+            self, ll_without_selection, ll_selection_observed,
+            log_selection_integral=0.0):
+        """Expose per-host CH0 likelihood terms as deterministic sites."""
+        if not self.save_log_likelihood_per_galaxy:
+            return
+
+        with_selection = (
+            ll_without_selection
+            + ll_selection_observed
+            - log_selection_integral
+        )
+        deterministic("log_likelihood_per_galaxy", ll_without_selection)
+        deterministic(
+            "log_observed_selection_per_galaxy",
+            ll_selection_observed)
+        deterministic("log_selection_integral", log_selection_integral)
+        deterministic(
+            "log_likelihood_per_galaxy_with_selection", with_selection)
 
     def _selection_radial_log_measure(self, H0):
         """Selection measure matching the configured host-distance prior."""
@@ -571,12 +628,15 @@ class CH0Model(H0ModelBase):
             Vext, Vext_quad, Vext_oct)
 
         # HST and Gaia zero-point calibration of MW Cepheids.
-        factor("M_W_HST",
-               normal_logpdf_var(self.M_HST, M_W, self.e2_M_HST))
-        factor("M_W_Gaia",
-               normal_logpdf_var(self.M_Gaia, M_W, self.e2_M_Gaia))
+        ll_M_W_HST = normal_logpdf_var(self.M_HST, M_W, self.e2_M_HST)
+        ll_M_W_Gaia = normal_logpdf_var(self.M_Gaia, M_W, self.e2_M_Gaia)
+        factor("M_W_HST", ll_M_W_HST)
+        factor("M_W_Gaia", ll_M_W_Gaia)
+        ll_total = ll_M_W_HST + ll_M_W_Gaia
 
-        mu_host, mu_N4258, mu_LMC, mu_M31 = self.sample_host_distmod()
+        mu_host, mu_N4258, mu_LMC, mu_M31, ll_anchor = \
+            self.sample_host_distmod()
+        ll_total += ll_anchor
 
         # Distance moduli for Cepheids, with per-Cepheid dZP correction.
         dZP = sample("dZP", Normal(0, self.sigma_grnd))
@@ -608,9 +668,9 @@ class CH0Model(H0ModelBase):
 
         # SN magnitude likelihood (shared by SN_magnitude* selections)
         if self.which_selection in ["SN_magnitude", "SN_magnitude_redshift"]:
-            self._factor_sn_likelihood(mu_host_all, M_B)
+            ll_total += self._factor_sn_likelihood(mu_host_all, M_B)
         elif self.which_selection == "SN_magnitude_or_redshift_Nmag":
-            self._factor_sn_likelihood(
+            ll_total += self._factor_sn_likelihood(
                 mu_host_all, M_B, n_mag=self.num_hosts_selection_mag)
 
         if self.use_reconstruction:
@@ -623,14 +683,21 @@ class CH0Model(H0ModelBase):
             self._no_reconstruction_fallback(lp_host_dist)
             sigma_v_host = map_sigma_v(jnp.zeros((1, self.num_hosts)))
 
+        ll_observed_selection_host = jnp.zeros(self.num_hosts)
+        log_selection_integral = None
+
         if self.apply_sel:
             if self.which_selection == "SN_magnitude":
                 mag_lim = self._resolve_threshold("mag_lim_SN")
                 mag_width = self._resolve_threshold("mag_lim_SN_width")
-                factor("ll_sel_per_object", jnp.sum(
-                    norm_jax.logcdf(
-                        (mag_lim - self.mag_SN_unique_Cepheid_host)
-                        / mag_width)))
+                ll_sel_mag = norm_jax.logcdf(
+                    (mag_lim - self.mag_SN_unique_Cepheid_host)
+                    / mag_width)
+                ll_observed_selection_host = (
+                    self._sn_selection_terms_by_host(ll_sel_mag))
+                ll_sel_object = jnp.sum(ll_sel_mag)
+                factor("ll_sel_per_object", ll_sel_object)
+                ll_total += ll_sel_object
                 log_S = self._compute_volume_log_S_mag(
                     bias_params, M_B,
                     self._sn_selection_mag_error(),
@@ -639,10 +706,13 @@ class CH0Model(H0ModelBase):
                 cz_lim = self._resolve_threshold("cz_lim_selection")
                 cz_width = self._resolve_threshold(
                     "cz_lim_selection_width")
-                factor("ll_sel_per_object", jnp.sum(
-                    norm_jax.logcdf(
-                        (cz_lim - self.czcmb_cepheid_host)
-                        / cz_width)))
+                ll_sel_cz = norm_jax.logcdf(
+                    (cz_lim - self.czcmb_cepheid_host)
+                    / cz_width)
+                ll_observed_selection_host = ll_sel_cz
+                ll_sel_object = jnp.sum(ll_sel_cz)
+                factor("ll_sel_per_object", ll_sel_object)
+                ll_total += ll_sel_object
                 log_S = self._compute_volume_log_S_cz(
                     bias_params, H0, selection_sigma_v(), beta,
                     Vext, Vext_mono, cz_lim, cz_width,
@@ -653,12 +723,16 @@ class CH0Model(H0ModelBase):
                     "cz_lim_selection_width")
                 mag_lim = self._resolve_threshold("mag_lim_SN")
                 mag_width = self._resolve_threshold("mag_lim_SN_width")
-                factor("ll_sel_per_object", jnp.sum(
-                    norm_jax.logcdf(
-                        (cz_lim - self.czcmb_cepheid_host) / cz_width)
-                    + norm_jax.logcdf(
-                        (mag_lim - self.mag_SN_unique_Cepheid_host)
-                        / mag_width)))
+                ll_sel_cz = norm_jax.logcdf(
+                    (cz_lim - self.czcmb_cepheid_host) / cz_width)
+                ll_sel_mag = norm_jax.logcdf(
+                    (mag_lim - self.mag_SN_unique_Cepheid_host)
+                    / mag_width)
+                ll_observed_selection_host = (
+                    ll_sel_cz + self._sn_selection_terms_by_host(ll_sel_mag))
+                ll_sel_object = jnp.sum(ll_sel_cz) + jnp.sum(ll_sel_mag)
+                factor("ll_sel_per_object", ll_sel_object)
+                ll_total += ll_sel_object
                 log_S = self._compute_volume_log_S_mag_cz(
                     bias_params, M_B,
                     self._sn_selection_mag_error(),
@@ -679,8 +753,11 @@ class CH0Model(H0ModelBase):
                 ll_sel_cz = norm_jax.logcdf(
                     (cz_lim - self.czcmb_cepheid_host[n_mag:])
                     / cz_width)
-                factor("ll_sel_per_object",
-                       jnp.sum(ll_sel_mag) + jnp.sum(ll_sel_cz))
+                ll_observed_selection_host = jnp.concatenate(
+                    [ll_sel_mag, ll_sel_cz])
+                ll_sel_object = jnp.sum(ll_sel_mag) + jnp.sum(ll_sel_cz)
+                factor("ll_sel_per_object", ll_sel_object)
+                ll_total += ll_sel_object
 
                 if n_mag == 0:
                     log_S_cz = self._compute_volume_log_S_cz(
@@ -716,15 +793,18 @@ class CH0Model(H0ModelBase):
                         else self.Neff_C_SN_unique_Cepheid_host)
                 log_S = log_S * Neff / self.num_hosts
             if self.use_reconstruction:
-                if log_S.ndim == 1:
-                    log_S = log_S[:, None]
-                ll_reconstruction -= log_S
+                log_selection_integral = log_S
+                log_S_host = log_S
+                if log_S_host.ndim == 1:
+                    log_S_host = log_S_host[:, None]
+                ll_reconstruction -= log_S_host
             else:
                 if log_S.ndim == 1:
-                    factor("neg_log_S_correction",
-                           -log_S[0] * self.num_hosts)
+                    ll_neg_log_S = -log_S[0] * self.num_hosts
                 else:
-                    factor("neg_log_S_correction", -jnp.sum(log_S[0]))
+                    ll_neg_log_S = -jnp.sum(log_S[0])
+                factor("neg_log_S_correction", ll_neg_log_S)
+                ll_total += ll_neg_log_S
         else:
             ll_reconstruction = self._factor_no_selection_distance_prior_norm(
                 r_host, H0, bias_params, ll_reconstruction)
@@ -733,10 +813,10 @@ class CH0Model(H0ModelBase):
         mu_cepheid = mu_cepheid.at[self.idx_dZP].add(dZP)
 
         mag_cepheid = mu_cepheid + M_W + b_W * self.logP + Z_W * self.OH
-        factor(
-            "ll_cepheid",
-            mvn_logpdf_cholesky(self.mag_cepheid, mag_cepheid, self.L_Cepheid)
-            )
+        ll_cepheid = mvn_logpdf_cholesky(
+            self.mag_cepheid, mag_cepheid, self.L_Cepheid)
+        factor("ll_cepheid", ll_cepheid)
+        ll_total += ll_cepheid
 
         if self.use_Cepheid_host_redshift:
             z_cosmo = self.distmod2redshift(mu_host, h=h)
@@ -754,8 +834,9 @@ class CH0Model(H0ModelBase):
                 cz_pred = predict_cz(z_cosmo, Vext_rad_host)
                 C = A_covmat * self.PV_covmat_cepheid_host
                 C = C.at[jnp.diag_indices(len(e2_cz))].add(e2_cz)
-                sample("cz_pred", MultivariateNormal(cz_pred, C),
-                       obs=self.czcmb_cepheid_host)
+                cz_dist = MultivariateNormal(cz_pred, C)
+                sample("cz_pred", cz_dist, obs=self.czcmb_cepheid_host)
+                ll_total += cz_dist.log_prob(self.czcmb_cepheid_host)
             elif self.use_reconstruction:
                 Vpec = beta * self.f_host_los_velocity(rh_host)
                 Vpec += Vext_rad_host[None, :]
@@ -768,13 +849,31 @@ class CH0Model(H0ModelBase):
                     self.czcmb_cepheid_host[None, :], cz_pred, e2_cz)
             else:
                 cz_pred = predict_cz(z_cosmo, Vext_rad_host)
-                factor("cz_pred",
-                       ll_cz_fn(self.czcmb_cepheid_host,
-                                cz_pred, e2_cz).sum())
+                ll_cz = ll_cz_fn(
+                    self.czcmb_cepheid_host, cz_pred, e2_cz).sum()
+                factor("cz_pred", ll_cz)
+                ll_total += ll_cz
 
         if self.use_reconstruction:
+            if self.save_log_likelihood_per_galaxy:
+                if log_selection_integral is None:
+                    raise RuntimeError(
+                        "Per-host CH0 log likelihood saving requires a "
+                        "selection integral.")
+                log_S_host = log_selection_integral
+                if log_S_host.ndim == 1:
+                    log_S_host = log_S_host[:, None]
+                self._record_per_galaxy_log_likelihood(
+                    ll_reconstruction[0] + log_S_host[0],
+                    ll_selection_observed=ll_observed_selection_host,
+                    log_selection_integral=log_selection_integral[0])
+
             # Take the product over host likelihoods, then average over
             # field realizations.
             ll_reconstruction = logmeanexp(
                 jnp.sum(ll_reconstruction, axis=1), axis=0)
             factor("ll_reconstruction", ll_reconstruction)
+            ll_total += ll_reconstruction
+
+        if self.save_log_likelihood_per_galaxy:
+            deterministic("log_likelihood_total", ll_total)
