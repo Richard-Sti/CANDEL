@@ -1450,6 +1450,7 @@ def _load_edd_trgb_core(fpath, label, zcmb_min=None, zcmb_max=None,
         colour_dered=colour_edd,
         colour_606_814=colour_606_814,
         e_colour_dered=e_colour_edd,
+        host_names=names,
     )
 
     if has_group_vcmb:

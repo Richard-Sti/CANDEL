@@ -53,8 +53,8 @@ selection_integral_grid_radius = 60.0
 density_3d_subsample_fraction = 1.0
 # Optional inner-region supersampling for the 3D selection integral.
 # target_dx=0 or radius=0 disables inner-region supersampling.
-selection_integral_supersample_radius = 30.0
-selection_integral_supersample_target_dx = 0.3
+selection_integral_supersample_radius = 0.0
+selection_integral_supersample_target_dx = 0.0
 
 # --- Overrides from default priors ---
 
@@ -111,6 +111,9 @@ scale = 1.0
 dist = "normal"
 loc = 0.43
 scale = 0.02
+
+[model.priors.alpha_high]
+low = 0.0
 
 [model.priors.A_covmat]
 dist = "truncated_normal"
