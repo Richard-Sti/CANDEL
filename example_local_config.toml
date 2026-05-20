@@ -1,0 +1,33 @@
+# Copy this file to local_config.toml and edit the machine-local paths.
+
+root_main = "/path/to/CANDEL/"
+root_data = "/path/to/CANDEL/"
+root_results = "/path/to/CANDEL/"
+python_exec = "/path/to/CANDEL/venv_candel/bin/python"
+machine = "local"
+
+# Optional cluster/runtime settings used by submission helpers.
+use_frozen = false
+modules = ""
+modules_gpu = ""
+gpu_ld_library_path = []
+
+[borg_fields]
+# Python environment that can run BORG helper scripts and import BORG-side
+# dependencies such as boto3 for downloads and MAS_library for CIC/PCS fields.
+borg_python = "/path/to/borg/venv/bin/python"
+
+# BORG forward executable used to produce split particle/field outputs.
+borg_forward = "/path/to/borg_forward"
+
+# CosmoTool SPH executable, only used with `--mas sph`.
+cosmotool_sph = "/path/to/simple3DFilter"
+
+# Python environment used for CANDEL plotting/validation helpers.
+plot_python = "/path/to/CANDEL/venv_candel/bin/python"
+
+# srun executable for cluster submission; use "srun" if it is on PATH.
+srun = "srun"
+
+# Root directory containing chain/, schedule_final.yaml, and forward products.
+borg_run_dir = "/path/to/BORG_RUN"
