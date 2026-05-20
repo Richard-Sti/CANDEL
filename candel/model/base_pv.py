@@ -426,7 +426,7 @@ class BasePVModel(ModelBase):
         return log_N
 
     def _setup_no_recon_lp_dist_and_Vrad(self, data, r_grid, kwargs_dist):
-        """Empirical radial prior without inhomogeneous Malmquist correction."""
+        """Empirical radial prior without inhomogeneous Malmquist."""
         R = kwargs_dist["R"]
         q = kwargs_dist["q"]
         log_R = jnp.log(R)
