@@ -15,6 +15,7 @@
 Utilities to interpolate 3D density and velocity fields along galaxy lines of
 sight.
 """
+import os
 from warnings import warn
 
 import numpy as np
@@ -23,6 +24,9 @@ from scipy.interpolate import RegularGridInterpolator
 
 from ..util import (fprint, radec_to_cartesian, radec_to_galactic,
                     radec_to_supergalactic)
+
+_NUMPY_GAUSSIAN_FALLBACK_MEMORY_FRACTION = 0.5
+_PYLIANS_FALLBACK_NOTICE_PRINTED = False
 
 
 @njit(cache=True)
@@ -95,42 +99,165 @@ def _trilinear_interp_field(field_flat, pos_flat, grid_min, grid_step,
     return result
 
 
+def _validate_gaussian_smoothing_scale(field, smooth_scale, boxsize):
+    """Validate a resolved Gaussian kernel scale and return grid metadata."""
+    if field.ndim != 3:
+        raise ValueError("`field` must be cubic with shape (N, N, N).")
+    N = field.shape[0]
+    if field.shape[1] != N or field.shape[2] != N:
+        raise ValueError("`field` must be cubic with shape (N, N, N).")
+    if not np.isfinite(smooth_scale) or smooth_scale <= 0:
+        raise ValueError("`smooth_scale` must be finite and positive.")
+    if not np.isfinite(boxsize) or boxsize <= 0:
+        raise ValueError("`boxsize` must be finite and positive.")
+    dx = float(boxsize) / N
+    if smooth_scale <= dx:
+        raise ValueError(
+            f"Gaussian smoothing scale {smooth_scale:g} Mpc/h must exceed "
+            f"the grid voxel size {dx:g} Mpc/h. Smoothing at or below the "
+            "grid scale is not well defined for these field products.")
+    return N, dx
+
+
+def _discrete_periodic_gaussian_filter_fft(N, smooth_scale, boxsize):
+    """Return the DFT of a periodic sampled Gaussian kernel."""
+    R_grid = smooth_scale * N / boxsize
+    axis = np.arange(N, dtype=np.float32)
+    middle = N // 2
+    axis[axis > middle] -= N
+    r2 = (axis[:, None, None]**2
+          + axis[None, :, None]**2
+          + axis[None, None, :]**2)
+    kernel = np.exp(-r2 / (2.0 * R_grid**2)).astype(np.float32)
+    kernel /= np.sum(kernel, dtype=np.float64)
+    return np.fft.rfftn(kernel, axes=(0, 1, 2)).astype(
+        np.complex64, copy=False)
+
+
+def _format_memory(num_bytes):
+    """Return a compact binary-size string."""
+    value = float(num_bytes)
+    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
+        if value < 1024.0 or unit == "TiB":
+            return f"{value:.1f} {unit}"
+        value /= 1024.0
+
+
+def _available_memory_bytes():
+    """Best-effort estimate of currently available system memory."""
+    try:
+        with open("/proc/meminfo", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) * 1024
+    except OSError:
+        pass
+
+    try:
+        pages = os.sysconf("SC_AVPHYS_PAGES")
+        page_size = os.sysconf("SC_PAGE_SIZE")
+    except (AttributeError, OSError, ValueError):
+        return None
+    if pages <= 0 or page_size <= 0:
+        return None
+    return int(pages) * int(page_size)
+
+
+def _numpy_gaussian_fallback_memory_bytes(N, dtype, make_copy):
+    """Estimate peak temporary memory for the NumPy smoothing fallback."""
+    n_real = int(N)**3
+    n_fourier = int(N) * int(N) * (int(N) // 2 + 1)
+    float32_bytes = np.dtype(np.float32).itemsize
+    float64_bytes = np.dtype(np.float64).itemsize
+    complex64_bytes = np.dtype(np.complex64).itemsize
+    complex128_bytes = np.dtype(np.complex128).itemsize
+    dtype_bytes = np.dtype(dtype).itemsize
+
+    copy_bytes = n_real * dtype_bytes if make_copy else 0
+    kernel_stage = (
+        copy_bytes
+        + 2 * n_real * float32_bytes
+        + n_fourier * (complex128_bytes + complex64_bytes)
+    )
+    smoothing_stage = (
+        copy_bytes
+        + n_fourier * (2 * complex128_bytes + complex64_bytes)
+        + n_real * (float64_bytes + dtype_bytes)
+    )
+    return int(1.25 * max(kernel_stage, smoothing_stage))
+
+
+def _check_numpy_gaussian_fallback_memory(N, dtype, make_copy):
+    """Raise if the NumPy fallback is likely to exceed memory headroom."""
+    estimated = _numpy_gaussian_fallback_memory_bytes(N, dtype, make_copy)
+    available = _available_memory_bytes()
+    if available is None:
+        return estimated, available
+
+    budget = int(_NUMPY_GAUSSIAN_FALLBACK_MEMORY_FRACTION * available)
+    if estimated > budget:
+        raise RuntimeError(
+            "Pylians `smoothing_library` is required for this Gaussian "
+            "smoothing run. The NumPy fallback estimates "
+            f"{_format_memory(estimated)} of temporary memory for a "
+            f"{N}^3 grid, exceeding the available-memory headroom "
+            f"({_format_memory(budget)} of currently available "
+            f"{_format_memory(available)}).")
+    return estimated, available
+
+
+def _print_numpy_gaussian_fallback_notice(N, estimated, available):
+    """Print a one-time notice when the Pylians smoothing path is absent."""
+    global _PYLIANS_FALLBACK_NOTICE_PRINTED
+    if _PYLIANS_FALLBACK_NOTICE_PRINTED:
+        return
+    if available is None:
+        memory = f"estimated temporary memory {_format_memory(estimated)}"
+    else:
+        memory = (
+            f"estimated temporary memory {_format_memory(estimated)}, "
+            f"available {_format_memory(available)}")
+    fprint(
+        "Pylians `smoothing_library` is not available; using the NumPy "
+        f"Gaussian smoothing fallback for a {N}^3 grid ({memory}).")
+    _PYLIANS_FALLBACK_NOTICE_PRINTED = True
+
+
 def apply_gaussian_smoothing(field, smooth_scale, boxsize, make_copy=False):
     """
-    Apply Gaussian smoothing to a 3D field using FFTs. Units of `smooth_scale`
-    must match that of `boxsize`.
+    Apply periodic Gaussian smoothing to a 3D field using FFTs.
+
+    The kernel follows Pylians' discrete-grid convention: sample the Gaussian
+    on the periodic real-space grid, normalise it, Fourier transform that
+    sampled kernel, then multiply the field FFT by it. Units of
+    `smooth_scale` must match that of `boxsize`.
     """
-    N = field.shape[0]
-    if field.ndim != 3 or not (field.shape[1] == N and field.shape[2] == N):
-        raise ValueError("`field` must be cubic with shape (N, N, N).")
+    N, _ = _validate_gaussian_smoothing_scale(
+        field, smooth_scale, boxsize)
 
     try:
         import smoothing_library as SL
+        x = np.ascontiguousarray(field, dtype=np.float32)
+        if make_copy:
+            x = x.copy()
         W_k = SL.FT_filter(boxsize, smooth_scale, N, "Gaussian", 1)
-        return SL.field_smoothing(field, W_k, 1)
+        smoothed = SL.field_smoothing(x, W_k, 1)
+        return smoothed.astype(field.dtype, copy=False)
     except ImportError:
         warn(
             "Optional `smoothing_library` (from Pylians3) not found; "
-            "falling back to a NumPy FFT implementation. Install it "
-            "with `pip install pylians` for the optimised path.",
-            UserWarning)
+            "falling back to a NumPy implementation of the same sampled "
+            "periodic Gaussian kernel. Install it with `pip install pylians` "
+            "for the optimised path.",
+            UserWarning, stacklevel=2)
 
+    estimated, available = _check_numpy_gaussian_fallback_memory(
+        N, field.dtype, make_copy)
+    _print_numpy_gaussian_fallback_notice(N, estimated, available)
     x = field.copy() if make_copy else field
-    dx = boxsize / N
-
-    # Fourier-space grid
-    kx = np.fft.fftfreq(N, d=dx) * 2.0 * np.pi
-    kz = np.fft.rfftfreq(N, d=dx) * 2.0 * np.pi
-    kx3, ky3, kz3 = np.meshgrid(kx, kx, kz, indexing="ij")
-    k2 = kx3**2 + ky3**2 + kz3**2
-
-    # Gaussian filter in Fourier space
-    Wk = np.exp(-0.5 * (smooth_scale**2) * k2)
-
-    # FFT → filter → inverse FFT
-    fhat = np.fft.rfftn(x)
-    fhat *= Wk
-    smoothed = np.fft.irfftn(fhat, s=(N, N, N))
+    Wk = _discrete_periodic_gaussian_filter_fft(N, smooth_scale, boxsize)
+    fhat = np.fft.rfftn(x, axes=(0, 1, 2)) * Wk
+    smoothed = np.fft.irfftn(fhat, s=(N, N, N), axes=(0, 1, 2))
 
     return smoothed.astype(field.dtype, copy=False)
 
@@ -182,9 +309,27 @@ def _get_grid_params(field_loader, ngrid):
     return cellsize, grid_min, voxel_size
 
 
+def _target_smoothing_to_kernel_scale(smooth_target, voxel_size):
+    """Convert a target resolution to the extra Gaussian kernel scale."""
+    if not np.isfinite(smooth_target) or smooth_target <= voxel_size:
+        raise ValueError(
+            f"Target smoothing scale {smooth_target} must be finite and "
+            f"exceed the voxel size {voxel_size}.")
+    smooth_scale = np.sqrt(smooth_target**2 - voxel_size**2)
+    if smooth_scale <= voxel_size:
+        min_target = np.sqrt(2.0) * voxel_size
+        raise ValueError(
+            f"Target smoothing scale {smooth_target:g} Mpc/h implies a "
+            f"Gaussian kernel scale {smooth_scale:g} Mpc/h, which does not "
+            f"exceed the voxel size {voxel_size:g} Mpc/h. Use target > "
+            f"{min_target:g} Mpc/h.")
+    return smooth_scale
+
+
 def interpolate_los_density_velocity(field_loader, r, RA, dec,
                                      smooth_target=None, verbose=True,
-                                     los_geometry=None):
+                                     los_geometry=None,
+                                     density_smoothing_scale=None):
     """
     Interpolate the density and velocity fields along the line of sight
     specified by `RA` and `dec` at radial steps `r` from the observer. The
@@ -207,18 +352,44 @@ def interpolate_los_density_velocity(field_loader, r, RA, dec,
     ngrid = density.shape[0]
     cellsize, grid_min, voxel_size = _get_grid_params(field_loader, ngrid)
 
-    smooth_scale = None
+    if smooth_target is not None and density_smoothing_scale is not None:
+        raise ValueError(
+            "`smooth_target` and `density_smoothing_scale` are mutually "
+            "exclusive. The former smooths density and velocity to a target "
+            "resolution; the latter smooths only the density field.")
+
+    density_smooth_scale = None
+    velocity_smooth_scale = None
     if smooth_target is not None:
-        if smooth_target < voxel_size:
-            raise ValueError(
-                f"Target smoothing scale {smooth_target} is smaller than "
-                f"the voxel size {voxel_size}.")
-        smooth_scale = np.sqrt(smooth_target**2 - voxel_size**2)
+        smooth_scale = _target_smoothing_to_kernel_scale(
+            smooth_target, voxel_size)
+        density_smooth_scale = smooth_scale
+        velocity_smooth_scale = smooth_scale
         fprint(f"applying Gaussian smoothing with scale {smooth_scale:.1f} "
                f"Mpc/h to match target {smooth_target:.1f} Mpc/h.",
                verbose=verbose)
+    elif density_smoothing_scale is not None:
+        density_smoothing_scale = float(density_smoothing_scale)
+        if (not np.isfinite(density_smoothing_scale)
+                or density_smoothing_scale < 0):
+            raise ValueError(
+                "`density_smoothing_scale` must be finite and non-negative.")
+        if density_smoothing_scale > 0:
+            if density_smoothing_scale <= voxel_size:
+                raise ValueError(
+                    "`density_smoothing_scale` must exceed the field voxel "
+                    f"size {voxel_size:g} Mpc/h; got "
+                    f"{density_smoothing_scale:g} Mpc/h.")
+            density_smooth_scale = float(density_smoothing_scale)
+            fprint(
+                "applying density-only Gaussian smoothing with scale "
+                f"{density_smooth_scale:.1f} Mpc/h.",
+                verbose=verbose)
+
+    if density_smooth_scale is not None:
         density = apply_gaussian_smoothing(
-            density, smooth_scale, field_loader.boxsize, make_copy=True)
+            density, density_smooth_scale, field_loader.boxsize,
+            make_copy=True)
 
     np.add(density, eps, out=density)
     np.log(density, out=density)
@@ -241,9 +412,9 @@ def interpolate_los_density_velocity(field_loader, r, RA, dec,
             fprint(f"interpolating velocity component {comp}...",
                    verbose=verbose)
             v_comp = field_loader.load_velocity_component(comp)
-            if smooth_scale is not None:
+            if velocity_smooth_scale is not None:
                 v_comp = apply_gaussian_smoothing(
-                    v_comp, smooth_scale, field_loader.boxsize,
+                    v_comp, velocity_smooth_scale, field_loader.boxsize,
                     make_copy=True)
             v_flat = np.ascontiguousarray(v_comp, dtype=np.float32).ravel()
             del v_comp
@@ -259,10 +430,10 @@ def interpolate_los_density_velocity(field_loader, r, RA, dec,
     else:
         fprint("interpolating the velocity field...", verbose=verbose)
         velocity = field_loader.load_velocity()
-        if smooth_scale is not None:
+        if velocity_smooth_scale is not None:
             for i in range(3):
                 velocity[i] = apply_gaussian_smoothing(
-                    velocity[i], smooth_scale, field_loader.boxsize,
+                    velocity[i], velocity_smooth_scale, field_loader.boxsize,
                     make_copy=True)
         for comp in range(3):
             v_flat = np.ascontiguousarray(
