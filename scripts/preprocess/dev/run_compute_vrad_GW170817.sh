@@ -1,11 +1,16 @@
-#!/bin/bash
+#!/bin/bash -l
+
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 
 # ---- user variables ----
-config="../runs/configs/config.toml"
+config="$ROOT/scripts/runs/configs/config.toml"
 queue="berg"
 ncpu=10
 memory=32
-env="/mnt/users/rstiskalek/CANDEL/venv_candel/bin/python"
+python_exec="$ROOT/venv_candel/bin/python"
+script="$ROOT/scripts/preprocess/dev/compute_vrad_GW170817.py"
 # ------------------------
 
 reconstructions=("manticore_2MPP_MULTIBIN_N256_DES_V2")
@@ -32,17 +37,21 @@ case $choice in
             else
                 ncpu_use=$ncpu
             fi
-            cm="addqueue -q $queue -n $ncpu_use -m $memory $env compute_vrad_GW170817.py --reconstruction $reconstruction --config $config"
+            cmd=(addqueue -q "$queue" -n "$ncpu_use" -m "$memory"
+                 "$python_exec" "$script"
+                 --reconstruction "$reconstruction" --config "$config")
             echo "Submitting: $reconstruction"
-            echo "  $cm"
-            eval "$cm"
+            printf '  %q' "${cmd[@]}"
+            echo
+            "${cmd[@]}"
             echo
         done
         ;;
     2)
         for reconstruction in "${reconstructions[@]}"; do
             echo "Running: $reconstruction"
-            $env compute_vrad_GW170817.py --reconstruction $reconstruction --config $config
+            "$python_exec" "$script" \
+                --reconstruction "$reconstruction" --config "$config"
             echo
         done
         ;;

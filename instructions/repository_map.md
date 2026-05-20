@@ -150,9 +150,10 @@ should not bake in local paths, queue names, Python executables, or outputs.
 
 - `/mnt/users/rstiskalek/CANDEL/scripts/preprocess`
   precomputes line-of-sight density/velocity products and warms H0 volume
-  field caches. `prepare_field_inputs.py` is the single runnable entry point
-  for LOS computation plus cache warmup from config/task inputs; helper logic
-  lives in `field_input_los.py` and `field_input_cache.py`.
+  field caches. `prepare_field_inputs.py` is the single Python entry point
+  for LOS computation plus cache warmup from config/task inputs, with
+  `prepare_field_inputs.sh` submitting it to CPU/MPI nodes. Helper logic lives
+  in `field_input_los.py` and `field_input_cache.py`.
 
 - `/mnt/users/rstiskalek/CANDEL/scripts/H0_convergence`,
   `/mnt/users/rstiskalek/CANDEL/scripts/diagnostics`, and
