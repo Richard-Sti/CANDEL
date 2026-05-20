@@ -139,7 +139,7 @@ def test_h0_volume_supersampling_trilinearly_interpolates_subcells():
 def test_pv_volume_cache_filename_keeps_requested_subsample_fraction():
     payload = {
         "kind": "pv_volume_density_3d",
-        "loader_name": "COLA_manticore_2MPP_MULTIBIN_N256_DES_V2",
+        "loader_name": "ManticoreLocalCOLA",
         "field_indices": [0, 1],
         "subcube_radius": 150.0,
         "pad_subcube_boundary": True,
