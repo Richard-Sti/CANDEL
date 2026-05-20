@@ -19,7 +19,7 @@ from os.path import dirname, splitext
 
 import jax
 import numpy as np
-from h5py import File
+from h5py import File, string_dtype
 from jax import jit
 from jax import numpy as jnp
 from jax import vmap
@@ -40,6 +40,15 @@ from ..util import (fprint, fsection, galactic_to_radec, plot_corner,
                     radec_to_cartesian, radec_to_galactic)
 from .evidence import (BIC_AIC, dict_samples_to_array, harmonic_evidence,
                        laplace_evidence)
+
+
+_BASE_AUXILIARY_KEYS = ("Vpec_host_skipZ",)
+_PER_GALAXY_LOG_LIKELIHOOD_AUXILIARY_KEYS = (
+    "log_likelihood_per_galaxy",
+    "log_observed_selection_per_galaxy",
+    "log_selection_integral",
+    "log_likelihood_per_galaxy_with_selection",
+)
 
 
 def _harmonic_available():
@@ -478,7 +487,7 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
     mcmc.run(jax.random.key(kwargs["seed"]), **model_kwargs)
 
     samples = mcmc.get_samples()
-    auxiliary = extract_auxiliary(samples, ["Vpec_host_skipZ"])
+    auxiliary = extract_auxiliary(samples, _BASE_AUXILIARY_KEYS)
     log_density_per_sample = samples.pop("log_density_per_sample", None)
 
     compute_log_density, compute_evidence = _post_sampling_flags(kwargs, model)
@@ -678,7 +687,8 @@ def run_H0_inference(model, model_kwargs=None, print_summary=True,
         diagnostic_summary = summary_numpyro(samples_by_chain,
                                              group_by_chain=True)
 
-    auxiliary = extract_auxiliary(samples, ["Vpec_host_skipZ"])
+    auxiliary = extract_auxiliary(samples, _auxiliary_keys(kwargs))
+    _attach_auxiliary_metadata(auxiliary, model)
     compute_log_density, compute_evidence = _post_sampling_flags(
         kwargs, model, require_config_evidence=True)
 
@@ -764,6 +774,30 @@ def extract_auxiliary(samples, keys):
             new_key = key.replace("_skipZ", "")
             aux[new_key] = samples.pop(key)
     return aux
+
+
+def _auxiliary_keys(inference_config):
+    """Return deterministic sites saved outside the posterior sample group."""
+    keys = list(_BASE_AUXILIARY_KEYS)
+    if inference_config.get("save_log_likelihood_per_galaxy", False):
+        keys.extend(_PER_GALAXY_LOG_LIKELIHOOD_AUXILIARY_KEYS)
+    return keys
+
+
+def _attach_auxiliary_metadata(auxiliary, model):
+    """Attach non-sampled metadata needed to interpret auxiliary arrays."""
+    if "log_likelihood_per_galaxy" not in auxiliary:
+        return
+    if not hasattr(model, "host_names"):
+        return
+
+    host_names = np.asarray(model.host_names, dtype=str)
+    n_hosts = np.shape(auxiliary["log_likelihood_per_galaxy"])[-1]
+    if host_names.shape != (n_hosts,):
+        raise ValueError(
+            "`host_names` shape does not match per-galaxy likelihood "
+            f"axis: {host_names.shape} != ({n_hosts},).")
+    auxiliary["host_names"] = host_names
 
 
 def drop_deterministic(samples, check_all_equals=True):
@@ -905,6 +939,29 @@ def print_student_t_nu_warnings(samples, threshold=5.0):
     return warned
 
 
+def _write_hdf5_dataset(group, key, value):
+    """Write one HDF5 dataset, keeping strings readable and floats compact."""
+    arr = np.asarray(value)
+    if arr.dtype.kind in ("O", "S", "U"):
+        dtype = string_dtype(encoding="utf-8")
+        data = arr.astype(str).astype(object)
+        group.create_dataset(key, data=data, dtype=dtype)
+    elif np.issubdtype(arr.dtype, np.floating):
+        group.create_dataset(key, data=arr, dtype=np.float32)
+    else:
+        group.create_dataset(key, data=arr)
+
+
+def _write_auxiliary_group(handle, auxiliary):
+    """Write auxiliary diagnostics under the HDF5 ``auxiliary`` group."""
+    if not auxiliary:
+        return
+
+    group = handle.create_group("auxiliary")
+    for key, value in auxiliary.items():
+        _write_hdf5_dataset(group, key, value)
+
+
 def save_mcmc_samples(samples, log_density, log_density_per_sample, gof,
                       filename, auxiliary=None):
     """Save the MCMC samples to an HDF5 file."""
@@ -916,11 +973,7 @@ def save_mcmc_samples(samples, log_density, log_density_per_sample, gof,
         for key, x in samples.items():
             grp.create_dataset(key, data=x, dtype=np.float32)
 
-        if auxiliary and "Vpec_host" in auxiliary:
-            grp_aux = f.create_group("auxiliary")
-            grp_aux.create_dataset(
-                "Vpec_host", data=auxiliary["Vpec_host"],
-                dtype=np.float32)
+        _write_auxiliary_group(f, auxiliary)
 
         if "Vext_ell" in samples:
             original_shape = samples["Vext_ell"].shape

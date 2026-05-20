@@ -18,7 +18,7 @@ import numpy as np
 from jax import checkpoint, lax
 from jax.scipy.special import logsumexp
 from jax.scipy.stats import norm as norm_jax
-from numpyro import factor, sample
+from numpyro import deterministic, factor, sample
 from numpyro.distributions import Normal, Uniform
 
 from ..util import fprint, get_nested, replace_prior_with_delta
@@ -157,6 +157,10 @@ class TRGBModel(H0ModelBase):
             self.config, "model/use_density_dependent_sigma_v", False)
         fprint("use_density_dependent_sigma_v set to "
                f"{self.use_density_dependent_sigma_v}")
+        self.save_log_likelihood_per_galaxy = bool(get_nested(
+            self.config, "inference/save_log_likelihood_per_galaxy", False))
+        if self.save_log_likelihood_per_galaxy:
+            fprint("saving per-galaxy TRGB log likelihood contributions.")
         self.mag_min_TRGB = get_nested(
             self.config, "model/mag_min_TRGB", 22.1)
         if self.which_selection == "TRGB_magnitude":
@@ -205,6 +209,8 @@ class TRGBModel(H0ModelBase):
         fprint(f"loaded {self.num_hosts} TRGB host galaxies.")
 
     def _set_data_arrays(self, data):
+        if data.get("host_names") is not None:
+            self.host_names = np.asarray(data["host_names"], dtype=str)
         skip = ("host_names", "sn_group_index", "m_Bprime",
                 "e_m_Bprime", "e_m_Bprime_median")
         super()._set_data_arrays(data, skip_keys=skip)
@@ -302,6 +308,19 @@ class TRGBModel(H0ModelBase):
                 "Number of 3D density fields "
                 f"({self.density_3d_fields.shape[0]}) does not match LOS "
                 f"field realisations ({self.num_fields}).")
+        if (self.save_log_likelihood_per_galaxy
+                and self.use_reconstruction
+                and self.num_fields != 1):
+            raise ValueError(
+                "Per-galaxy TRGB log likelihood saving is defined only for "
+                "single-field runs.")
+        if (self.save_log_likelihood_per_galaxy
+                and hasattr(self, "host_names")
+                and self.host_names.shape != (self.num_hosts,)):
+            raise ValueError(
+                "`host_names` must be one-dimensional with length matching "
+                "the number of TRGB hosts when saving per-galaxy log "
+                "likelihoods.")
         if self.use_density_dependent_sigma_v and not self.use_reconstruction:
             raise ValueError(
                 "`use_density_dependent_sigma_v` requires "
@@ -390,6 +409,32 @@ class TRGBModel(H0ModelBase):
         return self.sigma_v_from_density(
             delta_3d, sigma_v_low, sigma_v_high, log_rho_t, k)
 
+    def _sum_sn_terms_by_host(self, terms):
+        """Sum SN-level terms into their corresponding TRGB host bins."""
+        host_shape = (self.num_hosts,) + terms.shape[1:]
+        host_terms = jnp.zeros(host_shape)
+        return host_terms.at[self._sn_group_index].add(terms)
+
+    def _record_per_galaxy_log_likelihood(
+            self, ll_without_selection, ll_selection_observed,
+            log_selection_integral=0.0):
+        """Expose per-host likelihood terms as deterministic sites."""
+        if not self.save_log_likelihood_per_galaxy:
+            return
+
+        with_selection = (
+            ll_without_selection
+            + ll_selection_observed
+            - log_selection_integral
+        )
+        deterministic("log_likelihood_per_galaxy", ll_without_selection)
+        deterministic(
+            "log_observed_selection_per_galaxy",
+            ll_selection_observed)
+        deterministic("log_selection_integral", log_selection_integral)
+        deterministic(
+            "log_likelihood_per_galaxy_with_selection", with_selection)
+
     def __call__(self, **dynamic_attrs):
         if dynamic_attrs:
             with self._temporary_attrs(dynamic_attrs):
@@ -460,6 +505,7 @@ class TRGBModel(H0ModelBase):
 
         log_S = None
         ll_sn_host = None
+        ll_observed_selection_host = jnp.zeros(self.num_hosts)
 
         if self._has_trgb_colour:
             alpha_c = rsample("alpha_c", self.priors["alpha_c"])
@@ -492,10 +538,11 @@ class TRGBModel(H0ModelBase):
             mag_lim = self._resolve_threshold("mag_lim_TRGB")
             mag_width = self._resolve_threshold("mag_lim_TRGB_width")
 
+            ll_observed_selection_host = log_prob_integrand_window_sel(
+                self.mag_obs, 0.0, self.mag_min_TRGB,
+                mag_lim, mag_width)
             factor("ll_sel_per_object", jnp.sum(
-                log_prob_integrand_window_sel(
-                    self.mag_obs, 0.0, self.mag_min_TRGB,
-                    mag_lim, mag_width)))
+                ll_observed_selection_host))
 
             e_eff = jnp.sqrt(
                 self.e2_mag_median + sigma_int**2 + colour_sel_var)
@@ -507,8 +554,10 @@ class TRGBModel(H0ModelBase):
             cz_lim = self._resolve_threshold("cz_lim_selection")
             cz_width = self._resolve_threshold("cz_lim_selection_width")
 
+            ll_observed_selection_host = norm_jax.logcdf(
+                (cz_lim - self.czcmb) / cz_width)
             factor("ll_sel_per_object", jnp.sum(
-                norm_jax.logcdf((cz_lim - self.czcmb) / cz_width)))
+                ll_observed_selection_host))
 
             log_S = self._compute_volume_log_S_cz(
                 bias_params, H0, selection_sigma_v(), beta,
@@ -523,9 +572,11 @@ class TRGBModel(H0ModelBase):
             mag_width = self._resolve_threshold("mag_lim_SN_width")
 
             # Per-SN selection probability
-            factor("ll_sel_per_object", jnp.sum(
-                norm_jax.logcdf(
-                    (mag_lim - self._m_Bprime) / mag_width)))
+            ll_sel_sn = norm_jax.logcdf(
+                (mag_lim - self._m_Bprime) / mag_width)
+            factor("ll_sel_per_object", jnp.sum(ll_sel_sn))
+            ll_observed_selection_host = self._sum_sn_terms_by_host(
+                ll_sel_sn)
 
             log_S = self._compute_volume_log_S_mag(
                 bias_params, M_B,
@@ -539,10 +590,7 @@ class TRGBModel(H0ModelBase):
                 M_B + mu_grid[None, :],
                 self._e2_m_Bprime[:, None] + sigma_int_SN**2)
             # Sum SNe per host: (n_hosts, n_grid)
-            ll_sn_host = jnp.zeros(
-                (self.num_hosts, len(r_grid)))
-            ll_sn_host = ll_sn_host.at[
-                self._sn_group_index].add(ll_sn_per)
+            ll_sn_host = self._sum_sn_terms_by_host(ll_sn_per)
 
         self._call_marginalized(
             h, M_TRGB_host, e2_mag_host, ll_colour_host,
@@ -550,6 +598,7 @@ class TRGBModel(H0ModelBase):
             Vext_rad_host, r_grid, lp_r, log_S,
             mu_grid=mu_grid, z_grid=z_grid,
             ll_sn_host=ll_sn_host,
+            ll_observed_selection_host=ll_observed_selection_host,
             Vext_mono_host_grid=Vext_mono_host_grid,
             nu_cz=nu_cz)
 
@@ -584,12 +633,15 @@ class TRGBModel(H0ModelBase):
                            Vext_rad_host, r_grid, lp_r, log_S,
                            mu_grid=None, z_grid=None,
                            ll_sn_host=None,
+                           ll_observed_selection_host=None,
                            Vext_mono_host_grid=None,
                            nu_cz=None):
         if mu_grid is None:
             mu_grid = self.distance2distmod(r_grid, h=h)
         if z_grid is None:
             z_grid = self.distance2redshift(r_grid, h=h)
+        if ll_observed_selection_host is None:
+            ll_observed_selection_host = jnp.zeros(self.num_hosts)
 
         log_w = self._simpson_log_w
 
@@ -648,12 +700,30 @@ class TRGBModel(H0ModelBase):
             ll_host = logsumexp(integrand, axis=-1)
 
             if self.apply_sel:
-                ll_host -= log_S[:, None]
+                ll_without_selection = ll_host + ll_colour_host[None, :]
+                log_selection_integral = log_S
+                ll_host = (
+                    ll_without_selection
+                    - log_selection_integral[:, None]
+                )
             else:
                 log_norm = self._compute_no_selection_volume_log_norm(
                     bias_params, 100 * h)
-                ll_host -= log_norm[:, None]
-            ll_host += ll_colour_host[None, :]
+                ll_host = (
+                    ll_host - log_norm[:, None] + ll_colour_host[None, :])
+                ll_without_selection = ll_host
+                log_selection_integral = jnp.zeros_like(log_norm)
+
+            if self.save_log_likelihood_per_galaxy:
+                if self.num_fields != 1:
+                    raise NotImplementedError(
+                        "Per-galaxy TRGB log likelihood saving is defined "
+                        "only for single-field runs.")
+                self._record_per_galaxy_log_likelihood(
+                    ll_without_selection[0],
+                    ll_selection_observed=ll_observed_selection_host,
+                    log_selection_integral=log_selection_integral[0])
+
             # Take the product over host likelihoods, then average over
             # field realizations.
             ll_host = logmeanexp(jnp.sum(ll_host, axis=1), axis=0)
@@ -682,7 +752,18 @@ class TRGBModel(H0ModelBase):
             ll_host = ln_simpson_precomputed(integrand, log_w, axis=-1)
 
             if self.apply_sel:
-                ll_host -= log_S[0]
-            ll_host += ll_colour_host
+                ll_without_selection = ll_host + ll_colour_host
+                log_selection_integral = log_S[0]
+                ll_host = ll_without_selection - log_selection_integral
+            else:
+                ll_host = ll_host + ll_colour_host
+                ll_without_selection = ll_host
+                log_selection_integral = 0.0
+
+            if self.save_log_likelihood_per_galaxy:
+                self._record_per_galaxy_log_likelihood(
+                    ll_without_selection,
+                    ll_selection_observed=ll_observed_selection_host,
+                    log_selection_integral=log_selection_integral)
 
         factor("ll_host", jnp.sum(ll_host))
