@@ -39,9 +39,9 @@ from .field_cache import (_ArrayShapeOnly, _field_cache_dir_from_config,
                           _read_h0_volume_cache_superset,
                           _read_pv_volume_cache_superset, _write_field_cache,
                           _write_field_cache_mpi_part)
-from .field_products import (density_smoothing_cache_payload,
-                             density_smoothing_scale_from_config,
-                             validate_density_smoothing_scale)
+from .field_products import (field_smoothing_cache_payload,
+                             field_smoothing_scale_from_config,
+                             validate_field_smoothing_scale)
 
 _SPHERE_RADIUS_DX_WARN_MIN = 15.0
 
@@ -601,7 +601,7 @@ def _load_volume_data_for_H0_mpi(
         load_velocity, geometry, density_cache_path, velocity_cache_path,
         source_meta, mode, density_required, velocity_required,
         supersample_factor=1, supersample_radius=0.0,
-        density_smoothing_scale=None):
+        field_smoothing_scale=None):
     """Build one H0 volume cache file with fields split over MPI ranks."""
     rank = comm.Get_rank()
     size = comm.Get_size()
@@ -642,7 +642,7 @@ def _load_volume_data_for_H0_mpi(
                 return_cache_fields=True,
                 supersample_factor=supersample_factor,
                 supersample_radius=supersample_radius,
-                density_smoothing_scale=density_smoothing_scale)
+                field_smoothing_scale=field_smoothing_scale)
             field_arrays = {
                 key: np.asarray(value)
                 for key, value in partial.items()
@@ -811,7 +811,7 @@ def _load_volume_data_for_H0(
         voxel_subsample_seed=42, load_velocity=False, geometry="sphere",
         cache_dir=None, cache_enabled=True, return_cache_fields=False,
         supersample_factor=1, supersample_radius=0.0,
-        supersample_target_dx=None, density_smoothing_scale=None):
+        supersample_target_dx=None, field_smoothing_scale=None):
     """Load 3D voxel data for H0 selection integrals.
 
     Returns a dict to be merged into an H0-model data dict. The density field
@@ -832,8 +832,8 @@ def _load_volume_data_for_H0(
     supersample_factor, supersample_radius, supersample_target_dx = \
         _validate_h0_volume_supersampling(
             supersample_factor, supersample_radius, supersample_target_dx)
-    density_smoothing_scale = validate_density_smoothing_scale(
-        density_smoothing_scale)
+    field_smoothing_scale = validate_field_smoothing_scale(
+        field_smoothing_scale)
     mode = _volume_density_mode(galaxy_bias)
     rho_fields = []
     vrad_fields = [] if load_velocity else None
@@ -863,13 +863,13 @@ def _load_volume_data_for_H0(
         native_dx = _field_loader_native_dx(loaders[0])
         supersample_factor = _h0_volume_resolved_supersample_factor(
             native_dx, supersample_factor, supersample_target_dx)
-    if density_smoothing_scale is not None:
+    if field_smoothing_scale is not None:
         native_dx = native_dx or _field_loader_native_dx(loaders[0])
-        if density_smoothing_scale <= native_dx:
+        if field_smoothing_scale <= native_dx:
             raise ValueError(
                 f"`model.density_3d_smoothing_scale` must exceed the "
                 f"native field voxel size {native_dx:g} Mpc/h; got "
-                f"{density_smoothing_scale:g} Mpc/h.")
+                f"{field_smoothing_scale:g} Mpc/h.")
     use_supersampling = (
         supersample_factor > 1 and supersample_radius > 0.0)
 
@@ -896,11 +896,12 @@ def _load_volume_data_for_H0(
             supersample_factor, supersample_radius))
         density_cache_payload = {
             **base_cache_payload,
-            **density_smoothing_cache_payload(density_smoothing_scale),
+            **field_smoothing_cache_payload(field_smoothing_scale),
             "load_velocity": False,
         }
         velocity_cache_payload = {
             **base_cache_payload,
+            **field_smoothing_cache_payload(field_smoothing_scale),
             "load_velocity": True,
         }
         cache_path = _field_cache_path(
@@ -975,7 +976,7 @@ def _load_volume_data_for_H0(
                 load_velocity, geometry, cache_path, velocity_cache_path,
                 source_meta, mode, density_required, velocity_required,
                 supersample_factor, supersample_radius,
-                density_smoothing_scale=density_smoothing_scale)
+                field_smoothing_scale=field_smoothing_scale)
     else:
         cache_path = None
         velocity_cache_path = None
@@ -1006,15 +1007,16 @@ def _load_volume_data_for_H0(
 
         obs = np.asarray(loader.observer_pos, dtype=np.float32)
         dx = float(loader.boxsize) / rho.shape[0]
-        if density_smoothing_scale is not None:
+        if field_smoothing_scale is not None:
             if k == 0:
                 fprint(
                     "  applying real-space Gaussian smoothing to the 3D "
-                    f"density field with scale {density_smoothing_scale:g} "
+                    "density and velocity fields with scale "
+                    f"{field_smoothing_scale:g} "
                     "Mpc/h.")
             rho = apply_gaussian_smoothing(
                 rho.astype(np.float32, copy=False),
-                density_smoothing_scale, loader.boxsize, make_copy=True)
+                field_smoothing_scale, loader.boxsize, make_copy=True)
 
         if k == 0 and geometry == "sphere" and subcube_radius is not None:
             _warn_coarse_sphere_radius(
@@ -1095,6 +1097,11 @@ def _load_volume_data_for_H0(
                 try:
                     for comp in range(3):
                         v_full = loader.load_velocity_component(comp)
+                        if field_smoothing_scale is not None:
+                            v_full = apply_gaussian_smoothing(
+                                v_full.astype(np.float32, copy=False),
+                                field_smoothing_scale, loader.boxsize,
+                                make_copy=True)
                         if slices is not None:
                             v_comp = v_full[slices[0], slices[1], slices[2]]
                         else:
@@ -1111,6 +1118,11 @@ def _load_volume_data_for_H0(
                 v_full = loader.load_velocity()
                 for comp in range(3):
                     v_comp = v_full[comp]
+                    if field_smoothing_scale is not None:
+                        v_comp = apply_gaussian_smoothing(
+                            v_comp.astype(np.float32, copy=False),
+                            field_smoothing_scale, loader.boxsize,
+                            make_copy=True)
                     if slices is not None:
                         v_comp = v_comp[slices[0], slices[1], slices[2]]
                     v_comp = _h0_volume_apply_quadrature(v_comp, quad_ref)
@@ -1252,7 +1264,7 @@ def _load_h0_volume_data_from_config(config, los_data_path, which_los,
         "model.density_3d_subsample_seed")
     supersample_factor, supersample_radius, supersample_target_dx = (
         _h0_volume_supersampling_from_config(config))
-    density_smoothing_scale = density_smoothing_scale_from_config(config)
+    field_smoothing_scale = field_smoothing_scale_from_config(config)
     geometry = get_nested(
         config, "model/selection_integral_geometry", "sphere")
     if geometry not in ("sphere", "cube"):
@@ -1285,7 +1297,7 @@ def _load_h0_volume_data_from_config(config, los_data_path, which_los,
            f"voxel_subsample_fraction={voxel_subsample_fraction:g}, "
            f"supersample_radius={supersample_radius:g} Mpc/h, "
            f"supersample_target_dx={supersample_target_dx}, "
-           f"density_smoothing_scale={density_smoothing_scale}, "
+           f"field_smoothing_scale={field_smoothing_scale}, "
            f"velocity={load_vel}).")
     if supersample_target_dx is not None and supersample_radius > 0.0:
         fprint(
@@ -1317,13 +1329,15 @@ def _load_h0_volume_data_from_config(config, los_data_path, which_los,
         supersample_factor=supersample_factor,
         supersample_radius=supersample_radius,
         supersample_target_dx=supersample_target_dx,
-        density_smoothing_scale=density_smoothing_scale)
+        field_smoothing_scale=field_smoothing_scale)
 
 
 def _load_volume_density_3d(loader_name, loader_kwargs, downsample=1,
                             nsim=None, subcube_radius=None,
                             pad_subcube_boundary=False, cache_dir=None,
-                            cache_enabled=True, return_coordinate_frame=False):
+                            cache_enabled=True,
+                            return_coordinate_frame=False,
+                            field_smoothing_scale=None):
     """Load a 3D density cube and return NumPy arrays.
 
     `rho_3d` is dimensionless (1 + δ) on a regular Cartesian grid of side
@@ -1342,6 +1356,8 @@ def _load_volume_density_3d(loader_name, loader_kwargs, downsample=1,
     if not isinstance(downsample, int) or downsample < 1:
         raise ValueError(
             f"`density_3d_downsample` must be a positive int, got {downsample!r}.")  # noqa
+    field_smoothing_scale = validate_field_smoothing_scale(
+        field_smoothing_scale)
 
     loader_kwargs = dict(loader_kwargs)
     if nsim is not None:
@@ -1358,6 +1374,7 @@ def _load_volume_density_3d(loader_name, loader_kwargs, downsample=1,
             "nsim": None if nsim is None else int(nsim),
             "subcube_radius": subcube_radius,
             "pad_subcube_boundary": bool(pad_subcube_boundary),
+            **field_smoothing_cache_payload(field_smoothing_scale),
             "source": _field_source_metadata(loader),
         }
         cache_path = _field_cache_path(
@@ -1388,6 +1405,18 @@ def _load_volume_density_3d(loader_name, loader_kwargs, downsample=1,
             f"Volume density cube must be cubic 3D, got shape {rho.shape}.")
 
     dx = float(loader.boxsize) / rho.shape[0]
+    if field_smoothing_scale is not None:
+        if field_smoothing_scale <= dx:
+            raise ValueError(
+                f"`model.density_3d_smoothing_scale` must exceed the "
+                f"native field voxel size {dx:g} Mpc/h; got "
+                f"{field_smoothing_scale:g} Mpc/h.")
+        fprint(
+            "  applying real-space Gaussian smoothing to the PV 3D density "
+            f"field with scale {field_smoothing_scale:g} Mpc/h.")
+        rho = apply_gaussian_smoothing(
+            rho.astype(np.float32, copy=False),
+            field_smoothing_scale, loader.boxsize, make_copy=True)
     if downsample > 1:
         rho = rho[::downsample, ::downsample, ::downsample]
         dx *= downsample
@@ -1567,13 +1596,14 @@ def _pv_mpi_placeholder(cache_meta):
 
 def _load_one_pv_volume_density_field(
         loader_name, loader_kwargs, k, nsim, downsample, subcube_radius,
-        pad_subcube_boundary):
+        pad_subcube_boundary, field_smoothing_scale=None):
     loaded = _load_volume_density_3d(
         loader_name, loader_kwargs, downsample=downsample,
         nsim=int(nsim), subcube_radius=subcube_radius,
         pad_subcube_boundary=pad_subcube_boundary,
         cache_dir=None, cache_enabled=False,
-        return_coordinate_frame=True)
+        return_coordinate_frame=True,
+        field_smoothing_scale=field_smoothing_scale)
     rho, obs, dx, coord_frame = loaded
     fprint(
         f"  field {k} (nsim={int(nsim)}): cube shape {rho.shape}, "
@@ -1586,7 +1616,7 @@ def _load_volume_density_3d_fields_mpi(
         comm, loader_name, loader_kwargs, field_indices, downsample,
         subcube_radius, pad_subcube_boundary, cache_path, geometry, radius,
         store_rhat_3d, voxel_subsample_fraction, voxel_subsample_seed,
-        required):
+        required, field_smoothing_scale=None):
     """Build one grouped PV volume-density cache split over MPI ranks."""
     rank = comm.Get_rank()
     size = comm.Get_size()
@@ -1611,7 +1641,8 @@ def _load_volume_density_3d_fields_mpi(
                    f"(nsim={int(nsim)}).")
             field = _load_one_pv_volume_density_field(
                 loader_name, loader_kwargs, k, nsim, downsample,
-                subcube_radius, pad_subcube_boundary)
+                subcube_radius, pad_subcube_boundary,
+                field_smoothing_scale=field_smoothing_scale)
             prepared = _prepare_pv_volume_density_arrays(
                 [field], geometry=geometry, radius=radius,
                 store_rhat_3d=store_rhat_3d,
@@ -1735,7 +1766,7 @@ def _load_volume_density_3d_fields(
         subcube_radius=None, pad_subcube_boundary=False, cache_dir=None,
         cache_enabled=True, geometry="cube", radius=None,
         store_rhat_3d=False, voxel_subsample_fraction=1.0,
-        voxel_subsample_seed=42):
+        voxel_subsample_seed=42, field_smoothing_scale=None):
     """Load and cache one grouped PV 3D density product.
 
     The cached ``rho_fields`` are already downsampled, cropped, masked to the
@@ -1745,6 +1776,8 @@ def _load_volume_density_3d_fields(
     field_indices = np.asarray(field_indices, dtype=np.int32)
     if field_indices.size == 0:
         raise ValueError("At least one PV 3D density field is required.")
+    field_smoothing_scale = validate_field_smoothing_scale(
+        field_smoothing_scale)
 
     required = ["rho_fields", "log_r_3d", "log_dV_3d", "observer_pos", "dx"]
     if geometry == "sphere":
@@ -1771,6 +1804,7 @@ def _load_volume_density_3d_fields(
             "voxel_subsample_fraction": float(voxel_subsample_fraction),
             "voxel_subsample_seed": int(voxel_subsample_seed),
             "store_rhat_3d": bool(store_rhat_3d),
+            **field_smoothing_cache_payload(field_smoothing_scale),
             "sources": source_meta,
         }
         cache_path = _field_cache_path(
@@ -1792,7 +1826,8 @@ def _load_volume_density_3d_fields(
                 mpi_comm, loader_name, loader_kwargs, field_indices,
                 downsample, subcube_radius, pad_subcube_boundary, cache_path,
                 geometry, radius, store_rhat_3d, voxel_subsample_fraction,
-                voxel_subsample_seed, required)
+                voxel_subsample_seed, required,
+                field_smoothing_scale=field_smoothing_scale)
     else:
         cache_path = None
 
@@ -1806,7 +1841,8 @@ def _load_volume_density_3d_fields(
             nsim=int(nsim), subcube_radius=subcube_radius,
             pad_subcube_boundary=pad_subcube_boundary,
             cache_dir=cache_dir, cache_enabled=False,
-            return_coordinate_frame=True)
+            return_coordinate_frame=True,
+            field_smoothing_scale=field_smoothing_scale)
         rho, obs, dx, coord_frame = loaded
         if obs_ref is None:
             obs_ref = obs

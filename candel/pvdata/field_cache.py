@@ -27,7 +27,7 @@ from os.path import abspath, exists, isabs, join
 
 import numpy as np
 
-from ..util import fprint, get_nested, get_root_data
+from ..util import file_last_edited, fprint, get_nested, get_root_data
 
 _FIELD_CACHE_VERSION = 1
 
@@ -234,7 +234,7 @@ def _field_cache_payload_digest(payload, length=24):
 def _h0_volume_cache_filename(payload):
     """Readable, cluster-portable filename for H0 3D volume caches."""
     supersample = payload.get("supersample", None)
-    density_smoothing = payload.get("density_smoothing_scale", None)
+    field_smoothing = payload.get("field_smoothing_scale", None)
     parts = [
         f"v{_FIELD_CACHE_VERSION}",
         _field_cache_slug(payload["field_name"], max_len=70),
@@ -245,8 +245,8 @@ def _h0_volume_cache_filename(payload):
     ]
     if supersample is not None:
         parts.append(_h0_volume_supersample_tag(supersample))
-    if density_smoothing is not None:
-        parts.append(_h0_volume_density_smoothing_tag(density_smoothing))
+    if field_smoothing is not None:
+        parts.append(_field_smoothing_cache_tag(field_smoothing))
     parts.append("vel" if payload["load_velocity"] else "density")
     return "__".join(parts) + ".npz"
 
@@ -262,10 +262,10 @@ def _h0_volume_supersample_tag(supersample):
     return tag
 
 
-def _h0_volume_density_smoothing_tag(density_smoothing_scale):
-    """Readable filename tag for H0 density smoothing."""
-    return "smooth-R{}".format(
-        _field_cache_float_tag(density_smoothing_scale))
+def _field_smoothing_cache_tag(field_smoothing_scale):
+    """Readable filename tag for field smoothing."""
+    return "field-smooth-R{}".format(
+        _field_cache_float_tag(field_smoothing_scale))
 
 
 def _pv_volume_density_cache_filename(payload):
@@ -283,6 +283,7 @@ def _pv_volume_density_cache_filename(payload):
         _field_cache_float_tag(subsample_fraction),
         int(payload.get("voxel_subsample_seed", 42)))
     rhat_tag = "rhat" if payload.get("store_rhat_3d", False) else "norhat"
+    field_smoothing = payload.get("field_smoothing_scale", None)
     parts = [
         f"v{_FIELD_CACHE_VERSION}",
         _field_cache_slug(payload["loader_name"], max_len=70),
@@ -292,8 +293,10 @@ def _pv_volume_density_cache_filename(payload):
         f"ds-{int(payload['downsample'])}",
         subsample_tag,
         rhat_tag,
-        "density",
     ]
+    if field_smoothing is not None:
+        parts.append(_field_smoothing_cache_tag(field_smoothing))
+    parts.append("density")
     return "__".join(parts) + ".npz"
 
 
@@ -329,7 +332,12 @@ def _read_field_cache(cache_path, label, required_keys):
     except Exception as exc:
         fprint(f"ignoring unreadable {label} cache `{cache_path}`: {exc}")
         return None
-    fprint(f"loaded {label} cache from `{cache_path}`.")
+    edited = file_last_edited(cache_path)
+    if edited is None:
+        fprint(f"loaded {label} cache from `{cache_path}`.")
+    else:
+        fprint(f"loaded {label} cache from `{cache_path}` "
+               f"(last edited {edited}).")
     return out
 
 
@@ -363,13 +371,11 @@ def _h0_volume_supersample_tag_matches(cached_tag, supersample):
     return cached_tag == _h0_volume_supersample_tag(supersample)
 
 
-def _h0_volume_density_smoothing_tag_matches(
-        cached_tag, density_smoothing_scale):
-    """Return whether a cached density-smoothing tag satisfies a request."""
-    if density_smoothing_scale is None:
+def _field_smoothing_cache_tag_matches(cached_tag, field_smoothing_scale):
+    """Return whether a cached field-smoothing tag satisfies a request."""
+    if field_smoothing_scale is None:
         return cached_tag is None
-    return cached_tag == _h0_volume_density_smoothing_tag(
-        density_smoothing_scale)
+    return cached_tag == _field_smoothing_cache_tag(field_smoothing_scale)
 
 
 def _read_h0_volume_cache_superset(
@@ -388,7 +394,7 @@ def _read_h0_volume_cache_superset(
     radius_tag = _field_cache_float_tag(payload["subcube_radius"])
     downsample_tag = f"ds-{int(payload['downsample'])}"
     supersample = payload.get("supersample", None)
-    density_smoothing = payload.get("density_smoothing_scale", None)
+    field_smoothing = payload.get("field_smoothing_scale", None)
     kind_tag = "vel" if payload["load_velocity"] else "density"
 
     candidates = []
@@ -400,12 +406,12 @@ def _read_h0_volume_cache_superset(
             cached_radius, cached_downsample = parts[:6]
         cached_kind = parts[-1]
         cached_supersample = None
-        cached_density_smoothing = None
+        cached_field_smoothing = None
         for tag in parts[6:-1]:
             if tag.startswith("ss-"):
                 cached_supersample = tag
-            elif tag.startswith("smooth-"):
-                cached_density_smoothing = tag
+            elif tag.startswith("field-smooth-"):
+                cached_field_smoothing = tag
             else:
                 cached_supersample = tag
         if version != f"v{_FIELD_CACHE_VERSION}":
@@ -419,8 +425,8 @@ def _read_h0_volume_cache_superset(
         if not _h0_volume_supersample_tag_matches(
                 cached_supersample, supersample):
             continue
-        if not _h0_volume_density_smoothing_tag_matches(
-                cached_density_smoothing, density_smoothing):
+        if not _field_smoothing_cache_tag_matches(
+                cached_field_smoothing, field_smoothing):
             continue
         if not fields_part.startswith("fields-"):
             continue
@@ -461,16 +467,28 @@ def _read_pv_volume_cache_superset(cache_dir, payload, label, required_keys,
         _field_cache_float_tag(payload.get("voxel_subsample_fraction", 1.0)),
         int(payload.get("voxel_subsample_seed", 42)))
     rhat_tag = "rhat" if payload.get("store_rhat_3d", False) else "norhat"
+    field_smoothing = payload.get("field_smoothing_scale", None)
 
     candidates = []
     for fname in os.listdir(cache_subdir):
         parts = fname[:-4].split("__") if fname.endswith(".npz") else []
-        if len(parts) != 9:
+        if len(parts) not in (9, 10):
             continue
         version, cached_loader, fields_part, cached_geometry, \
             cached_radius, cached_downsample, cached_subsample, \
-            cached_rhat, cached_kind = parts
+            cached_rhat = parts[:8]
+        cached_tags = parts[8:-1]
+        cached_kind = parts[-1]
+        cached_field_smoothing = None
+        unknown_tag = False
+        for tag in cached_tags:
+            if tag.startswith("field-smooth-"):
+                cached_field_smoothing = tag
+            else:
+                unknown_tag = True
         if version != f"v{_FIELD_CACHE_VERSION}":
+            continue
+        if unknown_tag:
             continue
         if cached_loader != loader_slug or cached_geometry != geometry:
             continue
@@ -479,6 +497,9 @@ def _read_pv_volume_cache_superset(cache_dir, payload, label, required_keys,
         if cached_downsample != downsample_tag:
             continue
         if cached_subsample != subsample_tag or cached_rhat != rhat_tag:
+            continue
+        if not _field_smoothing_cache_tag_matches(
+                cached_field_smoothing, field_smoothing):
             continue
         if cached_kind != "density" or not fields_part.startswith("fields-"):
             continue

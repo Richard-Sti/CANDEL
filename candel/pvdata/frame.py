@@ -29,6 +29,8 @@ from ..util import (SPEED_OF_LIGHT, fprint, fsection, load_config,
 from .catalogues import _CATALOGUE_LOADERS, load_CF4_data, load_CF4_mock
 from .field_cache import (_field_cache_dir_from_config,
                           _field_cache_enabled_from_config)
+from .field_products import (field_smoothing_scale_from_config,
+                             resolve_los_data_path)
 from .los import _compute_r_grid, precompute_pixel_projection
 from .volume_density import (_load_volume_density_3d_fields,
                              _prepare_pv_volume_density_arrays,
@@ -50,6 +52,7 @@ def load_PV_dataframes(config_path):
 
     config_io = config["io"]
     config_pv_model = config["pv_model"]
+    field_smoothing_scale = field_smoothing_scale_from_config(config)
     names = config_io.pop("catalogue_name")
     if isinstance(names, str):
         names = [names]
@@ -69,8 +72,9 @@ def load_PV_dataframes(config_path):
 
         try_pop_los = is_mock and los_reconstruction is None
         if los_reconstruction is not None and not is_mock:
-            kwargs["los_data_path"] = kwargs.pop("los_file").replace(
-                "<X>", los_reconstruction)
+            kwargs["los_data_path"] = resolve_los_data_path(
+                kwargs.pop("los_file"), los_reconstruction,
+                field_smoothing_scale)
             fprint(
                 f"loading existing LOS data from {kwargs['los_data_path']}.")
             field_indices = config_io.get("field_indices", None)
@@ -98,7 +102,8 @@ def load_PV_dataframes(config_path):
             reconstruction_kwargs=recon_kwargs,
             reconstruction_name=los_reconstruction,
             field_cache_dir=field_cache_dir,
-            field_cache_enabled=field_cache_enabled)
+            field_cache_enabled=field_cache_enabled,
+            field_smoothing_scale=field_smoothing_scale)
         dfs.append(df)
 
     if len(dfs) == 1:
@@ -241,16 +246,12 @@ class PVDataFrame:
     @classmethod
     def from_config_dict(cls, config, name, try_pop_los, config_pv_model,
                          reconstruction_kwargs=None, reconstruction_name=None,
-                         field_cache_dir=None, field_cache_enabled=True):
+                         field_cache_dir=None, field_cache_enabled=True,
+                         field_smoothing_scale=None):
         root = config.pop("root")
         nsamples_subsample = config.pop("nsamples_subsample", None)
         seed_subsample = config.pop("seed_subsample", 42)
         sample_dust = False
-
-        smooth_target = config_pv_model.get("smooth_target", None)
-        if smooth_target is not None:
-            config["los_data_path"] = config["los_data_path"].replace(
-                ".hdf5", f"_smooth_to_{smooth_target}.hdf5")
 
         if "CF4_mock" in name:
             index = name.split("_")[-1]
@@ -388,6 +389,7 @@ class PVDataFrame:
                 f"voxel_subsample_fraction={voxel_subsample_fraction:g}, "
                 f"geometry={geometry}, radius={radius} Mpc/h, "
                 f"normalizer_batch_size={batch_size}, "
+                f"field_smoothing_scale={field_smoothing_scale}, "
                 f"density_mode="
                 f"{_volume_density_mode(galaxy_bias)}).")
             field_indices = np.asarray(
@@ -410,7 +412,8 @@ class PVDataFrame:
                 radius=radius,
                 store_rhat_3d=store_rhat_3d,
                 voxel_subsample_fraction=voxel_subsample_fraction,
-                voxel_subsample_seed=voxel_subsample_seed)
+                voxel_subsample_seed=voxel_subsample_seed,
+                field_smoothing_scale=field_smoothing_scale)
 
             frame.attach_prepared_volume_density_3d_fields(
                 fields_3d, batch_size=batch_size,

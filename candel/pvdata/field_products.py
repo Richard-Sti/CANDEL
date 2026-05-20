@@ -19,9 +19,9 @@ from os.path import splitext
 from ..util import get_nested
 
 
-def validate_density_smoothing_scale(
+def validate_field_smoothing_scale(
         value, label="model.density_3d_smoothing_scale"):
-    """Return a non-zero Gaussian density smoothing scale, or ``None``."""
+    """Return a non-zero Gaussian field smoothing scale, or ``None``."""
     if value is None:
         return None
     scale = float(value)
@@ -34,41 +34,50 @@ def validate_density_smoothing_scale(
     return scale
 
 
-def density_smoothing_scale_from_config(config):
-    """Read the optional H0 3D density smoothing scale from a config."""
-    return validate_density_smoothing_scale(
+def field_smoothing_scale_from_config(config):
+    """Read the optional 3D field smoothing scale from a config."""
+    return validate_field_smoothing_scale(
         get_nested(config, "model/density_3d_smoothing_scale", None))
 
 
-def density_smoothing_cache_payload(density_smoothing_scale):
-    """Return the cache-key payload for optional density smoothing."""
-    scale = validate_density_smoothing_scale(density_smoothing_scale)
+def field_smoothing_cache_payload(field_smoothing_scale):
+    """Return the cache-key payload for optional field smoothing."""
+    scale = validate_field_smoothing_scale(field_smoothing_scale)
     if scale is None:
         return {}
-    return {"density_smoothing_scale": scale}
+    return {"field_smoothing_scale": scale}
 
 
-def density_smoothing_tag(density_smoothing_scale):
-    """Return a stable filename tag for a non-zero smoothing scale."""
-    scale = validate_density_smoothing_scale(density_smoothing_scale)
+def field_smoothing_tag(field_smoothing_scale):
+    """Return a stable filename tag for a non-zero field smoothing scale."""
+    scale = validate_field_smoothing_scale(field_smoothing_scale)
     if scale is None:
         return None
-    return f"density_smooth_R{scale:g}"
+    return f"field_smooth_R{scale:g}"
 
 
-def density_smoothed_los_path(path, density_smoothing_scale):
-    """Append the density-smoothing suffix to a LOS file path if needed."""
-    tag = density_smoothing_tag(density_smoothing_scale)
+def field_smoothed_los_path(path, field_smoothing_scale):
+    """Append the field-smoothing suffix to a LOS file path if needed."""
+    tag = field_smoothing_tag(field_smoothing_scale)
     if path is None or tag is None:
         return path
     root, ext = splitext(path)
     return f"{root}_{tag}{ext}"
 
 
-def resolve_los_data_path(path, which_los=None, density_smoothing_scale=None):
-    """Resolve ``<X>`` and optional density-smoothing LOS filename suffix."""
+def resolve_los_data_path(path, which_los=None, field_smoothing_scale=None):
+    """Resolve ``<X>`` and optional field-smoothing LOS filename suffix."""
     if path is None:
         return None
     if which_los is not None:
         path = path.replace("<X>", which_los)
-    return density_smoothed_los_path(path, density_smoothing_scale)
+    return field_smoothed_los_path(path, field_smoothing_scale)
+
+
+# Backwards-compatible names. The config key is intentionally unchanged, but
+# the product now smooths every field carried by the cache/LOS product.
+validate_density_smoothing_scale = validate_field_smoothing_scale
+density_smoothing_scale_from_config = field_smoothing_scale_from_config
+density_smoothing_cache_payload = field_smoothing_cache_payload
+density_smoothing_tag = field_smoothing_tag
+density_smoothed_los_path = field_smoothed_los_path

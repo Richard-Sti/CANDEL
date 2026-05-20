@@ -24,7 +24,7 @@ from h5py import File
 from jax.nn import one_hot
 
 from ..cosmo.cosmography import Redshift2Distance
-from ..util import SPEED_OF_LIGHT, fprint, radec_to_galactic
+from ..util import SPEED_OF_LIGHT, file_last_edited, fprint, radec_to_galactic
 from .volume_density import _density_unit_normalization
 
 
@@ -212,5 +212,12 @@ def load_los(los_data_path, data, mask=None, verbose=True,
                    f"{los_field_indices.tolist()}", verbose=verbose)
 
         data["los_field_indices"] = los_field_indices.astype(np.int32)
+
+    edited = file_last_edited(los_data_path)
+    if edited is None:
+        fprint(f"loaded LOS file from `{los_data_path}`.", verbose=verbose)
+    else:
+        fprint(f"loaded LOS file from `{los_data_path}` "
+               f"(last edited {edited}).", verbose=verbose)
 
     return data
