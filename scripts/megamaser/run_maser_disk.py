@@ -123,9 +123,9 @@ from candel.inference.nested import print_nested_summary, run_nss
 from candel.model.model_H0_maser import (JointMaserModel, MaserDiskModel,
                                           radius_from_los_acceleration,
                                           remap_warp_to_r0)
+from candel.plotting.corner import plot_corner, sort_params
 from candel.pvdata.megamaser_data import load_megamaser_spots
-from candel.util import (data_path, fprint, fsection, get_nested, plot_corner,
-                         results_path, sort_params)
+from candel.util import data_path, fprint, fsection, get_nested, results_path
 
 _devs = jax.devices()
 _dev_names = ", ".join(d.device_kind for d in _devs)
