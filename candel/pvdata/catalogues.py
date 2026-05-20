@@ -711,20 +711,20 @@ def load_SH0ES_from_config(config_path):
     d = config["io"]["SH0ES"]
     root = d["root"]
     cepheid_host_cz_cmb_max = d.get("cepheid_host_cz_cmb_max", None)
-    which_host_los = d.get("which_host_los", None)
+    reconstruction = d.get("reconstruction", None)
     field_indices = get_nested(config, "io/field_indices", None)
     field_smoothing_scale = field_smoothing_scale_from_config(config)
-    if which_host_los is not None:
+    if reconstruction is not None:
         if config["io"]["load_host_los"]:
             los_data_path = resolve_los_data_path(
                 config["io"]["PV_main"]["SH0ES"]["los_file"],
-                which_host_los, field_smoothing_scale)
+                reconstruction, field_smoothing_scale)
         else:
             los_data_path = None
 
         if config["io"]["load_rand_los"]:
             rand_los_data_path = resolve_los_data_path(
-                config["io"]["los_file_random"], which_host_los,
+                config["io"]["los_file_random"], reconstruction,
                 field_smoothing_scale)
         else:
             rand_los_data_path = None
@@ -746,7 +746,7 @@ def load_SH0ES_from_config(config_path):
             velocity_selections.append("SN_magnitude_or_redshift_Nmag")
 
     volume_data = _load_h0_volume_data_from_config(
-        config, los_data_path, which_host_los, "SH0ES",
+        config, los_data_path, reconstruction, "SH0ES",
         velocity_selections=tuple(velocity_selections),
         field_indices=data.get("host_los_field_indices", None))
 
@@ -916,20 +916,19 @@ def load_CCHP_from_config(config_path, ra_dec_only=False):
     los_data_path = None
     rand_los_data_path = None
 
-    which_host_los = get_nested(
-        config, "io/which_host_los",
-        get_nested(config, "io/CCHP/which_host_los", None))
+    reconstruction = get_nested(
+        config, "io/CCHP/reconstruction", None)
     field_indices = get_nested(config, "io/field_indices", None)
     field_smoothing_scale = field_smoothing_scale_from_config(config)
     if get_nested(config, "io/load_host_los", False):
         los_file = get_nested(config, "io/CCHP/los_file", None)
         los_data_path = resolve_los_data_path(
-            los_file, which_host_los, field_smoothing_scale)
+            los_file, reconstruction, field_smoothing_scale)
 
     if get_nested(config, "io/load_rand_los", False):
         rand_file = get_nested(config, "io/los_file_random", None)
         rand_los_data_path = resolve_los_data_path(
-            rand_file, which_host_los, field_smoothing_scale)
+            rand_file, reconstruction, field_smoothing_scale)
 
     if los_data_path is not None:
         host_los = load_los(
@@ -956,7 +955,7 @@ def load_CCHP_from_config(config_path, ra_dec_only=False):
         data["has_rand_los"] = False
 
     volume_data = _load_h0_volume_data_from_config(
-        config, los_data_path, which_host_los, "CCHP",
+        config, los_data_path, reconstruction, "CCHP",
         velocity_selections=("redshift",),
         field_indices=data.get("host_los_field_indices", None))
     if volume_data is not None:
@@ -1566,15 +1565,14 @@ def _load_EDD_TRGB_from_config_common(config_path, config_key, loader):
     data["e_czcmb"] = data.pop("e_zcmb") * SPEED_OF_LIGHT
     data["e_mag_median"] = float(np.median(data["e_mag_obs"]))
 
-    which_los = get_nested(
-        config, "io/which_host_los",
-        get_nested(config, f"io/PV_main/{config_key}/which_host_los", None))
+    reconstruction = get_nested(
+        config, f"io/PV_main/{config_key}/reconstruction", None)
     field_indices = get_nested(config, "io/field_indices", None)
     field_smoothing_scale = field_smoothing_scale_from_config(config)
 
     def _resolve_los_path(path):
         return resolve_los_data_path(
-            path, which_los, field_smoothing_scale)
+            path, reconstruction, field_smoothing_scale)
 
     los_data_path = None
     rand_los_data_path = None
@@ -1584,7 +1582,7 @@ def _load_EDD_TRGB_from_config_common(config_path, config_key, loader):
         rand_los_data_path = _resolve_los_path(
             get_nested(config, "io/los_file_random", None))
 
-    fprint(f"reconstruction: {which_los or 'none'}")
+    fprint(f"reconstruction: {reconstruction or 'none'}")
     if los_data_path is not None:
         fprint(f"  host LOS path: {los_data_path}")
         host_los = load_los(
@@ -1611,7 +1609,7 @@ def _load_EDD_TRGB_from_config_common(config_path, config_key, loader):
         data["has_rand_los"] = False
 
     volume_data = _load_h0_volume_data_from_config(
-        config, los_data_path, which_los, config_key,
+        config, los_data_path, reconstruction, config_key,
         velocity_selections=("redshift",),
         field_indices=data.get("host_los_field_indices", None))
 
@@ -1747,7 +1745,7 @@ def load_EDD_2MTF_from_config(config_path):
     data["e_eta_median"] = float(np.median(data["e_eta"]))
 
     # LOS data
-    which_host_los = d.get("which_host_los", None)
+    reconstruction = d.get("reconstruction", None)
     field_smoothing_scale = field_smoothing_scale_from_config(config)
     los_data_path = None
     rand_los_data_path = None
@@ -1755,12 +1753,12 @@ def load_EDD_2MTF_from_config(config_path):
     if get_nested(config, "io/load_host_los", False):
         los_file = d.get("los_file", None)
         los_data_path = resolve_los_data_path(
-            los_file, which_host_los, field_smoothing_scale)
+            los_file, reconstruction, field_smoothing_scale)
 
     if get_nested(config, "io/load_rand_los", False):
         rand_file = get_nested(config, "io/los_file_random", None)
         rand_los_data_path = resolve_los_data_path(
-            rand_file, which_host_los, field_smoothing_scale)
+            rand_file, reconstruction, field_smoothing_scale)
 
     if los_data_path is not None:
         host_los = load_los(los_data_path, {}, mask=mask)
