@@ -878,12 +878,13 @@ TASK_SPECS = {
     },
     "CH0_single": {
         "description": (
-            "CH0 SN-magnitude one-Manticore-field runs without evidence."),
+            "CH0 SN-magnitude one-Manticore-field runs with evidence."),
         "config_path": "configs/config_CH0.toml",
         "tag": "single",
         "common": {
             **CH0_PAPER_COMMON,
-            "inference/compute_evidence": False,
+            "inference/compute_log_density": True,
+            "inference/compute_evidence": True,
             "inference/num_chains": 1,
             "inference/num_warmup": 1000,
             "inference/num_samples": 5000,
@@ -973,6 +974,7 @@ TASK_SPECS = {
             **TRGBH0_COMMON,
             "inference/num_warmup": 1000,
             "inference/num_samples": 1000,
+            "inference/save_log_likelihood_per_galaxy": True,
             "model/priors/H0/low": 40,
             "model/priors/H0/high": 100,
             "model/selection_integral_supersample_radius": (
