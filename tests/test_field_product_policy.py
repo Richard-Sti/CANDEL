@@ -1,9 +1,12 @@
+from pathlib import Path
+
 from candel.field import (
     field_allows_raw_product_reads,
     field_metadata,
     field_requires_cached_products,
     supported_field_names,
 )
+from candel.pvdata.field_products import los_field_cache_path
 
 
 def test_raw_reads_are_allowed_for_cheap_fields():
@@ -58,3 +61,18 @@ def test_old_manticore_names_are_not_supported():
         "unknown")
     assert field_metadata("manticore_2MPP_MULTIBIN_N256_DES_V2").name == (
         "unknown")
+
+
+def test_los_field_cache_path_uses_field_cache_dir(tmp_path):
+    config = {"io": {"field_cache_dir": str(tmp_path)}}
+
+    path = los_field_cache_path(
+        config, "CF4", "ManticoreLocalCOLA", "data/los_<X>.hdf5",
+        field_indices=0)
+
+    path = Path(path)
+    assert path.parent == tmp_path / "ManticoreLocalCOLA" / "los"
+    assert path.name.startswith("los__CF4__field-0__")
+    assert "v1" not in path.name
+    assert "field-0" in path.name
+    assert path.suffix == ".hdf5"

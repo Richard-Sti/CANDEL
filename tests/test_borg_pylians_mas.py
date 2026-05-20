@@ -170,3 +170,35 @@ def test_slim_product_writes_generic_borg_reader_schema(tmp_path: Path) -> None:
         assert handle.attrs["Om"] == 0.31
         assert handle.attrs["frame"] == "icrs"
         np.testing.assert_allclose(handle.attrs["observer_position"], [2.0, 2.0, 2.0])
+
+
+def test_cleanup_forward_workdirs_removes_only_work_dirs(tmp_path: Path) -> None:
+    product = tmp_path / "forward_fields" / "mcmc_1.hdf5"
+    product.parent.mkdir()
+    product.touch()
+    realspace = tmp_path / "forward" / "l1_e_b000" / "mcmc_1" / "realspace"
+    rsd = tmp_path / "forward" / "l1_e_b000" / "mcmc_1" / "rsd"
+    realspace.mkdir(parents=True)
+    rsd.mkdir(parents=True)
+    (realspace / "output_0001.h5_0").touch()
+    (rsd / "output_0001.h5_0").touch()
+
+    removed = run_borg_fields.cleanup_forward_workdirs([realspace, rsd], product)
+
+    assert removed == [realspace.resolve(), rsd.resolve()]
+    assert not realspace.exists()
+    assert not rsd.exists()
+    assert not realspace.parent.exists()
+    assert product.is_file()
+
+
+def test_cleanup_forward_workdirs_skips_product_parent(tmp_path: Path) -> None:
+    product = tmp_path / "forward" / "mcmc_1.hdf5"
+    product.parent.mkdir()
+    product.touch()
+
+    removed = run_borg_fields.cleanup_forward_workdirs([product.parent], product)
+
+    assert removed == []
+    assert product.is_file()
+    assert product.parent.is_dir()

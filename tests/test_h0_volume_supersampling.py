@@ -17,6 +17,7 @@ from candel.pvdata.volume_density import (
     _h0_volume_apply_quadrature,
     _h0_volume_quadrature_geometry,
     _h0_volume_resolved_supersample_factor,
+    _expected_h0_volume_grid_from_loader,
     _supersample_offsets_3d,
     _volume_density_geometry,
 )
@@ -74,7 +75,7 @@ def test_h0_volume_supersampling_is_generic_cache_payload():
         "kind": "volume_field_data",
         "product": "h0_volume",
         "loader_name": "toy_reconstruction",
-        "field_indices": [0, 1],
+        "field_indices": [0],
         "geometry": "sphere",
         "subcube_radius": 50.0,
         "downsample": 1,
@@ -84,7 +85,9 @@ def test_h0_volume_supersampling_is_generic_cache_payload():
 
     filename = _volume_field_cache_filename(payload)
 
-    assert "h0-volume" in filename
+    assert filename.startswith("cache_sphere__")
+    assert "h0-volume" not in filename
+    assert "v1" not in filename
     assert "toy_reconstruction" not in filename
     assert "ss-f8-r15-linear" in filename
     assert filename.endswith("__density.npz")
@@ -143,7 +146,7 @@ def test_pv_volume_cache_filename_keeps_requested_subsample_fraction():
         "kind": "volume_field_data",
         "product": "pv_volume_density",
         "loader_name": "ManticoreLocalCOLA",
-        "field_indices": [0, 1],
+        "field_indices": [0],
         "subcube_radius": 150.0,
         "pad_subcube_boundary": True,
         "downsample": 1,
@@ -165,7 +168,7 @@ def test_volume_cache_filenames_include_field_smoothing():
         "kind": "volume_field_data",
         "product": "h0_volume",
         "loader_name": "toy_reconstruction",
-        "field_indices": [0, 1],
+        "field_indices": [0],
         "geometry": "sphere",
         "subcube_radius": 50.0,
         "downsample": 1,
@@ -176,7 +179,7 @@ def test_volume_cache_filenames_include_field_smoothing():
         "kind": "volume_field_data",
         "product": "pv_volume_density",
         "loader_name": "toy_reconstruction",
-        "field_indices": [0, 1],
+        "field_indices": [0],
         "subcube_radius": 150.0,
         "pad_subcube_boundary": True,
         "downsample": 1,
@@ -298,7 +301,7 @@ def test_h0_volume_component_loader_cache_is_cleared():
     assert FakeLoader.clear_calls == 1
 
 
-def test_h0_volume_uses_warmed_superset_without_writing_slice(
+def test_h0_volume_uses_per_field_warmed_cache(
         tmp_path, monkeypatch):
     class FakeLoader:
         def __init__(self, nsim, **kwargs):
@@ -316,7 +319,7 @@ def test_h0_volume_uses_warmed_superset_without_writing_slice(
         "kind": "volume_field_data",
         "product": "h0_volume",
         "loader_name": "fake_manticore",
-        "field_indices": [0, 1, 2],
+        "field_indices": [1],
         "subcube_radius": 50.0,
         "geometry": "sphere",
         "sources": [],
@@ -332,14 +335,14 @@ def test_h0_volume_uses_warmed_superset_without_writing_slice(
         tmp_path, _VOLUME_FIELD_CACHE_PREFIX, payload))
     assert cache_path.parent.name == "fake_manticore"
     cache_path.parent.mkdir(parents=True, exist_ok=True)
+    r_3d, _ = _expected_h0_volume_grid_from_loader(
+        FakeLoader(1), "sphere", 50.0, 4, 15.0)
     np.savez(
         cache_path,
-        rho_3d_fields=np.asarray([[10.0, 10.0],
-                                  [20.0, 20.0],
-                                  [30.0, 30.0]], dtype=np.float32),
-        r_3d=np.asarray([1.0, 2.0], dtype=np.float32),
+        rho_3d_fields=np.full((1, len(r_3d)), 20.0, dtype=np.float32),
+        r_3d=r_3d,
         log_dV_3d=np.asarray(0.0, dtype=np.float32),
-        log_volume_weight_3d=np.asarray([0.0, 0.0], dtype=np.float32))
+        log_volume_weight_3d=np.zeros(len(r_3d), dtype=np.float32))
 
     monkeypatch.setattr(
         volume_density_mod, "name2field_loader", lambda name: FakeLoader)
@@ -350,10 +353,9 @@ def test_h0_volume_uses_warmed_superset_without_writing_slice(
         supersample_target_dx=1.0)
 
     np.testing.assert_allclose(
-        np.asarray(loaded["density_3d_fields"]), [[19.0, 19.0]])
-    assert not Path(_field_cache_path(
-        tmp_path, _VOLUME_FIELD_CACHE_PREFIX,
-        {**payload, "field_indices": [1]})).exists()
+        np.asarray(loaded["density_3d_fields"]),
+        np.full((1, len(r_3d)), 19.0, dtype=np.float32))
+    assert cache_path.exists()
 
 
 def test_h0_volume_target_dx_warmed_superset_matches_resolved_factor(
@@ -374,13 +376,15 @@ def test_h0_volume_target_dx_warmed_superset_matches_resolved_factor(
         "kind": "volume_field_data",
         "product": "h0_volume",
         "loader_name": "fake_manticore",
-        "field_indices": [0, 1, 2],
+        "field_indices": [1],
         "subcube_radius": 50.0,
         "geometry": "sphere",
         "sources": [],
         "downsample": 1,
         "load_velocity": False,
     }
+    r_3d, _ = _expected_h0_volume_grid_from_loader(
+        FakeLoader(1), "sphere", 50.0, 4, 15.0)
     for factor, value in ((4, 40.0), (8, 80.0)):
         cache_payload = {
             **payload,
@@ -393,15 +397,18 @@ def test_h0_volume_target_dx_warmed_superset_matches_resolved_factor(
         cache_path = Path(_field_cache_path(
             tmp_path, _VOLUME_FIELD_CACHE_PREFIX, cache_payload))
         cache_path.parent.mkdir(parents=True, exist_ok=True)
+        factor_r_3d = (
+            r_3d if factor == 4 else
+            _expected_h0_volume_grid_from_loader(
+                FakeLoader(1), "sphere", 50.0, factor, 15.0)[0])
         np.savez(
             cache_path,
-            rho_3d_fields=np.asarray([[10.0, 10.0],
-                                      [value, value],
-                                      [30.0, 30.0]], dtype=np.float32),
-            r_3d=np.asarray([1.0, 2.0], dtype=np.float32),
+            rho_3d_fields=np.full(
+                (1, len(factor_r_3d)), value, dtype=np.float32),
+            r_3d=factor_r_3d,
             log_dV_3d=np.asarray(0.0, dtype=np.float32),
-            log_volume_weight_3d=np.asarray([0.0, 0.0],
-                                            dtype=np.float32))
+            log_volume_weight_3d=np.zeros(
+                len(factor_r_3d), dtype=np.float32))
 
     monkeypatch.setattr(
         volume_density_mod, "name2field_loader", lambda name: FakeLoader)
@@ -412,7 +419,8 @@ def test_h0_volume_target_dx_warmed_superset_matches_resolved_factor(
         supersample_target_dx=1.0)
 
     np.testing.assert_allclose(
-        np.asarray(loaded["density_3d_fields"]), [[39.0, 39.0]])
+        np.asarray(loaded["density_3d_fields"]),
+        np.full((1, len(r_3d)), 39.0, dtype=np.float32))
 
 
 def test_h0_volume_missing_warmed_cache_errors_before_raw_load(
@@ -445,4 +453,30 @@ def test_h0_volume_missing_warmed_cache_errors_before_raw_load(
         raise AssertionError("expected missing warmed-cache error")
 
     assert "missing required warmed H0 3D volume data cache" in msg
-    assert "field_indices containing [1]" in msg
+    assert "cache_sphere__field-1" in msg
+
+
+def test_h0_volume_raw_readable_field_builds_cache_on_miss(
+        tmp_path, monkeypatch):
+    class FakeLoader:
+        def __init__(self, nsim, **kwargs):
+            self.nsim = nsim
+            self.boxsize = 16.0
+            self.ngrid = 4
+            self.coordinate_frame = "icrs"
+            self.observer_pos = np.array([8.0, 8.0, 8.0],
+                                         dtype=np.float32)
+
+        def load_density(self):
+            return np.full((4, 4, 4), 2.0 + self.nsim, dtype=np.float32)
+
+    monkeypatch.setattr(
+        volume_density_mod, "name2field_loader", lambda name: FakeLoader)
+
+    loaded = _load_volume_data_for_H0(
+        "ManticoreLocalCOLA", {"Om0": 0.306}, [0], "linear", 0.306,
+        geometry="cube", cache_dir=tmp_path, cache_enabled=True)
+
+    np.testing.assert_allclose(
+        np.asarray(loaded["density_3d_fields"]), np.ones((1, 4, 4, 4)))
+    assert list((tmp_path / "ManticoreLocalCOLA").glob("*.npz"))
