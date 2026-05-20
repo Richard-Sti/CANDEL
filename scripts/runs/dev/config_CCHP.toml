@@ -187,15 +187,15 @@ scale = 0.5
 # IO settings
 [io]
 fname_output = "results/CCHP/test.hdf5"
-# Templates for LOS files; <X> will be replaced by `which_host_los` if set.
+# Templates for LOS files; <X> will be replaced by `reconstruction` if set.
 los_file = "data/CCHP/los_<X>.hdf5"
-# which_host_los = "Carrick2015"
-which_host_los = "manticore_2MPP_MULTIBIN_N256_DES_V2"
 
 [io.CCHP]
 # Path to the processed TSV produced in notebooks/paper_CCHP/process_data.ipynb
 path = "data/CCHP/cchp_processed_data.tsv"
 los_file = "data/CCHP/los_<X>.hdf5"
+# reconstruction = "Carrick2015"
+reconstruction = "manticore_2MPP_MULTIBIN_N256_DES_V2"
 
 [io.CSP]
 root = "data/CSP"

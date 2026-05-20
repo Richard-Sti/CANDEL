@@ -235,7 +235,7 @@ def generate_dynamic_tag(config, base_tag="default"):
         parts.append(get_nested(config, "pv_model/galaxy_bias", ""))
 
     field_smoothing = get_nested(
-        config, "model/density_3d_smoothing_scale", None)
+        config, "model/field_3d_smoothing_scale", None)
     if _is_active(field_smoothing) and float(field_smoothing) != 0.0:
         parts.append(f"smoothR{_tag_number(field_smoothing)}")
 
@@ -334,10 +334,11 @@ def generate_dynamic_tag(config, base_tag="default"):
             parts.append("Vext")
 
         if use_reconstruction:
-            which_los = get_nested(config, "io/SH0ES/which_host_los", None)
-            parts.append(which_los)
+            reconstruction = get_nested(
+                config, "io/SH0ES/reconstruction", None)
+            parts.append(reconstruction)
             beta_prior = get_nested(config, "model/priors/beta", None)
-            if _is_manticore_box_los(which_los):
+            if _is_manticore_box_los(reconstruction):
                 if not _is_delta_prior(beta_prior):
                     parts.append("beta_free")
             if get_nested(config, "model/use_density_dependent_sigma_v", False):  # noqa
@@ -359,7 +360,7 @@ def generate_dynamic_tag(config, base_tag="default"):
         if get_nested(config, "model/infer_sel", False):
             parts.append("infer_sel")
         if get_nested(config, "model/use_reconstruction", False):
-            parts.append(get_nested(config, "io/which_host_los", None))
+            parts.append(get_nested(config, "io/CCHP/reconstruction", None))
         redshift_kind = get_nested(
             config, "io/CCHP_redshift_source/kind", "cz_cmb")
         if redshift_kind != "cz_cmb":
@@ -378,9 +379,7 @@ def generate_dynamic_tag(config, base_tag="default"):
             parts.append("Vext")
         if use_reconstruction:
             parts.append(get_nested(
-                config, "io/which_host_los",
-                get_nested(config,
-                           f"io/PV_main/{which_run}/which_host_los", None)))
+                config, f"io/PV_main/{which_run}/reconstruction", None))
             if get_nested(config, "model/use_density_dependent_sigma_v", False):  # noqa
                 parts.append("sigv_rho")
             beta_prior = get_nested(config, "model/priors/beta", None)
@@ -580,16 +579,16 @@ def apply_overrides(config, override_set):
 
 def apply_los_runtime_rules(config, override_set):
     """Apply LOS-field rules that should be enforced for generated configs."""
-    los_keys = [
-        "io/PV_main/EDD_TRGB/which_host_los",
-        "io/PV_main/EDD_TRGB_grouped/which_host_los",
-        "io/PV_main/EDD_2MTF/which_host_los",
-        "io/SH0ES/which_host_los",
-        "io/which_host_los",
+    reconstruction_keys = [
+        "io/PV_main/EDD_TRGB/reconstruction",
+        "io/PV_main/EDD_TRGB_grouped/reconstruction",
+        "io/PV_main/EDD_2MTF/reconstruction",
+        "io/SH0ES/reconstruction",
+        "io/CCHP/reconstruction",
     ]
-    for key in los_keys:
-        los = get_nested(config, key, None)
-        if not _is_manticore_box_los(los):
+    for key in reconstruction_keys:
+        reconstruction = get_nested(config, key, None)
+        if not _is_manticore_box_los(reconstruction):
             continue
 
         if get_nested(config, "model/run_ppc", False):
@@ -621,20 +620,22 @@ def validate_generated_config(config):
     allowed_absolute_prefixes = (
         "/mnt/extraspace/rstiskalek/MANTICORE/2MPP_MULTIBIN_N256_DES_V2/",
     )
-    los_keys = (
-        "io/PV_main/EDD_TRGB/which_host_los",
-        "io/PV_main/EDD_TRGB_grouped/which_host_los",
-        "io/PV_main/EDD_2MTF/which_host_los",
-        "io/SH0ES/which_host_los",
-        "io/which_host_los",
+    reconstruction_keys = (
+        "io/PV_main/EDD_TRGB/reconstruction",
+        "io/PV_main/EDD_TRGB_grouped/reconstruction",
+        "io/PV_main/EDD_2MTF/reconstruction",
+        "io/SH0ES/reconstruction",
+        "io/CCHP/reconstruction",
     )
-    selected_los = {
-        los for los in (get_nested(config, key, None) for key in los_keys)
-        if isinstance(los, str) and los.lower() != "none"
+    selected_reconstructions = {
+        reconstruction
+        for reconstruction in (
+            get_nested(config, key, None) for key in reconstruction_keys)
+        if isinstance(reconstruction, str) and reconstruction.lower() != "none"
     }
     recon_main = get_nested(config, "io/reconstruction_main", {})
-    for los in selected_los:
-        section = recon_main.get(los, {})
+    for reconstruction in selected_reconstructions:
+        section = recon_main.get(reconstruction, {})
         if not isinstance(section, dict):
             continue
         for key, value in section.items():
@@ -642,8 +643,10 @@ def validate_generated_config(config):
                     and value.startswith(bad_prefixes)
                     and not value.startswith(allowed_absolute_prefixes)):
                 raise ValueError(
-                    f"Selected reconstruction `{los}` has machine-local "
-                    f"path `io.reconstruction_main.{los}.{key}` = {value!r}. "
+                    f"Selected reconstruction `{reconstruction}` has "
+                    f"machine-local path "
+                    f"`io.reconstruction_main.{reconstruction}.{key}` = "
+                    f"{value!r}. "
                     "Generated task configs must use paths relative to "
                     "root_data or portable absolute paths."
                 )

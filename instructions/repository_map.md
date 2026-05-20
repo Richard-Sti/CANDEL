@@ -153,7 +153,9 @@ should not bake in local paths, queue names, Python executables, or outputs.
   field caches. `prepare_field_inputs.py` is the single Python entry point
   for LOS computation plus cache warmup from config/task inputs, with
   `prepare_field_inputs.sh` submitting it to CPU/MPI nodes. Helper logic lives
-  in `field_input_los.py` and `field_input_cache.py`.
+  in `field_input_los.py` and `field_input_cache.py`. Read
+  `/mnt/users/rstiskalek/CANDEL/instructions/field_product_runtime_plan.md`
+  before changing runtime field-product/cache-miss behaviour.
 
 - `/mnt/users/rstiskalek/CANDEL/scripts/H0_convergence`,
   `/mnt/users/rstiskalek/CANDEL/scripts/diagnostics`, and
@@ -164,7 +166,8 @@ should not bake in local paths, queue names, Python executables, or outputs.
   `/mnt/users/rstiskalek/CANDEL/scripts/data`, and
   `/mnt/users/rstiskalek/CANDEL/scripts/sharing`
   contain reconstruction-product helpers, one-off data parsers, and posterior
-  sharing utilities.
+  sharing utilities. `scripts/BORG_fields/run_borg_fields.sh` is the BORG
+  field-product runner.
 - `/mnt/users/rstiskalek/CANDEL/scripts/sync`
   contains machine sync helpers; avoid changing host-specific behavior without
   checking the relevant cluster guide.

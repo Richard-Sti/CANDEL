@@ -125,8 +125,8 @@ For learned harmonic-mean evidence estimates, also install [harmonic](https://gi
 
 Per-machine settings live in a `local_config.toml` file at the repository
 root. This file is **not** versioned and must be created on each machine where
-CANDEL is installed. It supplies machine-specific paths and Python interpreters
-used by the run scripts.
+CANDEL is installed. Start from `example_local_config.toml`. It supplies
+machine-specific paths and Python interpreters used by the run scripts.
 
 A minimal `local_config.toml` looks like:
 

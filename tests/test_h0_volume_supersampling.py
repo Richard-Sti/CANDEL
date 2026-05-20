@@ -7,9 +7,9 @@ from scipy.special import ndtr
 import candel.pvdata.volume_density as volume_density_mod
 from candel.cosmo.cosmography import Distance2Distmod
 from candel.pvdata.field_cache import (
+    _VOLUME_FIELD_CACHE_PREFIX,
     _field_cache_path,
-    _h0_volume_cache_filename,
-    _pv_volume_density_cache_filename,
+    _volume_field_cache_filename,
 )
 from candel.pvdata.volume_density import (
     _load_volume_data_for_H0,
@@ -71,8 +71,9 @@ def _volume_mag_selection_integral(
 
 def test_h0_volume_supersampling_is_generic_cache_payload():
     payload = {
-        "kind": "h0_volume_data",
-        "field_name": "toy_reconstruction",
+        "kind": "volume_field_data",
+        "product": "h0_volume",
+        "loader_name": "toy_reconstruction",
         "field_indices": [0, 1],
         "geometry": "sphere",
         "subcube_radius": 50.0,
@@ -81,9 +82,10 @@ def test_h0_volume_supersampling_is_generic_cache_payload():
     }
     payload.update(_h0_volume_cache_supersampling_payload(8, 15.0))
 
-    filename = _h0_volume_cache_filename(payload)
+    filename = _volume_field_cache_filename(payload)
 
-    assert "toy_reconstruction" in filename
+    assert "h0-volume" in filename
+    assert "toy_reconstruction" not in filename
     assert "ss-f8-r15-linear" in filename
     assert filename.endswith("__density.npz")
 
@@ -138,7 +140,8 @@ def test_h0_volume_supersampling_trilinearly_interpolates_subcells():
 
 def test_pv_volume_cache_filename_keeps_requested_subsample_fraction():
     payload = {
-        "kind": "pv_volume_density_3d",
+        "kind": "volume_field_data",
+        "product": "pv_volume_density",
         "loader_name": "ManticoreLocalCOLA",
         "field_indices": [0, 1],
         "subcube_radius": 150.0,
@@ -149,16 +152,19 @@ def test_pv_volume_cache_filename_keeps_requested_subsample_fraction():
         "store_rhat_3d": False,
     }
 
-    filename = _pv_volume_density_cache_filename(payload)
+    filename = _volume_field_cache_filename(payload)
 
+    assert "pv-volume-density" in filename
+    assert "ManticoreLocalCOLA" not in filename
     assert "sub-0p5-seed-42" in filename
     assert "sub-0p1-seed-42" not in filename
 
 
 def test_volume_cache_filenames_include_field_smoothing():
     h0_payload = {
-        "kind": "h0_volume_data",
-        "field_name": "toy_reconstruction",
+        "kind": "volume_field_data",
+        "product": "h0_volume",
+        "loader_name": "toy_reconstruction",
         "field_indices": [0, 1],
         "geometry": "sphere",
         "subcube_radius": 50.0,
@@ -167,7 +173,8 @@ def test_volume_cache_filenames_include_field_smoothing():
         "load_velocity": True,
     }
     pv_payload = {
-        "kind": "pv_volume_density_3d",
+        "kind": "volume_field_data",
+        "product": "pv_volume_density",
         "loader_name": "toy_reconstruction",
         "field_indices": [0, 1],
         "subcube_radius": 150.0,
@@ -179,8 +186,8 @@ def test_volume_cache_filenames_include_field_smoothing():
         "field_smoothing_scale": 3.0,
     }
 
-    assert "field-smooth-R3" in _h0_volume_cache_filename(h0_payload)
-    assert "field-smooth-R3" in _pv_volume_density_cache_filename(pv_payload)
+    assert "field-smooth-R3" in _volume_field_cache_filename(h0_payload)
+    assert "field-smooth-R3" in _volume_field_cache_filename(pv_payload)
 
 
 def test_h0_field_smoothing_applies_to_density_and_velocity(monkeypatch):
@@ -306,8 +313,9 @@ def test_h0_volume_uses_warmed_superset_without_writing_slice(
             raise AssertionError("raw field should not be loaded")
 
     payload = {
-        "kind": "h0_volume_data",
-        "field_name": "fake_manticore",
+        "kind": "volume_field_data",
+        "product": "h0_volume",
+        "loader_name": "fake_manticore",
         "field_indices": [0, 1, 2],
         "subcube_radius": 50.0,
         "geometry": "sphere",
@@ -321,7 +329,8 @@ def test_h0_volume_uses_warmed_superset_without_writing_slice(
         "load_velocity": False,
     }
     cache_path = Path(_field_cache_path(
-        tmp_path, "h0_volume_data", payload))
+        tmp_path, _VOLUME_FIELD_CACHE_PREFIX, payload))
+    assert cache_path.parent.name == "fake_manticore"
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     np.savez(
         cache_path,
@@ -343,7 +352,7 @@ def test_h0_volume_uses_warmed_superset_without_writing_slice(
     np.testing.assert_allclose(
         np.asarray(loaded["density_3d_fields"]), [[19.0, 19.0]])
     assert not Path(_field_cache_path(
-        tmp_path, "h0_volume_data",
+        tmp_path, _VOLUME_FIELD_CACHE_PREFIX,
         {**payload, "field_indices": [1]})).exists()
 
 
@@ -362,8 +371,9 @@ def test_h0_volume_target_dx_warmed_superset_matches_resolved_factor(
             raise AssertionError("raw field should not be loaded")
 
     payload = {
-        "kind": "h0_volume_data",
-        "field_name": "fake_manticore",
+        "kind": "volume_field_data",
+        "product": "h0_volume",
+        "loader_name": "fake_manticore",
         "field_indices": [0, 1, 2],
         "subcube_radius": 50.0,
         "geometry": "sphere",
@@ -381,7 +391,7 @@ def test_h0_volume_target_dx_warmed_superset_matches_resolved_factor(
             },
         }
         cache_path = Path(_field_cache_path(
-            tmp_path, "h0_volume_data", cache_payload))
+            tmp_path, _VOLUME_FIELD_CACHE_PREFIX, cache_payload))
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         np.savez(
             cache_path,

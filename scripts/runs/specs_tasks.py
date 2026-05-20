@@ -225,7 +225,7 @@ def _ch0_main_datasets():
             "model/use_PV_covmat_scaling": False,
             "model/weight_selection_by_covmat_Neff": False,
             "model/use_density_dependent_sigma_v": False,
-            "io/SH0ES/which_host_los": "Carrick2015",
+            "io/SH0ES/reconstruction": "Carrick2015",
             "model/priors/beta": _normal(0.43, 0.02),
         },
         {
@@ -234,7 +234,7 @@ def _ch0_main_datasets():
             "model/use_PV_covmat_scaling": False,
             "model/weight_selection_by_covmat_Neff": False,
             "model/use_density_dependent_sigma_v": False,
-            "io/SH0ES/which_host_los": CH0_MANTICORE_LOS,
+            "io/SH0ES/reconstruction": CH0_MANTICORE_LOS,
             "model/which_bias": CH0_MANTICORE_BIAS,
         },
         {
@@ -243,7 +243,7 @@ def _ch0_main_datasets():
             "model/use_PV_covmat_scaling": False,
             "model/weight_selection_by_covmat_Neff": False,
             "model/use_density_dependent_sigma_v": True,
-            "io/SH0ES/which_host_los": CH0_MANTICORE_LOS,
+            "io/SH0ES/reconstruction": CH0_MANTICORE_LOS,
             "model/which_bias": CH0_MANTICORE_BIAS,
         },
         {
@@ -252,7 +252,7 @@ def _ch0_main_datasets():
             "model/use_PV_covmat_scaling": False,
             "model/weight_selection_by_covmat_Neff": False,
             "model/use_density_dependent_sigma_v": False,
-            "io/SH0ES/which_host_los": CH0_MANTICORE_LOS,
+            "io/SH0ES/reconstruction": CH0_MANTICORE_LOS,
             "model/which_bias": CH0_MANTICORE_BIAS,
             "model/priors/beta": _normal(1.0, 0.5),
         },
@@ -312,7 +312,7 @@ def _ch0_mixed_selection_datasets():
             "model/use_reconstruction": True,
             "model/use_fiducial_Cepheid_host_PV_covariance": False,
             "model/use_density_dependent_sigma_v": False,
-            "io/SH0ES/which_host_los": CH0_MANTICORE_LOS,
+            "io/SH0ES/reconstruction": CH0_MANTICORE_LOS,
             "model/which_bias": CH0_MANTICORE_BIAS,
         }
         for n_mag in range(36)
@@ -328,7 +328,7 @@ def _ch0_manticore_field_datasets():
             "model/use_PV_covmat_scaling": False,
             "model/weight_selection_by_covmat_Neff": False,
             "model/use_density_dependent_sigma_v": False,
-            "io/SH0ES/which_host_los": CH0_MANTICORE_LOS,
+            "io/SH0ES/reconstruction": CH0_MANTICORE_LOS,
             "model/which_bias": CH0_MANTICORE_BIAS,
             "io/field_indices": field,
         }
@@ -356,7 +356,7 @@ def _trgbh0_main_datasets():
             "model/mag_min_TRGB": TRGBH0_EDD_MAG_MIN,
             "model/priors/mag_lim_TRGB": _trgbh0_edd_mag_lim_prior(),
             "inference/init_maxiter": 0,
-            "io/PV_main/EDD_TRGB/which_host_los": "Carrick2015",
+            "io/PV_main/EDD_TRGB/reconstruction": "Carrick2015",
             "model/priors/beta": _trgbh0_carrick_beta_prior(),
         },
         {
@@ -364,7 +364,7 @@ def _trgbh0_main_datasets():
             "model/use_density_dependent_sigma_v": False,
             "model/mag_min_TRGB": TRGBH0_EDD_MAG_MIN,
             "model/priors/mag_lim_TRGB": _trgbh0_edd_mag_lim_prior(),
-            "io/PV_main/EDD_TRGB/which_host_los": TRGBH0_MANTICORE_LOS,
+            "io/PV_main/EDD_TRGB/reconstruction": TRGBH0_MANTICORE_LOS,
             "model/which_bias": TRGBH0_MANTICORE_BIAS,
         },
         {
@@ -372,7 +372,7 @@ def _trgbh0_main_datasets():
             "model/use_density_dependent_sigma_v": False,
             "model/mag_min_TRGB": TRGBH0_EDD_MAG_MIN,
             "model/priors/mag_lim_TRGB": _trgbh0_edd_mag_lim_prior(),
-            "io/PV_main/EDD_TRGB/which_host_los": TRGBH0_MANTICORE_COLA_LOS,
+            "io/PV_main/EDD_TRGB/reconstruction": TRGBH0_MANTICORE_COLA_LOS,
             "model/which_bias": TRGBH0_MANTICORE_BIAS,
         },
     ]
@@ -384,7 +384,7 @@ def _trgbh0_main_datasets():
             "model/mag_min_TRGB": TRGBH0_EDD_MAG_MIN,
             "model/priors/mag_lim_TRGB": _trgbh0_edd_mag_lim_prior(),
             "model/priors/nu_cz": _nu_cz_student_t_prior(),
-            "io/PV_main/EDD_TRGB/which_host_los": "Carrick2015",
+            "io/PV_main/EDD_TRGB/reconstruction": "Carrick2015",
             "model/priors/beta": _trgbh0_carrick_beta_prior(),
         },
         {
@@ -394,7 +394,7 @@ def _trgbh0_main_datasets():
             "model/mag_min_TRGB": TRGBH0_EDD_MAG_MIN,
             "model/priors/mag_lim_TRGB": _trgbh0_edd_mag_lim_prior(),
             "model/priors/nu_cz": _nu_cz_student_t_prior(),
-            "io/PV_main/EDD_TRGB/which_host_los": TRGBH0_MANTICORE_LOS,
+            "io/PV_main/EDD_TRGB/reconstruction": TRGBH0_MANTICORE_LOS,
             "model/which_bias": TRGBH0_MANTICORE_BIAS,
         },
         {
@@ -403,7 +403,7 @@ def _trgbh0_main_datasets():
             "model/cz_likelihood": "gaussian",
             "model/mag_min_TRGB": TRGBH0_EDD_MAG_MIN,
             "model/priors/mag_lim_TRGB": _trgbh0_edd_mag_lim_prior(),
-            "io/PV_main/EDD_TRGB/which_host_los": TRGBH0_MANTICORE_LOS,
+            "io/PV_main/EDD_TRGB/reconstruction": TRGBH0_MANTICORE_LOS,
             "model/which_bias": TRGBH0_MANTICORE_BIAS,
             "model/priors/beta": {
                 "dist": "uniform",
@@ -418,7 +418,7 @@ def _trgbh0_main_datasets():
             "model/mag_min_TRGB": TRGBH0_EDD_MAG_MIN,
             "model/priors/mag_lim_TRGB": _trgbh0_edd_mag_lim_prior(),
             "model/priors/nu_cz": _nu_cz_student_t_prior(),
-            "io/PV_main/EDD_TRGB/which_host_los": TRGBH0_MANTICORE_LOS,
+            "io/PV_main/EDD_TRGB/reconstruction": TRGBH0_MANTICORE_LOS,
             "model/which_bias": TRGBH0_MANTICORE_BIAS,
             "model/priors/beta": {
                 "dist": "uniform",
@@ -474,7 +474,7 @@ def _trgbh0_manticore_field_datasets():
                 "model/mag_min_TRGB": TRGBH0_EDD_MAG_MIN,
                 "model/priors/mag_lim_TRGB": (
                     _trgbh0_edd_mag_lim_uninformative_prior()),
-                "io/PV_main/EDD_TRGB/which_host_los": los,
+                "io/PV_main/EDD_TRGB/reconstruction": los,
                 "model/which_bias": TRGBH0_MANTICORE_BIAS,
                 "io/field_indices": field,
                 **_trgbh0_selection("TRGB_magnitude"),
@@ -493,14 +493,14 @@ def _trgbh0_cchp_subset_datasets():
             **_trgbh0_cchp_config(),
             "model/use_reconstruction": True,
             "model/use_density_dependent_sigma_v": False,
-            "io/which_host_los": "Carrick2015",
+            "io/CCHP/reconstruction": "Carrick2015",
             "model/priors/beta": _trgbh0_carrick_beta_prior(),
         },
         {
             **_trgbh0_cchp_config(),
             "model/use_reconstruction": True,
             "model/use_density_dependent_sigma_v": False,
-            "io/which_host_los": TRGBH0_MANTICORE_LOS,
+            "io/CCHP/reconstruction": TRGBH0_MANTICORE_LOS,
             "model/which_bias": TRGBH0_MANTICORE_BIAS,
         },
     ]
@@ -511,7 +511,7 @@ def _trgbh0_cchp_subset_datasets():
             "model/use_density_dependent_sigma_v": False,
             "model/cz_likelihood": "student_t",
             "model/priors/nu_cz": _nu_cz_student_t_prior(),
-            "io/which_host_los": "Carrick2015",
+            "io/CCHP/reconstruction": "Carrick2015",
             "model/priors/beta": _trgbh0_carrick_beta_prior(),
         },
         {
@@ -520,7 +520,7 @@ def _trgbh0_cchp_subset_datasets():
             "model/use_density_dependent_sigma_v": False,
             "model/cz_likelihood": "student_t",
             "model/priors/nu_cz": _nu_cz_student_t_prior(),
-            "io/which_host_los": TRGBH0_MANTICORE_LOS,
+            "io/CCHP/reconstruction": TRGBH0_MANTICORE_LOS,
             "model/which_bias": TRGBH0_MANTICORE_BIAS,
         },
     ]

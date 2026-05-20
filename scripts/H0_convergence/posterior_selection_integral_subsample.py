@@ -61,12 +61,12 @@ DEFAULT_POSTERIORS = {
     "redshift": ROOT / "results/CH0/CH0_sel-redshift_manticore_2MPP_MULTIBIN_N256_DES_V2.hdf5",
 }
 DEFAULT_DENSITY_CACHE = (
-    ROOT / "data/field_cache/h0_volume_data/"
-    "v1__manticore_2MPP_MULTIBIN_N256_DES_V2__fields-0-29__sphere__r-100__ds-1__density.npz"
+    ROOT / "data/field_cache/manticore_2MPP_MULTIBIN_N256_DES_V2/"
+    "v1__h0-volume__fields-0-29__sphere__r-100__ds-1__density.npz"
 )
 DEFAULT_VELOCITY_CACHE = (
-    ROOT / "data/field_cache/h0_volume_data/"
-    "v1__manticore_2MPP_MULTIBIN_N256_DES_V2__fields-0-29__sphere__r-100__ds-1__vel.npz"
+    ROOT / "data/field_cache/manticore_2MPP_MULTIBIN_N256_DES_V2/"
+    "v1__h0-volume__fields-0-29__sphere__r-100__ds-1__vel.npz"
 )
 POSTERIOR_SUBSAMPLE_SIZE = 1000
 H0_REWEIGHT_PLOT_FRACTIONS = 3
