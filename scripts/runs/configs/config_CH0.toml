@@ -54,7 +54,7 @@ selection_integral_grid_radius = 60.0
 density_3d_subsample_fraction = 1.0
 # Optional Gaussian smoothing scale in Mpc/h for reconstruction fields.
 # Applies consistently to LOS products and 3D field caches; 0 disables it.
-density_3d_smoothing_scale = 0.0
+field_3d_smoothing_scale = 0.0
 # Optional inner-region supersampling for the 3D selection integral.
 # target_dx=0 or radius=0 disables inner-region supersampling.
 selection_integral_supersample_radius = 0.0
@@ -171,8 +171,8 @@ num_steps = 401
 [io.SH0ES]
 root = "data/SH0ES"
 cepheid_host_cz_cmb_max = 3300
-which_host_los = "Carrick2015"
-# which_host_los = "manticore_2MPP_MULTIBIN_N256_DES_V2"
+reconstruction = "Carrick2015"
+# reconstruction = "manticore_2MPP_MULTIBIN_N256_DES_V2"
 
 [io.PV_main.SH0ES]
 root = "data/SH0ES"
