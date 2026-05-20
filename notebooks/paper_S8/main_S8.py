@@ -19,7 +19,8 @@ from os.path import dirname, abspath, join
 
 def _heavy_imports():
     """Defer slow imports so ``--help`` returns instantly."""
-    global np, interp1d, plt, sns, File, candel, posterior_agreement
+    global np, interp1d, plt, sns, File, candel, plot_corner_from_hdf5
+    global posterior_agreement
     global get_key_all, compute_S8_all, compute_fsigma8_lin_all
     global makedirs, exists, md5, sys_path
 
@@ -40,6 +41,7 @@ def _heavy_imports():
 
     sys_path.insert(0, "/Users/rstiskalek/Projects/candel")
     import candel  # noqa: F401
+    from candel.plotting.corner import plot_corner_from_hdf5  # noqa: F401
     import posterior_agreement  # noqa: F401
 
     from utils import (
@@ -54,6 +56,7 @@ def _heavy_imports():
     g["sns"] = sns
     g["File"] = File
     g["candel"] = candel
+    g["plot_corner_from_hdf5"] = plot_corner_from_hdf5
     g["posterior_agreement"] = posterior_agreement
     g["get_key_all"] = get_key_all
     g["compute_S8_all"] = compute_S8_all
@@ -557,7 +560,7 @@ def plot_s8_comparison(S8_list, labels, savedir, S8_list_q=None):
 
 def plot_vext_corner(fnames, labels, savedir):
     out = join(savedir, "Vext.pdf")
-    candel.plot_corner_from_hdf5(
+    plot_corner_from_hdf5(
         fnames,
         fontsize=18,
         filled=True,

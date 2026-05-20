@@ -14,6 +14,9 @@ import numpy as np  # noqa: E402
 import scienceplots  # noqa: F401
 from scipy.stats import pearsonr, spearmanr  # noqa: E402
 
+from candel.plotting.selection_diagnostics import (  # noqa: E402
+    plot_raw_selection_evidence,
+)
 from trgbh0_plot_style import TRGBH0_COLOURS  # noqa: E402
 
 
@@ -432,6 +435,21 @@ def plot_driver_scatter(rows, best, out_pdf):
     return save_pdf_png(fig, out_pdf)
 
 
+def plot_raw_vs_selection(rows, out_pdf):
+    fields = np.asarray([row["field"] for row in rows], dtype=float)
+    raw = np.asarray([row["ll_total_mean"] for row in rows], dtype=float)
+    selection = np.asarray([
+        row["minus_log_selection_integral_total_mean"]
+        for row in rows
+    ], dtype=float)
+    lnz = np.asarray([row["lnZ_harmonic"] for row in rows], dtype=float)
+    total = np.asarray([row["full_total_mean"] for row in rows], dtype=float)
+    fig, _ = plot_raw_selection_evidence(
+        raw, selection, lnz, fields, total_likelihood=total)
+
+    return save_pdf_png(fig, out_pdf)
+
+
 def plot_best_galaxy_deltas(rows, host_names, best, top_n, out_pdf):
     top_rows, all_rows = best_galaxy_rows(rows, host_names, best, top_n)
     delta = np.asarray([row["delta_log_likelihood"] for row in all_rows])
@@ -750,6 +768,9 @@ def run_analysis(
         output_dir / f"trgbh0_manticore_evidence_driver_metrics{suffix}.pdf")
     scatter_png = plot_driver_scatter(
         rows, best, scatter_pdf)
+    raw_selection_pdf = output_dir / (
+        f"trgbh0_manticore_raw_likelihood_vs_selection{suffix}.pdf")
+    raw_selection_png = plot_raw_vs_selection(rows, raw_selection_pdf)
     deltas_pdf = (
         output_dir / f"trgbh0_manticore_best_field_galaxy_deltas{suffix}.pdf")
     deltas_png = plot_best_galaxy_deltas(
@@ -785,6 +806,7 @@ def run_analysis(
     print(f"Wrote {galaxy_csv}")
     print(f"Wrote {summary_txt}")
     print(f"Wrote {scatter_png}")
+    print(f"Wrote {raw_selection_png}")
     print(f"Wrote {deltas_png}")
     print(f"Wrote {heatmap_png}")
     print(f"Wrote {components_png}")
@@ -794,6 +816,8 @@ def run_analysis(
         "summary_txt": summary_txt,
         "scatter_pdf": scatter_pdf,
         "scatter_png": scatter_png,
+        "raw_selection_pdf": raw_selection_pdf,
+        "raw_selection_png": raw_selection_png,
         "deltas_pdf": deltas_pdf,
         "deltas_png": deltas_png,
         "heatmap_pdf": heatmap_pdf,

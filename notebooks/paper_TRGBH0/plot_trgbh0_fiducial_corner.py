@@ -2,7 +2,7 @@
 """Plot the fiducial TRGBH0 posterior corner."""
 from pathlib import Path
 
-import candel
+from candel.plotting.corner import plot_corner_from_hdf5
 
 
 ROOT = Path("/mnt/users/rstiskalek/CANDEL")
@@ -40,7 +40,7 @@ def main():
     if not FIDUCIAL.exists():
         raise FileNotFoundError(f"Missing fiducial posterior: {FIDUCIAL}")
     OUTDIR.mkdir(parents=True, exist_ok=True)
-    candel.plot_corner_from_hdf5(
+    plot_corner_from_hdf5(
         FIDUCIAL,
         keys=CORNER_KEYS,
         labels=[r"\texttt{Manticore-Local}, density-dependent $\sigma_v$"],

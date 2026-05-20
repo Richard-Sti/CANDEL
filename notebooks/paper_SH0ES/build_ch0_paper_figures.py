@@ -16,6 +16,7 @@ from astropy.cosmology import FlatLambdaCDM
 
 import candel
 from candel import SPEED_OF_LIGHT
+from candel.plotting.corner import plot_corner_from_hdf5
 
 
 ROOT = Path("/mnt/users/rstiskalek/CANDEL")
@@ -261,7 +262,7 @@ def plot_manticore_corner():
         },
         "color": "blue",
     }]
-    candel.plot_corner_from_hdf5(
+    plot_corner_from_hdf5(
         fnames,
         keys=[
             "H0", "M_W", "b_W", "Z_W", "dZP", "mu_LMC", "mu_M31",
@@ -286,7 +287,7 @@ def plot_anchor_distances():
         DIST / "CH0_noVext_no_Cepheid_redshift_paper.hdf5",
         DIST / "CH0_noVext_sel-SN_magnitude_no_Cepheid_redshift_paper.hdf5",
     ]
-    candel.plot_corner_from_hdf5(
+    plot_corner_from_hdf5(
         fnames,
         keys=["mu_LMC", "mu_N4258", "M_W"],
         labels=[
