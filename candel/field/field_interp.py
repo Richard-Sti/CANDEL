@@ -329,7 +329,6 @@ def _target_smoothing_to_kernel_scale(smooth_target, voxel_size):
 def interpolate_los_density_velocity(field_loader, r, RA, dec,
                                      smooth_target=None, verbose=True,
                                      los_geometry=None,
-                                     density_smoothing_scale=None,
                                      field_smoothing_scale=None):
     """
     Interpolate the density and velocity fields along the line of sight
@@ -353,44 +352,26 @@ def interpolate_los_density_velocity(field_loader, r, RA, dec,
     ngrid = density.shape[0]
     cellsize, grid_min, voxel_size = _get_grid_params(field_loader, ngrid)
 
-    density_smooth_scale = None
+    rho_kernel_scale = None
     velocity_smooth_scale = None
 
     smoothing_inputs = [
         smooth_target is not None,
-        density_smoothing_scale is not None,
         field_smoothing_scale is not None,
     ]
     if sum(smoothing_inputs) > 1:
         raise ValueError(
-            "`smooth_target`, `density_smoothing_scale`, and "
+            "`smooth_target` and "
             "`field_smoothing_scale` are mutually exclusive.")
 
     if smooth_target is not None:
         smooth_scale = _target_smoothing_to_kernel_scale(
             smooth_target, voxel_size)
-        density_smooth_scale = smooth_scale
+        rho_kernel_scale = smooth_scale
         velocity_smooth_scale = smooth_scale
         fprint(f"applying Gaussian smoothing with scale {smooth_scale:.1f} "
                f"Mpc/h to match target {smooth_target:.1f} Mpc/h.",
                verbose=verbose)
-    elif density_smoothing_scale is not None:
-        density_smoothing_scale = float(density_smoothing_scale)
-        if (not np.isfinite(density_smoothing_scale)
-                or density_smoothing_scale < 0):
-            raise ValueError(
-                "`density_smoothing_scale` must be finite and non-negative.")
-        if density_smoothing_scale > 0:
-            if density_smoothing_scale <= voxel_size:
-                raise ValueError(
-                    "`density_smoothing_scale` must exceed the field voxel "
-                    f"size {voxel_size:g} Mpc/h; got "
-                    f"{density_smoothing_scale:g} Mpc/h.")
-            density_smooth_scale = float(density_smoothing_scale)
-            fprint(
-                "applying density-only Gaussian smoothing with scale "
-                f"{density_smooth_scale:.1f} Mpc/h.",
-                verbose=verbose)
     elif field_smoothing_scale is not None:
         field_smoothing_scale = float(field_smoothing_scale)
         if (not np.isfinite(field_smoothing_scale)
@@ -403,17 +384,17 @@ def interpolate_los_density_velocity(field_loader, r, RA, dec,
                     "`field_smoothing_scale` must exceed the field voxel "
                     f"size {voxel_size:g} Mpc/h; got "
                     f"{field_smoothing_scale:g} Mpc/h.")
-            density_smooth_scale = float(field_smoothing_scale)
+            rho_kernel_scale = float(field_smoothing_scale)
             velocity_smooth_scale = float(field_smoothing_scale)
             fprint(
                 "applying Gaussian smoothing to density and velocity with "
                 "scale "
-                f"{density_smooth_scale:.1f} Mpc/h.",
+                f"{rho_kernel_scale:.1f} Mpc/h.",
                 verbose=verbose)
 
-    if density_smooth_scale is not None:
+    if rho_kernel_scale is not None:
         density = apply_gaussian_smoothing(
-            density, density_smooth_scale, field_loader.boxsize,
+            density, rho_kernel_scale, field_loader.boxsize,
             make_copy=True)
 
     np.add(density, eps, out=density)
