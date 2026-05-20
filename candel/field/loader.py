@@ -17,6 +17,7 @@ be interpolated along the line of sight of galaxies.
 """
 import re
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from os.path import join
 from pathlib import Path
 
@@ -24,27 +25,52 @@ import numpy as np
 from astropy.io import fits
 from h5py import File
 
-COLA_MANTICORE_NAME = "COLA_manticore_2MPP_MULTIBIN_N256_DES_V2"
-_MCMC_FIELD_RE = re.compile(r"mcmc_(\d+)\.hdf5$")
+
+@dataclass(frozen=True)
+class FieldMetadata:
+    """Static metadata and runtime-product policy for a field family."""
+
+    name: str
+    coordinate_frame: str
+    boxsize: float
+    Omega_m: float = None
+    ngrid: int = None
+    effective_resolution: float = None
+    H0: float = None
+    production_method: str = None
+    storage_schema: str = None
+    require_cached_products: bool = True
+    cache_group: str = None
+    description: str = ""
+
+    @property
+    def raw_read_allowed(self):
+        return not self.require_cached_products
 
 
-def available_mcmc_field_indices(fpath_root):
-    """Return sorted field indices from ``mcmc_<index>.hdf5`` files."""
+def available_mcmc_field_indices(fpath_root, glob="mcmc_*.hdf5",
+                                 filename_regex=r"mcmc_(\d+)\.hdf5$"):
+    """Return sorted field indices parsed from field product filenames."""
     root = Path(fpath_root)
+    field_re = re.compile(filename_regex)
     indices = []
-    for path in root.glob("mcmc_*.hdf5"):
-        match = _MCMC_FIELD_RE.fullmatch(path.name)
+    for path in root.glob(glob):
+        match = field_re.fullmatch(path.name)
         if match is not None:
             indices.append(int(match.group(1)))
 
     if not indices:
         raise FileNotFoundError(
-            f"No `mcmc_*.hdf5` field files found in `{root}`.")
+            f"No field files matching `{glob}` found in `{root}`.")
 
     return sorted(indices)
 
 
 def smooth_clip(x, eps=1e-3):
+    """Return a differentiable positive-part approximation for ``x``.
+
+    This is a smooth version of ``max(x, 0)`` with transition width ``eps``.
+    """
     return 0.5 * (x + np.sqrt(x**2 + eps**2))
 
 
@@ -55,6 +81,25 @@ def _flip_xz(field):
     field = np.transpose(field, (0, 3, 2, 1))
     field[[0, 2]] = field[[2, 0]]
     return field
+
+
+def _first_hdf5_attr(attrs, names, default=None):
+    for name in names:
+        if name in attrs:
+            value = attrs[name]
+            if isinstance(value, np.ndarray) and value.shape == ():
+                value = value.item()
+            if isinstance(value, bytes):
+                value = value.decode("utf-8")
+            return value
+    return default
+
+
+def _first_hdf5_dataset(group, names):
+    for name in names:
+        if name is not None and name in group:
+            return name
+    return None
 
 
 class BaseFieldLoader(ABC):
@@ -84,7 +129,10 @@ class BaseFieldLoader(ABC):
         try:
             return self._observer_pos
         except AttributeError:
-            return np.array([self.boxsize / 2] * 3, dtype=np.float32)
+            self._observer_pos = np.array(
+                [self.boxsize / 2] * 3, dtype=np.float32)
+            print(f"Setting observer_pos to box center: {self._observer_pos}")
+            return self._observer_pos
 
     @abstractmethod
     def load_density(self):
@@ -93,6 +141,268 @@ class BaseFieldLoader(ABC):
     @abstractmethod
     def load_velocity(self):
         pass
+
+
+class BORGFieldLoader(BaseFieldLoader):
+    """Generic HDF5 loader for BORG-style gridded field products.
+
+    Two storage methods are supported:
+
+    - Forward/gridded products with ``overdensity`` or ``density`` plus either
+      ``velocity`` or ``vx``/``vy``/``vz``.
+    - N-body MAS/SPH products with ``density`` plus momentum fields
+      ``p0``/``p1``/``p2``.
+
+    Dataset names and metadata may be specified by file attributes written by
+    ``scripts/BORG_fields/run_borg_fields.py``.
+    """
+
+    def __init__(self, nsim=0, fpath_root=None,
+                 filename_template="mcmc_{nsim}.hdf5", file_path=None,
+                 density_key=None, density_kind="auto", velocity_key=None,
+                 velocity_component_keys=("vx", "vy", "vz"),
+                 velocity_kind="auto", momentum_keys=("p0", "p1", "p2"),
+                 boxsize=None, Omega_m=None, coordinate_frame="icrs",
+                 observer_pos=None, ngrid=None, density_mass_factor=1.0,
+                 flip_xz=False, **kwargs):
+        self.nsim = int(nsim)
+        if file_path is None:
+            self.fname = join(fpath_root, filename_template.format(nsim=nsim))
+        else:
+            self.fname = str(file_path)
+        self.file_path = self.fname
+        self.density_key = density_key
+        self.density_kind = density_kind
+        self.velocity_key = velocity_key
+        self.velocity_component_keys = tuple(velocity_component_keys)
+        self.velocity_kind = velocity_kind
+        self.momentum_keys = tuple(momentum_keys)
+        self.density_mass_factor = float(density_mass_factor)
+        self.flip_xz = bool(flip_xz)
+        self._velocity_density = None
+
+        with File(self.fname, "r") as f:
+            box_value = _first_hdf5_attr(
+                f.attrs, ("boxsize", "BoxSize", "box_size"), boxsize)
+            if box_value is None:
+                raise ValueError(
+                    f"`{self.fname}` must define a boxsize attribute or the "
+                    "loader must receive `boxsize`.")
+            self.boxsize = self._scalar_boxsize(box_value)
+            Om_value = _first_hdf5_attr(
+                f.attrs, ("Omega_m", "Om", "Om0", "omega_m"), Omega_m)
+            self.Omega_m = None if Om_value is None else float(Om_value)
+            self.coordinate_frame = str(_first_hdf5_attr(
+                f.attrs, ("coordinate_frame", "frame"), coordinate_frame))
+            obs = _first_hdf5_attr(
+                f.attrs, ("observer_position", "observer_pos",
+                          "observer_position_borg_coordinates"),
+                observer_pos)
+            if obs is not None:
+                self._observer_pos = np.asarray(obs, dtype=np.float32)
+
+            key = self._density_dataset_key(f)
+            shape = tuple(int(size) for size in f[key].shape)
+            grid_shape = _first_hdf5_attr(f.attrs, ("grid_shape",), shape)
+            self.grid_shape = tuple(int(size) for size in np.asarray(grid_shape))
+            self.ngrid = int(ngrid if ngrid is not None else self.grid_shape[0])
+
+    def _scalar_boxsize(self, value):
+        value = np.asarray(value)
+        if value.shape == ():
+            return float(value)
+        if value.size == 1:
+            return float(value.reshape(-1)[0])
+        if np.allclose(value, value.reshape(-1)[0]):
+            return float(value.reshape(-1)[0])
+        raise ValueError(
+            f"`{self.fname}` has a non-cubic boxsize attribute: {value}.")
+
+    def _attr_dataset(self, f, names):
+        key = _first_hdf5_attr(f.attrs, names)
+        if key is None:
+            return None
+        key = str(key)
+        return key if key in f else None
+
+    def _density_dataset_key(self, f):
+        key = _first_hdf5_dataset(f, (self.density_key,))
+        if key is None:
+            key = self._attr_dataset(f, ("density_dataset",
+                                         "overdensity_dataset"))
+        if key is None:
+            key = _first_hdf5_dataset(f, ("density", "overdensity"))
+        if key is None:
+            raise KeyError(
+                f"No density dataset found in `{self.fname}`. Expected "
+                "`density` or `overdensity` unless `density_key` is set.")
+        return key
+
+    def _velocity_dataset_key(self, f):
+        key = _first_hdf5_dataset(f, (self.velocity_key,))
+        if key is None:
+            key = self._attr_dataset(f, ("velocity_dataset",))
+        if key is None:
+            key = _first_hdf5_dataset(f, ("velocity",))
+        return key
+
+    def _velocity_component_key(self, f, component):
+        if component < len(self.velocity_component_keys):
+            key = self.velocity_component_keys[component]
+            if key is not None and key in f:
+                return key
+        attr_names = ("vx_dataset", "vy_dataset", "vz_dataset")
+        key = self._attr_dataset(f, (attr_names[component],))
+        if key is not None:
+            return key
+        aliases = (
+            ("vx", "v_x", "velocity_x"),
+            ("vy", "v_y", "velocity_y"),
+            ("vz", "v_z", "velocity_z"),
+        )
+        return _first_hdf5_dataset(f, aliases[component])
+
+    def _momentum_key(self, f, component):
+        if component < len(self.momentum_keys):
+            key = self.momentum_keys[component]
+            if key is not None and key in f:
+                return key
+        aliases = (
+            ("p0", "px", "momentum_x"),
+            ("p1", "py", "momentum_y"),
+            ("p2", "pz", "momentum_z"),
+        )
+        return _first_hdf5_dataset(f, aliases[component])
+
+    def _density_is_overdensity(self, f, key):
+        if self.density_kind == "overdensity":
+            return True
+        if self.density_kind in {"density", "mass_density"}:
+            return False
+        attr_key = self._attr_dataset(f, ("overdensity_dataset",))
+        if attr_key is not None:
+            return key == attr_key
+        return key in {"overdensity", "density_contrast"}
+
+    def _density_unit_volume(self, grid):
+        return (self.boxsize * 1e3 / grid)**3
+
+    def _raw_density(self, f):
+        return f[self._density_dataset_key(f)][:]
+
+    def _read_density_for_velocity(self, f):
+        if self._velocity_density is None:
+            self._velocity_density = self._raw_density(f)
+        return self._velocity_density
+
+    def _velocity_method(self, f):
+        if self.velocity_kind in {"vector", "components", "momentum"}:
+            return self.velocity_kind
+        if self._velocity_dataset_key(f) is not None:
+            return "vector"
+        if all(self._velocity_component_key(f, i) is not None
+               for i in range(3)):
+            return "components"
+        if all(self._momentum_key(f, i) is not None for i in range(3)):
+            return "momentum"
+        return None
+
+    def load_density(self):
+        with File(self.fname, "r") as f:
+            key = self._density_dataset_key(f)
+            field = f[key][:]
+            is_overdensity = self._density_is_overdensity(f, key)
+
+        if self.density_kind == "mass_density":
+            field = field * self.density_mass_factor
+            field = field / self._density_unit_volume(field.shape[0])
+        elif is_overdensity:
+            field = 1 + field
+        field = field.astype(np.float32)
+        if self.flip_xz:
+            field = _flip_xz(field)
+        return field
+
+    def load_velocity(self):
+        with File(self.fname, "r") as f:
+            method = self._velocity_method(f)
+            if method == "vector":
+                key = self._velocity_dataset_key(f)
+                field = f[key][:]
+                if field.shape[0] == 3:
+                    velocity = field.astype(np.float32)
+                elif field.shape[-1] == 3:
+                    velocity = np.moveaxis(field, -1, 0).astype(np.float32)
+                else:
+                    raise ValueError(
+                        f"Velocity dataset `{key}` in `{self.fname}` must "
+                        "have a component axis of length 3.")
+            elif method == "components":
+                comps = [f[self._velocity_component_key(f, i)][:] for i in
+                         range(3)]
+                velocity = np.stack(comps, axis=0).astype(np.float32)
+            elif method == "momentum":
+                density = self._read_density_for_velocity(f)
+                comps = [f[self._momentum_key(f, i)][:] / density for i in
+                         range(3)]
+                velocity = np.array(comps, dtype=np.float32)
+            else:
+                raise KeyError(f"No velocity field found in `{self.fname}`.")
+
+        if self.flip_xz:
+            velocity = _flip_xz(velocity)
+        return velocity
+
+    def load_velocity_component(self, component):
+        source_component = (2, 1, 0)[component] if self.flip_xz else component
+        with File(self.fname, "r") as f:
+            method = self._velocity_method(f)
+            if method == "vector":
+                key = self._velocity_dataset_key(f)
+                field = f[key]
+                if field.shape[0] == 3:
+                    value = field[source_component]
+                elif field.shape[-1] == 3:
+                    value = field[..., source_component]
+                else:
+                    raise ValueError(
+                        f"Velocity dataset `{key}` in `{self.fname}` must "
+                        "have a component axis of length 3.")
+            elif method == "components":
+                key = self._velocity_component_key(f, source_component)
+                value = f[key][:]
+            elif method == "momentum":
+                density = self._read_density_for_velocity(f)
+                key = self._momentum_key(f, source_component)
+                value = f[key][:] / density
+            else:
+                raise KeyError(f"No velocity field found in `{self.fname}`.")
+
+        value = value.astype(np.float32)
+        if self.flip_xz:
+            value = _flip_xz(value)
+        return value
+
+    def clear_velocity_cache(self):
+        self._velocity_density = None
+
+
+class BORGSPHFieldLoader(BORGFieldLoader):
+    """Loader for BORG/N-body density and momentum products."""
+
+    def __init__(self, file_path, boxsize, Omega_m=None,
+                 coordinate_frame="icrs", density_key="density",
+                 momentum_keys=("p0", "p1", "p2"),
+                 density_mass_factor=1.0, flip_xz=False, ngrid=None,
+                 **kwargs):
+        super().__init__(
+            nsim=getattr(self, "nsim", 0), file_path=file_path,
+            density_key=density_key, density_kind="mass_density",
+            velocity_kind="momentum", momentum_keys=momentum_keys,
+            boxsize=boxsize, Omega_m=Omega_m,
+            coordinate_frame=coordinate_frame, ngrid=ngrid,
+            density_mass_factor=density_mass_factor, flip_xz=flip_xz,
+            **kwargs)
 
 
 class Carrick2015_FieldLoader(BaseFieldLoader):
@@ -112,13 +422,14 @@ class Carrick2015_FieldLoader(BaseFieldLoader):
     """
 
     def __init__(self, path_density, path_velocity, **kwargs):
+        metadata = field_metadata("Carrick2015")
         self.path_density = path_density
         self.path_velocity = path_velocity
 
-        self.coordinate_frame = "galactic"
-        self.boxsize = 400.0  # Mpc / h
-        self.Omega_m = 0.3
-        self.effective_resolution = 4
+        self.coordinate_frame = metadata.coordinate_frame
+        self.boxsize = metadata.boxsize
+        self.Omega_m = metadata.Omega_m
+        self.effective_resolution = metadata.effective_resolution
 
     def load_density(self):
         # Carrick+2015 density field is in the form of overdensity
@@ -163,14 +474,15 @@ class Lilow2024_FieldLoader(BaseFieldLoader):
 
     def __init__(self, path_density, path_velocity_x, path_velocity_y,
                  path_velocity_z, **kwargs):
+        metadata = field_metadata("Lilow2024")
         self.path_density = path_density
         self.path_velocity = [
             path_velocity_x, path_velocity_y, path_velocity_z]
 
-        self.coordinate_frame = "galactic"
-        self.boxsize = 400.0  # Mpc / h
-        self.Omega_m = 0.3175
-        self.effective_resolution = 4
+        self.coordinate_frame = metadata.coordinate_frame
+        self.boxsize = metadata.boxsize
+        self.Omega_m = metadata.Omega_m
+        self.effective_resolution = metadata.effective_resolution
 
     def load_density(self):
         rho = np.load(self.path_density).astype(np.float32)
@@ -199,12 +511,13 @@ class CF4_FieldLoader(BaseFieldLoader):
     """
 
     def __init__(self, folder, nsim, **kwargs):
+        metadata = field_metadata("CF4")
         self.folder = folder
         self.nsim = int(nsim)
 
-        self.coordinate_frame = "supergalactic"
-        self.boxsize = 1000.0  # Mpc / h
-        self.Omega_m = 0.3
+        self.coordinate_frame = metadata.coordinate_frame
+        self.boxsize = metadata.boxsize
+        self.Omega_m = metadata.Omega_m
 
         fname_base = f"CF4gp_23avr24_256-z008_test_realization{1 + self.nsim}"
         self._density_path = join(self.folder, f"{fname_base}_delta.fits")
@@ -231,18 +544,19 @@ class CLONES_FieldLoader(BaseFieldLoader):
     """
 
     def __init__(self, file_path, **kwargs):
+        metadata = field_metadata("CLONES")
         self.file_path = file_path
 
-        self.coordinate_frame = "supergalactic"
-        self.boxsize = 500  # Mpc / h
-        self.Omega_m = 0.307115
+        self.coordinate_frame = metadata.coordinate_frame
+        self.boxsize = metadata.boxsize
+        self.Omega_m = metadata.Omega_m
 
     def load_density(self):
         with File(self.file_path, "r") as f:
             field = f["density"][...]
 
         grid = field.shape[0]
-        field /= (500 * 1e3 / grid)**3
+        field /= (self.boxsize * 1e3 / grid)**3
 
         return field.astype(np.float32)
 
@@ -275,18 +589,19 @@ class Hamlet_FieldLoader(BaseFieldLoader):
         self.base = fpath_root
         assert version in (0, 1)
         self.version = int(version)
+        metadata = field_metadata(f"HAMLET_V{self.version}")
 
-        self.coordinate_frame = "supergalactic"
-        self.Omega_m = 0.3
-        self.H0 = 74.6
+        self.coordinate_frame = metadata.coordinate_frame
+        self.Omega_m = metadata.Omega_m
+        self.H0 = metadata.H0
         self.dtype = np.float32
 
         if self.version == 0:
             folder = str(1 + (self.nsim // 2))
             self.tag = 0 if (self.nsim % 2 == 0) else 99
             self.root = join(self.base, folder)
-            self.boxsize = 1000.0
-            self.ngrid = 256
+            self.boxsize = metadata.boxsize
+            self.ngrid = metadata.ngrid
         elif self.version == 1:
             cluster = 1 + (self.nsim // 2)
             self.rtag, self.stag = (("R000", "S000")
@@ -297,8 +612,8 @@ class Hamlet_FieldLoader(BaseFieldLoader):
                              self.rtag,
                              self.stag,
                              "cic")
-            self.boxsize = 500.0
-            self.ngrid = 128
+            self.boxsize = metadata.boxsize
+            self.ngrid = metadata.ngrid
         else:
             raise ValueError(f"Unknown HAMLET version: {self.version}")
 
@@ -341,86 +656,9 @@ class Hamlet_FieldLoader(BaseFieldLoader):
         return v
 
 
-class CSiBORG_FieldLoader(BaseFieldLoader):
+class ManticoreLocalSWIFT_FieldLoader(BORGSPHFieldLoader):
     """
-    Class to load CSiBORG1/2 z=0 SPH fields, in the ICRS frame.
-
-    Parameters
-    ----------
-    nsim : int
-        Simulation index (ranging from 0, not the MCMC step).
-    fpath_root : str
-        Root directory for the simulation files.
-    version : {"csiborg1", "csiborg2"}
-        Which CSiBORG version to load (sets boxsize and unit conversion).
-    """
-
-    def __init__(self, nsim, fpath_root, version, **kwargs):
-        if version not in {"csiborg1", "csiborg2"}:
-            raise ValueError("version must be 'csiborg1' or 'csiborg2'.")
-
-        self.nsim = nsim
-        self.flip_xz = True
-        self.version = version
-
-        index_path = join(fpath_root, f"{version}_index.txt")
-        mapping = {}
-        with open(index_path, "r") as f:
-            for line in f:
-                idx, tag = line.strip().split()
-                mapping[int(idx)] = tag
-
-        if self.nsim not in mapping:
-            raise ValueError(f"nsim {self.nsim} not found in {index_path}.")
-
-        tag = mapping[self.nsim]
-        if version == "csiborg1":
-            self.file_path = join(fpath_root, f"sph_ramses_{tag}_1024.hdf5")
-            self.boxsize = 677.7  # Mpc / h
-        elif version == "csiborg2":
-            self.file_path = join(fpath_root, f"chain_{tag}_1024.hdf5")
-            self.boxsize = 676.6  # Mpc / h
-        else:
-            raise ValueError(f"Unknown CSiBORG version: {version}")
-
-        self.coordinate_frame = "icrs"
-
-    def load_density(self):
-        with File(self.file_path, "r") as f:
-            rho = f["density"][:]
-
-        # Unit conversion (CSiBORG2 masses are in 1e10 Msun / h)
-        if self.version == "csiborg2":
-            rho = rho * 1e10  # Msun/h
-
-        grid = rho.shape[0]
-        cell = (self.boxsize * 1e3) / grid       # kpc/h per cell
-        rho = rho / (cell**3)                    # -> h^2 Msun / kpc^3
-        rho = rho.astype(np.float32)
-
-        if self.flip_xz:
-            rho = _flip_xz(rho)
-
-        return rho
-
-    def load_velocity(self):
-        with File(self.file_path, "r") as f:
-            rho = f["density"][:]
-            v0 = f["p0"][:] / rho
-            v1 = f["p1"][:] / rho
-            v2 = f["p2"][:] / rho
-
-        v = np.array([v0, v1, v2], dtype=np.float32)
-
-        if self.flip_xz:
-            v = _flip_xz(v)
-
-        return v
-
-
-class Manticore_FieldLoader(BaseFieldLoader):
-    """
-    Manticore field loader class, in the ICRS frame.
+    Manticore local SWIFT/SPH field loader, in the ICRS frame.
 
     Parameters
     ----------
@@ -431,47 +669,18 @@ class Manticore_FieldLoader(BaseFieldLoader):
     """
 
     def __init__(self, nsim, fpath_root, **kwargs):
-        self.fname = join(fpath_root, f"mcmc_{nsim}.hdf5")
-
-        self.coordinate_frame = "icrs"
-        self.boxsize = 681.1  # Mpc / h
-        self.ngrid = 1024
-        self.Omega_m = 0.306
-        self._velocity_density = None
-
-    def load_density(self):
-        with File(self.fname, "r") as f:
-            field = f["density"][:]
-
-        # Convert to h^2 Msun / kpc^3
-        grid = field.shape[0]
-        field /= (self.boxsize * 1e3 / grid)**3
-
-        return field.astype(np.float32)
-
-    def load_velocity(self):
-        with File(self.fname, "r") as f:
-            density = f["density"][:]
-            v0 = f["p0"][:] / density
-            v1 = f["p1"][:] / density
-            v2 = f["p2"][:] / density
-        return np.array([v0, v1, v2], dtype=np.float32)
-
-    def load_velocity_component(self, component):
-        key = f"p{component}"
-        with File(self.fname, "r") as f:
-            if self._velocity_density is None:
-                self._velocity_density = f["density"][:]
-            v = f[key][:] / self._velocity_density
-        return v.astype(np.float32)
-
-    def clear_velocity_cache(self):
-        self._velocity_density = None
+        self.nsim = int(nsim)
+        metadata = field_metadata("ManticoreLocalSWIFT")
+        file_path = join(fpath_root, f"mcmc_{self.nsim}.hdf5")
+        super().__init__(
+            file_path, boxsize=metadata.boxsize, Omega_m=metadata.Omega_m,
+            coordinate_frame=metadata.coordinate_frame, ngrid=metadata.ngrid,
+            **kwargs)
 
 
-class ManticoreCOLA_FieldLoader(BaseFieldLoader):
+class ManticoreLocalCOLA_FieldLoader(BORGFieldLoader):
     """
-    Manticore-box COLA density and velocity field loader, in the ICRS frame.
+    Manticore local COLA/BORG field loader, in the ICRS frame.
 
     Parameters
     ----------
@@ -483,27 +692,12 @@ class ManticoreCOLA_FieldLoader(BaseFieldLoader):
     """
 
     def __init__(self, nsim, fpath_root, **kwargs):
-        self.fname = join(fpath_root, f"mcmc_{nsim}.hdf5")
-
-        self.coordinate_frame = "icrs"
-        self.boxsize = 681.1  # Mpc / h
-        self.ngrid = 256
-        self.Omega_m = 0.306
-
-    def load_density(self):
-        with File(self.fname, "r") as f:
-            field = 1 + f["overdensity"][:]
-        return field.astype(np.float32)
-
-    def load_velocity(self):
-        with File(self.fname, "r") as f:
-            field = f["velocity"][:]
-        return np.moveaxis(field, -1, 0).astype(np.float32)
-
-    def load_velocity_component(self, component):
-        with File(self.fname, "r") as f:
-            field = f["velocity"][..., component]
-        return field.astype(np.float32)
+        metadata = field_metadata("ManticoreLocalCOLA")
+        super().__init__(
+            nsim, fpath_root, boxsize=metadata.boxsize,
+            Omega_m=metadata.Omega_m,
+            coordinate_frame=metadata.coordinate_frame, ngrid=metadata.ngrid,
+            **kwargs)
 
 
 ###############################################################################
@@ -516,18 +710,159 @@ _FIELD_LOADERS = {
     "Lilow2024": Lilow2024_FieldLoader,
     "CF4": CF4_FieldLoader,
     "CLONES": CLONES_FieldLoader,
-    "CB1": CSiBORG_FieldLoader,
-    "CB2": CSiBORG_FieldLoader,
-    COLA_MANTICORE_NAME: ManticoreCOLA_FieldLoader,
+    "ManticoreLocalCOLA": ManticoreLocalCOLA_FieldLoader,
+    "ManticoreLocalSWIFT": ManticoreLocalSWIFT_FieldLoader,
 }
+
+FIELD_METADATA = {
+    "Carrick2015": FieldMetadata(
+        name="Carrick2015",
+        coordinate_frame="galactic",
+        boxsize=400.0,
+        Omega_m=0.3,
+        effective_resolution=4.0,
+        require_cached_products=False,
+        cache_group="Carrick2015",
+        description="Carrick+2015 2M++ density and velocity fields."),
+    "Lilow2024": FieldMetadata(
+        name="Lilow2024",
+        coordinate_frame="galactic",
+        boxsize=400.0,
+        Omega_m=0.3175,
+        effective_resolution=4.0,
+        require_cached_products=True,
+        cache_group="Lilow2024",
+        description="Lilow+2024 density and velocity fields."),
+    "CF4": FieldMetadata(
+        name="CF4",
+        coordinate_frame="supergalactic",
+        boxsize=1000.0,
+        Omega_m=0.3,
+        require_cached_products=True,
+        cache_group="CF4",
+        description="Cosmicflows-4 constrained realisation fields."),
+    "CLONES": FieldMetadata(
+        name="CLONES",
+        coordinate_frame="supergalactic",
+        boxsize=500.0,
+        Omega_m=0.307115,
+        require_cached_products=True,
+        cache_group="CLONES",
+        description="CLONES z=0 density and velocity fields."),
+    "HAMLET_V0": FieldMetadata(
+        name="HAMLET_V0",
+        coordinate_frame="supergalactic",
+        boxsize=1000.0,
+        Omega_m=0.3,
+        ngrid=256,
+        H0=74.6,
+        require_cached_products=True,
+        cache_group="HAMLET_V0",
+        description="HAMLET version-0 z=0 fields."),
+    "HAMLET_V1": FieldMetadata(
+        name="HAMLET_V1",
+        coordinate_frame="supergalactic",
+        boxsize=500.0,
+        Omega_m=0.3,
+        ngrid=128,
+        H0=74.6,
+        require_cached_products=True,
+        cache_group="HAMLET_V1",
+        description="HAMLET version-1 z=0 fields."),
+    "CB1": FieldMetadata(
+        name="CB1",
+        coordinate_frame="icrs",
+        boxsize=677.7,
+        Omega_m=0.307,
+        ngrid=1024,
+        production_method="nbody_mas_sph",
+        storage_schema="density_momentum",
+        require_cached_products=True,
+        cache_group="CB1",
+        description="CSiBORG1 z=0 SPH fields."),
+    "CB2": FieldMetadata(
+        name="CB2",
+        coordinate_frame="icrs",
+        boxsize=676.6,
+        Omega_m=0.3111,
+        ngrid=1024,
+        production_method="nbody_mas_sph",
+        storage_schema="density_momentum",
+        require_cached_products=True,
+        cache_group="CB2",
+        description="CSiBORG2 z=0 SPH fields."),
+    "ManticoreLocalCOLA": FieldMetadata(
+        name="ManticoreLocalCOLA",
+        coordinate_frame="icrs",
+        boxsize=681.1,
+        Omega_m=0.306,
+        ngrid=256,
+        production_method="borg_forward_grid",
+        storage_schema="overdensity_velocity",
+        require_cached_products=False,
+        cache_group="ManticoreLocalCOLA",
+        description="Generic local BORG/COLA 256^3 density and velocity "
+                    "fields."),
+    "ManticoreLocalSWIFT": FieldMetadata(
+        name="ManticoreLocalSWIFT",
+        coordinate_frame="icrs",
+        boxsize=681.1,
+        Omega_m=0.306,
+        ngrid=1024,
+        production_method="nbody_mas_sph",
+        storage_schema="density_momentum",
+        require_cached_products=True,
+        cache_group="ManticoreLocalSWIFT",
+        description="Local Manticore SWIFT/SPH density and momentum fields."),
+}
+
+UNKNOWN_FIELD_METADATA = FieldMetadata(
+    name="unknown",
+    coordinate_frame="unknown",
+    boxsize=float("nan"),
+    require_cached_products=True,
+    cache_group="unknown",
+    description="Field has not been classified for raw runtime reads.")
+
+
+def field_metadata(name):
+    """Return static metadata for a supported reconstruction field."""
+    if name in FIELD_METADATA:
+        return FIELD_METADATA[name]
+
+    name_lower = str(name).lower()
+    if name_lower.startswith("hamlet_v0"):
+        return FIELD_METADATA["HAMLET_V0"]
+    if name_lower.startswith("hamlet_v1"):
+        return FIELD_METADATA["HAMLET_V1"]
+
+    return UNKNOWN_FIELD_METADATA
+
+
+def field_product_policy(name):
+    """Return field-product cache metadata."""
+    return field_metadata(name)
+
+
+def field_requires_cached_products(name):
+    """Return whether field-derived products must already exist on disk."""
+    return field_metadata(name).require_cached_products
+
+
+def field_allows_raw_product_reads(name):
+    """Return whether raw field reads are allowed to build products."""
+    return field_metadata(name).raw_read_allowed
+
+
+def supported_field_names():
+    """Return the field names and patterns known to the loader registry."""
+    return tuple(FIELD_METADATA)
 
 
 def name2field_loader(name):
     """Convert a field name to a field loader class."""
     if name in _FIELD_LOADERS:
         return _FIELD_LOADERS[name]
-    if name.lower().startswith("manticore"):
-        return Manticore_FieldLoader
     if name.lower().startswith("hamlet"):
         return Hamlet_FieldLoader
     raise ValueError(f"Unknown field loader: {name}")

@@ -20,7 +20,18 @@ from .field_interp import (                                                     
     )
 
 from .loader import (                                                           # noqa
-    COLA_MANTICORE_NAME,                                                        # noqa
+    BORGFieldLoader,                                                            # noqa
+    BORGSPHFieldLoader,                                                         # noqa
+    FIELD_METADATA,                                                             # noqa
+    FieldMetadata,                                                              # noqa
+    ManticoreLocalCOLA_FieldLoader,                                             # noqa
+    ManticoreLocalSWIFT_FieldLoader,                                            # noqa
+    UNKNOWN_FIELD_METADATA,                                                     # noqa
     available_mcmc_field_indices,                                               # noqa
+    field_allows_raw_product_reads,                                             # noqa
+    field_metadata,                                                             # noqa
+    field_product_policy,                                                       # noqa
+    field_requires_cached_products,                                             # noqa
     name2field_loader,                                                          # noqa
+    supported_field_names,                                                      # noqa
     )
