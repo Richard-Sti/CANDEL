@@ -24,7 +24,6 @@ import numpy as np
 from astropy.io import fits
 from h5py import File
 
-
 COLA_MANTICORE_NAME = "COLA_manticore_2MPP_MULTIBIN_N256_DES_V2"
 _MCMC_FIELD_RE = re.compile(r"mcmc_(\d+)\.hdf5$")
 
