@@ -1060,7 +1060,7 @@ class H0ModelBase(ModelBase):
                 + getattr(self, "log_volume_weight_3d", 0.0))
 
     def _selection_radial_log_measure(self, H0):
-        """Full-sky radial measure for no-reconstruction selection integrals."""
+        """Full-sky radial measure for selection integrals."""
         return (self.log_prior_distance(self.r_sel_range) + LOG_4PI
                 )[None, None, :]
 
