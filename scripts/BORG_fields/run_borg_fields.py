@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run and validate BORG forward fields for native Manticore samples."""
+"""Run and validate BORG forward fields for BORG MCMC samples."""
 
 from __future__ import annotations
 
@@ -13,41 +13,14 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from borg_field_config import configured_path
+
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-PATHS_FILE = SCRIPT_DIR / "paths.env"
-
-
-def read_paths_file(path: Path) -> dict[str, str]:
-    if not path.is_file():
-        raise FileNotFoundError(f"Missing path configuration: {path}")
-
-    values: dict[str, str] = {}
-    for line_no, raw_line in enumerate(path.read_text().splitlines(), start=1):
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if "=" not in line:
-            raise ValueError(f"Could not parse {path}:{line_no}: {raw_line!r}")
-        key, value = line.split("=", 1)
-        values[key.strip()] = value.strip().strip("\"'")
-    return values
-
-
-PATHS = read_paths_file(PATHS_FILE)
-
-
-def configured_path(name: str) -> Path:
-    try:
-        return Path(PATHS[name]).expanduser()
-    except KeyError as exc:
-        raise KeyError(f"Missing {name} in {PATHS_FILE}") from exc
-
-
-DEFAULT_BORG_FORWARD = configured_path("BORG_FORWARD")
-DEFAULT_COSMOTOOL_SPH = configured_path("COSMOTOOL_SPH")
-DEFAULT_PLOT_PYTHON = configured_path("PYTHON_PATH")
-DEFAULT_PLOT_SCRIPT = Path(__file__).with_name("plot_manticore_product_slices.py")
+DEFAULT_BORG_FORWARD = configured_path("borg_forward")
+DEFAULT_COSMOTOOL_SPH = configured_path("cosmotool_sph")
+DEFAULT_PLOT_PYTHON = configured_path("plot_python")
+DEFAULT_PLOT_SCRIPT = Path(__file__).with_name("plot_borg_product_slices.py")
 DEFAULT_RSD_COMPARISON_PLOT_SCRIPT = Path(__file__).with_name("plot_rsd_comparison.py")
 DEFAULT_RSD_CROSS_SCRIPT = Path(__file__).with_name("compute_rsd_pylians_cross_correlation.py")
 DEFAULT_PM_NSTEPS = 10
@@ -104,7 +77,7 @@ def parse_args() -> argparse.Namespace:
     run.add_argument(
         "--single-output",
         type=Path,
-        help="Single HDF5 product path. Default: <output-root>/<subchain>/<mcmc>/manticore_fields_<iteration>.h5.",
+        help="Single HDF5 product path. Default: <output-root>/<subchain>/<mcmc>/borg_fields_<iteration>.h5.",
     )
     run.add_argument(
         "--no-single-output",
@@ -119,21 +92,21 @@ def parse_args() -> argparse.Namespace:
     )
     run.add_argument(
         "--mas",
-        choices=("sph", "cic"),
-        default="sph",
-        help="Mass-assignment scheme for final density/velocity fields: sph or cic. Default: sph.",
+        choices=("sph", "cic", "pcs"),
+        default="cic",
+        help="Mass-assignment scheme for final density/velocity fields: sph, cic, or pcs. Default: cic.",
     )
     run.add_argument("--cosmotool-sph", type=Path, default=DEFAULT_COSMOTOOL_SPH)
     run.add_argument(
         "--sph-resolution",
         type=int,
-        help="Grid resolution for SPH or CIC. Default: /<mode>/scalars/N0.",
+        help="Grid resolution for SPH, CIC, or PCS. Default: /<mode>/scalars/N0.",
     )
     run.add_argument(
         "--cic-chunk-size",
         type=int,
         default=1_000_000,
-        help="Particle chunk size for CIC gridding. Default: 1000000.",
+        help="Particle chunk size for Pylians CIC/PCS gridding. Default: 1000000.",
     )
     run.add_argument(
         "--sph-radius-limit",
@@ -159,6 +132,18 @@ def parse_args() -> argparse.Namespace:
         help="Keep intermediate CosmoTool particle and field files.",
     )
     run.add_argument(
+        "--keep-particles",
+        action="store_true",
+        help="Keep /<mode>/u_pos and /<mode>/u_vel in the packed product; disables final product slimming.",
+    )
+    plot_mode = run.add_mutually_exclusive_group()
+    plot_mode.add_argument(
+        "--plots",
+        dest="plots",
+        action="store_true",
+        help="Write product slice plots under PRODUCT_PARENT/plots.",
+    )
+    plot_mode.add_argument(
         "--no-plots",
         dest="plots",
         action="store_false",
@@ -167,7 +152,7 @@ def parse_args() -> argparse.Namespace:
     run.add_argument("--plot-python", type=Path, default=DEFAULT_PLOT_PYTHON)
     run.add_argument("--plot-script", type=Path, default=DEFAULT_PLOT_SCRIPT)
     run.add_argument("--plot-slice-index", type=int, help="Default: middle slice.")
-    run.set_defaults(sph_fields=True, plots=True)
+    run.set_defaults(sph_fields=True, plots=False)
     add_common_args(run)
 
     validate = subparsers.add_parser(
@@ -354,7 +339,7 @@ def single_output_path(mcmc: Path, args: argparse.Namespace) -> Path:
     if getattr(args, "single_output", None) is not None:
         return args.single_output.expanduser().resolve()
     output_root, subchain, _ = infer_layout(mcmc, args.output_root)
-    return output_root / subchain / mcmc.stem / f"manticore_fields_{iteration:04d}.h5"
+    return output_root / subchain / mcmc.stem / f"borg_fields_{iteration:04d}.h5"
 
 
 def run_forward(mcmc: Path, args: argparse.Namespace, do_rsd: bool) -> tuple[Path, int, Path]:
@@ -515,6 +500,154 @@ def borg_velocity_multiplier(group) -> float:
     return unit_v0 / a_final
 
 
+def scalar_dataset_value(scalars, name: str) -> float | None:
+    if name not in scalars:
+        return None
+    dataset = scalars[name]
+    if dataset.shape == ():
+        return float(dataset[()])
+    return float(dataset[0])
+
+
+def cosmology_record_from_scalars(scalars):
+    for name in ("cosmology", "cosmo"):
+        if name in scalars:
+            record = scalars[name][0]
+            if getattr(record.dtype, "names", None):
+                return record, name
+    return None, None
+
+
+def record_value(record, names: tuple[str, ...]) -> float | None:
+    dtype_names = getattr(record.dtype, "names", None)
+    if dtype_names is None:
+        return None
+    for name in names:
+        if name in dtype_names:
+            return float(record[name])
+    return None
+
+
+def borg_mcmc_metadata(mcmc: Path) -> dict[str, object]:
+    import h5py
+
+    metadata: dict[str, object] = {"source_mcmc": str(mcmc)}
+    if not mcmc.is_file():
+        metadata["mcmc_metadata_status"] = "source_mcmc_not_found"
+        return metadata
+
+    with h5py.File(mcmc, "r") as handle:
+        if "scalars" not in handle:
+            metadata["mcmc_metadata_status"] = "source_mcmc_has_no_scalars_group"
+            return metadata
+        record, source = cosmology_record_from_scalars(handle["scalars"])
+        if record is None:
+            metadata["mcmc_metadata_status"] = "source_mcmc_has_no_cosmology"
+            return metadata
+
+        metadata["cosmology_source"] = f"{mcmc}:/scalars/{source}"
+        omega_m = record_value(record, ("omega_m", "Omega_m", "Om", "Om0"))
+        if omega_m is not None:
+            metadata["Om"] = omega_m
+            metadata["Omega_m"] = omega_m
+        h = record_value(record, ("h", "H0_over_100"))
+        if h is not None:
+            metadata["h"] = h
+        a0 = record_value(record, ("a0", "a"))
+        if a0 is not None:
+            metadata["a0"] = a0
+
+    return metadata
+
+
+def borg_forward_metadata(group) -> dict[str, object]:
+    import numpy as np
+
+    metadata: dict[str, object] = {}
+    if "scalars" not in group:
+        return metadata
+    scalars = group["scalars"]
+
+    lengths = [scalar_dataset_value(scalars, key) for key in ("L0", "L1", "L2")]
+    if all(length is not None for length in lengths):
+        box_lengths = np.asarray(lengths, dtype="f8")
+        metadata["boxsize_vector"] = box_lengths
+        if np.allclose(box_lengths, box_lengths[0]):
+            metadata["boxsize"] = float(box_lengths[0])
+        else:
+            metadata["boxsize"] = box_lengths
+        metadata["observer_position"] = 0.5 * box_lengths
+        metadata["observer_position_convention"] = (
+            "grid coordinates in Mpc/h, origin at the lower corner of the stored field"
+        )
+
+        corners = [scalar_dataset_value(scalars, key) for key in ("corner0", "corner1", "corner2")]
+        if all(corner is not None for corner in corners):
+            corner_values = np.asarray(corners, dtype="f8")
+            metadata["borg_box_corner"] = corner_values
+            metadata["observer_position_borg_coordinates"] = corner_values + 0.5 * box_lengths
+
+    resolution = [scalar_dataset_value(scalars, key) for key in ("N0", "N1", "N2")]
+    if all(size is not None for size in resolution):
+        metadata["grid_shape"] = np.asarray(resolution, dtype="i8")
+
+    record, source = cosmology_record_from_scalars(scalars)
+    if record is not None:
+        metadata["forward_cosmology_source"] = f"{group.name}/scalars/{source}"
+        omega_m = record_value(record, ("omega_m", "Omega_m", "Om", "Om0"))
+        if omega_m is not None:
+            metadata.setdefault("Om", omega_m)
+            metadata.setdefault("Omega_m", omega_m)
+
+    return metadata
+
+
+def borg_field_metadata(src, group_name: str) -> dict[str, object]:
+    group = src[group_name]
+    source_mcmc_value = group.attrs.get("source_mcmc", src.attrs.get("source_mcmc", ""))
+    source_mcmc_text = source_mcmc_value.decode() if isinstance(source_mcmc_value, bytes) else str(source_mcmc_value)
+    metadata = borg_mcmc_metadata(Path(source_mcmc_text)) if source_mcmc_text else {}
+    for key, value in borg_forward_metadata(group).items():
+        metadata.setdefault(key, value)
+    metadata["frame"] = "icrs"
+    metadata["coordinate_frame"] = "icrs"
+    return metadata
+
+
+def write_metadata_attrs(target, metadata: dict[str, object]) -> None:
+    for key, value in metadata.items():
+        target.attrs[key] = value
+    target.attrs["overdensity_dataset"] = "overdensity"
+    target.attrs["velocity_dataset"] = "velocity"
+    target.attrs["vx_dataset"] = "vx"
+    target.attrs["vy_dataset"] = "vy"
+    target.attrs["vz_dataset"] = "vz"
+
+
+def write_velocity_component_views(fields) -> None:
+    import h5py
+
+    velocity = fields["velocity"]
+    if velocity.ndim != 4 or velocity.shape[-1] != 3:
+        raise ValueError(f"Expected velocity shape (N, N, N, 3), got {velocity.shape}")
+    for name in ("vx", "vy", "vz"):
+        if name in fields:
+            del fields[name]
+    for axis, name in enumerate(("vx", "vy", "vz")):
+        layout = h5py.VirtualLayout(shape=velocity.shape[:-1], dtype=velocity.dtype)
+        source = h5py.VirtualSource(".", velocity.name, shape=velocity.shape)
+        layout[:, :, :] = source[:, :, :, axis]
+        component = fields.create_virtual_dataset(name, layout)
+        component.attrs["quantity"] = "peculiar velocity component"
+        component.attrs["units"] = "km/s"
+        component.attrs["source_dataset"] = velocity.name
+
+
+def write_generic_field_schema(fields, metadata: dict[str, object]) -> None:
+    write_metadata_attrs(fields, metadata)
+    write_velocity_component_views(fields)
+
+
 def dump_sph_particles(product: Path, group_name: str, particles: Path) -> float:
     import h5py
     import numpy as np
@@ -604,6 +737,7 @@ def write_sph_product(raw_sph: Path, product: Path, group_name: str, attrs: dict
             velocity[..., axis] = component
 
         sph.create_dataset("num_in_cell", data=src["num_in_cell"][...], chunks=(1,) + density.shape[1:])
+        write_generic_field_schema(sph, borg_field_metadata(out, group_name))
 
     print(f"Wrote SPH fields to: {product}:/{group_name}/sph", flush=True)
 
@@ -667,9 +801,26 @@ def run_sph_fields(product: Path, group_name: str, args: argparse.Namespace) -> 
         print(f"Removed SPH work directory: {product_work_dir}", flush=True)
 
 
-def run_cic_fields(product: Path, group_name: str, args: argparse.Namespace) -> None:
+def pylians_mas_name(mas: str) -> str:
+    names = {"cic": "CIC", "pcs": "PCS"}
+    try:
+        return names[mas]
+    except KeyError as exc:
+        raise ValueError(f"Pylians MAS is not supported for {mas!r}") from exc
+
+
+def centered_positions_to_pylians(positions, boxsize: float, resolution: int):
+    import numpy as np
+
+    cell_size = boxsize / resolution
+    offset = 0.5 * boxsize - 0.5 * cell_size
+    return np.mod(positions + offset, boxsize).astype("f4", copy=False)
+
+
+def run_pylians_mas_fields(product: Path, group_name: str, args: argparse.Namespace, mas: str) -> None:
     import h5py
     import numpy as np
+    import MAS_library as MASL
 
     with h5py.File(product, "r") as handle:
         group = handle[group_name]
@@ -677,22 +828,20 @@ def run_cic_fields(product: Path, group_name: str, args: argparse.Namespace) -> 
         boxsize = scalar_value(group, "L0")
         lengths = [scalar_value(group, key) for key in ("L0", "L1", "L2")]
         if any(abs(length - boxsize) > 1e-6 for length in lengths):
-            raise ValueError(f"CIC gridding assumes a cubic box; got L0,L1,L2={lengths}")
+            raise ValueError(f"{mas.upper()} gridding assumes a cubic box; got L0,L1,L2={lengths}")
         n_particles = group["u_pos"].shape[0]
         velocity_multiplier = borg_velocity_multiplier(group)
 
+    mas_name = pylians_mas_name(mas)
     print(
-        f"Running periodic CIC gridding: resolution={resolution}, "
+        f"Running Pylians periodic {mas_name} gridding: resolution={resolution}, "
         f"particles={n_particles}, chunk_size={args.cic_chunk_size}, "
         f"velocity_multiplier={velocity_multiplier:g}",
         flush=True,
     )
 
-    density = np.zeros((resolution, resolution, resolution), dtype=np.float64)
-    momentum = np.zeros((3, resolution, resolution, resolution), dtype=np.float64)
-    density_flat = density.ravel()
-    momentum_flat = momentum.reshape(3, -1)
-    inv_cell = resolution / boxsize
+    density = np.zeros((resolution, resolution, resolution), dtype=np.float32)
+    momentum = np.zeros((3, resolution, resolution, resolution), dtype=np.float32)
     chunk_size = max(1, int(args.cic_chunk_size))
 
     with h5py.File(product, "r") as handle:
@@ -701,26 +850,15 @@ def run_cic_fields(product: Path, group_name: str, args: argparse.Namespace) -> 
         vel = group["u_vel"]
         for start in range(0, n_particles, chunk_size):
             stop = min(start + chunk_size, n_particles)
-            coords = (pos[start:stop] + 0.5 * boxsize) * inv_cell - 0.5
-            base = np.floor(coords).astype(np.int64)
-            frac = coords - base
-            velocity = vel[start:stop] * velocity_multiplier
+            positions = centered_positions_to_pylians(pos[start:stop], boxsize, resolution)
+            velocity = (vel[start:stop] * velocity_multiplier).astype("f4", copy=False)
 
-            for dx in (0, 1):
-                wx = frac[:, 0] if dx else 1.0 - frac[:, 0]
-                ix = (base[:, 0] + dx) % resolution
-                for dy in (0, 1):
-                    wxy = wx * (frac[:, 1] if dy else 1.0 - frac[:, 1])
-                    iy = (base[:, 1] + dy) % resolution
-                    for dz in (0, 1):
-                        weight = wxy * (frac[:, 2] if dz else 1.0 - frac[:, 2])
-                        iz = (base[:, 2] + dz) % resolution
-                        index = (ix * resolution + iy) * resolution + iz
-                        np.add.at(density_flat, index, weight)
-                        for axis in range(3):
-                            np.add.at(momentum_flat[axis], index, weight * velocity[:, axis])
+            MASL.MA(positions, density, np.float32(boxsize), mas_name, verbose=False)
+            for axis in range(3):
+                weights = np.ascontiguousarray(velocity[:, axis], dtype=np.float32)
+                MASL.MA(positions, momentum[axis], np.float32(boxsize), mas_name, W=weights, verbose=False)
 
-            print(f"CIC deposited particles {stop} / {n_particles}", flush=True)
+            print(f"{mas_name} deposited particles {stop} / {n_particles}", flush=True)
 
     velocity_field = np.zeros(density.shape + (3,), dtype=np.float32)
     nonzero = density > 0.0
@@ -736,33 +874,44 @@ def run_cic_fields(product: Path, group_name: str, args: argparse.Namespace) -> 
 
     with h5py.File(product, "a") as handle:
         group = handle[group_name]
-        if "cic" in group:
-            del group["cic"]
-        cic = group.create_group("cic")
-        cic.attrs["resolution"] = resolution
-        cic.attrs["boxsize"] = boxsize
-        cic.attrs["periodic"] = 1
-        cic.attrs["chunk_size"] = chunk_size
-        cic.attrs["density_mean_raw"] = density_mean
-        cic.attrs["mass_column_value"] = 1
-        cic.attrs["velocity_units"] = "km/s"
-        cic.attrs["velocity_multiplier_internal_to_kms"] = velocity_multiplier
-        overdensity_dataset = cic.create_dataset(
+        if mas in group:
+            del group[mas]
+        fields = group.create_group(mas)
+        fields.attrs["assignment_library"] = "Pylians MAS_library.MA"
+        fields.attrs["assignment_scheme"] = mas_name
+        fields.attrs["resolution"] = resolution
+        fields.attrs["boxsize"] = boxsize
+        fields.attrs["periodic"] = 1
+        fields.attrs["chunk_size"] = chunk_size
+        fields.attrs["density_mean_raw"] = density_mean
+        fields.attrs["mass_column_value"] = 1
+        fields.attrs["velocity_units"] = "km/s"
+        fields.attrs["velocity_multiplier_internal_to_kms"] = velocity_multiplier
+        fields.attrs["grid_cell_size"] = boxsize / resolution
+        fields.attrs["position_convention"] = (
+            "BORG centred positions shifted by boxsize/2 - cell_size/2 before Pylians deposition"
+        )
+        overdensity_dataset = fields.create_dataset(
             "overdensity",
             data=overdensity,
             chunks=(1, resolution, resolution),
         )
         overdensity_dataset.attrs["quantity"] = "density contrast"
         overdensity_dataset.attrs["definition"] = "rho / mean(rho) - 1"
-        velocity_dataset = cic.create_dataset(
+        velocity_dataset = fields.create_dataset(
             "velocity",
             data=velocity_field,
             chunks=(1, resolution, resolution, 3),
         )
         velocity_dataset.attrs["quantity"] = "mass-weighted peculiar velocity"
         velocity_dataset.attrs["units"] = "km/s"
+        write_generic_field_schema(fields, borg_field_metadata(handle, group_name))
 
-    print(f"Wrote CIC fields to: {product}:/{group_name}/cic", flush=True)
+    print(f"Wrote {mas_name} fields to: {product}:/{group_name}/{mas}", flush=True)
+
+
+def run_cic_fields(product: Path, group_name: str, args: argparse.Namespace) -> None:
+    run_pylians_mas_fields(product, group_name, args, "cic")
 
 
 def remove_particle_datasets(product: Path, group_name: str) -> None:
@@ -800,16 +949,17 @@ def slim_field_product(product: Path, group_name: str, mas: str) -> None:
         out.attrs["mass_assignment"] = mas
         src.copy(overdensity, out, name="overdensity")
         src.copy(velocity, out, name="velocity")
+        write_generic_field_schema(out, borg_field_metadata(src, group_name))
 
     tmp_product.replace(product)
-    print(f"Slimmed final product to: {product}:/overdensity and /velocity", flush=True)
+    print(f"Slimmed final product to: {product}:/overdensity, /velocity, /vx, /vy, and /vz", flush=True)
 
 
 def run_gridded_fields(product: Path, group_name: str, args: argparse.Namespace) -> None:
     if args.mas == "sph":
         run_sph_fields(product, group_name, args)
-    elif args.mas == "cic":
-        run_cic_fields(product, group_name, args)
+    elif args.mas in ("cic", "pcs"):
+        run_pylians_mas_fields(product, group_name, args, args.mas)
     else:
         raise ValueError(f"Unknown mass-assignment scheme: {args.mas}")
 
@@ -1093,8 +1243,18 @@ def print_run_summary(
     if product is not None:
         print(f"  Single HDF5 product: {product}", flush=True)
         if args.sph_fields:
-            print("  Gridded fields: /overdensity and /velocity", flush=True)
-            print("  Final product contains only field datasets: yes", flush=True)
+            if args.keep_particles:
+                field_paths = ", ".join(
+                    f"/{group}/{args.mas}/overdensity, /{group}/{args.mas}/velocity, "
+                    f"/{group}/{args.mas}/vx, /{group}/{args.mas}/vy, "
+                    f"and /{group}/{args.mas}/vz"
+                    for group in modes
+                )
+                print(f"  Gridded fields: {field_paths}", flush=True)
+                print("  Final product contains only field datasets: no; particles were kept", flush=True)
+            else:
+                print("  Gridded fields: /overdensity, /velocity, /vx, /vy, and /vz", flush=True)
+                print("  Final product contains only field datasets: yes", flush=True)
         else:
             print("  Gridded fields: not written", flush=True)
         if plot_paths:
@@ -1121,10 +1281,25 @@ def main() -> None:
                 if args.plots:
                     print(f"Plot directory: {product.parent / 'plots'}", flush=True)
                 if args.sph_fields:
-                    print(f"{args.mas.upper()} fields would be written to: {product}:/overdensity and /velocity", flush=True)
+                    group_name = "rsd" if args.rsd else "realspace"
+                    if args.keep_particles:
+                        print(
+                            f"{args.mas.upper()} fields would be written under: "
+                            f"{product}:/{group_name}/{args.mas}",
+                            flush=True,
+                        )
+                    else:
+                        print(
+                            f"{args.mas.upper()} fields would be written to: "
+                            f"{product}:/overdensity, /velocity, /vx, /vy, and /vz",
+                            flush=True,
+                        )
                     if args.mas == "sph":
                         print(f"SPH OpenMP threads: {args.sph_threads}", flush=True)
-                    print("Final product will contain only these two field datasets.", flush=True)
+                    if args.keep_particles:
+                        print("Particle datasets would be kept; final product would not be slimmed.", flush=True)
+                    else:
+                        print("Final product will contain only the generic field datasets.", flush=True)
             return
         if not args.dry_run and not args.no_single_output:
             group_name = "rsd" if args.rsd else "realspace"
@@ -1140,22 +1315,27 @@ def main() -> None:
             )
             if args.sph_fields:
                 run_gridded_fields(product, group_name, args)
-                remove_particle_datasets(product, group_name)
+                if not args.keep_particles:
+                    remove_particle_datasets(product, group_name)
             if args.include_rsd and not args.rsd:
                 rsd_pattern, rsd_iteration, rsd_out_dir = run_forward(mcmc, args, do_rsd=True)
                 split_dirs.append(rsd_out_dir)
                 pack_split_outputs(rsd_pattern, rsd_iteration, args.nprocs, product, "rsd", mcmc)
                 if args.sph_fields:
                     run_gridded_fields(product, "rsd", args)
-                    remove_particle_datasets(product, "rsd")
+                    if not args.keep_particles:
+                        remove_particle_datasets(product, "rsd")
                 plotted_groups.append("rsd")
             plot_paths: list[Path] = []
             if args.plots:
                 plot_paths = write_product_plots(product, plotted_groups, args)
             if args.sph_fields:
-                if len(plotted_groups) != 1:
-                    raise ValueError("Slim final products support exactly one gridded mode.")
-                slim_field_product(product, plotted_groups[0], args.mas)
+                if args.keep_particles:
+                    print(f"Kept particle datasets in full product: {product}", flush=True)
+                else:
+                    if len(plotted_groups) != 1:
+                        raise ValueError("Slim final products support exactly one gridded mode.")
+                    slim_field_product(product, plotted_groups[0], args.mas)
             print(f"Single HDF5 product: {product}", flush=True)
             print_run_summary(mcmc, product, plotted_groups, split_dirs, plot_paths, args)
         elif not args.dry_run:

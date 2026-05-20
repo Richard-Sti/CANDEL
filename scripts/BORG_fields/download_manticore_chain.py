@@ -15,40 +15,13 @@ from pathlib import Path
 from urllib.error import URLError
 from urllib.request import urlopen
 
+from borg_field_config import configured_path
 
 GENERATION = "2MPP_MULTIBIN_N256_DES_V2"
 KEY_URL = "https://manticore.web.data-2-osu.iap.fr/public-keys.json"
 SCRIPT_DIR = Path(__file__).resolve().parent
-PATHS_FILE = SCRIPT_DIR / "paths.env"
 
-
-def read_paths_file(path: Path) -> dict[str, str]:
-    if not path.is_file():
-        raise FileNotFoundError(f"Missing path configuration: {path}")
-
-    values: dict[str, str] = {}
-    for line_no, raw_line in enumerate(path.read_text().splitlines(), start=1):
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if "=" not in line:
-            raise ValueError(f"Could not parse {path}:{line_no}: {raw_line!r}")
-        key, value = line.split("=", 1)
-        values[key.strip()] = value.strip().strip("\"'")
-    return values
-
-
-PATHS = read_paths_file(PATHS_FILE)
-
-
-def configured_path(name: str) -> Path:
-    try:
-        return Path(PATHS[name]).expanduser()
-    except KeyError as exc:
-        raise KeyError(f"Missing {name} in {PATHS_FILE}") from exc
-
-
-DEFAULT_OUTPUT_DIR = configured_path("MANTICORE_DIR")
+DEFAULT_OUTPUT_DIR = configured_path("borg_run_dir")
 
 
 def parse_args() -> argparse.Namespace:
@@ -119,7 +92,7 @@ def require_boto3():
     except ImportError as exc:
         raise SystemExit(
             "This script requires boto3 in the BORG environment. "
-            f"Install with: {configured_path('BORG_PYTHON')} -m pip install boto3"
+            f"Install with: {configured_path('borg_python')} -m pip install boto3"
         ) from exc
     return boto3, Config
 

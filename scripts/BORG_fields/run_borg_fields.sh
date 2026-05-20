@@ -2,28 +2,28 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PATHS_FILE="$SCRIPT_DIR/paths.env"
-if [[ -f "$PATHS_FILE" ]]; then
-  # shellcheck disable=SC1090
-  source "$PATHS_FILE"
+ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+CONFIG_PYTHON="${CANDEL_CONFIG_PYTHON:-$ROOT_DIR/venv_candel/bin/python}"
+if [[ ! -x "$CONFIG_PYTHON" ]]; then
+  CONFIG_PYTHON="${PYTHON:-python3}"
 fi
-: "${BORG_PYTHON:?Missing BORG_PYTHON in $PATHS_FILE}"
-: "${BORG_FORWARD:?Missing BORG_FORWARD in $PATHS_FILE}"
-: "${PYTHON_PATH:?Missing PYTHON_PATH in $PATHS_FILE}"
-: "${SRUN:?Missing SRUN in $PATHS_FILE}"
-: "${MANTICORE_DIR:?Missing MANTICORE_DIR in $PATHS_FILE}"
+CONFIG_EXPORTS="$(
+  "$CONFIG_PYTHON" "$SCRIPT_DIR/borg_field_config.py" \
+    --shell-env borg_python borg_forward cosmotool_sph plot_python srun borg_run_dir
+)"
+eval "$CONFIG_EXPORTS"
 
 usage() {
   cat <<'EOF'
 Usage:
-  run_manticore_fields.sh MCMC_FILE [run options]                         # submits to berg
-  run_manticore_fields.sh --steps [STEPS] [schedule options] [run options] # submits to berg
-  run_manticore_fields.sh -locally MCMC_FILE [run options]
-  run_manticore_fields.sh -locally --steps [STEPS] [schedule options] [run options]
-  run_manticore_fields.sh -locally validate-rsd CHAIN_DIR [validation options]
-  run_manticore_fields.sh --submit [submit options] MCMC_FILE [run options]
-  run_manticore_fields.sh --submit [submit options] --steps [STEPS] [schedule options] [run options]
-  run_manticore_fields.sh --submit [submit options] validate-rsd CHAIN_DIR [validation options]
+  run_borg_fields.sh MCMC_FILE [run options]                         # submits to berg
+  run_borg_fields.sh --steps [STEPS] [schedule options] [run options] # submits to berg
+  run_borg_fields.sh -locally MCMC_FILE [run options]
+  run_borg_fields.sh -locally --steps [STEPS] [schedule options] [run options]
+  run_borg_fields.sh -locally validate-rsd CHAIN_DIR [validation options]
+  run_borg_fields.sh --submit [submit options] MCMC_FILE [run options]
+  run_borg_fields.sh --submit [submit options] --steps [STEPS] [schedule options] [run options]
+  run_borg_fields.sh --submit [submit options] validate-rsd CHAIN_DIR [validation options]
 
 Default behaviour:
   Without -locally, this wrapper submits one berg-node job with 28 CPUs.
@@ -32,8 +32,8 @@ Default behaviour:
 
 Schedule options:
   --steps [STEPS]       Inclusive schedule steps, e.g. 0:50, 0-50, 0,5,10:12. Default if omitted after --steps: 0:50
-  --schedule FILE       Default: MANTICORE_DIR/schedule_final.yaml
-  --manticore-dir DIR   Default: configured MANTICORE_DIR from paths.env
+  --schedule FILE       Default: BORG_RUN_DIR/schedule_final.yaml
+  --borg-run-dir DIR    Default: [borg_fields].borg_run_dir from local_config.toml
   --pm-nsteps N         Override [gravity_chain_2] pm_nsteps. Default: 10
 
 Submit options:
@@ -42,31 +42,37 @@ Submit options:
   --omp-threads N       BORG OpenMP threads per MPI rank. Default: 1
   --mem-gb GB           Default: 7
   --nodes N             Split --steps over N single-node jobs. Default: 1
-  --name NAME           Default: manticore-fields
+  --name NAME           Default: borg-fields
   --log-dir DIR         Default: this directory
   --submit-dry-run      Print addqueue command without submitting
 
-SPH gridding runs after BORG and uses SPH_OMP_THREADS. On berg this defaults
-to 28, so the SPH stage uses the whole node unless SPH_OMP_THREADS is set.
-Use --mas cic to write CIC-assigned fields instead of SPH-assigned fields.
-Slice plots are written by default to PRODUCT_PARENT/plots; pass --no-plots
-to skip them.
+Pylians CIC gridding runs after BORG by default. Use --mas pcs for Pylians
+PCS or --mas sph for CosmoTool SPH. SPH uses SPH_OMP_THREADS; on berg this
+defaults to 28, so the SPH stage uses the whole node unless SPH_OMP_THREADS
+is set.
+Pass --keep-particles to keep /<mode>/u_pos and /<mode>/u_vel in the packed
+product and skip final slimming.
+Slim final products expose /overdensity, /velocity, /vx, /vy, and /vz. They
+also store BORG-reader attrs: Om from the MCMC cosmology, boxsize from the
+BORG forward scalars, observer_position as the box centre, and frame=icrs.
+Slice plots are optional diagnostics; pass --plots to write them to
+PRODUCT_PARENT/plots.
 For --steps runs, packed products are written to
-MANTICORE_DIR/forward_sph_fields/mcmc_<schedule-step>.hdf5 and plots to
-MANTICORE_DIR/forward_sph_fields/plots.
+BORG_RUN_DIR/forward_borg_fields/mcmc_<schedule-step>.hdf5.
 For --steps runs, one requested sample is also run in RSD mode for validation
 against /scalars/BORG_final_density, including a non-fatal Pylians
 cross-correlation check.
 
 Examples:
-  run_manticore_fields.sh --steps 0:2 --real-space --state state_6124
-  run_manticore_fields.sh --nodes 5 --steps 0:9
-  run_manticore_fields.sh --steps 0:2 --real-space --mas cic
-  run_manticore_fields.sh -locally MCMC.h5 --real-space --state state_6124
-  run_manticore_fields.sh --submit --steps 0:2 --real-space --state state_6124
-  run_manticore_fields.sh --submit MCMC.h5 --real-space --include-rsd --state state_6124
-  run_manticore_fields.sh --submit MCMC.h5 --real-space --state state_6124
-  run_manticore_fields.sh --submit validate-rsd /path/to/chain/l1_e_b000 --samples 1 --state state_6124
+  run_borg_fields.sh --steps 0:2 --real-space --state state_6124
+  run_borg_fields.sh --nodes 5 --steps 0:9
+  run_borg_fields.sh --steps 0:2 --real-space --mas sph
+  run_borg_fields.sh --steps 0:2 --real-space --mas pcs --keep-particles
+  run_borg_fields.sh -locally MCMC.h5 --real-space --state state_6124
+  run_borg_fields.sh --submit --steps 0:2 --real-space --state state_6124
+  run_borg_fields.sh --submit MCMC.h5 --real-space --include-rsd --state state_6124
+  run_borg_fields.sh --submit MCMC.h5 --real-space --state state_6124
+  run_borg_fields.sh --submit validate-rsd /path/to/chain/l1_e_b000 --samples 1 --state state_6124
 EOF
 }
 
@@ -94,6 +100,18 @@ has_help_arg() {
 has_steps_arg() {
   while [[ $# -gt 0 ]]; do
     if [[ "$1" == "--steps" ]]; then
+      return 0
+    fi
+    shift
+  done
+  return 1
+}
+
+has_option_arg() {
+  local option="$1"
+  shift
+  while [[ $# -gt 0 ]]; do
+    if [[ "$1" == "$option" || "$1" == "$option="* ]]; then
       return 0
     fi
     shift
@@ -189,9 +207,9 @@ replace_steps_arg() {
 
 resolve_step_targets() {
   local steps="$1"
-  local manticore_dir="$2"
+  local borg_run_dir="$2"
   local schedule="$3"
-  "$BORG_PYTHON" - "$steps" "$manticore_dir" "$schedule" <<'PY'
+  "$BORG_PYTHON" - "$steps" "$borg_run_dir" "$schedule" <<'PY'
 from __future__ import annotations
 
 import re
@@ -251,11 +269,11 @@ def read_schedule(path: Path) -> dict[int, tuple[str, int]]:
 
 
 steps_spec = sys.argv[1]
-manticore_dir = Path(sys.argv[2]).expanduser().resolve()
+borg_run_dir = Path(sys.argv[2]).expanduser().resolve()
 schedule_path = (
     Path(sys.argv[3]).expanduser().resolve()
     if sys.argv[3]
-    else manticore_dir / "schedule_final.yaml"
+    else borg_run_dir / "schedule_final.yaml"
 )
 schedule = read_schedule(schedule_path)
 steps = parse_steps(steps_spec)
@@ -265,7 +283,7 @@ if missing:
 
 for step in steps:
     subchain, mcmc = schedule[step]
-    path = manticore_dir / "chain" / subchain / f"mcmc_{mcmc}.h5"
+    path = borg_run_dir / "chain" / subchain / f"mcmc_{mcmc}.h5"
     print(f"{step}\t{path}")
 PY
 }
@@ -273,7 +291,7 @@ PY
 run_schedule_steps() {
   local steps=""
   local schedule=""
-  local manticore_dir="$MANTICORE_DIR"
+  local borg_run_dir="$BORG_RUN_DIR"
   local -a run_args=()
   local -a validation_args=()
   local explicit_single_output="false"
@@ -297,8 +315,8 @@ run_schedule_steps() {
         schedule="$2"
         shift 2
         ;;
-      --manticore-dir)
-        manticore_dir="$2"
+      --borg-run-dir)
+        borg_run_dir="$2"
         shift 2
         ;;
       --params|--state|--output-root|--borg-forward|--mpirun|--mpi-launcher|--nprocs|--omp-threads|--plot-python|--pm-nsteps)
@@ -336,7 +354,7 @@ run_schedule_steps() {
   fi
 
   local -a targets=()
-  mapfile -t targets < <(resolve_step_targets "$steps" "$manticore_dir" "$schedule")
+  mapfile -t targets < <(resolve_step_targets "$steps" "$borg_run_dir" "$schedule")
   echo "Resolved ${#targets[@]} schedule step(s)."
   local target step mcmc
   local status=0
@@ -347,9 +365,9 @@ run_schedule_steps() {
     echo "Running schedule step ${step}: ${mcmc}"
     step_run_args=("${run_args[@]}")
     if [[ "$explicit_single_output" != "true" ]]; then
-      step_run_args+=("--single-output" "${manticore_dir}/forward_sph_fields/mcmc_${step}.hdf5")
+      step_run_args+=("--single-output" "${borg_run_dir}/forward_borg_fields/mcmc_${step}.hdf5")
     fi
-    if ! "$SCRIPT_DIR/run_manticore_fields.sh" -locally "$mcmc" "${step_run_args[@]}"; then
+    if ! "$SCRIPT_DIR/run_borg_fields.sh" -locally "$mcmc" "${step_run_args[@]}"; then
       status=1
     fi
   done
@@ -364,7 +382,7 @@ run_schedule_steps() {
     validation_chain="$(dirname "$validation_mcmc")"
     validation_glob="$(basename "$validation_mcmc")"
     echo "Running RSD validation for schedule step ${validation_step}: ${validation_mcmc}"
-    if ! "$SCRIPT_DIR/run_manticore_fields.sh" -locally validate-rsd "$validation_chain" --glob "$validation_glob" --samples 1 "${validation_args[@]}"; then
+    if ! "$SCRIPT_DIR/run_borg_fields.sh" -locally validate-rsd "$validation_chain" --glob "$validation_glob" --samples 1 "${validation_args[@]}"; then
       status=1
     fi
   fi
@@ -393,7 +411,7 @@ if [[ "${1:-}" == "--submit" ]]; then
   OMP_THREADS="${OMP_NUM_THREADS:-1}"
   MEM_GB="7"
   NODES="1"
-  NAME="manticore-fields"
+  NAME="borg-fields"
   LOG_DIR="$SCRIPT_DIR"
   SUBMIT_DRY_RUN="false"
   RUN_ARGS=()
@@ -446,7 +464,7 @@ if [[ "${1:-}" == "--submit" ]]; then
     for STEP_CHUNK in "${STEP_CHUNKS[@]}"; do
       replace_steps_arg "$STEP_CHUNK" "${RUN_ARGS[@]}"
       LOG_FILE="${LOG_DIR}/%j-${NAME}-chunk_${CHUNK_INDEX}.out"
-      CMD=("$SCRIPT_DIR/run_manticore_fields.sh" -locally "${CHUNK_ARGS[@]}")
+      CMD=("$SCRIPT_DIR/run_borg_fields.sh" -locally "${CHUNK_ARGS[@]}")
       ADDQUEUE_FLAGS=(-q "$QUEUE" -m "$MEM_GB" -c "${NAME}-${CHUNK_INDEX}" -o "$LOG_FILE" -s -n "1x${NPROCS}")
       ADDQUEUE=(addqueue "${ADDQUEUE_FLAGS[@]}" "${CMD[@]}")
 
@@ -469,7 +487,7 @@ if [[ "${1:-}" == "--submit" ]]; then
   fi
 
   LOG_FILE="${LOG_DIR}/%j-${NAME}.out"
-  CMD=("$SCRIPT_DIR/run_manticore_fields.sh" -locally "${RUN_ARGS[@]}")
+  CMD=("$SCRIPT_DIR/run_borg_fields.sh" -locally "${RUN_ARGS[@]}")
   ADDQUEUE_FLAGS=(-q "$QUEUE" -m "$MEM_GB" -c "$NAME" -o "$LOG_FILE" -s -n "1x${NPROCS}")
   ADDQUEUE=(addqueue "${ADDQUEUE_FLAGS[@]}" "${CMD[@]}")
 
@@ -496,7 +514,7 @@ if [[ "${1:-}" == "--submit" ]]; then
 fi
 
 if [[ "$LOCAL_RUN" != "true" ]]; then
-  exec "$SCRIPT_DIR/run_manticore_fields.sh" --submit "$@"
+  exec "$SCRIPT_DIR/run_borg_fields.sh" --submit "$@"
 fi
 
 export NPROCS="${NPROCS:-8}"
@@ -522,12 +540,23 @@ fi
 
 ulimit -l unlimited 2>/dev/null || true
 
-EXTRA_ARGS=(--borg-forward "$BORG_FORWARD" --nprocs "$NPROCS" --omp-threads "$OMP_NUM_THREADS")
+EXTRA_ARGS=()
+if ! has_option_arg "--borg-forward" "$@"; then
+  EXTRA_ARGS+=(--borg-forward "$BORG_FORWARD")
+fi
+if ! has_option_arg "--nprocs" "$@"; then
+  EXTRA_ARGS+=(--nprocs "$NPROCS")
+fi
+if ! has_option_arg "--omp-threads" "$@"; then
+  EXTRA_ARGS+=(--omp-threads "$OMP_NUM_THREADS")
+fi
 if [[ "${1:-}" == "run" || "${1:-}" == "validate-rsd" ]]; then
-  EXTRA_ARGS+=(--plot-python "$PYTHON_PATH")
+  if ! has_option_arg "--plot-python" "$@"; then
+    EXTRA_ARGS+=(--plot-python "$PYTHON_PATH")
+  fi
 fi
 
 exec nice -n "${NICE:-10}" \
-  "$BORG_PYTHON" -u "$SCRIPT_DIR/run_manticore_fields.py" \
+  "$BORG_PYTHON" -u "$SCRIPT_DIR/run_borg_fields.py" \
   "$@" \
   "${EXTRA_ARGS[@]}"

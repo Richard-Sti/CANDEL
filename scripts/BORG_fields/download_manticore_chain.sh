@@ -2,13 +2,16 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PATHS_FILE="$SCRIPT_DIR/paths.env"
-if [[ -f "$PATHS_FILE" ]]; then
-  # shellcheck disable=SC1090
-  source "$PATHS_FILE"
+ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+CONFIG_PYTHON="${CANDEL_CONFIG_PYTHON:-$ROOT_DIR/venv_candel/bin/python}"
+if [[ ! -x "$CONFIG_PYTHON" ]]; then
+  CONFIG_PYTHON="${PYTHON:-python3}"
 fi
-: "${BORG_PYTHON:?Missing BORG_PYTHON in $PATHS_FILE}"
-: "${SRUN:?Missing SRUN in $PATHS_FILE}"
+CONFIG_EXPORTS="$(
+  "$CONFIG_PYTHON" "$SCRIPT_DIR/borg_field_config.py" \
+    --shell-env borg_python srun borg_run_dir
+)"
+eval "$CONFIG_EXPORTS"
 
 usage() {
   cat <<'EOF'
