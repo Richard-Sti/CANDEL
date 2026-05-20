@@ -155,6 +155,69 @@ def test_pv_volume_cache_filename_keeps_requested_subsample_fraction():
     assert "sub-0p1-seed-42" not in filename
 
 
+def test_volume_cache_filenames_include_field_smoothing():
+    h0_payload = {
+        "kind": "h0_volume_data",
+        "field_name": "toy_reconstruction",
+        "field_indices": [0, 1],
+        "geometry": "sphere",
+        "subcube_radius": 50.0,
+        "downsample": 1,
+        "field_smoothing_scale": 3.0,
+        "load_velocity": True,
+    }
+    pv_payload = {
+        "kind": "pv_volume_density_3d",
+        "loader_name": "toy_reconstruction",
+        "field_indices": [0, 1],
+        "subcube_radius": 150.0,
+        "pad_subcube_boundary": True,
+        "downsample": 1,
+        "voxel_subsample_fraction": 0.5,
+        "voxel_subsample_seed": 42,
+        "store_rhat_3d": False,
+        "field_smoothing_scale": 3.0,
+    }
+
+    assert "field-smooth-R3" in _h0_volume_cache_filename(h0_payload)
+    assert "field-smooth-R3" in _pv_volume_density_cache_filename(pv_payload)
+
+
+def test_h0_field_smoothing_applies_to_density_and_velocity(monkeypatch):
+    class FakeLoader:
+        def __init__(self, nsim, **kwargs):
+            self.nsim = nsim
+            self.boxsize = 12.0
+            self.ngrid = 4
+            self.coordinate_frame = "icrs"
+            self.observer_pos = np.array([6.0, 6.0, 6.0],
+                                         dtype=np.float32)
+
+        def load_density(self):
+            return np.ones((4, 4, 4), dtype=np.float32)
+
+        def load_velocity_component(self, component):
+            return np.full((4, 4, 4), component + 1, dtype=np.float32)
+
+    calls = []
+
+    def fake_smooth(field, smooth_scale, boxsize, make_copy=False):
+        calls.append((field.shape, smooth_scale, boxsize))
+        return np.array(field, copy=True)
+
+    monkeypatch.setattr(
+        volume_density_mod, "name2field_loader", lambda name: FakeLoader)
+    monkeypatch.setattr(
+        volume_density_mod, "apply_gaussian_smoothing", fake_smooth)
+
+    _load_volume_data_for_H0(
+        "fake", {"Om0": 0.3}, [0], "linear", 0.3,
+        load_velocity=True, geometry="cube", cache_enabled=False,
+        return_cache_fields=True, field_smoothing_scale=4.0)
+
+    assert len(calls) == 4
+
+
 def test_h0_volume_supersampling_matches_homogeneous_radial_integral():
     radius = 50.0
     dx = 5.0
