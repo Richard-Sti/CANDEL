@@ -171,16 +171,16 @@ def _selected_reconstruction_names(config):
     """Return reconstruction names selected by the loaded config."""
     names = set()
     for key_path in (
-            "io/SH0ES/which_host_los",
-            "io/which_host_los"):
+            "io/SH0ES/reconstruction",
+            "io/CCHP/reconstruction"):
         value = get_nested(config, key_path, None)
         if isinstance(value, str) and value.lower() != "none":
             names.add(value)
 
     for key_path in (
-            "io/PV_main/EDD_TRGB/which_host_los",
-            "io/PV_main/EDD_TRGB_grouped/which_host_los",
-            "io/PV_main/EDD_2MTF/which_host_los"):
+            "io/PV_main/EDD_TRGB/reconstruction",
+            "io/PV_main/EDD_TRGB_grouped/reconstruction",
+            "io/PV_main/EDD_2MTF/reconstruction"):
         value = get_nested(config, key_path, None)
         if isinstance(value, str) and value.lower() != "none":
             names.add(value)
