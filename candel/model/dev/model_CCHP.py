@@ -191,7 +191,8 @@ class BaseCCHPModel(ABC):
         self.which_selection = get_nested(
             config, "model/which_selection", None)
         if self.use_reconstruction:
-            recon_name = get_nested(config, "io/which_host_los", "unspecified")
+            recon_name = get_nested(
+                config, "io/CCHP/reconstruction", "unspecified")
             fprint(f"Using reconstruction: {recon_name}")
         fprint(f"which_bias set to {self.which_bias}")
         fprint(f"selection set to {self.which_selection}")
