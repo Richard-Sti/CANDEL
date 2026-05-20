@@ -51,8 +51,12 @@ should not bake in local paths, queue names, Python executables, or outputs.
   exports the public convenience API used by scripts and notebooks.
 
 - `/mnt/users/rstiskalek/CANDEL/candel/util.py`
-  handles config loading and path resolution, coordinate transforms, plotting
-  helpers, sample readers, labels, and local root helpers.
+  handles config loading and path resolution, coordinate transforms, sample
+  readers, labels, and local root helpers.
+
+- `/mnt/users/rstiskalek/CANDEL/candel/plotting`
+  holds reusable plotting helpers such as corner/GetDist posterior plots,
+  radial external-velocity plots, and likelihood-selection diagnostics.
 
 - `/mnt/users/rstiskalek/CANDEL/candel/pvdata`
   contains peculiar-velocity data loading. `frame.py` defines `PVDataFrame`
@@ -147,7 +151,8 @@ should not bake in local paths, queue names, Python executables, or outputs.
 - `/mnt/users/rstiskalek/CANDEL/scripts/preprocess`
   precomputes line-of-sight density/velocity products and warms H0 volume
   field caches. `warm_field_cache.py` reuses production config loaders and can
-  read generated task files.
+  read generated task files. `prepare_field_inputs.py` orchestrates LOS
+  computation plus cache warmup from the same config/task inputs.
 
 - `/mnt/users/rstiskalek/CANDEL/scripts/H0_convergence`,
   `/mnt/users/rstiskalek/CANDEL/scripts/diagnostics`, and
