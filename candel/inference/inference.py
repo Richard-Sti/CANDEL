@@ -33,17 +33,18 @@ from numpyro.infer.util import log_density
 from scipy.optimize import minimize as sp_minimize
 from tqdm import trange
 
-from ..util import (fprint, fsection, galactic_to_radec, plot_corner,
-                    plot_radial_profiles, plot_Vext_moll, plot_Vext_rad_corner,
-                    plot_Vext_radial_bulkflow, plot_Vext_radmag,
-                    radec_cartesian_to_galactic,
-                    radec_to_cartesian, radec_to_galactic)
+from ..plotting.corner import plot_corner, plot_Vext_rad_corner
+from ..plotting.vext import (plot_radial_profiles, plot_Vext_moll,
+                             plot_Vext_radial_bulkflow, plot_Vext_radmag)
+from ..util import (fprint, fsection, galactic_to_radec,
+                    radec_cartesian_to_galactic, radec_to_cartesian,
+                    radec_to_galactic)
 from .evidence import (BIC_AIC, dict_samples_to_array, harmonic_evidence,
                        laplace_evidence)
 
-
 _BASE_AUXILIARY_KEYS = ("Vpec_host_skipZ",)
 _PER_GALAXY_LOG_LIKELIHOOD_AUXILIARY_KEYS = (
+    "log_likelihood_total",
     "log_likelihood_per_galaxy",
     "log_observed_selection_per_galaxy",
     "log_selection_integral",
