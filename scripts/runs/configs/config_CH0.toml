@@ -10,6 +10,7 @@ num_samples = 5000
 num_chains = 4
 chain_method = "sequential"
 seed = 44
+save_log_likelihood_per_galaxy = false
 num_chains_harmonic = 10
 
 ###############################################################################

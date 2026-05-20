@@ -888,6 +888,7 @@ TASK_SPECS = {
             "inference/num_chains": 1,
             "inference/num_warmup": 1000,
             "inference/num_samples": 5000,
+            "inference/save_log_likelihood_per_galaxy": True,
             **_with_root(f"{CH0_PAPER_ROOT}/single_fields"),
         },
         "datasets": _ch0_manticore_field_datasets(),
