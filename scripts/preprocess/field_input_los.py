@@ -12,20 +12,20 @@
 # You should have received a copy of the GNU General Public License along
 # with this program; if not, write to the Free Software Foundation, Inc.,
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
-"""
-A script to compute the LOS density and radial velocity from an existing
-reconstruction and a catalogue of galaxies.
-"""
-from argparse import ArgumentParser
+"""Helpers for preparing reconstruction LOS density and velocity products."""
+from os import makedirs
 from os import replace
-from os.path import basename, dirname, join, splitext
+from os.path import basename, dirname, exists, join, splitext
 
 import numpy as np
 from h5py import File
-from mpi4py import MPI
 
 import candel
 from candel import fprint
+from candel.pvdata.field_products import (
+    density_smoothed_los_path,
+    validate_density_smoothing_scale,
+)
 
 
 def generate_random_sky(npoints, seed):
@@ -125,25 +125,8 @@ def load_los(catalogue, config, filepath=None, config_path=None):
     return RA, dec, los_file
 
 
-def main():
-    comm = MPI.COMM_WORLD
-    rank = comm.Get_rank()
-    size = comm.Get_size()
-    verbose = rank == 0
-
-    parser = ArgumentParser()
-    parser.add_argument("--catalogue", type=str, required=True)
-    parser.add_argument("--reconstruction", type=str, required=True)
-    parser.add_argument("--config", type=str, required=True)
-    parser.add_argument("--smooth_target", type=float, default=None)
-    parser.add_argument("--filepath", type=str, default=None,
-                        help="Path to catalogue file (required for generic)")
-    args = parser.parse_args()
-
-    if args.smooth_target == 0:
-        args.smooth_target = None
-
-    config = candel.load_config(args.config)
+def reconstruction_field_indices(config, reconstruction):
+    """Return the reconstruction realisation indices to interpolate."""
     nreal_map = {
         "Carrick2015": 1,
         "Lilow2024": 1,
@@ -155,78 +138,105 @@ def main():
         "HAMLET_V1": 20,
         }
 
-    recon = args.reconstruction
-    if recon in nreal_map:
-        nsims = list(range(nreal_map[recon]))
-    elif (recon == candel.field.COLA_MANTICORE_NAME
-          or recon.lower().startswith("manticore")):
-        field_kwargs = config["io"]["reconstruction_main"][recon]
-        nsims = candel.field.available_mcmc_field_indices(
+    if reconstruction in nreal_map:
+        return list(range(nreal_map[reconstruction]))
+    if (reconstruction == candel.field.COLA_MANTICORE_NAME
+            or reconstruction.lower().startswith("manticore")):
+        field_kwargs = config["io"]["reconstruction_main"][reconstruction]
+        return candel.field.available_mcmc_field_indices(
             field_kwargs["fpath_root"])
-    else:
-        if rank == 0:
-            raise ValueError(f"Reconstruction `{recon}` not supported.")
-        return
+    raise ValueError(f"Reconstruction `{reconstruction}` not supported.")
 
-    fprint(f"iterating over {len(nsims)} simulations "
-           f"for `{args.reconstruction}`.", verbose=verbose)
 
-    if "random_" in args.catalogue:
-        # Use the dedicated random-LOS grid with per-reconstruction dr.
+def radial_los_grid(config, catalogue, reconstruction, verbose=True):
+    """Return the radial grid for a catalogue/reconstruction LOS product."""
+    if "random_" in catalogue:
         rand_cfg = config["io"].get("reconstruction_rand_los", {})
         rmin = rand_cfg.get("rmin", 0.1)
         rmax = rand_cfg.get("rmax", 251)
         dr = rand_cfg.get("dr", 1.0)
-        recon_cfg = rand_cfg.get(args.reconstruction, {})
+        recon_cfg = rand_cfg.get(reconstruction, {})
         rmin = recon_cfg.get("rmin", rmin)
         rmax = recon_cfg.get("rmax", rmax)
         dr = recon_cfg.get("dr", dr)
         num_steps = round((rmax - rmin) / dr) + 1
-        r = np.linspace(rmin, rmax, num_steps)
         fprint(f"random LOS grid: {rmin} to {rmax} Mpc/h, "
                f"dr={dr}, {num_steps} steps.", verbose=verbose)
-    else:
-        d = config["io"]["reconstruction_main"]
-        fprint(f"setting the radial grid from {d['rmin']} to {d['rmax']} "
-               f"with {d['num_steps']} steps.", verbose=verbose)
-        r = np.linspace(d["rmin"], d["rmax"], d["num_steps"])
+        return np.linspace(rmin, rmax, num_steps)
 
-    fprint(f"loading the catalogue `{args.catalogue}` with "
-           f"reconstruction `{args.reconstruction}`.", verbose=verbose)
-    RA, dec, los_file = load_los(
-        args.catalogue, config, args.filepath, config_path=args.config)
+    d = config["io"]["reconstruction_main"]
+    fprint(f"setting the radial grid from {d['rmin']} to {d['rmax']} "
+           f"with {d['num_steps']} steps.", verbose=verbose)
+    return np.linspace(d["rmin"], d["rmax"], d["num_steps"])
+
+
+def resolve_los_output_path(los_file, reconstruction, smooth_target=None,
+                            density_smoothing_scale=None):
+    """Resolve a LOS template to the output path for this smoothing variant."""
+    if smooth_target is not None and density_smoothing_scale is not None:
+        raise ValueError(
+            "`smooth_target` and `density_smoothing_scale` are mutually "
+            "exclusive.")
+    los_file = los_file.replace("<X>", reconstruction)
+    if smooth_target is not None:
+        los_file = los_file.replace(
+            ".hdf5", f"_smooth_to_{smooth_target}.hdf5")
+    return density_smoothed_los_path(los_file, density_smoothing_scale)
+
+
+def compute_los_file(catalogue, reconstruction, config, filepath=None,
+                     config_path=None, smooth_target=None,
+                     density_smoothing_scale=None, overwrite=False,
+                     verbose=True):
+    """Compute one LOS product serially using the standard file schema."""
+    density_smoothing_scale = validate_density_smoothing_scale(
+        density_smoothing_scale)
+    if smooth_target == 0:
+        smooth_target = None
+    if smooth_target is not None and density_smoothing_scale is not None:
+        raise ValueError(
+            "`smooth_target` and `density_smoothing_scale` are mutually "
+            "exclusive.")
+
+    nsims = reconstruction_field_indices(config, reconstruction)
+    r = radial_los_grid(config, catalogue, reconstruction, verbose=verbose)
+    fprint(f"loading the catalogue `{catalogue}` with "
+           f"reconstruction `{reconstruction}`.", verbose=verbose)
+    RA, dec, los_template = load_los(
+        catalogue, config, filepath, config_path=config_path)
     fprint(f"loaded {len(RA)} galaxies from the catalogue.", verbose=verbose)
+
+    los_file = resolve_los_output_path(
+        los_template, reconstruction, smooth_target,
+        density_smoothing_scale)
+    if exists(los_file) and not overwrite:
+        fprint(f"LOS file already exists at `{los_file}`; skipping.",
+               verbose=verbose)
+        return {"path": los_file, "status": "exists"}
+
+    out_dir = dirname(los_file)
+    if out_dir:
+        makedirs(out_dir, exist_ok=True)
 
     n_sims = len(nsims)
     n_gal = len(RA)
     n_r = len(r)
+    is_random_multireal = "random_" in catalogue and n_sims > 1
 
-    # For multi-realisation random catalogues, each sim gets independent sky
-    # positions drawn with seed = 42 + nsim instead of sharing seed=42.
-    is_random_multireal = "random_" in args.catalogue and n_sims > 1
-
-    loader_cls = candel.field.name2field_loader(args.reconstruction)
-    loader_kwargs = config["io"]["reconstruction_main"][args.reconstruction]
+    loader_cls = candel.field.name2field_loader(reconstruction)
+    loader_kwargs = config["io"]["reconstruction_main"][reconstruction]
     fixed_los_geometry = None
-    does_interpolate = size == 1 or rank != 0
-    if not is_random_multireal and does_interpolate:
+    if not is_random_multireal:
         geometry_loader = loader_cls(nsim=nsims[0], **loader_kwargs)
         fixed_los_geometry = candel.field.prepare_los_geometry(
             geometry_loader, r, RA, dec)
 
-    fout = None
-    if rank == 0:
-        los_file = los_file.replace("<X>", args.reconstruction)
-        if args.smooth_target is not None:
-            los_file = los_file.replace(
-                ".hdf5",
-                f"_smooth_to_{args.smooth_target}.hdf5")
-
-        fprint(f"saving the line of sight data to `{los_file}`.")
-        los_tmp_file = f"{los_file}.tmp"
-        dt = np.dtype(np.float32)
-        dt16 = np.dtype(np.float16)
-        fout = File(los_tmp_file, "w")
+    fprint(f"saving the line of sight data to `{los_file}`.",
+           verbose=verbose)
+    los_tmp_file = f"{los_file}.tmp"
+    dt = np.dtype(np.float32)
+    dt16 = np.dtype(np.float16)
+    with File(los_tmp_file, "w") as fout:
         if is_random_multireal:
             ra_dataset = fout.create_dataset(
                 "RA", shape=(n_sims, n_gal), dtype=dt)
@@ -245,85 +255,24 @@ def main():
         fout.create_dataset(
             "field_indices", data=np.asarray(nsims, dtype=np.int32))
 
-        def write_result(result):
-            i, dens_i, vel_i, RA_i, dec_i = result
-            density_dataset[i] = dens_i
-            velocity_dataset[i] = vel_i
+        for i, nsim in enumerate(nsims):
+            fprint(f"loading `{reconstruction}` for sim {nsim}.",
+                   verbose=verbose)
+            loader = loader_cls(nsim=nsim, **loader_kwargs)
             if is_random_multireal:
-                ra_dataset[i] = RA_i
-                dec_dataset[i] = dec_i
-
-    TAG_WORK = 1
-    TAG_DONE = 2
-    TAG_RESULT = 3
-
-    def compute_result(i):
-        nsim = nsims[i]
-        print(f"[rank {rank}] loading `{args.reconstruction}` "
-              f"for sim {nsim}.")
-        loader = loader_cls(nsim=nsim, **loader_kwargs)
-        if is_random_multireal:
-            RA_i, dec_i = generate_random_sky(n_gal, seed=42 + nsim)
-            los_geometry = None
-        else:
-            RA_i, dec_i = RA, dec
-            los_geometry = fixed_los_geometry
-        dens_i, vel_i = candel.field.interpolate_los_density_velocity(
-            loader, r, RA_i, dec_i, args.smooth_target,
-            los_geometry=los_geometry)
-
-        return (
-            i,
-            dens_i.astype(np.float32),
-            vel_i.astype(np.float16),
-            RA_i.astype(np.float32) if is_random_multireal else None,
-            dec_i.astype(np.float32) if is_random_multireal else None,
-            )
-
-    try:
-        if rank == 0:
-            if size == 1:
-                for i in range(n_sims):
-                    write_result(compute_result(i))
+                RA_i, dec_i = generate_random_sky(n_gal, seed=42 + nsim)
+                los_geometry = None
             else:
-                next_i = 0
-                for worker_rank in range(1, size):
-                    if next_i < n_sims:
-                        comm.send(next_i, dest=worker_rank, tag=TAG_WORK)
-                        next_i += 1
-                    else:
-                        comm.send(None, dest=worker_rank, tag=TAG_DONE)
-
-                status = MPI.Status()
-                for __ in range(n_sims):
-                    result = comm.recv(
-                        source=MPI.ANY_SOURCE, tag=TAG_RESULT,
-                        status=status)
-                    write_result(result)
-                    worker_rank = status.Get_source()
-                    if next_i < n_sims:
-                        comm.send(next_i, dest=worker_rank, tag=TAG_WORK)
-                        next_i += 1
-                    else:
-                        comm.send(None, dest=worker_rank, tag=TAG_DONE)
-
-            fout.close()
-            replace(los_tmp_file, los_file)
-        else:
-            status = MPI.Status()
-            while True:
-                i = comm.recv(source=0, status=status)
-                if status.Get_tag() == TAG_DONE:
-                    break
-                result = compute_result(i)
-                comm.send(result, dest=0, tag=TAG_RESULT)
-    finally:
-        if rank == 0 and fout is not None:
-            fout.close()
-
-    if rank == 0:
-        fprint("all finished.")
-
-
-if __name__ == "__main__":
-    main()
+                RA_i, dec_i = RA, dec
+                los_geometry = fixed_los_geometry
+            dens_i, vel_i = candel.field.interpolate_los_density_velocity(
+                loader, r, RA_i, dec_i, smooth_target=smooth_target,
+                density_smoothing_scale=density_smoothing_scale,
+                verbose=verbose, los_geometry=los_geometry)
+            density_dataset[i] = dens_i.astype(np.float32)
+            velocity_dataset[i] = vel_i.astype(np.float16)
+            if is_random_multireal:
+                ra_dataset[i] = RA_i.astype(np.float32)
+                dec_dataset[i] = dec_i.astype(np.float32)
+    replace(los_tmp_file, los_file)
+    return {"path": los_file, "status": "computed"}

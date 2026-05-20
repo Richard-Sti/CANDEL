@@ -1,18 +1,15 @@
-#!/usr/bin/env python
 """
-Warm field-derived cache files without running inference.
+Helpers for warming field-derived cache files without running inference.
 
-Loading the model-ready data is enough to trigger the cache writers in
-``candel.pvdata``.  This script is intentionally thin: it reuses the same
-config loaders as production runs, so the generated cache keys match inference.
+Loading the model-ready data is enough to trigger cache writers in
+``candel.pvdata``. These helpers reuse the same config loaders as production
+runs, so generated cache keys match inference.
 """
-import argparse
 import json
 import os
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
-from textwrap import dedent
 
 # This is a CPU cache-prep script; set before importing candel/JAX.
 os.environ.setdefault("JAX_PLATFORMS", "cpu")
@@ -34,10 +31,13 @@ from h5py import File  # noqa: E402
 from candel.field.loader import name2field_loader  # noqa: E402
 from candel.pvdata import catalogues as catalogues_mod  # noqa: E402
 from candel.pvdata import field_cache as field_cache_mod  # noqa: E402
+from candel.pvdata import field_products as field_products_mod  # noqa: E402
 from candel.pvdata import frame as frame_mod  # noqa: E402
 from candel.pvdata import los as los_mod  # noqa: E402
 from candel.pvdata import volume_density as volume_density_mod  # noqa: E402
-from candel.pvdata.field_cache import _field_cache_dir_from_config  # noqa: E402
+from candel.pvdata.field_cache import (  # noqa: E402
+    _field_cache_dir_from_config,
+)
 from candel.util import SPEED_OF_LIGHT  # noqa: E402
 
 pvdata_mod = SimpleNamespace(
@@ -55,6 +55,11 @@ pvdata_mod = SimpleNamespace(
         volume_density_mod._h0_volume_supersampling_from_config),
     _h0_volume_resolved_supersample_factor=(
         volume_density_mod._h0_volume_resolved_supersample_factor),
+    density_smoothing_cache_payload=(
+        field_products_mod.density_smoothing_cache_payload),
+    density_smoothing_scale_from_config=(
+        field_products_mod.density_smoothing_scale_from_config),
+    resolve_los_data_path=field_products_mod.resolve_los_data_path,
     _field_loader_native_dx=volume_density_mod._field_loader_native_dx,
     _jsonable=field_cache_mod._jsonable,
     name2field_loader=name2field_loader,
@@ -87,12 +92,6 @@ def _log(message, *, all_ranks=False):
     """Print warmer-level progress without duplicating every rank."""
     if all_ranks or _RANK == 0:
         candel.fprint(message, flush=True)
-
-
-def _bcast(value):
-    if _COMM is None:
-        return value
-    return _COMM.bcast(value, root=0)
 
 
 def _cache_fprint(*args, verbose=True, **kwargs):
@@ -181,13 +180,6 @@ def _looks_like_task_file(path):
     except (OSError, ValueError):
         return False
     return False
-
-
-def _split_values(values):
-    out = []
-    for value in values or []:
-        out.extend(v.strip() for v in value.split(",") if v.strip())
-    return out
 
 
 def _short_path(path):
@@ -307,7 +299,7 @@ def _cache_group_key(config):
         config, f"io/reconstruction_main/{which_los}", None)
     if which_los is None or field_kwargs is None:
         return None
-    los_data_path = _resolve_los_path(los_file, which_los)
+    los_data_path = _resolve_los_path(los_file, which_los, config)
     if los_data_path is None or not _resolve_repo_path(los_data_path).exists():
         return None
     field_indices = _read_h0_field_indices(los_data_path)
@@ -317,6 +309,8 @@ def _cache_group_key(config):
         get_nested(config, "model/density_3d_subsample_seed", 42))
     supersampling = _h0_supersampling_payload(
         config, which_los, field_kwargs, field_indices)
+    density_smoothing = pvdata_mod.density_smoothing_cache_payload(
+        pvdata_mod.density_smoothing_scale_from_config(config))
     return _json_key({
         "kind": "h0_volume_data",
         "cache_dir": _field_cache_dir_from_config(config),
@@ -328,6 +322,7 @@ def _cache_group_key(config):
             config, "model/selection_integral_grid_radius", None),
         "sampling": sampling,
         "supersampling": supersampling,
+        "density_smoothing": density_smoothing,
         "velocity": _h0_velocity_key(config),
     })
 
@@ -447,10 +442,25 @@ def _h0_supersampling_description(config):
         f"target_dx={target_dx:g} Mpc/h")
 
 
-def _resolve_los_path(path, which_los):
-    if path is not None and which_los is not None:
-        path = path.replace("<X>", which_los)
-    return path
+def _h0_density_smoothing_description(config):
+    """Human-readable H0 density smoothing settings."""
+    which_run = get_nested(config, "model/which_run", None)
+    h0_runs = ("CH0", "CCHP", "CCHP_CSP", "EDD_TRGB",
+               "EDD_TRGB_grouped")
+    if which_run not in h0_runs:
+        return ""
+    scale = pvdata_mod.density_smoothing_scale_from_config(config)
+    if scale is None:
+        return ""
+    return f"Gaussian R={scale:g} Mpc/h"
+
+
+def _resolve_los_path(path, which_los, config=None):
+    density_smoothing_scale = (
+        None if config is None else
+        pvdata_mod.density_smoothing_scale_from_config(config))
+    return pvdata_mod.resolve_los_data_path(
+        path, which_los, density_smoothing_scale)
 
 
 def _h0_supersampling_payload(config, which_los, field_kwargs,
@@ -480,7 +490,7 @@ def _h0_cache_file_status(config):
         return None, None
 
     which_los, los_file = _h0_los_config(config)
-    los_data_path = _resolve_los_path(los_file, which_los)
+    los_data_path = _resolve_los_path(los_file, which_los, config)
     if which_los is None or los_data_path is None:
         return None, "no LOS"
     los_read_path = _resolve_repo_path(los_data_path)
@@ -524,7 +534,12 @@ def _h0_cache_file_status(config):
     supersampling = _h0_supersampling_payload(
         config, which_los, field_kwargs, field_indices)
     base_payload.update(supersampling)
-    density_payload = {**base_payload, "load_velocity": False}
+    density_payload = {
+        **base_payload,
+        **pvdata_mod.density_smoothing_cache_payload(
+            pvdata_mod.density_smoothing_scale_from_config(config)),
+        "load_velocity": False,
+    }
     velocity_payload = {**base_payload, "load_velocity": True}
     cache_dir = _field_cache_dir_from_config(config)
     density_cache_path = Path(pvdata_mod._field_cache_path(
@@ -628,6 +643,7 @@ def _variant_info(config_path, selection=None):
         "cache_dir": cache_dir,
         "cache_group": _cache_group_key(config),
         "supersampling": _h0_supersampling_description(config),
+        "smoothing": _h0_density_smoothing_description(config),
         "note": "",
     }
 
@@ -717,27 +733,6 @@ def _plan_variants(configs, selections):
     return variants
 
 
-def _read_requested_variants(args):
-    configs = []
-    inputs = [_resolve_cli_path(p) for p in args.inputs]
-    task_file = args.task_file
-    if task_file is None and inputs and _looks_like_task_file(inputs[0]):
-        task_file = inputs.pop(0)
-
-    if task_file is not None:
-        task_file = _resolve_cli_path(task_file)
-        configs.extend(_read_task_file(task_file, args.tasks))
-    configs.extend(inputs)
-
-    if not configs:
-        raise ValueError("provide a task file or at least one config")
-    for config_path in configs:
-        if not config_path.exists():
-            raise FileNotFoundError(config_path)
-
-    return _plan_variants(configs, _split_values(args.selection))
-
-
 def _print_plan(variants):
     if _RANK != 0:
         return
@@ -752,6 +747,7 @@ def _print_plan(variants):
             "selection": variant["selection"],
             "action": variant["action"],
             "supersampling": variant["supersampling"],
+            "smoothing": variant["smoothing"],
             "note": variant["note"],
             "config": variant["config"],
         })
@@ -759,6 +755,7 @@ def _print_plan(variants):
             rows,
             [("#", "#"), ("run", "run"), ("selection", "selection"),
              ("action", "action"), ("supersampling", "supersampling"),
+             ("smoothing", "smoothing"),
              ("note", "note"), ("config", "config")]
     ).splitlines():
         _log(line)
@@ -780,7 +777,8 @@ def _write_selection_override(config_path, selection):
     config = candel.load_config(config_path, replace_los_prior=False)
     config.setdefault("model", {})["which_selection"] = selection
     tmp = tempfile.NamedTemporaryFile(
-        mode="wb", prefix="warm_field_cache_", suffix=".toml", delete=False)
+        mode="wb", prefix="field_input_cache_", suffix=".toml",
+        delete=False)
     with tmp:
         tomli_w.dump(config, tmp)
     return Path(tmp.name)
@@ -810,12 +808,11 @@ def _load_for_cache(config_path):
 
     run_config_path = config_path
     tmp_config_path = None
-    if (which_run in ("CH0", "CCHP", "CCHP_CSP", "EDD_TRGB",
-                     "EDD_TRGB_grouped")
-            and "field_indices" in config.get("io", {})):
+    h0_runs = ("CH0", "CCHP", "CCHP_CSP", "EDD_TRGB", "EDD_TRGB_grouped")
+    if which_run in h0_runs and "field_indices" in config.get("io", {}):
         config["io"].pop("field_indices", None)
         tmp = tempfile.NamedTemporaryFile(
-            mode="wb", prefix="warm_field_cache_", suffix=".toml",
+            mode="wb", prefix="field_input_cache_", suffix=".toml",
             delete=False)
         with tmp:
             tomli_w.dump(config, tmp)
@@ -850,88 +847,3 @@ def _load_for_cache(config_path):
     summary = _summarise_loaded(loaded)
     _log(summary)
     return summary
-
-
-def main():
-    _init_mpi_info()
-    _install_quiet_reader_logs()
-
-    parser = argparse.ArgumentParser(
-        description="Generate field cache files by loading CANDEL configs.",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=dedent("""\
-            examples:
-              warm_field_cache.py scripts/runs/tasks_CH0_main.txt
-              warm_field_cache.py scripts/runs/tasks_CH0_main.txt --tasks 12-23
-              warm_field_cache.py scripts/runs/configs/config_CH0.toml \
---selection SN_magnitude,redshift
-            """))
-    parser.add_argument(
-        "inputs", nargs="*", type=Path,
-        help=("Task file as first argument, or config TOML files to warm."))
-    parser.add_argument(
-        "--task-file", type=Path,
-        help=argparse.SUPPRESS)
-    parser.add_argument(
-        "--tasks", default=None,
-        help="Comma-separated task ids/ranges from the task file, e.g. 3,5-8.")
-    parser.add_argument(
-        "--selection", action="append", default=[],
-        help=("Override model.which_selection for H0 configs. May be repeated "
-              "or comma-separated, e.g. --selection SN_magnitude,redshift."))
-    parser.add_argument(
-        "--plan-only", action="store_true",
-        help="Print the cache warmup plan and exit without loading data.")
-    args = parser.parse_args()
-
-    if _RANK == 0:
-        try:
-            variants = _read_requested_variants(args)
-            error = None
-        except Exception as exc:
-            variants = []
-            error = str(exc)
-    else:
-        variants = []
-        error = None
-    error, variants = _bcast((error, variants))
-    if error is not None:
-        parser.error(error)
-
-    _print_plan(variants)
-    variants = _runnable_variants(variants)
-
-    if args.plan_only:
-        if not variants:
-            raise SystemExit(3)
-        return
-
-    if not variants:
-        _log("")
-        _log("Nothing to warm.")
-        return
-
-    for i, variant in enumerate(variants, 1):
-        config_path = variant["config_path"]
-        selection = variant["selection_override"]
-        run_config = config_path
-        label = str(config_path)
-        if selection is not None:
-            label = f"{label} [which_selection={selection}]"
-            run_config = _write_selection_override(config_path, selection)
-
-        _log("")
-        _log(f"[{i}/{len(variants)}] warming {variant['run']} "
-             f"selection={variant['selection']} from `{label}`.")
-        if variant["supersampling"]:
-            _log(f"  supersampling: {variant['supersampling']}")
-        try:
-            summary = _load_for_cache(str(run_config))
-            _log(f"[{i}/{len(variants)}] done: {summary}")
-        finally:
-            if selection is not None:
-                run_config.unlink(missing_ok=True)
-
-
-if __name__ == "__main__":
-    main()

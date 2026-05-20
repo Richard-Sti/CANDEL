@@ -60,8 +60,8 @@ def _h0_volume_missing_cache_error(label, density_path,
     return RuntimeError(
         f"missing required warmed {label} cache. Tried "
         + "; ".join(tried)
-        + ". Run scripts/preprocess/warm_field_cache.py for this task "
-          "set before inference.")
+        + ". Run scripts/preprocess/prepare_field_inputs.py --products "
+          "cache for this task set before inference.")
 
 
 def _density_unit_normalization(source):
