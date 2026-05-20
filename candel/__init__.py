@@ -47,7 +47,7 @@ from .inference.evidence import (                                               
 from .inference.inference import (                                              # noqa
     find_initial_point,                                                         # noqa
     run_pv_inference,                                                           # noqa
-    run_H0_inference,                                                          # noqa
+    run_H0_inference,                                                           # noqa
     save_mcmc_samples,                                                          # noqa
     get_log_density,                                                            # noqa
     )
@@ -56,10 +56,6 @@ from .redshift2real import Redshift2Real  # noqa
 
 from .util import (                                                             # noqa
     SPEED_OF_LIGHT,                                                             # noqa
-    plot_corner,                                                                # noqa
-    plot_corner_getdist,                                                        # noqa
-    plot_corner_from_hdf5,                                                      # noqa
-    plot_radial_profiles,                                                       # noqa
     radec_to_cartesian,                                                         # noqa
     cartesian_to_radec,                                                         # noqa
     radec_to_galactic,                                                          # noqa
