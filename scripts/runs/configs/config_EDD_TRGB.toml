@@ -62,6 +62,9 @@ dr_max_sel = 0.375
 selection_integral_geometry = "sphere"
 selection_integral_grid_radius = 50.0
 density_3d_subsample_fraction = 1.0
+# Optional Gaussian smoothing scale in Mpc/h for reconstruction fields.
+# Applies consistently to LOS products and 3D field caches; 0 disables it.
+density_3d_smoothing_scale = 0.0
 # Optional inner-region supersampling for the 3D selection integral.
 # target_dx=0 or radius=0 disables inner-region supersampling.
 selection_integral_supersample_radius = 15.0

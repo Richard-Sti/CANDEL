@@ -234,9 +234,10 @@ def generate_dynamic_tag(config, base_tag="default"):
     if get_nested(config, "pv_model/kind", "").startswith("precomputed_los"):
         parts.append(get_nested(config, "pv_model/galaxy_bias", ""))
 
-    smooth_target = get_nested(config, "pv_model/smooth_target", None)
-    if _is_active(smooth_target):
-        parts.append(f"smooth{smooth_target}")
+    field_smoothing = get_nested(
+        config, "model/density_3d_smoothing_scale", None)
+    if _is_active(field_smoothing) and float(field_smoothing) != 0.0:
+        parts.append(f"smoothR{_tag_number(field_smoothing)}")
 
     if model_name and "TFR" in model_name:
         if not get_nested(config, "model/marginalize_eta", True):
