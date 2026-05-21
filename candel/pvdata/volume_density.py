@@ -257,8 +257,6 @@ def _field_loader_native_dx(loader):
     boxsize = float(loader.boxsize)
     if hasattr(loader, "ngrid"):
         return boxsize / int(loader.ngrid)
-    if hasattr(loader, "effective_resolution"):
-        return float(loader.effective_resolution)
 
     for path_attr, keys in (
             ("fname", ("density", "overdensity")),

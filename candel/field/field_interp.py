@@ -299,14 +299,10 @@ def prepare_los_geometry(field_loader, r, RA, dec):
 
 
 def _get_grid_params(field_loader, ngrid):
-    """Return grid geometry and smoothing metadata."""
+    """Return grid geometry from the loaded Cartesian field."""
     cellsize = np.float32(field_loader.boxsize / ngrid)
     grid_min = np.float32(0.5 * cellsize)
-    try:
-        voxel_size = field_loader.effective_resolution
-    except AttributeError:
-        voxel_size = cellsize
-    return cellsize, grid_min, voxel_size
+    return cellsize, grid_min
 
 
 def _target_smoothing_to_kernel_scale(smooth_target, voxel_size):
@@ -350,7 +346,7 @@ def interpolate_los_density_velocity(field_loader, r, RA, dec,
     fprint("interpolating the density field...", verbose=verbose)
     density = field_loader.load_density().astype(np.float32, copy=False)
     ngrid = density.shape[0]
-    cellsize, grid_min, voxel_size = _get_grid_params(field_loader, ngrid)
+    cellsize, grid_min = _get_grid_params(field_loader, ngrid)
 
     rho_kernel_scale = None
     velocity_smooth_scale = None
@@ -366,7 +362,7 @@ def interpolate_los_density_velocity(field_loader, r, RA, dec,
 
     if smooth_target is not None:
         smooth_scale = _target_smoothing_to_kernel_scale(
-            smooth_target, voxel_size)
+            smooth_target, cellsize)
         rho_kernel_scale = smooth_scale
         velocity_smooth_scale = smooth_scale
         fprint(f"applying Gaussian smoothing with scale {smooth_scale:.1f} "
@@ -379,10 +375,10 @@ def interpolate_los_density_velocity(field_loader, r, RA, dec,
             raise ValueError(
                 "`field_smoothing_scale` must be finite and non-negative.")
         if field_smoothing_scale > 0:
-            if field_smoothing_scale <= voxel_size:
+            if field_smoothing_scale <= cellsize:
                 raise ValueError(
                     "`field_smoothing_scale` must exceed the field voxel "
-                    f"size {voxel_size:g} Mpc/h; got "
+                    f"size {cellsize:g} Mpc/h; got "
                     f"{field_smoothing_scale:g} Mpc/h.")
             rho_kernel_scale = float(field_smoothing_scale)
             velocity_smooth_scale = float(field_smoothing_scale)
