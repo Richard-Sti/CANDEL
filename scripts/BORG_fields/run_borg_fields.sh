@@ -65,9 +65,11 @@ Slice plots are optional diagnostics; pass --plots to write them to
 PRODUCT_PARENT/plots.
 BORG chain-specific defaults are read from local_config.toml.
 For --steps runs, packed products are written to
-BORG_FIELD_OUTPUT_DIR/mcmc_<schedule-step>.hdf5.
+BORG_FIELD_OUTPUT_DIR/<MAS>/mcmc_<schedule-step>.hdf5.
 For direct MCMC runs, the default packed product is
-BORG_FIELD_OUTPUT_DIR/mcmc_<iteration>.hdf5 unless --single-output is passed.
+BORG_FIELD_OUTPUT_DIR/<MAS>/mcmc_<iteration>.hdf5 unless --single-output is
+passed. Pass multiple MAS values, e.g. --mas cic pcs, to write multiple
+products from one BORG run.
 For --steps runs, one requested sample is also run in RSD mode for validation
 against /scalars/BORG_final_density, including a non-fatal Pylians
 cross-correlation check.
@@ -356,7 +358,7 @@ run_schedule_steps() {
         validation_args+=("--nprocs" "$2")
         shift 2
         ;;
-      --params|--state|--output-root|--borg-forward|--mpirun|--mpi-launcher|--nprocs|--omp-threads|--plot-python|--pm-nsteps)
+      --params|--state|--output-root|--borg-forward|--mpirun|--mpi-launcher|--nprocs|--omp-threads|--plot-python|--pm-nsteps|--output-index)
         run_args+=("$1" "$2")
         validation_args+=("$1" "$2")
         shift 2
@@ -402,7 +404,7 @@ run_schedule_steps() {
     echo "Running schedule step ${step}: ${mcmc}"
     step_run_args=("${run_args[@]}")
     if [[ "$explicit_single_output" != "true" ]]; then
-      step_run_args+=("--single-output" "${field_output_dir}/mcmc_${step}.hdf5")
+      step_run_args+=("--output-index" "$step")
     fi
     if ! "$SCRIPT_DIR/run_borg_fields.sh" -locally "$mcmc" "${step_run_args[@]}"; then
       status=1

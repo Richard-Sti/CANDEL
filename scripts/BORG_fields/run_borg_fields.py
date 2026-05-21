@@ -31,6 +31,7 @@ DEFAULT_PLOT_SCRIPT = Path(__file__).with_name("plot_borg_product_slices.py")
 DEFAULT_RSD_COMPARISON_PLOT_SCRIPT = Path(__file__).with_name("plot_rsd_comparison.py")
 DEFAULT_RSD_CROSS_SCRIPT = Path(__file__).with_name("compute_rsd_pylians_cross_correlation.py")
 DEFAULT_PM_NSTEPS = 10
+SUPPORTED_MAS = ("sph", "cic", "pcs", "cic-borg")
 
 
 def add_common_args(parser: argparse.ArgumentParser) -> None:
@@ -90,6 +91,11 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     run.add_argument(
+        "--output-index",
+        type=int,
+        help=argparse.SUPPRESS,
+    )
+    run.add_argument(
         "--field-output-dir",
         type=Path,
         default=DEFAULT_FIELD_OUTPUT_DIR,
@@ -111,11 +117,12 @@ def parse_args() -> argparse.Namespace:
     )
     run.add_argument(
         "--mas",
-        choices=("sph", "cic", "pcs", "cic-borg"),
-        default="cic",
+        nargs="+",
+        default=["cic"],
         help=(
             "Mass-assignment scheme for final density/velocity fields: "
-            "sph, cic, pcs, or cic-borg. Default: cic."
+            "sph, cic, pcs, or cic-borg. Pass multiple values to write "
+            "multiple products. Default: cic."
         ),
     )
     run.add_argument("--cosmotool-sph", type=Path, default=DEFAULT_COSMOTOOL_SPH)
@@ -353,14 +360,18 @@ def borg_forward_writes_particles(args: argparse.Namespace) -> bool:
         return True
     if not getattr(args, "sph_fields", False):
         return True
-    return getattr(args, "keep_particles", False) or getattr(args, "mas", None) in ("sph", "cic", "pcs")
+    mas_values = getattr(args, "mas", [])
+    return (
+        getattr(args, "keep_particles", False)
+        or any(mas in ("sph", "cic", "pcs") for mas in mas_values)
+    )
 
 
 def borg_forward_writes_vfield(args: argparse.Namespace) -> bool:
     return (
         getattr(args, "command", None) == "run"
         and getattr(args, "sph_fields", False)
-        and getattr(args, "mas", None) == "cic-borg"
+        and "cic-borg" in getattr(args, "mas", [])
     )
 
 
@@ -370,11 +381,48 @@ def launcher(args: argparse.Namespace) -> list[str]:
     return shlex.split(args.mpi_launcher.format(nprocs=args.nprocs))
 
 
-def single_output_path(mcmc: Path, args: argparse.Namespace) -> Path:
-    iteration = iteration_from_mcmc(mcmc)
+def normalise_mas_value(mas: str) -> str:
+    key = str(mas).strip().replace("_", "-").lower()
+    if key not in SUPPORTED_MAS:
+        raise ValueError(
+            f"Unknown mass-assignment scheme {mas!r}; expected one of "
+            f"{', '.join(SUPPORTED_MAS)}.")
+    return key
+
+
+def parse_mas_values(values: list[str]) -> list[str]:
+    parsed = []
+    for value in values:
+        parsed.extend(item for item in str(value).split(",") if item)
+    normalised = [normalise_mas_value(value) for value in parsed]
+    if not normalised:
+        raise ValueError("--mas must name at least one mass-assignment scheme.")
+    return normalised
+
+
+def mas_output_directory(mas: str) -> str:
+    folders = {
+        "sph": "SPH",
+        "cic": "CIC",
+        "pcs": "PCS",
+        "cic-borg": "CIC_BORG",
+    }
+    return folders[normalise_mas_value(mas)]
+
+
+def single_output_path(mcmc: Path, args: argparse.Namespace, mas: str) -> Path:
+    iteration = (
+        args.output_index
+        if getattr(args, "output_index", None) is not None
+        else iteration_from_mcmc(mcmc)
+    )
     if getattr(args, "single_output", None) is not None:
         return args.single_output.expanduser().resolve()
-    return args.field_output_dir.expanduser().resolve() / f"mcmc_{iteration}.hdf5"
+    return (
+        args.field_output_dir.expanduser().resolve()
+        / mas_output_directory(mas)
+        / f"mcmc_{iteration}.hdf5"
+    )
 
 
 def run_forward(mcmc: Path, args: argparse.Namespace, do_rsd: bool) -> tuple[Path, int, Path]:
@@ -1120,17 +1168,17 @@ def slim_field_product(product: Path, group_name: str, mas: str) -> None:
     print(f"Slimmed final product to: {product}:/overdensity, /velocity, /vx, /vy, and /vz", flush=True)
 
 
-def run_gridded_fields(product: Path, group_name: str, args: argparse.Namespace) -> None:
-    if args.mas == "sph":
+def run_gridded_fields(product: Path, group_name: str, args: argparse.Namespace, mas: str) -> None:
+    if mas == "sph":
         run_sph_fields(product, group_name, args)
-    elif args.mas == "cic":
+    elif mas == "cic":
         run_cic_fields(product, group_name, args)
-    elif args.mas == "pcs":
-        run_pylians_mas_fields(product, group_name, args, args.mas)
-    elif args.mas == "cic-borg":
+    elif mas == "pcs":
+        run_pylians_mas_fields(product, group_name, args, mas)
+    elif mas == "cic-borg":
         run_borg_cic_fields(product, group_name, args)
     else:
-        raise ValueError(f"Unknown mass-assignment scheme: {args.mas}")
+        raise ValueError(f"Unknown mass-assignment scheme: {mas}")
 
 
 def validate_split_outputs(
@@ -1361,7 +1409,7 @@ def choose_mcmc_files(chain_dir: Path, glob: str, samples: int, seed: int) -> li
     return rng.sample(candidates, min(samples, len(candidates)))
 
 
-def write_product_plots(product: Path, groups: list[str], args: argparse.Namespace) -> list[Path]:
+def write_product_plots(product: Path, groups: list[str], args: argparse.Namespace, mas: str) -> list[Path]:
     plot_python = require_file_preserve_symlink(args.plot_python, "plot Python")
     plot_script = require_file(args.plot_script, "plot script")
     output_dir = product.parent / "plots"
@@ -1378,7 +1426,7 @@ def write_product_plots(product: Path, groups: list[str], args: argparse.Namespa
         cmd.extend(["--groups", *groups])
     if args.plot_slice_index is not None:
         cmd.extend(["--slice-index", str(args.plot_slice_index)])
-    expected = [output_dir / f"{product.stem}_{group}_{args.mas}_field_slices.png" for group in groups]
+    expected = [output_dir / f"{product.stem}_{group}_{mas}_field_slices.png" for group in groups]
 
     print("Writing field slice plots:", flush=True)
     print(" ".join(cmd), flush=True)
@@ -1411,6 +1459,7 @@ def check_plot_environment(args: argparse.Namespace) -> None:
 def print_run_summary(
     mcmc: Path,
     product: Path | None,
+    mas: str | None,
     modes: list[str],
     split_dirs: list[Path],
     plot_paths: list[Path],
@@ -1423,12 +1472,14 @@ def print_run_summary(
     print(f"  Split outputs: {', '.join(str(path) for path in split_dirs)}", flush=True)
     if product is not None:
         print(f"  Single HDF5 product: {product}", flush=True)
+        if mas is not None:
+            print(f"  MAS: {mas} ({mas_output_directory(mas)})", flush=True)
         if args.sph_fields:
             if args.keep_particles:
                 field_paths = ", ".join(
-                    f"/{group}/{args.mas}/overdensity, /{group}/{args.mas}/velocity, "
-                    f"/{group}/{args.mas}/vx, /{group}/{args.mas}/vy, "
-                    f"and /{group}/{args.mas}/vz"
+                    f"/{group}/{mas}/overdensity, /{group}/{mas}/velocity, "
+                    f"/{group}/{mas}/vx, /{group}/{mas}/vy, "
+                    f"and /{group}/{mas}/vz"
                     for group in modes
                 )
                 print(f"  Gridded fields: {field_paths}", flush=True)
@@ -1448,11 +1499,21 @@ def print_run_summary(
 
 def main() -> None:
     args = parse_args()
+    if getattr(args, "command", None) == "run":
+        args.mas = parse_mas_values(args.mas)
+        if len(args.mas) > 1 and args.single_output is not None:
+            raise ValueError("--single-output can only be used with one --mas value.")
     if args.command == "run":
         mcmc = require_file(args.mcmc, "MCMC file")
-        product = single_output_path(mcmc, args)
-        if args.sph_fields and args.mas in ("cic", "pcs"):
-            check_pylians_mas_library(args.mas)
+        product_paths = [single_output_path(mcmc, args, mas) for mas in args.mas]
+        print(f"Requested MAS: {', '.join(args.mas)}", flush=True)
+        if not args.no_single_output:
+            for mas, product in zip(args.mas, product_paths):
+                print(f"Default {mas} product: {product}", flush=True)
+        if args.sph_fields:
+            for mas in args.mas:
+                if mas in ("cic", "pcs"):
+                    check_pylians_mas_library(mas)
         if args.plots and not args.no_single_output and not args.dry_run:
             check_plot_environment(args)
         output_pattern, iteration, out_dir = run_forward(mcmc, args, do_rsd=args.rsd)
@@ -1460,71 +1521,78 @@ def main() -> None:
             if args.include_rsd and not args.rsd:
                 run_forward(mcmc, args, do_rsd=True)
             if not args.no_single_output:
-                print(f"Single HDF5 product: {product}", flush=True)
-                if args.plots:
-                    print(f"Plot directory: {product.parent / 'plots'}", flush=True)
+                for mas, product in zip(args.mas, product_paths):
+                    print(f"Single HDF5 product: {product}", flush=True)
+                    if args.plots:
+                        print(f"Plot directory: {product.parent / 'plots'}", flush=True)
+                    if args.sph_fields:
+                        group_name = "rsd" if args.rsd else "realspace"
+                        if args.keep_particles:
+                            print(
+                                f"{mas.upper()} fields would be written under: "
+                                f"{product}:/{group_name}/{mas}",
+                                flush=True,
+                            )
+                        else:
+                            print(
+                                f"{mas.upper()} fields would be written to: "
+                                f"{product}:/overdensity, /velocity, /vx, /vy, and /vz",
+                                flush=True,
+                            )
+                        if mas == "sph":
+                            print(f"SPH OpenMP threads: {args.sph_threads}", flush=True)
                 if args.sph_fields:
-                    group_name = "rsd" if args.rsd else "realspace"
                     if args.keep_particles:
-                        print(
-                            f"{args.mas.upper()} fields would be written under: "
-                            f"{product}:/{group_name}/{args.mas}",
-                            flush=True,
-                        )
+                        print("Particle datasets would be kept; final products would not be slimmed.", flush=True)
                     else:
-                        print(
-                            f"{args.mas.upper()} fields would be written to: "
-                            f"{product}:/overdensity, /velocity, /vx, /vy, and /vz",
-                            flush=True,
-                        )
-                    if args.mas == "sph":
-                        print(f"SPH OpenMP threads: {args.sph_threads}", flush=True)
-                    if args.keep_particles:
-                        print("Particle datasets would be kept; final product would not be slimmed.", flush=True)
-                    else:
-                        print("Final product will contain only the generic field datasets.", flush=True)
+                        print("Final products will contain only the generic field datasets.", flush=True)
             return
         if not args.dry_run and not args.no_single_output:
             group_name = "rsd" if args.rsd else "realspace"
             plotted_groups = [group_name]
             split_dirs = [out_dir]
-            pack_split_outputs(
-                output_pattern,
-                iteration,
-                args.nprocs,
-                product,
-                group_name,
-                mcmc,
-            )
-            if args.sph_fields:
-                run_gridded_fields(product, group_name, args)
-                if not args.keep_particles:
-                    remove_particle_datasets(product, group_name)
             if args.include_rsd and not args.rsd:
                 rsd_pattern, rsd_iteration, rsd_out_dir = run_forward(mcmc, args, do_rsd=True)
                 split_dirs.append(rsd_out_dir)
-                pack_split_outputs(rsd_pattern, rsd_iteration, args.nprocs, product, "rsd", mcmc)
-                if args.sph_fields:
-                    run_gridded_fields(product, "rsd", args)
-                    if not args.keep_particles:
-                        remove_particle_datasets(product, "rsd")
                 plotted_groups.append("rsd")
-            plot_paths: list[Path] = []
-            if args.plots:
-                plot_paths = write_product_plots(product, plotted_groups, args)
-            if args.sph_fields:
-                if args.keep_particles:
-                    print(f"Kept particle datasets in full product: {product}", flush=True)
-                else:
-                    if len(plotted_groups) != 1:
-                        raise ValueError("Slim final products support exactly one gridded mode.")
-                    slim_field_product(product, plotted_groups[0], args.mas)
-            print(f"Single HDF5 product: {product}", flush=True)
-            print_run_summary(mcmc, product, plotted_groups, split_dirs, plot_paths, args)
-            cleanup_forward_workdirs(split_dirs, product)
+            else:
+                rsd_pattern = rsd_iteration = None
+
+            for mas, product in zip(args.mas, product_paths):
+                pack_split_outputs(
+                    output_pattern,
+                    iteration,
+                    args.nprocs,
+                    product,
+                    group_name,
+                    mcmc,
+                )
+                if args.sph_fields:
+                    run_gridded_fields(product, group_name, args, mas)
+                    if not args.keep_particles:
+                        remove_particle_datasets(product, group_name)
+                if rsd_pattern is not None:
+                    pack_split_outputs(rsd_pattern, rsd_iteration, args.nprocs, product, "rsd", mcmc)
+                    if args.sph_fields:
+                        run_gridded_fields(product, "rsd", args, mas)
+                        if not args.keep_particles:
+                            remove_particle_datasets(product, "rsd")
+                plot_paths: list[Path] = []
+                if args.plots:
+                    plot_paths = write_product_plots(product, plotted_groups, args, mas)
+                if args.sph_fields:
+                    if args.keep_particles:
+                        print(f"Kept particle datasets in full product: {product}", flush=True)
+                    else:
+                        if len(plotted_groups) != 1:
+                            raise ValueError("Slim final products support exactly one gridded mode.")
+                        slim_field_product(product, plotted_groups[0], mas)
+                print(f"Single HDF5 product: {product}", flush=True)
+                print_run_summary(mcmc, product, mas, plotted_groups, split_dirs, plot_paths, args)
+            cleanup_forward_workdirs(split_dirs, product_paths[0])
         elif not args.dry_run:
             mode = "rsd" if args.rsd else "realspace"
-            print_run_summary(mcmc, None, [mode], [out_dir], [], args)
+            print_run_summary(mcmc, None, None, [mode], [out_dir], [], args)
         return
 
     mcmcs = choose_mcmc_files(args.chain_dir, args.glob, args.samples, args.seed)
