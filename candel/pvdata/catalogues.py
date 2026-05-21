@@ -735,7 +735,7 @@ def load_SH0ES_from_config(config_path):
         if config["io"]["load_rand_los"]:
             rand_los_data_path = resolve_los_data_path(
                 config["io"]["los_file_random"], reconstruction,
-                field_smoothing_scale)
+                field_smoothing_scale, config=config)
         else:
             rand_los_data_path = None
 
@@ -944,7 +944,7 @@ def load_CCHP_from_config(config_path, ra_dec_only=False):
     if get_nested(config, "io/load_rand_los", False):
         rand_file = get_nested(config, "io/los_file_random", None)
         rand_los_data_path = resolve_los_data_path(
-            rand_file, reconstruction, field_smoothing_scale)
+            rand_file, reconstruction, field_smoothing_scale, config=config)
 
     if los_data_path is not None:
         los_data_path = resolve_los_cache_request(
@@ -1578,7 +1578,7 @@ def _load_EDD_TRGB_from_config_common(config_path, config_key, loader):
     if get_nested(config, "io/load_rand_los", False):
         rand_los_data_path = resolve_los_data_path(
             get_nested(config, "io/los_file_random", None),
-            reconstruction, field_smoothing_scale)
+            reconstruction, field_smoothing_scale, config=config)
 
     data, mask = loader(root, zcmb_min=zcmb_min, zcmb_max=zcmb_max,
                         b_min=b_min, return_mask=True,
@@ -1754,7 +1754,7 @@ def load_EDD_2MTF_from_config(config_path):
     if get_nested(config, "io/load_rand_los", False):
         rand_file = get_nested(config, "io/los_file_random", None)
         rand_los_data_path = resolve_los_data_path(
-            rand_file, reconstruction, field_smoothing_scale)
+            rand_file, reconstruction, field_smoothing_scale, config=config)
 
     data, mask = load_EDD_2MTF(
         root, zcmb_min=zcmb_min, zcmb_max=zcmb_max, b_min=b_min,

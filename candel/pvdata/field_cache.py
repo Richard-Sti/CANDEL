@@ -252,6 +252,9 @@ def _los_field_cache_filename(payload):
     radial_grid = payload.get("radial_grid", None)
     if radial_grid is not None:
         parts.append(_radial_grid_cache_tag(radial_grid))
+    which_MAS = payload.get("which_MAS", None)
+    if which_MAS is not None:
+        parts.append(f"mas-{_field_cache_slug(which_MAS, max_len=20)}")
     field_smoothing = payload.get("field_smoothing_scale", None)
     if field_smoothing is not None:
         parts.append(_field_smoothing_cache_tag(field_smoothing))

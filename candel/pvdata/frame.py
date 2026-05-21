@@ -218,7 +218,9 @@ class PVDataFrame:
         """Attach compact cached PV volume-normalizer arrays."""
         mode = _volume_density_mode(galaxy_bias)
         rho_fields = np.asarray(prepared["rho_fields"], dtype=np.float32)
-        if mode == "log_rho":
+        if mode == "uniform":
+            density_fields = np.zeros_like(rho_fields, dtype=np.float32)
+        elif mode == "log_rho":
             density_fields = np.log(rho_fields).astype(np.float32)
         else:
             density_fields = (rho_fields - 1.0).astype(np.float32)

@@ -30,6 +30,7 @@ from jax import numpy as jnp
 
 from ..field.field_interp import apply_gaussian_smoothing
 from ..field.loader import field_allows_raw_product_reads, name2field_loader
+from ..model.pv_utils import galaxy_bias_density_mode
 from ..util import fprint, get_nested
 from .field_cache import (_ArrayShapeOnly, _VOLUME_FIELD_CACHE_PREFIX,
                           _field_cache_dir_from_config,
@@ -690,7 +691,9 @@ def _h0_density_fields_from_rho(rho_fields, mode, copy=True):
         if not rho_fields.flags.writeable:
             rho_fields = np.array(rho_fields, dtype=np.float32, copy=True)
 
-    if mode == "log_rho":
+    if mode == "uniform":
+        rho_fields.fill(0.0)
+    elif mode == "log_rho":
         np.log(rho_fields, out=rho_fields)
     else:
         np.subtract(rho_fields, 1.0, out=rho_fields)
@@ -2156,6 +2159,4 @@ def _volume_density_geometry(shape, observer_pos, dx):
 
 def _volume_density_mode(galaxy_bias):
     """Minimal density representation needed by the 3D bias normalizer."""
-    if galaxy_bias in ("powerlaw", "double_powerlaw", "manticore_stdp"):
-        return "log_rho"
-    return "delta"
+    return galaxy_bias_density_mode(galaxy_bias)

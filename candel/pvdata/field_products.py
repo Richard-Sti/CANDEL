@@ -18,7 +18,7 @@ from os.path import splitext
 
 import numpy as np
 
-from ..field import field_allows_raw_product_reads
+from ..field import field_allows_raw_product_reads, field_mas_directory
 from ..util import fprint, get_nested
 from .field_cache import (_field_cache_dir_from_config,
                           _field_cache_enabled_from_config, _jsonable,
@@ -71,12 +71,31 @@ def field_smoothed_los_path(path, field_smoothing_scale):
     return f"{root}_{tag}{ext}"
 
 
-def resolve_los_data_path(path, reconstruction=None, field_smoothing_scale=None):
+def reconstruction_mas_from_config(config, reconstruction):
+    """Return the configured MAS label for reconstructions that need one."""
+    if config is None or reconstruction != "ManticoreLocalCOLA":
+        return None
+    recon_cfg = get_nested(
+        config, f"io/reconstruction_main/{reconstruction}", {}) or {}
+    return field_mas_directory(recon_cfg.get("which_MAS", "CIC"))
+
+
+def reconstruction_los_label(config, reconstruction):
+    """Return the reconstruction label used in LOS filenames."""
+    mas = reconstruction_mas_from_config(config, reconstruction)
+    if mas is None:
+        return reconstruction
+    return f"{reconstruction}_{mas}"
+
+
+def resolve_los_data_path(path, reconstruction=None, field_smoothing_scale=None,
+                          config=None):
     """Resolve ``<X>`` and optional field-smoothing LOS filename suffix."""
     if path is None:
         return None
     if reconstruction is not None:
-        path = path.replace("<X>", reconstruction)
+        path = path.replace("<X>", reconstruction_los_label(
+            config, reconstruction))
     return field_smoothed_los_path(path, field_smoothing_scale)
 
 
@@ -270,10 +289,14 @@ def los_field_cache_path(config, catalogue, reconstruction, los_template,
         "catalogue": catalogue,
         "reconstruction": reconstruction,
         "los_template": resolve_los_data_path(
-            los_template, reconstruction, field_smoothing_scale),
+            los_template, reconstruction, field_smoothing_scale,
+            config=config),
         "field_indices": _jsonable(field_indices),
         **field_smoothing_cache_payload(field_smoothing_scale),
     }
+    mas = reconstruction_mas_from_config(config, reconstruction)
+    if mas is not None:
+        payload["which_MAS"] = mas
     if radial_grid is not None:
         payload["radial_grid"] = _jsonable(radial_grid)
     return _los_field_cache_path(_field_cache_dir_from_config(config),
@@ -305,7 +328,7 @@ def resolve_or_build_los_data_path(
         field_indices=None, verbose=True):
     """Resolve a LOS path, deferring raw-readable field cache builds."""
     legacy_path = resolve_los_data_path(
-        los_template, reconstruction, field_smoothing_scale)
+        los_template, reconstruction, field_smoothing_scale, config=config)
     if (config is None or reconstruction is None or los_template is None
             or not _field_cache_enabled_from_config(config)):
         return legacy_path

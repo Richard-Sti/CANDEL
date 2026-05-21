@@ -68,6 +68,25 @@ def available_mcmc_field_indices(fpath_root, glob="mcmc_*.hdf5",
     return sorted(indices)
 
 
+def field_mas_directory(which_MAS=None):
+    """Return the canonical on-disk folder for a field MAS choice."""
+    if which_MAS is None:
+        return "CIC"
+    key = str(which_MAS).strip().replace("_", "-").lower()
+    folders = {
+        "cic": "CIC",
+        "pcs": "PCS",
+        "sph": "SPH",
+        "cic-borg": "CIC_BORG",
+    }
+    try:
+        return folders[key]
+    except KeyError as exc:
+        raise ValueError(
+            "`which_MAS` must be one of CIC, PCS, SPH, or CIC_BORG; "
+            f"got {which_MAS!r}.") from exc
+
+
 def smooth_clip(x, eps=1e-3):
     """Return a differentiable positive-part approximation for ``x``.
 
@@ -674,6 +693,11 @@ class ManticoreLocalSWIFT_FieldLoader(BORGSPHFieldLoader):
 
     def __init__(self, nsim, fpath_root, **kwargs):
         self.nsim = int(nsim)
+        metadata = field_metadata("ManticoreLocalSWIFT")
+        kwargs.setdefault("boxsize", metadata.boxsize)
+        kwargs.setdefault("Omega_m", metadata.Omega_m)
+        kwargs.setdefault("coordinate_frame", metadata.coordinate_frame)
+        kwargs.setdefault("ngrid", metadata.ngrid)
         file_path = join(fpath_root, f"mcmc_{self.nsim}.hdf5")
         super().__init__(file_path, **kwargs)
 
@@ -691,8 +715,9 @@ class ManticoreLocalCOLA_FieldLoader(BORGFieldLoader):
         and ``velocity`` datasets.
     """
 
-    def __init__(self, nsim, fpath_root, **kwargs):
-        super().__init__(nsim, fpath_root, **kwargs)
+    def __init__(self, nsim, fpath_root, which_MAS="CIC", **kwargs):
+        self.which_MAS = field_mas_directory(which_MAS)
+        super().__init__(nsim, Path(fpath_root) / self.which_MAS, **kwargs)
 
 
 ###############################################################################
@@ -794,12 +819,13 @@ FIELD_METADATA = {
         storage_schema="overdensity_velocity",
         require_cached_products=False,
         cache_group="ManticoreLocalCOLA",
-        description="Generic local BORG/COLA 256^3 density and velocity "
-                    "fields."),
+        description="Generic local BORG/COLA density and velocity fields."),
     "ManticoreLocalSWIFT": FieldMetadata(
         name="ManticoreLocalSWIFT",
         coordinate_frame="icrs",
-        boxsize=float("nan"),
+        boxsize=681.1,
+        Omega_m=0.306,
+        ngrid=1024,
         production_method="nbody_mas_sph",
         storage_schema="density_momentum",
         require_cached_products=True,
