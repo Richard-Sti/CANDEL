@@ -226,6 +226,11 @@ def _tag_number(value):
     return f"{float(value):g}".replace("-", "m").replace(".", "p")
 
 
+def _tag_string(value):
+    """Return a compact filesystem-friendly tag component."""
+    return str(value).replace("-", "m").replace(".", "p").replace("_", "-")
+
+
 def generate_dynamic_tag(config, base_tag="default"):
     """Generate a descriptive tag string based on selected config values."""
     parts = []
@@ -305,6 +310,13 @@ def generate_dynamic_tag(config, base_tag="default"):
             if rmiss_high is not None:
                 parts.append(f"Mmiss_rmax{_tag_number(rmiss_high)}")
 
+    for reconstruction in sorted(selected_reconstruction_names(config)):
+        which_MAS = get_nested(
+            config, f"io/reconstruction_main/{reconstruction}/which_MAS",
+            None)
+        if _is_active(which_MAS):
+            parts.append(f"MAS-{_tag_string(which_MAS)}")
+
     # Only include beta/b1 info if using precomputed LOS (reconstruction)
     pv_kind = get_nested(config, "pv_model/kind", "")
     if pv_kind.startswith("precomputed_los"):
@@ -352,6 +364,9 @@ def generate_dynamic_tag(config, base_tag="default"):
             reconstruction = get_nested(
                 config, "io/SH0ES/reconstruction", None)
             parts.append(reconstruction)
+            which_bias = get_nested(config, "model/which_bias", None)
+            if which_bias == "uniform":
+                parts.append(which_bias)
             beta_prior = get_nested(config, "model/priors/beta", None)
             if _is_manticore_box_los(reconstruction):
                 if not _is_delta_prior(beta_prior):
@@ -689,8 +704,6 @@ def selected_reconstruction_names(config):
 def prune_inactive_reconstruction_sections(config):
     """Drop unused reconstruction subsections from a generated config."""
     active = selected_reconstruction_names(config)
-    if not active:
-        return
 
     for key in ("reconstruction_main", "reconstruction_rand_los"):
         recon_cfg = get_nested(config, f"io/{key}", {})
