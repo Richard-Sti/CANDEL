@@ -311,4 +311,7 @@ if __name__ == "__main__":
 
             insert_comment_at_top(args.config, "finished")
     finally:
-        gpu_monitor.stop()
+        try:
+            candel.pvdata.cleanup_temporary_los_files()
+        finally:
+            gpu_monitor.stop()
