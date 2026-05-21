@@ -275,7 +275,7 @@ def _load_LOSS_Foundation(which, root, zcmb_min=None, zcmb_max=None,
         e_c = grp["e_c"][...]
         e_x1 = grp["e_x1"][...]
 
-    fprint(f"initially loaded {len(zcmb)} galaxies from LOSS/Foundation data.")
+    fprint(f"initially loaded {len(zcmb)} galaxies from {which} data.")
 
     data = dict(
         zcmb=zcmb,

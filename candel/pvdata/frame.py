@@ -278,11 +278,12 @@ class PVDataFrame:
         dr = config_pv_model["dr_malmquist"]
         Om_model = config_pv_model.get("Om", config_pv_model.get("Om0", 0.3))
         Om = _reconstruction_omega_m(
-            reconstruction_name, reconstruction_kwargs, fallback=Om_model)
+            reconstruction_name, reconstruction_kwargs, fallback=Om_model,
+            field_indices=config.get("field_indices", None))
         if reconstruction_name is not None and not np.isclose(Om, Om_model):
             fprint(
-                f"using reconstruction Om0={Om:g} for "
-                f"`{reconstruction_name}` instead of model Om0={Om_model:g}.")
+                f"using reconstruction Omega_m={Om:g} for "
+                f"`{reconstruction_name}` instead of model Omega_m={Om_model:g}.")
         data["r_grid"] = _compute_r_grid(r_limits, dr, data, Om)
 
         los_decay_scale = config_pv_model.get("los_decay_scale", 5.0)

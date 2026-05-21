@@ -71,7 +71,7 @@ def _density_unit_normalization(source):
     source_lower = source_str.lower()
     source_upper = source_str.upper()
 
-    if "manticorelocalcola" in source_lower:
+    if "manticorelocal" in source_lower and "cola" in source_lower:
         return None
     if "manticore" in source_lower:
         return 0.306 * 275.4, "Manticore", "Om = 0.306"
@@ -85,16 +85,31 @@ def _density_unit_normalization(source):
 
 
 def _reconstruction_omega_m(
-        reconstruction_name=None, reconstruction_kwargs=None, fallback=0.3):
+        reconstruction_name=None, reconstruction_kwargs=None, fallback=0.3,
+        field_indices=None, loader=None):
     """Return the matter density assumed by a configured reconstruction."""
     if reconstruction_kwargs:
-        for key in ("Omega_m", "Om0", "Om", "omega_m"):
+        for key in ("Omega_m", "Om", "Om0", "omega_m"):
             if key in reconstruction_kwargs:
                 return float(reconstruction_kwargs[key])
+    if loader is not None and getattr(loader, "Omega_m", None) is not None:
+        return float(loader.Omega_m)
+    if reconstruction_name is not None and reconstruction_kwargs:
+        try:
+            indices = np.asarray(field_indices, dtype=np.int32)
+            nsim = int(indices.reshape(-1)[0])
+        except (TypeError, ValueError, IndexError):
+            nsim = 0
+        kwargs = dict(reconstruction_kwargs)
+        kwargs["nsim"] = nsim
+        loader = name2field_loader(reconstruction_name)(**kwargs)
+        if loader is not None and getattr(loader, "Omega_m", None) is not None:
+            return float(loader.Omega_m)
     if reconstruction_name is not None:
         raise ValueError(
             f"`io.reconstruction_main.{reconstruction_name}` must define "
-            "`Om0` when that reconstruction is used.")
+            "`Omega_m` or the field file must provide an `Omega_m`/`Om` "
+            "attribute.")
     return float(fallback)
 
 
@@ -1061,11 +1076,11 @@ def _load_volume_data_for_H0(
 
     Om0_model = Om0
     Om0 = _reconstruction_omega_m(
-        field_name, field_kwargs, fallback=Om0_model)
+        field_name, field_kwargs, fallback=Om0_model, loader=loaders[0])
     if not np.isclose(Om0, Om0_model):
         fprint(
-            f"using reconstruction Om0={Om0:g} for `{field_name}` "
-            f"instead of model Om0={Om0_model:g}.")
+            f"using reconstruction Omega_m={Om0:g} for `{field_name}` "
+            f"instead of model Omega_m={Om0_model:g}.")
 
     if cache_enabled:
         expected_max_r_3d = _expected_h0_volume_max_radius_from_loader(

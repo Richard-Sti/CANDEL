@@ -394,7 +394,7 @@ class BORGFieldLoader(BaseFieldLoader):
 class BORGSPHFieldLoader(BORGFieldLoader):
     """Loader for BORG/N-body density and momentum products."""
 
-    def __init__(self, file_path, boxsize, Omega_m=None,
+    def __init__(self, file_path, boxsize=None, Omega_m=None,
                  coordinate_frame="icrs", density_key="density",
                  momentum_keys=("p0", "p1", "p2"),
                  density_mass_factor=1.0, flip_xz=False, ngrid=None,
@@ -674,12 +674,8 @@ class ManticoreLocalSWIFT_FieldLoader(BORGSPHFieldLoader):
 
     def __init__(self, nsim, fpath_root, **kwargs):
         self.nsim = int(nsim)
-        metadata = field_metadata("ManticoreLocalSWIFT")
         file_path = join(fpath_root, f"mcmc_{self.nsim}.hdf5")
-        super().__init__(
-            file_path, boxsize=metadata.boxsize, Omega_m=metadata.Omega_m,
-            coordinate_frame=metadata.coordinate_frame, ngrid=metadata.ngrid,
-            **kwargs)
+        super().__init__(file_path, **kwargs)
 
 
 class ManticoreLocalCOLA_FieldLoader(BORGFieldLoader):
@@ -696,12 +692,7 @@ class ManticoreLocalCOLA_FieldLoader(BORGFieldLoader):
     """
 
     def __init__(self, nsim, fpath_root, **kwargs):
-        metadata = field_metadata("ManticoreLocalCOLA")
-        super().__init__(
-            nsim, fpath_root, boxsize=metadata.boxsize,
-            Omega_m=metadata.Omega_m,
-            coordinate_frame=metadata.coordinate_frame, ngrid=metadata.ngrid,
-            **kwargs)
+        super().__init__(nsim, fpath_root, **kwargs)
 
 
 ###############################################################################
@@ -798,9 +789,7 @@ FIELD_METADATA = {
     "ManticoreLocalCOLA": FieldMetadata(
         name="ManticoreLocalCOLA",
         coordinate_frame="icrs",
-        boxsize=681.1,
-        Omega_m=0.306,
-        ngrid=256,
+        boxsize=float("nan"),
         production_method="borg_forward_grid",
         storage_schema="overdensity_velocity",
         require_cached_products=False,
@@ -810,9 +799,7 @@ FIELD_METADATA = {
     "ManticoreLocalSWIFT": FieldMetadata(
         name="ManticoreLocalSWIFT",
         coordinate_frame="icrs",
-        boxsize=681.1,
-        Omega_m=0.306,
-        ngrid=1024,
+        boxsize=float("nan"),
         production_method="nbody_mas_sph",
         storage_schema="density_momentum",
         require_cached_products=True,
@@ -829,6 +816,22 @@ UNKNOWN_FIELD_METADATA = FieldMetadata(
     description="Field has not been classified for raw runtime reads.")
 
 
+def _is_manticore_local_cola(name):
+    name_lower = str(name).lower()
+    return (
+        name_lower.startswith("manticorelocal")
+        and name_lower.endswith("cola")
+    )
+
+
+def _is_manticore_local_swift(name):
+    name_lower = str(name).lower()
+    return (
+        name_lower.startswith("manticorelocal")
+        and name_lower.endswith("swift")
+    )
+
+
 def field_metadata(name):
     """Return static metadata for a supported reconstruction field."""
     if name in FIELD_METADATA:
@@ -839,6 +842,26 @@ def field_metadata(name):
         return FIELD_METADATA["HAMLET_V0"]
     if name_lower.startswith("hamlet_v1"):
         return FIELD_METADATA["HAMLET_V1"]
+    if _is_manticore_local_cola(name):
+        return FieldMetadata(
+            name=str(name),
+            coordinate_frame="icrs",
+            boxsize=float("nan"),
+            production_method="borg_forward_grid",
+            storage_schema="overdensity_velocity",
+            require_cached_products=False,
+            cache_group=str(name),
+            description="Generic local BORG/COLA density and velocity fields.")
+    if _is_manticore_local_swift(name):
+        return FieldMetadata(
+            name=str(name),
+            coordinate_frame="icrs",
+            boxsize=float("nan"),
+            production_method="nbody_mas_sph",
+            storage_schema="density_momentum",
+            require_cached_products=True,
+            cache_group=str(name),
+            description="Local Manticore SWIFT/SPH density and momentum fields.")
 
     return UNKNOWN_FIELD_METADATA
 
@@ -860,7 +883,7 @@ def field_allows_raw_product_reads(name):
 
 def supported_field_names():
     """Return the field names and patterns known to the loader registry."""
-    return tuple(FIELD_METADATA)
+    return (*FIELD_METADATA, "ManticoreLocal*COLA", "ManticoreLocal*SWIFT")
 
 
 def name2field_loader(name):
@@ -869,4 +892,8 @@ def name2field_loader(name):
         return _FIELD_LOADERS[name]
     if name.lower().startswith("hamlet"):
         return Hamlet_FieldLoader
+    if _is_manticore_local_cola(name):
+        return ManticoreLocalCOLA_FieldLoader
+    if _is_manticore_local_swift(name):
+        return ManticoreLocalSWIFT_FieldLoader
     raise ValueError(f"Unknown field loader: {name}")
