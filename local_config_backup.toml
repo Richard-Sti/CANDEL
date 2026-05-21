@@ -1,0 +1,102 @@
+# =============================================================================
+# Core CANDEL paths
+# =============================================================================
+
+root_main = "/mnt/users/rstiskalek/CANDEL/"
+root_data = "/mnt/users/rstiskalek/CANDEL/"
+root_results = "/mnt/users/rstiskalek/CANDEL/"
+python_exec = "/mnt/users/rstiskalek/CANDEL/venv_candel/bin/python"
+machine = "glamdring"
+
+# =============================================================================
+# Runtime and cluster submission
+# =============================================================================
+
+# If true, submit.sh runs jobs against the frozen snapshot at
+# CANDEL_FROZEN_ROOT (produced by freeze_candel.sh). If false or
+# missing, jobs run directly from the live source tree at CANDEL_ROOT.
+# Default when absent: false.
+use_frozen = false
+
+# Optional: modules to `module add` before the job runs.
+# Space-separated; empty or missing = no modules.
+# `modules_gpu` overrides `modules` for GPU jobs.
+modules     = ""
+modules_gpu = ""
+
+# =============================================================================
+# GPU library path overrides
+# =============================================================================
+
+# LD_LIBRARY_PATH entries prepended for GPU jobs. Safe default is an empty
+# list — modern loaders resolve the pip-bundled NVIDIA libs via RPATH.
+# Populate only on clusters where JAX fails to find cuDNN/cuBLAS (e.g.
+# glamdring's older stack). Empty or missing = nothing is prepended.
+gpu_ld_library_path = [
+    "/mnt/users/rstiskalek/CANDEL/venv_candel/lib/python3.11/site-packages/nvidia/cublas/lib",
+    "/mnt/users/rstiskalek/CANDEL/venv_candel/lib/python3.11/site-packages/nvidia/cuda_cupti/lib",
+    "/mnt/users/rstiskalek/CANDEL/venv_candel/lib/python3.11/site-packages/nvidia/cuda_nvrtc/lib",
+    "/mnt/users/rstiskalek/CANDEL/venv_candel/lib/python3.11/site-packages/nvidia/cuda_runtime/lib",
+    "/mnt/users/rstiskalek/CANDEL/venv_candel/lib/python3.11/site-packages/nvidia/cudnn/lib",
+    "/mnt/users/rstiskalek/CANDEL/venv_candel/lib/python3.11/site-packages/nvidia/cufft/lib",
+    "/mnt/users/rstiskalek/CANDEL/venv_candel/lib/python3.11/site-packages/nvidia/cusolver/lib",
+    "/mnt/users/rstiskalek/CANDEL/venv_candel/lib/python3.11/site-packages/nvidia/cusparse/lib",
+    "/mnt/users/rstiskalek/CANDEL/venv_candel/lib/python3.11/site-packages/nvidia/nccl/lib",
+    "/mnt/users/rstiskalek/CANDEL/venv_candel/lib/python3.11/site-packages/nvidia/nvjitlink/lib",
+    "/usr/local/shared/python/3.11.4/lib",
+    "/usr/local/cuda/lib64",
+]
+
+# =============================================================================
+# BORG field helper executables
+# =============================================================================
+
+[borg_fields]
+borg_python = "/mnt/users/rstiskalek/borg/venv_borg/bin/python"
+borg_forward = "/mnt/users/rstiskalek/borg/build_venv_borg_gcc_mpi/tools/borg_forward/borg_forward"
+cosmotool_sph = "/mnt/users/rstiskalek/cosmotool/build-sph/sample/simple3DFilter"
+plot_python = "/mnt/users/rstiskalek/CANDEL/venv_candel/bin/python"
+srun = "/usr/local/shared/slurm/bin/srun"
+active_chain = "ManticoreLocal"
+
+# =============================================================================
+# Active BORG chain configuration
+# =============================================================================
+
+[borg_fields.chains.ManticoreLocal]
+run_dir = "/mnt/extraspace/rstiskalek/MANTICORE/2MPP_MULTIBIN_N256_DES_V2"
+schedule = "/mnt/extraspace/rstiskalek/MANTICORE/2MPP_MULTIBIN_N256_DES_V2/schedule_final.yaml"
+field_output_dir = "/mnt/extraspace/rstiskalek/MANTICORE/2MPP_MULTIBIN_N256_DES_V2/forward_fields"
+reference_fields_dir = "/mnt/extraspace/rstiskalek/MANTICORE/2MPP_MULTIBIN_N256_DES_V2/sph_fields_new_feb/sph_fields"
+download_generation = "2MPP_MULTIBIN_N256_DES_V2"
+
+# =============================================================================
+# Machine-local reconstruction field products
+# =============================================================================
+
+[io.reconstruction_main.Lilow2024]
+path_density = "/mnt/extraspace/rstiskalek/catalogs/Lilow2024_density.npy"
+path_velocity_x = "/mnt/extraspace/rstiskalek/catalogs/Lilow2024_xVelocity.npy"
+path_velocity_y = "/mnt/extraspace/rstiskalek/catalogs/Lilow2024_yVelocity.npy"
+path_velocity_z = "/mnt/extraspace/rstiskalek/catalogs/Lilow2024_zVelocity.npy"
+
+[io.reconstruction_main.CF4]
+folder = "/mnt/extraspace/rstiskalek/catalogs/CF4/CF4gp_23avr24_256-z008_test_100_realizations"
+
+[io.reconstruction_main.CLONES]
+file_path = "/mnt/extraspace/rstiskalek/CLONES/s8/cf2gvpecc1pt5elmo73_sig6distribsbvoldi_RZA3Derrv2_512_500_ss8_zinit60_000.hdf5"
+
+[io.reconstruction_main.HAMLET_V0]
+fpath_root = "/mnt/extraspace/rstiskalek/catalogs/HAMLET/HAMLET_V0"
+
+[io.reconstruction_main.HAMLET_V1]
+fpath_root = "/mnt/extraspace/rstiskalek/catalogs/HAMLET/HAMLET_V1"
+
+[io.reconstruction_main.CB1]
+fpath_root = "/mnt/extraspace/rstiskalek/csiborg1/field"
+
+[io.reconstruction_main.CB2]
+fpath_root = "/mnt/extraspace/rstiskalek/csiborg2_main/field"
+
+[io.reconstruction_main.ManticoreLocalCOLA]
+fpath_root = "/mnt/extraspace/rstiskalek/MANTICORE/2MPP_MULTIBIN_N256_DES_V2/forward_fields"
