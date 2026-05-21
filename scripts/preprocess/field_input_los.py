@@ -139,7 +139,8 @@ def reconstruction_field_indices(config, reconstruction):
 
     if reconstruction in nreal_map:
         return list(range(nreal_map[reconstruction]))
-    if reconstruction in {"ManticoreLocalCOLA", "ManticoreLocalSWIFT"}:
+    if str(reconstruction).lower().startswith("manticorelocal"):
+        candel.field.name2field_loader(reconstruction)
         field_kwargs = config["io"]["reconstruction_main"][reconstruction]
         return candel.field.available_mcmc_field_indices(
             field_kwargs["fpath_root"])
