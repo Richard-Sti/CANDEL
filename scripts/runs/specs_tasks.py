@@ -6,10 +6,11 @@ generate_tasks.py.
 
 
 CH0_PAPER_ROOT = "results/CH0_paper"
-CH0_MANTICORE_LOS = "manticore_2MPP_MULTIBIN_N256_DES_V2"
+CH0_MANTICORE_LOS = "ManticoreLocalSWIFT"
+CH0_MANTICORE_COLA_LOS = "ManticoreLocalCOLA"
 CH0_MANTICORE_BIAS = "double_powerlaw"
 TRGBH0_ROOT = "results/TRGBH0_paper"
-TRGBH0_MANTICORE_LOS = "manticore_2MPP_MULTIBIN_N256_DES_V2"
+TRGBH0_MANTICORE_LOS = "ManticoreLocalSWIFT"
 TRGBH0_MANTICORE_COLA_LOS = "ManticoreLocalCOLA"
 TRGBH0_MANTICORE_BIAS = "double_powerlaw"
 TRGBH0_CARRICK_BETA_LOC = 0.461
@@ -56,7 +57,7 @@ VEXT_RADMAG_SDSS_FP_CARRICK_PRIOR = {
     "method": "cubic",
 }
 VFO_ROOT = "results/VFO"
-VFO_MANTICORE_LOS = "manticore_2MPP_MULTIBIN_N256_DES_V2"
+VFO_MANTICORE_LOS = "ManticoreLocalSWIFT"
 VFO_MANTICORE_COLA_LOS = "ManticoreLocalCOLA"
 
 CH0_PAPER_COMMON = {
@@ -103,6 +104,14 @@ def _delta(value):
 
 def _normal(loc, scale):
     return {"dist": "normal", "loc": loc, "scale": scale}
+
+
+CH0_FIXED_BIAS_PRIORS = {
+    "model/priors/alpha_low": _delta(1.835),
+    "model/priors/alpha_high": _delta(0.343),
+    "model/priors/log_rho_t": _delta(0.313),
+    "model/priors/log_rho_width": _delta(0.879),
+}
 
 
 def _nu_cz_student_t_prior():
@@ -320,8 +329,9 @@ def _ch0_mixed_selection_datasets():
 
 
 def _ch0_manticore_field_datasets():
-    return [
-        {
+    datasets = []
+    for field in range(30):
+        datasets.append({
             "model/which_selection": "SN_magnitude",
             "model/use_reconstruction": True,
             "model/use_fiducial_Cepheid_host_PV_covariance": False,
@@ -331,9 +341,85 @@ def _ch0_manticore_field_datasets():
             "io/SH0ES/reconstruction": CH0_MANTICORE_LOS,
             "model/which_bias": CH0_MANTICORE_BIAS,
             "io/field_indices": field,
+        })
+
+    for mas in ("CIC", "PCS", "SPH"):
+        for field in range(80):
+            datasets.append({
+                "model/which_selection": "SN_magnitude",
+                "model/use_reconstruction": True,
+                "model/use_fiducial_Cepheid_host_PV_covariance": False,
+                "model/use_PV_covmat_scaling": False,
+                "model/weight_selection_by_covmat_Neff": False,
+                "model/use_density_dependent_sigma_v": False,
+                "io/SH0ES/reconstruction": CH0_MANTICORE_COLA_LOS,
+                "io/reconstruction_main/ManticoreLocalCOLA/which_MAS": mas,
+                "model/which_bias": CH0_MANTICORE_BIAS,
+                "io/field_indices": field,
+            })
+
+    return datasets
+
+
+def _ch0_manticore_cola_cic_field_datasets():
+    return [
+        {
+            "model/which_selection": "SN_magnitude",
+            "model/use_reconstruction": True,
+            "model/use_fiducial_Cepheid_host_PV_covariance": False,
+            "model/use_PV_covmat_scaling": False,
+            "model/weight_selection_by_covmat_Neff": False,
+            "model/use_density_dependent_sigma_v": False,
+            "io/SH0ES/reconstruction": CH0_MANTICORE_COLA_LOS,
+            "io/reconstruction_main/ManticoreLocalCOLA/which_MAS": "CIC",
+            "model/which_bias": CH0_MANTICORE_BIAS,
+            "io/field_indices": field,
         }
-        for field in range(30)
+        for field in range(80)
     ]
+
+
+def _ch0_manticore_cola_cic_fixed_bias_datasets():
+    return [
+        {
+            **dataset,
+            "model/which_bias": CH0_MANTICORE_BIAS,
+            **CH0_FIXED_BIAS_PRIORS,
+        }
+        for dataset in _ch0_manticore_cola_cic_field_datasets()
+    ]
+
+
+def _ch0_leaveoneout_datasets():
+    return [{
+        "model/which_selection": "SN_magnitude",
+        "model/use_reconstruction": True,
+        "model/use_fiducial_Cepheid_host_PV_covariance": False,
+        "model/use_PV_covmat_scaling": False,
+        "model/weight_selection_by_covmat_Neff": False,
+        "model/use_density_dependent_sigma_v": False,
+        "io/SH0ES/reconstruction": CH0_MANTICORE_LOS,
+        "model/which_bias": CH0_MANTICORE_BIAS,
+        "io/field_indices": 21,
+        "io/SH0ES/drop_observation": list(range(35)),
+    }]
+
+
+def _ch0_angular_scatter_datasets():
+    return [{
+        "model/which_selection": "SN_magnitude",
+        "model/use_reconstruction": True,
+        "model/use_fiducial_Cepheid_host_PV_covariance": False,
+        "model/use_PV_covmat_scaling": False,
+        "model/weight_selection_by_covmat_Neff": False,
+        "model/use_density_dependent_sigma_v": False,
+        "io/SH0ES/reconstruction": CH0_MANTICORE_COLA_LOS,
+        "io/reconstruction_main/ManticoreLocalCOLA/which_MAS": "CIC",
+        "model/which_bias": CH0_MANTICORE_BIAS,
+        "io/field_indices": list(range(30)),
+        "io/angular_position_scatter_deg": [2.0, 4.0, 8.0, 16.0],
+        "io/angular_position_scatter_seed": 42,
+    }]
 
 
 def _trgbh0_selection_datasets(pv_models, selections=("TRGB_magnitude",)):
@@ -860,6 +946,8 @@ TASK_SPECS = {
         "tag": "paper",
         "common": {
             **CH0_PAPER_COMMON,
+            "inference/compute_log_density": True,
+            "inference/compute_evidence": True,
             "inference/num_chains": 1,
             "inference/num_warmup": 1000,
             "inference/num_samples": 5000,
@@ -892,12 +980,87 @@ TASK_SPECS = {
             "inference/compute_evidence": True,
             "inference/num_chains": 1,
             "inference/num_warmup": 1000,
-            "inference/num_samples": 5000,
+            "inference/num_samples": 2000,
             "inference/save_log_likelihood_per_galaxy": True,
             **_with_root(f"{CH0_PAPER_ROOT}/single_fields"),
         },
         "datasets": _ch0_manticore_field_datasets(),
-        "expected_tasks": 30,
+        "expected_tasks": 270,
+    },
+    "CH0_single_smoothed": {
+        "description": (
+            "CH0 CIC COLA one-field runs with density-field smoothing."),
+        "config_path": "configs/config_CH0.toml",
+        "tag": "single_smoothed",
+        "common": {
+            **CH0_PAPER_COMMON,
+            "inference/compute_log_density": True,
+            "inference/compute_evidence": True,
+            "inference/num_chains": 1,
+            "inference/num_warmup": 1000,
+            "inference/num_samples": 2000,
+            "inference/save_log_likelihood_per_galaxy": True,
+            "model/field_3d_smoothing_scale": [4.0, 8.0, 16.0, 32.0],
+            **_with_root(f"{CH0_PAPER_ROOT}/single_fields_smoothed"),
+        },
+        "datasets": _ch0_manticore_cola_cic_field_datasets(),
+        "expected_tasks": 320,
+    },
+    "CH0_single_fixed_bias": {
+        "description": (
+            "CH0 CIC COLA one-field runs with fixed double-power-law bias."),
+        "config_path": "configs/config_CH0.toml",
+        "tag": "single_fixed_bias",
+        "common": {
+            **CH0_PAPER_COMMON,
+            "inference/compute_log_density": True,
+            "inference/compute_evidence": True,
+            "inference/num_chains": 1,
+            "inference/num_warmup": 1000,
+            "inference/num_samples": 2000,
+            "inference/save_log_likelihood_per_galaxy": True,
+            **_with_root(f"{CH0_PAPER_ROOT}/single_fields_fixed_bias"),
+        },
+        "datasets": _ch0_manticore_cola_cic_fixed_bias_datasets(),
+        "expected_tasks": 80,
+    },
+    "CH0_leaveoneout": {
+        "description": (
+            "CH0 SN-magnitude leave-one-out runs for ManticoreLocalSWIFT "
+            "field 21."),
+        "config_path": "configs/config_CH0.toml",
+        "tag": "leaveoneout",
+        "common": {
+            **CH0_PAPER_COMMON,
+            "inference/compute_log_density": True,
+            "inference/compute_evidence": True,
+            "inference/num_chains": 1,
+            "inference/num_warmup": 1000,
+            "inference/num_samples": 2000,
+            "inference/save_log_likelihood_per_galaxy": True,
+            **_with_root(f"{CH0_PAPER_ROOT}/leaveoneout"),
+        },
+        "datasets": _ch0_leaveoneout_datasets(),
+        "expected_tasks": 35,
+    },
+    "CH0_angular_scatter": {
+        "description": (
+            "CH0 SN-magnitude angular-position scatter runs for CIC "
+            "ManticoreLocalCOLA fields 0-29."),
+        "config_path": "configs/config_CH0.toml",
+        "tag": "angular_scatter",
+        "common": {
+            **CH0_PAPER_COMMON,
+            "inference/compute_log_density": True,
+            "inference/compute_evidence": True,
+            "inference/num_chains": 1,
+            "inference/num_warmup": 1000,
+            "inference/num_samples": 2000,
+            "inference/save_log_likelihood_per_galaxy": True,
+            **_with_root(f"{CH0_PAPER_ROOT}/angular_scatter"),
+        },
+        "datasets": _ch0_angular_scatter_datasets(),
+        "expected_tasks": 120,
     },
     "Vext_rad": {
         "description": (
