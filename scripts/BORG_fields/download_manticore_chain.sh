@@ -9,7 +9,7 @@ if [[ ! -x "$CONFIG_PYTHON" ]]; then
 fi
 CONFIG_EXPORTS="$(
   "$CONFIG_PYTHON" "$SCRIPT_DIR/borg_field_config.py" \
-    --shell-env borg_python srun borg_run_dir
+    --shell-env borg_python srun chain_name run_dir download_generation
 )"
 eval "$CONFIG_EXPORTS"
 
@@ -115,6 +115,9 @@ if [[ "${1:-}" == "--submit" ]]; then
   echo "Single-node shape: 1x1"
   echo "Memory request (-m): ${MEM_GB} GB"
   echo "BORG Python: $BORG_PYTHON"
+  echo "BORG chain: $BORG_CHAIN_NAME"
+  echo "BORG run directory: $BORG_RUN_DIR"
+  echo "BORG download generation: $BORG_DOWNLOAD_GENERATION"
   echo "Log file: $LOG_FILE"
   echo "Command:"
   quote_cmd "${ADDQUEUE[@]}"

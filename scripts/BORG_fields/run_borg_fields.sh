@@ -9,7 +9,8 @@ if [[ ! -x "$CONFIG_PYTHON" ]]; then
 fi
 CONFIG_EXPORTS="$(
   "$CONFIG_PYTHON" "$SCRIPT_DIR/borg_field_config.py" \
-    --shell-env borg_python borg_forward cosmotool_sph plot_python srun borg_run_dir
+    --shell-env borg_python borg_forward cosmotool_sph plot_python srun \
+      chain_name run_dir schedule field_output_dir
 )"
 eval "$CONFIG_EXPORTS"
 RUN_PYTHON="${CANDEL_RUN_PYTHON:-$PYTHON_PATH}"
@@ -33,8 +34,10 @@ Default behaviour:
 
 Schedule options:
   --steps [STEPS]       Inclusive schedule steps, e.g. 0:50, 0-50, 0,5,10:12. Default if omitted after --steps: 0:50
-  --schedule FILE       Default: BORG_RUN_DIR/schedule_final.yaml
-  --borg-run-dir DIR    Default: [borg_fields].borg_run_dir from local_config.toml
+  --schedule FILE       Default: active [borg_fields.chains.<name>].schedule
+  --borg-run-dir DIR    Default: active [borg_fields.chains.<name>].run_dir
+  --field-output-dir DIR
+                         Default: active [borg_fields.chains.<name>].field_output_dir
   --pm-nsteps N         Override [gravity_chain_2] pm_nsteps. Default: 10
 
 Submit options:
@@ -59,11 +62,11 @@ also store BORG-reader attrs: Om from the MCMC cosmology, boxsize from the
 BORG forward scalars, observer_position as the box centre, and frame=icrs.
 Slice plots are optional diagnostics; pass --plots to write them to
 PRODUCT_PARENT/plots.
+BORG chain-specific defaults are read from local_config.toml.
 For --steps runs, packed products are written to
-BORG_RUN_DIR/forward_fields/mcmc_<schedule-step>.hdf5.
+BORG_FIELD_OUTPUT_DIR/mcmc_<schedule-step>.hdf5.
 For direct MCMC runs, the default packed product is
-BORG_RUN_DIR/forward_fields/mcmc_<iteration>.hdf5 unless --single-output is
-passed.
+BORG_FIELD_OUTPUT_DIR/mcmc_<iteration>.hdf5 unless --single-output is passed.
 For --steps runs, one requested sample is also run in RSD mode for validation
 against /scalars/BORG_final_density, including a non-fatal Pylians
 cross-correlation check.
@@ -311,8 +314,9 @@ PY
 
 run_schedule_steps() {
   local steps=""
-  local schedule=""
+  local schedule="$BORG_SCHEDULE"
   local borg_run_dir="$BORG_RUN_DIR"
+  local field_output_dir="$BORG_FIELD_OUTPUT_DIR"
   local -a run_args=()
   local -a validation_args=()
   local explicit_single_output="false"
@@ -338,6 +342,11 @@ run_schedule_steps() {
         ;;
       --borg-run-dir)
         borg_run_dir="$2"
+        shift 2
+        ;;
+      --field-output-dir)
+        field_output_dir="$2"
+        run_args+=("$1" "$2")
         shift 2
         ;;
       -n)
@@ -391,7 +400,7 @@ run_schedule_steps() {
     echo "Running schedule step ${step}: ${mcmc}"
     step_run_args=("${run_args[@]}")
     if [[ "$explicit_single_output" != "true" ]]; then
-      step_run_args+=("--single-output" "${borg_run_dir}/forward_fields/mcmc_${step}.hdf5")
+      step_run_args+=("--single-output" "${field_output_dir}/mcmc_${step}.hdf5")
     fi
     if ! "$SCRIPT_DIR/run_borg_fields.sh" -locally "$mcmc" "${step_run_args[@]}"; then
       status=1
@@ -523,6 +532,10 @@ if [[ "${1:-}" == "--submit" ]]; then
   echo "BORG OpenMP threads per rank: $OMP_THREADS"
   echo "BORG Python: $BORG_PYTHON"
   echo "BORG forward: $BORG_FORWARD"
+  echo "BORG chain: $BORG_CHAIN_NAME"
+  echo "BORG run directory: $BORG_RUN_DIR"
+  echo "BORG schedule: $BORG_SCHEDULE"
+  echo "BORG field output directory: $BORG_FIELD_OUTPUT_DIR"
   echo "Run Python: $RUN_PYTHON"
   echo "Plot Python: $PYTHON_PATH"
   echo "SPH OpenMP threads: $SPH_OMP_THREADS"
@@ -582,6 +595,11 @@ fi
 if [[ "${1:-}" == "run" || "${1:-}" == "validate-rsd" ]]; then
   if ! has_option_arg "--plot-python" "$@"; then
     EXTRA_ARGS+=(--plot-python "$PYTHON_PATH")
+  fi
+fi
+if [[ "${1:-}" == "run" ]]; then
+  if ! has_option_arg "--field-output-dir" "$@"; then
+    EXTRA_ARGS+=(--field-output-dir "$BORG_FIELD_OUTPUT_DIR")
   fi
 fi
 

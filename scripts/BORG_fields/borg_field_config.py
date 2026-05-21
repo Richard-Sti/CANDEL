@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read BORG field helper paths from CANDEL local_config.toml."""
+"""Read BORG field helper and active-chain settings from local_config.toml."""
 
 from __future__ import annotations
 
@@ -19,13 +19,21 @@ LOCAL_CONFIG_ENV = "CANDEL_LOCAL_CONFIG"
 LOCAL_CONFIG = REPO_ROOT / "local_config.toml"
 EXAMPLE_CONFIG = REPO_ROOT / "example_local_config.toml"
 SECTION = "borg_fields"
+CHAIN_SECTION = "chains"
 ENV_NAMES = {
     "borg_python": "BORG_PYTHON",
     "borg_forward": "BORG_FORWARD",
     "cosmotool_sph": "COSMOTOOL_SPH",
     "plot_python": "PYTHON_PATH",
     "srun": "SRUN",
-    "borg_run_dir": "BORG_RUN_DIR",
+}
+CHAIN_ENV_NAMES = {
+    "chain_name": "BORG_CHAIN_NAME",
+    "run_dir": "BORG_RUN_DIR",
+    "schedule": "BORG_SCHEDULE",
+    "field_output_dir": "BORG_FIELD_OUTPUT_DIR",
+    "download_generation": "BORG_DOWNLOAD_GENERATION",
+    "reference_fields_dir": "BORG_REFERENCE_FIELDS_DIR",
 }
 
 
@@ -51,11 +59,7 @@ def read_local_config(path: Path | None = None) -> dict:
 def borg_field_config(required: tuple[str, ...] = tuple(ENV_NAMES)) -> dict[str, str]:
     path = local_config_path()
     config = read_local_config(path)
-    section = config.get(SECTION)
-    if not isinstance(section, dict):
-        raise LocalConfigError(
-            f"Missing [{SECTION}] in {path}. See {EXAMPLE_CONFIG}."
-        )
+    section = borg_fields_section(config, path)
 
     missing = [
         key for key in required
@@ -71,16 +75,89 @@ def borg_field_config(required: tuple[str, ...] = tuple(ENV_NAMES)) -> dict[str,
     return {key: section[key] for key in required}
 
 
+def borg_fields_section(config: dict, path: Path) -> dict:
+    section = config.get(SECTION)
+    if not isinstance(section, dict):
+        raise LocalConfigError(
+            f"Missing [{SECTION}] in {path}. See {EXAMPLE_CONFIG}."
+        )
+    return section
+
+
+def active_chain_name(section: dict, path: Path) -> str:
+    name = section.get("active_chain")
+    if not isinstance(name, str) or not name.strip():
+        raise LocalConfigError(
+            f"Missing required [{SECTION}] active_chain in {path}. "
+            f"See {EXAMPLE_CONFIG}."
+        )
+    return name
+
+
+def borg_chain_config(
+        required: tuple[str, ...] = ("run_dir",),
+        chain_name: str | None = None) -> dict[str, str]:
+    path = local_config_path()
+    config = read_local_config(path)
+    section = borg_fields_section(config, path)
+    if chain_name is None:
+        chain_name = active_chain_name(section, path)
+    chains = section.get(CHAIN_SECTION)
+    if not isinstance(chains, dict):
+        raise LocalConfigError(
+            f"Missing [{SECTION}.{CHAIN_SECTION}] in {path}. "
+            f"See {EXAMPLE_CONFIG}."
+        )
+    chain = chains.get(chain_name)
+    if not isinstance(chain, dict):
+        raise LocalConfigError(
+            f"Missing [{SECTION}.{CHAIN_SECTION}.{chain_name}] in {path}. "
+            f"See {EXAMPLE_CONFIG}."
+        )
+
+    missing = [
+        key for key in required
+        if not isinstance(chain.get(key), str) or not chain[key].strip()
+    ]
+    if missing:
+        joined = "\n  ".join(missing)
+        raise LocalConfigError(
+            f"Missing required [{SECTION}.{CHAIN_SECTION}.{chain_name}] "
+            f"local_config.toml keys in {path}:\n"
+            f"  {joined}\n"
+            f"See {EXAMPLE_CONFIG}."
+        )
+    values = {"chain_name": chain_name}
+    values.update({key: chain[key] for key in required})
+    return values
+
+
 def configured_path(name: str) -> Path:
     return Path(borg_field_config((name,))[name]).expanduser()
 
 
+def configured_chain_value(name: str) -> str:
+    return borg_chain_config((name,))[name]
+
+
+def configured_chain_path(name: str) -> Path:
+    return Path(configured_chain_value(name)).expanduser()
+
+
 def shell_exports(keys: tuple[str, ...]) -> str:
-    values = borg_field_config(keys)
-    return "\n".join(
-        f"{ENV_NAMES[key]}={shlex.quote(values[key])}"
-        for key in keys
-    )
+    tool_keys = tuple(key for key in keys if key in ENV_NAMES)
+    chain_keys = tuple(key for key in keys if key in CHAIN_ENV_NAMES)
+    values: dict[str, str] = {}
+    if tool_keys:
+        values.update(borg_field_config(tool_keys))
+    if chain_keys:
+        required = tuple(key for key in chain_keys if key != "chain_name")
+        values.update(borg_chain_config(required))
+    lines = []
+    for key in keys:
+        env_name = ENV_NAMES[key] if key in ENV_NAMES else CHAIN_ENV_NAMES[key]
+        lines.append(f"{env_name}={shlex.quote(values[key])}")
+    return "\n".join(lines)
 
 
 def parse_args() -> argparse.Namespace:
@@ -88,8 +165,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--shell-env",
         nargs="+",
-        choices=tuple(ENV_NAMES),
-        help="Print shell assignments for the requested [borg_fields] keys.",
+        choices=tuple(ENV_NAMES) + tuple(CHAIN_ENV_NAMES),
+        help=(
+            "Print shell assignments for the requested [borg_fields] tool "
+            "or active-chain keys."
+        ),
     )
     return parser.parse_args()
 

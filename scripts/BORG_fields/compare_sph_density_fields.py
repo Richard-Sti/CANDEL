@@ -11,15 +11,24 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 import Pk_library as PKL  # noqa: E402
 
+from borg_field_config import configured_chain_path  # noqa: E402
 
-DEFAULT_ROOT = Path("/mnt/extraspace/rstiskalek/MANTICORE/2MPP_MULTIBIN_N256_DES_V2")
-DEFAULT_OUTDIR = Path("/mnt/users/rstiskalek/CANDEL/results/MANTICORE_field_checks")
+DEFAULT_OUTDIR = (
+    Path(__file__).resolve().parents[2] / "results" / "BORG_field_checks"
+)
 BOXSIZE = 681.0  # Mpc / h
 
 
 def parse_args():
     parser = ArgumentParser(description=__doc__)
-    parser.add_argument("--step", type=int, help="Use default Manticore mcmc_<step> paths.")
+    parser.add_argument(
+        "--step",
+        type=int,
+        help=(
+            "Use active BORG chain field_output_dir and reference_fields_dir "
+            "mcmc_<step> paths."
+        ),
+    )
     parser.add_argument("--field-a", type=Path, help="Reference HDF5 field.")
     parser.add_argument("--field-b", type=Path, help="Comparison HDF5 field.")
     parser.add_argument("--label-a", default="BORG forward SPH")
@@ -33,8 +42,8 @@ def parse_args():
 
 def default_paths(step):
     return (
-        DEFAULT_ROOT / "forward_fields" / f"mcmc_{step}.hdf5",
-        DEFAULT_ROOT / "sph_fields_new_feb" / "sph_fields" / f"mcmc_{step}.hdf5",
+        configured_chain_path("field_output_dir") / f"mcmc_{step}.hdf5",
+        configured_chain_path("reference_fields_dir") / f"mcmc_{step}.hdf5",
     )
 
 

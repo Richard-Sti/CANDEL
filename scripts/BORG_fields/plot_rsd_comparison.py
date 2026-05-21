@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Plot an RSD validation density slice against the native Manticore sample."""
+"""Plot an RSD validation density slice against the native BORG sample."""
 
 from __future__ import annotations
 
@@ -98,7 +98,7 @@ def main() -> None:
 
     fig, axes = plt.subplots(1, 3, figsize=(14.4, 4.8), constrained_layout=True)
     draw_panel(fig, axes[0], gen_slice, "generated RSD density", "density")
-    draw_panel(fig, axes[1], ref_slice, "Manticore reference density", "density")
+    draw_panel(fig, axes[1], ref_slice, "reference BORG density", "density")
     draw_panel(fig, axes[2], diff, "generated - reference", "density difference", symmetric=True)
     fig.suptitle(f"RSD validation: axis {args.axis} slice {index}")
 

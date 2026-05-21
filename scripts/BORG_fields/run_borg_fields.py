@@ -17,12 +17,13 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
-from borg_field_config import configured_path
+from borg_field_config import configured_chain_path, configured_path
 
 
 DEFAULT_BORG_FORWARD = configured_path("borg_forward")
 DEFAULT_COSMOTOOL_SPH = configured_path("cosmotool_sph")
 DEFAULT_PLOT_PYTHON = configured_path("plot_python")
+DEFAULT_FIELD_OUTPUT_DIR = configured_chain_path("field_output_dir")
 DEFAULT_PLOT_SCRIPT = Path(__file__).with_name("plot_borg_product_slices.py")
 DEFAULT_RSD_COMPARISON_PLOT_SCRIPT = Path(__file__).with_name("plot_rsd_comparison.py")
 DEFAULT_RSD_CROSS_SCRIPT = Path(__file__).with_name("compute_rsd_pylians_cross_correlation.py")
@@ -80,7 +81,19 @@ def parse_args() -> argparse.Namespace:
     run.add_argument(
         "--single-output",
         type=Path,
-        help="Single HDF5 product path. Default: <output-root>/<subchain>/<mcmc>/borg_fields_<iteration>.h5.",
+        help=(
+            "Single HDF5 product path. Default: "
+            "<field-output-dir>/mcmc_<iteration>.hdf5."
+        ),
+    )
+    run.add_argument(
+        "--field-output-dir",
+        type=Path,
+        default=DEFAULT_FIELD_OUTPUT_DIR,
+        help=(
+            "Directory for default packed HDF5 products. Default: active "
+            "[borg_fields.chains.<name>].field_output_dir from local_config.toml."
+        ),
     )
     run.add_argument(
         "--no-single-output",
@@ -351,8 +364,7 @@ def single_output_path(mcmc: Path, args: argparse.Namespace) -> Path:
     iteration = iteration_from_mcmc(mcmc)
     if getattr(args, "single_output", None) is not None:
         return args.single_output.expanduser().resolve()
-    output_root, _, _ = infer_layout(mcmc, args.output_root)
-    return output_root.parent / "forward_fields" / f"mcmc_{iteration}.hdf5"
+    return args.field_output_dir.expanduser().resolve() / f"mcmc_{iteration}.hdf5"
 
 
 def run_forward(mcmc: Path, args: argparse.Namespace, do_rsd: bool) -> tuple[Path, int, Path]:

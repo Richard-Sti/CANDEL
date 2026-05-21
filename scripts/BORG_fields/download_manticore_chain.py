@@ -15,25 +15,30 @@ from pathlib import Path
 from urllib.error import URLError
 from urllib.request import urlopen
 
-from borg_field_config import configured_path
+from borg_field_config import (configured_chain_path, configured_chain_value,
+                               configured_path)
 
-GENERATION = "2MPP_MULTIBIN_N256_DES_V2"
 KEY_URL = "https://manticore.web.data-2-osu.iap.fr/public-keys.json"
 SCRIPT_DIR = Path(__file__).resolve().parent
 
-DEFAULT_OUTPUT_DIR = configured_path("borg_run_dir")
+DEFAULT_GENERATION = configured_chain_value("download_generation")
+DEFAULT_OUTPUT_DIR = configured_chain_path("run_dir")
+DEFAULT_SCHEDULE = configured_chain_path("schedule")
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--generation",
-        default=GENERATION,
-        help=f"Manticore generation key. Default: {GENERATION}",
+        default=DEFAULT_GENERATION,
+        help=(
+            "Manticore generation key. Default: active "
+            "[borg_fields.chains.<name>].download_generation."
+        ),
     )
     parser.add_argument(
         "--subchain",
-        help="Manual mode: Manticore chain subchain.",
+        help="Manual mode: chain subchain.",
     )
     parser.add_argument(
         "--mcmc",
@@ -43,7 +48,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--schedule",
         type=Path,
-        help="Schedule YAML. Default: OUTPUT_DIR/schedule_final.yaml.",
+        default=DEFAULT_SCHEDULE,
+        help=(
+            "Schedule YAML. Default: active "
+            "[borg_fields.chains.<name>].schedule."
+        ),
     )
     parser.add_argument(
         "--steps",
@@ -156,7 +165,7 @@ def parse_steps(spec: str) -> list[int]:
 
 
 def read_schedule(path: Path) -> dict[int, tuple[str, int]]:
-    """Read the simple Manticore schedule YAML without adding a dependency."""
+    """Read the simple BORG schedule YAML without adding a dependency."""
 
     step_re = re.compile(r"^(\d+):\s*$")
     subchain_re = re.compile(r"^\s{2}([^:\s]+):\s*$")
@@ -216,11 +225,7 @@ def planned_downloads(args: argparse.Namespace) -> list[tuple[int | None, str, i
         return [(None, args.subchain, args.mcmc)]
 
     output_dir = args.output_dir.expanduser().resolve()
-    schedule_path = (
-        args.schedule.expanduser().resolve()
-        if args.schedule is not None
-        else output_dir / "schedule_final.yaml"
-    )
+    schedule_path = args.schedule.expanduser().resolve()
     schedule = read_schedule(schedule_path)
     steps = parse_steps(args.steps)
 
