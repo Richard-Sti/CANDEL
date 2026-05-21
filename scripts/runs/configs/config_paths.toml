@@ -106,7 +106,7 @@ dr = 0.5
 [io.reconstruction_rand_los.manticore_2MPP_MULTIBIN_N256_DES_V2]
 dr = 0.5
 
-[io.reconstruction_rand_los.COLA_manticore_2MPP_MULTIBIN_N256_DES_V2]
+[io.reconstruction_rand_los.ManticoreLocalCOLA]
 dr = 0.5
 
 [io.reconstruction_main.Carrick2015]
@@ -118,41 +118,29 @@ Om0 = 0.3
 fpath_root = "data/MANTICORE/2MPP_MULTIBIN_N256_DES_V2/sph_fields_new_feb/sph_fields"
 Om0 = 0.306
 
-[io.reconstruction_main.COLA_manticore_2MPP_MULTIBIN_N256_DES_V2]
-fpath_root = "data/MANTICORE/2MPP_MULTIBIN_N256_DES_V2/forward_fields"
-Om0 = 0.306
+[io.reconstruction_main.ManticoreLocalCOLA]
 
 [io.reconstruction_main.Lilow2024]
-path_density = "/mnt/extraspace/rstiskalek/catalogs/Lilow2024_density.npy"
-path_velocity_x = "/mnt/extraspace/rstiskalek/catalogs/Lilow2024_xVelocity.npy"
-path_velocity_y = "/mnt/extraspace/rstiskalek/catalogs/Lilow2024_yVelocity.npy"
-path_velocity_z = "/mnt/extraspace/rstiskalek/catalogs/Lilow2024_zVelocity.npy"
 Om0 = 0.3175
 
 [io.reconstruction_main.CF4]
-folder = "/mnt/extraspace/rstiskalek/catalogs/CF4/CF4gp_23avr24_256-z008_test_100_realizations"
 Om0 = 0.3
 
 [io.reconstruction_main.CLONES]
-file_path = "/mnt/extraspace/rstiskalek/CLONES/s8/cf2gvpecc1pt5elmo73_sig6distribsbvoldi_RZA3Derrv2_512_500_ss8_zinit60_000.hdf5"
 Om0 = 0.307115
 
 [io.reconstruction_main.HAMLET_V0]
-fpath_root = "/mnt/extraspace/rstiskalek/catalogs/HAMLET/HAMLET_V0"
 version = 0
 Om0 = 0.3
 
 [io.reconstruction_main.HAMLET_V1]
-fpath_root = "/mnt/extraspace/rstiskalek/catalogs/HAMLET/HAMLET_V1"
 version = 1
 Om0 = 0.3
 
 [io.reconstruction_main.CB1]
-fpath_root = "/mnt/extraspace/rstiskalek/csiborg1/field"
 version = "csiborg1"
 Om0 = 0.307
 
 [io.reconstruction_main.CB2]
-fpath_root = "/mnt/extraspace/rstiskalek/csiborg2_main/field"
 version = "csiborg2"
 Om0 = 0.3111
