@@ -4,7 +4,10 @@
 from __future__ import annotations
 
 import argparse
+import h5py
+import importlib
 import json
+import numpy as np
 import os
 import random
 import re
@@ -108,9 +111,12 @@ def parse_args() -> argparse.Namespace:
     )
     run.add_argument(
         "--mas",
-        choices=("sph", "cic", "pcs"),
+        choices=("sph", "cic", "pcs", "cic-borg"),
         default="cic",
-        help="Mass-assignment scheme for final density/velocity fields: sph, cic, or pcs. Default: cic.",
+        help=(
+            "Mass-assignment scheme for final density/velocity fields: "
+            "sph, cic, pcs, or cic-borg. Default: cic."
+        ),
     )
     run.add_argument("--cosmotool-sph", type=Path, default=DEFAULT_COSMOTOOL_SPH)
     run.add_argument(
@@ -316,15 +322,11 @@ def write_run_config(template: Path, config: Path, do_rsd: bool, console_output:
 
 
 def has_borg_vobs(mcmc: Path) -> bool:
-    import h5py
-
     with h5py.File(mcmc, "r") as handle:
         return "/scalars/BORG_vobs" in handle
 
 
 def patch_mcmc_missing_vobs(mcmc: Path, out_dir: Path, create: bool) -> Path:
-    import h5py
-
     if has_borg_vobs(mcmc):
         return mcmc
     patched = out_dir / "mcmc_with_BORG_vobs" / mcmc.name
@@ -352,6 +354,14 @@ def borg_forward_writes_particles(args: argparse.Namespace) -> bool:
     if not getattr(args, "sph_fields", False):
         return True
     return getattr(args, "keep_particles", False) or getattr(args, "mas", None) in ("sph", "cic", "pcs")
+
+
+def borg_forward_writes_vfield(args: argparse.Namespace) -> bool:
+    return (
+        getattr(args, "command", None) == "run"
+        and getattr(args, "sph_fields", False)
+        and getattr(args, "mas", None) == "cic-borg"
+    )
 
 
 def launcher(args: argparse.Namespace) -> list[str]:
@@ -400,6 +410,9 @@ def run_forward(mcmc: Path, args: argparse.Namespace, do_rsd: bool) -> tuple[Pat
     writes_particles = borg_forward_writes_particles(args)
     if writes_particles:
         cmd.extend(["--pos", "--vel"])
+    writes_vfield = borg_forward_writes_vfield(args)
+    if writes_vfield:
+        cmd.append("--vfield")
 
     output = output_path(output_pattern, iteration)
     print(f"MCMC: {mcmc}", flush=True)
@@ -425,11 +438,14 @@ def run_forward(mcmc: Path, args: argparse.Namespace, do_rsd: bool) -> tuple[Pat
         iteration,
         args.nprocs,
         require_particles=writes_particles,
+        require_vfield=writes_vfield,
     )
     print(f"Saved output directory: {out_dir}", flush=True)
     datasets = ["/final_density", "/s_hat_field"]
     if writes_particles:
         datasets.extend(["/u_pos", "/u_vel"])
+    if writes_vfield:
+        datasets.append("/v_field")
     print(f"Saved datasets: {', '.join(datasets)}", flush=True)
     return output_pattern, iteration, out_dir
 
@@ -442,8 +458,6 @@ def pack_split_outputs(
     group_name: str,
     mcmc: Path,
 ) -> None:
-    import h5py
-
     output = output_path(output_pattern, iteration)
     rank_paths = [Path(f"{output}_{rank}") for rank in range(nprocs)]
     missing = [path for path in rank_paths if not path.is_file()]
@@ -571,8 +585,6 @@ def record_value(record, names: tuple[str, ...]) -> float | None:
 
 
 def borg_mcmc_metadata(mcmc: Path) -> dict[str, object]:
-    import h5py
-
     metadata: dict[str, object] = {"source_mcmc": str(mcmc)}
     if not mcmc.is_file():
         metadata["mcmc_metadata_status"] = "source_mcmc_not_found"
@@ -603,8 +615,6 @@ def borg_mcmc_metadata(mcmc: Path) -> dict[str, object]:
 
 
 def borg_forward_metadata(group) -> dict[str, object]:
-    import numpy as np
-
     metadata: dict[str, object] = {}
     if "scalars" not in group:
         return metadata
@@ -667,8 +677,6 @@ def write_metadata_attrs(target, metadata: dict[str, object]) -> None:
 
 
 def write_velocity_component_views(fields) -> None:
-    import h5py
-
     velocity = fields["velocity"]
     if velocity.ndim != 4 or velocity.shape[-1] != 3:
         raise ValueError(f"Expected velocity shape (N, N, N, 3), got {velocity.shape}")
@@ -691,9 +699,6 @@ def write_generic_field_schema(fields, metadata: dict[str, object]) -> None:
 
 
 def dump_sph_particles(product: Path, group_name: str, particles: Path) -> float:
-    import h5py
-    import numpy as np
-
     particles.parent.mkdir(parents=True, exist_ok=True)
     with h5py.File(product, "r") as src, h5py.File(particles, "w") as out:
         group = src[group_name]
@@ -732,9 +737,6 @@ def dump_sph_particles(product: Path, group_name: str, particles: Path) -> float
 
 
 def write_sph_product(raw_sph: Path, product: Path, group_name: str, attrs: dict[str, float | int | str]) -> None:
-    import h5py
-    import numpy as np
-
     with h5py.File(raw_sph, "r") as src, h5py.File(product, "a") as out:
         group = out[group_name]
         if "sph" in group:
@@ -785,8 +787,6 @@ def write_sph_product(raw_sph: Path, product: Path, group_name: str, attrs: dict
 
 
 def run_sph_fields(product: Path, group_name: str, args: argparse.Namespace) -> None:
-    import h5py
-
     sph_binary = require_file(args.cosmotool_sph, "CosmoTool simple3DFilter")
     with h5py.File(product, "r") as handle:
         group = handle[group_name]
@@ -852,10 +852,8 @@ def pylians_mas_name(mas: str) -> str:
 
 
 def check_pylians_mas_library(mas: str) -> None:
-    import sys
-
     try:
-        import MAS_library as MASL
+        MASL = importlib.import_module("MAS_library")
     except ModuleNotFoundError as exc:
         raise ModuleNotFoundError(
             f"Pylians MAS_library is required for --mas {mas}. "
@@ -872,17 +870,13 @@ def check_pylians_mas_library(mas: str) -> None:
 
 
 def centered_positions_to_pylians(positions, boxsize: float, resolution: int):
-    import numpy as np
-
     cell_size = boxsize / resolution
     offset = 0.5 * boxsize - 0.5 * cell_size
     return np.mod(positions + offset, boxsize).astype("f4", copy=False)
 
 
 def run_pylians_mas_fields(product: Path, group_name: str, args: argparse.Namespace, mas: str) -> None:
-    import h5py
-    import numpy as np
-    import MAS_library as MASL
+    MASL = importlib.import_module("MAS_library")
 
     with h5py.File(product, "r") as handle:
         group = handle[group_name]
@@ -976,9 +970,56 @@ def run_cic_fields(product: Path, group_name: str, args: argparse.Namespace) -> 
     run_pylians_mas_fields(product, group_name, args, "cic")
 
 
-def remove_particle_datasets(product: Path, group_name: str) -> None:
-    import h5py
+def run_borg_cic_fields(product: Path, group_name: str, _args: argparse.Namespace) -> None:
+    with h5py.File(product, "a") as handle:
+        group = handle[group_name]
+        if "final_density" not in group:
+            raise KeyError(f"Missing /{group_name}/final_density in {product}")
+        if "v_field" not in group:
+            raise KeyError(f"Missing /{group_name}/v_field in {product}; BORG must be run with --vfield")
 
+        density = group["final_density"]
+        vfield = group["v_field"]
+        if vfield.ndim != 4:
+            raise ValueError(f"Expected /{group_name}/v_field to be 4D, got {vfield.shape}")
+
+        if "cic-borg" in group:
+            del group["cic-borg"]
+        fields = group.create_group("cic-borg")
+        fields.attrs["assignment_library"] = "BORG borg_forward"
+        fields.attrs["assignment_scheme"] = "CIC"
+        fields.attrs["source_density_dataset"] = f"/{group_name}/final_density"
+        fields.attrs["source_velocity_dataset"] = f"/{group_name}/v_field"
+        fields.attrs["velocity_units"] = "km/s"
+
+        overdensity = fields.create_dataset(
+            "overdensity",
+            data=density[...].astype("f4", copy=False),
+            chunks=(1,) + density.shape[1:],
+        )
+        overdensity.attrs["quantity"] = "density contrast"
+        overdensity.attrs["definition"] = "BORG final_density"
+
+        raw_velocity = vfield[...]
+        if raw_velocity.shape[-1] == 3:
+            velocity_data = raw_velocity
+        elif raw_velocity.shape[0] == 3:
+            velocity_data = np.moveaxis(raw_velocity, 0, -1)
+        else:
+            raise ValueError(f"Expected /{group_name}/v_field component axis of length 3, got {vfield.shape}")
+        velocity = fields.create_dataset(
+            "velocity",
+            data=velocity_data.astype("f4", copy=False),
+            chunks=(1,) + velocity_data.shape[1:],
+        )
+        velocity.attrs["quantity"] = "BORG CIC peculiar velocity"
+        velocity.attrs["units"] = "km/s"
+        write_generic_field_schema(fields, borg_field_metadata(handle, group_name))
+
+    print(f"Wrote BORG CIC fields to: {product}:/{group_name}/cic-borg", flush=True)
+
+
+def remove_particle_datasets(product: Path, group_name: str) -> None:
     removed = []
     with h5py.File(product, "a") as handle:
         group = handle[group_name]
@@ -1056,9 +1097,6 @@ def cleanup_forward_workdirs(
 
 
 def slim_field_product(product: Path, group_name: str, mas: str) -> None:
-    import h5py
-    import numpy as np
-
     tmp_product = product.with_suffix(product.suffix + ".slim")
     tmp_product.unlink(missing_ok=True)
     with h5py.File(product, "r") as src, h5py.File(tmp_product, "w") as out:
@@ -1089,6 +1127,8 @@ def run_gridded_fields(product: Path, group_name: str, args: argparse.Namespace)
         run_cic_fields(product, group_name, args)
     elif args.mas == "pcs":
         run_pylians_mas_fields(product, group_name, args, args.mas)
+    elif args.mas == "cic-borg":
+        run_borg_cic_fields(product, group_name, args)
     else:
         raise ValueError(f"Unknown mass-assignment scheme: {args.mas}")
 
@@ -1100,8 +1140,6 @@ def validate_split_outputs(
     require_particles: bool = True,
     require_vfield: bool = False,
 ) -> None:
-    import h5py
-
     output = output_path(output_pattern, iteration)
     density_slabs = 0
     particle_count = 0
@@ -1146,9 +1184,6 @@ def validate_split_outputs(
 
 
 def compare_to_mcmc(mcmc: Path, output_pattern: Path, iteration: int, nprocs: int, atol: float, rtol: float) -> dict[str, float]:
-    import h5py
-    import numpy as np
-
     output = output_path(output_pattern, iteration)
     max_abs = 0.0
     max_ref_abs = 0.0
