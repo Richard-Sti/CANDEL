@@ -48,3 +48,5 @@ from .frame import (                                                            
 from .megamaser_data import (                                                   # noqa
     load_megamaser_spots,                                                       # noqa
     )
+
+from .field_products import cleanup_temporary_los_files                         # noqa
