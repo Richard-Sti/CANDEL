@@ -93,3 +93,9 @@ fpath_root = "/path/to/csiborg1/field"
 
 [io.reconstruction_main.CB2]
 fpath_root = "/path/to/csiborg2_main/field"
+
+[io.reconstruction_main.ManticoreLocalCOLA]
+fpath_root = "/path/to/BORG_RUN/forward_fields"
+
+[io.reconstruction_main.ManticoreLocalSWIFT]
+fpath_root = "/path/to/BORG_RUN/sph_fields_new_feb/sph_fields"

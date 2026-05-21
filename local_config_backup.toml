@@ -100,3 +100,6 @@ fpath_root = "/mnt/extraspace/rstiskalek/csiborg2_main/field"
 
 [io.reconstruction_main.ManticoreLocalCOLA]
 fpath_root = "/mnt/extraspace/rstiskalek/MANTICORE/2MPP_MULTIBIN_N256_DES_V2/forward_fields"
+
+[io.reconstruction_main.ManticoreLocalSWIFT]
+fpath_root = "/mnt/extraspace/rstiskalek/MANTICORE/2MPP_MULTIBIN_N256_DES_V2/sph_fields_new_feb/sph_fields"
