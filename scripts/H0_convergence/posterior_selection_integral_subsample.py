@@ -53,6 +53,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
 from candel.cosmo.cosmography import Distance2Distmod, Distance2Redshift
+from candel.model.pv_utils import galaxy_bias_density_mode
 from candel.model.utils import log_prob_integrand_sel, predict_cz
 
 
@@ -164,12 +165,13 @@ def load_field_cache(path: Path, selection: str, field_index: int,
         print(f"restricted smoke grid to {n:,} voxels")
 
     rho_arr = out_np.pop("rho")
-    if bias_model in ("powerlaw", "double_powerlaw", "manticore_stdp"):
+    density_mode = galaxy_bias_density_mode(bias_model)
+    if density_mode == "log_rho":
         density = np.log(np.clip(rho_arr, 1.0e-6, None))
-        density_mode = "log_rho"
+    elif density_mode == "uniform":
+        density = np.zeros_like(rho_arr, dtype=np.float32)
     else:
         density = rho_arr - 1.0
-        density_mode = "delta"
 
     out: dict[str, jax.Array | float | str] = {
         "density": jnp.asarray(density),
