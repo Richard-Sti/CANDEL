@@ -24,7 +24,8 @@ from numpyro.distributions import Normal, Uniform
 from ..util import fprint, get_nested, replace_prior_with_delta
 from .base_model import H0ModelBase
 from .integration import ln_simpson_precomputed
-from .pv_utils import lp_galaxy_bias, rsample, sample_galaxy_bias
+from .pv_utils import (galaxy_bias_needs_log_rho, lp_galaxy_bias, rsample,
+                       sample_galaxy_bias)
 from .utils import (log_prob_integrand_window_sel, logmeanexp,
                     normal_logpdf_var, predict_cz)
 
@@ -657,7 +658,8 @@ class TRGBModel(H0ModelBase):
 
             delta_grid = self.f_host_los_delta.interp_many(rh_grid)
             log_rho = (jnp.log(1 + delta_grid)
-                       if "linear" not in self.which_bias else None)
+                       if galaxy_bias_needs_log_rho(self.which_bias)
+                       else None)
             lp_bias = lp_galaxy_bias(
                 delta_grid, log_rho,
                 bias_params, self.which_bias)
