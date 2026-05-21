@@ -452,9 +452,118 @@ def load_SH0ES(root):
     return data
 
 
+def _remap_indices_after_mask(indices, mask):
+    old_to_new = np.full(len(mask), -1, dtype=int)
+    old_to_new[mask] = np.arange(mask.sum())
+    indices = old_to_new[indices]
+    return indices[indices >= 0]
+
+
+def _resolve_sh0es_drop_observation(drop_observation, host_names):
+    """Resolve a CH0 leave-one-out host selector to an active host index."""
+    if drop_observation is None:
+        return None
+
+    if isinstance(drop_observation, str):
+        value = drop_observation.strip()
+        if value == "" or value.lower() == "none":
+            return None
+    if (isinstance(drop_observation, (int, np.integer))
+            and not isinstance(drop_observation, (bool, np.bool_))):
+        drop_index = int(drop_observation)
+    else:
+        raise TypeError(
+            "`io.SH0ES.drop_observation` must be 'none' or an integer "
+            "active host index.")
+
+    host_names = np.asarray(host_names, dtype=str)
+    if not (0 <= drop_index < len(host_names)):
+        raise ValueError(
+            "`io.SH0ES.drop_observation` index out of range: "
+            f"{drop_index}. Active Cepheid host indices run from 0 to "
+            f"{len(host_names) - 1}.")
+    return drop_index
+
+
+def _drop_sh0es_observation(data, drop_observation):
+    """Drop one active Cepheid host and all observations tied to it."""
+    drop_index = _resolve_sh0es_drop_observation(
+        drop_observation, data["host_names"])
+    if drop_index is None:
+        return data
+
+    num_hosts = int(data["num_hosts"])
+    host_names = np.asarray(data["host_names"], dtype=str)
+    dropped_name = host_names[drop_index]
+
+    keep_host = np.ones(num_hosts, dtype=bool)
+    keep_host[drop_index] = False
+    keep_host_all = np.concatenate([keep_host, np.ones(3, dtype=bool)])
+
+    keep_cepheid = data["L_Cepheid_host_dist"][:, drop_index] == 0
+    keep_sn = data["L_SN_unique_Cepheid_host_dist"][:, drop_index] == 0
+    fprint("Leaving out SH0ES Cepheid host observation "
+           f"{dropped_name} (active index {drop_index}): dropping "
+           f"{np.sum(~keep_cepheid)} Cepheids and {np.sum(~keep_sn)} "
+           "SN calibrator row(s).")
+    fprint("  dropped host details: "
+           f"czcmb={data['czcmb_cepheid_host'][drop_index]:.3f} km/s, "
+           f"RA={data['RA_host'][drop_index]:.6f} deg, "
+           f"dec={data['dec_host'][drop_index]:.6f} deg.")
+
+    for key in ("OH", "logP", "mag_cepheid"):
+        data[key] = data[key][keep_cepheid]
+    data["idx_dZP"] = _remap_indices_after_mask(
+        data["idx_dZP"], keep_cepheid)
+    data["C_Cepheid"] = data["C_Cepheid"][keep_cepheid][:, keep_cepheid]
+    data["L_Cepheid"] = cholesky(data["C_Cepheid"], lower=True)
+    data["L_Cepheid_host_dist"] = (
+        data["L_Cepheid_host_dist"][keep_cepheid][:, keep_host_all])
+
+    data["mag_SN_unique_Cepheid_host"] = (
+        data["mag_SN_unique_Cepheid_host"][keep_sn])
+    data["C_SN_unique_Cepheid_host"] = (
+        data["C_SN_unique_Cepheid_host"][keep_sn][:, keep_sn])
+    data["L_SN_unique_Cepheid_host"] = cholesky(
+        data["C_SN_unique_Cepheid_host"], lower=True)
+    data["L_SN_unique_Cepheid_host_dist"] = (
+        data["L_SN_unique_Cepheid_host_dist"][keep_sn][:, keep_host_all])
+    data["mean_std_mag_SN_unique_Cepheid_host"] = np.mean(
+        np.sqrt(np.diag(data["C_SN_unique_Cepheid_host"])))
+
+    for key in ("czcmb_cepheid_host", "e_czcmb_cepheid_host",
+                "RA_host", "dec_host", "host_names"):
+        data[key] = data[key][keep_host]
+    data["PV_covmat_cepheid_host"] = (
+        data["PV_covmat_cepheid_host"][keep_host][:, keep_host])
+
+    if "mask_host" in data:
+        mask_host = np.array(data["mask_host"], copy=True)
+        active_original = np.flatnonzero(mask_host)
+        if len(active_original) == num_hosts:
+            mask_host[active_original[drop_index]] = False
+        elif len(mask_host) == num_hosts:
+            mask_host[drop_index] = False
+        else:
+            raise ValueError(
+                "`mask_host` is inconsistent with active SH0ES hosts: "
+                f"{len(mask_host)} mask entries for {num_hosts} hosts.")
+        data["mask_host"] = mask_host
+    else:
+        data["mask_host"] = keep_host
+
+    data["num_hosts"] = int(np.sum(keep_host))
+    data["num_cepheids"] = int(np.sum(keep_cepheid))
+    data["dropped_observation"] = str(dropped_name)
+    data["dropped_observation_active_index"] = int(drop_index)
+
+    return data
+
+
 def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
                          los_data_path=None, rand_los_data_path=None,
-                         volume_data=None, field_indices=None):
+                         volume_data=None, field_indices=None,
+                         drop_observation=None):
     """
     Load the separated SH0ES data, separating the Cepheid and supernovae and
     covariance matrices.
@@ -673,10 +782,8 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
 
         # Remap idx_dZP: keep only indices that survive the mask, then
         # convert to new positions in the masked array.
-        old_to_new = np.full(len(mask_cepheid), -1, dtype=int)
-        old_to_new[mask_cepheid] = np.arange(mask_cepheid.sum())
-        data["idx_dZP"] = old_to_new[data["idx_dZP"]]
-        data["idx_dZP"] = data["idx_dZP"][data["idx_dZP"] >= 0]
+        data["idx_dZP"] = _remap_indices_after_mask(
+            data["idx_dZP"], mask_cepheid)
         data["C_Cepheid"] = data["C_Cepheid"][mask_cepheid][:, mask_cepheid]
         data["L_Cepheid"] = cholesky(data["C_Cepheid"], lower=True)
 
@@ -697,6 +804,8 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
         data["host_names"] = data["host_names"][mask_host]
 
         data["mask_host"] = mask_host
+
+    data = _drop_sh0es_observation(data, drop_observation)
 
     data["Neff_C_SN_unique_Cepheid_host"] = effective_rank_entropy(data["C_SN_unique_Cepheid_host"])  # noqa
     data["Neff_PV_covmat_cepheid_host"] = effective_rank_entropy(data["PV_covmat_cepheid_host"])     # noqa
@@ -719,6 +828,7 @@ def load_SH0ES_from_config(config_path):
     d = config["io"]["SH0ES"]
     root = d["root"]
     cepheid_host_cz_cmb_max = d.get("cepheid_host_cz_cmb_max", None)
+    drop_observation = d.get("drop_observation", None)
     reconstruction = d.get("reconstruction", None)
     field_indices = get_nested(config, "io/field_indices", None)
     field_smoothing_scale = field_smoothing_scale_from_config(config)
@@ -746,7 +856,7 @@ def load_SH0ES_from_config(config_path):
     data = load_SH0ES_separated(
         root, cepheid_host_cz_cmb_max,
         los_data_path=los_data_path, rand_los_data_path=rand_los_data_path,
-        field_indices=field_indices)
+        field_indices=field_indices, drop_observation=drop_observation)
     if los_data_path is not None:
         los_data_path = getattr(los_data_path, "resolved_path", los_data_path)
 
