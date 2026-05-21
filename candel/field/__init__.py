@@ -29,6 +29,7 @@ from .loader import (                                                           
     UNKNOWN_FIELD_METADATA,                                                     # noqa
     available_mcmc_field_indices,                                               # noqa
     field_allows_raw_product_reads,                                             # noqa
+    field_mas_directory,                                                        # noqa
     field_metadata,                                                             # noqa
     field_product_policy,                                                       # noqa
     field_requires_cached_products,                                             # noqa
