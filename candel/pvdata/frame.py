@@ -26,6 +26,9 @@ from ..model.integration import simpson_log_weights
 from ..model.interp import LOSInterpolator
 from ..util import (SPEED_OF_LIGHT, fprint, fsection, load_config,
                     radec_to_cartesian)
+from .angular_scatter import (angular_position_scatter_from_config,
+                              catalogue_scatter_from_config,
+                              scatter_data_coordinates)
 from .catalogues import _CATALOGUE_LOADERS, load_CF4_data, load_CF4_mock
 from .field_cache import (_field_cache_dir_from_config,
                           _field_cache_enabled_from_config)
@@ -52,6 +55,7 @@ def load_PV_dataframes(config_path):
 
     config_io = config["io"]
     config_pv_model = config["pv_model"]
+    scatter = angular_position_scatter_from_config(config)
     field_smoothing_scale = field_smoothing_scale_from_config(config)
     names = config_io.pop("catalogue_name")
     if isinstance(names, str):
@@ -69,6 +73,11 @@ def load_PV_dataframes(config_path):
             kwargs = config_io["CF4_mock"].copy()
         else:
             kwargs = config_io[name].copy()
+        if scatter is not None:
+            kwargs.setdefault(
+                "angular_position_scatter_deg", scatter["sigma_deg"])
+            kwargs.setdefault(
+                "angular_position_scatter_seed", scatter["seed"])
 
         try_pop_los = is_mock and los_reconstruction is None
         if los_reconstruction is not None and not is_mock:
@@ -275,6 +284,11 @@ class PVDataFrame:
                 if key.startswith("los_"):
                     fprint(f"removing `{key}` from data.")
                     data.pop(key, None)
+
+        if "los_density" not in data:
+            scatter = catalogue_scatter_from_config(config)
+            if scatter is not None:
+                scatter_data_coordinates(data, scatter, label=name)
 
         r_limits = config_pv_model["r_limits_malmquist"]
         dr = config_pv_model["dr_malmquist"]
