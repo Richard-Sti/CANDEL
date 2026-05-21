@@ -30,6 +30,43 @@ from .utils import smoothclip_nr
 
 RHO_CRIT_H2 = 2.77536627e11  # (Msun / h) / (Mpc / h)^3
 
+GALAXY_BIAS_REQUIRED_PRIORS = {
+    "uniform": frozenset(),
+    "unity": frozenset(),
+    "powerlaw": frozenset(("alpha",)),
+    "linear": frozenset(("b1",)),
+    "linear_from_beta": frozenset(),
+    "linear_from_beta_stochastic": frozenset(("delta_b1",)),
+    "double_powerlaw": frozenset(
+        ("alpha_low", "alpha_high", "log_rho_t", "log_rho_width")),
+    "manticore_stdp": frozenset(
+        ("stdp_gamma_t", "stdp_gamma_s", "stdp_alpha",
+         "stdp_beta", "stdp_beta0")),
+    "quadratic": frozenset(("b1", "b2")),
+    "cubic": frozenset(("b1", "b2", "b3")),
+}
+GALAXY_BIAS_MODELS = tuple(GALAXY_BIAS_REQUIRED_PRIORS)
+GALAXY_BIAS_LOG_RHO_MODELS = frozenset(
+    ("powerlaw", "double_powerlaw", "manticore_stdp"))
+GALAXY_BIAS_LINEAR_DELTA_MODELS = frozenset(
+    ("unity", "linear", "linear_from_beta", "linear_from_beta_stochastic"))
+GALAXY_BIAS_PRIOR_DEFAULTS = {
+    "b1": 1.0,
+    "b2": 0.0,
+    "b3": 0.0,
+    "alpha": 1.0,
+    "delta_b1": 0.0,
+    "alpha_low": 1.0,
+    "alpha_high": 1.0,
+    "log_rho_t": 0.0,
+    "log_rho_width": 1.0,
+    "stdp_gamma_t": -1.0,
+    "stdp_gamma_s": 0.5,
+    "stdp_alpha": 1.0,
+    "stdp_beta": 0.7,
+    "stdp_beta0": 1.0,
+}
+
 _R_ICRS_TO_GAL = jnp.array([
     [-0.05487565771259163, -0.87343705195561590, -0.48383507361671546],
     [+0.49410943719272680, -0.44482972122329520, +0.74698218398666760],
@@ -179,6 +216,28 @@ def interp_cartesian_vector(rq, rknot, v_knot, method="cubic"):
 ###############################################################################
 #                           Sampling utilities                                #
 ###############################################################################
+
+
+def galaxy_bias_needs_log_rho(galaxy_bias):
+    """Return whether a galaxy-bias model requires ``log(1 + delta)``."""
+    validate_galaxy_bias(galaxy_bias)
+    return galaxy_bias in GALAXY_BIAS_LOG_RHO_MODELS
+
+
+def galaxy_bias_density_mode(galaxy_bias):
+    """Return the minimal density representation needed by a bias model."""
+    validate_galaxy_bias(galaxy_bias)
+    if galaxy_bias == "uniform":
+        return "uniform"
+    if galaxy_bias in GALAXY_BIAS_LOG_RHO_MODELS:
+        return "log_rho"
+    return "delta"
+
+
+def validate_galaxy_bias(galaxy_bias):
+    """Raise if ``galaxy_bias`` is not a known bias model."""
+    if galaxy_bias not in GALAXY_BIAS_REQUIRED_PRIORS:
+        raise ValueError(f"Invalid galaxy bias model '{galaxy_bias}'.")
 
 
 def _rsample(name, dist):
@@ -471,7 +530,9 @@ def sample_galaxy_bias(priors, galaxy_bias, shared_params=None, **kwargs):
     """
     Sample a vector of galaxy bias parameters based on the specified model.
     """
-    if galaxy_bias == "unity":
+    if galaxy_bias == "uniform":
+        return []
+    elif galaxy_bias == "unity":
         return [1.,]
     elif galaxy_bias == "powerlaw":
         alpha = rsample("alpha", priors["alpha"], shared_params)
@@ -523,7 +584,12 @@ def lp_galaxy_bias(delta, log_rho, bias_params, galaxy_bias,
     """
     Log galaxy bias probability, given some density and a bias model.
     """
-    if galaxy_bias == "powerlaw":
+    if galaxy_bias == "uniform":
+        ref = delta
+        if ref is None or (jnp.shape(ref) == () and log_rho is not None):
+            ref = log_rho
+        lp = jnp.zeros_like(ref)
+    elif galaxy_bias == "powerlaw":
         lp = bias_params[0] * log_rho
     elif galaxy_bias == "double_powerlaw":
         alpha_low, alpha_high, log_rho_t, log_rho_width = bias_params
@@ -537,7 +603,7 @@ def lp_galaxy_bias(delta, log_rho, bias_params, galaxy_bias,
         lp = (-jnp.logaddexp(0.0, (gamma_t - log_rho) / gamma_s)
               + alpha * log_rho
               - beta * jnp.logaddexp(0.0, beta * (log_rho - beta0)))
-    elif "linear" in galaxy_bias or galaxy_bias == "unity":
+    elif galaxy_bias in GALAXY_BIAS_LINEAR_DELTA_MODELS:
         lp = jnp.log(smoothclip_nr(1 + bias_params[0] * delta, tau=0.1))
     elif galaxy_bias == "quadratic":
         b1, b2 = bias_params
