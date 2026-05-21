@@ -122,6 +122,7 @@ fpath_root = "data/MANTICORE/2MPP_MULTIBIN_N256_DES_V2/sph_fields_new_feb/sph_fi
 Om0 = 0.306
 
 [io.reconstruction_main.ManticoreLocalCOLA]
+which_MAS = "CIC"
 
 [io.reconstruction_main.ManticoreLocalSWIFT]
 
