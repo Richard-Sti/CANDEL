@@ -15,7 +15,7 @@
 """Running the MCMC inference for the model and some postprocessing."""
 import contextlib
 from os import makedirs
-from os.path import dirname, splitext
+from os.path import abspath, dirname, splitext
 
 import jax
 import numpy as np
@@ -379,6 +379,7 @@ def _post_sampling_flags(kwargs, model, require_config_evidence=False):
 
 def _compute_gof(samples, log_density, ndata, kwargs):
     """Compute BIC/AIC and Laplace/harmonic evidence summaries."""
+    fsection("Evidence")
     bic, aic = BIC_AIC(samples, log_density, ndata)
 
     samples_arr, names = dict_samples_to_array(samples)
@@ -402,6 +403,46 @@ def _compute_gof(samples, log_density, ndata, kwargs):
            "err_lnZ_harmonic": err_lnZ_harmonic}
     _print_gof(gof)
     return gof
+
+
+def _summarise_sample_block(samples):
+    """Return a compact description of the posterior sample dictionary."""
+    if not samples:
+        return "0 parameters"
+
+    first = next(iter(samples.values()))
+    nsamples = np.shape(first)[0]
+    return f"{len(samples)} parameter(s), {nsamples} posterior sample(s)"
+
+
+def _print_post_sampling_plan(compute_log_density, compute_evidence):
+    """Print the requested post-sampling calculations."""
+    fsection("Post-processing")
+    fprint(f"log density: {'computed' if compute_log_density else 'skipped'}")
+    fprint(f"evidence: {'computed' if compute_evidence else 'skipped'}")
+
+
+def _print_output_manifest(fname_out, fname_summary, plot_paths,
+                           log_density, log_density_per_sample, gof,
+                           auxiliary):
+    """Print the files and HDF5 entries produced by an inference run."""
+    fsection("Outputs")
+    fprint(f"samples HDF5: {abspath(fname_out)}")
+
+    entries = ["/samples"]
+    if log_density is not None:
+        entries.append("/log_density")
+    if log_density_per_sample is not None:
+        entries.append("/log_density_per_sample")
+    if gof is not None:
+        entries.append("/gof")
+    if auxiliary:
+        entries.append("/auxiliary")
+    fprint(f"HDF5 entries: {', '.join(entries)}")
+
+    fprint(f"summary text: {abspath(fname_summary)}")
+    for label, path in plot_paths:
+        fprint(f"{label}: {abspath(path)}")
 
 
 def run_pv_inference(model, model_kwargs, print_summary=True,
@@ -492,6 +533,7 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
     log_density_per_sample = samples.pop("log_density_per_sample", None)
 
     compute_log_density, compute_evidence = _post_sampling_flags(kwargs, model)
+    _print_post_sampling_plan(compute_log_density, compute_evidence)
 
     if compute_log_density:
         log_density = get_log_density(samples, model, model_kwargs)
@@ -512,17 +554,20 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
     samples = postprocess_samples(samples)
 
     if print_summary:
+        fsection("Posterior summary")
+        fprint(_summarise_sample_block(samples))
         print_clean_summary(samples)
 
     if save_samples:
         fname_out = model.config["io"]["fname_output"]
-        fprint(f"output directory is {dirname(fname_out)}.")
+        fprint(f"writing outputs under {abspath(dirname(fname_out))}.")
         save_mcmc_samples(
             samples, log_density, log_density_per_sample, gof, fname_out,
             auxiliary=auxiliary)
 
         fname_plot = splitext(fname_out)[0] + ".png"
         plot_corner(samples, show_fig=False, filename=fname_plot,)
+        plot_paths = [("corner plot", fname_plot)]
 
         fname_summary = splitext(fname_out)[0] + "_summary.txt"
         with open(fname_summary, "w") as f:
@@ -535,22 +580,29 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
         if model.which_Vext == "radial":
             fname_plot = splitext(fname_out)[0] + "_corner_Vext_rad.png"
             plot_Vext_rad_corner(samples, show_fig=False, filename=fname_plot)
+            plot_paths.append(("Vext radial corner plot", fname_plot))
 
             fname_plot = splitext(fname_out)[0] + "_profile_Vext_rad.png"
             plot_radial_profiles(samples, model, show_fig=False,
                                  filename=fname_plot)
+            plot_paths.append(("Vext radial profile plot", fname_plot))
 
             fname_plot = splitext(fname_out)[0] + "_bulkflow_Vext_rad.png"
             plot_Vext_radial_bulkflow(
                 samples, model, show_fig=False, filename=fname_plot)
+            plot_paths.append(("Vext radial bulk-flow plot", fname_plot))
         elif model.which_Vext == "radial_magnitude":
             fname_plot = splitext(fname_out)[0] + "_profile_Vext_radmag.png"
             plot_Vext_radmag(
                 samples, model, show_fig=False, filename=fname_plot,)
+            plot_paths.append(("Vext radial-magnitude profile plot",
+                               fname_plot))
 
             fname_plot = splitext(fname_out)[0] + "_bulkflow_Vext_radmag.png"
             plot_Vext_radial_bulkflow(
                 samples, model, show_fig=False, filename=fname_plot)
+            plot_paths.append(("Vext radial-magnitude bulk-flow plot",
+                               fname_plot))
 
         if model.which_Vext == "per_pix":
             npix = samples["Vext_pix"].shape[1]
@@ -562,9 +614,15 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
                     f"Vext_pix_{i}": samples["Vext_pix"][:, i]
                     for i in range(npix)}
                 plot_corner(samples_Vext, show_fig=False, filename=fname_plot,)
+                plot_paths.append(("Vext per-pixel corner plot", fname_plot))
 
             fname_plot = splitext(fname_out)[0] + "_moll_Vext_pix.png"
             plot_Vext_moll(samples["Vext_pix"], fname_plot,)
+            plot_paths.append(("Vext per-pixel mollweide plot", fname_plot))
+
+        _print_output_manifest(
+            fname_out, fname_summary, plot_paths, log_density,
+            log_density_per_sample, gof, auxiliary)
 
     if return_original_samples:
         return samples, log_density, original_samples
@@ -692,6 +750,7 @@ def run_H0_inference(model, model_kwargs=None, print_summary=True,
     _attach_auxiliary_metadata(auxiliary, model)
     compute_log_density, compute_evidence = _post_sampling_flags(
         kwargs, model, require_config_evidence=True)
+    _print_post_sampling_plan(compute_log_density, compute_evidence)
 
     if compute_log_density:
         log_density = get_log_density(samples, model, model_kwargs)
@@ -709,17 +768,20 @@ def run_H0_inference(model, model_kwargs=None, print_summary=True,
     samples = postprocess_samples(samples)
 
     if print_summary:
+        fsection("Posterior summary")
+        fprint(_summarise_sample_block(samples))
         print_clean_summary(samples)
         print_student_t_nu_warnings(samples)
 
     if save_samples:
         fname_out = model.config["io"]["fname_output"]
-        fprint(f"output directory is {dirname(fname_out)}.")
+        fprint(f"writing outputs under {abspath(dirname(fname_out))}.")
         save_mcmc_samples(samples, log_density, None, gof, fname_out,
                           auxiliary=auxiliary)
 
         fname_plot = splitext(fname_out)[0] + ".png"
         plot_corner(samples, show_fig=False, filename=fname_plot,)
+        plot_paths = [("corner plot", fname_plot)]
 
         fname_summary = splitext(fname_out)[0] + "_summary.txt"
         with open(fname_summary, "w") as f:
@@ -729,6 +791,9 @@ def run_H0_inference(model, model_kwargs=None, print_summary=True,
                 if compute_evidence:
                     _print_gof(gof)
         fprint(f"saved summary to {fname_summary}")
+        _print_output_manifest(
+            fname_out, fname_summary, plot_paths, log_density, None, gof,
+            auxiliary)
 
     if return_diagnostics:
         return samples, diagnostic_summary
