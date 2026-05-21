@@ -64,7 +64,16 @@ def test_old_manticore_names_are_not_supported():
 
 
 def test_los_field_cache_path_uses_field_cache_dir(tmp_path):
-    config = {"io": {"field_cache_dir": str(tmp_path)}}
+    config = {
+        "io": {
+            "field_cache_dir": str(tmp_path),
+            "reconstruction_main": {
+                "rmin": 0.001,
+                "rmax": 201,
+                "num_steps": 251,
+            },
+        },
+    }
 
     path = los_field_cache_path(
         config, "CF4", "ManticoreLocalCOLA", "data/los_<X>.hdf5",
@@ -72,7 +81,7 @@ def test_los_field_cache_path_uses_field_cache_dir(tmp_path):
 
     path = Path(path)
     assert path.parent == tmp_path / "ManticoreLocalCOLA" / "los"
-    assert path.name.startswith("los__CF4__field-0__")
+    assert path.name == "los__CF4__field-0__r-0p001-201-n251.hdf5"
     assert "v1" not in path.name
     assert "field-0" in path.name
     assert path.suffix == ".hdf5"

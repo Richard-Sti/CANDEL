@@ -45,6 +45,7 @@ pvdata_mod = SimpleNamespace(
     SPEED_OF_LIGHT=SPEED_OF_LIGHT,
     _field_cache_enabled_from_config=(
         field_cache_mod._field_cache_enabled_from_config),
+    _VOLUME_FIELD_CACHE_PREFIX=field_cache_mod._VOLUME_FIELD_CACHE_PREFIX,
     _field_cache_path=field_cache_mod._field_cache_path,
     _field_source_metadata=field_cache_mod._field_source_metadata,
     _h0_volume_cache_sampling_payload=(
@@ -55,10 +56,12 @@ pvdata_mod = SimpleNamespace(
         volume_density_mod._h0_volume_supersampling_from_config),
     _h0_volume_resolved_supersample_factor=(
         volume_density_mod._h0_volume_resolved_supersample_factor),
-    density_smoothing_cache_payload=(
-        field_products_mod.density_smoothing_cache_payload),
-    density_smoothing_scale_from_config=(
-        field_products_mod.density_smoothing_scale_from_config),
+    _h0_volume_supersampling_cache_arrays=(
+        volume_density_mod._h0_volume_supersampling_cache_arrays),
+    field_smoothing_cache_payload=(
+        field_products_mod.field_smoothing_cache_payload),
+    field_smoothing_scale_from_config=(
+        field_products_mod.field_smoothing_scale_from_config),
     resolve_los_data_path=field_products_mod.resolve_los_data_path,
     _field_loader_native_dx=volume_density_mod._field_loader_native_dx,
     _jsonable=field_cache_mod._jsonable,
@@ -215,29 +218,62 @@ def _h0_los_config(config):
     which_run = get_nested(config, "model/which_run", None)
     if which_run == "CH0":
         return (
-            get_nested(config, "io/SH0ES/which_host_los", None),
+            get_nested(config, "io/SH0ES/reconstruction", None),
             get_nested(config, "io/PV_main/SH0ES/los_file", None),
         )
     if which_run in ("CCHP", "CCHP_CSP"):
         return (
-            get_nested(config, "io/which_host_los",
-                       get_nested(config, "io/CCHP/which_host_los", None)),
+            get_nested(config, "io/CCHP/reconstruction", None),
             get_nested(config, "io/CCHP/los_file", None),
         )
     if which_run in ("EDD_TRGB", "EDD_TRGB_grouped"):
         return (
-            get_nested(config, "io/which_host_los",
-                       get_nested(
-                           config,
-                           f"io/PV_main/{which_run}/which_host_los", None)),
+            get_nested(config, f"io/PV_main/{which_run}/reconstruction", None),
             get_nested(config, f"io/PV_main/{which_run}/los_file", None),
         )
     return None, None
 
 
+def _h0_los_catalogue(config):
+    """Return the LOS-prep catalogue name for the configured H0 run."""
+    which_run = get_nested(config, "model/which_run", None)
+    if which_run == "CH0":
+        return "SH0ES"
+    if which_run in ("CCHP", "CCHP_CSP", "EDD_TRGB",
+                     "EDD_TRGB_grouped"):
+        return which_run.replace("_CSP", "")
+    return None
+
+
 def _resolve_repo_path(path):
     path = Path(path)
     return path if path.is_absolute() else ROOT / path
+
+
+def _as_path_list(path_or_paths):
+    if isinstance(path_or_paths, (list, tuple)):
+        return list(path_or_paths)
+    return [path_or_paths]
+
+
+def _all_paths_exist(path_or_paths):
+    return all(_resolve_repo_path(path).exists()
+               for path in _as_path_list(path_or_paths))
+
+
+def _configured_or_available_field_indices(config, reconstruction):
+    configured = get_nested(config, "io/field_indices", None)
+    if configured is not None:
+        configured = pvdata_mod.np.asarray(
+            configured, dtype=pvdata_mod.np.int32)
+        if configured.ndim == 0:
+            configured = configured[None]
+        return configured
+    try:
+        from scripts.preprocess import field_input_los as prep_los_mod
+        return prep_los_mod.reconstruction_field_indices(config, reconstruction)
+    except Exception:
+        return None
 
 
 def _sh0es_num_hosts(config):
@@ -279,6 +315,53 @@ def _h0_velocity_key(config):
     return "density"
 
 
+def _field_indices_label(field_indices):
+    values = sorted({int(x) for x in field_indices})
+    if not values:
+        return "-"
+
+    ranges = []
+    start = prev = values[0]
+    for value in values[1:]:
+        if value == prev + 1:
+            prev = value
+            continue
+        ranges.append((start, prev))
+        start = prev = value
+    ranges.append((start, prev))
+
+    labels = [
+        str(lo) if lo == hi else f"{lo}-{hi}"
+        for lo, hi in ranges[:3]
+    ]
+    if len(ranges) > 3:
+        labels.append(f"+{len(ranges) - 3}")
+    return ",".join(labels)
+
+
+def _number_label(value):
+    if value is None:
+        return "-"
+    return f"{float(value):g}"
+
+
+def _radius_label(geometry, radius):
+    if radius is None:
+        return str(geometry)
+    return f"{geometry} r<{_number_label(radius)}"
+
+
+def _selection_label(selection):
+    if selection in (None, "", "none", "-"):
+        return "-"
+    selection = str(selection)
+    aliases = {
+        "SN_magnitude_redshift": "mag+z",
+        "SN_magnitude_or_redshift_Nmag": "mag|z_N",
+    }
+    return aliases.get(selection, selection)
+
+
 def _cache_group_key(config):
     which_run = get_nested(config, "model/which_run", None)
     if which_run not in ("CH0", "CCHP", "CCHP_CSP", "EDD_TRGB",
@@ -287,34 +370,38 @@ def _cache_group_key(config):
         if not entries:
             return None
         return _json_key({
-            "kind": "pv_volume_density_3d_set",
+            "kind": "volume_field_data_set",
+            "product": "pv_volume_density",
             "cache_dir": _field_cache_dir_from_config(config),
             "entries": [entry["payload"] for entry in entries],
         })
     if _variant_action(config) != "check/cache":
         return None
 
-    which_los, los_file = _h0_los_config(config)
+    reconstruction, los_file = _h0_los_config(config)
     field_kwargs = get_nested(
-        config, f"io/reconstruction_main/{which_los}", None)
-    if which_los is None or field_kwargs is None:
+        config, f"io/reconstruction_main/{reconstruction}", None)
+    if reconstruction is None or field_kwargs is None:
         return None
-    los_data_path = _resolve_los_path(los_file, which_los, config)
-    if los_data_path is None or not _resolve_repo_path(los_data_path).exists():
+    los_data_path = _resolve_los_path(
+        los_file, reconstruction, config, _h0_los_catalogue(config))
+    field_indices = _h0_field_indices_for_plan(config, reconstruction,
+                                               los_data_path)
+    if field_indices is None:
         return None
-    field_indices = _read_h0_field_indices(los_data_path)
 
     sampling = pvdata_mod._h0_volume_cache_sampling_payload(
         get_nested(config, "model/density_3d_subsample_fraction", 1.0),
         get_nested(config, "model/density_3d_subsample_seed", 42))
     supersampling = _h0_supersampling_payload(
-        config, which_los, field_kwargs, field_indices)
-    density_smoothing = pvdata_mod.density_smoothing_cache_payload(
-        pvdata_mod.density_smoothing_scale_from_config(config))
+        config, reconstruction, field_kwargs, field_indices)
+    field_smoothing = pvdata_mod.field_smoothing_cache_payload(
+        pvdata_mod.field_smoothing_scale_from_config(config))
     return _json_key({
-        "kind": "h0_volume_data",
+        "kind": "volume_field_data",
+        "product": "h0_volume",
         "cache_dir": _field_cache_dir_from_config(config),
-        "which_los": which_los,
+        "reconstruction": reconstruction,
         "los_file": los_file,
         "selection_integral_geometry": get_nested(
             config, "model/selection_integral_geometry", "sphere"),
@@ -322,7 +409,7 @@ def _cache_group_key(config):
             config, "model/selection_integral_grid_radius", None),
         "sampling": sampling,
         "supersampling": supersampling,
-        "density_smoothing": density_smoothing,
+        "field_smoothing": field_smoothing,
         "velocity": _h0_velocity_key(config),
     })
 
@@ -358,52 +445,70 @@ def _pv_volume_cache_entries(config):
     voxel_subsample_seed = get_nested(
         config, "pv_model/density_3d_subsample_seed", 42)
     store_rhat_3d = bool(get_nested(config, "pv_model/use_Mmiss", False))
+    field_smoothing = pvdata_mod.field_smoothing_cache_payload(
+        pvdata_mod.field_smoothing_scale_from_config(config))
 
     entries = {}
+    geometry_tag = "sphere" if pad_boundary else "cube"
     for name in names:
         io_name = "CF4_mock" if str(name).startswith("CF4_mock") else name
         io_section = get_nested(config, f"io/{io_name}", None)
         if io_section is None or "los_file" not in io_section:
             return [], f"missing LOS config: {name}"
-        los_path = _resolve_los_path(io_section["los_file"], reconstruction)
-        los_read_path = _resolve_repo_path(los_path)
-        if not los_read_path.exists():
-            return [], f"missing LOS: {_short_path(los_read_path)}"
-        with pvdata_mod.File(los_read_path, "r") as f:
-            if "field_indices" in f:
-                field_indices = f["field_indices"][:]
-            else:
-                field_indices = pvdata_mod.np.arange(f["los_density"].shape[0])
+        los_path = _resolve_los_path(
+            io_section["los_file"], reconstruction, config, name)
+        if not _all_paths_exist(los_path):
+            missing = [
+                _short_path(_resolve_repo_path(path))
+                for path in _as_path_list(los_path)
+                if not _resolve_repo_path(path).exists()
+            ]
+            return [], f"missing LOS: {missing[:3]}"
+        field_indices = _read_h0_field_indices(los_path)
 
         source_meta = []
+        max_radii = []
         for nsim in field_indices:
             loader_kwargs = dict(recon_kwargs)
             loader_kwargs["nsim"] = int(nsim)
             loader = pvdata_mod.name2field_loader(
                 reconstruction)(**loader_kwargs)
             source_meta.append(pvdata_mod._field_source_metadata(loader))
-        payload = {
-            "kind": "pv_volume_density_3d",
-            "loader_name": reconstruction,
-            "loader_kwargs": pvdata_mod._jsonable(recon_kwargs),
-            "field_indices": pvdata_mod._jsonable(
-                pvdata_mod.np.asarray(field_indices)),
-            "downsample": downsample,
-            "subcube_radius": radius,
-            "pad_subcube_boundary": bool(pad_boundary),
-            "voxel_subsample_fraction": float(voxel_subsample_fraction),
-            "voxel_subsample_seed": int(voxel_subsample_seed),
-            "store_rhat_3d": store_rhat_3d,
-            "sources": source_meta,
-        }
-        cache_path = Path(pvdata_mod._field_cache_path(
-            cache_dir, "pv_volume_density_3d", payload))
-        entries[str(cache_path)] = {
-            "payload": payload,
-            "path": cache_path,
-        }
+            max_radii.append(
+                volume_density_mod._expected_pv_volume_max_radius_from_loader(
+                    loader, downsample, radius, pad_boundary, geometry_tag,
+                    radius, voxel_subsample_fraction, voxel_subsample_seed))
+        for i, nsim in enumerate(field_indices):
+            payload = {
+                "kind": "volume_field_data",
+                "product": "pv_volume_density",
+                "loader_name": reconstruction,
+                "loader_kwargs": pvdata_mod._jsonable(recon_kwargs),
+                "field_indices": [int(nsim)],
+                "downsample": downsample,
+                "subcube_radius": radius,
+                "max_radius": max_radii[i],
+                "pad_subcube_boundary": bool(pad_boundary),
+                "voxel_subsample_fraction": float(voxel_subsample_fraction),
+                "voxel_subsample_seed": int(voxel_subsample_seed),
+                "store_rhat_3d": store_rhat_3d,
+                **field_smoothing,
+                "sources": [source_meta[i]],
+            }
+            cache_path = Path(pvdata_mod._field_cache_path(
+                cache_dir, pvdata_mod._VOLUME_FIELD_CACHE_PREFIX, payload))
+            entries[str(cache_path)] = {
+                "payload": payload,
+                "path": cache_path,
+            }
 
     return list(entries.values()), ""
+
+
+def _h0_field_indices_for_plan(config, reconstruction, los_data_path):
+    if los_data_path is not None and _all_paths_exist(los_data_path):
+        return _read_h0_field_indices(los_data_path)
+    return _configured_or_available_field_indices(config, reconstruction)
 
 
 def _variant_action(config):
@@ -442,73 +547,134 @@ def _h0_supersampling_description(config):
         f"target_dx={target_dx:g} Mpc/h")
 
 
-def _h0_density_smoothing_description(config):
-    """Human-readable H0 density smoothing settings."""
-    which_run = get_nested(config, "model/which_run", None)
-    h0_runs = ("CH0", "CCHP", "CCHP_CSP", "EDD_TRGB",
-               "EDD_TRGB_grouped")
-    if which_run not in h0_runs:
-        return ""
-    scale = pvdata_mod.density_smoothing_scale_from_config(config)
+def _h0_supersampling_label(config):
+    factor, radius, target_dx = pvdata_mod._h0_volume_supersampling_from_config(
+        config)
+    if radius <= 0.0:
+        return "-"
+    if target_dx is not None:
+        return f"r<{radius:g},dx={target_dx:g}"
+    if factor <= 1:
+        return "-"
+    return f"r<{radius:g},x{int(factor)}"
+
+
+def _field_smoothing_description(config):
+    """Human-readable field smoothing settings."""
+    scale = pvdata_mod.field_smoothing_scale_from_config(config)
     if scale is None:
         return ""
     return f"Gaussian R={scale:g} Mpc/h"
 
 
-def _resolve_los_path(path, which_los, config=None):
-    density_smoothing_scale = (
+def _field_smoothing_label(config):
+    scale = pvdata_mod.field_smoothing_scale_from_config(config)
+    if scale is None:
+        return "-"
+    return f"R={scale:g}"
+
+
+def _resolve_los_path(path, reconstruction, config=None, catalogue=None):
+    field_smoothing_scale = (
         None if config is None else
-        pvdata_mod.density_smoothing_scale_from_config(config))
+        pvdata_mod.field_smoothing_scale_from_config(config))
+    if catalogue is not None:
+        field_indices = _configured_or_available_field_indices(
+            config, reconstruction)
+        cache_path = field_products_mod.los_field_cache_paths(
+            config, catalogue, reconstruction, path,
+            field_smoothing_scale=field_smoothing_scale,
+            field_indices=field_indices)
+        if cache_path is not None:
+            return cache_path
     return pvdata_mod.resolve_los_data_path(
-        path, which_los, density_smoothing_scale)
+        path, reconstruction, field_smoothing_scale)
 
 
-def _h0_supersampling_payload(config, which_los, field_kwargs,
+def _h0_supersampling_payload(config, reconstruction, field_kwargs,
                               field_indices):
     factor, radius, target_dx = (
         pvdata_mod._h0_volume_supersampling_from_config(config))
     if target_dx is not None and radius > 0.0:
         kwargs = dict(field_kwargs)
         kwargs["nsim"] = int(field_indices[0])
-        loader = pvdata_mod.name2field_loader(which_los)(**kwargs)
+        loader = pvdata_mod.name2field_loader(reconstruction)(**kwargs)
         dx = pvdata_mod._field_loader_native_dx(loader)
         factor = pvdata_mod._h0_volume_resolved_supersample_factor(
             dx, factor, target_dx)
     return pvdata_mod._h0_volume_cache_supersampling_payload(factor, radius)
 
 
+def _cache_grid_status(f, expected_r_3d=None):
+    """Return a stale-cache note if the stored volume radius differs."""
+    if expected_r_3d is not None:
+        got = float(pvdata_mod.np.max(f["r_3d"][...]))
+        expected = float(pvdata_mod.np.max(pvdata_mod.np.asarray(
+            expected_r_3d)))
+        if not pvdata_mod.np.isclose(got, expected):
+            return "stale", "max r_3d differs"
+    return None
+
+
+def _cache_supersampling_status(f, expected):
+    """Return a stale-cache note if supersampling metadata differs."""
+    factor = int(pvdata_mod.np.asarray(
+        f["supersample_factor"]).reshape(-1)[0])
+    radius = float(pvdata_mod.np.asarray(
+        f["supersample_radius"]).reshape(-1)[0])
+    method = str(pvdata_mod.np.asarray(f["supersample_method"]).item())
+    expected_factor = int(pvdata_mod.np.asarray(
+        expected["supersample_factor"]).reshape(-1)[0])
+    expected_radius = float(pvdata_mod.np.asarray(
+        expected["supersample_radius"]).reshape(-1)[0])
+    expected_method = str(pvdata_mod.np.asarray(
+        expected["supersample_method"]).item())
+    if (factor == expected_factor and pvdata_mod.np.isclose(
+            radius, expected_radius) and method == expected_method):
+        return None
+    return "stale", "supersampling metadata differs"
+
+
 def _read_h0_field_indices(los_data_path):
-    los_read_path = _resolve_repo_path(los_data_path)
-    with pvdata_mod.File(los_read_path, "r") as f:
-        if "field_indices" in f:
-            return f["field_indices"][:]
-        return pvdata_mod.np.arange(f["los_density"].shape[0])
+    out = []
+    for path in _as_path_list(los_data_path):
+        los_read_path = _resolve_repo_path(path)
+        with pvdata_mod.File(los_read_path, "r") as f:
+            if "field_indices" in f:
+                out.extend(f["field_indices"][:].astype(pvdata_mod.np.int32))
+            else:
+                out.extend(pvdata_mod.np.arange(
+                    f["los_density"].shape[0], dtype=pvdata_mod.np.int32))
+    return pvdata_mod.np.asarray(out, dtype=pvdata_mod.np.int32)
 
 
 def _h0_cache_file_status(config):
     if _variant_action(config) != "check/cache":
         return None, None
 
-    which_los, los_file = _h0_los_config(config)
-    los_data_path = _resolve_los_path(los_file, which_los, config)
-    if which_los is None or los_data_path is None:
+    reconstruction, los_file = _h0_los_config(config)
+    los_data_path = _resolve_los_path(
+        los_file, reconstruction, config, _h0_los_catalogue(config))
+    if reconstruction is None or los_data_path is None:
         return None, "no LOS"
-    los_read_path = _resolve_repo_path(los_data_path)
-    if not los_read_path.exists():
-        return None, f"missing LOS: {_short_path(los_read_path)}"
+    if not _all_paths_exist(los_data_path):
+        return "missing", "needs LOS"
 
     field_indices = _read_h0_field_indices(los_data_path)
 
     field_kwargs = get_nested(
-        config, f"io/reconstruction_main/{which_los}", None)
+        config, f"io/reconstruction_main/{reconstruction}", None)
     if field_kwargs is None:
-        return None, f"missing reconstruction: {which_los}"
+        return None, f"missing reconstruction: {reconstruction}"
 
     source_meta = []
-    for nsim in field_indices:
+    first_loader = None
+    for i, nsim in enumerate(field_indices):
         kwargs = dict(field_kwargs)
         kwargs["nsim"] = int(nsim)
-        loader = pvdata_mod.name2field_loader(which_los)(**kwargs)
+        loader = pvdata_mod.name2field_loader(reconstruction)(**kwargs)
+        if i == 0:
+            first_loader = loader
         source_meta.append(pvdata_mod._field_source_metadata(loader))
 
     geometry = get_nested(
@@ -521,8 +687,9 @@ def _h0_cache_file_status(config):
         config, "model/density_3d_subsample_seed", 42)
     load_velocity = _h0_velocity_key(config) == "velocity"
     base_payload = {
-        "kind": "h0_volume_data",
-        "field_name": which_los,
+        "kind": "volume_field_data",
+        "product": "h0_volume",
+        "loader_name": reconstruction,
         "field_indices": pvdata_mod._jsonable(
             pvdata_mod.np.asarray(field_indices)),
         "subcube_radius": grid_radius,
@@ -532,52 +699,111 @@ def _h0_cache_file_status(config):
     base_payload.update(pvdata_mod._h0_volume_cache_sampling_payload(
         subsample_fraction, subsample_seed))
     supersampling = _h0_supersampling_payload(
-        config, which_los, field_kwargs, field_indices)
+        config, reconstruction, field_kwargs, field_indices)
     base_payload.update(supersampling)
+    supersample = supersampling.get("supersample", None)
+    if supersample is None:
+        supersample_factor = 1
+        supersample_radius = 0.0
+    else:
+        supersample_factor = int(supersample["factor"])
+        supersample_radius = float(supersample["radius"])
+    expected_max_r_3d = (
+        volume_density_mod._expected_h0_volume_max_radius_from_loader(
+            first_loader, geometry, grid_radius, supersample_factor,
+            supersample_radius))
+    base_payload["max_radius"] = expected_max_r_3d
+    expected_supersampling = pvdata_mod._h0_volume_supersampling_cache_arrays(
+        supersample_factor, supersample_radius)
+    field_smoothing = pvdata_mod.field_smoothing_cache_payload(
+        pvdata_mod.field_smoothing_scale_from_config(config))
     density_payload = {
         **base_payload,
-        **pvdata_mod.density_smoothing_cache_payload(
-            pvdata_mod.density_smoothing_scale_from_config(config)),
+        **field_smoothing,
         "load_velocity": False,
     }
-    velocity_payload = {**base_payload, "load_velocity": True}
+    velocity_payload = {**base_payload, **field_smoothing,
+                        "load_velocity": True}
     cache_dir = _field_cache_dir_from_config(config)
-    density_cache_path = Path(pvdata_mod._field_cache_path(
-        cache_dir, "h0_volume_data", density_payload))
-    velocity_cache_path = Path(pvdata_mod._field_cache_path(
-        cache_dir, "h0_volume_data", velocity_payload))
-    density_required = ["rho_3d_fields", "r_3d", "log_dV_3d"]
+    density_cache_paths = [
+        Path(pvdata_mod._field_cache_path(
+            cache_dir, pvdata_mod._VOLUME_FIELD_CACHE_PREFIX,
+            {**density_payload, "field_indices": [int(nsim)],
+             "sources": [source_meta[i]]}))
+        for i, nsim in enumerate(field_indices)
+    ]
+    velocity_cache_paths = [
+        Path(pvdata_mod._field_cache_path(
+            cache_dir, pvdata_mod._VOLUME_FIELD_CACHE_PREFIX,
+            {**velocity_payload, "field_indices": [int(nsim)],
+             "sources": [source_meta[i]]}))
+        for i, nsim in enumerate(field_indices)
+    ]
+    supersampling_required = [
+        "supersample_factor", "supersample_radius", "supersample_method"]
+    density_required = [
+        "rho_3d_fields", "r_3d", "log_dV_3d", *supersampling_required]
     if ((geometry == "sphere" and grid_radius is not None)
             or supersampling):
         density_required.append("log_volume_weight_3d")
     velocity_required = [
-        "vrad_3d_fields", "rhat_x_3d", "rhat_y_3d", "rhat_z_3d"]
+        "vrad_3d_fields", "r_3d", "log_dV_3d",
+        "rhat_x_3d", "rhat_y_3d", "rhat_z_3d",
+        *supersampling_required]
 
-    if not density_cache_path.exists():
-        return "missing", _short_path(density_cache_path)
-    try:
-        with pvdata_mod.np.load(density_cache_path, allow_pickle=False) as f:
-            missing = [key for key in density_required if key not in f.files]
-    except Exception as exc:
-        return "unreadable", str(exc)
-    if missing:
-        return "incomplete", f"missing {missing}"
-
-    if load_velocity:
-        if not velocity_cache_path.exists():
-            return "missing", _short_path(velocity_cache_path)
+    missing_files = 0
+    for density_cache_path in density_cache_paths:
+        if not density_cache_path.exists():
+            missing_files += 1
+            continue
         try:
             with pvdata_mod.np.load(
-                    velocity_cache_path, allow_pickle=False) as f:
+                    density_cache_path, allow_pickle=False) as f:
                 missing = [
-                    key for key in velocity_required if key not in f.files]
+                    key for key in density_required if key not in f.files]
+                if not missing:
+                    stale = _cache_grid_status(f, expected_max_r_3d)
+                    if stale is not None:
+                        return stale
+                    stale = _cache_supersampling_status(
+                        f, expected_supersampling)
+                    if stale is not None:
+                        return stale
         except Exception as exc:
             return "unreadable", str(exc)
         if missing:
             return "incomplete", f"missing {missing}"
+    if missing_files:
+        return "missing", f"needs {missing_files} density cache file(s)"
+
     if load_velocity:
-        return "cached", f"{_short_path(density_cache_path)} + velocity"
-    return "cached", _short_path(density_cache_path)
+        missing_files = 0
+        for velocity_cache_path in velocity_cache_paths:
+            if not velocity_cache_path.exists():
+                missing_files += 1
+                continue
+            try:
+                with pvdata_mod.np.load(
+                        velocity_cache_path, allow_pickle=False) as f:
+                    missing = [
+                        key for key in velocity_required if key not in f.files]
+                    if not missing:
+                        stale = _cache_grid_status(f, expected_max_r_3d)
+                        if stale is not None:
+                            return stale
+                        stale = _cache_supersampling_status(
+                            f, expected_supersampling)
+                        if stale is not None:
+                            return stale
+            except Exception as exc:
+                return "unreadable", str(exc)
+            if missing:
+                return "incomplete", f"missing {missing}"
+        if missing_files:
+            return "missing", f"needs {missing_files} velocity cache file(s)"
+    if load_velocity:
+        return "cached", "rho+vel"
+    return "cached", "rho"
 
 
 def _pv_cache_file_status(config):
@@ -597,10 +823,22 @@ def _pv_cache_file_status(config):
             missing += 1
             continue
         try:
+            loader_kwargs = dict(payload["loader_kwargs"])
+            loader_kwargs["nsim"] = int(payload["field_indices"][0])
+            loader = pvdata_mod.name2field_loader(
+                payload["loader_name"])(**loader_kwargs)
+            expected_max_r_3d = (
+                volume_density_mod._expected_pv_volume_max_radius_from_loader(
+                    loader, int(payload["downsample"]),
+                    payload["subcube_radius"],
+                    bool(payload["pad_subcube_boundary"]), geometry,
+                    payload["subcube_radius"],
+                    float(payload.get("voxel_subsample_fraction", 1.0)),
+                    int(payload.get("voxel_subsample_seed", 42))))
             with pvdata_mod.np.load(path, allow_pickle=False) as f:
                 missing_keys = [
                     key for key in (
-                        "rho_fields", "log_r_3d", "log_dV_3d",
+                        "rho_fields", "r_3d", "log_dV_3d",
                         "observer_pos", "dx")
                     if key not in f.files]
                 if geometry == "sphere" and (
@@ -611,6 +849,10 @@ def _pv_cache_file_status(config):
                         key for key in (
                             "rhat_x_3d", "rhat_y_3d", "rhat_z_3d")
                         if key not in f.files)
+                if not missing_keys:
+                    stale = _cache_grid_status(f, expected_max_r_3d)
+                    if stale is not None:
+                        return stale
         except Exception as exc:
             return "unreadable", str(exc)
         if missing_keys:
@@ -619,6 +861,62 @@ def _pv_cache_file_status(config):
     if missing:
         return "missing", f"missing {missing}/{len(entries)}"
     return "cached", f"{len(entries)} file(s)"
+
+
+def _cache_product_description(config):
+    which_run = get_nested(config, "model/which_run", None)
+    h0_runs = ("CH0", "CCHP", "CCHP_CSP", "EDD_TRGB", "EDD_TRGB_grouped")
+    if which_run in h0_runs:
+        reconstruction, los_file = _h0_los_config(config)
+        los_data_path = (
+            None if reconstruction is None or los_file is None
+            else _resolve_los_path(
+                los_file, reconstruction, config, _h0_los_catalogue(config)))
+        field_indices = _h0_field_indices_for_plan(
+            config, reconstruction, los_data_path)
+        geometry = get_nested(
+            config, "model/selection_integral_geometry", "sphere")
+        grid_radius = get_nested(
+            config, "model/selection_integral_grid_radius", None)
+        kind = "rho+vel" if _h0_velocity_key(config) == "velocity" else "rho"
+        return {
+            "model": reconstruction or "-",
+            "fields": (
+                "-" if field_indices is None
+                else _field_indices_label(field_indices)),
+            "radius": _radius_label(geometry, grid_radius),
+            "kind": kind,
+            "ss": _h0_supersampling_label(config),
+            "smooth": _field_smoothing_label(config),
+        }
+
+    entries, _ = _pv_volume_cache_entries(config)
+    kind = get_nested(config, "pv_model/kind", "")
+    model = (
+        kind.replace("precomputed_los_", "")
+        if isinstance(kind, str) and kind.startswith("precomputed_los_")
+        else str(kind or "-"))
+    if not entries:
+        return {
+            "model": model,
+            "fields": "-",
+            "radius": "-",
+            "kind": "rho",
+            "ss": "-",
+            "smooth": _field_smoothing_label(config),
+        }
+
+    payload = entries[0]["payload"]
+    geometry = "sphere" if payload["pad_subcube_boundary"] else "cube"
+    field_kind = "rho+rhat" if payload.get("store_rhat_3d", False) else "rho"
+    return {
+        "model": model,
+        "fields": _field_indices_label(payload["field_indices"]),
+        "radius": _radius_label(geometry, payload["subcube_radius"]),
+        "kind": field_kind,
+        "ss": "-",
+        "smooth": _field_smoothing_label(config),
+    }
 
 
 def _variant_info(config_path, selection=None):
@@ -631,10 +929,10 @@ def _variant_info(config_path, selection=None):
         which_run = get_nested(config, "io/catalogue_name", "?")
         if isinstance(which_run, list):
             which_run = "+".join(which_run)
-    if which_selection is None:
-        which_selection = get_nested(config, "pv_model/kind", "-")
+    which_selection = _selection_label(which_selection)
     cache_dir = _field_cache_dir_from_config(config)
     action = _variant_action(config)
+    product = _cache_product_description(config)
     return {
         "config": _short_path(config_path),
         "run": which_run,
@@ -643,7 +941,8 @@ def _variant_info(config_path, selection=None):
         "cache_dir": cache_dir,
         "cache_group": _cache_group_key(config),
         "supersampling": _h0_supersampling_description(config),
-        "smoothing": _h0_density_smoothing_description(config),
+        "smoothing": _field_smoothing_description(config),
+        **product,
         "note": "",
     }
 
@@ -660,8 +959,8 @@ def _set_cache_status(info, config_path, selection):
     if status == "cached":
         info["action"] = "cached"
         info["note"] = note or "exists"
-    elif status in ("incomplete", "unreadable"):
-        info["note"] = status
+    elif status in ("incomplete", "unreadable", "stale"):
+        info["note"] = note if status == "stale" else status
     elif status == "missing":
         info["note"] = note
     elif note and status is None:
@@ -689,12 +988,8 @@ def _plan_variants(configs, selections):
                     _set_uncacheable_status(info, config_path, selection)
                 elif group in seen_groups:
                     first = seen_groups[group]
-                    if first["action"] == "cached":
-                        info["action"] = "cached"
-                        info["note"] = "exists"
-                    else:
-                        info["duplicate_of"] = first["idx"]
-                        info["action"] = f"duplicate #{first['idx']}"
+                    info["duplicate_of"] = first["idx"]
+                    info["action"] = f"duplicate #{first['idx']}"
                 elif group is not None:
                     _set_cache_status(info, config_path, selection)
                     seen_groups[group] = {
@@ -713,12 +1008,8 @@ def _plan_variants(configs, selections):
                 _set_uncacheable_status(info, config_path, None)
             elif group in seen_groups:
                 first = seen_groups[group]
-                if first["action"] == "cached":
-                    info["action"] = "cached"
-                    info["note"] = "exists"
-                else:
-                    info["duplicate_of"] = first["idx"]
-                    info["action"] = f"duplicate #{first['idx']}"
+                info["duplicate_of"] = first["idx"]
+                info["action"] = f"duplicate #{first['idx']}"
             elif group is not None:
                 _set_cache_status(info, config_path, None)
                 seen_groups[group] = {
@@ -730,7 +1021,24 @@ def _plan_variants(configs, selections):
                 "selection_override": None,
                 **info,
             })
+    _annotate_cache_item_ids(variants)
     return variants
+
+
+def _annotate_cache_item_ids(variants):
+    counts = {}
+    for variant in variants:
+        group = variant.get("cache_group")
+        if group is not None:
+            counts[group] = counts.get(group, 0) + 1
+
+    item_id = 1
+    for variant in variants:
+        if variant.get("cache_group") is None or "duplicate_of" in variant:
+            continue
+        variant["item_id"] = item_id
+        variant["configs"] = counts[variant["cache_group"]]
+        item_id += 1
 
 
 def _print_plan(variants):
@@ -738,39 +1046,86 @@ def _print_plan(variants):
         return
     size_display = int(os.environ.get("CANDEL_FIELD_CACHE_PLAN_SIZE", _SIZE))
     _log("")
-    _log("Field-cache warmup plan")
+    _log("Step 2/2: unique 3D volume-cache products")
     rows = []
-    for i, variant in enumerate(variants, 1):
+    for variant in variants:
+        if "item_id" not in variant:
+            continue
         rows.append({
-            "#": i,
+            "item": variant["item_id"],
             "run": variant["run"],
+            "model": variant["model"],
             "selection": variant["selection"],
-            "action": variant["action"],
-            "supersampling": variant["supersampling"],
-            "smoothing": variant["smoothing"],
-            "note": variant["note"],
-            "config": variant["config"],
+            "fields": variant["fields"],
+            "radius": variant["radius"],
+            "kind": variant["kind"],
+            "ss": variant["ss"],
+            "smooth": variant["smooth"],
+            "status": (
+                "missing" if variant["action"] == "check/cache"
+                else variant["action"]),
+            "configs": variant["configs"],
         })
-    for line in _table(
-            rows,
-            [("#", "#"), ("run", "run"), ("selection", "selection"),
-             ("action", "action"), ("supersampling", "supersampling"),
-             ("smoothing", "smoothing"),
-             ("note", "note"), ("config", "config")]
-    ).splitlines():
-        _log(line)
-    queued = sum(row["action"] == "check/cache" for row in variants)
+    if rows:
+        for line in _table(
+                rows,
+                [("item", "item"), ("run", "run"),
+                 ("model", "model"), ("selection", "selection"),
+                 ("fields", "fields"), ("radius", "radius"),
+                 ("kind", "kind"), ("ss", "ss"),
+                 ("smooth", "smooth"), ("status", "status"),
+                 ("configs", "configs")]
+        ).splitlines():
+            _log(line)
+    else:
+        _log("  no cacheable field products inferred.")
+
+    queued_items = [
+        variant for variant in variants
+        if "item_id" in variant and variant["action"] == "check/cache"
+    ]
+    queued = len(queued_items)
+    cached = sum(
+        "item_id" in variant and variant["action"] == "cached"
+        for variant in variants)
     duplicates = sum("duplicate_of" in row for row in variants)
-    cached = sum(row["action"] == "cached" for row in variants)
     skipped = sum(str(row["action"]).startswith("skip") for row in variants)
-    _log(f"summary: {queued} unique check/cache, {cached} cached, "
-         f"{duplicates} duplicate(s), {skipped} skip(s), "
-         f"{size_display} MPI rank(s).")
+    other = len(variants) - len(rows) - duplicates - skipped
+    skipped_by_action = {}
+    for variant in variants:
+        action = str(variant["action"])
+        if action.startswith("skip"):
+            skipped_by_action[action] = skipped_by_action.get(action, 0) + 1
+    skipped_summary = ", ".join(
+        f"{action}={count}" for action, count in sorted(
+            skipped_by_action.items()))
+    if not skipped_summary:
+        skipped_summary = "none"
+    _log(f"summary: missing={queued}, cached={cached}, "
+         f"duplicates={duplicates}, skipped={skipped}, other={other}, "
+         f"MPI ranks={size_display}.")
+    _log(f"skipped breakdown: {skipped_summary}.")
+    if queued:
+        ids = [str(variant["item_id"]) for variant in queued_items]
+        _log("missing cache item IDs: " + ", ".join(ids))
+        _log("submit a subset with `--cache-items 1,3-5`.")
 
 
-def _runnable_variants(variants):
-    return [variant for variant in variants
-            if variant["action"] == "check/cache"]
+def _runnable_variants(variants, item_ids=None):
+    if item_ids is not None:
+        valid = {
+            variant["item_id"] for variant in variants
+            if "item_id" in variant
+        }
+        unknown = sorted(set(item_ids) - valid)
+        if unknown:
+            raise ValueError(
+                f"Unknown cache item id(s): {unknown}.")
+    return [
+        variant for variant in variants
+        if variant["action"] == "check/cache"
+        and (item_ids is None or variant.get("item_id") in item_ids)
+    ]
 
 
 def _write_selection_override(config_path, selection):

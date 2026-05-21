@@ -25,6 +25,8 @@ import numpy as np
 from astropy.io import fits
 from h5py import File
 
+from ..util import fprint
+
 
 @dataclass(frozen=True)
 class FieldMetadata:
@@ -131,7 +133,9 @@ class BaseFieldLoader(ABC):
         except AttributeError:
             self._observer_pos = np.array(
                 [self.boxsize / 2] * 3, dtype=np.float32)
-            print(f"Setting observer_pos to box center: {self._observer_pos}")
+            fprint(
+                "field loader: observer_pos not set; using box center "
+                f"{self._observer_pos}.")
             return self._observer_pos
 
     @abstractmethod

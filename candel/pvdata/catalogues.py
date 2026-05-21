@@ -33,9 +33,11 @@ from ..util import (SPEED_OF_LIGHT, fprint, get_nested, get_root_data,
                     load_config)
 from .dust import read_dustmap
 from .field_products import (field_smoothing_scale_from_config,
+                             resolve_or_build_los_data_path,
                              resolve_los_data_path)
 from .los import (_compute_r_grid, _filter_data, _zcmb_blat_mask,
-                  effective_rank_entropy, load_los)
+                  effective_rank_entropy, load_los,
+                  resolve_los_cache_request)
 from .volume_density import _load_h0_volume_data_from_config
 
 
@@ -178,7 +180,8 @@ def load_CF4_mock(root, index):
 
 
 def load_2MTF(root, eta_min=-0.1, eta_max=0.2, zcmb_min=None, zcmb_max=None,
-              b_min=7.5, los_data_path=None, return_all=False, **kwargs):
+              b_min=7.5, los_data_path=None, return_all=False,
+              field_indices=None, **kwargs):
     """
     Load the 2MTF data from the given root directory.
     """
@@ -211,11 +214,12 @@ def load_2MTF(root, eta_min=-0.1, eta_max=0.2, zcmb_min=None, zcmb_max=None,
 
     mask = (eta > eta_min) & (eta < eta_max)
     mask &= _zcmb_blat_mask(zcmb, RA, DEC, zcmb_min, zcmb_max, b_min)
-    return _filter_data(data, mask, los_data_path)
+    return _filter_data(data, mask, los_data_path, field_indices=field_indices)
 
 
 def load_SFI(root, eta_min=-0.1, zcmb_min=None, zcmb_max=None,
-             b_min=7.5, los_data_path=None, return_all=False, **kwargs):
+             b_min=7.5, los_data_path=None, return_all=False,
+             field_indices=None, **kwargs):
     """
     Load the SFI++ data from the given root directory.
     """
@@ -248,12 +252,12 @@ def load_SFI(root, eta_min=-0.1, zcmb_min=None, zcmb_max=None,
 
     mask = eta > eta_min
     mask &= _zcmb_blat_mask(zcmb, RA, DEC, zcmb_min, zcmb_max, b_min)
-    return _filter_data(data, mask, los_data_path)
+    return _filter_data(data, mask, los_data_path, field_indices=field_indices)
 
 
 def _load_LOSS_Foundation(which, root, zcmb_min=None, zcmb_max=None,
                           b_min=7.5, los_data_path=None, return_all=False,
-                          **kwargs):
+                          field_indices=None, **kwargs):
     """
     Load the LOSS or Foundation SNe data from the given root directory.
     """
@@ -289,27 +293,30 @@ def _load_LOSS_Foundation(which, root, zcmb_min=None, zcmb_max=None,
         return data
 
     mask = _zcmb_blat_mask(zcmb, RA, DEC, zcmb_min, zcmb_max, b_min)
-    return _filter_data(data, mask, los_data_path)
+    return _filter_data(data, mask, los_data_path, field_indices=field_indices)
 
 
 def load_LOSS(root, zcmb_min=None, zcmb_max=None, b_min=7.5,
-              los_data_path=None, return_all=False, **kwargs):
+              los_data_path=None, return_all=False, field_indices=None,
+              **kwargs):
     return _load_LOSS_Foundation(
         "LOSS", root, zcmb_min=zcmb_min, zcmb_max=zcmb_max,
         b_min=b_min, los_data_path=los_data_path, return_all=return_all,
-        **kwargs)
+        field_indices=field_indices, **kwargs)
 
 
 def load_Foundation(root, zcmb_min=None, zcmb_max=None, b_min=7.5,
-                    los_data_path=None, return_all=False, **kwargs):
+                    los_data_path=None, return_all=False, field_indices=None,
+                    **kwargs):
     return _load_LOSS_Foundation(
         "Foundation", root, zcmb_min=zcmb_min, zcmb_max=zcmb_max,
         b_min=b_min, los_data_path=los_data_path, return_all=return_all,
-        **kwargs)
+        field_indices=field_indices, **kwargs)
 
 
 def load_PantheonPlus_Lane(root, zcmb_min=None, zcmb_max=None, b_min=7.5,
-                           los_data_path=None, return_all=False, **kwargs):
+                           los_data_path=None, return_all=False,
+                           field_indices=None, **kwargs):
     if zcmb_max is not None and zcmb_max > 0.075:
         raise ValueError(f"`zcmb_max` of {zcmb_max} is too high for the "
                          "LOWZ sample which goes only up to 0.075.")
@@ -335,20 +342,18 @@ def load_PantheonPlus_Lane(root, zcmb_min=None, zcmb_max=None, b_min=7.5,
 
     mask = _zcmb_blat_mask(
         data["zcmb"], data["RA"], data["dec"], zcmb_min, zcmb_max, b_min)
-    _filter_data(data, mask)
+    _filter_data(data, mask, los_data_path, field_indices=field_indices)
 
     C_idx = (3 * np.where(mask)[0][:, None] + np.arange(3)).ravel()
     data["mag_covmat"] = C[C_idx][:, C_idx]
-
-    if los_data_path is not None:
-        data = load_los(los_data_path, data, mask=mask)
 
     return data
 
 
 def load_PantheonPlus(root, zcmb_min=None, zcmb_max=None, b_min=7.5,
                       los_data_path=None, return_all=False,
-                      removed_PV_from_covmat=True, **kwargs):
+                      removed_PV_from_covmat=True, field_indices=None,
+                      **kwargs):
     """
     Load the Pantheon+ data from the given root directory, the covariance
     is expected to have peculiar velocity contribution removed.
@@ -382,14 +387,11 @@ def load_PantheonPlus(root, zcmb_min=None, zcmb_max=None, b_min=7.5,
 
     mask = _zcmb_blat_mask(
         data["zcmb"], data["RA"], data["dec"], zcmb_min, zcmb_max, b_min)
-    _filter_data(data, mask)
+    _filter_data(data, mask, los_data_path, field_indices=field_indices)
 
     C = C[mask][:, mask]
     data["mag_covmat"] = C
     data["e_mag"] = np.sqrt(np.diag(C))  # Do not use in the inference!
-
-    if los_data_path is not None:
-        data = load_los(los_data_path, data, mask=mask)
 
     return data
 
@@ -549,6 +551,12 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
     PV_covmat_cepheid_host = np.load(
         join(root, "processed", "PV_covmat_cepheid_hosts_fiducial.npy"),
         allow_pickle=True)
+
+    if los_data_path is not None:
+        los_data_path = resolve_los_cache_request(
+            los_data_path,
+            {"RA": data_cepheid_host_redshift["RA"],
+             "dec": data_cepheid_host_redshift["DEC"]})
 
     def _load_los_or_none(path, keys):
         if path is None:
@@ -716,9 +724,11 @@ def load_SH0ES_from_config(config_path):
     field_smoothing_scale = field_smoothing_scale_from_config(config)
     if reconstruction is not None:
         if config["io"]["load_host_los"]:
-            los_data_path = resolve_los_data_path(
+            los_data_path = resolve_or_build_los_data_path(
+                config, "SH0ES", reconstruction,
                 config["io"]["PV_main"]["SH0ES"]["los_file"],
-                reconstruction, field_smoothing_scale)
+                field_smoothing_scale=field_smoothing_scale,
+                config_path=config_path, field_indices=field_indices)
         else:
             los_data_path = None
 
@@ -737,6 +747,8 @@ def load_SH0ES_from_config(config_path):
         root, cepheid_host_cz_cmb_max,
         los_data_path=los_data_path, rand_los_data_path=rand_los_data_path,
         field_indices=field_indices)
+    if los_data_path is not None:
+        los_data_path = getattr(los_data_path, "resolved_path", los_data_path)
 
     velocity_selections = ["redshift", "SN_magnitude_redshift"]
     if get_nested(config, "model/which_selection", None) \
@@ -818,6 +830,8 @@ def load_CCHP_from_config(config_path, ra_dec_only=False):
 
     ra = data_tbl["ra_deg"]
     dec = data_tbl["dec_deg"]
+    ra_all = np.asarray(ra)
+    dec_all = np.asarray(dec)
 
     source = redshift_source.lower()
     fprint(f"Using CCHP redshift source: {source}", verbose=True)
@@ -922,8 +936,10 @@ def load_CCHP_from_config(config_path, ra_dec_only=False):
     field_smoothing_scale = field_smoothing_scale_from_config(config)
     if get_nested(config, "io/load_host_los", False):
         los_file = get_nested(config, "io/CCHP/los_file", None)
-        los_data_path = resolve_los_data_path(
-            los_file, reconstruction, field_smoothing_scale)
+        los_data_path = resolve_or_build_los_data_path(
+            config, "CCHP", reconstruction, los_file,
+            field_smoothing_scale=field_smoothing_scale,
+            config_path=config_path, field_indices=field_indices)
 
     if get_nested(config, "io/load_rand_los", False):
         rand_file = get_nested(config, "io/los_file_random", None)
@@ -931,6 +947,8 @@ def load_CCHP_from_config(config_path, ra_dec_only=False):
             rand_file, reconstruction, field_smoothing_scale)
 
     if los_data_path is not None:
+        los_data_path = resolve_los_cache_request(
+            los_data_path, {"RA": ra_all, "dec": dec_all})
         host_los = load_los(
             los_data_path, {}, mask=None, field_indices=field_indices)
         # LOS file has one entry per row in the original TSV (25 entries).
@@ -1053,7 +1071,8 @@ def arcsec_to_radian(arcsec):
 
 
 def load_SDSS_FP(root, zcmb_min=None, zcmb_max=None, b_min=7.5,
-                 los_data_path=None, return_all=False, **kwargs):
+                 los_data_path=None, return_all=False, field_indices=None,
+                 **kwargs):
     """Load the SDSS FP data from the given root directory."""
     fname = join(root, "SDSS_PV_public.dat")
     d_input = np.genfromtxt(fname, names=True, )
@@ -1088,11 +1107,12 @@ def load_SDSS_FP(root, zcmb_min=None, zcmb_max=None, b_min=7.5,
 
     mask = _zcmb_blat_mask(
         data["zcmb"], data["RA"], data["dec"], zcmb_min, zcmb_max, b_min)
-    return _filter_data(data, mask, los_data_path)
+    return _filter_data(data, mask, los_data_path, field_indices=field_indices)
 
 
 def load_6dF_FP(root, which_band=None, zcmb_min=None, zcmb_max=None, b_min=7.5,
-                los_data_path=None, return_all=False, **kwargs):
+                los_data_path=None, return_all=False, field_indices=None,
+                **kwargs):
     """Load the 6dF FP data from the given root directory."""
     d = np.genfromtxt(join(root, "6dF_FP.dat"))
 
@@ -1154,10 +1174,10 @@ def load_6dF_FP(root, which_band=None, zcmb_min=None, zcmb_max=None, b_min=7.5,
 
     mask = _zcmb_blat_mask(
         data["zcmb"], data["RA"], data["dec"], zcmb_min, zcmb_max, b_min)
-    return _filter_data(data, mask, los_data_path)
+    return _filter_data(data, mask, los_data_path, field_indices=field_indices)
 
 
-def load_generic(filepath, los_data_path=None, **kwargs):
+def load_generic(filepath, los_data_path=None, field_indices=None, **kwargs):
     """
     Load generic catalog data from a .txt file with column names.
 
@@ -1174,7 +1194,8 @@ def load_generic(filepath, los_data_path=None, **kwargs):
     fprint(f"loaded {len(data['RA'])} galaxies from {filepath}.")
 
     if los_data_path is not None:
-        data = load_los(los_data_path, data,)
+        data = load_los(
+            los_data_path, data, field_indices=field_indices)
 
     return data
 
@@ -1183,7 +1204,7 @@ def load_CSP(root, zcmb_min=None, zcmb_max=None, b_min=None, quality_min=None,
              st_min=None, st_max=None, t0_min=None, t0_max=None,
              phys_only=False, exclude_phys=True, which_sample=None,
              los_data_path=None, return_all=False, remove_duplicates=True,
-             **kwargs):
+             field_indices=None, **kwargs):
     """
     Load CSP (Carnegie Supernova Project) SNe Ia data.
 
@@ -1370,7 +1391,7 @@ def load_CSP(root, zcmb_min=None, zcmb_max=None, b_min=None, quality_min=None,
             raise ValueError(f"Unknown sample: {which_sample}. "
                              "Must be 'CSPI', 'CSPII', or 'LSQ'.")
 
-    return _filter_data(data, mask, los_data_path)
+    return _filter_data(data, mask, los_data_path, field_indices=field_indices)
 
 
 def _parse_edd_trgb_txt(fpath):
@@ -1411,7 +1432,7 @@ def _edd_col_str(rows, idx):
 def _load_edd_trgb_core(fpath, label, zcmb_min=None, zcmb_max=None,
                         b_min=None, los_data_path=None, return_all=False,
                         return_mask=False, e_czcmb_default=20.0,
-                        mag_min_TRGB=22.1):
+                        mag_min_TRGB=22.1, field_indices=None):
     """Shared loader for ungrouped and grouped EDD TRGB files.
 
     The grouped file has an extra CF4 group Vcmb at column 1 (detected
@@ -1505,14 +1526,8 @@ def _load_edd_trgb_core(fpath, label, zcmb_min=None, zcmb_max=None,
         zcmb_arr[keep], RA[keep], dec[keep], zcmb_min, zcmb_max, b_min)
     keep[np.where(keep)[0][~sub_mask]] = False
 
-    for k in data:
-        if isinstance(data[k], np.ndarray):
-            data[k] = data[k][keep]
-    n_kept = int(np.sum(keep))
-    fprint(f"removed {n_orig - n_kept} objects, thus {n_kept} remain.")
-
-    if los_data_path:
-        data = load_los(los_data_path, data, mask=keep)
+    data = _filter_data(
+        data, keep, los_data_path, field_indices=field_indices)
 
     if return_mask:
         return data, keep
@@ -1548,9 +1563,28 @@ def _load_EDD_TRGB_from_config_common(config_path, config_key, loader):
     b_min = get_nested(config, f"io/PV_main/{config_key}/b_min", None)
 
     mag_min_TRGB = get_nested(config, "model/mag_min_TRGB", 22.1)
+    reconstruction = get_nested(
+        config, f"io/PV_main/{config_key}/reconstruction", None)
+    field_indices = get_nested(config, "io/field_indices", None)
+    field_smoothing_scale = field_smoothing_scale_from_config(config)
+
+    los_data_path = None
+    rand_los_data_path = None
+    if get_nested(config, "io/load_host_los", False):
+        los_data_path = resolve_or_build_los_data_path(
+            config, config_key, reconstruction, d.get("los_file", None),
+            field_smoothing_scale=field_smoothing_scale,
+            config_path=config_path, field_indices=field_indices)
+    if get_nested(config, "io/load_rand_los", False):
+        rand_los_data_path = resolve_los_data_path(
+            get_nested(config, "io/los_file_random", None),
+            reconstruction, field_smoothing_scale)
+
     data, mask = loader(root, zcmb_min=zcmb_min, zcmb_max=zcmb_max,
                         b_min=b_min, return_mask=True,
-                        mag_min_TRGB=mag_min_TRGB)
+                        mag_min_TRGB=mag_min_TRGB,
+                        los_data_path=los_data_path,
+                        field_indices=field_indices)
 
     data["RA_host"] = data.pop("RA")
     data["dec_host"] = data.pop("dec")
@@ -1565,33 +1599,15 @@ def _load_EDD_TRGB_from_config_common(config_path, config_key, loader):
     data["e_czcmb"] = data.pop("e_zcmb") * SPEED_OF_LIGHT
     data["e_mag_median"] = float(np.median(data["e_mag_obs"]))
 
-    reconstruction = get_nested(
-        config, f"io/PV_main/{config_key}/reconstruction", None)
-    field_indices = get_nested(config, "io/field_indices", None)
-    field_smoothing_scale = field_smoothing_scale_from_config(config)
-
-    def _resolve_los_path(path):
-        return resolve_los_data_path(
-            path, reconstruction, field_smoothing_scale)
-
-    los_data_path = None
-    rand_los_data_path = None
-    if get_nested(config, "io/load_host_los", False):
-        los_data_path = _resolve_los_path(d.get("los_file", None))
-    if get_nested(config, "io/load_rand_los", False):
-        rand_los_data_path = _resolve_los_path(
-            get_nested(config, "io/los_file_random", None))
-
     fprint(f"reconstruction: {reconstruction or 'none'}")
     if los_data_path is not None:
+        los_data_path = getattr(los_data_path, "resolved_path", los_data_path)
         fprint(f"  host LOS path: {los_data_path}")
-        host_los = load_los(
-            los_data_path, {}, mask=mask, field_indices=field_indices)
-        data["host_los_density"] = host_los["los_density"]
-        data["host_los_velocity"] = host_los["los_velocity"]
-        data["host_los_r"] = host_los["los_r"]
-        data["host_los_field_indices"] = host_los["los_field_indices"]
-        fprint(f"  host LOS shape: {host_los['los_density'].shape}")
+        data["host_los_density"] = data.pop("los_density")
+        data["host_los_velocity"] = data.pop("los_velocity")
+        data["host_los_r"] = data.pop("los_r")
+        data["host_los_field_indices"] = data.pop("los_field_indices")
+        fprint(f"  host LOS shape: {data['host_los_density'].shape}")
 
     if rand_los_data_path is not None:
         fprint(f"  random LOS path: {rand_los_data_path}")
@@ -1647,7 +1663,7 @@ def load_EDD_TRGB_grouped_from_config(config_path):
 def load_EDD_2MTF(root, zcmb_min=None, zcmb_max=None, b_min=7.5,
                   eta_min=None, eta_max=None,
                   los_data_path=None, return_all=False,
-                  return_mask=False, **kwargs):
+                  return_mask=False, field_indices=None, **kwargs):
     """Load 2MTF data from the EDD text file.
 
     The file format is pipe-delimited with 5 header lines.
@@ -1699,15 +1715,8 @@ def load_EDD_2MTF(root, zcmb_min=None, zcmb_max=None, b_min=7.5,
     if eta_max is not None:
         mask &= eta < eta_max
 
-    for k in data:
-        if isinstance(data[k], np.ndarray):
-            data[k] = data[k][mask]
-
-    n_kept = int(np.sum(mask))
-    fprint(f"removed {len(RA) - n_kept} objects, thus {n_kept} remain.")
-
-    if los_data_path:
-        data = load_los(los_data_path, data, mask=mask)
+    data = _filter_data(
+        data, mask, los_data_path, field_indices=field_indices)
 
     if return_mask:
         return data, mask
@@ -1729,10 +1738,29 @@ def load_EDD_2MTF_from_config(config_path):
     eta_min = d.get("eta_min", None)
     eta_max = d.get("eta_max", None)
 
+    reconstruction = d.get("reconstruction", None)
+    field_indices = get_nested(config, "io/field_indices", None)
+    field_smoothing_scale = field_smoothing_scale_from_config(config)
+    los_data_path = None
+    rand_los_data_path = None
+
+    if get_nested(config, "io/load_host_los", False):
+        los_file = d.get("los_file", None)
+        los_data_path = resolve_or_build_los_data_path(
+            config, "EDD_2MTF", reconstruction, los_file,
+            field_smoothing_scale=field_smoothing_scale,
+            config_path=config_path, field_indices=field_indices)
+
+    if get_nested(config, "io/load_rand_los", False):
+        rand_file = get_nested(config, "io/los_file_random", None)
+        rand_los_data_path = resolve_los_data_path(
+            rand_file, reconstruction, field_smoothing_scale)
+
     data, mask = load_EDD_2MTF(
         root, zcmb_min=zcmb_min, zcmb_max=zcmb_max, b_min=b_min,
         eta_min=eta_min, eta_max=eta_max,
-        return_mask=True)
+        los_data_path=los_data_path, return_mask=True,
+        field_indices=field_indices)
 
     # Rename to match model expectations
     data["RA_host"] = data.pop("RA")
@@ -1744,27 +1772,12 @@ def load_EDD_2MTF_from_config(config_path):
     data["e_mag_median"] = float(np.median(data["e_mag"]))
     data["e_eta_median"] = float(np.median(data["e_eta"]))
 
-    # LOS data
-    reconstruction = d.get("reconstruction", None)
-    field_smoothing_scale = field_smoothing_scale_from_config(config)
-    los_data_path = None
-    rand_los_data_path = None
-
-    if get_nested(config, "io/load_host_los", False):
-        los_file = d.get("los_file", None)
-        los_data_path = resolve_los_data_path(
-            los_file, reconstruction, field_smoothing_scale)
-
-    if get_nested(config, "io/load_rand_los", False):
-        rand_file = get_nested(config, "io/los_file_random", None)
-        rand_los_data_path = resolve_los_data_path(
-            rand_file, reconstruction, field_smoothing_scale)
-
     if los_data_path is not None:
-        host_los = load_los(los_data_path, {}, mask=mask)
-        data["host_los_density"] = host_los["los_density"]
-        data["host_los_velocity"] = host_los["los_velocity"]
-        data["host_los_r"] = host_los["los_r"]
+        los_data_path = getattr(los_data_path, "resolved_path", los_data_path)
+        data["host_los_density"] = data.pop("los_density")
+        data["host_los_velocity"] = data.pop("los_velocity")
+        data["host_los_r"] = data.pop("los_r")
+        data["host_los_field_indices"] = data.pop("los_field_indices")
 
     if rand_los_data_path is not None:
         rand_los = load_los(rand_los_data_path, {}, mask=None, verbose=False)

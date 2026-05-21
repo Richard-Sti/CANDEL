@@ -14,6 +14,7 @@ from candel.pvdata.field_cache import (
 from candel.pvdata.volume_density import (
     _load_volume_data_for_H0,
     _h0_volume_cache_supersampling_payload,
+    _h0_volume_supersampling_cache_arrays,
     _h0_volume_apply_quadrature,
     _h0_volume_quadrature_geometry,
     _h0_volume_resolved_supersample_factor,
@@ -78,6 +79,7 @@ def test_h0_volume_supersampling_is_generic_cache_payload():
         "field_indices": [0],
         "geometry": "sphere",
         "subcube_radius": 50.0,
+        "max_radius": 50.0,
         "downsample": 1,
         "load_velocity": False,
     }
@@ -89,6 +91,7 @@ def test_h0_volume_supersampling_is_generic_cache_payload():
     assert "h0-volume" not in filename
     assert "v1" not in filename
     assert "toy_reconstruction" not in filename
+    assert "rmax-50" in filename
     assert "ss-f8-r15-linear" in filename
     assert filename.endswith("__density.npz")
 
@@ -148,6 +151,7 @@ def test_pv_volume_cache_filename_keeps_requested_subsample_fraction():
         "loader_name": "ManticoreLocalCOLA",
         "field_indices": [0],
         "subcube_radius": 150.0,
+        "max_radius": 150.0,
         "pad_subcube_boundary": True,
         "downsample": 1,
         "voxel_subsample_fraction": 0.5,
@@ -159,6 +163,7 @@ def test_pv_volume_cache_filename_keeps_requested_subsample_fraction():
 
     assert "pv-volume-density" in filename
     assert "ManticoreLocalCOLA" not in filename
+    assert "rmax-150" in filename
     assert "sub-0p5-seed-42" in filename
     assert "sub-0p1-seed-42" not in filename
 
@@ -342,7 +347,8 @@ def test_h0_volume_uses_per_field_warmed_cache(
         rho_3d_fields=np.full((1, len(r_3d)), 20.0, dtype=np.float32),
         r_3d=r_3d,
         log_dV_3d=np.asarray(0.0, dtype=np.float32),
-        log_volume_weight_3d=np.zeros(len(r_3d), dtype=np.float32))
+        log_volume_weight_3d=np.zeros(len(r_3d), dtype=np.float32),
+        **_h0_volume_supersampling_cache_arrays(4, 15.0))
 
     monkeypatch.setattr(
         volume_density_mod, "name2field_loader", lambda name: FakeLoader)
@@ -408,7 +414,8 @@ def test_h0_volume_target_dx_warmed_superset_matches_resolved_factor(
             r_3d=factor_r_3d,
             log_dV_3d=np.asarray(0.0, dtype=np.float32),
             log_volume_weight_3d=np.zeros(
-                len(factor_r_3d), dtype=np.float32))
+                len(factor_r_3d), dtype=np.float32),
+            **_h0_volume_supersampling_cache_arrays(factor, 15.0))
 
     monkeypatch.setattr(
         volume_density_mod, "name2field_loader", lambda name: FakeLoader)

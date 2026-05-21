@@ -23,8 +23,6 @@ os.environ.setdefault(
     "NUMBA_CACHE_DIR", os.path.join(tempfile.gettempdir(),
                                     f"candel_numba_{_USER}"))
 
-import tomli_w  # noqa: E402
-
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -32,15 +30,13 @@ if str(ROOT) not in sys.path:
 import candel  # noqa: E402
 from candel import get_nested  # noqa: E402
 from candel.pvdata.field_products import (  # noqa: E402
-    density_smoothing_scale_from_config,
-    validate_density_smoothing_scale,
+    field_smoothing_scale_from_config,
+    los_field_cache_paths,
+    los_radial_grid_payload_from_array,
 )
 
 from scripts.preprocess import field_input_cache as cache_mod  # noqa: E402
 from scripts.preprocess import field_input_los as los_mod  # noqa: E402
-
-
-_USE_CONFIG = object()
 
 
 def _split_values(values):
@@ -71,74 +67,29 @@ def _read_config_paths(args):
     return configs
 
 
-def _parse_smoothing_overrides(values):
-    tokens = _split_values(values)
-    if not tokens:
-        return [_USE_CONFIG]
-
-    overrides = []
-    for token in tokens:
-        lower = token.lower()
-        if lower in ("config", "from-config"):
-            overrides.append(_USE_CONFIG)
-        elif lower in ("none", "off", "unsmoothed", "0"):
-            overrides.append(None)
-        else:
-            overrides.append(validate_density_smoothing_scale(float(token)))
-    return overrides
-
-
-def _apply_smoothing_override(config_path, override):
-    config = candel.load_config(config_path, replace_los_prior=False)
-    if override is _USE_CONFIG:
-        return config_path, None, config
-
-    config.setdefault("model", {})
-    if override is None:
-        config["model"].pop("density_3d_smoothing_scale", None)
-    else:
-        config["model"]["density_3d_smoothing_scale"] = float(override)
-
-    tmp = tempfile.NamedTemporaryFile(
-        mode="wb", prefix="prepare_field_inputs_", suffix=".toml",
-        delete=False)
-    with tmp:
-        tomli_w.dump(config, tmp)
-    return Path(tmp.name), Path(tmp.name), config
-
-
-def _override_label(config, override):
-    if override is _USE_CONFIG:
-        scale = density_smoothing_scale_from_config(config)
-        if scale is None:
-            return "config:none"
-        return f"config:R={scale:g}"
-    if override is None:
+def _smoothing_label(config):
+    scale = field_smoothing_scale_from_config(config)
+    if scale is None:
         return "none"
-    return f"R={override:g}"
+    return f"R={scale:g}"
 
 
-def _config_variants(config_paths, smoothing_overrides):
+def _config_variants(config_paths):
     variants = []
     seen = set()
     for config_path in config_paths:
-        for override in smoothing_overrides:
-            run_config, tmp_path, config = _apply_smoothing_override(
-                config_path, override)
-            label = _override_label(config, override)
-            key = (str(config_path), label)
-            if key in seen:
-                if tmp_path is not None:
-                    tmp_path.unlink(missing_ok=True)
-                continue
-            seen.add(key)
-            variants.append({
-                "source_path": config_path,
-                "config_path": run_config,
-                "tmp_path": tmp_path,
-                "config": config,
-                "smoothing": label,
-            })
+        config = candel.load_config(config_path, replace_los_prior=False)
+        label = _smoothing_label(config)
+        key = (str(config_path), label)
+        if key in seen:
+            continue
+        seen.add(key)
+        variants.append({
+            "source_path": config_path,
+            "config_path": config_path,
+            "config": config,
+            "smoothing": label,
+        })
     return variants
 
 
@@ -147,24 +98,17 @@ def _infer_h0_los_job(config):
     if which_run == "CH0":
         return (
             "SH0ES",
-            get_nested(config, "io/SH0ES/which_host_los",
-                       get_nested(config,
-                                  "io/PV_main/SH0ES/which_host_los",
-                                  None)),
+            get_nested(config, "io/SH0ES/reconstruction", None),
         )
     if which_run in ("CCHP", "CCHP_CSP"):
         return (
             "CCHP",
-            get_nested(config, "io/which_host_los",
-                       get_nested(config, "io/CCHP/which_host_los", None)),
+            get_nested(config, "io/CCHP/reconstruction", None),
         )
     if which_run in ("EDD_TRGB", "EDD_TRGB_grouped"):
         return (
             which_run,
-            get_nested(config, "io/which_host_los",
-                       get_nested(config,
-                                  f"io/PV_main/{which_run}/which_host_los",
-                                  None)),
+            get_nested(config, f"io/PV_main/{which_run}/reconstruction", None),
         )
     return None
 
@@ -207,21 +151,57 @@ def _infer_los_jobs(config, catalogue=None, reconstruction=None):
     ]
 
 
+def _plan_los_metadata(config, catalogue):
+    """Return LOS template and count using config-only information."""
+    if "random_" in catalogue:
+        return config["io"]["los_file_random"], int(
+            catalogue.replace("random_", ""))
+
+    if catalogue == "CCHP":
+        los_template = get_nested(config, "io/CCHP/los_file", None)
+    else:
+        los_template = get_nested(
+            config, f"io/PV_main/{catalogue}/los_file", None)
+
+    if los_template is None:
+        raise ValueError(
+            f"No configured LOS template found for `{catalogue}`.")
+    return los_template, "-"
+
+
 def _plan_los_file(variant, job):
     config = variant["config"]
-    RA, __, los_template = los_mod.load_los(
-        job["catalogue"], config, config_path=str(variant["config_path"]))
-    scale = density_smoothing_scale_from_config(config)
-    los_path = los_mod.resolve_los_output_path(
-        los_template, job["reconstruction"],
-        density_smoothing_scale=scale)
-    status = "cached" if Path(los_path).exists() else "missing"
+    los_template, n_los = _plan_los_metadata(config, job["catalogue"])
+    scale = field_smoothing_scale_from_config(config)
+    field_indices = get_nested(config, "io/field_indices", None)
+    selected = los_mod._selected_field_indices(
+        config, job["reconstruction"], field_indices)
+    r = los_mod.radial_los_grid(
+        config, job["catalogue"], job["reconstruction"], verbose=False)
+    radial_grid = los_radial_grid_payload_from_array(r)
+    los_paths = los_field_cache_paths(
+        config, job["catalogue"], job["reconstruction"], los_template,
+        field_smoothing_scale=scale, field_indices=selected,
+        radial_grid=radial_grid)
+    if los_paths is None:
+        los_paths = [los_mod.resolve_los_output_path(
+            los_template, job["reconstruction"], field_smoothing_scale=scale)
+        ]
+    matches = [
+        los_mod.los_file_matches_grid(path, r, verbose=False)
+        for path in los_paths
+    ]
+    status = "cached" if all(matches) else "missing"
     return {
         "catalogue": job["catalogue"],
         "reconstruction": job["reconstruction"],
         "status": status,
-        "n_los": len(RA),
-        "path": los_path,
+        "n_los": n_los,
+        "path": los_paths[0] if len(los_paths) == 1 else los_paths,
+        "paths": los_paths,
+        "path_key": tuple(los_paths),
+        "field_indices": selected,
+        "r": r,
     }
 
 
@@ -233,31 +213,60 @@ def _prepare_los(variants, args):
             variant["config"], catalogue=args.catalogue,
             reconstruction=args.reconstruction)
         for job in jobs:
+            planned = _plan_los_file(variant, job)
+            planned["smoothing"] = variant["smoothing"]
             key = (
-                str(variant["config_path"]), job["catalogue"],
-                job["reconstruction"])
+                planned["catalogue"], planned["reconstruction"],
+                planned["smoothing"], planned["path_key"])
             if key in seen:
+                for row in rows:
+                    row_key = (
+                        row["catalogue"], row["reconstruction"],
+                        row["smoothing"], row["path_key"])
+                    if row_key == key:
+                        row["configs"] += 1
+                        break
                 continue
             seen.add(key)
             if args.plan_only:
-                row = _plan_los_file(variant, job)
+                row = planned
             else:
-                result = los_mod.compute_los_file(
-                    job["catalogue"], job["reconstruction"],
-                    variant["config"], config_path=str(variant["config_path"]),
-                    density_smoothing_scale=(
-                        density_smoothing_scale_from_config(
-                            variant["config"])),
-                    overwrite=args.overwrite_los)
+                if planned["status"] == "cached" and not args.overwrite_los:
+                    results = [
+                        {"path": path, "status": "exists"}
+                        for path in planned["paths"]
+                    ]
+                else:
+                    RA, dec, los_template = los_mod.load_los(
+                        job["catalogue"], variant["config"],
+                        config_path=str(variant["config_path"]))
+                    results = []
+                    for nsim, path in zip(
+                            planned["field_indices"], planned["paths"]):
+                        results.append(
+                            los_mod.compute_los_file_from_coordinates(
+                                job["catalogue"], job["reconstruction"],
+                                variant["config"], RA, dec,
+                                los_template=los_template,
+                                field_smoothing_scale=(
+                                    field_smoothing_scale_from_config(
+                                        variant["config"])),
+                                output_path=path, field_indices=[nsim],
+                                overwrite=args.overwrite_los,
+                                r=planned["r"]))
+                statuses = {result["status"] for result in results}
+                status = statuses.pop() if len(statuses) == 1 else "mixed"
                 row = {
                     "catalogue": job["catalogue"],
                     "reconstruction": job["reconstruction"],
-                    "status": result["status"],
+                    "status": status,
                     "n_los": "",
-                    "path": result["path"],
+                    "path": planned["path"],
+                    "paths": planned["paths"],
+                    "path_key": planned["path_key"],
                 }
             row["smoothing"] = variant["smoothing"]
-            row["config"] = cache_mod._short_path(variant["source_path"])
+            row["configs"] = 1
             rows.append(row)
 
     if not rows:
@@ -265,16 +274,15 @@ def _prepare_los(variants, args):
         return
 
     cache_mod._log("")
-    cache_mod._log("LOS preparation plan" if args.plan_only
-                   else "LOS preparation result")
+    cache_mod._log("Step 1/2: unique LOS products" if args.plan_only
+                   else "Step 1/2: LOS preparation result")
     columns = [
         ("catalogue", "catalogue"),
         ("reconstruction", "reconstruction"),
         ("smoothing", "smoothing"),
         ("status", "status"),
         ("n_los", "n_los"),
-        ("path", "path"),
-        ("config", "config"),
+        ("configs", "configs"),
     ]
     for line in cache_mod._table(rows, columns).splitlines():
         cache_mod._log(line)
@@ -296,7 +304,11 @@ def _warm_cache(variants, args):
             str(variant["config_path"]), variant["config"])
     cache_mod._print_plan(cache_variants)
 
-    runnable = cache_mod._runnable_variants(cache_variants)
+    item_ids = cache_mod._parse_id_spec(args.cache_items)
+    try:
+        runnable = cache_mod._runnable_variants(cache_variants, item_ids)
+    except ValueError as exc:
+        raise SystemExit(f"error: {exc}") from None
     if args.plan_only or not runnable:
         if not runnable:
             cache_mod._log("")
@@ -319,7 +331,7 @@ def _warm_cache(variants, args):
         if variant["supersampling"]:
             cache_mod._log(f"  supersampling: {variant['supersampling']}")
         if variant["smoothing"]:
-            cache_mod._log(f"  density smoothing: {variant['smoothing']}")
+            cache_mod._log(f"  field smoothing: {variant['smoothing']}")
         try:
             summary = cache_mod._load_for_cache(str(run_config))
             cache_mod._log(f"[{i}/{len(runnable)}] done: {summary}")
@@ -336,13 +348,18 @@ def _mpi_barrier():
 def main():
     cache_mod._init_mpi_info()
     parser = argparse.ArgumentParser(
-        description="Prepare LOS files and warm H0 field caches.",
+        description="Prepare LOS files and warm 3D volume caches.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=dedent("""\
+            Field smoothing is read from model.field_3d_smoothing_scale in
+            each input config. Use separate generated configs/tasks for
+            multiple smoothing scales.
+
             examples:
               prepare_field_inputs.py scripts/runs/tasks_TRGBH0_main.txt
               prepare_field_inputs.py config_EDD_TRGB.toml --plan-only
-              prepare_field_inputs.py tasks.txt --density-smoothing-scale 2
+              prepare_field_inputs.py tasks.txt --products cache
+              prepare_field_inputs.py tasks.txt --products cache --cache-items 1,3-5
             """))
     parser.add_argument(
         "inputs", nargs="*", type=Path,
@@ -356,10 +373,10 @@ def main():
         help=("Override model.which_selection for H0 cache warming. May be "
               "repeated or comma-separated."))
     parser.add_argument(
-        "--density-smoothing-scale", action="append", default=[],
-        help=("Gaussian density smoothing scale(s) in Mpc/h. Use 'none' for "
-              "the unsmoothed baseline or omit to use each config as-is. "
-              "Each non-zero scale must exceed the field voxel size."))
+        "--cache-items", default=None,
+        help=("Comma-separated unique 3D volume-cache item IDs/ranges to warm, "
+              "as printed by the plan, e.g. 1,3-5. Default: all missing "
+              "unique cache products. LOS products are still prepared first."))
     parser.add_argument(
         "--products", choices=("all", "los", "cache"), default="all",
         help="Which preprocessing products to prepare.")
@@ -373,26 +390,15 @@ def main():
         help="Print planned LOS/cache work and exit without writing files.")
     args = parser.parse_args()
 
-    tmp_paths = []
-    try:
-        config_paths = _read_config_paths(args)
-        smoothing_overrides = _parse_smoothing_overrides(
-            args.density_smoothing_scale)
-        variants = _config_variants(config_paths, smoothing_overrides)
-        tmp_paths = [
-            variant["tmp_path"] for variant in variants
-            if variant["tmp_path"] is not None
-        ]
+    config_paths = _read_config_paths(args)
+    variants = _config_variants(config_paths)
 
-        if args.products in ("all", "los") and cache_mod._RANK == 0:
-            _prepare_los(variants, args)
-        if args.products in ("all", "los"):
-            _mpi_barrier()
-        if args.products in ("all", "cache"):
-            _warm_cache(variants, args)
-    finally:
-        for path in tmp_paths:
-            path.unlink(missing_ok=True)
+    if args.products in ("all", "los") and cache_mod._RANK == 0:
+        _prepare_los(variants, args)
+    if args.products in ("all", "los"):
+        _mpi_barrier()
+    if args.products in ("all", "cache"):
+        _warm_cache(variants, args)
 
 
 if __name__ == "__main__":

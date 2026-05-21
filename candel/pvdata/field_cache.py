@@ -29,7 +29,8 @@ import numpy as np
 
 from ..util import file_last_edited, fprint, get_nested, get_root_data
 
-_FIELD_CACHE_VERSION = 1
+_LOS_FIELD_CACHE_PREFIX = "los"
+_VOLUME_FIELD_CACHE_PREFIX = "volume_field_data"
 
 
 class _ArrayShapeOnly:
@@ -207,42 +208,106 @@ def _field_cache_indices_tag(indices):
     return "_".join(ranges)
 
 
-def _parse_field_cache_indices_tag(tag):
-    """Parse a compact field-index tag.
-
-    This reverses `_field_cache_indices_tag`.
-    """
-    if tag == "none":
-        return []
-    values = []
-    for part in tag.split("_"):
-        if "-" in part:
-            start, stop = part.split("-", 1)
-            values.extend(range(int(start), int(stop) + 1))
-        else:
-            values.append(int(part))
-    return values
+def _field_cache_single_index(payload):
+    """Return the single field index required by per-field cache files."""
+    field_indices = payload.get("field_indices", None)
+    if field_indices is None:
+        nsim = payload.get("nsim", None)
+        if nsim is None:
+            raise ValueError("Per-field cache payload requires `nsim` or "
+                             "one `field_indices` value.")
+        return int(nsim)
+    values = [int(x) for x in field_indices]
+    if len(values) != 1:
+        raise ValueError(
+            "Field cache files are stored per realisation; payload "
+            f"contains {values}.")
+    return values[0]
 
 
 def _field_cache_payload_digest(payload, length=24):
     """Stable digest for the complete field-cache payload."""
-    payload = _jsonable({"version": _FIELD_CACHE_VERSION, **payload})
+    payload = _jsonable(payload)
     key = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(key.encode("utf-8")).hexdigest()[:length]
 
 
-def _h0_volume_cache_filename(payload):
-    """Readable, cluster-portable filename for H0 3D volume caches."""
+def _volume_field_product_tag(product):
+    """Readable filename tag for a prepared volume-field product."""
+    return _field_cache_slug(str(product).replace("_", "-"), max_len=40)
+
+
+def _los_field_cache_filename(payload):
+    """Readable filename for cached LOS products."""
+    field_indices = payload.get("field_indices", None)
+    if field_indices is None:
+        field_tag = "all"
+    else:
+        field_tag = _field_cache_indices_tag(field_indices)
+    parts = [
+        "los",
+        _field_cache_slug(payload["catalogue"], max_len=50),
+        f"field-{field_tag}",
+    ]
+    radial_grid = payload.get("radial_grid", None)
+    if radial_grid is not None:
+        parts.append(_radial_grid_cache_tag(radial_grid))
+    field_smoothing = payload.get("field_smoothing_scale", None)
+    if field_smoothing is not None:
+        parts.append(_field_smoothing_cache_tag(field_smoothing))
+    return "__".join(parts) + ".hdf5"
+
+
+def _los_field_cache_path(cache_dir, payload):
+    """Return the canonical field-cache path for one LOS HDF5 product."""
+    if cache_dir is None:
+        return None
+    return join(cache_dir, _field_cache_slug(payload["reconstruction"],
+                                            max_len=70),
+                _LOS_FIELD_CACHE_PREFIX, _los_field_cache_filename(payload))
+
+
+def _volume_field_source_name(payload):
+    """Return the configured reconstruction/loader name for a volume product."""
+    for key in ("loader_name", "field_name", "reconstruction"):
+        if key in payload:
+            return payload[key]
+    raise KeyError("volume field cache payload must define a loader name")
+
+
+def _volume_field_cache_subdir(payload):
+    """Directory name for volume-field caches from one reconstruction."""
+    return _field_cache_slug(_volume_field_source_name(payload), max_len=70)
+
+
+def _volume_field_cache_filename(payload):
+    """Readable, cluster-portable filename for prepared volume-field caches."""
+    product = payload["product"]
+    if product == "h0_volume":
+        return _h0_volume_product_cache_filename(payload)
+    product_tag = _volume_field_product_tag(product)
+    if product == "pv_volume_density":
+        return _pv_volume_density_product_cache_filename(payload, product_tag)
+    if product == "pv_density_cube":
+        return _pv_density_cube_product_cache_filename(payload, product_tag)
+    raise ValueError(f"Unknown volume field cache product {product!r}.")
+
+
+def _h0_volume_product_cache_filename(payload):
+    """Readable filename for H0 selection-volume cache products."""
     supersample = payload.get("supersample", None)
     field_smoothing = payload.get("field_smoothing_scale", None)
+    geometry = _field_cache_slug(payload["geometry"], max_len=20)
+    nsim = _field_cache_single_index(payload)
     parts = [
-        f"v{_FIELD_CACHE_VERSION}",
-        _field_cache_slug(payload["field_name"], max_len=70),
-        f"fields-{_field_cache_indices_tag(payload['field_indices'])}",
-        _field_cache_slug(payload["geometry"], max_len=20),
+        f"cache_{geometry}",
+        f"field-{nsim}",
         f"r-{_field_cache_float_tag(payload['subcube_radius'])}",
         f"ds-{int(payload['downsample'])}",
     ]
+    max_radius = payload.get("max_radius", None)
+    if max_radius is not None:
+        parts.append(f"rmax-{_field_cache_float_tag(max_radius)}")
     if supersample is not None:
         parts.append(_h0_volume_supersample_tag(supersample))
     if field_smoothing is not None:
@@ -268,16 +333,18 @@ def _field_smoothing_cache_tag(field_smoothing_scale):
         _field_cache_float_tag(field_smoothing_scale))
 
 
-def _pv_volume_density_cache_filename(payload):
-    """Readable, cluster-portable filename for PV 3D density caches."""
+def _radial_grid_cache_tag(radial_grid):
+    """Readable filename tag for a 1D radial interpolation grid."""
+    return "r-{}-{}-n{}".format(
+        _field_cache_float_tag(radial_grid["rmin"]),
+        _field_cache_float_tag(radial_grid["rmax"]),
+        int(radial_grid["num_steps"]))
+
+
+def _pv_volume_density_product_cache_filename(payload, product_tag):
+    """Readable filename for grouped PV volume-density cache products."""
     geometry = "sphere" if payload["pad_subcube_boundary"] else "cube"
-    field_indices = payload.get("field_indices", None)
-    if field_indices is None:
-        nsim = payload.get("nsim", None)
-        field_tag = "none" if nsim is None else _field_cache_indices_tag(
-            [nsim])
-    else:
-        field_tag = _field_cache_indices_tag(field_indices)
+    nsim = _field_cache_single_index(payload)
     subsample_fraction = payload.get("voxel_subsample_fraction", 1.0)
     subsample_tag = "sub-{}-seed-{}".format(
         _field_cache_float_tag(subsample_fraction),
@@ -285,15 +352,38 @@ def _pv_volume_density_cache_filename(payload):
     rhat_tag = "rhat" if payload.get("store_rhat_3d", False) else "norhat"
     field_smoothing = payload.get("field_smoothing_scale", None)
     parts = [
-        f"v{_FIELD_CACHE_VERSION}",
-        _field_cache_slug(payload["loader_name"], max_len=70),
-        f"fields-{field_tag}",
+        product_tag,
+        f"field-{nsim}",
         geometry,
         f"r-{_field_cache_float_tag(payload['subcube_radius'])}",
         f"ds-{int(payload['downsample'])}",
-        subsample_tag,
-        rhat_tag,
     ]
+    max_radius = payload.get("max_radius", None)
+    if max_radius is not None:
+        parts.append(f"rmax-{_field_cache_float_tag(max_radius)}")
+    parts.extend([subsample_tag, rhat_tag])
+    if field_smoothing is not None:
+        parts.append(_field_smoothing_cache_tag(field_smoothing))
+    parts.append("density")
+    return "__".join(parts) + ".npz"
+
+
+def _pv_density_cube_product_cache_filename(payload, product_tag):
+    """Readable filename for one prepared PV density cube cache product."""
+    geometry = "sphere" if payload["pad_subcube_boundary"] else "cube"
+    nsim = payload.get("nsim", None)
+    field_tag = "none" if nsim is None else str(int(nsim))
+    field_smoothing = payload.get("field_smoothing_scale", None)
+    parts = [
+        product_tag,
+        f"field-{field_tag}",
+        geometry,
+        f"r-{_field_cache_float_tag(payload['subcube_radius'])}",
+        f"ds-{int(payload['downsample'])}",
+    ]
+    max_radius = payload.get("max_radius", None)
+    if max_radius is not None:
+        parts.append(f"rmax-{_field_cache_float_tag(max_radius)}")
     if field_smoothing is not None:
         parts.append(_field_smoothing_cache_tag(field_smoothing))
     parts.append("density")
@@ -304,12 +394,10 @@ def _field_cache_path(cache_dir, prefix, payload):
     """Return the cache path for a field-cache payload."""
     if cache_dir is None:
         return None
-    if prefix == "h0_volume_data" and payload.get("kind") == "h0_volume_data":
-        return join(cache_dir, prefix, _h0_volume_cache_filename(payload))
-    if (prefix == "pv_volume_density_3d"
-            and payload.get("kind") == "pv_volume_density_3d"):
-        return join(
-            cache_dir, prefix, _pv_volume_density_cache_filename(payload))
+    if (prefix == _VOLUME_FIELD_CACHE_PREFIX
+            and payload.get("kind") == "volume_field_data"):
+        return join(cache_dir, _volume_field_cache_subdir(payload),
+                    _volume_field_cache_filename(payload))
     digest = _field_cache_payload_digest(payload)
     return join(cache_dir, prefix, f"{digest}.npz")
 
@@ -341,182 +429,110 @@ def _read_field_cache(cache_path, label, required_keys):
     return out
 
 
-def _slice_h0_volume_cache_fields(cached, cached_indices, requested_indices):
-    """Slice field-axis arrays in a cached H0 volume product."""
-    requested_indices = [int(x) for x in requested_indices]
-    cached_indices = [int(x) for x in cached_indices]
-    rows = [cached_indices.index(x) for x in requested_indices]
-    out = dict(cached)
-    for key in ("rho_3d_fields", "vrad_3d_fields"):
+def _field_cache_payload_for_index(payload, nsim, source_index=None):
+    """Return a per-field payload for one requested realisation."""
+    out = dict(payload)
+    out["field_indices"] = [int(nsim)]
+    if source_index is not None and isinstance(out.get("sources"), list):
+        sources = out["sources"]
+        if len(sources) > source_index:
+            out["sources"] = [sources[source_index]]
+    return out
+
+
+def _combine_per_field_caches(caches, field_keys):
+    """Stack per-field cache files into the in-memory grouped schema."""
+    out = dict(caches[0])
+    for key in field_keys:
         if key in out:
-            out[key] = np.asarray(out[key])[rows]
+            out[key] = np.concatenate(
+                [np.asarray(cached[key]) for cached in caches], axis=0)
     return out
 
 
-def _slice_pv_volume_cache_fields(cached, cached_indices, requested_indices):
-    """Slice field-axis arrays in a cached PV volume-density product."""
-    requested_indices = [int(x) for x in requested_indices]
-    cached_indices = [int(x) for x in cached_indices]
-    rows = [cached_indices.index(x) for x in requested_indices]
-    out = dict(cached)
-    if "rho_fields" in out:
-        out["rho_fields"] = np.asarray(out["rho_fields"])[rows]
-    return out
+def _cache_max_radius_matches(cached, expected_r_3d, label, cache_path):
+    """Return whether a cached volume has the requested maximum radius."""
+    if expected_r_3d is None or "r_3d" not in cached:
+        return True
+    got = float(np.max(np.asarray(cached["r_3d"])))
+    expected = float(np.max(np.asarray(expected_r_3d)))
+    if np.isclose(got, expected):
+        return True
+    fprint(f"ignoring stale {label} cache `{cache_path}`: max(`r_3d`) "
+           "does not match the requested volume radius.")
+    return False
 
 
-def _h0_volume_supersample_tag_matches(cached_tag, supersample):
-    """Return whether a cached supersampling tag satisfies a request."""
-    if supersample is None:
-        return cached_tag is None
-    return cached_tag == _h0_volume_supersample_tag(supersample)
-
-
-def _field_smoothing_cache_tag_matches(cached_tag, field_smoothing_scale):
-    """Return whether a cached field-smoothing tag satisfies a request."""
-    if field_smoothing_scale is None:
-        return cached_tag is None
-    return cached_tag == _field_smoothing_cache_tag(field_smoothing_scale)
+def _cache_supersampling_matches(cached, expected, label, cache_path):
+    """Return whether cached H0 supersampling metadata matches."""
+    if expected is None:
+        return True
+    factor = int(np.asarray(cached["supersample_factor"]).reshape(-1)[0])
+    radius = float(np.asarray(cached["supersample_radius"]).reshape(-1)[0])
+    method = str(np.asarray(cached["supersample_method"]).item())
+    expected_factor = int(np.asarray(
+        expected["supersample_factor"]).reshape(-1)[0])
+    expected_radius = float(np.asarray(
+        expected["supersample_radius"]).reshape(-1)[0])
+    expected_method = str(np.asarray(expected["supersample_method"]).item())
+    if (factor == expected_factor and np.isclose(radius, expected_radius)
+            and method == expected_method):
+        return True
+    fprint(f"ignoring stale {label} cache `{cache_path}`: supersampling "
+           "metadata does not match the requested settings.")
+    return False
 
 
 def _read_h0_volume_cache_superset(
         cache_dir, payload, label, required_keys, requested_indices,
-        require_superset=False):
-    """Load a cached H0 volume product whose field set contains the request."""
+        expected_r_3d=None, expected_supersampling=None):
+    """Load and stack per-field cached H0 volume products."""
     if cache_dir is None:
-        return None
-    cache_subdir = join(cache_dir, "h0_volume_data")
-    if not exists(cache_subdir):
         return None
 
     requested = [int(x) for x in requested_indices]
-    field_slug = _field_cache_slug(payload["field_name"], max_len=70)
-    geometry = _field_cache_slug(payload["geometry"], max_len=20)
-    radius_tag = _field_cache_float_tag(payload["subcube_radius"])
-    downsample_tag = f"ds-{int(payload['downsample'])}"
-    supersample = payload.get("supersample", None)
-    field_smoothing = payload.get("field_smoothing_scale", None)
-    kind_tag = "vel" if payload["load_velocity"] else "density"
-
-    candidates = []
-    for fname in os.listdir(cache_subdir):
-        parts = fname[:-4].split("__") if fname.endswith(".npz") else []
-        if len(parts) < 7:
-            continue
-        version, cached_field, fields_part, cached_geometry, \
-            cached_radius, cached_downsample = parts[:6]
-        cached_kind = parts[-1]
-        cached_supersample = None
-        cached_field_smoothing = None
-        for tag in parts[6:-1]:
-            if tag.startswith("ss-"):
-                cached_supersample = tag
-            elif tag.startswith("field-smooth-"):
-                cached_field_smoothing = tag
-            else:
-                cached_supersample = tag
-        if version != f"v{_FIELD_CACHE_VERSION}":
-            continue
-        if cached_field != field_slug or cached_geometry != geometry:
-            continue
-        if cached_radius != f"r-{radius_tag}":
-            continue
-        if cached_downsample != downsample_tag or cached_kind != kind_tag:
-            continue
-        if not _h0_volume_supersample_tag_matches(
-                cached_supersample, supersample):
-            continue
-        if not _field_smoothing_cache_tag_matches(
-                cached_field_smoothing, field_smoothing):
-            continue
-        if not fields_part.startswith("fields-"):
-            continue
-        cached_indices = _parse_field_cache_indices_tag(
-            fields_part.removeprefix("fields-"))
-        if require_superset and len(cached_indices) <= len(requested):
-            continue
-        if all(index in cached_indices for index in requested):
-            candidates.append((len(cached_indices), cached_indices,
-                               join(cache_subdir, fname)))
-
-    for _, cached_indices, path in sorted(
-            candidates, reverse=require_superset):
-        cached = _read_field_cache(path, f"{label} superset", required_keys)
-        if cached is not None:
-            fprint(f"using {label} cache `{path}` sliced to field indices "
-                   f"{requested}.")
-            return _slice_h0_volume_cache_fields(
-                cached, cached_indices, requested)
-    return None
+    caches = []
+    for i, nsim in enumerate(requested):
+        field_payload = _field_cache_payload_for_index(payload, nsim, i)
+        path = _field_cache_path(cache_dir, _VOLUME_FIELD_CACHE_PREFIX,
+                                 field_payload)
+        cached = _read_field_cache(
+            path, f"{label} field {nsim}", required_keys)
+        if cached is None:
+            return None
+        if not _cache_max_radius_matches(cached, expected_r_3d, label, path):
+            return None
+        if not _cache_supersampling_matches(
+                cached, expected_supersampling, label, path):
+            return None
+        caches.append(cached)
+    fprint(f"using {label} per-field caches for indices {requested}.")
+    return _combine_per_field_caches(
+        caches, ("rho_3d_fields", "vrad_3d_fields"))
 
 
 def _read_pv_volume_cache_superset(cache_dir, payload, label, required_keys,
-                                   requested_indices):
-    """Load a cached PV volume-density product containing the request."""
+                                   requested_indices,
+                                   expected_r_3d=None):
+    """Load and stack per-field cached PV volume-density products."""
     if cache_dir is None:
-        return None
-    cache_subdir = join(cache_dir, "pv_volume_density_3d")
-    if not exists(cache_subdir):
         return None
 
     requested = [int(x) for x in requested_indices]
-    loader_slug = _field_cache_slug(payload["loader_name"], max_len=70)
-    geometry = "sphere" if payload["pad_subcube_boundary"] else "cube"
-    radius_tag = _field_cache_float_tag(payload["subcube_radius"])
-    downsample_tag = f"ds-{int(payload['downsample'])}"
-    subsample_tag = "sub-{}-seed-{}".format(
-        _field_cache_float_tag(payload.get("voxel_subsample_fraction", 1.0)),
-        int(payload.get("voxel_subsample_seed", 42)))
-    rhat_tag = "rhat" if payload.get("store_rhat_3d", False) else "norhat"
-    field_smoothing = payload.get("field_smoothing_scale", None)
-
-    candidates = []
-    for fname in os.listdir(cache_subdir):
-        parts = fname[:-4].split("__") if fname.endswith(".npz") else []
-        if len(parts) not in (9, 10):
-            continue
-        version, cached_loader, fields_part, cached_geometry, \
-            cached_radius, cached_downsample, cached_subsample, \
-            cached_rhat = parts[:8]
-        cached_tags = parts[8:-1]
-        cached_kind = parts[-1]
-        cached_field_smoothing = None
-        unknown_tag = False
-        for tag in cached_tags:
-            if tag.startswith("field-smooth-"):
-                cached_field_smoothing = tag
-            else:
-                unknown_tag = True
-        if version != f"v{_FIELD_CACHE_VERSION}":
-            continue
-        if unknown_tag:
-            continue
-        if cached_loader != loader_slug or cached_geometry != geometry:
-            continue
-        if cached_radius != f"r-{radius_tag}":
-            continue
-        if cached_downsample != downsample_tag:
-            continue
-        if cached_subsample != subsample_tag or cached_rhat != rhat_tag:
-            continue
-        if not _field_smoothing_cache_tag_matches(
-                cached_field_smoothing, field_smoothing):
-            continue
-        if cached_kind != "density" or not fields_part.startswith("fields-"):
-            continue
-        cached_indices = _parse_field_cache_indices_tag(
-            fields_part.removeprefix("fields-"))
-        if all(index in cached_indices for index in requested):
-            candidates.append((len(cached_indices), cached_indices,
-                               join(cache_subdir, fname)))
-
-    for _, cached_indices, path in sorted(candidates):
-        cached = _read_field_cache(path, f"{label} superset", required_keys)
-        if cached is not None:
-            fprint(f"using {label} cache `{path}` sliced to field indices "
-                   f"{requested}.")
-            return _slice_pv_volume_cache_fields(
-                cached, cached_indices, requested)
-    return None
+    caches = []
+    for i, nsim in enumerate(requested):
+        field_payload = _field_cache_payload_for_index(payload, nsim, i)
+        path = _field_cache_path(cache_dir, _VOLUME_FIELD_CACHE_PREFIX,
+                                 field_payload)
+        cached = _read_field_cache(
+            path, f"{label} field {nsim}", required_keys)
+        if cached is None:
+            return None
+        if not _cache_max_radius_matches(cached, expected_r_3d, label, path):
+            return None
+        caches.append(cached)
+    fprint(f"using {label} per-field caches for indices {requested}.")
+    return _combine_per_field_caches(caches, ("rho_fields",))
 
 
 def _write_field_cache(cache_path, label, arrays):

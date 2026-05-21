@@ -36,6 +36,7 @@ SPEED_OF_LIGHT = 299_792.458  # km / s
 def fsection(title, width=60):
     """Print a section header."""
     rule = "─" * (width - len(title) - 3)
+    print()
     print(f"── {title} {rule}")
 
 

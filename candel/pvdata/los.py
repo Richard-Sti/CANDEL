@@ -43,6 +43,9 @@ def _zcmb_blat_mask(zcmb, RA, dec, zcmb_min=None, zcmb_max=None, b_min=None):
 
 def _filter_data(data, mask, los_data_path=None, field_indices=None):
     """Apply boolean mask to data arrays, report counts, and load LOS."""
+    if los_data_path:
+        los_data_path = resolve_los_cache_request(los_data_path, data)
+
     n_total = len(mask)
     n_kept = int(np.sum(mask))
     fprint(f"removed {n_total - n_kept} objects, thus {n_kept} remain.")
@@ -53,6 +56,19 @@ def _filter_data(data, mask, los_data_path=None, field_indices=None):
         data = load_los(
             los_data_path, data, mask=mask, field_indices=field_indices)
     return data
+
+
+def resolve_los_cache_request(los_data_path, data, mask=None, verbose=True):
+    """Resolve a deferred LOS cache request against loaded catalogue data."""
+    if not hasattr(los_data_path, "ensure_from_data"):
+        return los_data_path
+    if mask is not None:
+        for key in ("RA", "RA_host"):
+            if key in data and len(data[key]) != len(mask):
+                raise ValueError(
+                    "Deferred LOS cache requests must be resolved before "
+                    "catalogue cuts are applied.")
+    return los_data_path.ensure_from_data(data, verbose=verbose)
 
 
 def _compute_r_grid(r_limits, dr, data, Om=0.3):
@@ -138,8 +154,73 @@ def precompute_pixel_projection(rhat_data, nside, sigma_deg=None):
     return w * d
 
 
+def _select_los_field_indices(data, los_field_indices, field_indices,
+                              los_data_path, verbose=True):
+    """Select requested field rows from already-loaded LOS arrays."""
+    if field_indices is None:
+        return los_field_indices.astype(np.int32)
+
+    requested = np.asarray(field_indices, dtype=np.int32)
+    if requested.ndim == 0:
+        requested = requested[None]
+    if requested.ndim != 1 or len(requested) == 0:
+        raise ValueError(
+            "`io.field_indices` must be an int or non-empty 1D list.")
+
+    rows = []
+    for nsim in requested:
+        match = np.where(los_field_indices == nsim)[0]
+        if len(match) != 1:
+            available = ", ".join(map(str, los_field_indices.tolist()))
+            raise ValueError(
+                f"Requested LOS field index {int(nsim)} is not "
+                f"available in `{los_data_path}`. Available: "
+                f"{available}.")
+        rows.append(int(match[0]))
+
+    data["los_density"] = data["los_density"][rows]
+    data["los_velocity"] = data["los_velocity"][rows]
+    los_field_indices = los_field_indices[rows]
+    fprint("selected LOS field indices: "
+           f"{los_field_indices.tolist()}", verbose=verbose)
+    return los_field_indices.astype(np.int32)
+
+
+def _merge_los_coordinate(values):
+    """Return a shared coordinate vector or stack per-field coordinates."""
+    first = values[0]
+    if all(np.array_equal(value, first) for value in values[1:]):
+        return first
+    return np.stack(values)
+
+
 def load_los(los_data_path, data, mask=None, verbose=True,
              field_indices=None):
+    los_data_path = resolve_los_cache_request(
+        los_data_path, data, mask=mask, verbose=verbose)
+
+    if isinstance(los_data_path, (list, tuple)):
+        parts = [
+            load_los(path, {}, mask=mask, verbose=verbose,
+                     field_indices=None)
+            for path in los_data_path
+        ]
+        data["los_density"] = np.concatenate(
+            [part["los_density"] for part in parts], axis=0)
+        data["los_velocity"] = np.concatenate(
+            [part["los_velocity"] for part in parts], axis=0)
+        data["los_r"] = parts[0]["los_r"]
+        data["los_RA"] = _merge_los_coordinate(
+            [part["los_RA"] for part in parts])
+        data["los_dec"] = _merge_los_coordinate(
+            [part["los_dec"] for part in parts])
+        los_field_indices = np.concatenate(
+            [part["los_field_indices"] for part in parts])
+        data["los_field_indices"] = _select_los_field_indices(
+            data, los_field_indices, field_indices, los_data_path,
+            verbose=verbose)
+        return data
+
     with File(los_data_path, 'r') as f:
         if mask is None:
             data["los_density"] = f['los_density'][...].astype(np.float32)
@@ -186,32 +267,9 @@ def load_los(los_data_path, data, mask=None, verbose=True,
             data["los_velocity"] = data["los_velocity"][::5]
             los_field_indices = los_field_indices[::5]
 
-        if field_indices is not None:
-            requested = np.asarray(field_indices, dtype=np.int32)
-            if requested.ndim == 0:
-                requested = requested[None]
-            if requested.ndim != 1 or len(requested) == 0:
-                raise ValueError(
-                    "`io.field_indices` must be an int or non-empty 1D list.")
-
-            rows = []
-            for nsim in requested:
-                match = np.where(los_field_indices == nsim)[0]
-                if len(match) != 1:
-                    available = ", ".join(map(str, los_field_indices.tolist()))
-                    raise ValueError(
-                        f"Requested LOS field index {int(nsim)} is not "
-                        f"available in `{los_data_path}`. Available: "
-                        f"{available}.")
-                rows.append(int(match[0]))
-
-            data["los_density"] = data["los_density"][rows]
-            data["los_velocity"] = data["los_velocity"][rows]
-            los_field_indices = los_field_indices[rows]
-            fprint("selected LOS field indices: "
-                   f"{los_field_indices.tolist()}", verbose=verbose)
-
-        data["los_field_indices"] = los_field_indices.astype(np.int32)
+        data["los_field_indices"] = _select_los_field_indices(
+            data, los_field_indices, field_indices, los_data_path,
+            verbose=verbose)
 
     edited = file_last_edited(los_data_path)
     if edited is None:

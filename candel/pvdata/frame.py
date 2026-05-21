@@ -30,7 +30,7 @@ from .catalogues import _CATALOGUE_LOADERS, load_CF4_data, load_CF4_mock
 from .field_cache import (_field_cache_dir_from_config,
                           _field_cache_enabled_from_config)
 from .field_products import (field_smoothing_scale_from_config,
-                             resolve_los_data_path)
+                             resolve_or_build_los_data_path)
 from .los import _compute_r_grid, precompute_pixel_projection
 from .volume_density import (_load_volume_density_3d_fields,
                              _prepare_pv_volume_density_arrays,
@@ -72,12 +72,12 @@ def load_PV_dataframes(config_path):
 
         try_pop_los = is_mock and los_reconstruction is None
         if los_reconstruction is not None and not is_mock:
-            kwargs["los_data_path"] = resolve_los_data_path(
-                kwargs.pop("los_file"), los_reconstruction,
-                field_smoothing_scale)
-            fprint(
-                f"loading existing LOS data from {kwargs['los_data_path']}.")
+            los_template = kwargs.pop("los_file")
             field_indices = config_io.get("field_indices", None)
+            kwargs["los_data_path"] = resolve_or_build_los_data_path(
+                config, name, los_reconstruction, los_template,
+                field_smoothing_scale=field_smoothing_scale,
+                config_path=config_path, field_indices=field_indices)
             if field_indices is not None:
                 kwargs["field_indices"] = field_indices
 
@@ -92,9 +92,9 @@ def load_PV_dataframes(config_path):
             if field_cache_enabled else None)
         if los_reconstruction is not None:
             if field_cache_enabled:
-                fprint(f"field cache enabled: `{field_cache_dir}`.")
+                fprint(f"field cache: enabled at `{field_cache_dir}`.")
             else:
-                fprint("field cache disabled.")
+                fprint("field cache: disabled.")
 
         df = PVDataFrame.from_config_dict(
             kwargs, name, try_pop_los=try_pop_los,
