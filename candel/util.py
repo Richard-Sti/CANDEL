@@ -211,6 +211,12 @@ _LOCAL_RECONSTRUCTION_PATH_KEYS = {
 }
 
 
+def _local_reconstruction_path_keys(name):
+    if str(name).lower().startswith("manticorelocal"):
+        return ("fpath_root",)
+    return _LOCAL_RECONSTRUCTION_PATH_KEYS.get(name, ())
+
+
 def _validate_runtime_paths(config):
     """Catch machine-local reconstruction paths before expensive I/O."""
     recon_main = get_nested(config, "io/reconstruction_main", {})
@@ -220,7 +226,7 @@ def _validate_runtime_paths(config):
         if not isinstance(section, dict):
             section = {}
         missing = [
-            key for key in _LOCAL_RECONSTRUCTION_PATH_KEYS.get(name, ())
+            key for key in _local_reconstruction_path_keys(name)
             if key not in section or section[key] in (None, "")
         ]
         if missing:
