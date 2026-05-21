@@ -13,16 +13,55 @@
 # with this program; if not, write to the Free Software Foundation, Inc.,
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 """Shared helpers for reconstruction-derived preprocessing products."""
+import atexit
+import itertools
 import math
-from os.path import splitext
+import os
+import shutil
+import tempfile
+from os.path import join, splitext
 
 import numpy as np
 
 from ..field import field_allows_raw_product_reads, field_mas_directory
 from ..util import fprint, get_nested
+from .angular_scatter import (angular_position_scatter_from_config,
+                              scatter_data_coordinates)
 from .field_cache import (_field_cache_dir_from_config,
                           _field_cache_enabled_from_config, _jsonable,
                           _los_field_cache_path)
+
+_TEMP_LOS_DIRS = set()
+_TEMP_LOS_COUNTER = itertools.count()
+
+
+def _slug(value):
+    text = str(value)
+    out = "".join(ch if ch.isalnum() or ch in "_.+-" else "-"
+                  for ch in text)
+    return out.strip("-") or "value"
+
+
+def _temporary_los_dir(config):
+    parent = get_nested(config, "io/temporary_los_dir", None)
+    if parent is None:
+        path = tempfile.mkdtemp(prefix="candel_scattered_los_")
+    else:
+        parent = os.path.abspath(parent)
+        os.makedirs(parent, exist_ok=True)
+        path = tempfile.mkdtemp(prefix="candel_scattered_los_", dir=parent)
+    _TEMP_LOS_DIRS.add(path)
+    return path
+
+
+def cleanup_temporary_los_files():
+    """Remove temporary LOS directories created for scattered positions."""
+    for path in list(_TEMP_LOS_DIRS):
+        shutil.rmtree(path, ignore_errors=True)
+        _TEMP_LOS_DIRS.discard(path)
+
+
+atexit.register(cleanup_temporary_los_files)
 
 
 def validate_field_smoothing_scale(
@@ -167,27 +206,35 @@ def _normalise_field_indices(field_indices):
         return [int(field_indices)]
 
 
-def _los_coordinates_from_data(data):
-    """Return RA/dec arrays from a loaded catalogue dictionary."""
+def _los_coordinate_keys(data):
+    """Return the RA/dec key names in a loaded catalogue dictionary."""
     if "RA" in data:
-        RA = data["RA"]
+        ra_key = "RA"
     elif "RA_host" in data:
-        RA = data["RA_host"]
+        ra_key = "RA_host"
     else:
         raise KeyError(
             "Cannot build LOS cache from catalogue data without an `RA` "
             "or `RA_host` array.")
 
     if "dec" in data:
-        dec = data["dec"]
+        dec_key = "dec"
     elif "DEC" in data:
-        dec = data["DEC"]
+        dec_key = "DEC"
     elif "dec_host" in data:
-        dec = data["dec_host"]
+        dec_key = "dec_host"
     else:
         raise KeyError(
             "Cannot build LOS cache from catalogue data without a `dec`, "
             "`DEC`, or `dec_host` array.")
+    return ra_key, dec_key
+
+
+def _los_coordinates_from_data(data):
+    """Return RA/dec arrays from a loaded catalogue dictionary."""
+    ra_key, dec_key = _los_coordinate_keys(data)
+    RA = data[ra_key]
+    dec = data[dec_key]
 
     RA = np.asarray(RA)
     dec = np.asarray(dec)
@@ -203,7 +250,8 @@ class LOSCacheRequest:
 
     def __init__(self, catalogue, reconstruction, config, cache_paths,
                  cache_valid, field_indices, r, field_smoothing_scale=None,
-                 config_path=None, filepath=None):
+                 config_path=None, filepath=None, temporary=False,
+                 angular_position_scatter=None):
         self.catalogue = catalogue
         self.reconstruction = reconstruction
         self.config = config
@@ -214,6 +262,8 @@ class LOSCacheRequest:
         self.field_smoothing_scale = field_smoothing_scale
         self.config_path = config_path
         self.filepath = filepath
+        self.temporary = bool(temporary)
+        self.angular_position_scatter = angular_position_scatter
         self._resolved = None
 
     def __bool__(self):
@@ -234,12 +284,25 @@ class LOSCacheRequest:
             return self.cache_paths[0]
         return self.cache_paths
 
+    @property
+    def requires_filtered_coordinates(self):
+        return self.angular_position_scatter is not None
+
     def ensure_from_data(self, data, verbose=True):
         """Build missing cache files using the catalogue coordinates in data."""
+        if self._resolved is not None:
+            return self._resolved
+        if self.angular_position_scatter is not None:
+            keys = _los_coordinate_keys(data)
+            scatter_data_coordinates(
+                data, self.angular_position_scatter, keys=keys,
+                label=f"{self.catalogue}/{self.reconstruction}")
         RA, dec = _los_coordinates_from_data(data)
-        return self.ensure_from_coordinates(RA, dec, verbose=verbose)
+        return self.ensure_from_coordinates(
+            RA, dec, verbose=verbose, apply_scatter=False)
 
-    def ensure_from_coordinates(self, RA, dec, verbose=True):
+    def ensure_from_coordinates(self, RA, dec, verbose=True,
+                                apply_scatter=True):
         """Build missing cache files using explicit sky coordinates."""
         if self._resolved is not None:
             return self._resolved
@@ -253,16 +316,35 @@ class LOSCacheRequest:
                 f"`RA` and `dec` must have the same length, got "
                 f"{len(RA)} and {len(dec)}.")
 
+        if self.angular_position_scatter is not None and apply_scatter:
+            coords = {"RA": RA, "dec": dec}
+            scatter_data_coordinates(
+                coords, self.angular_position_scatter,
+                label=f"{self.catalogue}/{self.reconstruction}")
+            RA, dec = coords["RA"], coords["dec"]
+        metadata = {}
+        if self.temporary:
+            metadata["temporary_los"] = True
+        if self.angular_position_scatter is not None:
+            metadata.update({
+                "angular_position_scatter_deg": float(
+                    self.angular_position_scatter["sigma_deg"]),
+                "angular_position_scatter_seed": int(
+                    self.angular_position_scatter["seed"]),
+            })
+
         for nsim, cache_path in zip(self.field_indices, self.cache_paths):
-            if field_input_los.los_file_matches_grid(
-                    cache_path, self.r, verbose=False):
+            if (not self.temporary
+                    and field_input_los.los_file_matches_grid(
+                        cache_path, self.r, verbose=False)):
                 continue
             field_input_los.compute_los_file_from_coordinates(
                 self.catalogue, self.reconstruction, self.config, RA, dec,
                 filepath=self.filepath,
                 field_smoothing_scale=self.field_smoothing_scale,
                 output_path=cache_path, field_indices=[nsim],
-                overwrite=True, r=self.r, verbose=verbose)
+                overwrite=True, r=self.r, verbose=verbose,
+                metadata=metadata)
 
         self._resolved = self.resolved_path
         return self._resolved
@@ -322,6 +404,18 @@ def los_field_cache_paths(config, catalogue, reconstruction, los_template,
     return paths
 
 
+def _temporary_los_paths(config, catalogue, reconstruction, field_indices):
+    root = _temporary_los_dir(config)
+    tag = f"{os.getpid()}_{next(_TEMP_LOS_COUNTER)}"
+    paths = []
+    for nsim in field_indices:
+        fname = (
+            f"los_{_slug(catalogue)}_{_slug(reconstruction)}_"
+            f"field-{int(nsim)}_{tag}.hdf5")
+        paths.append(join(root, fname))
+    return paths
+
+
 def resolve_or_build_los_data_path(
         config, catalogue, reconstruction, los_template,
         field_smoothing_scale=None, config_path=None, filepath=None,
@@ -329,6 +423,42 @@ def resolve_or_build_los_data_path(
     """Resolve a LOS path, deferring raw-readable field cache builds."""
     legacy_path = resolve_los_data_path(
         los_template, reconstruction, field_smoothing_scale, config=config)
+    scatter = angular_position_scatter_from_config(config)
+    if scatter is not None:
+        if reconstruction is None:
+            return legacy_path
+        if not field_allows_raw_product_reads(reconstruction):
+            raise ValueError(
+                "Angular position scatter requires on-the-fly LOS "
+                f"interpolation, but reconstruction `{reconstruction}` "
+                "does not allow raw product reads.")
+
+        from scripts.preprocess import field_input_los
+        selected = field_input_los._selected_field_indices(
+            config, reconstruction, field_indices)
+        r = field_input_los.radial_los_grid(
+            config, catalogue, reconstruction, verbose=False)
+        radial_grid = los_radial_grid_payload_from_array(r)
+        cache_paths = _temporary_los_paths(
+            config, catalogue, reconstruction, selected)
+        fprint(
+            f"temporary scattered LOS: {catalogue}/{reconstruction}",
+            verbose=verbose)
+        fprint(f"  grid: {_format_los_radial_grid(radial_grid)}",
+               verbose=verbose)
+        fprint(f"  path: {_format_cache_paths(cache_paths)}",
+               verbose=verbose)
+        fprint(
+            f"  scatter: sigma={scatter['sigma_deg']:g} deg, "
+            f"seed={scatter['seed']}; files will be cleaned up after run.",
+            verbose=verbose)
+        return LOSCacheRequest(
+            catalogue, reconstruction, config, cache_paths,
+            [False] * len(cache_paths), selected, r,
+            field_smoothing_scale=field_smoothing_scale,
+            config_path=config_path, filepath=filepath,
+            temporary=True, angular_position_scatter=scatter)
+
     if (config is None or reconstruction is None or los_template is None
             or not _field_cache_enabled_from_config(config)):
         return legacy_path

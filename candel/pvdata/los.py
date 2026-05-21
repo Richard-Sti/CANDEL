@@ -43,7 +43,9 @@ def _zcmb_blat_mask(zcmb, RA, dec, zcmb_min=None, zcmb_max=None, b_min=None):
 
 def _filter_data(data, mask, los_data_path=None, field_indices=None):
     """Apply boolean mask to data arrays, report counts, and load LOS."""
-    if los_data_path:
+    defer_los = bool(getattr(
+        los_data_path, "requires_filtered_coordinates", False))
+    if los_data_path and not defer_los:
         los_data_path = resolve_los_cache_request(los_data_path, data)
 
     n_total = len(mask)
@@ -53,6 +55,9 @@ def _filter_data(data, mask, los_data_path=None, field_indices=None):
         if isinstance(data[k], np.ndarray):
             data[k] = data[k][mask]
     if los_data_path:
+        if defer_los:
+            los_data_path = resolve_los_cache_request(los_data_path, data)
+            mask = None
         data = load_los(
             los_data_path, data, mask=mask, field_indices=field_indices)
     return data

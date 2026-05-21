@@ -31,6 +31,8 @@ from scipy.linalg import cholesky
 
 from ..util import (SPEED_OF_LIGHT, fprint, get_nested, get_root_data,
                     load_config)
+from .angular_scatter import (angular_position_scatter_from_config,
+                              scatter_data_coordinates)
 from .dust import read_dustmap
 from .field_products import (field_smoothing_scale_from_config,
                              resolve_or_build_los_data_path,
@@ -661,11 +663,13 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
         join(root, "processed", "PV_covmat_cepheid_hosts_fiducial.npy"),
         allow_pickle=True)
 
+    host_coords = {
+        "RA": np.array(data_cepheid_host_redshift["RA"], copy=True),
+        "dec": np.array(data_cepheid_host_redshift["DEC"], copy=True),
+    }
     if los_data_path is not None:
         los_data_path = resolve_los_cache_request(
-            los_data_path,
-            {"RA": data_cepheid_host_redshift["RA"],
-             "dec": data_cepheid_host_redshift["DEC"]})
+            los_data_path, host_coords)
 
     def _load_los_or_none(path, keys):
         if path is None:
@@ -734,8 +738,8 @@ def load_SH0ES_separated(root, cepheid_host_cz_cmb_max=None,
         "host_names": host_names,
         "czcmb_cepheid_host": data_cepheid_host_redshift["zCMB"] * SPEED_OF_LIGHT,  # noqa
         "e_czcmb_cepheid_host": data_cepheid_host_redshift["zCMBERR"],
-        "RA_host": data_cepheid_host_redshift["RA"],
-        "dec_host": data_cepheid_host_redshift["DEC"],
+        "RA_host": host_coords["RA"],
+        "dec_host": host_coords["dec"],
         "PV_covmat_cepheid_host": PV_covmat_cepheid_host,
         "host_los_density": host_los["los_density"],
         "host_los_velocity": host_los["los_velocity"],
@@ -857,6 +861,12 @@ def load_SH0ES_from_config(config_path):
         root, cepheid_host_cz_cmb_max,
         los_data_path=los_data_path, rand_los_data_path=rand_los_data_path,
         field_indices=field_indices, drop_observation=drop_observation)
+    if los_data_path is None:
+        scatter = angular_position_scatter_from_config(config)
+        if scatter is not None:
+            scatter_data_coordinates(
+                data, scatter, keys=("RA_host", "dec_host"),
+                label="SH0ES")
     if los_data_path is not None:
         los_data_path = getattr(los_data_path, "resolved_path", los_data_path)
 
@@ -1057,18 +1067,31 @@ def load_CCHP_from_config(config_path, ra_dec_only=False):
             rand_file, reconstruction, field_smoothing_scale, config=config)
 
     if los_data_path is not None:
-        los_data_path = resolve_los_cache_request(
-            los_data_path, {"RA": ra_all, "dec": dec_all})
-        host_los = load_los(
-            los_data_path, {}, mask=None, field_indices=field_indices)
-        # LOS file has one entry per row in the original TSV (25 entries).
-        # Apply the same row mask as above, then extract selected host rows.
-        los_density = host_los["los_density"][:, row_mask]
-        los_velocity = host_los["los_velocity"][:, row_mask]
-        data["host_los_density"] = los_density[:, selected_idx]
-        data["host_los_velocity"] = los_velocity[:, selected_idx]
+        if getattr(los_data_path, "requires_filtered_coordinates", False):
+            los_data_path = resolve_los_cache_request(los_data_path, data)
+            host_los = load_los(
+                los_data_path, {}, mask=None, field_indices=field_indices)
+            data["host_los_density"] = host_los["los_density"]
+            data["host_los_velocity"] = host_los["los_velocity"]
+        else:
+            los_data_path = resolve_los_cache_request(
+                los_data_path, {"RA": ra_all, "dec": dec_all})
+            host_los = load_los(
+                los_data_path, {}, mask=None, field_indices=field_indices)
+            # LOS file has one entry per row in the original TSV (25 entries).
+            # Apply the same row mask as above, then extract selected host rows.
+            los_density = host_los["los_density"][:, row_mask]
+            los_velocity = host_los["los_velocity"][:, row_mask]
+            data["host_los_density"] = los_density[:, selected_idx]
+            data["host_los_velocity"] = los_velocity[:, selected_idx]
         data["host_los_r"] = host_los["los_r"]
         data["host_los_field_indices"] = host_los["los_field_indices"]
+    else:
+        scatter = angular_position_scatter_from_config(config)
+        if scatter is not None:
+            scatter_data_coordinates(
+                data, scatter, keys=("RA_host", "dec_host"),
+                label="CCHP")
 
     if rand_los_data_path is not None:
         rand_los = load_los(rand_los_data_path, {}, mask=None, verbose=False)
@@ -1695,6 +1718,10 @@ def _load_EDD_TRGB_from_config_common(config_path, config_key, loader):
                         mag_min_TRGB=mag_min_TRGB,
                         los_data_path=los_data_path,
                         field_indices=field_indices)
+    if los_data_path is None:
+        scatter = angular_position_scatter_from_config(config)
+        if scatter is not None:
+            scatter_data_coordinates(data, scatter, label=config_key)
 
     data["RA_host"] = data.pop("RA")
     data["dec_host"] = data.pop("dec")
@@ -1871,6 +1898,10 @@ def load_EDD_2MTF_from_config(config_path):
         eta_min=eta_min, eta_max=eta_max,
         los_data_path=los_data_path, return_mask=True,
         field_indices=field_indices)
+    if los_data_path is None:
+        scatter = angular_position_scatter_from_config(config)
+        if scatter is not None:
+            scatter_data_coordinates(data, scatter, label="EDD_2MTF")
 
     # Rename to match model expectations
     data["RA_host"] = data.pop("RA")

@@ -369,6 +369,60 @@ def radec_to_cartesian(ra, dec):
     return np.column_stack([x, y, z])
 
 
+def scatter_radec(ra, dec, sigma_deg, seed=42):
+    """Randomly scatter sky coordinates by an isotropic tangent-plane offset."""
+    sigma_deg = float(sigma_deg)
+    if sigma_deg < 0 or not np.isfinite(sigma_deg):
+        raise ValueError(
+            f"`sigma_deg` must be a finite non-negative value, got "
+            f"{sigma_deg!r}.")
+
+    ra = np.asarray(ra)
+    dec = np.asarray(dec)
+    if ra.shape != dec.shape:
+        raise ValueError(
+            f"`ra` and `dec` must have matching shapes, got "
+            f"{ra.shape} and {dec.shape}.")
+    if sigma_deg == 0.0:
+        return ra.copy(), dec.copy()
+
+    shape = ra.shape
+    ra = ra.reshape(-1)
+    dec = dec.reshape(-1)
+    ra_rad = np.deg2rad(ra)
+    dec_rad = np.deg2rad(dec)
+    rhat = radec_to_cartesian(ra, dec)
+
+    e_ra = np.column_stack([
+        -np.sin(ra_rad),
+        np.cos(ra_rad),
+        np.zeros_like(ra_rad),
+    ])
+    e_dec = np.column_stack([
+        -np.cos(ra_rad) * np.sin(dec_rad),
+        -np.sin(ra_rad) * np.sin(dec_rad),
+        np.cos(dec_rad),
+    ])
+
+    rng = np.random.default_rng(int(seed))
+    sigma = np.deg2rad(sigma_deg)
+    dx = rng.normal(0.0, sigma, size=ra.shape)
+    dy = rng.normal(0.0, sigma, size=ra.shape)
+    theta = np.sqrt(dx**2 + dy**2)
+
+    tangent = dx[:, None] * e_ra + dy[:, None] * e_dec
+    tangent_norm = np.linalg.norm(tangent, axis=1, keepdims=True)
+    direction = tangent / np.where(tangent_norm == 0.0, 1.0, tangent_norm)
+
+    scattered = (
+        np.cos(theta)[:, None] * rhat
+        + np.sin(theta)[:, None] * direction)
+    scattered /= np.linalg.norm(scattered, axis=1, keepdims=True)
+    _, ra_new, dec_new = cartesian_to_radec(
+        scattered[:, 0], scattered[:, 1], scattered[:, 2])
+    return ra_new.reshape(shape), dec_new.reshape(shape)
+
+
 def cartesian_to_radec(x, y, z):
     """
     Convert Cartesian coordinates (x, y, z) to right ascension and
