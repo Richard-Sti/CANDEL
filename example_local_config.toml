@@ -31,3 +31,29 @@ srun = "srun"
 
 # Root directory containing chain/, schedule_final.yaml, and forward products.
 borg_run_dir = "/path/to/BORG_RUN"
+
+# Machine-local reconstruction field products that are too large or too
+# installation-specific to live in reusable configs.
+[io.reconstruction_main.Lilow2024]
+path_density = "/path/to/Lilow2024_density.npy"
+path_velocity_x = "/path/to/Lilow2024_xVelocity.npy"
+path_velocity_y = "/path/to/Lilow2024_yVelocity.npy"
+path_velocity_z = "/path/to/Lilow2024_zVelocity.npy"
+
+[io.reconstruction_main.CF4]
+folder = "/path/to/CF4gp_23avr24_256-z008_test_100_realizations"
+
+[io.reconstruction_main.CLONES]
+file_path = "/path/to/cf2gvpecc1pt5elmo73_sig6distribsbvoldi_RZA3Derrv2_512_500_ss8_zinit60_000.hdf5"
+
+[io.reconstruction_main.HAMLET_V0]
+fpath_root = "/path/to/HAMLET_V0"
+
+[io.reconstruction_main.HAMLET_V1]
+fpath_root = "/path/to/HAMLET_V1"
+
+[io.reconstruction_main.CB1]
+fpath_root = "/path/to/csiborg1/field"
+
+[io.reconstruction_main.CB2]
+fpath_root = "/path/to/csiborg2_main/field"

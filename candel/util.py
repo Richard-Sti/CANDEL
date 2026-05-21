@@ -151,7 +151,12 @@ def convert_to_absolute_paths(config):
         "los_file_random",
         "path_density",
         "path_velocity",
+        "path_velocity_x",
+        "path_velocity_y",
+        "path_velocity_z",
         "fpath_root",
+        "folder",
+        "file_path",
     }
 
     def _recurse(d):
@@ -171,6 +176,10 @@ def convert_to_absolute_paths(config):
 def _selected_reconstruction_names(config):
     """Return reconstruction names selected by the loaded config."""
     names = set()
+    kind = get_nested(config, "pv_model/kind", "")
+    if isinstance(kind, str) and kind.startswith("precomputed_los_"):
+        names.add(kind.replace("precomputed_los_", ""))
+
     for key_path in (
             "io/SH0ES/reconstruction",
             "io/CCHP/reconstruction"):
@@ -189,8 +198,39 @@ def _selected_reconstruction_names(config):
     return names
 
 
+_LOCAL_RECONSTRUCTION_PATH_KEYS = {
+    "Lilow2024": (
+        "path_density", "path_velocity_x", "path_velocity_y",
+        "path_velocity_z"),
+    "CF4": ("folder",),
+    "CLONES": ("file_path",),
+    "HAMLET_V0": ("fpath_root",),
+    "HAMLET_V1": ("fpath_root",),
+    "CB1": ("fpath_root",),
+    "CB2": ("fpath_root",),
+}
+
+
 def _validate_runtime_paths(config):
     """Catch machine-local reconstruction paths before expensive I/O."""
+    recon_main = get_nested(config, "io/reconstruction_main", {})
+    selected = _selected_reconstruction_names(config)
+    for name in selected:
+        section = recon_main.get(name, {})
+        if not isinstance(section, dict):
+            section = {}
+        missing = [
+            key for key in _LOCAL_RECONSTRUCTION_PATH_KEYS.get(name, ())
+            if key not in section or section[key] in (None, "")
+        ]
+        if missing:
+            keys = ", ".join(missing)
+            raise ValueError(
+                f"Selected reconstruction `{name}` is missing local path "
+                f"setting(s): {keys}. Add them to local_config.toml under "
+                f"`[io.reconstruction_main.{name}]`."
+            )
+
     if config.get("machine") != "arc":
         return
 
@@ -198,8 +238,7 @@ def _validate_runtime_paths(config):
         "/mnt/extraspace/",
         "/mnt/users/rstiskalek/",
     )
-    recon_main = get_nested(config, "io/reconstruction_main", {})
-    for name in _selected_reconstruction_names(config):
+    for name in selected:
         section = recon_main.get(name, {})
         if not isinstance(section, dict):
             continue
@@ -256,15 +295,15 @@ def load_config(config_path, replace_none=True, fill_paths=True,
                 merged = _deep_merge(merged, tomllib.load(f))
         config = _deep_merge(merged, config)
 
-    # Inject defaults from local_config.toml (config values take precedence)
+    # Inject defaults from local_config.toml (config values take precedence).
+    # This is a deep merge so machine-local nested values such as
+    # [io.reconstruction_main.<name>] can live outside reusable configs.
     project_root = Path(__file__).resolve().parent.parent
     local_config_path = project_root / "local_config.toml"
     if local_config_path.exists():
         with open(local_config_path, 'rb') as f:
             local_cfg = tomllib.load(f)
-        for k, v in local_cfg.items():
-            if k not in config:
-                config[k] = v
+        config = _deep_merge(local_cfg, config)
 
     # Convert "none" strings to None
     if replace_none:
