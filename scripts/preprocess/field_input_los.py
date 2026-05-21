@@ -232,7 +232,8 @@ def _selected_field_indices(config, reconstruction, field_indices=None):
 def compute_los_file_from_coordinates(
         catalogue, reconstruction, config, RA, dec, los_template=None,
         filepath=None, field_smoothing_scale=None, overwrite=False,
-        output_path=None, field_indices=None, r=None, verbose=True):
+        output_path=None, field_indices=None, r=None, verbose=True,
+        metadata=None):
     """Compute one LOS product from already-loaded sky coordinates."""
     field_smoothing_scale = validate_field_smoothing_scale(
         field_smoothing_scale)
@@ -294,6 +295,9 @@ def compute_los_file_from_coordinates(
     dt16 = np.dtype(np.float16)
     try:
         with File(los_tmp_file, "w") as fout:
+            if metadata is not None:
+                for key, value in metadata.items():
+                    fout.attrs[key] = value
             if is_random_multireal:
                 ra_dataset = fout.create_dataset(
                     "RA", shape=(n_sims, n_gal), dtype=dt)
