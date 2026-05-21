@@ -89,7 +89,6 @@ RUN_DIR = Path(__file__).resolve().parent
 CANDEL_ROOT = RUN_DIR.parent.parent
 TASK_INDEX_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 VERBOSE = True
-MANTICORE_COLA_LOS = "COLA_manticore_2MPP_MULTIBIN_N256_DES_V2"
 
 fprint = None
 get_nested = None
@@ -129,20 +128,36 @@ def log(message):
 
 
 def _is_manticore_box_los(value):
-    return (
-        isinstance(value, str)
-        and ("manticore" in value.lower() or value == MANTICORE_COLA_LOS)
-    )
+    return isinstance(value, str) and "manticore" in value.lower()
 
 
 # Keys that must come from local_config.toml at job runtime, not baked into
 # generated configs. Baking them in defeats the portability mechanism in
-# load_config, which injects local_config.toml only for keys not already set.
+# load_config, which injects local_config.toml as machine-local defaults.
 _MACHINE_KEYS = {
     "root_main", "root_data", "root_results",
     "python_exec", "machine", "modules", "modules_gpu",
     "use_frozen", "gpu_ld_library_path", "watcher_dir",
+    "borg_fields",
 }
+
+_LOCAL_RECONSTRUCTION_PATH_KEYS = {
+    "Lilow2024": (
+        "path_density", "path_velocity_x", "path_velocity_y",
+        "path_velocity_z"),
+    "CF4": ("folder",),
+    "CLONES": ("file_path",),
+    "HAMLET_V0": ("fpath_root",),
+    "HAMLET_V1": ("fpath_root",),
+    "CB1": ("fpath_root",),
+    "CB2": ("fpath_root",),
+}
+
+
+def local_reconstruction_path_keys(name):
+    if str(name).lower().startswith("manticorelocal"):
+        return ("fpath_root",)
+    return _LOCAL_RECONSTRUCTION_PATH_KEYS.get(name, ())
 
 
 def load_local_config():
@@ -617,9 +632,6 @@ def validate_generated_config(config):
             f"Invalid which_run='{which_run}'. Must be one of {valid_runs}.")
 
     bad_prefixes = ("/mnt/extraspace/", "/mnt/users/rstiskalek/")
-    allowed_absolute_prefixes = (
-        "/mnt/extraspace/rstiskalek/MANTICORE/2MPP_MULTIBIN_N256_DES_V2/",
-    )
     reconstruction_keys = (
         "io/PV_main/EDD_TRGB/reconstruction",
         "io/PV_main/EDD_TRGB_grouped/reconstruction",
@@ -640,8 +652,7 @@ def validate_generated_config(config):
             continue
         for key, value in section.items():
             if (isinstance(value, str)
-                    and value.startswith(bad_prefixes)
-                    and not value.startswith(allowed_absolute_prefixes)):
+                    and value.startswith(bad_prefixes)):
                 raise ValueError(
                     f"Selected reconstruction `{reconstruction}` has "
                     f"machine-local path "
@@ -650,6 +661,45 @@ def validate_generated_config(config):
                     "Generated task configs must use paths relative to "
                     "root_data or portable absolute paths."
                 )
+
+
+def selected_reconstruction_names(config):
+    """Return reconstruction names actively selected by the generated config."""
+    reconstruction_keys = (
+        "io/PV_main/EDD_TRGB/reconstruction",
+        "io/PV_main/EDD_TRGB_grouped/reconstruction",
+        "io/PV_main/EDD_2MTF/reconstruction",
+        "io/SH0ES/reconstruction",
+        "io/CCHP/reconstruction",
+    )
+    selected = {
+        reconstruction
+        for reconstruction in (
+            get_nested(config, key, None) for key in reconstruction_keys)
+        if isinstance(reconstruction, str) and reconstruction.lower() != "none"
+    }
+    kind = get_nested(config, "pv_model/kind", None)
+    prefix = "precomputed_los_"
+    if isinstance(kind, str) and kind.startswith(prefix):
+        selected.add(kind.removeprefix(prefix))
+
+    return selected
+
+
+def prune_inactive_reconstruction_sections(config):
+    """Drop unused reconstruction subsections from a generated config."""
+    active = selected_reconstruction_names(config)
+    if not active:
+        return
+
+    for key in ("reconstruction_main", "reconstruction_rand_los"):
+        recon_cfg = get_nested(config, f"io/{key}", {})
+        if not isinstance(recon_cfg, dict):
+            continue
+
+        for name, section in list(recon_cfg.items()):
+            if isinstance(section, dict) and name not in active:
+                recon_cfg.pop(name)
 
 
 def finalize_output_path(config, tag):
@@ -667,7 +717,22 @@ def finalize_output_path(config, tag):
 
 def drop_machine_keys(config):
     """Remove machine-local keys before writing a portable generated config."""
-    return {k: v for k, v in config.items() if k not in _MACHINE_KEYS}
+    cleaned = deepcopy(config)
+    for key in _MACHINE_KEYS:
+        cleaned.pop(key, None)
+
+    prune_inactive_reconstruction_sections(cleaned)
+
+    recon_main = get_nested(cleaned, "io/reconstruction_main", {})
+    if isinstance(recon_main, dict):
+        for name in list(recon_main):
+            section = recon_main.get(name)
+            if not isinstance(section, dict):
+                continue
+            for key in local_reconstruction_path_keys(name):
+                section.pop(key, None)
+
+    return cleaned
 
 
 def prepare_generated_tasks(spec, base_config, override_combinations):
@@ -688,9 +753,10 @@ def prepare_generated_tasks(spec, base_config, override_combinations):
         base_config = base_configs[config_path]
         local_config = apply_overrides(base_config, override_set)
         local_config = apply_los_runtime_rules(local_config, override_set)
-        validate_generated_config(local_config)
         local_config, stem, fname_out = finalize_output_path(
             local_config, spec.tag)
+        portable_config = drop_machine_keys(local_config)
+        validate_generated_config(portable_config)
 
         if stem in seen_stems:
             raise ValueError(f"Duplicate generated TOML stem: {stem}")
@@ -704,7 +770,7 @@ def prepare_generated_tasks(spec, base_config, override_combinations):
         seen_outputs.add(fname_out)
         seen_output_filenames.add(fname_out_name)
 
-        generated.append((idx, stem, local_config))
+        generated.append((idx, stem, portable_config))
 
     return generated
 
