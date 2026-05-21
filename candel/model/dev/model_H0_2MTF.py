@@ -37,8 +37,9 @@ from numpyro.distributions import Normal, Uniform
 from ...util import fprint, get_nested
 from ..base_model import H0ModelBase
 from ..integration import ln_simpson_precomputed
-from ..pv_utils import (gauss_hermite_log_weights, get_absmag_TFR,
-                        lp_galaxy_bias, rsample, sample_galaxy_bias)
+from ..pv_utils import (galaxy_bias_needs_log_rho, gauss_hermite_log_weights,
+                        get_absmag_TFR, lp_galaxy_bias, rsample,
+                        sample_galaxy_bias)
 from ..utils import log_prob_integrand_sel, logmeanexp, predict_cz
 
 
@@ -268,7 +269,8 @@ class EDD2MTFModel(H0ModelBase):
             rh_grid = r_grid * h
             delta_grid = self.f_host_los_delta.interp_many(rh_grid)
             log_rho = (jnp.log(1 + delta_grid)
-                       if "linear" not in self.which_bias else None)
+                       if galaxy_bias_needs_log_rho(self.which_bias)
+                       else None)
             lp_bias = lp_galaxy_bias(
                 delta_grid, log_rho, bias_params, self.which_bias)
 
@@ -280,7 +282,8 @@ class EDD2MTFModel(H0ModelBase):
                 self.f_rand_los_delta.interp_many_steps_per_galaxy(
                     r_grid * h)
             log_rho_rand = (jnp.log(1 + rand_delta)
-                            if "linear" not in self.which_bias else None)
+                            if galaxy_bias_needs_log_rho(self.which_bias)
+                            else None)
             lp_rand_dist_grid = lp_rand_dist_grid + lp_galaxy_bias(
                 rand_delta, log_rho_rand, bias_params, self.which_bias)
 
