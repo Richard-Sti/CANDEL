@@ -588,7 +588,7 @@ def _resolve_los_path(path, reconstruction, config=None, catalogue=None):
         if cache_path is not None:
             return cache_path
     return pvdata_mod.resolve_los_data_path(
-        path, reconstruction, field_smoothing_scale)
+        path, reconstruction, field_smoothing_scale, config=config)
 
 
 def _h0_supersampling_payload(config, reconstruction, field_kwargs,
