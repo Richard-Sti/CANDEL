@@ -29,7 +29,7 @@ For practical examples, please refer to the Jupyter notebooks in the
 directory. These notebooks demonstrate specific workflows, such as:
 
 - **example.ipynb**: A general overview of the package.
-- **paper_SH0ES**: Replicating the results from `Stiskalek et al. (2025) <https://arxiv.org/abs/2509.09665>`_.
+- **paper_CH0**: Replicating the results from `Stiskalek et al. (2025) <https://arxiv.org/abs/2509.09665>`_.
 - **paper_CCHP**: Analysis of the CCHP TRGB calibration.
 
 HPC and Batch Processing
