@@ -125,7 +125,8 @@ def main():
     }
     if recon in nreal_map:
         nsims = list(range(nreal_map[recon]))
-    elif recon in {"ManticoreLocalCOLA", "ManticoreLocalSWIFT"}:
+    elif recon.lower().startswith("manticorelocal"):
+        name2field_loader(recon)
         field_kwargs = config["io"]["reconstruction_main"][recon]
         nsims = available_mcmc_field_indices(field_kwargs["fpath_root"])
     else:
