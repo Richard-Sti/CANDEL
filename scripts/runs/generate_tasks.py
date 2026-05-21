@@ -310,6 +310,15 @@ def generate_dynamic_tag(config, base_tag="default"):
             if rmiss_high is not None:
                 parts.append(f"Mmiss_rmax{_tag_number(rmiss_high)}")
 
+    angular_scatter = get_nested(
+        config, "io/angular_position_scatter_deg", 0.0)
+    if angular_scatter is not None and float(angular_scatter) > 0.0:
+        parts.append(f"angscatter{_tag_number(angular_scatter)}deg")
+        scatter_seed = get_nested(
+            config, "io/angular_position_scatter_seed", None)
+        if scatter_seed is not None:
+            parts.append(f"seed{int(scatter_seed)}")
+
     for reconstruction in sorted(selected_reconstruction_names(config)):
         which_MAS = get_nested(
             config, f"io/reconstruction_main/{reconstruction}/which_MAS",
@@ -343,6 +352,15 @@ def generate_dynamic_tag(config, base_tag="default"):
 
         if get_nested(config, "model/use_uniform_mu_host_priors", False):
             parts.append("uniform_mu_host")
+
+        drop_observation = get_nested(
+            config, "io/SH0ES/drop_observation", None)
+        if _is_active(drop_observation):
+            if type(drop_observation) is not int:
+                raise TypeError(
+                    "`io/SH0ES/drop_observation` must be an integer active "
+                    "host index for CH0 generated tasks.")
+            parts.append(f"drop{drop_observation:02d}")
 
         r_prior = get_nested(config, "model/which_distance_prior", "volume")
         if r_prior != "volume":
