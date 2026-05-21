@@ -11,12 +11,15 @@ import re
 import shlex
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
 from borg_field_config import configured_path
 
 
-SCRIPT_DIR = Path(__file__).resolve().parent
 DEFAULT_BORG_FORWARD = configured_path("borg_forward")
 DEFAULT_COSMOTOOL_SPH = configured_path("cosmotool_sph")
 DEFAULT_PLOT_PYTHON = configured_path("plot_python")
@@ -328,6 +331,16 @@ def output_path(output_pattern: Path, iteration: int) -> Path:
     return Path(str(output_pattern) % iteration)
 
 
+def borg_forward_writes_particles(args: argparse.Namespace) -> bool:
+    if getattr(args, "command", None) == "validate-rsd":
+        return False
+    if getattr(args, "no_single_output", False):
+        return True
+    if not getattr(args, "sph_fields", False):
+        return True
+    return getattr(args, "keep_particles", False) or getattr(args, "mas", None) in ("sph", "cic", "pcs")
+
+
 def launcher(args: argparse.Namespace) -> list[str]:
     if args.mpi_launcher is None:
         return [args.mpirun, "-np", str(args.nprocs)]
@@ -338,8 +351,8 @@ def single_output_path(mcmc: Path, args: argparse.Namespace) -> Path:
     iteration = iteration_from_mcmc(mcmc)
     if getattr(args, "single_output", None) is not None:
         return args.single_output.expanduser().resolve()
-    output_root, subchain, _ = infer_layout(mcmc, args.output_root)
-    return output_root / subchain / mcmc.stem / f"borg_fields_{iteration:04d}.h5"
+    output_root, _, _ = infer_layout(mcmc, args.output_root)
+    return output_root.parent / "forward_fields" / f"mcmc_{iteration}.hdf5"
 
 
 def run_forward(mcmc: Path, args: argparse.Namespace, do_rsd: bool) -> tuple[Path, int, Path]:
@@ -370,10 +383,11 @@ def run_forward(mcmc: Path, args: argparse.Namespace, do_rsd: bool) -> tuple[Pat
         str(mcmc_for_borg),
         "--output",
         str(output_pattern),
-        "--pos",
-        "--vel",
         "--output_split",
     ]
+    writes_particles = borg_forward_writes_particles(args)
+    if writes_particles:
+        cmd.extend(["--pos", "--vel"])
 
     output = output_path(output_pattern, iteration)
     print(f"MCMC: {mcmc}", flush=True)
@@ -394,9 +408,17 @@ def run_forward(mcmc: Path, args: argparse.Namespace, do_rsd: bool) -> tuple[Pat
     env = os.environ.copy()
     env["OMP_NUM_THREADS"] = str(args.omp_threads)
     subprocess.run(cmd, check=True, env=env, cwd=log_dir)
-    validate_split_outputs(output_pattern, iteration, args.nprocs)
+    validate_split_outputs(
+        output_pattern,
+        iteration,
+        args.nprocs,
+        require_particles=writes_particles,
+    )
     print(f"Saved output directory: {out_dir}", flush=True)
-    print(f"Saved datasets in each split file: /final_density, /s_hat_field, /u_pos, /u_vel", flush=True)
+    datasets = ["/final_density", "/s_hat_field"]
+    if writes_particles:
+        datasets.extend(["/u_pos", "/u_vel"])
+    print(f"Saved datasets: {', '.join(datasets)}", flush=True)
     return output_pattern, iteration, out_dir
 
 
@@ -423,7 +445,8 @@ def pack_split_outputs(
         with h5py.File(path, "r") as handle:
             density_slabs.append(handle["final_density"].shape[0])
             shat_slabs.append(handle["s_hat_field"].shape[0])
-            particle_counts.append(handle["u_pos"].shape[0])
+            if "u_pos" in handle:
+                particle_counts.append(handle["u_pos"].shape[0])
 
     product.parent.mkdir(parents=True, exist_ok=True)
     with h5py.File(rank_paths[0], "r") as first, h5py.File(product, "a") as out:
@@ -438,22 +461,29 @@ def pack_split_outputs(
 
         density_shape = (sum(density_slabs),) + first["final_density"].shape[1:]
         shat_shape = (sum(shat_slabs),) + first["s_hat_field"].shape[1:]
-        particle_shape = (sum(particle_counts), 3)
+        has_particles = bool(particle_counts)
+        particle_shape = (sum(particle_counts), 3) if has_particles else None
 
         density = group.create_dataset("final_density", density_shape, dtype=first["final_density"].dtype, chunks=(1,) + density_shape[1:])
         shat = group.create_dataset("s_hat_field", shat_shape, dtype=first["s_hat_field"].dtype, chunks=(1,) + shat_shape[1:])
-        pos = group.create_dataset(
-            "u_pos",
-            particle_shape,
-            dtype=first["u_pos"].dtype,
-            chunks=(min(1_000_000, max(1, particle_shape[0])), 3),
-        )
-        vel = group.create_dataset(
-            "u_vel",
-            particle_shape,
-            dtype=first["u_vel"].dtype,
-            chunks=(min(1_000_000, max(1, particle_shape[0])), 3),
-        )
+        if "v_field" in first:
+            first.copy("v_field", group, name="v_field")
+        if has_particles:
+            pos = group.create_dataset(
+                "u_pos",
+                particle_shape,
+                dtype=first["u_pos"].dtype,
+                chunks=(min(1_000_000, max(1, particle_shape[0])), 3),
+            )
+            vel = group.create_dataset(
+                "u_vel",
+                particle_shape,
+                dtype=first["u_vel"].dtype,
+                chunks=(min(1_000_000, max(1, particle_shape[0])), 3),
+            )
+        else:
+            pos = None
+            vel = None
 
         density_offset = 0
         shat_offset = 0
@@ -470,8 +500,8 @@ def pack_split_outputs(
                     shat[shat_offset : shat_offset + n_shat] = handle["s_hat_field"][...]
                     shat_offset += n_shat
 
-                n_particle = handle["u_pos"].shape[0]
-                if n_particle:
+                n_particle = handle["u_pos"].shape[0] if has_particles else 0
+                if n_particle and pos is not None and vel is not None:
                     pos[particle_offset : particle_offset + n_particle] = handle["u_pos"][...]
                     vel[particle_offset : particle_offset + n_particle] = handle["u_vel"][...]
                     particle_offset += n_particle
@@ -809,6 +839,26 @@ def pylians_mas_name(mas: str) -> str:
         raise ValueError(f"Pylians MAS is not supported for {mas!r}") from exc
 
 
+def check_pylians_mas_library(mas: str) -> None:
+    import sys
+
+    try:
+        import MAS_library as MASL
+    except ModuleNotFoundError as exc:
+        raise ModuleNotFoundError(
+            f"Pylians MAS_library is required for --mas {mas}. "
+            f"Active Python is {sys.executable}. Install Pylians there or run "
+            "scripts/BORG_fields/run_borg_fields.sh with CANDEL_RUN_PYTHON "
+            "pointing at a Python environment that has MAS_library."
+        ) from exc
+    print(
+        f"Pylians MAS_library OK for --mas {mas}: "
+        f"{getattr(MASL, '__file__', '<unknown>')} "
+        f"(python={sys.executable})",
+        flush=True,
+    )
+
+
 def centered_positions_to_pylians(positions, boxsize: float, resolution: int):
     import numpy as np
 
@@ -928,18 +978,45 @@ def remove_particle_datasets(product: Path, group_name: str) -> None:
         print(f"Removed particle datasets from final product: {', '.join(removed)}", flush=True)
 
 
-def cleanup_forward_workdirs(work_dirs: list[Path], product: Path) -> list[Path]:
+def cleanup_forward_workdirs(
+    work_dirs: list[Path],
+    product: Path,
+    preserve_names: tuple[str, ...] = (),
+) -> list[Path]:
     product = product.resolve()
     removed = []
-    parents = []
+    prune_from = []
+    cleanup_root = Path(
+        os.path.commonpath([str(product), *(str(path.resolve()) for path in work_dirs)])
+    )
     for work_dir in work_dirs:
         work_dir = work_dir.resolve()
         if product == work_dir or work_dir in product.parents:
             print(f"[WARN] Skipping cleanup for work directory containing product: {work_dir}", flush=True)
             continue
-        parents.append(work_dir.parent)
         if work_dir.exists():
-            shutil.rmtree(work_dir)
+            if preserve_names:
+                removed_children = []
+                for child in work_dir.iterdir():
+                    if child.name in preserve_names:
+                        continue
+                    if child.is_dir():
+                        shutil.rmtree(child)
+                    else:
+                        child.unlink()
+                    removed_children.append(child)
+                if removed_children:
+                    print(
+                        f"Removed BORG forward generated files from {work_dir}: "
+                        + ", ".join(path.name for path in removed_children),
+                        flush=True,
+                    )
+                if any(work_dir.iterdir()):
+                    continue
+                work_dir.rmdir()
+            else:
+                shutil.rmtree(work_dir)
+            prune_from.append(work_dir.parent)
             removed.append(work_dir)
     if removed:
         print(
@@ -948,14 +1025,15 @@ def cleanup_forward_workdirs(work_dirs: list[Path], product: Path) -> list[Path]
             flush=True,
         )
     pruned = []
-    for parent in parents:
-        if product == parent or parent in product.parents:
-            continue
-        try:
-            parent.rmdir()
-        except OSError:
-            continue
-        pruned.append(parent)
+    for parent in prune_from:
+        parent = parent.resolve()
+        while parent != cleanup_root and product != parent and parent not in product.parents:
+            try:
+                parent.rmdir()
+            except OSError:
+                break
+            pruned.append(parent)
+            parent = parent.parent
     if pruned:
         print(
             "Removed empty BORG forward parent directories: "
@@ -995,13 +1073,21 @@ def slim_field_product(product: Path, group_name: str, mas: str) -> None:
 def run_gridded_fields(product: Path, group_name: str, args: argparse.Namespace) -> None:
     if args.mas == "sph":
         run_sph_fields(product, group_name, args)
-    elif args.mas in ("cic", "pcs"):
+    elif args.mas == "cic":
+        run_cic_fields(product, group_name, args)
+    elif args.mas == "pcs":
         run_pylians_mas_fields(product, group_name, args, args.mas)
     else:
         raise ValueError(f"Unknown mass-assignment scheme: {args.mas}")
 
 
-def validate_split_outputs(output_pattern: Path, iteration: int, nprocs: int) -> None:
+def validate_split_outputs(
+    output_pattern: Path,
+    iteration: int,
+    nprocs: int,
+    require_particles: bool = True,
+    require_vfield: bool = False,
+) -> None:
     import h5py
 
     output = output_path(output_pattern, iteration)
@@ -1014,12 +1100,22 @@ def validate_split_outputs(output_pattern: Path, iteration: int, nprocs: int) ->
         if not rank_output.is_file():
             raise FileNotFoundError(f"Missing split output: {rank_output}")
         with h5py.File(rank_output, "r") as handle:
-            for dataset in ("final_density", "s_hat_field", "u_pos", "u_vel"):
+            required = ["final_density", "s_hat_field"]
+            if require_particles:
+                required.extend(["u_pos", "u_vel"])
+            if require_vfield and rank == 0:
+                required.append("v_field")
+            for dataset in required:
                 if dataset not in handle:
                     raise KeyError(f"Missing /{dataset} in {rank_output}")
             density_slabs += handle["final_density"].shape[0]
-            particle_count += handle["u_pos"].shape[0]
-            velocity_count += handle["u_vel"].shape[0]
+            if require_particles:
+                particle_count += handle["u_pos"].shape[0]
+                velocity_count += handle["u_vel"].shape[0]
+            if require_vfield and rank == 0:
+                vfield = handle["v_field"]
+                if vfield.shape[0] != 3 and vfield.shape[-1] != 3:
+                    raise ValueError(f"Expected /v_field component axis of length 3, got {vfield.shape}")
             rank_n0 = int(handle["scalars/N0"][0])
             expected_n0 = rank_n0 if expected_n0 is None else expected_n0
             if rank_n0 != expected_n0:
@@ -1027,11 +1123,12 @@ def validate_split_outputs(output_pattern: Path, iteration: int, nprocs: int) ->
 
     if density_slabs != expected_n0:
         raise ValueError(f"Split density slabs sum to {density_slabs}, expected {expected_n0}")
-    if particle_count != velocity_count:
+    if require_particles and particle_count != velocity_count:
         raise ValueError(f"u_pos count {particle_count} != u_vel count {velocity_count}")
+    particle_text = f", {particle_count} particles" if require_particles else ""
     print(
         "Validated split outputs: "
-        f"{nprocs} files, {density_slabs} density slabs, {particle_count} particles.",
+        f"{nprocs} files, {density_slabs} density slabs{particle_text}.",
         flush=True,
     )
 
@@ -1307,6 +1404,8 @@ def main() -> None:
     if args.command == "run":
         mcmc = require_file(args.mcmc, "MCMC file")
         product = single_output_path(mcmc, args)
+        if args.sph_fields and args.mas in ("cic", "pcs"):
+            check_pylians_mas_library(args.mas)
         if args.plots and not args.no_single_output and not args.dry_run:
             check_plot_environment(args)
         output_pattern, iteration, out_dir = run_forward(mcmc, args, do_rsd=args.rsd)
@@ -1432,6 +1531,7 @@ def main() -> None:
                 print("  Validation mismatch is non-fatal; continuing.", flush=True)
             if cross_metrics is not None and not cross_metrics["passed"]:
                 print("  Cross-correlation mismatch is non-fatal; continuing.", flush=True)
+            cleanup_forward_workdirs([out_dir], mcmc.resolve(), preserve_names=("plots",))
 
 
 if __name__ == "__main__":

@@ -12,6 +12,7 @@ CONFIG_EXPORTS="$(
     --shell-env borg_python borg_forward cosmotool_sph plot_python srun borg_run_dir
 )"
 eval "$CONFIG_EXPORTS"
+RUN_PYTHON="${CANDEL_RUN_PYTHON:-$PYTHON_PATH}"
 
 usage() {
   cat <<'EOF'
@@ -47,9 +48,10 @@ Submit options:
   --submit-dry-run      Print addqueue command without submitting
 
 Pylians CIC gridding runs after BORG by default. Use --mas pcs for Pylians
-PCS or --mas sph for CosmoTool SPH. SPH uses SPH_OMP_THREADS; on berg this
-defaults to 28, so the SPH stage uses the whole node unless SPH_OMP_THREADS
-is set.
+PCS or --mas sph for CosmoTool SPH. The Python runner uses RUN_PYTHON
+(default: the configured CANDEL Python) so MAS_library is checked before BORG
+starts. SPH uses SPH_OMP_THREADS; on berg this defaults to 28, so the SPH
+stage uses the whole node unless SPH_OMP_THREADS is set.
 Pass --keep-particles to keep /<mode>/u_pos and /<mode>/u_vel in the packed
 product and skip final slimming.
 Slim final products expose /overdensity, /velocity, /vx, /vy, and /vz. They
@@ -59,6 +61,9 @@ Slice plots are optional diagnostics; pass --plots to write them to
 PRODUCT_PARENT/plots.
 For --steps runs, packed products are written to
 BORG_RUN_DIR/forward_fields/mcmc_<schedule-step>.hdf5.
+For direct MCMC runs, the default packed product is
+BORG_RUN_DIR/forward_fields/mcmc_<iteration>.hdf5 unless --single-output is
+passed.
 For --steps runs, one requested sample is also run in RSD mode for validation
 against /scalars/BORG_final_density, including a non-fatal Pylians
 cross-correlation check.
@@ -462,7 +467,7 @@ if [[ "${1:-}" == "--submit" ]]; then
   fi
   mkdir -p "$LOG_DIR"
   LOG_DIR="$(cd "$LOG_DIR" && pwd)"
-  export BORG_PYTHON BORG_FORWARD PYTHON_PATH NPROCS
+  export BORG_PYTHON BORG_FORWARD PYTHON_PATH RUN_PYTHON NPROCS
   export BORG_OMP_THREADS="$OMP_THREADS"
   export OMP_NUM_THREADS="$OMP_THREADS"
   export SPH_OMP_THREADS="${SPH_OMP_THREADS:-$NPROCS}"
@@ -518,6 +523,7 @@ if [[ "${1:-}" == "--submit" ]]; then
   echo "BORG OpenMP threads per rank: $OMP_THREADS"
   echo "BORG Python: $BORG_PYTHON"
   echo "BORG forward: $BORG_FORWARD"
+  echo "Run Python: $RUN_PYTHON"
   echo "Plot Python: $PYTHON_PATH"
   echo "SPH OpenMP threads: $SPH_OMP_THREADS"
   echo "MPI launcher: $BORG_MPI_LAUNCHER"
@@ -544,7 +550,7 @@ export OMP_NUM_THREADS="$BORG_OMP_THREADS"
 export SPH_OMP_THREADS="${SPH_OMP_THREADS:-$NPROCS}"
 export OMPI_MCA_pml="${OMPI_MCA_pml:-^cm}"
 export BORG_FORWARD
-export PYTHON_PATH
+export PYTHON_PATH RUN_PYTHON
 
 if run_schedule_steps "$@"; then
   exit 0
@@ -580,6 +586,6 @@ if [[ "${1:-}" == "run" || "${1:-}" == "validate-rsd" ]]; then
 fi
 
 exec nice -n "${NICE:-10}" \
-  "$BORG_PYTHON" -u "$SCRIPT_DIR/run_borg_fields.py" \
+  "$RUN_PYTHON" -u "$SCRIPT_DIR/run_borg_fields.py" \
   "$@" \
   "${EXTRA_ARGS[@]}"
