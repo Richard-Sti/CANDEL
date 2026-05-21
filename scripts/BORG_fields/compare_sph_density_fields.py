@@ -19,6 +19,17 @@ DEFAULT_OUTDIR = (
 BOXSIZE = 681.0  # Mpc / h
 
 
+def mas_folder(mas):
+    folders = {
+        "sph": "SPH",
+        "cic": "CIC",
+        "pcs": "PCS",
+        "cic-borg": "CIC_BORG",
+        "cic_borg": "CIC_BORG",
+    }
+    return folders.get(str(mas).strip().lower(), str(mas).strip())
+
+
 def parse_args():
     parser = ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -31,6 +42,7 @@ def parse_args():
     )
     parser.add_argument("--field-a", type=Path, help="Reference HDF5 field.")
     parser.add_argument("--field-b", type=Path, help="Comparison HDF5 field.")
+    parser.add_argument("--mas", default="SPH", help="MAS output folder for --step. Default: SPH.")
     parser.add_argument("--label-a", default="BORG forward SPH")
     parser.add_argument("--label-b", default="February N-body SPH")
     parser.add_argument("--out-stem", help="Output filename stem.")
@@ -40,9 +52,9 @@ def parse_args():
     return parser.parse_args()
 
 
-def default_paths(step):
+def default_paths(step, mas):
     return (
-        configured_chain_path("field_output_dir") / f"mcmc_{step}.hdf5",
+        configured_chain_path("field_output_dir") / mas_folder(mas) / f"mcmc_{step}.hdf5",
         configured_chain_path("reference_fields_dir") / f"mcmc_{step}.hdf5",
     )
 
@@ -231,7 +243,7 @@ def make_power_plot(power, args, outpng):
 
 def resolve_inputs(args):
     if args.step is not None:
-        field_a, field_b = default_paths(args.step)
+        field_a, field_b = default_paths(args.step, args.mas)
         if args.out_stem is None:
             args.out_stem = f"feb_nbody_vs_borg_forward_mcmc{args.step}_density"
     else:
