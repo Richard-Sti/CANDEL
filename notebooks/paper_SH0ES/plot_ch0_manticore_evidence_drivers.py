@@ -66,6 +66,9 @@ def parse_args():
     parser.add_argument(
         "--output-dir", type=Path, default=DEFAULT_OUTDIR,
         help="Directory for plots and summaries.")
+    parser.add_argument(
+        "--pattern", default=PATTERN,
+        help="Glob pattern for the single-field HDF5 files.")
     return parser.parse_args()
 
 
@@ -110,11 +113,11 @@ def selection_integral_total(log_s, n_hosts):
     raise ValueError(f"Unexpected log-selection-integral shape {log_s.shape}.")
 
 
-def read_rows(results_dir):
-    paths = sorted(results_dir.glob(PATTERN), key=field_index)
+def read_rows(results_dir, pattern):
+    paths = sorted(results_dir.glob(pattern), key=field_index)
     if not paths:
         raise FileNotFoundError(
-            f"No files matching `{results_dir / PATTERN}`.")
+            f"No files matching `{results_dir / pattern}`.")
 
     rows = []
     skipped = []
@@ -348,7 +351,7 @@ def write_summary(rows, skipped, path):
 
 def main():
     args = parse_args()
-    rows, skipped = read_rows(args.results_dir)
+    rows, skipped = read_rows(args.results_dir, args.pattern)
 
     csv_path = args.output_dir / "ch0_manticore_evidence_driver_summary.csv"
     txt_path = args.output_dir / "ch0_manticore_evidence_driver_summary.txt"
