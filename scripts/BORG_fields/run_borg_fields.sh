@@ -50,11 +50,12 @@ Submit options:
   --log-dir DIR         Default: this directory
   --submit-dry-run      Print addqueue command without submitting
 
-Pylians CIC gridding runs after BORG by default. Use --mas pcs for Pylians
-PCS or --mas sph for CosmoTool SPH. The Python runner uses RUN_PYTHON
-(default: the configured CANDEL Python) so MAS_library is checked before BORG
-starts. SPH uses SPH_OMP_THREADS; on berg this defaults to 28, so the SPH
-stage uses the whole node unless SPH_OMP_THREADS is set.
+Pylians CIC gridding runs after BORG by default. Use --mas cic-borg for
+BORG's CIC density/velocity output; this passes --vfield to borg_forward.
+Use --mas pcs for Pylians PCS or --mas sph for CosmoTool SPH. The Python
+runner uses RUN_PYTHON (default: the configured CANDEL Python) so MAS_library
+is checked before BORG starts. SPH uses SPH_OMP_THREADS; on berg this defaults
+to 28, so the SPH stage uses the whole node unless SPH_OMP_THREADS is set.
 Pass --keep-particles to keep /<mode>/u_pos and /<mode>/u_vel in the packed
 product and skip final slimming.
 Slim final products expose /overdensity, /velocity, /vx, /vy, and /vz. They
@@ -76,6 +77,7 @@ Examples:
   run_borg_fields.sh --nodes 5 --steps 0:9
   run_borg_fields.sh --steps 0:2 --real-space --mas sph
   run_borg_fields.sh --steps 0:2 --real-space --mas pcs --keep-particles
+  run_borg_fields.sh --steps 0:2 --real-space --mas cic-borg
   run_borg_fields.sh -locally MCMC.h5 --real-space --state state_6124
   run_borg_fields.sh --submit --steps 0:2 --real-space --state state_6124
   run_borg_fields.sh --submit MCMC.h5 --real-space --include-rsd --state state_6124
