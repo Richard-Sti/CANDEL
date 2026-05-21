@@ -1,16 +1,28 @@
 # Copy this file to local_config.toml and edit the machine-local paths.
 
+# =============================================================================
+# Core CANDEL paths
+# =============================================================================
+
 root_main = "/path/to/CANDEL/"
 root_data = "/path/to/CANDEL/"
 root_results = "/path/to/CANDEL/"
 python_exec = "/path/to/CANDEL/venv_candel/bin/python"
 machine = "local"
 
+# =============================================================================
+# Runtime and cluster submission
+# =============================================================================
+
 # Optional cluster/runtime settings used by submission helpers.
 use_frozen = false
 modules = ""
 modules_gpu = ""
 gpu_ld_library_path = []
+
+# =============================================================================
+# BORG field helper executables
+# =============================================================================
 
 [borg_fields]
 # Python environment that can run BORG helper scripts and import BORG-side
@@ -29,8 +41,32 @@ plot_python = "/path/to/CANDEL/venv_candel/bin/python"
 # srun executable for cluster submission; use "srun" if it is on PATH.
 srun = "srun"
 
+# Active BORG chain used by scripts/BORG_fields helpers.
+active_chain = "ManticoreLocal"
+
+# =============================================================================
+# Active BORG chain configuration
+# =============================================================================
+
+[borg_fields.chains.ManticoreLocal]
 # Root directory containing chain/, schedule_final.yaml, and forward products.
-borg_run_dir = "/path/to/BORG_RUN"
+run_dir = "/path/to/BORG_RUN"
+
+# Schedule mapping requested field steps to chain subchains and MCMC samples.
+schedule = "/path/to/BORG_RUN/schedule_final.yaml"
+
+# Packed HDF5 products written by run_borg_fields.sh.
+field_output_dir = "/path/to/BORG_RUN/forward_fields"
+
+# Optional reference products used by compare_sph_density_fields.py --step.
+reference_fields_dir = "/path/to/BORG_RUN/sph_fields_new_feb/sph_fields"
+
+# Public Manticore download generation used by download_manticore_chain.py.
+download_generation = "2MPP_MULTIBIN_N256_DES_V2"
+
+# =============================================================================
+# Machine-local reconstruction field products
+# =============================================================================
 
 # Machine-local reconstruction field products that are too large or too
 # installation-specific to live in reusable configs.
