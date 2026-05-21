@@ -185,7 +185,8 @@ def _plan_los_file(variant, job):
         radial_grid=radial_grid)
     if los_paths is None:
         los_paths = [los_mod.resolve_los_output_path(
-            los_template, job["reconstruction"], field_smoothing_scale=scale)
+            los_template, job["reconstruction"], field_smoothing_scale=scale,
+            config=config)
         ]
     matches = [
         los_mod.los_file_matches_grid(path, r, verbose=False)

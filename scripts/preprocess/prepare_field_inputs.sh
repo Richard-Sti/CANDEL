@@ -148,7 +148,7 @@ if [[ -n "$missing_cache_items" && "$products" != "los" \
     read -r -p "Cache items to run [all]: " cache_items
     cache_items="${cache_items:-all}"
     case "$cache_items" in
-        all|ALL)
+        all|ALL|y|Y|yes|YES)
             ;;
         q|Q|quit|QUIT|abort|ABORT)
             echo "Aborting."
