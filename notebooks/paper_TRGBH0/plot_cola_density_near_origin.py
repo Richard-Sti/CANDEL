@@ -13,14 +13,14 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 from matplotlib.patches import Circle  # noqa: E402
 
-from candel.field.loader import ManticoreCOLA_FieldLoader  # noqa: E402
+from candel.field.loader import ManticoreLocalCOLA_FieldLoader  # noqa: E402
 
 
 ROOT = Path("/mnt/users/rstiskalek/CANDEL")
 SOURCE_ROOT = (
     Path("/mnt/extraspace/rstiskalek/MANTICORE")
     / "2MPP_MULTIBIN_N256_DES_V2"
-    / "forward_sph_fields"
+    / "forward_fields"
 )
 OUTDIR = (
     ROOT
@@ -72,7 +72,7 @@ def central_indices(coords):
 
 
 def load_local_field(field, source_root, radius, load_velocity=True):
-    loader = ManticoreCOLA_FieldLoader(
+    loader = ManticoreLocalCOLA_FieldLoader(
         nsim=int(field), fpath_root=str(source_root))
     path = Path(loader.fname)
     if not path.exists():
