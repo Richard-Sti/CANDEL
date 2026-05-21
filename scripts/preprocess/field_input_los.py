@@ -23,6 +23,7 @@ import candel
 from candel import fprint
 from candel.pvdata.field_products import (field_smoothed_los_path,
                                           los_radial_grid_payload,
+                                          reconstruction_los_label,
                                           validate_field_smoothing_scale)
 
 
@@ -142,8 +143,14 @@ def reconstruction_field_indices(config, reconstruction):
     if str(reconstruction).lower().startswith("manticorelocal"):
         candel.field.name2field_loader(reconstruction)
         field_kwargs = config["io"]["reconstruction_main"][reconstruction]
+        fpath_root = field_kwargs["fpath_root"]
+        if reconstruction == "ManticoreLocalCOLA":
+            fpath_root = join(
+                fpath_root,
+                candel.field.field_mas_directory(
+                    field_kwargs.get("which_MAS", "CIC")))
         return candel.field.available_mcmc_field_indices(
-            field_kwargs["fpath_root"])
+            fpath_root)
     raise ValueError(f"Reconstruction `{reconstruction}` not supported.")
 
 
@@ -169,9 +176,10 @@ def radial_los_grid(config, catalogue, reconstruction, verbose=True):
 
 
 def resolve_los_output_path(los_file, reconstruction,
-                            field_smoothing_scale=None):
+                            field_smoothing_scale=None, config=None):
     """Resolve a LOS template to the output path for this smoothing variant."""
-    los_file = los_file.replace("<X>", reconstruction)
+    los_file = los_file.replace(
+        "<X>", reconstruction_los_label(config, reconstruction))
     return field_smoothed_los_path(los_file, field_smoothing_scale)
 
 
@@ -248,7 +256,8 @@ def compute_los_file_from_coordinates(
     los_file = (
         output_path if output_path is not None
         else resolve_los_output_path(
-            los_template, reconstruction, field_smoothing_scale))
+            los_template, reconstruction, field_smoothing_scale,
+            config=config))
     if los_file is None:
         raise ValueError(
             "A LOS output path is required. Provide either `output_path` "
