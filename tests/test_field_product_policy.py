@@ -1,3 +1,4 @@
+import math
 from pathlib import Path
 
 from candel.field import (
@@ -17,7 +18,9 @@ def test_raw_reads_are_allowed_for_cheap_fields():
     assert not field_requires_cached_products("ManticoreLocalCOLA")
     assert field_metadata("ManticoreLocalCOLA").cache_group == (
         "ManticoreLocalCOLA")
-    assert field_metadata("ManticoreLocalCOLA").ngrid == 256
+    assert field_metadata("ManticoreLocalCOLA").ngrid is None
+    assert field_metadata("ManticoreLocalCOLA").Omega_m is None
+    assert not math.isfinite(field_metadata("ManticoreLocalCOLA").boxsize)
     assert field_metadata("ManticoreLocalCOLA").storage_schema == (
         "overdensity_velocity")
 
@@ -71,6 +74,7 @@ def test_los_field_cache_path_uses_field_cache_dir(tmp_path):
                 "rmin": 0.001,
                 "rmax": 201,
                 "num_steps": 251,
+                "ManticoreLocalCOLA": {"which_MAS": "CIC"},
             },
         },
     }
@@ -81,7 +85,7 @@ def test_los_field_cache_path_uses_field_cache_dir(tmp_path):
 
     path = Path(path)
     assert path.parent == tmp_path / "ManticoreLocalCOLA" / "los"
-    assert path.name == "los__CF4__field-0__r-0p001-201-n251.hdf5"
+    assert path.name == "los__CF4__field-0__r-0p001-201-n251__mas-CIC.hdf5"
     assert "v1" not in path.name
     assert "field-0" in path.name
     assert path.suffix == ".hdf5"

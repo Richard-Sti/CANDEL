@@ -10,12 +10,18 @@ from candel.pvdata.volume_density import _density_unit_normalization
 
 def test_manticore_local_cola_loader_reads_overdensity_and_velocity(tmp_path):
     fpath_root = tmp_path
-    fname = fpath_root / "mcmc_0.hdf5"
+    mas_root = fpath_root / "CIC"
+    mas_root.mkdir()
+    fname = mas_root / "mcmc_0.hdf5"
 
     overdensity = np.arange(8, dtype=np.float32).reshape(2, 2, 2) / 10
     velocity = np.arange(24, dtype=np.float32).reshape(2, 2, 2, 3)
 
     with File(fname, "w") as f:
+        f.attrs["boxsize"] = 123.0
+        f.attrs["Omega_m"] = 0.25
+        f.attrs["grid_shape"] = np.array([2, 2, 2])
+        f.attrs["frame"] = "icrs"
         f.create_dataset("overdensity", data=overdensity)
         f.create_dataset("velocity", data=velocity)
 
@@ -30,13 +36,16 @@ def test_manticore_local_cola_loader_reads_overdensity_and_velocity(tmp_path):
     np.testing.assert_allclose(
         loader.load_velocity_component(1), velocity[..., 1])
     assert loader.coordinate_frame == "icrs"
-    assert loader.boxsize == 681.1
-    assert loader.Omega_m == 0.306
+    assert loader.boxsize == 123.0
+    assert loader.Omega_m == 0.25
+    assert loader.ngrid == 2
 
 
 def test_manticore_local_cola_loader_reads_generic_borg_schema(tmp_path):
     fpath_root = tmp_path
-    fname = fpath_root / "mcmc_0.hdf5"
+    mas_root = fpath_root / "CIC"
+    mas_root.mkdir()
+    fname = mas_root / "mcmc_0.hdf5"
 
     density = np.arange(8, dtype=np.float32).reshape(2, 2, 2)
     vx = density + 10
@@ -65,6 +74,26 @@ def test_manticore_local_cola_loader_reads_generic_borg_schema(tmp_path):
     assert loader.boxsize == 123.0
     assert loader.Omega_m == 0.25
     assert loader.coordinate_frame == "icrs"
+
+
+def test_manticore_local_cola_loader_respects_which_mas(tmp_path):
+    fpath_root = tmp_path
+    mas_root = fpath_root / "PCS"
+    mas_root.mkdir()
+    fname = mas_root / "mcmc_0.hdf5"
+
+    density = np.ones((2, 2, 2), dtype=np.float32)
+    velocity = np.zeros((2, 2, 2, 3), dtype=np.float32)
+    with File(fname, "w") as f:
+        f.attrs["boxsize"] = 123.0
+        f.create_dataset("density", data=density)
+        f.create_dataset("velocity", data=velocity)
+
+    loader = ManticoreLocalCOLA_FieldLoader(
+        nsim=0, fpath_root=str(fpath_root), which_MAS="PCS")
+
+    assert loader.fname == str(fname)
+    np.testing.assert_allclose(loader.load_density(), density)
 
 
 def test_borg_loader_reads_forward_product_attrs(tmp_path):
