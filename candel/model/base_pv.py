@@ -32,12 +32,13 @@ from ..util import fprint, get_nested
 from .base_model import ModelBase
 from .integration import simpson_log_weights
 from .pv_utils import (_rsample, compute_Vext_radial, convert_cartesian_frame,
-                       lp_galaxy_bias, missing_mass_at_distance_delta_velocity,
+                       galaxy_bias_density_mode, lp_galaxy_bias,
+                       missing_mass_at_distance_delta_velocity,
                        missing_mass_los_delta_velocity,
                        missing_mass_volume_delta, rsample,
                        sample_distance_prior_volume, sample_galaxy_bias,
                        sample_Vext, sigma_v_from_density, spherical_rhat,
-                       sumzero_basis)
+                       sumzero_basis, validate_galaxy_bias)
 from .utils import (joint_config_mismatch, normal_logpdf_var, predict_cz,
                     student_t_logpdf_var)
 
@@ -175,13 +176,7 @@ class BasePVModel(ModelBase):
             self.eta_grid_kwargs = get_nested(config, "model/eta_grid", None)
 
         self.galaxy_bias = get_nested(config, "pv_model/galaxy_bias", "unity")
-        if self.galaxy_bias not in ["unity", "powerlaw", "linear",
-                                    "linear_from_beta",
-                                    "linear_from_beta_stochastic",
-                                    "double_powerlaw", "manticore_stdp",
-                                    "quadratic", "cubic"]:
-            raise ValueError(
-                f"Invalid galaxy bias model '{self.galaxy_bias}'.")
+        validate_galaxy_bias(self.galaxy_bias)
         self.quadratic_bias_delta0 = get_nested(
             config, "pv_model/quadratic_bias_delta0", 0.0)
 
@@ -353,9 +348,7 @@ class BasePVModel(ModelBase):
         return simpson_log_weights(r_grid)
 
     def _expected_volume_density_mode(self):
-        return ("log_rho" if self.galaxy_bias in
-                ("powerlaw", "double_powerlaw", "manticore_stdp")
-                else "delta")
+        return galaxy_bias_density_mode(self.galaxy_bias)
 
     def _validate_volume_normalized_prior_data(self, data):
         if not data.has_precomputed_los:

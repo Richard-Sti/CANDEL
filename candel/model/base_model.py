@@ -124,8 +124,11 @@ from ..util import (fprint, fsection, get_nested, load_config,
                     radec_to_cartesian, replace_prior_with_delta)
 from .integration import ln_simpson_precomputed, simpson_log_weights
 from .interp import LOSInterpolator
-from .pv_utils import (lp_galaxy_bias, octupole_radial, quadrupole_radial,
-                       rsample, sample_octupole, sample_quadrupole,
+from .pv_utils import (GALAXY_BIAS_PRIOR_DEFAULTS,
+                       GALAXY_BIAS_REQUIRED_PRIORS,
+                       galaxy_bias_needs_log_rho, lp_galaxy_bias,
+                       octupole_radial, quadrupole_radial, rsample,
+                       sample_octupole, sample_quadrupole,
                        sigmoid_monopole_radial)
 from .utils import (load_priors, log_prob_integrand_sel,
                     log_prob_integrand_window_sel, logmeanexp,
@@ -955,22 +958,7 @@ class H0ModelBase(ModelBase):
         priors = config.setdefault(
             "model", {}).setdefault("priors", {})
 
-        # Params required by each bias model.
-        _required = {
-            "unity": set(),
-            "powerlaw": {"alpha"},
-            "linear": {"b1"},
-            "linear_from_beta": set(),
-            "linear_from_beta_stochastic": {"delta_b1"},
-            "double_powerlaw": {
-                "alpha_low", "alpha_high", "log_rho_t", "log_rho_width"},
-            "manticore_stdp": {
-                "stdp_gamma_t", "stdp_gamma_s", "stdp_alpha",
-                "stdp_beta", "stdp_beta0"},
-            "quadratic": {"b1", "b2"},
-            "cubic": {"b1", "b2", "b3"},
-        }
-        required = _required.get(which_bias, set())
+        required = GALAXY_BIAS_REQUIRED_PRIORS.get(which_bias, set())
 
         if use_reconstruction:
             for param in required:
@@ -979,13 +967,7 @@ class H0ModelBase(ModelBase):
                         f"Bias model '{which_bias}' requires prior "
                         f"[model.priors.{param}] but none was found.")
 
-        bias_defaults = {"b1": 1.0, "b2": 0.0, "b3": 0.0, "alpha": 1.0,
-                         "delta_b1": 0.0, "alpha_low": 1.0,
-                         "alpha_high": 1.0, "log_rho_t": 0.0,
-                         "log_rho_width": 1.0, "stdp_gamma_t": -1.0,
-                         "stdp_gamma_s": 0.5, "stdp_alpha": 1.0,
-                         "stdp_beta": 0.7, "stdp_beta0": 1.0}
-        for param, default in bias_defaults.items():
+        for param, default in GALAXY_BIAS_PRIOR_DEFAULTS.items():
             if param not in priors:
                 priors[param] = {"dist": "delta",
                                  "value": default}
@@ -1010,9 +992,9 @@ class H0ModelBase(ModelBase):
         lp_host_dist = lp_host_dist[None, :]
         los_delta_host = self.f_host_los_delta(rh_host)
 
-        _needs_log_rho = "linear" not in self.which_bias
         log_rho_host = (jnp.log(1 + los_delta_host)
-                        if _needs_log_rho else None)
+                        if galaxy_bias_needs_log_rho(self.which_bias)
+                        else None)
         lp_host_dist += lp_galaxy_bias(
             los_delta_host, log_rho_host, bias_params,
             self.which_bias)
