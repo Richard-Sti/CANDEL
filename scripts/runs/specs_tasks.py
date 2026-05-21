@@ -10,7 +10,7 @@ CH0_MANTICORE_LOS = "manticore_2MPP_MULTIBIN_N256_DES_V2"
 CH0_MANTICORE_BIAS = "double_powerlaw"
 TRGBH0_ROOT = "results/TRGBH0_paper"
 TRGBH0_MANTICORE_LOS = "manticore_2MPP_MULTIBIN_N256_DES_V2"
-TRGBH0_MANTICORE_COLA_LOS = "COLA_manticore_2MPP_MULTIBIN_N256_DES_V2"
+TRGBH0_MANTICORE_COLA_LOS = "ManticoreLocalCOLA"
 TRGBH0_MANTICORE_BIAS = "double_powerlaw"
 TRGBH0_CARRICK_BETA_LOC = 0.461
 TRGBH0_CARRICK_BETA_SCALE = 0.013
@@ -57,7 +57,7 @@ VEXT_RADMAG_SDSS_FP_CARRICK_PRIOR = {
 }
 VFO_ROOT = "results/VFO"
 VFO_MANTICORE_LOS = "manticore_2MPP_MULTIBIN_N256_DES_V2"
-VFO_MANTICORE_COLA_LOS = "COLA_manticore_2MPP_MULTIBIN_N256_DES_V2"
+VFO_MANTICORE_COLA_LOS = "ManticoreLocalCOLA"
 
 CH0_PAPER_COMMON = {
     "inference/compute_log_density": False,
@@ -462,23 +462,19 @@ def _trgbh0_distance_only_datasets():
 
 def _trgbh0_manticore_field_datasets():
     datasets = []
-    for los, n_fields in (
-            (TRGBH0_MANTICORE_LOS, 30),
-            (TRGBH0_MANTICORE_COLA_LOS, 50),
-    ):
-        for field in range(n_fields):
-            datasets.append({
-                "model/use_reconstruction": True,
-                "model/use_density_dependent_sigma_v": False,
-                "model/cz_likelihood": "gaussian",
-                "model/mag_min_TRGB": TRGBH0_EDD_MAG_MIN,
-                "model/priors/mag_lim_TRGB": (
-                    _trgbh0_edd_mag_lim_uninformative_prior()),
-                "io/PV_main/EDD_TRGB/reconstruction": los,
-                "model/which_bias": TRGBH0_MANTICORE_BIAS,
-                "io/field_indices": field,
-                **_trgbh0_selection("TRGB_magnitude"),
-            })
+    for field in range(50):
+        datasets.append({
+            "model/use_reconstruction": True,
+            "model/use_density_dependent_sigma_v": False,
+            "model/cz_likelihood": "gaussian",
+            "model/mag_min_TRGB": TRGBH0_EDD_MAG_MIN,
+            "model/priors/mag_lim_TRGB": (
+                _trgbh0_edd_mag_lim_uninformative_prior()),
+            "io/PV_main/EDD_TRGB/reconstruction": TRGBH0_MANTICORE_COLA_LOS,
+            "model/which_bias": TRGBH0_MANTICORE_BIAS,
+            "io/field_indices": field,
+            **_trgbh0_selection("TRGB_magnitude"),
+        })
     return datasets
 
 
@@ -810,11 +806,14 @@ def _vfo_single_datasets():
 
 TASK_SPECS = {
     "test": {
-        "description": "CF4 TFR W1 Mmiss run with a single NUTS chain.",
+        "description": (
+            "Foundation SN simple Carrick/COLA field test with optional "
+            "density smoothing."),
         "config_path": "configs/config.toml",
-        "tag": "Mmiss_single_chain",
+        "tag": "foundation_simple",
         "common": {
-            "inference/model": "TFRModel",
+            "inference/model": "SNModel",
+            "io/catalogue_name": "Foundation",
             "inference/num_chains": 1,
             "inference/chain_method": "sequential",
             "inference/num_warmup": 500,
@@ -822,32 +821,38 @@ TASK_SPECS = {
             "inference/compute_evidence": False,
             "inference/compute_log_density": False,
             "inference/target_accept_prob": 0.9,
-            "pv_model/kind": "precomputed_los_Carrick2015",
-            "pv_model/galaxy_bias": "linear",
-            "pv_model/use_Mmiss": True,
-            "pv_model/Mmiss_sigma": 5.0,
-            "pv_model/Mmiss_coordinate_frame": "galactic",
-            "pv_model/dr_malmquist": 1.0,
             "pv_model/density_3d_geometry": "sphere",
-            "pv_model/density_3d_radius": 200.0,
+            "pv_model/density_3d_radius": 150.0,
             "pv_model/density_3d_downsample": 1,
-            "model/priors/Mmiss_distance/high": [
-                50.0, 100.0, 150.0, 200.0, 250.0],
-            "model/priors/Vext": _delta([0.0, 0.0, 0.0]),
-            "model/priors/b1": {
-                "dist": "truncated_normal",
-                "low": 0.1,
-                "mean": 1.2,
-                "scale": 0.4,
-            },
+            "pv_model/density_3d_subsample_fraction": 0.5,
+            "model/field_3d_smoothing_scale": [0.0, 8.0],
             "io/root_output": "results/test",
         },
         "datasets": [
             {
-                "io/catalogue_name": "CF4_W1",
+                "pv_model/kind": "precomputed_los_Carrick2015",
+                "pv_model/galaxy_bias": "linear",
+                "model/priors/beta": {
+                    "dist": "uniform",
+                    "low": 0.0,
+                    "high": 1.0,
+                },
+            },
+            {
+                "pv_model/kind": f"precomputed_los_{VFO_MANTICORE_COLA_LOS}",
+                "pv_model/galaxy_bias": "double_powerlaw",
+                "model/priors/beta": _delta(1.0),
+                "model/cz_likelihood": "gaussian",
+                "io/field_indices": 0,
+            },
+            {
+                "pv_model/kind": f"precomputed_los_{VFO_MANTICORE_COLA_LOS}",
+                "pv_model/galaxy_bias": "double_powerlaw",
+                "model/priors/beta": _delta(1.0),
+                "model/cz_likelihood": "gaussian",
             },
         ],
-        "expected_tasks": 5,
+        "expected_tasks": 6,
     },
     "CH0_main": {
         "description": "CH0 paper H0 grid plus redshift-free distance runs.",
@@ -986,7 +991,7 @@ TASK_SPECS = {
             **_with_root(f"{TRGBH0_ROOT}/manticore_fields_const_sigv"),
         },
         "datasets": _trgbh0_manticore_field_datasets(),
-        "expected_tasks": 80,
+        "expected_tasks": 50,
     },
     "S8_production": {
         "description": (
