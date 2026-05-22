@@ -616,6 +616,35 @@ def _trgbh0_manticore_field_datasets():
     return datasets
 
 
+def _trgbh0_manticore_cola_mas_field_datasets(mas_values):
+    datasets = []
+    for mas in mas_values:
+        for field in range(80):
+            datasets.append({
+                "model/use_reconstruction": True,
+                "model/use_density_dependent_sigma_v": False,
+                "model/cz_likelihood": "gaussian",
+                "model/mag_min_TRGB": TRGBH0_EDD_MAG_MIN,
+                "model/priors/mag_lim_TRGB": (
+                    _trgbh0_edd_mag_lim_uninformative_prior()),
+                "io/PV_main/EDD_TRGB/reconstruction": (
+                    TRGBH0_MANTICORE_COLA_LOS),
+                "io/reconstruction_main/ManticoreLocalCOLA/which_MAS": mas,
+                "model/which_bias": TRGBH0_MANTICORE_BIAS,
+                "io/field_indices": field,
+                **_trgbh0_selection("TRGB_magnitude"),
+            })
+    return datasets
+
+
+def _trgbh0_manticore_cola_single_datasets():
+    return _trgbh0_manticore_cola_mas_field_datasets(("CIC", "PCS", "SPH"))
+
+
+def _trgbh0_manticore_cola_pcs_field_datasets():
+    return _trgbh0_manticore_cola_mas_field_datasets(("PCS",))
+
+
 def _trgbh0_cchp_subset_datasets():
     main_models = [
         {
@@ -1215,6 +1244,52 @@ TASK_SPECS = {
         },
         "datasets": _trgbh0_manticore_field_datasets(),
         "expected_tasks": 50,
+    },
+    "TRGBH0_single": {
+        "description": (
+            "TRGB H0 COLA one-field runs for CIC, PCS, and SPH MAS."),
+        "config_path": "configs/config_EDD_TRGB.toml",
+        "tag": "single",
+        "common": {
+            **TRGBH0_COMMON,
+            "inference/num_warmup": 1000,
+            "inference/num_samples": 1000,
+            "inference/save_log_likelihood_per_galaxy": True,
+            "model/priors/H0/low": 40,
+            "model/priors/H0/high": 100,
+            "model/selection_integral_supersample_radius": (
+                TRGBH0_SELECTION_SUPERSAMPLE_RADIUS),
+            "model/selection_integral_supersample_target_dx": (
+                TRGBH0_SELECTION_SUPERSAMPLE_TARGET_DX),
+            "model/priors/mag_lim_TRGB_width/low": 0.15,
+            **_with_root(f"{TRGBH0_ROOT}/single_fields"),
+        },
+        "datasets": _trgbh0_manticore_cola_single_datasets(),
+        "expected_tasks": 240,
+    },
+    "TRGBH0_single_smoothed": {
+        "description": (
+            "TRGB H0 PCS COLA one-field runs with density-field smoothing."),
+        "config_path": "configs/config_EDD_TRGB.toml",
+        "tag": "single_smoothed",
+        "common": {
+            **TRGBH0_COMMON,
+            "inference/num_warmup": 1000,
+            "inference/num_samples": 1000,
+            "inference/save_log_likelihood_per_galaxy": True,
+            "model/priors/H0/low": 40,
+            "model/priors/H0/high": 100,
+            "model/selection_integral_supersample_radius": (
+                TRGBH0_SELECTION_SUPERSAMPLE_RADIUS),
+            "model/selection_integral_supersample_target_dx": (
+                TRGBH0_SELECTION_SUPERSAMPLE_TARGET_DX),
+            "model/priors/mag_lim_TRGB_width/low": 0.15,
+            "model/field_3d_smoothing_scale": [4.0, 8.0],
+            "model/velocity_3d_smoothing_scale": 0.0,
+            **_with_root(f"{TRGBH0_ROOT}/single_fields_smoothed"),
+        },
+        "datasets": _trgbh0_manticore_cola_pcs_field_datasets(),
+        "expected_tasks": 160,
     },
     "S8_production": {
         "description": (
