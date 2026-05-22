@@ -41,6 +41,16 @@ local_config.toml
 
 *.png
 *.pdf
+
+# Plot output directories.
+**/*plot*/*.png
+**/*plot*/*.pdf
+**/*plot*/*.csv
+**/*plot*/*.txt
+**/*plot*/**/*.png
+**/*plot*/**/*.pdf
+**/*plot*/**/*.csv
+**/*plot*/**/*.txt
 CLAUDE.md
 background_info/
 docs/plans/
