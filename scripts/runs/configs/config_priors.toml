@@ -92,12 +92,6 @@ low = 0.0
 mean = 1.5
 scale = 1.0
 
-[model.priors.alpha_high]
-dist = "truncated_normal"
-low = -2.0
-mean = 0.5
-scale = 1.0
-
 [model.priors.alpha_high_frac]
 dist = "truncated_normal"
 low = 0.0
