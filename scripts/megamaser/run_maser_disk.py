@@ -388,8 +388,14 @@ parser.add_argument("--r-ang-init", type=str, default=None,
                          "Mode 2 centring optimiser.")
 parser.add_argument("--no-ecc", action="store_true",
                     help="Disable eccentricity model (override config)")
+parser.add_argument("--add-ecc", "-add-ecc", action="store_true",
+                    help="Enable eccentricity model (override config)")
 parser.add_argument("--no-quadratic-warp", action="store_true",
                     help="Disable quadratic warp (override config)")
+parser.add_argument("--add-quadratic", "--add-quadratic-warp",
+                    "-add-quadratic",
+                    dest="add_quadratic_warp", action="store_true",
+                    help="Enable quadratic warp (override config)")
 parser.add_argument("--resume", action="store_true",
                     help="Resume from latest checkpoint "
                          "(NUTS warmup/sampling, NSS)")
@@ -400,6 +406,11 @@ parser.add_argument("--f64", action="store_true", default=_enable_f64,
                     help="Enable JAX float64. Automatically enabled for "
                          "mode1 NUTS.")
 args = parser.parse_args()
+if args.no_ecc and args.add_ecc:
+    parser.error("--no-ecc and --add-ecc are mutually exclusive")
+if args.no_quadratic_warp and args.add_quadratic_warp:
+    parser.error("--no-quadratic-warp and --add-quadratic are mutually "
+                 "exclusive")
 
 galaxy = args.galaxy
 sampler = args.sampler or inf_cfg.get("sampler", "nss")
@@ -426,8 +437,12 @@ if args.f_grid != 1.0:
 # Model feature overrides
 if args.no_ecc:
     _tags.append("noecc")
+if args.add_ecc:
+    _tags.append("ecc")
 if args.no_quadratic_warp:
     _tags.append("noqw")
+if args.add_quadratic_warp:
+    _tags.append("qw")
 
 dist_tag = "_".join(_tags)
 
@@ -486,15 +501,22 @@ config = {
 }
 if args.mode is not None:
     config["model"]["mode"] = args.mode
-if args.no_ecc or args.no_quadratic_warp:
+if (args.no_ecc or args.add_ecc
+        or args.no_quadratic_warp or args.add_quadratic_warp):
     gals = config["model"].setdefault("galaxies", {})
     gcfg_ov = gals.setdefault(galaxy if not is_joint else "", {})
     if args.no_ecc:
         gcfg_ov["use_ecc"] = False
         fprint("CLI override: use_ecc = False")
+    if args.add_ecc:
+        gcfg_ov["use_ecc"] = True
+        fprint("CLI override: use_ecc = True")
     if args.no_quadratic_warp:
         gcfg_ov["use_quadratic_warp"] = False
         fprint("CLI override: use_quadratic_warp = False")
+    if args.add_quadratic_warp:
+        gcfg_ov["use_quadratic_warp"] = True
+        fprint("CLI override: use_quadratic_warp = True")
 
 # Joint: apply prior overrides from [joint.priors] config section
 if is_joint:
