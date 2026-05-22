@@ -29,7 +29,7 @@ _NUMPY_GAUSSIAN_FALLBACK_MEMORY_FRACTION = 0.5
 _PYLIANS_FALLBACK_NOTICE_PRINTED = False
 
 
-@njit(cache=True)
+@njit(cache=False)
 def _trilinear_interp_field(field_flat, pos_flat, grid_min, grid_step,
                             ngrid, fill_value):
     """Fused trilinear interpolation: index computation + weighted sum."""
@@ -325,7 +325,8 @@ def _target_smoothing_to_kernel_scale(smooth_target, voxel_size):
 def interpolate_los_density_velocity(field_loader, r, RA, dec,
                                      smooth_target=None, verbose=True,
                                      los_geometry=None,
-                                     field_smoothing_scale=None):
+                                     field_smoothing_scale=None,
+                                     velocity_field_smoothing_scale=None):
     """
     Interpolate the density and velocity fields along the line of sight
     specified by `RA` and `dec` at radial steps `r` from the observer. The
@@ -349,8 +350,6 @@ def interpolate_los_density_velocity(field_loader, r, RA, dec,
     cellsize, grid_min = _get_grid_params(field_loader, ngrid)
 
     rho_kernel_scale = None
-    velocity_smooth_scale = None
-
     smoothing_inputs = [
         smooth_target is not None,
         field_smoothing_scale is not None,
@@ -364,9 +363,9 @@ def interpolate_los_density_velocity(field_loader, r, RA, dec,
         smooth_scale = _target_smoothing_to_kernel_scale(
             smooth_target, cellsize)
         rho_kernel_scale = smooth_scale
-        velocity_smooth_scale = smooth_scale
-        fprint(f"applying Gaussian smoothing with scale {smooth_scale:.1f} "
-               f"Mpc/h to match target {smooth_target:.1f} Mpc/h.",
+        fprint(f"applying Gaussian smoothing to density with scale "
+               f"{smooth_scale:.1f} Mpc/h to match target "
+               f"{smooth_target:.1f} Mpc/h.",
                verbose=verbose)
     elif field_smoothing_scale is not None:
         field_smoothing_scale = float(field_smoothing_scale)
@@ -381,11 +380,29 @@ def interpolate_los_density_velocity(field_loader, r, RA, dec,
                     f"size {cellsize:g} Mpc/h; got "
                     f"{field_smoothing_scale:g} Mpc/h.")
             rho_kernel_scale = float(field_smoothing_scale)
-            velocity_smooth_scale = float(field_smoothing_scale)
             fprint(
-                "applying Gaussian smoothing to density and velocity with "
-                "scale "
+                "applying Gaussian smoothing to density with scale "
                 f"{rho_kernel_scale:.1f} Mpc/h.",
+                verbose=verbose)
+
+    velocity_smooth_scale = None
+    if velocity_field_smoothing_scale is not None:
+        velocity_field_smoothing_scale = float(velocity_field_smoothing_scale)
+        if (not np.isfinite(velocity_field_smoothing_scale)
+                or velocity_field_smoothing_scale < 0):
+            raise ValueError(
+                "`velocity_field_smoothing_scale` must be finite and "
+                "non-negative.")
+        if velocity_field_smoothing_scale > 0:
+            if velocity_field_smoothing_scale <= cellsize:
+                raise ValueError(
+                    "`velocity_field_smoothing_scale` must exceed the field "
+                    f"voxel size {cellsize:g} Mpc/h; got "
+                    f"{velocity_field_smoothing_scale:g} Mpc/h.")
+            velocity_smooth_scale = float(velocity_field_smoothing_scale)
+            fprint(
+                "applying Gaussian smoothing to velocity with scale "
+                f"{velocity_smooth_scale:.1f} Mpc/h.",
                 verbose=verbose)
 
     if rho_kernel_scale is not None:
