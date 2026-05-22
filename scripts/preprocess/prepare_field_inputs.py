@@ -33,6 +33,7 @@ from candel.pvdata.field_products import (  # noqa: E402
     field_smoothing_scale_from_config,
     los_field_cache_paths,
     los_radial_grid_payload_from_array,
+    velocity_field_smoothing_scale_from_config,
 )
 
 from scripts.preprocess import field_input_cache as cache_mod  # noqa: E402
@@ -69,9 +70,14 @@ def _read_config_paths(args):
 
 def _smoothing_label(config):
     scale = field_smoothing_scale_from_config(config)
-    if scale is None:
+    velocity_scale = velocity_field_smoothing_scale_from_config(config)
+    if scale is None and velocity_scale is None:
         return "none"
-    return f"R={scale:g}"
+    if velocity_scale is None:
+        return f"rhoR={scale:g}"
+    if scale is None:
+        return f"vR={velocity_scale:g}"
+    return f"rhoR={scale:g},vR={velocity_scale:g}"
 
 
 def _config_variants(config_paths):
@@ -173,6 +179,7 @@ def _plan_los_file(variant, job):
     config = variant["config"]
     los_template, n_los = _plan_los_metadata(config, job["catalogue"])
     scale = field_smoothing_scale_from_config(config)
+    velocity_scale = velocity_field_smoothing_scale_from_config(config)
     field_indices = get_nested(config, "io/field_indices", None)
     selected = los_mod._selected_field_indices(
         config, job["reconstruction"], field_indices)
@@ -182,11 +189,12 @@ def _plan_los_file(variant, job):
     los_paths = los_field_cache_paths(
         config, job["catalogue"], job["reconstruction"], los_template,
         field_smoothing_scale=scale, field_indices=selected,
-        radial_grid=radial_grid)
+        radial_grid=radial_grid,
+        velocity_field_smoothing_scale=velocity_scale)
     if los_paths is None:
         los_paths = [los_mod.resolve_los_output_path(
             los_template, job["reconstruction"], field_smoothing_scale=scale,
-            config=config)
+            config=config, velocity_field_smoothing_scale=velocity_scale)
         ]
     matches = [
         los_mod.los_file_matches_grid(path, r, verbose=False)
@@ -251,6 +259,9 @@ def _prepare_los(variants, args):
                                 los_template=los_template,
                                 field_smoothing_scale=(
                                     field_smoothing_scale_from_config(
+                                        variant["config"])),
+                                velocity_field_smoothing_scale=(
+                                    velocity_field_smoothing_scale_from_config(
                                         variant["config"])),
                                 output_path=path, field_indices=[nsim],
                                 overwrite=args.overwrite_los,
@@ -352,9 +363,9 @@ def main():
         description="Prepare LOS files and warm 3D volume caches.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=dedent("""\
-            Field smoothing is read from model.field_3d_smoothing_scale in
-            each input config. Use separate generated configs/tasks for
-            multiple smoothing scales.
+            Density smoothing is read from model.field_3d_smoothing_scale in
+            each input config. Velocity smoothing is disabled unless
+            model.velocity_3d_smoothing_scale is set.
 
             examples:
               prepare_field_inputs.py scripts/runs/tasks_TRGBH0_main.txt

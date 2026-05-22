@@ -22,8 +22,9 @@ usage: $(basename "$0") [submit options] -- [prepare_field_inputs.py args]
        $(basename "$0") [submit options] [prepare_field_inputs.py args]
 
 Prepare LOS HDF5 products and 3D volume caches as a CPU MPI job.
-The field smoothing scale is read from model.field_3d_smoothing_scale in
-each input config; use separate generated configs/tasks for multiple scales.
+The density smoothing scale is read from model.field_3d_smoothing_scale in
+each input config. Velocity smoothing is disabled unless
+model.velocity_3d_smoothing_scale is set.
 
 submit options:
   -q, --queue QUEUE       queue/partition (default: $queue)
