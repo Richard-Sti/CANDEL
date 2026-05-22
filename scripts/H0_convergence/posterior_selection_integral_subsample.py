@@ -124,9 +124,6 @@ def infer_bias(samples: dict[str, np.ndarray], requested: str) -> str:
         return requested
     if {"alpha_low", "alpha_high", "log_rho_t"} <= samples.keys():
         return "double_powerlaw"
-    if {"stdp_gamma_t", "stdp_gamma_s", "stdp_alpha",
-            "stdp_beta", "stdp_beta0"} <= samples.keys():
-        return "manticore_stdp"
     if "b1" in samples:
         return "linear"
     return "unity"
@@ -232,12 +229,6 @@ def sample_batch(samples: dict[str, np.ndarray], idx: np.ndarray,
         batch["log_rho_t"] = sample_array(samples, "log_rho_t", idx)
         batch["log_rho_width"] = sample_array(
             samples, "log_rho_width", idx, 1.0)
-    elif bias_model == "manticore_stdp":
-        batch["stdp_gamma_t"] = sample_array(samples, "stdp_gamma_t", idx)
-        batch["stdp_gamma_s"] = sample_array(samples, "stdp_gamma_s", idx)
-        batch["stdp_alpha"] = sample_array(samples, "stdp_alpha", idx)
-        batch["stdp_beta"] = sample_array(samples, "stdp_beta", idx)
-        batch["stdp_beta0"] = sample_array(samples, "stdp_beta0", idx)
     return batch
 
 
@@ -269,21 +260,6 @@ def log_bias_batch(density: jax.Array, density_mode: str, bias_model: str,
                 + (batch["alpha_high"][:, None]
                    - batch["alpha_low"][:, None])
                 * batch["log_rho_width"][:, None] * jnp.logaddexp(0.0, z))
-    if bias_model == "manticore_stdp":
-        if density_mode != "log_rho":
-            log_rho = jnp.log(jnp.clip(1.0 + density, a_min=1.0e-6))
-        else:
-            log_rho = density
-        return (
-            -jnp.logaddexp(
-                0.0,
-                ((batch["stdp_gamma_t"][:, None] - log_rho[None, :])
-                 / batch["stdp_gamma_s"][:, None]))
-            + batch["stdp_alpha"][:, None] * log_rho[None, :]
-            - batch["stdp_beta"][:, None] * jnp.logaddexp(
-                0.0,
-                batch["stdp_beta"][:, None]
-                * (log_rho[None, :] - batch["stdp_beta0"][:, None])))
     raise ValueError(f"unsupported bias model: {bias_model}")
 
 
@@ -775,8 +751,7 @@ def main() -> None:
                    help="Number of posterior samples per JIT-compiled GPU batch.")
     p.add_argument("--seed", type=int, default=20260506)
     p.add_argument("--bias-model",
-                   choices=["auto", "unity", "linear", "double_powerlaw",
-                            "manticore_stdp"],
+                   choices=["auto", "unity", "linear", "double_powerlaw"],
                    default="auto")
     p.add_argument("--sn-selection-mag-error", type=float, default=0.13486865)
     p.add_argument("--max-voxels", type=int, default=None,

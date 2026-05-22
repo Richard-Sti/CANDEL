@@ -113,19 +113,6 @@ class BaseRedshift2Real(ABC):
             ]
             self._bias_param_names = [
                 "alpha_low", "alpha_high", "log_rho_t", "log_rho_width"]
-        elif which_bias == "manticore_stdp":
-            self._bias_interp = LOSInterpolator(
-                los_r, np.log(los_density), r0_decay_scale=r0_decay_scale)
-            self._bias_params = [
-                np.asarray(calibration_samples["stdp_gamma_t"]),
-                np.asarray(calibration_samples["stdp_gamma_s"]),
-                np.asarray(calibration_samples["stdp_alpha"]),
-                np.asarray(calibration_samples["stdp_beta"]),
-                np.asarray(calibration_samples["stdp_beta0"]),
-            ]
-            self._bias_param_names = [
-                "stdp_gamma_t", "stdp_gamma_s", "stdp_alpha",
-                "stdp_beta", "stdp_beta0"]
         else:
             raise ValueError(f"Unknown bias model: {which_bias}")
 

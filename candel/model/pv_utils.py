@@ -39,15 +39,12 @@ GALAXY_BIAS_REQUIRED_PRIORS = {
     "linear_from_beta_stochastic": frozenset(("delta_b1",)),
     "double_powerlaw": frozenset(
         ("alpha_low", "alpha_high_frac", "log_rho_t", "log_rho_width")),
-    "manticore_stdp": frozenset(
-        ("stdp_gamma_t", "stdp_gamma_s", "stdp_alpha",
-         "stdp_beta", "stdp_beta0")),
     "quadratic": frozenset(("b1", "b2")),
     "cubic": frozenset(("b1", "b2", "b3")),
 }
 GALAXY_BIAS_MODELS = tuple(GALAXY_BIAS_REQUIRED_PRIORS)
 GALAXY_BIAS_LOG_RHO_MODELS = frozenset(
-    ("powerlaw", "double_powerlaw", "manticore_stdp"))
+    ("powerlaw", "double_powerlaw"))
 GALAXY_BIAS_LINEAR_DELTA_MODELS = frozenset(
     ("unity", "linear", "linear_from_beta", "linear_from_beta_stochastic"))
 GALAXY_BIAS_PRIOR_DEFAULTS = {
@@ -59,11 +56,6 @@ GALAXY_BIAS_PRIOR_DEFAULTS = {
     "alpha_low": 1.0,
     "log_rho_t": 0.0,
     "log_rho_width": 1.0,
-    "stdp_gamma_t": -1.0,
-    "stdp_gamma_s": 0.5,
-    "stdp_alpha": 1.0,
-    "stdp_beta": 0.7,
-    "stdp_beta0": 1.0,
 }
 
 _R_ICRS_TO_GAL = jnp.array([
@@ -563,15 +555,6 @@ def sample_galaxy_bias(priors, galaxy_bias, shared_params=None, **kwargs):
         log_rho_width = rsample(
             "log_rho_width", priors["log_rho_width"], shared_params)
         bias_params = [alpha_low, alpha_high, log_rho_t, log_rho_width]
-    elif galaxy_bias == "manticore_stdp":
-        gamma_t = rsample(
-            "stdp_gamma_t", priors["stdp_gamma_t"], shared_params)
-        gamma_s = rsample(
-            "stdp_gamma_s", priors["stdp_gamma_s"], shared_params)
-        alpha = rsample("stdp_alpha", priors["stdp_alpha"], shared_params)
-        beta = rsample("stdp_beta", priors["stdp_beta"], shared_params)
-        beta0 = rsample("stdp_beta0", priors["stdp_beta0"], shared_params)
-        bias_params = [gamma_t, gamma_s, alpha, beta, beta0]
     elif galaxy_bias == "quadratic":
         b1 = rsample("b1", priors["b1"], shared_params)
         b2 = rsample("b2", priors["b2"], shared_params)
@@ -606,11 +589,6 @@ def lp_galaxy_bias(delta, log_rho, bias_params, galaxy_bias,
         lp = (alpha_low * log_x
               + ((alpha_high - alpha_low) * log_rho_width
                  * jnp.logaddexp(0.0, z)))
-    elif galaxy_bias == "manticore_stdp":
-        gamma_t, gamma_s, alpha, beta, beta0 = bias_params
-        lp = (-jnp.logaddexp(0.0, (gamma_t - log_rho) / gamma_s)
-              + alpha * log_rho
-              - beta * jnp.logaddexp(0.0, beta * (log_rho - beta0)))
     elif galaxy_bias in GALAXY_BIAS_LINEAR_DELTA_MODELS:
         lp = jnp.log(smoothclip_nr(1 + bias_params[0] * delta, tau=0.1))
     elif galaxy_bias == "quadratic":

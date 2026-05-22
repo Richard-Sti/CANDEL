@@ -780,12 +780,6 @@ def _vfo_datasets():
             "pv_model/density_3d_subsample_fraction": 0.1,
             "model/priors/beta": _delta(1.0),
         },
-        {
-            "pv_model/kind": f"precomputed_los_{VFO_MANTICORE_LOS}",
-            "pv_model/galaxy_bias": "manticore_stdp",
-            "pv_model/density_3d_subsample_fraction": 0.1,
-            "model/priors/beta": _delta(1.0),
-        },
     ]
     manticore_linear_models = [
         {
@@ -1328,7 +1322,7 @@ TASK_SPECS = {
             "io/root_output": VFO_ROOT,
         },
         "datasets": _vfo_datasets(),
-        "expected_tasks": 80,
+        "expected_tasks": 74,
     },
     "VFO_single": {
         "description": (

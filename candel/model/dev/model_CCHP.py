@@ -531,14 +531,6 @@ class BaseCCHPModel(ABC):
             replace_prior_with_delta(config, "log_rho_t", 0.0, verbose=False)
             replace_prior_with_delta(
                 config, "log_rho_width", 1.0, verbose=False)
-            replace_prior_with_delta(
-                config, "stdp_gamma_t", -1.0, verbose=False)
-            replace_prior_with_delta(
-                config, "stdp_gamma_s", 0.5, verbose=False)
-            replace_prior_with_delta(
-                config, "stdp_alpha", 1.0, verbose=False)
-            replace_prior_with_delta(config, "stdp_beta", 0.7, verbose=False)
-            replace_prior_with_delta(config, "stdp_beta0", 1.0, verbose=False)
         which_sel = get_nested(config, "model/which_selection", None)
         if which_sel not in ("SN_magnitude", "CSP"):
             replace_prior_with_delta(config, "M_B", -18.5, verbose=False)
