@@ -71,9 +71,11 @@ nOm = 1000
 [model]
 marginalize_eta = true
 
-# Optional Gaussian smoothing scale in Mpc/h for reconstruction fields.
+# Optional Gaussian smoothing scale in Mpc/h for reconstruction density fields.
 # Applies consistently to LOS products and 3D field caches; 0 disables it.
 field_3d_smoothing_scale = 0.0
+# Optional velocity-field smoothing. Disabled unless explicitly set non-zero.
+velocity_3d_smoothing_scale = 0.0
 
 # CSP selection integral grid settings (CSPModel)
 # LSQ data ranges: st=[0.50, 1.22], BV=[-0.05, 0.47], zcmb=[0.021, 0.126]
