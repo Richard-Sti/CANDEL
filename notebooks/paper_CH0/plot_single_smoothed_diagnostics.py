@@ -22,14 +22,23 @@ from scipy.stats import gaussian_kde, pearsonr, spearmanr  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 TASK_FILE = ROOT / "scripts" / "runs" / "tasks_CH0_single_smoothed.txt"
+BASELINE_TASK_FILE = ROOT / "scripts" / "runs" / "tasks_CH0_single.txt"
 DEFAULT_OUTDIR = Path(__file__).resolve().parent / "ch0_single_smoothed_plots"
 FIGURE_DPI = 500
 MAX_KDE_SAMPLES = 40_000
 H0_LABEL = (
     r"$H_0~[\mathrm{km}\,\mathrm{s}^{-1}\,\mathrm{Mpc}^{-1}]$"
 )
+BIAS_PARAMS = ("alpha_low", "alpha_high", "log_rho_t", "log_rho_width")
+BIAS_LABELS = {
+    "alpha_low": r"$\alpha_\mathrm{low}$",
+    "alpha_high": r"$\alpha_\mathrm{high}$",
+    "log_rho_t": r"$\log\rho_t$",
+    "log_rho_width": r"$\log\Delta\rho$",
+}
 FIELD_COLOURS = ["#ef476f", "#473198", "#a8c256", "#5adbff", "#fe9000"]
 SCALE_COLOURS = {
+    0.0: "#4d4d4d",
     4.0: "#87193d",
     8.0: "#1e42b9",
     16.0: "#168039",
@@ -49,6 +58,13 @@ def parse_args():
     parser.add_argument(
         "--task-file", type=Path, default=TASK_FILE,
         help="Task file listing CH0 smoothed single-field configs.")
+    parser.add_argument(
+        "--baseline-task-file", type=Path, default=BASELINE_TASK_FILE,
+        help=("Task file from which to add the unsmoothed COLA/CIC "
+              "double-power-law density-field baseline."))
+    parser.add_argument(
+        "--no-unsmoothed-baseline", action="store_true",
+        help="Do not add the unsmoothed density-field baseline.")
     parser.add_argument(
         "--output-dir", type=Path, default=DEFAULT_OUTDIR,
         help="Directory for plots and summaries.")
@@ -110,8 +126,8 @@ def task_specs(task_file):
             with config_path.open("rb") as config_handle:
                 config = tomllib.load(config_handle)
             which_bias = get_nested(config, ("model", "which_bias"))
-            smooth_R = float(get_nested(
-                config, ("model", "field_3d_smoothing_scale")))
+            smooth_R = float(get_nested_default(
+                config, ("model", "field_3d_smoothing_scale"), 0.0))
             mas = get_nested_default(
                 config, ("io", "reconstruction_main",
                          "ManticoreLocalCOLA", "which_MAS"), "")
@@ -135,6 +151,15 @@ def task_specs(task_file):
         raise ValueError(f"No task configs found in `{task_file}`.")
     return sorted(specs, key=lambda spec: (
         family_sort_key(spec), spec["field"], spec["task"]))
+
+
+def unsmoothed_density_baseline_specs(task_file):
+    return [
+        spec for spec in task_specs(task_file)
+        if spec["which_bias"] == "double_powerlaw"
+        and spec["reconstruction_label"] == "COLA/CIC"
+        and spec["smooth_R"] == 0.0
+    ]
 
 
 def finite_samples(handle, name, path):
@@ -166,6 +191,31 @@ def h0_summary(samples):
     }
 
 
+def sample_summary(samples, prefix):
+    q16, q50, q84 = np.percentile(samples, [16.0, 50.0, 84.0])
+    return {
+        f"{prefix}_mean": float(np.mean(samples)),
+        f"{prefix}_std": float(np.std(samples, ddof=1)),
+        f"{prefix}_q16": float(q16),
+        f"{prefix}_q50": float(q50),
+        f"{prefix}_q84": float(q84),
+    }
+
+
+def bias_param_summaries(handle, path):
+    summaries = {}
+    for name in BIAS_PARAMS:
+        dataset = f"samples/{name}"
+        if dataset not in handle:
+            continue
+        samples = np.asarray(handle[dataset], dtype=float).reshape(-1)
+        samples = samples[np.isfinite(samples)]
+        if samples.size == 0:
+            raise ValueError(f"`{path}` has no finite `{name}` samples.")
+        summaries.update(sample_summary(samples, name))
+    return summaries
+
+
 def read_row(spec):
     path = existing_source_path(spec)
     if not path.is_file():
@@ -187,6 +237,7 @@ def read_row(spec):
                 handle, "gof/err_lnZ_laplace", path),
             "BIC": bic,
             "lnZ_bic": -0.5 * bic,
+            **bias_param_summaries(handle, path),
         }
 
 
@@ -203,8 +254,11 @@ def existing_source_path(spec):
     return path
 
 
-def load_rows(task_file, allow_missing):
-    rows = [read_row(spec) for spec in task_specs(task_file)]
+def load_rows(task_file, baseline_task_file, allow_missing):
+    specs = task_specs(task_file)
+    if baseline_task_file is not None:
+        specs = unsmoothed_density_baseline_specs(baseline_task_file) + specs
+    rows = [read_row(spec) for spec in specs]
     missing = [row for row in rows if row["status"] != "complete"]
     if missing and not allow_missing:
         preview = "\n".join(row["source"] for row in missing[:8])
@@ -256,6 +310,11 @@ def grouped_by_scale(rows):
                       key=lambda row: row["field"])
         for scale in scales
     }
+
+
+def available_bias_params(rows):
+    return [name for name in BIAS_PARAMS if any(f"{name}_q50" in row
+                                                for row in rows)]
 
 
 def add_reference_deltas(rows):
@@ -321,7 +380,21 @@ def field_norm(rows):
 
 
 def scale_label(scale):
+    if float(scale) == 0.0:
+        return "unsmoothed"
     return rf"$R={scale:g}\,h^{{-1}}\mathrm{{Mpc}}$"
+
+
+def scale_text(scale):
+    if float(scale) == 0.0:
+        return "none"
+    return f"{scale:g}"
+
+
+def reference_text(scale):
+    if float(scale) == 0.0:
+        return "unsmoothed double-power-law COLA/CIC density field"
+    return f"double-power-law COLA/CIC density smoothing R={scale:g} Mpc/h"
 
 
 def plot_category_label(row):
@@ -334,7 +407,7 @@ def plot_category_label(row):
 
 def tick_category_label(row):
     if row["which_bias"] == "double_powerlaw":
-        return f"R={row['smooth_R']:g}"
+        return scale_text(row["smooth_R"])
     if row["which_bias"] == "uniform":
         return "uniform\n" + row["reconstruction_label"]
     return row["family"]
@@ -375,6 +448,7 @@ def matched_fields_by_scale(grouped):
 def plot_matched_field_impact(rows, out_pdf):
     grouped = grouped_by_scale(rows)
     scales = np.asarray(sorted(grouped), dtype=float)
+    positions = np.arange(len(scales), dtype=float)
     fields = matched_fields_by_scale(grouped)
     cmap = field_cmap()
     norm = field_norm(rows)
@@ -396,12 +470,13 @@ def plot_matched_field_impact(rows, out_pdf):
             h0 = np.asarray([row["H0_q50"] for row in field_rows])
             delta = np.asarray([
                 row["delta_H0_q50_vs_reference"] for row in field_rows])
-            ax_h0.plot(scales, h0, color=colour, lw=0.65, alpha=0.48)
+            ax_h0.plot(positions, h0, color=colour, lw=0.65, alpha=0.48)
             ax_h0.scatter(
-                scales, h0, color=colour, s=11, alpha=0.80, zorder=3)
-            ax_delta.plot(scales, delta, color=colour, lw=0.65, alpha=0.48)
+                positions, h0, color=colour, s=11, alpha=0.80, zorder=3)
+            ax_delta.plot(
+                positions, delta, color=colour, lw=0.65, alpha=0.48)
             ax_delta.scatter(
-                scales, delta, color=colour, s=11, alpha=0.80, zorder=3)
+                positions, delta, color=colour, s=11, alpha=0.80, zorder=3)
 
         mean_h0 = []
         std_h0 = []
@@ -419,25 +494,25 @@ def plot_matched_field_impact(rows, out_pdf):
             std_delta.append(np.std(delta, ddof=1))
 
         ax_h0.errorbar(
-            scales, mean_h0, yerr=std_h0, color="black", marker="o",
+            positions, mean_h0, yerr=std_h0, color="black", marker="o",
             ms=4.1, lw=1.25, capsize=2.4,
             label="field mean\n(error bar: field-to-field std)",
             zorder=5)
         ax_delta.errorbar(
-            scales, mean_delta, yerr=std_delta, color="black", marker="o",
+            positions, mean_delta, yerr=std_delta, color="black", marker="o",
             ms=4.1, lw=1.25, capsize=2.4,
             label="field mean\n(error bar: field-to-field std)",
             zorder=5)
         ax_delta.axhline(0.0, color="0.35", lw=0.75, ls="--")
         ax_h0.set_ylabel(H0_LABEL)
         ax_delta.set_ylabel(rf"$\Delta H_0$ vs {scale_label(ref)}")
-        ax_delta.set_xlabel(r"Field smoothing scale [$h^{-1}\mathrm{Mpc}$]")
+        ax_delta.set_xlabel(
+            r"Density-field smoothing scale [$h^{-1}\mathrm{Mpc}$]")
         ax_h0.set_title("Matched Manticore realisations", loc="left")
         ax_h0.legend(loc="upper right", frameon=False, handlelength=1.7)
         for ax in axes:
-            ax.set_xscale("log", base=2)
-            ax.set_xticks(scales)
-            ax.set_xticklabels([f"{scale:g}" for scale in scales])
+            ax.set_xticks(positions)
+            ax.set_xticklabels([scale_text(scale) for scale in scales])
         sm = plt.cm.ScalarMappable(norm=norm, cmap=cmap)
         sm.set_array([])
         cbar = fig.colorbar(sm, ax=axes, pad=0.015, fraction=0.055)
@@ -489,9 +564,9 @@ def plot_broad_shift(rows, out_pdf):
                 i, q50, yerr=[[q50 - q16], [q84 - q50]],
                 fmt="o", color="black", ms=3.7, capsize=2.4, zorder=5)
         ax_violin.set_xticks(np.arange(len(scales)))
-        ax_violin.set_xticklabels([f"{scale:g}" for scale in scales])
+        ax_violin.set_xticklabels([scale_text(scale) for scale in scales])
         ax_violin.set_xlabel(
-            r"Field smoothing scale [$h^{-1}\mathrm{Mpc}$]")
+            r"Density-field smoothing scale [$h^{-1}\mathrm{Mpc}$]")
         ax_violin.set_ylabel(H0_LABEL)
         ax_violin.set_title("Field-median distribution", loc="left")
 
@@ -576,6 +651,196 @@ def plot_h0_vs_harmonic_lnz(rows, out_pdf):
                 ax.set_ylabel(H0_LABEL)
             else:
                 ax.tick_params(labelleft=False)
+        return save_pdf_png(fig, out_pdf)
+
+
+def plot_lnz_distributions(rows, out_pdf):
+    grouped = grouped_by_scale(rows)
+    scales = np.asarray(sorted(grouped), dtype=float)
+    positions = np.arange(len(scales), dtype=float)
+    fields = matched_fields_by_scale(grouped)
+    cmap = field_cmap()
+    norm = field_norm(rows)
+
+    with plt.style.context(["science", "no-latex"]):
+        set_paper_rc()
+        fig, axes = plt.subplots(
+            2, 1, figsize=(4.9, 4.15), sharex=True,
+            constrained_layout=True, height_ratios=(1.0, 1.0))
+        ax_lnz, ax_delta = axes
+
+        values = [
+            np.asarray([row["lnZ_harmonic"] for row in grouped[scale]],
+                       dtype=float)
+            for scale in scales
+        ]
+        parts = ax_lnz.violinplot(
+            values, positions=positions, widths=0.72, showmeans=False,
+            showextrema=False, showmedians=False)
+        for body, scale in zip(parts["bodies"], scales):
+            body.set_facecolor(SCALE_COLOURS.get(float(scale), "0.5"))
+            body.set_edgecolor("none")
+            body.set_alpha(0.34)
+        for i, (scale, vals) in enumerate(zip(scales, values)):
+            colour = SCALE_COLOURS.get(float(scale), "0.5")
+            jitter = np.linspace(-0.17, 0.17, len(vals))
+            ax_lnz.scatter(
+                np.full(len(vals), positions[i]) + jitter, vals,
+                s=6.5, color=colour, alpha=0.38, edgecolor="none")
+            ax_lnz.errorbar(
+                positions[i], np.mean(vals), yerr=np.std(vals, ddof=1),
+                fmt="o", color="black", ms=3.5, capsize=2.2, zorder=5,
+                label=("field mean\n(error bar: field-to-field std)"
+                       if i == 0 else None))
+
+        for field in fields:
+            field_rows = [
+                next(row for row in grouped[scale] if row["field"] == field)
+                for scale in scales
+            ]
+            delta = np.asarray([
+                row["delta_lnZ_harmonic_vs_reference"]
+                for row in field_rows
+            ], dtype=float)
+            colour = cmap(norm(field))
+            ax_delta.plot(
+                positions, delta, color=colour, lw=0.6, alpha=0.40)
+            ax_delta.scatter(
+                positions, delta, color=colour, s=8.0, alpha=0.68,
+                edgecolor="none", zorder=3)
+
+        mean_delta = []
+        std_delta = []
+        for scale in scales:
+            vals = np.asarray([
+                row["delta_lnZ_harmonic_vs_reference"]
+                for row in grouped[scale]
+            ], dtype=float)
+            mean_delta.append(np.mean(vals))
+            std_delta.append(np.std(vals, ddof=1))
+        ax_delta.errorbar(
+            positions, mean_delta, yerr=std_delta, color="black",
+            marker="o", ms=3.7, lw=1.15, capsize=2.2, zorder=5)
+        ax_delta.axhline(0.0, color="0.35", lw=0.75, ls="--")
+
+        ax_lnz.set_ylabel(r"harmonic $\ln Z$")
+        ax_lnz.set_title("Evidence distribution", loc="left")
+        ax_lnz.legend(loc="best", frameon=False, handlelength=1.6)
+        ax_delta.set_ylabel(r"$\Delta$ harmonic $\ln Z$")
+        ax_delta.set_xlabel(
+            r"Density-field smoothing scale [$h^{-1}\mathrm{Mpc}$]")
+        ax_delta.set_xticks(positions)
+        ax_delta.set_xticklabels([scale_text(scale) for scale in scales])
+        return save_pdf_png(fig, out_pdf)
+
+
+def plot_bias_param_matched_fields(rows, out_pdf):
+    params = available_bias_params(rows)
+    if not params:
+        return []
+    grouped = grouped_by_scale(rows)
+    scales = np.asarray(sorted(grouped), dtype=float)
+    positions = np.arange(len(scales), dtype=float)
+    fields = matched_fields_by_scale(grouped)
+    cmap = field_cmap()
+    norm = field_norm(rows)
+
+    with plt.style.context(["science", "no-latex"]):
+        set_paper_rc()
+        fig, axes = plt.subplots(
+            len(params), 1, figsize=(4.9, 1.75 * len(params)),
+            sharex=True, constrained_layout=True)
+        axes = np.atleast_1d(axes)
+
+        for ax, param in zip(axes, params):
+            for field in fields:
+                field_rows = [
+                    next(row for row in grouped[scale]
+                         if row["field"] == field)
+                    for scale in scales
+                ]
+                values = np.asarray([row[f"{param}_q50"]
+                                     for row in field_rows], dtype=float)
+                colour = cmap(norm(field))
+                ax.plot(positions, values, color=colour, lw=0.6, alpha=0.40)
+                ax.scatter(
+                    positions, values, color=colour, s=8.0, alpha=0.68,
+                    edgecolor="none", zorder=3)
+
+            means = []
+            stds = []
+            for scale in scales:
+                vals = np.asarray([
+                    row[f"{param}_q50"] for row in grouped[scale]
+                ], dtype=float)
+                means.append(np.mean(vals))
+                stds.append(np.std(vals, ddof=1))
+            ax.errorbar(
+                positions, means, yerr=stds, color="black", marker="o",
+                ms=3.7, lw=1.15, capsize=2.2,
+                label="field mean\n(error bar: field-to-field std)",
+                zorder=5)
+            ax.set_ylabel(BIAS_LABELS.get(param, param))
+            ax.set_title(BIAS_LABELS.get(param, param), loc="left")
+
+        axes[0].legend(loc="best", frameon=False, handlelength=1.6)
+        axes[-1].set_xticks(positions)
+        axes[-1].set_xticklabels([scale_text(scale) for scale in scales])
+        axes[-1].set_xlabel(
+            r"Density-field smoothing scale [$h^{-1}\mathrm{Mpc}$]")
+        sm = plt.cm.ScalarMappable(norm=norm, cmap=cmap)
+        sm.set_array([])
+        cbar = fig.colorbar(sm, ax=axes, pad=0.015, fraction=0.040)
+        cbar.set_label("Manticore field")
+        cbar.ax.tick_params(labelsize=7.0)
+        return save_pdf_png(fig, out_pdf)
+
+
+def plot_bias_param_distributions(rows, out_pdf):
+    params = available_bias_params(rows)
+    if not params:
+        return []
+    grouped = grouped_by_scale(rows)
+    scales = sorted(grouped)
+    positions = np.arange(len(scales), dtype=float)
+
+    with plt.style.context(["science", "no-latex"]):
+        set_paper_rc()
+        fig, axes = plt.subplots(
+            len(params), 1, figsize=(4.9, 1.65 * len(params)),
+            sharex=True, constrained_layout=True)
+        axes = np.atleast_1d(axes)
+
+        for ax, param in zip(axes, params):
+            values = [
+                np.asarray([row[f"{param}_q50"] for row in grouped[scale]],
+                           dtype=float)
+                for scale in scales
+            ]
+            parts = ax.violinplot(
+                values, positions=positions, widths=0.72,
+                showmeans=False, showextrema=False, showmedians=False)
+            for body, scale in zip(parts["bodies"], scales):
+                body.set_facecolor(SCALE_COLOURS.get(float(scale), "0.5"))
+                body.set_edgecolor("none")
+                body.set_alpha(0.35)
+            for i, (scale, vals) in enumerate(zip(scales, values)):
+                colour = SCALE_COLOURS.get(float(scale), "0.5")
+                jitter = np.linspace(-0.17, 0.17, len(vals))
+                ax.scatter(
+                    np.full(len(vals), positions[i]) + jitter, vals,
+                    s=6.5, color=colour, alpha=0.35, edgecolor="none")
+                q16, q50, q84 = np.percentile(vals, [16.0, 50.0, 84.0])
+                ax.errorbar(
+                    positions[i], q50, yerr=[[q50 - q16], [q84 - q50]],
+                    fmt="o", color="black", ms=3.4, capsize=2.1, zorder=5)
+            ax.set_ylabel(BIAS_LABELS.get(param, param))
+            ax.set_title(BIAS_LABELS.get(param, param), loc="left")
+
+        axes[-1].set_xticks(positions)
+        axes[-1].set_xticklabels([scale_text(scale) for scale in scales])
+        axes[-1].set_xlabel(
+            r"Density-field smoothing scale [$h^{-1}\mathrm{Mpc}$]")
         return save_pdf_png(fig, out_pdf)
 
 
@@ -778,6 +1043,11 @@ def write_rows_csv(rows, path):
         "delta_lnZ_harmonic_vs_reference", "lnZ_laplace",
         "err_lnZ_laplace", "BIC", "lnZ_bic", "source", "config",
     ]
+    for name in BIAS_PARAMS:
+        fieldnames.extend([
+            f"{name}_mean", f"{name}_std", f"{name}_q16",
+            f"{name}_q50", f"{name}_q84",
+        ])
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="") as handle:
         writer = csv.DictWriter(
@@ -801,19 +1071,18 @@ def write_summary(rows, missing, path):
         f"Complete outputs: {len(rows)}.",
         f"Missing outputs: {len(missing)}.",
         "Result families: "
-        f"{len(smoothed)} double-power-law COLA/CIC smoothing runs; "
+        f"{len(smoothed)} double-power-law COLA/CIC density-smoothing runs; "
         f"{sum(len(group) for _, group in uniform_groups)} "
         "uniform-bias/density-field control runs.",
-        "Reference model for matched shifts: "
-        f"double-power-law COLA/CIC R={ref:g} Mpc/h.",
+        f"Reference model for matched shifts: {reference_text(ref)}.",
         "",
-        "## Double-power-law COLA/CIC smoothing sequence",
+        "## Double-power-law COLA/CIC density-smoothing sequence",
         "",
-        "| smoothing R [Mpc/h] | fields | mean field H0 | std field H0 | "
+        "| density smoothing R [Mpc/h] | fields | mean field H0 | std field H0 | "
         "median field H0 | stacked H0 mean | stacked H0 std | "
         "mean delta H0 | std delta H0 | median harmonic lnZ | "
         "best harmonic lnZ field |",
-        "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | "
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | "
         "---: | ---: |",
     ]
     for scale, group in grouped.items():
@@ -826,7 +1095,7 @@ def write_summary(rows, missing, path):
         best = max(group, key=lambda row: row["lnZ_harmonic"])
         lnz = np.asarray([row["lnZ_harmonic"] for row in group], dtype=float)
         lines.append(
-            f"| {scale:g} | {len(group)} | {np.mean(h0):.3f} | "
+            f"| {scale_text(scale)} | {len(group)} | {np.mean(h0):.3f} | "
             f"{np.std(h0, ddof=1):.3f} | {np.median(h0):.3f} | "
             f"{summary['H0_mean']:.3f} | {summary['H0_std']:.3f} | "
             f"{np.mean(deltas):+.3f} | {np.std(deltas, ddof=1):.3f} | "
@@ -879,7 +1148,10 @@ def write_summary(rows, missing, path):
 def main():
     args = parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    rows, missing = load_rows(args.task_file, args.allow_missing)
+    baseline_task_file = (
+        None if args.no_unsmoothed_baseline else args.baseline_task_file)
+    rows, missing = load_rows(
+        args.task_file, baseline_task_file, args.allow_missing)
     smoothed = smoothed_result_rows(rows)
 
     csv_path = args.output_dir / "ch0_single_smoothed_summary.csv"
@@ -887,6 +1159,12 @@ def main():
     impact_pdf = args.output_dir / "ch0_single_smoothed_h0_matched_fields.pdf"
     broad_pdf = args.output_dir / "ch0_single_smoothed_h0_distributions.pdf"
     evidence_pdf = args.output_dir / "ch0_single_smoothed_h0_vs_harmonic_lnz.pdf"
+    evidence_dist_pdf = (
+        args.output_dir / "ch0_single_smoothed_lnz_distributions.pdf")
+    bias_matched_pdf = (
+        args.output_dir / "ch0_single_smoothed_bias_params_matched_fields.pdf")
+    bias_dist_pdf = (
+        args.output_dir / "ch0_single_smoothed_bias_params_distributions.pdf")
     all_broad_pdf = (
         args.output_dir / "ch0_single_smoothed_all_h0_distributions.pdf")
     all_evidence_pdf = (
@@ -902,6 +1180,9 @@ def main():
         *plot_matched_field_impact(smoothed, impact_pdf),
         *plot_broad_shift(smoothed, broad_pdf),
         *plot_h0_vs_harmonic_lnz(smoothed, evidence_pdf),
+        *plot_lnz_distributions(smoothed, evidence_dist_pdf),
+        *plot_bias_param_matched_fields(smoothed, bias_matched_pdf),
+        *plot_bias_param_distributions(smoothed, bias_dist_pdf),
         *plot_all_variant_distributions(rows, all_broad_pdf),
         *plot_all_h0_vs_harmonic_lnz(rows, all_evidence_pdf),
         *plot_uniform_control_shift(rows, uniform_pdf),
