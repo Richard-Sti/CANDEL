@@ -172,6 +172,14 @@ def _get_sample_site_names(model, model_kwargs, seed=42):
             if v["type"] == "sample" and not v.get("is_observed", False)}
 
 
+def _select_sample_sites(samples, site_names):
+    """Return only NumPyro sample sites, dropping deterministic traces."""
+    if site_names is None:
+        return dict(samples)
+    site_names = set(site_names)
+    return {k: v for k, v in samples.items() if k in site_names}
+
+
 def _setup_dense_mass(kwargs, init_params, model, model_kwargs,
                       site_names=None):
     """Resolve sample-site names and delegate to :func:`_parse_dense_mass`.
@@ -534,20 +542,26 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
 
     compute_log_density, compute_evidence = _post_sampling_flags(kwargs, model)
     _print_post_sampling_plan(compute_log_density, compute_evidence)
+    if (compute_log_density or compute_evidence) and site_names is None:
+        site_names = _get_sample_site_names(model, model_kwargs,
+                                            seed=kwargs["seed"])
+    samples_for_log_density = _select_sample_sites(samples, site_names)
 
     if compute_log_density:
-        log_density = get_log_density(samples, model, model_kwargs)
+        log_density = get_log_density(
+            samples_for_log_density, model, model_kwargs)
     else:
         log_density = None
 
     if return_original_samples:
         original_samples = dict(samples)
 
+    samples_for_evidence = drop_deterministic(samples_for_log_density.copy())
     samples = drop_deterministic(samples)
 
     if compute_evidence:
         ndata = len(model_kwargs["data"])
-        gof = _compute_gof(samples, log_density, ndata, kwargs)
+        gof = _compute_gof(samples_for_evidence, log_density, ndata, kwargs)
     else:
         gof = None
 
@@ -751,17 +765,23 @@ def run_H0_inference(model, model_kwargs=None, print_summary=True,
     compute_log_density, compute_evidence = _post_sampling_flags(
         kwargs, model, require_config_evidence=True)
     _print_post_sampling_plan(compute_log_density, compute_evidence)
+    if (compute_log_density or compute_evidence) and site_names is None:
+        site_names = _get_sample_site_names(model, model_kwargs,
+                                            seed=kwargs["seed"])
+    samples_for_log_density = _select_sample_sites(samples, site_names)
 
     if compute_log_density:
-        log_density = get_log_density(samples, model, model_kwargs)
+        log_density = get_log_density(
+            samples_for_log_density, model, model_kwargs)
     else:
         log_density = None
 
+    samples_for_evidence = drop_deterministic(samples_for_log_density.copy())
     samples = drop_deterministic(samples)
 
     if compute_evidence:
         ndata = _h0_ndata(model, model_kwargs)
-        gof = _compute_gof(samples, log_density, ndata, kwargs)
+        gof = _compute_gof(samples_for_evidence, log_density, ndata, kwargs)
     else:
         gof = None
 
@@ -904,6 +924,12 @@ def postprocess_samples(samples):
     model_prefixes.add("")  # Also handle unprefixed keys
 
     for model_prefix in model_prefixes:
+        alpha_low_key = f"{model_prefix}alpha_low"
+        alpha_high_frac_key = f"{model_prefix}alpha_high_frac"
+        if alpha_low_key in samples and alpha_high_frac_key in samples:
+            samples[f"{model_prefix}alpha_high"] = (
+                samples[alpha_low_key] * samples.pop(alpha_high_frac_key))
+
         for prefix in ["Vext_rad", "Vext_radmag", "Vext",
                        "zeropoint_dipole"]:
             full_prefix = f"{model_prefix}{prefix}"
