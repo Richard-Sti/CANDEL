@@ -34,6 +34,8 @@ SCALE_COLOURS = {
     8.0: "#1e42b9",
     16.0: "#168039",
     32.0: "#fe9000",
+    64.0: "#d42a29",
+    128.0: "#008b8b",
 }
 VARIANT_COLOURS = {
     "uniform_cola_cic": "#7d4e93",
@@ -165,7 +167,7 @@ def h0_summary(samples):
 
 
 def read_row(spec):
-    path = Path(spec["source"])
+    path = existing_source_path(spec)
     if not path.is_file():
         return {**spec, "status": "missing"}
     with h5py.File(path, "r") as handle:
@@ -174,6 +176,7 @@ def read_row(spec):
         return {
             **spec,
             "status": "complete",
+            "source": str(path),
             "samples": h0,
             **h0_summary(h0),
             "lnZ_harmonic": read_scalar(handle, "gof/lnZ_harmonic", path),
@@ -185,6 +188,19 @@ def read_row(spec):
             "BIC": bic,
             "lnZ_bic": -0.5 * bic,
         }
+
+
+def existing_source_path(spec):
+    path = Path(spec["source"])
+    if path.is_file():
+        return path
+    if spec["which_bias"] != "double_powerlaw":
+        return path
+    legacy_name = path.name.replace("CH0_rhoSmoothR", "CH0_smoothR", 1)
+    legacy_path = path.with_name(legacy_name)
+    if legacy_path.is_file():
+        return legacy_path
+    return path
 
 
 def load_rows(task_file, allow_missing):
@@ -404,11 +420,13 @@ def plot_matched_field_impact(rows, out_pdf):
 
         ax_h0.errorbar(
             scales, mean_h0, yerr=std_h0, color="black", marker="o",
-            ms=4.1, lw=1.25, capsize=2.4, label="field mean +- std",
+            ms=4.1, lw=1.25, capsize=2.4,
+            label="field mean\n(error bar: field-to-field std)",
             zorder=5)
         ax_delta.errorbar(
             scales, mean_delta, yerr=std_delta, color="black", marker="o",
-            ms=4.1, lw=1.25, capsize=2.4, label="field mean +- std",
+            ms=4.1, lw=1.25, capsize=2.4,
+            label="field mean\n(error bar: field-to-field std)",
             zorder=5)
         ax_delta.axhline(0.0, color="0.35", lw=0.75, ls="--")
         ax_h0.set_ylabel(H0_LABEL)
@@ -523,7 +541,8 @@ def plot_h0_vs_harmonic_lnz(rows, out_pdf):
     with plt.style.context(["science", "no-latex"]):
         set_paper_rc()
         fig, axes = plt.subplots(
-            1, len(scales), figsize=(9.2, 2.55), sharey=True,
+            1, len(scales), figsize=(2.35 * len(scales), 2.55),
+            sharey=True,
             constrained_layout=True)
         for ax, scale in zip(axes, scales):
             group = grouped[scale]
@@ -576,7 +595,7 @@ def plot_all_variant_distributions(rows, out_pdf):
     with plt.style.context(["science", "no-latex"]):
         set_paper_rc()
         fig, axes = plt.subplots(
-            1, 2, figsize=(7.6, 3.25), constrained_layout=True)
+            1, 2, figsize=(8.4, 3.25), constrained_layout=True)
         ax_violin, ax_kde = axes
 
         values = [
@@ -761,7 +780,8 @@ def write_rows_csv(rows, path):
     ]
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer = csv.DictWriter(
+            handle, fieldnames=fieldnames, lineterminator="\n")
         writer.writeheader()
         for row in rows:
             writer.writerow({name: row.get(name, "") for name in fieldnames})
