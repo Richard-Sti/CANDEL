@@ -38,7 +38,7 @@ GALAXY_BIAS_REQUIRED_PRIORS = {
     "linear_from_beta": frozenset(),
     "linear_from_beta_stochastic": frozenset(("delta_b1",)),
     "double_powerlaw": frozenset(
-        ("alpha_low", "alpha_high", "log_rho_t", "log_rho_width")),
+        ("alpha_low", "alpha_high_frac", "log_rho_t", "log_rho_width")),
     "manticore_stdp": frozenset(
         ("stdp_gamma_t", "stdp_gamma_s", "stdp_alpha",
          "stdp_beta", "stdp_beta0")),
@@ -57,7 +57,6 @@ GALAXY_BIAS_PRIOR_DEFAULTS = {
     "alpha": 1.0,
     "delta_b1": 0.0,
     "alpha_low": 1.0,
-    "alpha_high": 1.0,
     "log_rho_t": 0.0,
     "log_rho_width": 1.0,
     "stdp_gamma_t": -1.0,
@@ -550,7 +549,16 @@ def sample_galaxy_bias(priors, galaxy_bias, shared_params=None, **kwargs):
         bias_params = [b1,]
     elif galaxy_bias == "double_powerlaw":
         alpha_low = rsample("alpha_low", priors["alpha_low"], shared_params)
-        alpha_high = rsample("alpha_high", priors["alpha_high"], shared_params)
+        if "alpha_high_frac" in priors:
+            alpha_high_frac = rsample(
+                "alpha_high_frac", priors["alpha_high_frac"], shared_params)
+            alpha_high = deterministic(
+                "alpha_high_skipZ", alpha_low * alpha_high_frac)
+        else:
+            alpha_high_raw = rsample(
+                "alpha_high", priors["alpha_high"], shared_params)
+            alpha_high = deterministic(
+                "alpha_high_skipZ", jnp.minimum(alpha_high_raw, alpha_low))
         log_rho_t = rsample("log_rho_t", priors["log_rho_t"], shared_params)
         log_rho_width = rsample(
             "log_rho_width", priors["log_rho_width"], shared_params)

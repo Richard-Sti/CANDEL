@@ -958,7 +958,28 @@ class H0ModelBase(ModelBase):
         priors = config.setdefault(
             "model", {}).setdefault("priors", {})
 
+        if which_bias == "double_powerlaw":
+            alpha_high_prior = priors.get("alpha_high", {})
+            if alpha_high_prior.get("dist", None) == "delta":
+                priors.pop("alpha_high_frac", None)
+            elif "alpha_high_frac" not in priors:
+                priors["alpha_high_frac"] = {
+                    "dist": "truncated_normal",
+                    "low": 0.0,
+                    "high": 1.0,
+                    "mean": 0.5,
+                    "scale": 0.5,
+                }
+                priors.pop("alpha_high", None)
+            else:
+                priors.pop("alpha_high", None)
+
         required = GALAXY_BIAS_REQUIRED_PRIORS.get(which_bias, set())
+        if (which_bias == "double_powerlaw"
+                and priors.get("alpha_high", {}).get("dist", None)
+                == "delta"):
+            required = frozenset(
+                ("alpha_low", "alpha_high", "log_rho_t", "log_rho_width"))
 
         if use_reconstruction:
             for param in required:
