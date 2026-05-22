@@ -1192,12 +1192,14 @@ def run_nss(model, model_args=(), model_kwargs=None,
 
     if resume_path is not None:
         state, dead, rng_key, n_dead = _load_nss_checkpoint(resume_path)
+        fprint(f"Resumed from {resume_path} (n_dead={n_dead}, "
+               f"logZ={float(state.integrator.logZ):.2f})")
         # Warmup JIT with restored state
+        fprint("NSS: compiling/warming replacement step...", flush=True)
         rng_key, subkey = jax.random.split(rng_key)
         _warmup_state, _ = jax.block_until_ready(step_fn(state, subkey))
         del _warmup_state
-        fprint(f"Resumed from {resume_path} (n_dead={n_dead}, "
-               f"logZ={float(state.integrator.logZ):.2f})")
+        fprint("NSS: warmup complete; entering sampling loop", flush=True)
     else:
         # ---- Draw initial live points from prior ----
         initial_samples = sample_prior(dists, names, sizes, n_live, seed)
@@ -1230,9 +1232,11 @@ def run_nss(model, model_args=(), model_kwargs=None,
             _save_nss_checkpoint(_ckpt_path, state, [], rng_key, 0)
 
         # ---- Warmup JIT ----
+        fprint("NSS: compiling/warming replacement step...", flush=True)
         rng_key, subkey = jax.random.split(rng_key)
         _warmup_state, _ = jax.block_until_ready(step_fn(state, subkey))
         del _warmup_state
+        fprint("NSS: warmup complete; entering sampling loop", flush=True)
 
         dead = []
         n_dead = 0
