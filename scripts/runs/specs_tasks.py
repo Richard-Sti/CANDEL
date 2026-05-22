@@ -390,6 +390,33 @@ def _ch0_manticore_cola_cic_fixed_bias_datasets():
     ]
 
 
+def _ch0_manticore_swift_cola_cic_uniform_bias_datasets():
+    swift_datasets = [
+        {
+            "model/which_selection": "SN_magnitude",
+            "model/use_reconstruction": True,
+            "model/use_fiducial_Cepheid_host_PV_covariance": False,
+            "model/use_PV_covmat_scaling": False,
+            "model/weight_selection_by_covmat_Neff": False,
+            "model/use_density_dependent_sigma_v": False,
+            "io/SH0ES/reconstruction": CH0_MANTICORE_LOS,
+            "model/which_bias": "uniform",
+            "model/field_3d_smoothing_scale": 0.0,
+            "io/field_indices": field,
+        }
+        for field in range(30)
+    ]
+    cola_datasets = [
+        {
+            **dataset,
+            "model/which_bias": "uniform",
+            "model/field_3d_smoothing_scale": 0.0,
+        }
+        for dataset in _ch0_manticore_cola_cic_field_datasets()
+    ]
+    return swift_datasets + cola_datasets
+
+
 def _ch0_leaveoneout_datasets():
     return [{
         "model/which_selection": "SN_magnitude",
@@ -1001,10 +1028,14 @@ TASK_SPECS = {
             "inference/num_samples": 2000,
             "inference/save_log_likelihood_per_galaxy": True,
             "model/field_3d_smoothing_scale": [4.0, 8.0, 16.0, 32.0],
+            "model/velocity_3d_smoothing_scale": 0.0,
             **_with_root(f"{CH0_PAPER_ROOT}/single_fields_smoothed"),
         },
-        "datasets": _ch0_manticore_cola_cic_field_datasets(),
-        "expected_tasks": 320,
+        "datasets": (
+            _ch0_manticore_cola_cic_field_datasets()
+            + _ch0_manticore_swift_cola_cic_uniform_bias_datasets()
+        ),
+        "expected_tasks": 430,
     },
     "CH0_single_fixed_bias": {
         "description": (

@@ -257,7 +257,12 @@ def generate_dynamic_tag(config, base_tag="default"):
     field_smoothing = get_nested(
         config, "model/field_3d_smoothing_scale", None)
     if _is_active(field_smoothing) and float(field_smoothing) != 0.0:
-        parts.append(f"smoothR{_tag_number(field_smoothing)}")
+        parts.append(f"rhoSmoothR{_tag_number(field_smoothing)}")
+
+    velocity_smoothing = get_nested(
+        config, "model/velocity_3d_smoothing_scale", None)
+    if _is_active(velocity_smoothing) and float(velocity_smoothing) != 0.0:
+        parts.append(f"velSmoothR{_tag_number(velocity_smoothing)}")
 
     if model_name and "TFR" in model_name:
         if not get_nested(config, "model/marginalize_eta", True):
