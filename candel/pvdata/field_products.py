@@ -80,34 +80,70 @@ def validate_field_smoothing_scale(
 
 
 def field_smoothing_scale_from_config(config):
-    """Read the optional 3D field smoothing scale from a config."""
+    """Read the optional 3D density-field smoothing scale from a config."""
     return validate_field_smoothing_scale(
         get_nested(config, "model/field_3d_smoothing_scale", None))
 
 
+def velocity_field_smoothing_scale_from_config(config):
+    """Read the optional 3D velocity-field smoothing scale from a config."""
+    return validate_field_smoothing_scale(
+        get_nested(config, "model/velocity_3d_smoothing_scale", None),
+        label="model.velocity_3d_smoothing_scale")
+
+
 def field_smoothing_cache_payload(field_smoothing_scale):
-    """Return the cache-key payload for optional field smoothing."""
+    """Return the cache-key payload for optional density-field smoothing."""
     scale = validate_field_smoothing_scale(field_smoothing_scale)
     if scale is None:
         return {}
-    return {"field_smoothing_scale": scale}
+    return {"density_field_smoothing_scale": scale}
+
+
+def velocity_field_smoothing_cache_payload(velocity_field_smoothing_scale):
+    """Return the cache-key payload for optional velocity-field smoothing."""
+    scale = validate_field_smoothing_scale(
+        velocity_field_smoothing_scale,
+        label="model.velocity_3d_smoothing_scale")
+    if scale is None:
+        return {}
+    return {"velocity_field_smoothing_scale": scale}
 
 
 def field_smoothing_tag(field_smoothing_scale):
-    """Return a stable filename tag for a non-zero field smoothing scale."""
+    """Return a stable filename tag for non-zero density-field smoothing."""
     scale = validate_field_smoothing_scale(field_smoothing_scale)
     if scale is None:
         return None
-    return f"field_smooth_R{scale:g}"
+    return f"density_smooth_R{scale:g}"
 
 
-def field_smoothed_los_path(path, field_smoothing_scale):
+def velocity_field_smoothing_tag(velocity_field_smoothing_scale):
+    """Return a stable filename tag for non-zero velocity-field smoothing."""
+    scale = validate_field_smoothing_scale(
+        velocity_field_smoothing_scale,
+        label="model.velocity_3d_smoothing_scale")
+    if scale is None:
+        return None
+    return f"velocity_smooth_R{scale:g}"
+
+
+def field_smoothed_los_path(path, field_smoothing_scale,
+                            velocity_field_smoothing_scale=None):
     """Append the field-smoothing suffix to a LOS file path if needed."""
-    tag = field_smoothing_tag(field_smoothing_scale)
-    if path is None or tag is None:
+    if path is None:
+        return path
+    tags = [
+        tag for tag in (
+            field_smoothing_tag(field_smoothing_scale),
+            velocity_field_smoothing_tag(velocity_field_smoothing_scale),
+        )
+        if tag is not None
+    ]
+    if not tags:
         return path
     root, ext = splitext(path)
-    return f"{root}_{tag}{ext}"
+    return f"{root}_{'_'.join(tags)}{ext}"
 
 
 def reconstruction_mas_from_config(config, reconstruction):
@@ -128,14 +164,16 @@ def reconstruction_los_label(config, reconstruction):
 
 
 def resolve_los_data_path(path, reconstruction=None, field_smoothing_scale=None,
-                          config=None):
+                          config=None, velocity_field_smoothing_scale=None):
     """Resolve ``<X>`` and optional field-smoothing LOS filename suffix."""
     if path is None:
         return None
     if reconstruction is not None:
         path = path.replace("<X>", reconstruction_los_label(
             config, reconstruction))
-    return field_smoothed_los_path(path, field_smoothing_scale)
+    return field_smoothed_los_path(
+        path, field_smoothing_scale,
+        velocity_field_smoothing_scale=velocity_field_smoothing_scale)
 
 
 def los_radial_grid_payload(config, catalogue, reconstruction):
@@ -251,7 +289,8 @@ class LOSCacheRequest:
     def __init__(self, catalogue, reconstruction, config, cache_paths,
                  cache_valid, field_indices, r, field_smoothing_scale=None,
                  config_path=None, filepath=None, temporary=False,
-                 angular_position_scatter=None):
+                 angular_position_scatter=None,
+                 velocity_field_smoothing_scale=None):
         self.catalogue = catalogue
         self.reconstruction = reconstruction
         self.config = config
@@ -260,6 +299,7 @@ class LOSCacheRequest:
         self.field_indices = list(field_indices)
         self.r = np.asarray(r)
         self.field_smoothing_scale = field_smoothing_scale
+        self.velocity_field_smoothing_scale = velocity_field_smoothing_scale
         self.config_path = config_path
         self.filepath = filepath
         self.temporary = bool(temporary)
@@ -342,6 +382,8 @@ class LOSCacheRequest:
                 self.catalogue, self.reconstruction, self.config, RA, dec,
                 filepath=self.filepath,
                 field_smoothing_scale=self.field_smoothing_scale,
+                velocity_field_smoothing_scale=(
+                    self.velocity_field_smoothing_scale),
                 output_path=cache_path, field_indices=[nsim],
                 overwrite=True, r=self.r, verbose=verbose,
                 metadata=metadata)
@@ -352,7 +394,8 @@ class LOSCacheRequest:
 
 def los_field_cache_path(config, catalogue, reconstruction, los_template,
                          field_smoothing_scale=None, field_indices=None,
-                         radial_grid=None):
+                         radial_grid=None,
+                         velocity_field_smoothing_scale=None):
     """Return the canonical field-cache path for a LOS HDF5 product."""
     if (config is None or reconstruction is None or los_template is None
             or not _field_cache_enabled_from_config(config)):
@@ -372,9 +415,12 @@ def los_field_cache_path(config, catalogue, reconstruction, los_template,
         "reconstruction": reconstruction,
         "los_template": resolve_los_data_path(
             los_template, reconstruction, field_smoothing_scale,
-            config=config),
+            config=config,
+            velocity_field_smoothing_scale=velocity_field_smoothing_scale),
         "field_indices": _jsonable(field_indices),
         **field_smoothing_cache_payload(field_smoothing_scale),
+        **velocity_field_smoothing_cache_payload(
+            velocity_field_smoothing_scale),
     }
     mas = reconstruction_mas_from_config(config, reconstruction)
     if mas is not None:
@@ -387,7 +433,8 @@ def los_field_cache_path(config, catalogue, reconstruction, los_template,
 
 def los_field_cache_paths(config, catalogue, reconstruction, los_template,
                           field_smoothing_scale=None, field_indices=None,
-                          radial_grid=None):
+                          radial_grid=None,
+                          velocity_field_smoothing_scale=None):
     """Return one canonical LOS cache path per requested field."""
     field_indices = _normalise_field_indices(field_indices)
     if field_indices is None:
@@ -396,7 +443,8 @@ def los_field_cache_paths(config, catalogue, reconstruction, los_template,
         los_field_cache_path(
             config, catalogue, reconstruction, los_template,
             field_smoothing_scale=field_smoothing_scale,
-            field_indices=[nsim], radial_grid=radial_grid)
+            field_indices=[nsim], radial_grid=radial_grid,
+            velocity_field_smoothing_scale=velocity_field_smoothing_scale)
         for nsim in field_indices
     ]
     if any(path is None for path in paths):
@@ -419,10 +467,11 @@ def _temporary_los_paths(config, catalogue, reconstruction, field_indices):
 def resolve_or_build_los_data_path(
         config, catalogue, reconstruction, los_template,
         field_smoothing_scale=None, config_path=None, filepath=None,
-        field_indices=None, verbose=True):
+        field_indices=None, verbose=True, velocity_field_smoothing_scale=None):
     """Resolve a LOS path, deferring raw-readable field cache builds."""
     legacy_path = resolve_los_data_path(
-        los_template, reconstruction, field_smoothing_scale, config=config)
+        los_template, reconstruction, field_smoothing_scale, config=config,
+        velocity_field_smoothing_scale=velocity_field_smoothing_scale)
     scatter = angular_position_scatter_from_config(config)
     if scatter is not None:
         if reconstruction is None:
@@ -456,6 +505,7 @@ def resolve_or_build_los_data_path(
             catalogue, reconstruction, config, cache_paths,
             [False] * len(cache_paths), selected, r,
             field_smoothing_scale=field_smoothing_scale,
+            velocity_field_smoothing_scale=velocity_field_smoothing_scale,
             config_path=config_path, filepath=filepath,
             temporary=True, angular_position_scatter=scatter)
 
@@ -477,6 +527,7 @@ def resolve_or_build_los_data_path(
     cache_paths = los_field_cache_paths(
         config, catalogue, reconstruction, los_template,
         field_smoothing_scale=field_smoothing_scale,
+        velocity_field_smoothing_scale=velocity_field_smoothing_scale,
         field_indices=selected, radial_grid=radial_grid)
     if cache_paths is None:
         return legacy_path
@@ -508,4 +559,5 @@ def resolve_or_build_los_data_path(
     return LOSCacheRequest(
         catalogue, reconstruction, config, cache_paths, cache_valid,
         selected, r, field_smoothing_scale=field_smoothing_scale,
+        velocity_field_smoothing_scale=velocity_field_smoothing_scale,
         config_path=config_path, filepath=filepath)

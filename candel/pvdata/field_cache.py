@@ -255,9 +255,7 @@ def _los_field_cache_filename(payload):
     which_MAS = payload.get("which_MAS", None)
     if which_MAS is not None:
         parts.append(f"mas-{_field_cache_slug(which_MAS, max_len=20)}")
-    field_smoothing = payload.get("field_smoothing_scale", None)
-    if field_smoothing is not None:
-        parts.append(_field_smoothing_cache_tag(field_smoothing))
+    parts.extend(_field_smoothing_cache_tags(payload))
     return "__".join(parts) + ".hdf5"
 
 
@@ -299,7 +297,6 @@ def _volume_field_cache_filename(payload):
 def _h0_volume_product_cache_filename(payload):
     """Readable filename for H0 selection-volume cache products."""
     supersample = payload.get("supersample", None)
-    field_smoothing = payload.get("field_smoothing_scale", None)
     geometry = _field_cache_slug(payload["geometry"], max_len=20)
     nsim = _field_cache_single_index(payload)
     parts = [
@@ -313,8 +310,7 @@ def _h0_volume_product_cache_filename(payload):
         parts.append(f"rmax-{_field_cache_float_tag(max_radius)}")
     if supersample is not None:
         parts.append(_h0_volume_supersample_tag(supersample))
-    if field_smoothing is not None:
-        parts.append(_field_smoothing_cache_tag(field_smoothing))
+    parts.extend(_field_smoothing_cache_tags(payload))
     parts.append("vel" if payload["load_velocity"] else "density")
     return "__".join(parts) + ".npz"
 
@@ -331,9 +327,36 @@ def _h0_volume_supersample_tag(supersample):
 
 
 def _field_smoothing_cache_tag(field_smoothing_scale):
-    """Readable filename tag for field smoothing."""
+    """Readable filename tag for legacy field smoothing."""
     return "field-smooth-R{}".format(
         _field_cache_float_tag(field_smoothing_scale))
+
+
+def _density_field_smoothing_cache_tag(field_smoothing_scale):
+    """Readable filename tag for density-field smoothing."""
+    return "density-smooth-R{}".format(
+        _field_cache_float_tag(field_smoothing_scale))
+
+
+def _velocity_field_smoothing_cache_tag(field_smoothing_scale):
+    """Readable filename tag for velocity-field smoothing."""
+    return "velocity-smooth-R{}".format(
+        _field_cache_float_tag(field_smoothing_scale))
+
+
+def _field_smoothing_cache_tags(payload):
+    """Readable filename tags for density/velocity smoothing payloads."""
+    tags = []
+    field_smoothing = payload.get("field_smoothing_scale", None)
+    if field_smoothing is not None:
+        tags.append(_field_smoothing_cache_tag(field_smoothing))
+    density_smoothing = payload.get("density_field_smoothing_scale", None)
+    if density_smoothing is not None:
+        tags.append(_density_field_smoothing_cache_tag(density_smoothing))
+    velocity_smoothing = payload.get("velocity_field_smoothing_scale", None)
+    if velocity_smoothing is not None:
+        tags.append(_velocity_field_smoothing_cache_tag(velocity_smoothing))
+    return tags
 
 
 def _radial_grid_cache_tag(radial_grid):
@@ -353,7 +376,6 @@ def _pv_volume_density_product_cache_filename(payload, product_tag):
         _field_cache_float_tag(subsample_fraction),
         int(payload.get("voxel_subsample_seed", 42)))
     rhat_tag = "rhat" if payload.get("store_rhat_3d", False) else "norhat"
-    field_smoothing = payload.get("field_smoothing_scale", None)
     parts = [
         product_tag,
         f"field-{nsim}",
@@ -365,8 +387,7 @@ def _pv_volume_density_product_cache_filename(payload, product_tag):
     if max_radius is not None:
         parts.append(f"rmax-{_field_cache_float_tag(max_radius)}")
     parts.extend([subsample_tag, rhat_tag])
-    if field_smoothing is not None:
-        parts.append(_field_smoothing_cache_tag(field_smoothing))
+    parts.extend(_field_smoothing_cache_tags(payload))
     parts.append("density")
     return "__".join(parts) + ".npz"
 
@@ -376,7 +397,6 @@ def _pv_density_cube_product_cache_filename(payload, product_tag):
     geometry = "sphere" if payload["pad_subcube_boundary"] else "cube"
     nsim = payload.get("nsim", None)
     field_tag = "none" if nsim is None else str(int(nsim))
-    field_smoothing = payload.get("field_smoothing_scale", None)
     parts = [
         product_tag,
         f"field-{field_tag}",
@@ -387,8 +407,7 @@ def _pv_density_cube_product_cache_filename(payload, product_tag):
     max_radius = payload.get("max_radius", None)
     if max_radius is not None:
         parts.append(f"rmax-{_field_cache_float_tag(max_radius)}")
-    if field_smoothing is not None:
-        parts.append(_field_smoothing_cache_tag(field_smoothing))
+    parts.extend(_field_smoothing_cache_tags(payload))
     parts.append("density")
     return "__".join(parts) + ".npz"
 

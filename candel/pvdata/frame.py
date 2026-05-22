@@ -33,7 +33,8 @@ from .catalogues import _CATALOGUE_LOADERS, load_CF4_data, load_CF4_mock
 from .field_cache import (_field_cache_dir_from_config,
                           _field_cache_enabled_from_config)
 from .field_products import (field_smoothing_scale_from_config,
-                             resolve_or_build_los_data_path)
+                             resolve_or_build_los_data_path,
+                             velocity_field_smoothing_scale_from_config)
 from .los import _compute_r_grid, precompute_pixel_projection
 from .volume_density import (_load_volume_density_3d_fields,
                              _prepare_pv_volume_density_arrays,
@@ -57,6 +58,8 @@ def load_PV_dataframes(config_path):
     config_pv_model = config["pv_model"]
     scatter = angular_position_scatter_from_config(config)
     field_smoothing_scale = field_smoothing_scale_from_config(config)
+    velocity_field_smoothing_scale = (
+        velocity_field_smoothing_scale_from_config(config))
     names = config_io.pop("catalogue_name")
     if isinstance(names, str):
         names = [names]
@@ -86,6 +89,7 @@ def load_PV_dataframes(config_path):
             kwargs["los_data_path"] = resolve_or_build_los_data_path(
                 config, name, los_reconstruction, los_template,
                 field_smoothing_scale=field_smoothing_scale,
+                velocity_field_smoothing_scale=velocity_field_smoothing_scale,
                 config_path=config_path, field_indices=field_indices)
             if field_indices is not None:
                 kwargs["field_indices"] = field_indices

@@ -36,7 +36,8 @@ from .angular_scatter import (angular_position_scatter_from_config,
 from .dust import read_dustmap
 from .field_products import (field_smoothing_scale_from_config,
                              resolve_or_build_los_data_path,
-                             resolve_los_data_path)
+                             resolve_los_data_path,
+                             velocity_field_smoothing_scale_from_config)
 from .los import (_compute_r_grid, _filter_data, _zcmb_blat_mask,
                   effective_rank_entropy, load_los,
                   resolve_los_cache_request)
@@ -836,12 +837,15 @@ def load_SH0ES_from_config(config_path):
     reconstruction = d.get("reconstruction", None)
     field_indices = get_nested(config, "io/field_indices", None)
     field_smoothing_scale = field_smoothing_scale_from_config(config)
+    velocity_field_smoothing_scale = (
+        velocity_field_smoothing_scale_from_config(config))
     if reconstruction is not None:
         if config["io"]["load_host_los"]:
             los_data_path = resolve_or_build_los_data_path(
                 config, "SH0ES", reconstruction,
                 config["io"]["PV_main"]["SH0ES"]["los_file"],
                 field_smoothing_scale=field_smoothing_scale,
+                velocity_field_smoothing_scale=velocity_field_smoothing_scale,
                 config_path=config_path, field_indices=field_indices)
         else:
             los_data_path = None
@@ -849,7 +853,8 @@ def load_SH0ES_from_config(config_path):
         if config["io"]["load_rand_los"]:
             rand_los_data_path = resolve_los_data_path(
                 config["io"]["los_file_random"], reconstruction,
-                field_smoothing_scale, config=config)
+                field_smoothing_scale, config=config,
+                velocity_field_smoothing_scale=velocity_field_smoothing_scale)
         else:
             rand_los_data_path = None
 
@@ -1054,17 +1059,21 @@ def load_CCHP_from_config(config_path, ra_dec_only=False):
         config, "io/CCHP/reconstruction", None)
     field_indices = get_nested(config, "io/field_indices", None)
     field_smoothing_scale = field_smoothing_scale_from_config(config)
+    velocity_field_smoothing_scale = (
+        velocity_field_smoothing_scale_from_config(config))
     if get_nested(config, "io/load_host_los", False):
         los_file = get_nested(config, "io/CCHP/los_file", None)
         los_data_path = resolve_or_build_los_data_path(
             config, "CCHP", reconstruction, los_file,
             field_smoothing_scale=field_smoothing_scale,
+            velocity_field_smoothing_scale=velocity_field_smoothing_scale,
             config_path=config_path, field_indices=field_indices)
 
     if get_nested(config, "io/load_rand_los", False):
         rand_file = get_nested(config, "io/los_file_random", None)
         rand_los_data_path = resolve_los_data_path(
-            rand_file, reconstruction, field_smoothing_scale, config=config)
+            rand_file, reconstruction, field_smoothing_scale, config=config,
+            velocity_field_smoothing_scale=velocity_field_smoothing_scale)
 
     if los_data_path is not None:
         if getattr(los_data_path, "requires_filtered_coordinates", False):
@@ -1700,6 +1709,8 @@ def _load_EDD_TRGB_from_config_common(config_path, config_key, loader):
         config, f"io/PV_main/{config_key}/reconstruction", None)
     field_indices = get_nested(config, "io/field_indices", None)
     field_smoothing_scale = field_smoothing_scale_from_config(config)
+    velocity_field_smoothing_scale = (
+        velocity_field_smoothing_scale_from_config(config))
 
     los_data_path = None
     rand_los_data_path = None
@@ -1707,11 +1718,13 @@ def _load_EDD_TRGB_from_config_common(config_path, config_key, loader):
         los_data_path = resolve_or_build_los_data_path(
             config, config_key, reconstruction, d.get("los_file", None),
             field_smoothing_scale=field_smoothing_scale,
+            velocity_field_smoothing_scale=velocity_field_smoothing_scale,
             config_path=config_path, field_indices=field_indices)
     if get_nested(config, "io/load_rand_los", False):
         rand_los_data_path = resolve_los_data_path(
             get_nested(config, "io/los_file_random", None),
-            reconstruction, field_smoothing_scale, config=config)
+            reconstruction, field_smoothing_scale, config=config,
+            velocity_field_smoothing_scale=velocity_field_smoothing_scale)
 
     data, mask = loader(root, zcmb_min=zcmb_min, zcmb_max=zcmb_max,
                         b_min=b_min, return_mask=True,
@@ -1878,6 +1891,8 @@ def load_EDD_2MTF_from_config(config_path):
     reconstruction = d.get("reconstruction", None)
     field_indices = get_nested(config, "io/field_indices", None)
     field_smoothing_scale = field_smoothing_scale_from_config(config)
+    velocity_field_smoothing_scale = (
+        velocity_field_smoothing_scale_from_config(config))
     los_data_path = None
     rand_los_data_path = None
 
@@ -1886,12 +1901,14 @@ def load_EDD_2MTF_from_config(config_path):
         los_data_path = resolve_or_build_los_data_path(
             config, "EDD_2MTF", reconstruction, los_file,
             field_smoothing_scale=field_smoothing_scale,
+            velocity_field_smoothing_scale=velocity_field_smoothing_scale,
             config_path=config_path, field_indices=field_indices)
 
     if get_nested(config, "io/load_rand_los", False):
         rand_file = get_nested(config, "io/los_file_random", None)
         rand_los_data_path = resolve_los_data_path(
-            rand_file, reconstruction, field_smoothing_scale, config=config)
+            rand_file, reconstruction, field_smoothing_scale, config=config,
+            velocity_field_smoothing_scale=velocity_field_smoothing_scale)
 
     data, mask = load_EDD_2MTF(
         root, zcmb_min=zcmb_min, zcmb_max=zcmb_max, b_min=b_min,
