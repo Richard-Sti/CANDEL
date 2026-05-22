@@ -107,6 +107,7 @@ def run_case(label, model, ndim, mu, Sigma, log_Z_true, args,
     print(f"True      log Z = {log_Z_true:.4f}")
     print(f"Difference      = {diff:.4f} ({sigma_diff:.1f} sigma)")
     print(f"n_eff           = {meta['n_eff']}")
+    print(f"n_total         = {meta.get('n_total', np.nan)}")
 
     diagnostics = meta.get("diagnostics", {})
     if diagnostics:
@@ -117,6 +118,10 @@ def run_case(label, model, ndim, mu, Sigma, log_Z_true, args,
               f"{diagnostics.get('stale_fraction', np.nan):.3f}")
         print(f"  num_retries:         "
               f"{diagnostics.get('num_retries', 0)}")
+        print(f"  num_slice_evals:     "
+              f"{diagnostics.get('num_slice_evals', 0)}")
+        print(f"  mean_slice_evals:    "
+              f"{diagnostics.get('mean_slice_evals', np.nan):.2f}")
         print(f"  mean_shrink:         "
               f"{diagnostics.get('mean_shrink', np.nan):.2f}")
         print(f"  max_cov_jitter:      "
@@ -159,7 +164,7 @@ def run_case(label, model, ndim, mu, Sigma, log_Z_true, args,
 def print_comparison(results):
     print("\nA/B comparison:")
     print(f"{'case':>12s} {'dlogZ':>10s} {'sigma':>8s} {'accept':>8s} "
-          f"{'stale':>8s} {'retries':>8s} {'cov_reg':>8s}")
+          f"{'stale':>8s} {'evals':>8s} {'retries':>8s} {'cov_reg':>8s}")
     for result in results:
         diagnostics = result["diagnostics"]
         print(f"{result['label']:>12s} "
@@ -167,6 +172,7 @@ def print_comparison(results):
               f"{result['sigma_diff']:>8.2f} "
               f"{diagnostics.get('acceptance_rate', np.nan):>8.3f} "
               f"{diagnostics.get('stale_fraction', np.nan):>8.3f} "
+              f"{diagnostics.get('num_slice_evals', 0):>8d} "
               f"{diagnostics.get('num_retries', 0):>8d} "
               f"{diagnostics.get('num_cov_regularized', 0):>8d}")
 

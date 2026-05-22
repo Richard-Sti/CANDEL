@@ -840,12 +840,14 @@ def _summarise_nss_infos(dead_list):
             "num_accepted": 0,
             "num_step_out": 0,
             "num_shrink": 0,
+            "num_slice_evals": 0,
             "num_stale_chains": 0,
             "num_retries": 0,
             "acceptance_rate": np.nan,
             "stale_fraction": np.nan,
             "mean_step_out": np.nan,
             "mean_shrink": np.nan,
+            "mean_slice_evals": np.nan,
             "max_cov_jitter": 0.0,
             "max_cov_condition": np.nan,
             "num_cov_regularized": 0,
@@ -860,6 +862,7 @@ def _summarise_nss_infos(dead_list):
     num_accepted = _int("num_accepted")
     num_step_out = _int("num_step_out")
     num_shrink = _int("num_shrink")
+    num_slice_evals = num_step_out + num_shrink
     num_stale = _int("num_stale_chains")
     num_retries = _int("num_retries")
     max_cov_jitter = max(float(np.asarray(info.max_cov_jitter).item())
@@ -875,6 +878,7 @@ def _summarise_nss_infos(dead_list):
         "num_accepted": num_accepted,
         "num_step_out": num_step_out,
         "num_shrink": num_shrink,
+        "num_slice_evals": num_slice_evals,
         "num_stale_chains": num_stale,
         "num_retries": num_retries,
         "acceptance_rate": (num_accepted / num_transitions
@@ -884,6 +888,8 @@ def _summarise_nss_infos(dead_list):
                           if num_transitions else np.nan),
         "mean_shrink": (num_shrink / num_transitions
                         if num_transitions else np.nan),
+        "mean_slice_evals": (num_slice_evals / num_transitions
+                             if num_transitions else np.nan),
         "max_cov_jitter": max_cov_jitter,
         "max_cov_condition": max_cov_condition,
         "num_cov_regularized": num_cov_regularized,
@@ -931,7 +937,8 @@ def _save_nss_checkpoint(path, state, dead, rng_key, n_dead):
     diagnostics = _summarise_nss_infos(dead)
     for key, value in diagnostics.items():
         if key in ("acceptance_rate", "stale_fraction",
-                   "mean_step_out", "mean_shrink"):
+                   "mean_step_out", "mean_shrink", "num_slice_evals",
+                   "mean_slice_evals"):
             continue
         data[f"diag_{key}"] = np.asarray(value)
     if d_all is not None:
@@ -1047,7 +1054,7 @@ def run_nss(model, model_args=(), model_kwargs=None,
         Weighted posterior samples resampled to equal weights.
         Same format as MCMC: ``{name: array(n_eff,)}`` for scalars.
         Contains ``__nested__`` metadata with ``log_Z``, ``log_Z_err``,
-        ``n_eff``, run time, names, and sizes.
+        ``n_eff``, particle counts, run time, names, and sizes.
     """
     if model_kwargs is None:
         model_kwargs = {}
@@ -1275,6 +1282,10 @@ def run_nss(model, model_args=(), model_kwargs=None,
         "log_Z": log_Z,
         "log_Z_err": log_Z_err,
         "n_eff": n_eff,
+        "n_live": int(state.particles.position.shape[0]),
+        "n_dead": int(n_dead),
+        "n_total": int(positions.shape[0]),
+        "num_delete_total": int(total_num_delete),
         "time": dt,
         "names": names,
         "sizes": sizes,
@@ -1298,11 +1309,17 @@ def print_nested_summary(samples, meta=None):
     if meta is not None:
         print(f"\nlog Z = {meta['log_Z']:.2f} +/- {meta['log_Z_err']:.2f}")
         print(f"n_eff = {meta['n_eff']}")
+        if "n_total" in meta:
+            print(f"n_total = {meta['n_total']} "
+                  f"(dead={meta.get('n_dead', 'unknown')}, "
+                  f"live={meta.get('n_live', 'unknown')})")
         diagnostics = meta.get("diagnostics", {})
         if diagnostics:
             print("HRSS diagnostics: "
                   f"accept={diagnostics.get('acceptance_rate', np.nan):.3f}, "
                   f"stale={diagnostics.get('stale_fraction', np.nan):.3f}, "
+                  f"mean_evals="
+                  f"{diagnostics.get('mean_slice_evals', np.nan):.2f}, "
                   f"mean_shrink={diagnostics.get('mean_shrink', np.nan):.2f}, "
                   f"cov_reg={diagnostics.get('num_cov_regularized', 0)}")
 
