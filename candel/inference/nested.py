@@ -262,6 +262,30 @@ class _NSSState(NamedTuple):
 class _DeadInfo(NamedTuple):
     # leading axis: (deletion batch,) per step, (n_total,) after finalise
     particles: _Particle
+    info: "_NSSInfo" = None
+
+
+class _SliceInfo(NamedTuple):
+    is_accepted: jax.Array
+    num_steps: jax.Array
+    num_shrink: jax.Array
+
+
+class _SliceStats(NamedTuple):
+    num_chains: jax.Array
+    num_transitions: jax.Array
+    num_accepted: jax.Array
+    num_step_out: jax.Array
+    num_shrink: jax.Array
+    num_stale_chains: jax.Array
+    num_retries: jax.Array
+
+
+class _NSSInfo(NamedTuple):
+    stats: _SliceStats
+    max_cov_jitter: jax.Array
+    max_cov_condition: jax.Array
+    num_cov_regularized: jax.Array
 
 
 def _logmeanexp(x):
@@ -271,9 +295,41 @@ def _logmeanexp(x):
 
 def _log1mexp(x):
     """Numerically stable log(1 - exp(x)) for x < 0."""
+    x = jnp.minimum(x, -jnp.finfo(x.dtype).eps)
     return jnp.where(x > -0.6931472,          # threshold ≈ log(2)
                      jnp.log(-jnp.expm1(x)),
                      jnp.log1p(-jnp.exp(x)))
+
+
+def _add_slice_stats(a, b):
+    return _SliceStats(*(x + y for x, y in zip(a, b)))
+
+
+def _regularize_covariance(cov, relative_jitter):
+    """Symmetrise and minimally jitter a live-point covariance matrix."""
+    cov = 0.5 * (cov + cov.T)
+    dtype = cov.dtype
+    ndim = cov.shape[0]
+    if relative_jitter is None:
+        relative_jitter = 0.0
+    relative_jitter = jnp.array(relative_jitter, dtype=dtype)
+
+    eigvals = jnp.linalg.eigvalsh(cov)
+    min_eig = jnp.min(eigvals)
+    max_eig = jnp.max(eigvals)
+    diag_scale = jnp.maximum(jnp.mean(jnp.diag(cov)),
+                             jnp.array(1.0, dtype=dtype))
+    floor = jnp.maximum(relative_jitter * diag_scale,
+                        jnp.finfo(dtype).eps * diag_scale)
+    jitter = jnp.where(relative_jitter > 0.0,
+                       jnp.maximum(floor - min_eig, 0.0),
+                       jnp.array(0.0, dtype=dtype))
+    cov = cov + jitter * jnp.eye(ndim, dtype=dtype)
+    min_reg = min_eig + jitter
+    max_reg = max_eig + jitter
+    condition = max_reg / jnp.maximum(min_reg, floor)
+    regularized = jitter > 0.0
+    return cov, jitter, condition, regularized
 
 
 def _init_integrator(particles):
@@ -351,7 +407,10 @@ def _hrss_step(rng_key, particle, logprior_fn, loglikelihood_fn,
 
     Returns
     -------
-    _Particle — accepted new particle (unchanged if no accepted sample found)
+    _Particle
+        Accepted new particle, unchanged if no accepted sample is found.
+    _SliceInfo
+        Acceptance and stepping-out/shrink diagnostics for this HRSS step.
     """
     vs_key, hs_key, dir_key = jax.random.split(rng_key, 3)
 
@@ -406,18 +465,24 @@ def _hrss_step(rng_key, particle, logprior_fn, loglikelihood_fn,
         n, _, _, _, _, is_acc = carry
         return ~is_acc & (n < max_shrinkage)
 
-    _, _, _, _, new_p, is_acc = jax.lax.while_loop(
+    n_shrink, _, _, _, new_p, is_acc = jax.lax.while_loop(
         _shrink_cond, _shrink_body,
         (0, rng_key, left, right, particle, False))
 
     # If shrinkage found nothing, stay put
-    return jax.tree.map(
+    new_p = jax.tree.map(
         lambda new, old: jnp.where(is_acc, new, old), new_p, particle)
+    info = _SliceInfo(
+        is_accepted=is_acc,
+        num_steps=max_steps + 1 - j - k,
+        num_shrink=n_shrink,
+    )
+    return new_p, info
 
 
 def _nss_step(rng_key, state, logprior_fn, loglikelihood_fn,
               num_delete, num_mcmc_steps, max_steps=10,
-              max_shrinkage=100):
+              max_shrinkage=100, stale_retries=1, cov_jitter=1e-6):
     """One NSS iteration: remove worst live points, replace above L*.
 
     Matches blackjax.nss exactly:
@@ -442,22 +507,65 @@ def _nss_step(rng_key, state, logprior_fn, loglikelihood_fn,
     w = jnp.where(w.sum() > 0.0, w, jnp.ones_like(w))
     start_idx = jax.random.choice(
         choice_key, particles.loglikelihood.shape[0],
-        shape=(num_delete,), p=w / w.sum(), replace=True)
+        shape=(num_delete, stale_retries + 1), p=w / w.sum(), replace=True)
     start_p = jax.tree.map(lambda x: x[start_idx], particles)
 
-    # Run num_mcmc_steps HRSS steps for each replacement particle (take last)
-    def one_chain(rng_key, p0):
-        def body(p, k):
-            return _hrss_step(
-                k, p, logprior_fn, loglikelihood_fn,
-                logL_0, state.cov, max_steps,
-                max_shrinkage), None
-        keys = jax.random.split(rng_key, num_mcmc_steps)
-        final_p, _ = jax.lax.scan(body, p0, keys)
-        return final_p
+    cov, cov_jitter_added, cov_condition, cov_regularized = (
+        _regularize_covariance(state.cov, cov_jitter))
 
-    new_p = jax.vmap(one_chain)(
+    # Run num_mcmc_steps HRSS steps for each replacement particle (take last)
+    def one_chain(rng_key, p0_attempts):
+        def run_attempt(rng_key, p0):
+            def body(p, k):
+                new_p, info = _hrss_step(
+                    k, p, logprior_fn, loglikelihood_fn,
+                    logL_0, cov, max_steps, max_shrinkage)
+                return new_p, info
+
+            keys = jax.random.split(rng_key, num_mcmc_steps)
+            final_p, infos = jax.lax.scan(body, p0, keys)
+            accepted = infos.is_accepted.astype(jnp.int32)
+            stats = _SliceStats(
+                num_chains=jnp.array(0, dtype=jnp.int32),
+                num_transitions=jnp.array(num_mcmc_steps, dtype=jnp.int32),
+                num_accepted=jnp.sum(accepted),
+                num_step_out=jnp.sum(infos.num_steps.astype(jnp.int32)),
+                num_shrink=jnp.sum(infos.num_shrink.astype(jnp.int32)),
+                num_stale_chains=jnp.array(0, dtype=jnp.int32),
+                num_retries=jnp.array(0, dtype=jnp.int32),
+            )
+            return final_p, stats, jnp.any(infos.is_accepted)
+
+        rng_key, attempt_key = jax.random.split(rng_key)
+        p0 = jax.tree.map(lambda x: x[0], p0_attempts)
+        final_p, stats, accepted_any = run_attempt(attempt_key, p0)
+
+        def retry_cond(carry):
+            n_retry, _, _, is_done, _ = carry
+            return (~is_done) & (n_retry < stale_retries)
+
+        def retry_body(carry):
+            n_retry, final_p, stats, _, key = carry
+            key, attempt_key = jax.random.split(key)
+            p0 = jax.tree.map(lambda x: x[n_retry + 1], p0_attempts)
+            final_p, retry_stats, accepted_any = run_attempt(attempt_key, p0)
+            stats = _add_slice_stats(stats, retry_stats)
+            return n_retry + 1, final_p, stats, accepted_any, key
+
+        n_retry, final_p, stats, accepted_any, _ = jax.lax.while_loop(
+            retry_cond, retry_body,
+            (jnp.array(0, dtype=jnp.int32), final_p, stats, accepted_any,
+             rng_key))
+        stats = stats._replace(
+            num_chains=jnp.array(1, dtype=jnp.int32),
+            num_stale_chains=(~accepted_any).astype(jnp.int32),
+            num_retries=n_retry,
+        )
+        return final_p, stats
+
+    new_p, chain_stats = jax.vmap(one_chain)(
         jax.random.split(mcmc_key, num_delete), start_p)
+    stats = jax.tree.map(lambda x: jnp.sum(x, axis=0), chain_stats)
 
     # Replace dead positions
     updated = jax.tree.map(
@@ -469,7 +577,13 @@ def _nss_step(rng_key, state, logprior_fn, loglikelihood_fn,
     new_integrator = _update_integrator(
         state.integrator, updated, dead_p)
 
-    return _NSSState(updated, new_integrator, new_cov), _DeadInfo(dead_p)
+    info = _NSSInfo(
+        stats=stats,
+        max_cov_jitter=cov_jitter_added,
+        max_cov_condition=cov_condition,
+        num_cov_regularized=cov_regularized.astype(jnp.int32),
+    )
+    return _NSSState(updated, new_integrator, new_cov), _DeadInfo(dead_p, info)
 
 
 def _adjust_num_delete_for_devices(num_delete, n_devices, n_live):
@@ -487,7 +601,8 @@ def _adjust_num_delete_for_devices(num_delete, n_devices, n_live):
 
 def _make_nss_step_pmap(logprior_fn, loglikelihood_fn, total_num_delete,
                         num_mcmc_steps, devices, max_steps=10,
-                        max_shrinkage=100):
+                        max_shrinkage=100, stale_retries=1,
+                        cov_jitter=1e-6):
     """Build one NSS step with replacement chains sharded over devices."""
     n_devices = len(devices)
     if total_num_delete % n_devices != 0:
@@ -510,27 +625,69 @@ def _make_nss_step_pmap(logprior_fn, loglikelihood_fn, total_num_delete,
         w = jnp.where(w.sum() > 0.0, w, jnp.ones_like(w))
         start_idx = jax.random.choice(
             choice_key, particles.loglikelihood.shape[0],
-            shape=(total_num_delete,), p=w / w.sum(), replace=True)
+            shape=(total_num_delete, stale_retries + 1),
+            p=w / w.sum(), replace=True)
         start_p = jax.tree.map(lambda x: x[start_idx], particles)
         mcmc_keys = jax.random.split(mcmc_key, n_devices)
         return dead_idx, dead_p, logL_0, start_p, mcmc_keys
 
     @partial(jax.pmap, in_axes=(0, 0, None, None), devices=devices)
     def _run_chains(device_key, p0_device, logL_0, cov):
-        def one_chain(rng_key, p0):
-            def body(p, k):
-                return _hrss_step(
-                    k, p, logprior_fn, loglikelihood_fn,
-                    logL_0, cov, max_steps, max_shrinkage), None
-            keys = jax.random.split(rng_key, num_mcmc_steps)
-            final_p, _ = jax.lax.scan(body, p0, keys)
-            return final_p
+        def one_chain(rng_key, p0_attempts):
+            def run_attempt(rng_key, p0):
+                def body(p, k):
+                    new_p, info = _hrss_step(
+                        k, p, logprior_fn, loglikelihood_fn,
+                        logL_0, cov, max_steps, max_shrinkage)
+                    return new_p, info
+
+                keys = jax.random.split(rng_key, num_mcmc_steps)
+                final_p, infos = jax.lax.scan(body, p0, keys)
+                accepted = infos.is_accepted.astype(jnp.int32)
+                stats = _SliceStats(
+                    num_chains=jnp.array(0, dtype=jnp.int32),
+                    num_transitions=jnp.array(num_mcmc_steps, dtype=jnp.int32),
+                    num_accepted=jnp.sum(accepted),
+                    num_step_out=jnp.sum(infos.num_steps.astype(jnp.int32)),
+                    num_shrink=jnp.sum(infos.num_shrink.astype(jnp.int32)),
+                    num_stale_chains=jnp.array(0, dtype=jnp.int32),
+                    num_retries=jnp.array(0, dtype=jnp.int32),
+                )
+                return final_p, stats, jnp.any(infos.is_accepted)
+
+            rng_key, attempt_key = jax.random.split(rng_key)
+            p0 = jax.tree.map(lambda x: x[0], p0_attempts)
+            final_p, stats, accepted_any = run_attempt(attempt_key, p0)
+
+            def retry_cond(carry):
+                n_retry, _, _, is_done, _ = carry
+                return (~is_done) & (n_retry < stale_retries)
+
+            def retry_body(carry):
+                n_retry, final_p, stats, _, key = carry
+                key, attempt_key = jax.random.split(key)
+                p0 = jax.tree.map(lambda x: x[n_retry + 1], p0_attempts)
+                final_p, retry_stats, accepted_any = run_attempt(attempt_key, p0)
+                stats = _add_slice_stats(stats, retry_stats)
+                return n_retry + 1, final_p, stats, accepted_any, key
+
+            n_retry, final_p, stats, accepted_any, _ = jax.lax.while_loop(
+                retry_cond, retry_body,
+                (jnp.array(0, dtype=jnp.int32), final_p, stats, accepted_any,
+                 rng_key))
+            stats = stats._replace(
+                num_chains=jnp.array(1, dtype=jnp.int32),
+                num_stale_chains=(~accepted_any).astype(jnp.int32),
+                num_retries=n_retry,
+            )
+            return final_p, stats
 
         keys = jax.random.split(device_key, chains_per_device)
         return jax.vmap(one_chain)(keys, p0_device)
 
     @jax.jit
-    def _finish(state, dead_idx, dead_p, new_p):
+    def _finish(state, dead_idx, dead_p, new_p, stats, cov_jitter_added,
+                cov_condition, cov_regularized):
         particles = state.particles
         updated = jax.tree.map(
             lambda full, new: full.at[dead_idx].set(new), particles, new_p)
@@ -538,20 +695,31 @@ def _make_nss_step_pmap(logprior_fn, loglikelihood_fn, total_num_delete,
             jnp.cov(updated.position, ddof=0, rowvar=False))
         new_integrator = _update_integrator(
             state.integrator, updated, dead_p)
-        return _NSSState(updated, new_integrator, new_cov), _DeadInfo(dead_p)
+        info = _NSSInfo(
+            stats=stats,
+            max_cov_jitter=cov_jitter_added,
+            max_cov_condition=cov_condition,
+            num_cov_regularized=cov_regularized.astype(jnp.int32),
+        )
+        return _NSSState(updated, new_integrator, new_cov), _DeadInfo(dead_p, info)
 
     def _step(state, rng_key):
         dead_idx, dead_p, logL_0, start_p, mcmc_keys = _prepare(
             state, rng_key)
         start_p = jax.tree.map(
             lambda x: x.reshape(
-                (n_devices, chains_per_device) + x.shape[1:]),
+                (n_devices, chains_per_device, stale_retries + 1)
+                + x.shape[2:]),
             start_p)
-        new_p = _run_chains(mcmc_keys, start_p, logL_0, state.cov)
+        cov, cov_jitter_added, cov_condition, cov_regularized = (
+            _regularize_covariance(state.cov, cov_jitter))
+        new_p, stats = _run_chains(mcmc_keys, start_p, logL_0, cov)
+        stats = jax.tree.map(lambda x: jnp.sum(x), stats)
         new_p = jax.tree.map(
             lambda x: x.reshape((total_num_delete,) + x.shape[2:]),
             new_p)
-        return _finish(state, dead_idx, dead_p, new_p)
+        return _finish(state, dead_idx, dead_p, new_p, stats,
+                       cov_jitter_added, cov_condition, cov_regularized)
 
     return _step, chains_per_device
 
@@ -662,6 +830,85 @@ def _log_weights(rng_key, dead_info, n_compress=100):
     return log_w[unsort_idx]
 
 
+def _summarise_nss_infos(dead_list):
+    """Aggregate per-iteration NSS diagnostics from dead-point records."""
+    infos = [d.info for d in dead_list if getattr(d, "info", None) is not None]
+    if not infos:
+        return {
+            "num_transitions": 0,
+            "num_chains": 0,
+            "num_accepted": 0,
+            "num_step_out": 0,
+            "num_shrink": 0,
+            "num_stale_chains": 0,
+            "num_retries": 0,
+            "acceptance_rate": np.nan,
+            "stale_fraction": np.nan,
+            "mean_step_out": np.nan,
+            "mean_shrink": np.nan,
+            "max_cov_jitter": 0.0,
+            "max_cov_condition": np.nan,
+            "num_cov_regularized": 0,
+        }
+
+    def _int(field):
+        return int(sum(np.asarray(getattr(info.stats, field)).item()
+                       for info in infos))
+
+    num_transitions = _int("num_transitions")
+    num_chains = _int("num_chains")
+    num_accepted = _int("num_accepted")
+    num_step_out = _int("num_step_out")
+    num_shrink = _int("num_shrink")
+    num_stale = _int("num_stale_chains")
+    num_retries = _int("num_retries")
+    max_cov_jitter = max(float(np.asarray(info.max_cov_jitter).item())
+                         for info in infos)
+    max_cov_condition = max(float(np.asarray(info.max_cov_condition).item())
+                            for info in infos)
+    num_cov_regularized = int(sum(
+        np.asarray(info.num_cov_regularized).item() for info in infos))
+
+    return {
+        "num_transitions": num_transitions,
+        "num_chains": num_chains,
+        "num_accepted": num_accepted,
+        "num_step_out": num_step_out,
+        "num_shrink": num_shrink,
+        "num_stale_chains": num_stale,
+        "num_retries": num_retries,
+        "acceptance_rate": (num_accepted / num_transitions
+                            if num_transitions else np.nan),
+        "stale_fraction": (num_stale / num_chains if num_chains else np.nan),
+        "mean_step_out": (num_step_out / num_transitions
+                          if num_transitions else np.nan),
+        "mean_shrink": (num_shrink / num_transitions
+                        if num_transitions else np.nan),
+        "max_cov_jitter": max_cov_jitter,
+        "max_cov_condition": max_cov_condition,
+        "num_cov_regularized": num_cov_regularized,
+    }
+
+
+def _nss_info_from_summary(summary):
+    stats = _SliceStats(
+        jnp.array(summary.get("num_chains", 0), dtype=jnp.int32),
+        jnp.array(summary.get("num_transitions", 0), dtype=jnp.int32),
+        jnp.array(summary.get("num_accepted", 0), dtype=jnp.int32),
+        jnp.array(summary.get("num_step_out", 0), dtype=jnp.int32),
+        jnp.array(summary.get("num_shrink", 0), dtype=jnp.int32),
+        jnp.array(summary.get("num_stale_chains", 0), dtype=jnp.int32),
+        jnp.array(summary.get("num_retries", 0), dtype=jnp.int32),
+    )
+    return _NSSInfo(
+        stats=stats,
+        max_cov_jitter=jnp.array(summary.get("max_cov_jitter", 0.0)),
+        max_cov_condition=jnp.array(summary.get("max_cov_condition", np.nan)),
+        num_cov_regularized=jnp.array(
+            summary.get("num_cov_regularized", 0), dtype=jnp.int32),
+    )
+
+
 # ── Checkpoint helpers ───────────────────────────────────────────────────────
 
 def _save_nss_checkpoint(path, state, dead, rng_key, n_dead):
@@ -681,6 +928,12 @@ def _save_nss_checkpoint(path, state, dead, rng_key, n_dead):
         rng_key=np.asarray(rng_key),
         n_dead=np.array(n_dead),
     )
+    diagnostics = _summarise_nss_infos(dead)
+    for key, value in diagnostics.items():
+        if key in ("acceptance_rate", "stale_fraction",
+                   "mean_step_out", "mean_shrink"):
+            continue
+        data[f"diag_{key}"] = np.asarray(value)
     if d_all is not None:
         data["dead_pos"] = np.asarray(d_all.position)
         data["dead_logprior"] = np.asarray(d_all.logprior)
@@ -709,13 +962,24 @@ def _load_nss_checkpoint(path):
     n_dead = int(d["n_dead"])
     dead = []
     if "dead_pos" in d:
+        diag_keys = (
+            "num_chains", "num_transitions", "num_accepted", "num_step_out",
+            "num_shrink", "num_stale_chains", "num_retries",
+            "max_cov_jitter", "max_cov_condition", "num_cov_regularized",
+        )
+        diagnostics = {
+            key: d[f"diag_{key}"].item()
+            for key in diag_keys if f"diag_{key}" in d
+        }
+        info = (_nss_info_from_summary(diagnostics)
+                if diagnostics else None)
         dead_p = _Particle(
             position=jnp.array(d["dead_pos"]),
             logprior=jnp.array(d["dead_logprior"]),
             loglikelihood=jnp.array(d["dead_loglikelihood"]),
             logL_birth=jnp.array(d["dead_logL_birth"]),
         )
-        dead = [_DeadInfo(dead_p)]
+        dead = [_DeadInfo(dead_p, info)]
     return state, dead, rng_key, n_dead
 
 
@@ -725,7 +989,8 @@ def run_nss(model, model_args=(), model_kwargs=None,
             n_live=500, num_mcmc_steps=50, num_delete=1,
             termination=-3, seed=42, validate=True,
             checkpoint_dir=None, checkpoint_path=None, resume_path=None,
-            checkpoint_interval=900, devices="auto"):
+            checkpoint_interval=900, devices="auto", max_steps=10,
+            max_shrinkage=100, stale_retries=1, cov_jitter=1e-6):
     """Run the Nested Slice Sampler on a NumPyro model.
 
     Recommended settings (Yallup+2026, arXiv:2601.23252):
@@ -765,6 +1030,16 @@ def run_nss(model, model_args=(), model_kwargs=None,
         Number of visible local devices to use for replacement-chain
         parallelism. ``"auto"`` uses all non-CPU local devices only when more
         than one is visible; otherwise the original single-device path is used.
+    max_steps : int
+        Maximum stepping-out steps on each side of one HRSS transition.
+    max_shrinkage : int
+        Maximum shrinkage proposals in one HRSS transition.
+    stale_retries : int
+        Number of extra full replacement-chain attempts when an entire chain
+        produces no accepted HRSS transition.
+    cov_jitter : float
+        Relative eigenvalue floor used to regularise the live-point covariance
+        before drawing HRSS directions. Set to 0 to recover the old behaviour.
 
     Returns
     -------
@@ -776,6 +1051,14 @@ def run_nss(model, model_args=(), model_kwargs=None,
     """
     if model_kwargs is None:
         model_kwargs = {}
+    if max_steps < 1:
+        raise ValueError("`max_steps` must be at least 1.")
+    if max_shrinkage < 1:
+        raise ValueError("`max_shrinkage` must be at least 1.")
+    if stale_retries < 0:
+        raise ValueError("`stale_retries` must be non-negative.")
+    if cov_jitter < 0:
+        raise ValueError("`cov_jitter` must be non-negative.")
 
     # Decompose model into prior + likelihood
     (log_prior_fn, log_likelihood_fn, log_joint_fn,
@@ -808,12 +1091,16 @@ def run_nss(model, model_args=(), model_kwargs=None,
     else:
         fprint(f"NSS: ndim={ndim}, num_mcmc_steps={num_mcmc_steps}, "
                f"n_live={n_live}, num_delete={total_num_delete}")
+    fprint(f"NSS: max_steps={max_steps}, max_shrinkage={max_shrinkage}, "
+           f"stale_retries={stale_retries}, cov_jitter={cov_jitter:g}")
 
     use_pmap = len(local_devices) > 1 and total_num_delete > 1
     if use_pmap:
         step_fn, chains_per_device = _make_nss_step_pmap(
             log_prior_fn, log_likelihood_fn, total_num_delete,
-            num_mcmc_steps, local_devices)
+            num_mcmc_steps, local_devices, max_steps=max_steps,
+            max_shrinkage=max_shrinkage, stale_retries=stale_retries,
+            cov_jitter=cov_jitter)
         fprint("NSS: replacement chains sharded over "
                f"{len(local_devices)} local devices "
                f"({chains_per_device}/device).")
@@ -827,7 +1114,9 @@ def run_nss(model, model_args=(), model_kwargs=None,
         def step_fn(state, rng_key):
             return _nss_step(
                 rng_key, state, log_prior_fn,
-                log_likelihood_fn, total_num_delete, num_mcmc_steps)
+                log_likelihood_fn, total_num_delete, num_mcmc_steps,
+                max_steps=max_steps, max_shrinkage=max_shrinkage,
+                stale_retries=stale_retries, cov_jitter=cov_jitter)
 
     if checkpoint_dir is not None and checkpoint_path is None:
         raise ValueError(
@@ -941,6 +1230,7 @@ def run_nss(model, model_args=(), model_kwargs=None,
 
     # ---- Finalise and compute evidence ----
     final = _finalise(state, dead)
+    diagnostics = _summarise_nss_infos(dead)
     logw = _log_weights(rng_key, final)
     # Average weights over stochastic compression realisations:
     # log(mean_j(w_ij)) = logsumexp(logw, -1) - log(n_compress)
@@ -988,6 +1278,13 @@ def run_nss(model, model_args=(), model_kwargs=None,
         "time": dt,
         "names": names,
         "sizes": sizes,
+        "diagnostics": diagnostics,
+        "final_logZ_live_gap": float(state.integrator.logZ_live
+                                     - state.integrator.logZ),
+        "max_steps": int(max_steps),
+        "max_shrinkage": int(max_shrinkage),
+        "stale_retries": int(stale_retries),
+        "cov_jitter": float(cov_jitter),
     }
 
     return samples
@@ -1001,6 +1298,13 @@ def print_nested_summary(samples, meta=None):
     if meta is not None:
         print(f"\nlog Z = {meta['log_Z']:.2f} +/- {meta['log_Z_err']:.2f}")
         print(f"n_eff = {meta['n_eff']}")
+        diagnostics = meta.get("diagnostics", {})
+        if diagnostics:
+            print("HRSS diagnostics: "
+                  f"accept={diagnostics.get('acceptance_rate', np.nan):.3f}, "
+                  f"stale={diagnostics.get('stale_fraction', np.nan):.3f}, "
+                  f"mean_shrink={diagnostics.get('mean_shrink', np.nan):.2f}, "
+                  f"cov_reg={diagnostics.get('num_cov_regularized', 0)}")
 
     header = (f"{'':>20s} {'mean':>10s} {'std':>10s} {'median':>10s} "
               f"{'5.0%':>10s} {'95.0%':>10s}")
