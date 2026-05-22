@@ -29,6 +29,10 @@ python scripts/megamaser/run_maser_disk.py <galaxy> [--sampler nuts|nss] [option
 | `--n-live` | 5000 | NSS live points |
 | `--num-mcmc-steps` | 0 (=ndim) | NSS slice steps |
 | `--num-delete` | 250 | NSS contraction batch per device |
+| `--max-steps` | 10 | NSS HRSS stepping-out steps per side |
+| `--max-shrinkage` | 100 | NSS HRSS shrinkage proposals per transition |
+| `--stale-retries` | 1 | Extra replacement-chain attempts when a chain has no accepted HRSS transition |
+| `--cov-jitter` | 1e-6 | Relative eigenvalue floor for live-point covariance regularisation; set to 0 for old behaviour |
 | `--devices` | auto | Local-device sharding for NSS replacement chains or DE population fitness evaluations. Use `1` for the original single-device path or numeric `N` for N visible GPUs on one node. |
 | `--termination` | -3 | NSS stopping criterion |
 | `--f-grid` | 1.0 | Scale every phi/r grid size (`n_phi_hv_high`, `n_phi_hv_low`, `n_phi_sys`, their `_mode1` variants, `n_r_local`, `n_r_brute`) by this factor; results rounded to nearest odd integer, min 3. Applies to global `[model]` keys and per-galaxy overrides. |

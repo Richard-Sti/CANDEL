@@ -347,6 +347,20 @@ parser.add_argument("--n-live", type=int, default=None)
 parser.add_argument("--num-mcmc-steps", type=int, default=None)
 parser.add_argument("--num-delete", type=int, default=None)
 parser.add_argument("--termination", type=float, default=None)
+parser.add_argument("--max-steps", type=int, default=None,
+                    help="Maximum HRSS stepping-out steps per side "
+                         "(default: from config or 10)")
+parser.add_argument("--max-shrinkage", type=int, default=None,
+                    help="Maximum HRSS shrinkage proposals per transition "
+                         "(default: from config or 100)")
+parser.add_argument("--stale-retries", type=int, default=None,
+                    help="Extra full replacement-chain attempts when a chain "
+                         "has no accepted HRSS transition "
+                         "(default: from config or 1)")
+parser.add_argument("--cov-jitter", type=float, default=None,
+                    help="Relative eigenvalue floor for live-point covariance "
+                         "regularisation; use 0 for the old behaviour "
+                         "(default: from config or 1e-6)")
 parser.add_argument("--devices", type=str, default=None,
                     help="Local devices used by sampler parallel work: "
                          "auto, 1, or N. auto uses multiple non-CPU devices "
@@ -858,6 +872,12 @@ elif sampler == "nss":
     num_delete = args.num_delete or inf_cfg.get("num_delete", 250)
     termination = args.termination or inf_cfg.get("termination", -3)
     devices = args.devices or inf_cfg.get("devices", "auto")
+    max_steps = args.max_steps or inf_cfg.get("max_steps", 10)
+    max_shrinkage = args.max_shrinkage or inf_cfg.get("max_shrinkage", 100)
+    stale_retries = (args.stale_retries if args.stale_retries is not None
+                     else inf_cfg.get("stale_retries", 1))
+    cov_jitter = (args.cov_jitter if args.cov_jitter is not None
+                  else inf_cfg.get("cov_jitter", 1e-6))
 
     if num_mcmc_steps == 0:
         num_mcmc_steps = None  # run_nss will use ndim
@@ -866,6 +886,8 @@ elif sampler == "nss":
     fsection(f"Running NSS ({_label}, {n_spots} spots)")
     fprint(f"n_live={n_live}, mcmc_steps={num_mcmc_steps}, "
            f"num_delete={num_delete}")
+    fprint(f"max_steps={max_steps}, max_shrinkage={max_shrinkage}, "
+           f"stale_retries={stale_retries}, cov_jitter={cov_jitter:g}")
     fprint(f"devices={devices}")
 
     _nss_ckpt_dir = results_path(
@@ -896,6 +918,10 @@ elif sampler == "nss":
         resume_path=_nss_resume,
         checkpoint_interval=_checkpoint_interval_seconds,
         devices=devices,
+        max_steps=max_steps,
+        max_shrinkage=max_shrinkage,
+        stale_retries=stale_retries,
+        cov_jitter=cov_jitter,
     )
     dt = time.time() - t0
 
