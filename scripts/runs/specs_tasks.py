@@ -113,6 +113,13 @@ CH0_FIXED_BIAS_PRIORS = {
     "model/priors/log_rho_width": _delta(0.879),
 }
 
+CH0_SWIFT_FIXED_BIAS_PRIORS = {
+    "model/priors/alpha_low": _delta(1.542),
+    "model/priors/alpha_high": _delta(0.286),
+    "model/priors/log_rho_t": _delta(-0.027),
+    "model/priors/log_rho_width": _delta(0.954),
+}
+
 
 def _nu_cz_student_t_prior():
     return {
@@ -387,6 +394,24 @@ def _ch0_manticore_cola_cic_fixed_bias_datasets():
             **CH0_FIXED_BIAS_PRIORS,
         }
         for dataset in _ch0_manticore_cola_cic_field_datasets()
+    ]
+
+
+def _ch0_manticore_swift_fixed_bias_datasets():
+    return [
+        {
+            "model/which_selection": "SN_magnitude",
+            "model/use_reconstruction": True,
+            "model/use_fiducial_Cepheid_host_PV_covariance": False,
+            "model/use_PV_covmat_scaling": False,
+            "model/weight_selection_by_covmat_Neff": False,
+            "model/use_density_dependent_sigma_v": False,
+            "io/SH0ES/reconstruction": CH0_MANTICORE_LOS,
+            "model/which_bias": CH0_MANTICORE_BIAS,
+            "io/field_indices": field,
+            **CH0_SWIFT_FIXED_BIAS_PRIORS,
+        }
+        for field in range(30)
     ]
 
 
@@ -1039,7 +1064,8 @@ TASK_SPECS = {
     },
     "CH0_single_fixed_bias": {
         "description": (
-            "CH0 CIC COLA one-field runs with fixed double-power-law bias."),
+            "CH0 CIC COLA and SWIFT one-field runs with fixed "
+            "double-power-law bias."),
         "config_path": "configs/config_CH0.toml",
         "tag": "single_fixed_bias",
         "common": {
@@ -1052,8 +1078,11 @@ TASK_SPECS = {
             "inference/save_log_likelihood_per_galaxy": True,
             **_with_root(f"{CH0_PAPER_ROOT}/single_fields_fixed_bias"),
         },
-        "datasets": _ch0_manticore_cola_cic_fixed_bias_datasets(),
-        "expected_tasks": 80,
+        "datasets": (
+            _ch0_manticore_cola_cic_fixed_bias_datasets()
+            + _ch0_manticore_swift_fixed_bias_datasets()
+        ),
+        "expected_tasks": 110,
     },
     "CH0_leaveoneout": {
         "description": (
