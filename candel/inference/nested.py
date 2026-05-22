@@ -301,8 +301,43 @@ def _log1mexp(x):
                      jnp.log1p(-jnp.exp(x)))
 
 
-def _add_slice_stats(a, b):
-    return _SliceStats(*(x + y for x, y in zip(a, b)))
+def _broadcast_chain_mask(mask, x):
+    shape = mask.shape + (1,) * (x.ndim - mask.ndim)
+    return mask.reshape(shape)
+
+
+def _select_chain_values(mask, new, old):
+    return jnp.where(_broadcast_chain_mask(mask, new), new, old)
+
+
+def _add_masked_slice_stats(stats, extra, mask):
+    mask = mask.astype(jnp.int32)
+    return _SliceStats(*(a + b * mask for a, b in zip(stats, extra)))
+
+
+def _finalise_chain_stats(chain_stats, accepted_any, retry_counts):
+    stats = jax.tree.map(lambda x: jnp.sum(x, axis=0), chain_stats)
+    return stats._replace(
+        num_chains=jnp.array(accepted_any.shape[0], dtype=jnp.int32),
+        num_stale_chains=jnp.sum((~accepted_any).astype(jnp.int32)),
+        num_retries=jnp.sum(retry_counts.astype(jnp.int32)),
+    )
+
+
+def _merge_retry_attempt(new_p, chain_stats, accepted_any, retry_counts,
+                         retry_new_p, retry_stats, retry_accepted):
+    stale = ~accepted_any
+    new_p = jax.tree.map(
+        lambda retry, current: _select_chain_values(stale, retry, current),
+        retry_new_p, new_p)
+    chain_stats = _add_masked_slice_stats(chain_stats, retry_stats, stale)
+    retry_counts = retry_counts + stale.astype(jnp.int32)
+    accepted_any = accepted_any | (stale & retry_accepted)
+    return new_p, chain_stats, accepted_any, retry_counts
+
+
+def _has_stale_chains(accepted_any):
+    return bool(np.asarray(jax.device_get(jnp.any(~accepted_any))))
 
 
 def _regularize_covariance(cov, relative_jitter):
@@ -480,10 +515,10 @@ def _hrss_step(rng_key, particle, logprior_fn, loglikelihood_fn,
     return new_p, info
 
 
-def _nss_step(rng_key, state, logprior_fn, loglikelihood_fn,
-              num_delete, num_mcmc_steps, max_steps=10,
-              max_shrinkage=100, stale_retries=1, cov_jitter=1e-6):
-    """One NSS iteration: remove worst live points, replace above L*.
+def _nss_attempt(rng_key, state, logprior_fn, loglikelihood_fn,
+                 num_delete, num_mcmc_steps, max_steps=10,
+                 max_shrinkage=100, cov_jitter=1e-6):
+    """Propose one batch of NSS replacements without retry branching.
 
     Matches blackjax.nss exactly:
       - delete_fn: top_k(-logL, num_delete)
@@ -507,65 +542,47 @@ def _nss_step(rng_key, state, logprior_fn, loglikelihood_fn,
     w = jnp.where(w.sum() > 0.0, w, jnp.ones_like(w))
     start_idx = jax.random.choice(
         choice_key, particles.loglikelihood.shape[0],
-        shape=(num_delete, stale_retries + 1), p=w / w.sum(), replace=True)
+        shape=(num_delete,), p=w / w.sum(), replace=True)
     start_p = jax.tree.map(lambda x: x[start_idx], particles)
 
     cov, cov_jitter_added, cov_condition, cov_regularized = (
         _regularize_covariance(state.cov, cov_jitter))
 
     # Run num_mcmc_steps HRSS steps for each replacement particle (take last)
-    def one_chain(rng_key, p0_attempts):
-        def run_attempt(rng_key, p0):
-            def body(p, k):
-                new_p, info = _hrss_step(
-                    k, p, logprior_fn, loglikelihood_fn,
-                    logL_0, cov, max_steps, max_shrinkage)
-                return new_p, info
+    def one_chain(rng_key, p0):
+        def body(p, k):
+            new_p, info = _hrss_step(
+                k, p, logprior_fn, loglikelihood_fn,
+                logL_0, cov, max_steps, max_shrinkage)
+            return new_p, info
 
-            keys = jax.random.split(rng_key, num_mcmc_steps)
-            final_p, infos = jax.lax.scan(body, p0, keys)
-            accepted = infos.is_accepted.astype(jnp.int32)
-            stats = _SliceStats(
-                num_chains=jnp.array(0, dtype=jnp.int32),
-                num_transitions=jnp.array(num_mcmc_steps, dtype=jnp.int32),
-                num_accepted=jnp.sum(accepted),
-                num_step_out=jnp.sum(infos.num_steps.astype(jnp.int32)),
-                num_shrink=jnp.sum(infos.num_shrink.astype(jnp.int32)),
-                num_stale_chains=jnp.array(0, dtype=jnp.int32),
-                num_retries=jnp.array(0, dtype=jnp.int32),
-            )
-            return final_p, stats, jnp.any(infos.is_accepted)
-
-        rng_key, attempt_key = jax.random.split(rng_key)
-        p0 = jax.tree.map(lambda x: x[0], p0_attempts)
-        final_p, stats, accepted_any = run_attempt(attempt_key, p0)
-
-        def retry_cond(carry):
-            n_retry, _, _, is_done, _ = carry
-            return (~is_done) & (n_retry < stale_retries)
-
-        def retry_body(carry):
-            n_retry, final_p, stats, _, key = carry
-            key, attempt_key = jax.random.split(key)
-            p0 = jax.tree.map(lambda x: x[n_retry + 1], p0_attempts)
-            final_p, retry_stats, accepted_any = run_attempt(attempt_key, p0)
-            stats = _add_slice_stats(stats, retry_stats)
-            return n_retry + 1, final_p, stats, accepted_any, key
-
-        n_retry, final_p, stats, accepted_any, _ = jax.lax.while_loop(
-            retry_cond, retry_body,
-            (jnp.array(0, dtype=jnp.int32), final_p, stats, accepted_any,
-             rng_key))
-        stats = stats._replace(
-            num_chains=jnp.array(1, dtype=jnp.int32),
-            num_stale_chains=(~accepted_any).astype(jnp.int32),
-            num_retries=n_retry,
+        keys = jax.random.split(rng_key, num_mcmc_steps)
+        final_p, infos = jax.lax.scan(body, p0, keys)
+        accepted = infos.is_accepted.astype(jnp.int32)
+        stats = _SliceStats(
+            num_chains=jnp.array(0, dtype=jnp.int32),
+            num_transitions=jnp.array(num_mcmc_steps, dtype=jnp.int32),
+            num_accepted=jnp.sum(accepted),
+            num_step_out=jnp.sum(infos.num_steps.astype(jnp.int32)),
+            num_shrink=jnp.sum(infos.num_shrink.astype(jnp.int32)),
+            num_stale_chains=jnp.array(0, dtype=jnp.int32),
+            num_retries=jnp.array(0, dtype=jnp.int32),
         )
-        return final_p, stats
+        return final_p, stats, jnp.any(infos.is_accepted)
 
-    new_p, chain_stats = jax.vmap(one_chain)(
+    new_p, chain_stats, accepted_any = jax.vmap(one_chain)(
         jax.random.split(mcmc_key, num_delete), start_p)
-    stats = jax.tree.map(lambda x: jnp.sum(x, axis=0), chain_stats)
+    return (dead_idx, dead_p, new_p, chain_stats, accepted_any,
+            cov_jitter_added, cov_condition,
+            cov_regularized.astype(jnp.int32))
+
+
+def _nss_finish(state, dead_idx, dead_p, new_p, chain_stats, accepted_any,
+                retry_counts, cov_jitter_added, cov_condition,
+                cov_regularized):
+    """Finish one NSS iteration after retry selection is resolved."""
+    particles = state.particles
+    stats = _finalise_chain_stats(chain_stats, accepted_any, retry_counts)
 
     # Replace dead positions
     updated = jax.tree.map(
@@ -581,9 +598,54 @@ def _nss_step(rng_key, state, logprior_fn, loglikelihood_fn,
         stats=stats,
         max_cov_jitter=cov_jitter_added,
         max_cov_condition=cov_condition,
-        num_cov_regularized=cov_regularized.astype(jnp.int32),
+        num_cov_regularized=cov_regularized,
     )
     return _NSSState(updated, new_integrator, new_cov), _DeadInfo(dead_p, info)
+
+
+def _make_nss_step(logprior_fn, loglikelihood_fn, num_delete,
+                   num_mcmc_steps, max_steps=10, max_shrinkage=100,
+                   stale_retries=1, cov_jitter=1e-6):
+    """Build an NSS step; retry attempts reuse the same compiled kernel."""
+
+    @jax.jit
+    def _attempt(state, rng_key):
+        return _nss_attempt(
+            rng_key, state, logprior_fn, loglikelihood_fn,
+            num_delete, num_mcmc_steps, max_steps=max_steps,
+            max_shrinkage=max_shrinkage, cov_jitter=cov_jitter)
+
+    @jax.jit
+    def _finish(state, dead_idx, dead_p, new_p, chain_stats, accepted_any,
+                retry_counts, cov_jitter_added, cov_condition,
+                cov_regularized):
+        return _nss_finish(
+            state, dead_idx, dead_p, new_p, chain_stats, accepted_any,
+            retry_counts, cov_jitter_added, cov_condition, cov_regularized)
+
+    def _step(state, rng_key):
+        rng_key, attempt_key = jax.random.split(rng_key)
+        (dead_idx, dead_p, new_p, chain_stats, accepted_any,
+         cov_jitter_added, cov_condition, cov_regularized) = _attempt(
+             state, attempt_key)
+        retry_counts = jnp.zeros(accepted_any.shape, dtype=jnp.int32)
+
+        for _ in range(stale_retries):
+            if not _has_stale_chains(accepted_any):
+                break
+            rng_key, retry_key = jax.random.split(rng_key)
+            (_, _, retry_new_p, retry_stats, retry_accepted,
+             _, _, _) = _attempt(state, retry_key)
+            new_p, chain_stats, accepted_any, retry_counts = (
+                _merge_retry_attempt(
+                    new_p, chain_stats, accepted_any, retry_counts,
+                    retry_new_p, retry_stats, retry_accepted))
+
+        return _finish(
+            state, dead_idx, dead_p, new_p, chain_stats, accepted_any,
+            retry_counts, cov_jitter_added, cov_condition, cov_regularized)
+
+    return _step
 
 
 def _adjust_num_delete_for_devices(num_delete, n_devices, n_live):
@@ -625,7 +687,7 @@ def _make_nss_step_pmap(logprior_fn, loglikelihood_fn, total_num_delete,
         w = jnp.where(w.sum() > 0.0, w, jnp.ones_like(w))
         start_idx = jax.random.choice(
             choice_key, particles.loglikelihood.shape[0],
-            shape=(total_num_delete, stale_retries + 1),
+            shape=(total_num_delete,),
             p=w / w.sum(), replace=True)
         start_p = jax.tree.map(lambda x: x[start_idx], particles)
         mcmc_keys = jax.random.split(mcmc_key, n_devices)
@@ -633,62 +695,36 @@ def _make_nss_step_pmap(logprior_fn, loglikelihood_fn, total_num_delete,
 
     @partial(jax.pmap, in_axes=(0, 0, None, None), devices=devices)
     def _run_chains(device_key, p0_device, logL_0, cov):
-        def one_chain(rng_key, p0_attempts):
-            def run_attempt(rng_key, p0):
-                def body(p, k):
-                    new_p, info = _hrss_step(
-                        k, p, logprior_fn, loglikelihood_fn,
-                        logL_0, cov, max_steps, max_shrinkage)
-                    return new_p, info
+        def one_chain(rng_key, p0):
+            def body(p, k):
+                new_p, info = _hrss_step(
+                    k, p, logprior_fn, loglikelihood_fn,
+                    logL_0, cov, max_steps, max_shrinkage)
+                return new_p, info
 
-                keys = jax.random.split(rng_key, num_mcmc_steps)
-                final_p, infos = jax.lax.scan(body, p0, keys)
-                accepted = infos.is_accepted.astype(jnp.int32)
-                stats = _SliceStats(
-                    num_chains=jnp.array(0, dtype=jnp.int32),
-                    num_transitions=jnp.array(num_mcmc_steps, dtype=jnp.int32),
-                    num_accepted=jnp.sum(accepted),
-                    num_step_out=jnp.sum(infos.num_steps.astype(jnp.int32)),
-                    num_shrink=jnp.sum(infos.num_shrink.astype(jnp.int32)),
-                    num_stale_chains=jnp.array(0, dtype=jnp.int32),
-                    num_retries=jnp.array(0, dtype=jnp.int32),
-                )
-                return final_p, stats, jnp.any(infos.is_accepted)
-
-            rng_key, attempt_key = jax.random.split(rng_key)
-            p0 = jax.tree.map(lambda x: x[0], p0_attempts)
-            final_p, stats, accepted_any = run_attempt(attempt_key, p0)
-
-            def retry_cond(carry):
-                n_retry, _, _, is_done, _ = carry
-                return (~is_done) & (n_retry < stale_retries)
-
-            def retry_body(carry):
-                n_retry, final_p, stats, _, key = carry
-                key, attempt_key = jax.random.split(key)
-                p0 = jax.tree.map(lambda x: x[n_retry + 1], p0_attempts)
-                final_p, retry_stats, accepted_any = run_attempt(attempt_key, p0)
-                stats = _add_slice_stats(stats, retry_stats)
-                return n_retry + 1, final_p, stats, accepted_any, key
-
-            n_retry, final_p, stats, accepted_any, _ = jax.lax.while_loop(
-                retry_cond, retry_body,
-                (jnp.array(0, dtype=jnp.int32), final_p, stats, accepted_any,
-                 rng_key))
-            stats = stats._replace(
-                num_chains=jnp.array(1, dtype=jnp.int32),
-                num_stale_chains=(~accepted_any).astype(jnp.int32),
-                num_retries=n_retry,
+            keys = jax.random.split(rng_key, num_mcmc_steps)
+            final_p, infos = jax.lax.scan(body, p0, keys)
+            accepted = infos.is_accepted.astype(jnp.int32)
+            stats = _SliceStats(
+                num_chains=jnp.array(0, dtype=jnp.int32),
+                num_transitions=jnp.array(num_mcmc_steps, dtype=jnp.int32),
+                num_accepted=jnp.sum(accepted),
+                num_step_out=jnp.sum(infos.num_steps.astype(jnp.int32)),
+                num_shrink=jnp.sum(infos.num_shrink.astype(jnp.int32)),
+                num_stale_chains=jnp.array(0, dtype=jnp.int32),
+                num_retries=jnp.array(0, dtype=jnp.int32),
             )
-            return final_p, stats
+            return final_p, stats, jnp.any(infos.is_accepted)
 
         keys = jax.random.split(device_key, chains_per_device)
         return jax.vmap(one_chain)(keys, p0_device)
 
     @jax.jit
-    def _finish(state, dead_idx, dead_p, new_p, stats, cov_jitter_added,
-                cov_condition, cov_regularized):
+    def _finish(state, dead_idx, dead_p, new_p, chain_stats, accepted_any,
+                retry_counts, cov_jitter_added, cov_condition,
+                cov_regularized):
         particles = state.particles
+        stats = _finalise_chain_stats(chain_stats, accepted_any, retry_counts)
         updated = jax.tree.map(
             lambda full, new: full.at[dead_idx].set(new), particles, new_p)
         new_cov = jnp.atleast_2d(
@@ -703,23 +739,49 @@ def _make_nss_step_pmap(logprior_fn, loglikelihood_fn, total_num_delete,
         )
         return _NSSState(updated, new_integrator, new_cov), _DeadInfo(dead_p, info)
 
-    def _step(state, rng_key):
+    def _attempt(state, rng_key):
         dead_idx, dead_p, logL_0, start_p, mcmc_keys = _prepare(
             state, rng_key)
         start_p = jax.tree.map(
             lambda x: x.reshape(
-                (n_devices, chains_per_device, stale_retries + 1)
-                + x.shape[2:]),
+                (n_devices, chains_per_device) + x.shape[1:]),
             start_p)
         cov, cov_jitter_added, cov_condition, cov_regularized = (
             _regularize_covariance(state.cov, cov_jitter))
-        new_p, stats = _run_chains(mcmc_keys, start_p, logL_0, cov)
-        stats = jax.tree.map(lambda x: jnp.sum(x), stats)
+        new_p, chain_stats, accepted_any = _run_chains(
+            mcmc_keys, start_p, logL_0, cov)
         new_p = jax.tree.map(
             lambda x: x.reshape((total_num_delete,) + x.shape[2:]),
             new_p)
-        return _finish(state, dead_idx, dead_p, new_p, stats,
-                       cov_jitter_added, cov_condition, cov_regularized)
+        chain_stats = jax.tree.map(
+            lambda x: x.reshape((total_num_delete,) + x.shape[2:]),
+            chain_stats)
+        accepted_any = accepted_any.reshape((total_num_delete,))
+        return (dead_idx, dead_p, new_p, chain_stats, accepted_any,
+                cov_jitter_added, cov_condition,
+                cov_regularized.astype(jnp.int32))
+
+    def _step(state, rng_key):
+        rng_key, attempt_key = jax.random.split(rng_key)
+        (dead_idx, dead_p, new_p, chain_stats, accepted_any,
+         cov_jitter_added, cov_condition, cov_regularized) = _attempt(
+             state, attempt_key)
+        retry_counts = jnp.zeros(accepted_any.shape, dtype=jnp.int32)
+
+        for _ in range(stale_retries):
+            if not _has_stale_chains(accepted_any):
+                break
+            rng_key, retry_key = jax.random.split(rng_key)
+            (_, _, retry_new_p, retry_stats, retry_accepted,
+             _, _, _) = _attempt(state, retry_key)
+            new_p, chain_stats, accepted_any, retry_counts = (
+                _merge_retry_attempt(
+                    new_p, chain_stats, accepted_any, retry_counts,
+                    retry_new_p, retry_stats, retry_accepted))
+
+        return _finish(state, dead_idx, dead_p, new_p, chain_stats,
+                       accepted_any, retry_counts, cov_jitter_added,
+                       cov_condition, cov_regularized)
 
     return _step, chains_per_device
 
@@ -1116,14 +1178,11 @@ def run_nss(model, model_args=(), model_kwargs=None,
             fprint("NSS: multiple devices visible but num_delete <= 1; "
                    "using single-device step.")
 
-        # ---- JIT the NSS step ----
-        @jax.jit
-        def step_fn(state, rng_key):
-            return _nss_step(
-                rng_key, state, log_prior_fn,
-                log_likelihood_fn, total_num_delete, num_mcmc_steps,
-                max_steps=max_steps, max_shrinkage=max_shrinkage,
-                stale_retries=stale_retries, cov_jitter=cov_jitter)
+        step_fn = _make_nss_step(
+            log_prior_fn, log_likelihood_fn, total_num_delete,
+            num_mcmc_steps, max_steps=max_steps,
+            max_shrinkage=max_shrinkage, stale_retries=stale_retries,
+            cov_jitter=cov_jitter)
 
     if checkpoint_dir is not None and checkpoint_path is None:
         raise ValueError(
