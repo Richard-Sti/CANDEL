@@ -89,3 +89,29 @@ def test_los_field_cache_path_uses_field_cache_dir(tmp_path):
     assert "v1" not in path.name
     assert "field-0" in path.name
     assert path.suffix == ".hdf5"
+
+
+def test_los_field_cache_path_separates_density_and_velocity_smoothing(
+        tmp_path):
+    config = {
+        "io": {
+            "field_cache_dir": str(tmp_path),
+            "reconstruction_main": {
+                "rmin": 0.001,
+                "rmax": 201,
+                "num_steps": 251,
+                "ManticoreLocalCOLA": {"which_MAS": "CIC"},
+            },
+        },
+    }
+
+    path = los_field_cache_path(
+        config, "CF4", "ManticoreLocalCOLA", "data/los_<X>.hdf5",
+        field_smoothing_scale=8.0,
+        velocity_field_smoothing_scale=16.0,
+        field_indices=0)
+
+    name = Path(path).name
+    assert "density-smooth-R8" in name
+    assert "velocity-smooth-R16" in name
+    assert "field-smooth-R8" not in name

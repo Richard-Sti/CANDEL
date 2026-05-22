@@ -177,7 +177,8 @@ def test_volume_cache_filenames_include_field_smoothing():
         "geometry": "sphere",
         "subcube_radius": 50.0,
         "downsample": 1,
-        "field_smoothing_scale": 3.0,
+        "density_field_smoothing_scale": 3.0,
+        "velocity_field_smoothing_scale": 5.0,
         "load_velocity": True,
     }
     pv_payload = {
@@ -191,14 +192,15 @@ def test_volume_cache_filenames_include_field_smoothing():
         "voxel_subsample_fraction": 0.5,
         "voxel_subsample_seed": 42,
         "store_rhat_3d": False,
-        "field_smoothing_scale": 3.0,
+        "density_field_smoothing_scale": 3.0,
     }
 
-    assert "field-smooth-R3" in _volume_field_cache_filename(h0_payload)
-    assert "field-smooth-R3" in _volume_field_cache_filename(pv_payload)
+    assert "density-smooth-R3" in _volume_field_cache_filename(h0_payload)
+    assert "velocity-smooth-R5" in _volume_field_cache_filename(h0_payload)
+    assert "density-smooth-R3" in _volume_field_cache_filename(pv_payload)
 
 
-def test_h0_field_smoothing_applies_to_density_and_velocity(monkeypatch):
+def test_h0_field_smoothing_applies_to_density_only(monkeypatch):
     class FakeLoader:
         def __init__(self, nsim, **kwargs):
             self.nsim = nsim
@@ -229,6 +231,42 @@ def test_h0_field_smoothing_applies_to_density_and_velocity(monkeypatch):
         "fake", {"Om0": 0.3}, [0], "linear", 0.3,
         load_velocity=True, geometry="cube", cache_enabled=False,
         return_cache_fields=True, field_smoothing_scale=4.0)
+
+    assert len(calls) == 1
+
+
+def test_h0_velocity_smoothing_requires_explicit_config(monkeypatch):
+    class FakeLoader:
+        def __init__(self, nsim, **kwargs):
+            self.nsim = nsim
+            self.boxsize = 12.0
+            self.ngrid = 4
+            self.coordinate_frame = "icrs"
+            self.observer_pos = np.array([6.0, 6.0, 6.0],
+                                         dtype=np.float32)
+
+        def load_density(self):
+            return np.ones((4, 4, 4), dtype=np.float32)
+
+        def load_velocity_component(self, component):
+            return np.full((4, 4, 4), component + 1, dtype=np.float32)
+
+    calls = []
+
+    def fake_smooth(field, smooth_scale, boxsize, make_copy=False):
+        calls.append((field.shape, smooth_scale, boxsize))
+        return np.array(field, copy=True)
+
+    monkeypatch.setattr(
+        volume_density_mod, "name2field_loader", lambda name: FakeLoader)
+    monkeypatch.setattr(
+        volume_density_mod, "apply_gaussian_smoothing", fake_smooth)
+
+    _load_volume_data_for_H0(
+        "fake", {"Om0": 0.3}, [0], "linear", 0.3,
+        load_velocity=True, geometry="cube", cache_enabled=False,
+        return_cache_fields=True, field_smoothing_scale=4.0,
+        velocity_field_smoothing_scale=4.0)
 
     assert len(calls) == 4
 
