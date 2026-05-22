@@ -62,6 +62,10 @@ pvdata_mod = SimpleNamespace(
         field_products_mod.field_smoothing_cache_payload),
     field_smoothing_scale_from_config=(
         field_products_mod.field_smoothing_scale_from_config),
+    velocity_field_smoothing_cache_payload=(
+        field_products_mod.velocity_field_smoothing_cache_payload),
+    velocity_field_smoothing_scale_from_config=(
+        field_products_mod.velocity_field_smoothing_scale_from_config),
     resolve_los_data_path=field_products_mod.resolve_los_data_path,
     _field_loader_native_dx=volume_density_mod._field_loader_native_dx,
     _jsonable=field_cache_mod._jsonable,
@@ -397,6 +401,8 @@ def _cache_group_key(config):
         config, reconstruction, field_kwargs, field_indices)
     field_smoothing = pvdata_mod.field_smoothing_cache_payload(
         pvdata_mod.field_smoothing_scale_from_config(config))
+    velocity_smoothing = pvdata_mod.velocity_field_smoothing_cache_payload(
+        pvdata_mod.velocity_field_smoothing_scale_from_config(config))
     return _json_key({
         "kind": "volume_field_data",
         "product": "h0_volume",
@@ -410,6 +416,7 @@ def _cache_group_key(config):
         "sampling": sampling,
         "supersampling": supersampling,
         "field_smoothing": field_smoothing,
+        "velocity_smoothing": velocity_smoothing,
         "velocity": _h0_velocity_key(config),
     })
 
@@ -562,33 +569,51 @@ def _h0_supersampling_label(config):
 def _field_smoothing_description(config):
     """Human-readable field smoothing settings."""
     scale = pvdata_mod.field_smoothing_scale_from_config(config)
-    if scale is None:
+    velocity_scale = pvdata_mod.velocity_field_smoothing_scale_from_config(
+        config)
+    if scale is None and velocity_scale is None:
         return ""
-    return f"Gaussian R={scale:g} Mpc/h"
+    parts = []
+    if scale is not None:
+        parts.append(f"density R={scale:g} Mpc/h")
+    if velocity_scale is not None:
+        parts.append(f"velocity R={velocity_scale:g} Mpc/h")
+    return "Gaussian " + ", ".join(parts)
 
 
 def _field_smoothing_label(config):
     scale = pvdata_mod.field_smoothing_scale_from_config(config)
-    if scale is None:
+    velocity_scale = pvdata_mod.velocity_field_smoothing_scale_from_config(
+        config)
+    if scale is None and velocity_scale is None:
         return "-"
-    return f"R={scale:g}"
+    if velocity_scale is None:
+        return f"rhoR={scale:g}"
+    if scale is None:
+        return f"vR={velocity_scale:g}"
+    return f"rhoR={scale:g},vR={velocity_scale:g}"
 
 
 def _resolve_los_path(path, reconstruction, config=None, catalogue=None):
     field_smoothing_scale = (
         None if config is None else
         pvdata_mod.field_smoothing_scale_from_config(config))
+    velocity_field_smoothing_scale = (
+        None if config is None else
+        pvdata_mod.velocity_field_smoothing_scale_from_config(config))
     if catalogue is not None:
         field_indices = _configured_or_available_field_indices(
             config, reconstruction)
         cache_path = field_products_mod.los_field_cache_paths(
             config, catalogue, reconstruction, path,
             field_smoothing_scale=field_smoothing_scale,
+            velocity_field_smoothing_scale=velocity_field_smoothing_scale,
             field_indices=field_indices)
         if cache_path is not None:
             return cache_path
     return pvdata_mod.resolve_los_data_path(
-        path, reconstruction, field_smoothing_scale, config=config)
+        path, reconstruction, field_smoothing_scale, config=config,
+        velocity_field_smoothing_scale=velocity_field_smoothing_scale)
 
 
 def _h0_supersampling_payload(config, reconstruction, field_kwargs,
@@ -717,12 +742,14 @@ def _h0_cache_file_status(config):
         supersample_factor, supersample_radius)
     field_smoothing = pvdata_mod.field_smoothing_cache_payload(
         pvdata_mod.field_smoothing_scale_from_config(config))
+    velocity_smoothing = pvdata_mod.velocity_field_smoothing_cache_payload(
+        pvdata_mod.velocity_field_smoothing_scale_from_config(config))
     density_payload = {
         **base_payload,
         **field_smoothing,
         "load_velocity": False,
     }
-    velocity_payload = {**base_payload, **field_smoothing,
+    velocity_payload = {**base_payload, **velocity_smoothing,
                         "load_velocity": True}
     cache_dir = _field_cache_dir_from_config(config)
     density_cache_paths = [

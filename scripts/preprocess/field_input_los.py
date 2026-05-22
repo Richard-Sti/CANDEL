@@ -176,11 +176,14 @@ def radial_los_grid(config, catalogue, reconstruction, verbose=True):
 
 
 def resolve_los_output_path(los_file, reconstruction,
-                            field_smoothing_scale=None, config=None):
+                            field_smoothing_scale=None, config=None,
+                            velocity_field_smoothing_scale=None):
     """Resolve a LOS template to the output path for this smoothing variant."""
     los_file = los_file.replace(
         "<X>", reconstruction_los_label(config, reconstruction))
-    return field_smoothed_los_path(los_file, field_smoothing_scale)
+    return field_smoothed_los_path(
+        los_file, field_smoothing_scale,
+        velocity_field_smoothing_scale=velocity_field_smoothing_scale)
 
 
 def los_file_matches_grid(los_file, r, verbose=True):
@@ -233,10 +236,13 @@ def compute_los_file_from_coordinates(
         catalogue, reconstruction, config, RA, dec, los_template=None,
         filepath=None, field_smoothing_scale=None, overwrite=False,
         output_path=None, field_indices=None, r=None, verbose=True,
-        metadata=None):
+        metadata=None, velocity_field_smoothing_scale=None):
     """Compute one LOS product from already-loaded sky coordinates."""
     field_smoothing_scale = validate_field_smoothing_scale(
         field_smoothing_scale)
+    velocity_field_smoothing_scale = validate_field_smoothing_scale(
+        velocity_field_smoothing_scale,
+        label="model.velocity_3d_smoothing_scale")
 
     nsims = _selected_field_indices(config, reconstruction, field_indices)
     if r is None:
@@ -258,7 +264,8 @@ def compute_los_file_from_coordinates(
         output_path if output_path is not None
         else resolve_los_output_path(
             los_template, reconstruction, field_smoothing_scale,
-            config=config))
+            config=config,
+            velocity_field_smoothing_scale=velocity_field_smoothing_scale))
     if los_file is None:
         raise ValueError(
             "A LOS output path is required. Provide either `output_path` "
@@ -334,6 +341,8 @@ def compute_los_file_from_coordinates(
                 dens_i, vel_i = candel.field.interpolate_los_density_velocity(
                     loader, r, RA_i, dec_i,
                     field_smoothing_scale=field_smoothing_scale,
+                    velocity_field_smoothing_scale=(
+                        velocity_field_smoothing_scale),
                     verbose=verbose, los_geometry=los_geometry)
                 density_dataset[i] = dens_i.astype(np.float32)
                 velocity_dataset[i] = vel_i.astype(np.float16)
@@ -353,7 +362,7 @@ def compute_los_file_from_coordinates(
 def compute_los_file(catalogue, reconstruction, config, filepath=None,
                      config_path=None, field_smoothing_scale=None,
                      overwrite=False, output_path=None, field_indices=None,
-                     verbose=True):
+                     verbose=True, velocity_field_smoothing_scale=None):
     """Compute one LOS product serially using the standard file schema."""
     RA, dec, los_template = load_los(
         catalogue, config, filepath, config_path=config_path)
@@ -361,5 +370,6 @@ def compute_los_file(catalogue, reconstruction, config, filepath=None,
         catalogue, reconstruction, config, RA, dec,
         los_template=los_template, filepath=filepath,
         field_smoothing_scale=field_smoothing_scale,
+        velocity_field_smoothing_scale=velocity_field_smoothing_scale,
         overwrite=overwrite, output_path=output_path,
         field_indices=field_indices, verbose=verbose)
