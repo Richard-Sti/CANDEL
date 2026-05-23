@@ -47,6 +47,7 @@ SCALE_COLOURS = {
     4.0: TRGBH0_COLOURS[0],
     8.0: TRGBH0_COLOURS[1],
 }
+LIKELIHOOD_CHOICES = ("gaussian", "student_t", "all")
 
 
 def parse_args():
@@ -64,6 +65,9 @@ def parse_args():
     parser.add_argument(
         "--output-dir", type=Path, default=DEFAULT_OUTDIR,
         help="Directory for plots and summaries.")
+    parser.add_argument(
+        "--cz-likelihood", choices=LIKELIHOOD_CHOICES, default="gaussian",
+        help="Redshift likelihood to plot from the mixed task files.")
     parser.add_argument(
         "--allow-missing", action="store_true",
         help="Skip missing HDF5 outputs instead of failing.")
@@ -111,7 +115,7 @@ def family_sort_key(row):
     )
 
 
-def task_specs(task_file):
+def task_specs(task_file, cz_likelihood):
     specs = []
     with repo_path(task_file).open() as handle:
         for line in handle:
@@ -131,11 +135,17 @@ def task_specs(task_file):
             smooth_R = float(get_nested_default(
                 config, ("model", "field_3d_smoothing_scale"), 0.0))
             which_bias = get_nested(config, ("model", "which_bias"))
+            config_likelihood = get_nested_default(
+                config, ("model", "cz_likelihood"), "gaussian")
+            if (cz_likelihood != "all"
+                    and config_likelihood != cz_likelihood):
+                continue
             recon_label = reconstruction_label(reconstruction, mas)
             specs.append({
                 "task": int(task),
                 "field": int(get_nested(config, ("io", "field_indices"))),
                 "smooth_R": smooth_R,
+                "cz_likelihood": config_likelihood,
                 "which_bias": which_bias,
                 "which_selection": get_nested_default(
                     config, ("model", "which_selection"), ""),
@@ -153,9 +163,9 @@ def task_specs(task_file):
     return sorted(specs, key=family_sort_key)
 
 
-def unsmoothed_density_baseline_specs(task_file):
+def unsmoothed_density_baseline_specs(task_file, cz_likelihood):
     return [
-        spec for spec in task_specs(task_file)
+        spec for spec in task_specs(task_file, cz_likelihood)
         if spec["which_bias"] == "double_powerlaw"
         and spec["reconstruction_label"] == "COLA/PCS"
         and spec["smooth_R"] == 0.0
@@ -177,6 +187,8 @@ def read_scalar(handle, name, path, default=None):
         raise KeyError(f"`{path}` does not contain `{name}`.")
     value = float(handle[name][()])
     if not np.isfinite(value):
+        if default is not None:
+            return default
         raise ValueError(f"`{path}` has non-finite `{name}`: {value}.")
     return value
 
@@ -233,10 +245,10 @@ def read_row(spec):
             **h0_summary(h0),
             "lnZ_harmonic": read_scalar(handle, "gof/lnZ_harmonic", path),
             "err_lnZ_harmonic": read_scalar(
-                handle, "gof/err_lnZ_harmonic", path),
+                handle, "gof/err_lnZ_harmonic", path, default=np.nan),
             "lnZ_laplace": read_scalar(handle, "gof/lnZ_laplace", path),
             "err_lnZ_laplace": read_scalar(
-                handle, "gof/err_lnZ_laplace", path),
+                handle, "gof/err_lnZ_laplace", path, default=np.nan),
             "BIC": bic,
             "lnZ_bic": -0.5 * bic,
             **sample_summaries(handle, path, BIAS_PARAMS),
@@ -244,16 +256,16 @@ def read_row(spec):
         }
 
 
-def load_rows(task_file, baseline_task_file, allow_missing):
+def load_rows(task_file, baseline_task_file, cz_likelihood, allow_missing):
     specs = [
         {**spec, "task_set": "smoothed"}
-        for spec in task_specs(task_file)
+        for spec in task_specs(task_file, cz_likelihood)
     ]
     if baseline_task_file is not None:
         baseline_specs = [
             {**spec, "task_set": "unsmoothed_baseline"}
             for spec in unsmoothed_density_baseline_specs(
-                baseline_task_file)
+                baseline_task_file, cz_likelihood)
         ]
         specs = baseline_specs + specs
     rows = [read_row(spec) for spec in specs]
@@ -578,12 +590,29 @@ def plot_h0_vs_harmonic_lnz(rows, out_pdf):
             h0 = np.asarray([row["H0_q50"] for row in group], dtype=float)
             h0_lo = np.asarray([row["H0_q16"] for row in group], dtype=float)
             h0_hi = np.asarray([row["H0_q84"] for row in group], dtype=float)
+            finite = (
+                np.isfinite(x) & np.isfinite(h0)
+                & np.isfinite(h0_lo) & np.isfinite(h0_hi)
+            )
+            x = x[finite]
+            xerr = xerr[finite]
+            h0 = h0[finite]
+            h0_lo = h0_lo[finite]
+            h0_hi = h0_hi[finite]
             yerr = np.vstack([h0 - h0_lo, h0_hi - h0])
             colour = scale_colour(scale)
-            ax.errorbar(
-                x, h0, xerr=xerr, yerr=yerr, fmt="o", ms=3.1,
-                color=colour, ecolor=colour, elinewidth=0.45,
-                capsize=1.0, alpha=0.72, zorder=2)
+            finite_xerr = np.isfinite(xerr)
+            for mask, maybe_xerr in (
+                (finite_xerr, xerr[finite_xerr]),
+                (~finite_xerr, None),
+            ):
+                if not np.any(mask):
+                    continue
+                ax.errorbar(
+                    x[mask], h0[mask], xerr=maybe_xerr,
+                    yerr=yerr[:, mask], fmt="o", ms=3.1,
+                    color=colour, ecolor=colour, elinewidth=0.45,
+                    capsize=1.0, alpha=0.72, zorder=2)
             ax.set_title(scale_label(scale), loc="left")
             ax.set_xlabel(r"harmonic $\ln Z$")
             ax.xaxis.set_major_locator(MaxNLocator(nbins=4))
@@ -797,8 +826,8 @@ def plot_bias_param_distributions(rows, out_pdf):
 def write_rows_csv(rows, path):
     fieldnames = [
         "status", "task_set", "task", "field", "smooth_R",
-        "reference_smooth_R", "which_bias", "which_selection", "mas",
-        "reconstruction",
+        "reference_smooth_R", "cz_likelihood", "which_bias",
+        "which_selection", "mas", "reconstruction",
         "reconstruction_label", "family", "n_H0", "H0_mean", "H0_std",
         "H0_q16", "H0_q50", "H0_q84", "reference_H0_q50",
         "delta_H0_q50_vs_reference", "delta_H0_mean_vs_reference",
@@ -829,9 +858,11 @@ def write_summary(rows, missing, path):
         row for row in rows
         if row.get("task_set") == "unsmoothed_baseline"
     ]
+    likelihoods = sorted({row.get("cz_likelihood", "") for row in rows})
     lines = [
         "# TRGBH0 Single-Field Smoothing Diagnostics",
         "",
+        f"Redshift likelihood: {', '.join(likelihoods)}.",
         f"Complete outputs: {len(rows)}.",
         f"Smoothed task outputs: {len(smoothed)}.",
         f"Matched unsmoothed baseline outputs: {len(baseline)}.",
@@ -900,7 +931,8 @@ def main():
     baseline_task_file = (
         None if args.no_unsmoothed_baseline else args.baseline_task_file)
     rows, missing = load_rows(
-        args.task_file, baseline_task_file, args.allow_missing)
+        args.task_file, baseline_task_file, args.cz_likelihood,
+        args.allow_missing)
     selected = result_rows(rows)
 
     csv_path = args.output_dir / "trgbh0_single_smoothed_summary.csv"

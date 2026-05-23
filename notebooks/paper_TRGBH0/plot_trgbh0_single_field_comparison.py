@@ -4,6 +4,7 @@
 from argparse import ArgumentParser
 from dataclasses import dataclass
 import csv
+from itertools import combinations
 from pathlib import Path
 
 import h5py
@@ -38,6 +39,7 @@ MAS_COLOURS = {
     "PCS": "#168039",
     "SPH": "#fe9000",
 }
+LIKELIHOOD_CHOICES = ("gaussian", "student_t", "all")
 PARAMETERS = (
     "M_TRGB",
     "alpha_low",
@@ -63,6 +65,7 @@ class Row:
     reconstruction: str
     config: str
     source: str
+    cz_likelihood: str
     values: dict[str, float | int | str]
 
 
@@ -81,9 +84,15 @@ def parse_args():
         help="Directory for plots and summary CSV files.",
     )
     parser.add_argument(
+        "--cz-likelihood",
+        choices=LIKELIHOOD_CHOICES,
+        default="gaussian",
+        help="Redshift likelihood to plot from the mixed task file.",
+    )
+    parser.add_argument(
         "--require-complete",
         action="store_true",
-        help="Fail if any field is missing one of CIC, PCS, or SPH.",
+        help="Fail if any field is missing a plotted MAS variant.",
     )
     parser.add_argument(
         "--fail-on-unusable",
@@ -123,7 +132,7 @@ def task_config_paths(task_file):
     return paths
 
 
-def output_spec(task_index, config_path):
+def output_spec(task_index, config_path, cz_likelihood):
     with config_path.open("rb") as handle:
         config = tomllib.load(handle)
 
@@ -139,6 +148,11 @@ def output_spec(task_index, config_path):
     if mas not in MAS_ORDER:
         return None
 
+    config_likelihood = get_nested(
+        config, ("model", "cz_likelihood"), default="gaussian")
+    if cz_likelihood != "all" and config_likelihood != cz_likelihood:
+        return None
+
     return {
         "task": task_index,
         "field": int(get_nested(config, ("io", "field_indices"))),
@@ -146,6 +160,7 @@ def output_spec(task_index, config_path):
         "reconstruction": reconstruction,
         "config": str(config_path),
         "source": str(repo_path(get_nested(config, ("io", "fname_output")))),
+        "cz_likelihood": config_likelihood,
     }
 
 
@@ -224,10 +239,10 @@ def read_row(spec):
     return Row(**spec, values=values)
 
 
-def load_rows(task_file, fail_on_unusable=False):
+def load_rows(task_file, cz_likelihood, fail_on_unusable=False):
     specs = []
     for task_index, config_path in task_config_paths(task_file):
-        spec = output_spec(task_index, config_path)
+        spec = output_spec(task_index, config_path, cz_likelihood)
         if spec is not None:
             specs.append(spec)
     rows = []
@@ -264,20 +279,24 @@ def rows_for_mas(rows, mas):
     return [row for row in rows if row.mas == mas]
 
 
-def matched_fields(rows, require_complete=False):
+def active_mas_order(rows):
+    return tuple(mas for mas in MAS_ORDER if rows_for_mas(rows, mas))
+
+
+def matched_fields(rows, mas_order, require_complete=False):
     by_field = {}
     for row in rows:
         by_field.setdefault(row.field, {})[row.mas] = row
 
     matched = {
-        field: {mas: by_field[field][mas] for mas in MAS_ORDER}
+        field: {mas: by_field[field][mas] for mas in mas_order}
         for field in sorted(by_field)
-        if all(mas in by_field[field] for mas in MAS_ORDER)
+        if all(mas in by_field[field] for mas in mas_order)
     }
     missing = {
-        field: [mas for mas in MAS_ORDER if mas not in rows_by_mas]
+        field: [mas for mas in mas_order if mas not in rows_by_mas]
         for field, rows_by_mas in sorted(by_field.items())
-        if any(mas not in rows_by_mas for mas in MAS_ORDER)
+        if any(mas not in rows_by_mas for mas in mas_order)
     }
 
     if require_complete:
@@ -326,6 +345,7 @@ def write_summary_csv(rows, out_csv):
         "task",
         "field",
         "mas",
+        "cz_likelihood",
         "reconstruction",
         "n_H0",
         "H0_mean",
@@ -356,12 +376,15 @@ def write_summary_csv(rows, out_csv):
         for row in rows:
             value_fields = [
                 key for key in base_fields
-                if key not in ("task", "field", "mas", "reconstruction")
+                if key not in (
+                    "task", "field", "mas", "cz_likelihood",
+                    "reconstruction")
             ] + parameter_fields
             writer.writerow({
                 "task": row.task,
                 "field": row.field,
                 "mas": row.mas,
+                "cz_likelihood": row.cz_likelihood,
                 "reconstruction": row.reconstruction,
                 **{key: row.values.get(key, "") for key in value_fields},
                 "source": row.source,
@@ -369,8 +392,16 @@ def write_summary_csv(rows, out_csv):
             })
 
 
-def delta_rows(matched):
-    comparisons = (("PCS", "CIC"), ("SPH", "CIC"), ("SPH", "PCS"))
+def delta_rows(matched, mas_order):
+    preferred_order = (("PCS", "CIC"), ("SPH", "CIC"), ("SPH", "PCS"))
+    comparisons = [
+        pair for pair in preferred_order
+        if pair[0] in mas_order and pair[1] in mas_order
+    ]
+    comparisons.extend(
+        pair for pair in combinations(mas_order, 2)
+        if pair not in comparisons and pair[::-1] not in comparisons
+    )
     rows = []
     for field in sorted(matched):
         for left, right in comparisons:
@@ -505,7 +536,7 @@ def add_best_label(ax, rows, x_key, y_key="H0_q50"):
     )
 
 
-def plot_h0_vs_lnz(rows, out_pdf):
+def plot_h0_vs_lnz(rows, mas_order, out_pdf):
     cmap = trgbh0_cmap("trgbh0_single_field_index")
     norm = field_norm(rows)
     evidence_specs = (
@@ -516,12 +547,13 @@ def plot_h0_vs_lnz(rows, out_pdf):
     with plt.style.context(["science", "no-latex"]):
         set_paper_rc()
         fig, axes = plt.subplots(
-            len(evidence_specs), len(MAS_ORDER),
+            len(evidence_specs), len(mas_order),
             figsize=(8.4, 5.25),
             sharey="row",
             constrained_layout=True,
         )
-        for col, mas in enumerate(MAS_ORDER):
+        axes = np.asarray(axes).reshape(len(evidence_specs), len(mas_order))
+        for col, mas in enumerate(mas_order):
             mas_rows = rows_for_mas(rows, mas)
             fields = np.asarray([row.field for row in mas_rows], dtype=float)
             h0 = np.asarray([row_value(row, "H0_q50") for row in mas_rows])
@@ -598,7 +630,7 @@ def plot_h0_vs_lnz(rows, out_pdf):
         return save_pdf_png(fig, out_pdf)
 
 
-def plot_h0_vs_harmonic_lnz(rows, out_pdf):
+def plot_h0_vs_harmonic_lnz(rows, mas_order, out_pdf):
     cmap = trgbh0_cmap("trgbh0_single_harmonic_field_index")
     norm = field_norm(rows)
 
@@ -606,12 +638,13 @@ def plot_h0_vs_harmonic_lnz(rows, out_pdf):
         set_paper_rc()
         fig, axes = plt.subplots(
             1,
-            len(MAS_ORDER),
+            len(mas_order),
             figsize=(8.2, 2.9),
             sharey=True,
             constrained_layout=True,
         )
-        for ax, mas in zip(axes, MAS_ORDER):
+        axes = np.atleast_1d(axes)
+        for ax, mas in zip(axes, mas_order):
             mas_rows = rows_for_mas(rows, mas)
             x = np.asarray([
                 row_value(row, "lnZ_harmonic") for row in mas_rows
@@ -677,9 +710,9 @@ def plot_h0_vs_harmonic_lnz(rows, out_pdf):
         return save_pdf_png(fig, out_pdf)
 
 
-def plot_matched_fields(matched, out_pdf):
+def plot_matched_fields(matched, mas_order, out_pdf):
     fields = sorted(matched)
-    xpos = np.arange(len(MAS_ORDER))
+    xpos = np.arange(len(mas_order))
     cmap = trgbh0_cmap("trgbh0_single_matched_fields")
     norm = Normalize(vmin=0, vmax=max(fields) if fields else 1)
 
@@ -699,7 +732,7 @@ def plot_matched_fields(matched, out_pdf):
             values_by_field = []
             for field in fields:
                 values = np.asarray([
-                    row_value(matched[field][mas], key) for mas in MAS_ORDER
+                    row_value(matched[field][mas], key) for mas in mas_order
                 ])
                 values_by_field.append(values)
                 colour = cmap(norm(field))
@@ -731,7 +764,7 @@ def plot_matched_fields(matched, out_pdf):
                     framealpha=0.85,
                     handlelength=1.7,
                 )
-        axes[1].set_xticks(xpos, [MAS_LABELS[mas] for mas in MAS_ORDER])
+        axes[1].set_xticks(xpos, [MAS_LABELS[mas] for mas in mas_order])
         axes[1].set_xlabel("Mass-assignment scheme")
         sm = plt.cm.ScalarMappable(norm=norm, cmap=cmap)
         sm.set_array([])
@@ -742,7 +775,10 @@ def plot_matched_fields(matched, out_pdf):
 
 
 def plot_mas_deltas(delta_data, out_pdf):
-    comparisons = ("PCS-CIC", "SPH-CIC", "SPH-PCS")
+    comparisons = tuple(dict.fromkeys(
+        item["comparison"] for item in delta_data))
+    if not comparisons:
+        return []
     colours = {
         "PCS-CIC": "#168039",
         "SPH-CIC": "#fe9000",
@@ -784,7 +820,7 @@ def plot_mas_deltas(delta_data, out_pdf):
                     positions[idx] + jitter,
                     values,
                     s=10,
-                    color=colours[comparison],
+                    color=colours.get(comparison, "0.45"),
                     alpha=0.45,
                     linewidth=0.0,
                 )
@@ -807,7 +843,7 @@ def plot_mas_deltas(delta_data, out_pdf):
         return save_pdf_png(fig, out_pdf)
 
 
-def plot_parameter_diagnostics(rows, out_pdf):
+def plot_parameter_diagnostics(rows, mas_order, out_pdf):
     x_specs = (
         ("alpha_low_q50", r"$\alpha_{\rm low}$"),
         ("alpha_high_q50", r"$\alpha_{\rm high}$"),
@@ -825,7 +861,7 @@ def plot_parameter_diagnostics(rows, out_pdf):
         )
         axes = axes.ravel()
         for ax, (x_key, xlabel) in zip(axes, x_specs):
-            for mas in MAS_ORDER:
+            for mas in mas_order:
                 mas_rows = [
                     row for row in rows_for_mas(rows, mas)
                     if x_key in row.values
@@ -857,14 +893,15 @@ def plot_parameter_diagnostics(rows, out_pdf):
                 markersize=4.5,
                 label=MAS_LABELS[mas],
             )
-            for mas in MAS_ORDER
+            for mas in mas_order
         ]
-        axes[0].legend(handles=handles, loc="best", frameon=False)
+        if handles:
+            axes[0].legend(handles=handles, loc="best", frameon=False)
         axes[0].set_title("H0 against bias and selection parameters", loc="left")
         return save_pdf_png(fig, out_pdf)
 
 
-def print_summary(rows, matched, missing, unusable, plot_exclusions):
+def print_summary(rows, mas_order, matched, missing, unusable, plot_exclusions):
     print(f"Loaded {len(rows)} outputs.")
     if unusable:
         print(f"Unusable outputs: {len(unusable)}.")
@@ -882,7 +919,7 @@ def print_summary(rows, matched, missing, unusable, plot_exclusions):
                 f"(H0={item['H0_q50']:.3f}, "
                 f"lnZ={item['lnZ_harmonic']})"
             )
-    for mas in MAS_ORDER:
+    for mas in mas_order:
         mas_rows = rows_for_mas(rows, mas)
         h0 = np.asarray([row_value(row, "H0_q50") for row in mas_rows])
         lnz = np.asarray([row_value(row, "lnZ_harmonic") for row in mas_rows])
@@ -910,10 +947,19 @@ def print_summary(rows, matched, missing, unusable, plot_exclusions):
     if missing:
         print(f"Missing MAS entries: {missing}")
 
-    for comparison in ("PCS-CIC", "SPH-CIC", "SPH-PCS"):
+    preferred_order = (("PCS", "CIC"), ("SPH", "CIC"), ("SPH", "PCS"))
+    comparisons = [
+        pair for pair in preferred_order
+        if pair[0] in mas_order and pair[1] in mas_order
+    ]
+    comparisons.extend(
+        pair for pair in combinations(mas_order, 2)
+        if pair not in comparisons and pair[::-1] not in comparisons
+    )
+    for left, right in comparisons:
+        comparison = f"{left}-{right}"
         deltas = []
         lnz_deltas = []
-        left, right = comparison.split("-")
         for field in sorted(matched):
             deltas.append(
                 row_value(matched[field][left], "H0_q50")
@@ -941,10 +987,13 @@ def main():
     args = parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
-    rows, unusable = load_rows(args.task_file, args.fail_on_unusable)
+    rows, unusable = load_rows(
+        args.task_file, args.cz_likelihood, args.fail_on_unusable)
     plot_rows, plot_exclusions = split_plot_rows(rows)
-    matched, missing = matched_fields(plot_rows, args.require_complete)
-    deltas = delta_rows(matched)
+    mas_order = active_mas_order(plot_rows)
+    matched, missing = matched_fields(
+        plot_rows, mas_order, args.require_complete)
+    deltas = delta_rows(matched, mas_order)
 
     summary_csv = args.output_dir / "trgbh0_single_field_summary.csv"
     delta_csv = args.output_dir / "trgbh0_single_matched_deltas.csv"
@@ -957,26 +1006,32 @@ def main():
 
     plot_h0_vs_lnz(
         plot_rows,
+        mas_order,
         args.output_dir / "trgbh0_single_h0_vs_lnz.pdf",
     )
     plot_h0_vs_harmonic_lnz(
         plot_rows,
+        mas_order,
         args.output_dir / "trgbh0_single_h0_vs_harmonic_lnz.pdf",
     )
-    plot_matched_fields(
-        matched,
-        args.output_dir / "trgbh0_single_matched_fields.pdf",
-    )
+    if len(mas_order) >= 2 and matched:
+        plot_matched_fields(
+            matched,
+            mas_order,
+            args.output_dir / "trgbh0_single_matched_fields.pdf",
+        )
     plot_mas_deltas(
         deltas,
         args.output_dir / "trgbh0_single_mas_deltas.pdf",
     )
     plot_parameter_diagnostics(
         plot_rows,
+        mas_order,
         args.output_dir / "trgbh0_single_h0_vs_parameters.pdf",
     )
 
-    print_summary(plot_rows, matched, missing, unusable, plot_exclusions)
+    print_summary(
+        plot_rows, mas_order, matched, missing, unusable, plot_exclusions)
     print(f"Summary CSV: {summary_csv}")
     print(f"Delta CSV: {delta_csv}")
     print(f"Unusable CSV: {unusable_csv}")
