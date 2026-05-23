@@ -431,12 +431,19 @@ def generate_dynamic_tag(config, base_tag="default"):
         if not use_reconstruction and not _is_delta_prior(Vext_prior):
             parts.append("Vext")
         if use_reconstruction:
-            parts.append(get_nested(
-                config, f"io/PV_main/{which_run}/reconstruction", None))
+            reconstruction = get_nested(
+                config, f"io/PV_main/{which_run}/reconstruction", None)
+            parts.append(reconstruction)
+            which_bias = get_nested(config, "model/which_bias", "linear")
+            if reconstruction == "Carrick2015" and which_bias != "linear":
+                parts.append(which_bias)
             if get_nested(config, "model/use_density_dependent_sigma_v", False):  # noqa
                 parts.append("sigv_rho")
             beta_prior = get_nested(config, "model/priors/beta", None)
-            if (isinstance(beta_prior, dict)
+            if (reconstruction == "Carrick2015"
+                    and _is_delta_prior(beta_prior)):
+                parts.append(f"beta_{_tag_number(beta_prior.get('value'))}")
+            elif (isinstance(beta_prior, dict)
                     and not _is_delta_prior(beta_prior)):
                 beta_loc = beta_prior.get("loc", beta_prior.get("mean"))
                 beta_scale = beta_prior.get("scale", beta_prior.get("std"))
