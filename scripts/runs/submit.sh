@@ -23,6 +23,8 @@ gpu_flag=false
 no_gpu=false
 walltime=""
 tasks_spec=""
+batch_size=0
+batch_arg_set=false
 skip_done=false
 status_only=false
 local_mode=false
@@ -32,7 +34,7 @@ usage() {
     cat <<EOF
 usage: $(basename "$0") -q QUEUE [-n NCPU] [-m MEMORY]
                         [--gpu | --no-gpu] [--gputype TYPE] [--time T]
-                        [--tasks SPEC] [--skip-done]
+                        [--tasks SPEC] [--batch N] [--skip-done]
                         [--status] [--local] [--dry] <task_index>
 
 Submit CANDEL inference tasks.
@@ -61,6 +63,10 @@ options:
                            ignored on glamdring)
   --tasks SPEC            Comma-separated task IDs / ranges to submit
                           (e.g. 3,5,7-9). Default: all tasks in the file.
+  --batch N               Submit chunks of N tasks per scheduler job. Tasks
+                          run sequentially inside the job, with one log file
+                          per task named logs-<jobid>-task_<id>.out, and
+                          later tasks still run if one fails.
   --skip-done             Skip tasks whose io/fname_output already exists.
   --status                Report done/pending status for each task and exit
                           (no submission). Respects --tasks SPEC. -q is
@@ -85,6 +91,7 @@ while [[ $# -gt 0 ]]; do
         --gpu-mem)       gpu_mem="$2"; shift 2 ;;
         --time)          walltime="$2"; shift 2 ;;
         --tasks)         tasks_spec="$2"; shift 2 ;;
+        --batch)         batch_arg_set=true; batch_size="$2"; shift 2 ;;
         --skip-done)     skip_done=true; shift ;;
         --status)        status_only=true; shift ;;
         --local)         local_mode=true; shift ;;
@@ -95,6 +102,17 @@ done
 
 if [[ -z "$task_index" ]]; then
     echo "[ERROR] Missing task_index"; exit 1
+fi
+if ! [[ "$batch_size" =~ ^[0-9]+$ ]]; then
+    echo "[ERROR] --batch must be a positive integer"; exit 1
+fi
+if $batch_arg_set && (( batch_size < 1 )); then
+    echo "[ERROR] --batch must be a positive integer"; exit 1
+fi
+if ! $batch_arg_set; then
+    batch_mode=false
+else
+    batch_mode=true
 fi
 # machine='local' has no batch backend: force --local and reject -q.
 if [[ "$CANDEL_CLUSTER" == "local" ]]; then
@@ -282,6 +300,11 @@ if (( ${#task_lines[@]} != total_in_file )); then
 else
     echo "  Total tasks: ${#task_lines[@]}"
 fi
+if $batch_mode; then
+    n_batches=$(( (${#task_lines[@]} + batch_size - 1) / batch_size ))
+    echo "  Batch size:  $batch_size"
+    echo "  Batch jobs:  $n_batches"
+fi
 echo "  Source:      $source_label"
 echo
 
@@ -302,6 +325,142 @@ if (( CANDEL_USE_FROZEN )) && [[ ! -d "$run_root" ]]; then
     exit 4
 fi
 export PYTHONPATH="$run_root:${PYTHONPATH:-}"
+
+_write_batch_runner() {
+    local runner="$1" batch_label="$2" log_dir="$3"
+    local start="$4" end="$5"
+
+    mkdir -p "$(dirname "$runner")"
+    {
+        printf '#!/bin/bash -l\n'
+        printf 'set -uo pipefail\n'
+        printf 'CANDEL_ROOT=%q\n' "$CANDEL_ROOT"
+        printf 'CANDEL_PYTHON=%q\n' "$CANDEL_PYTHON"
+        printf 'RUN_ROOT=%q\n' "$run_root"
+        printf 'RUN_MAIN=%q\n' "$run_main"
+        printf 'SUBMIT_CWD=%q\n' "$PWD"
+        printf 'HOST_DEVICES=%q\n' "$host_devices"
+        printf 'BATCH_LABEL=%q\n' "$batch_label"
+        printf 'LOG_DIR=%q\n' "$log_dir"
+        printf 'batch_tasks=()\n'
+        for ((j=start; j<end; j++)); do
+            printf 'batch_tasks+=(%q)\n' "${task_lines[$j]}"
+        done
+        cat <<'SCRIPT'
+
+mkdir -p "$LOG_DIR"
+cd "$SUBMIT_CWD"
+export PYTHONPATH="$RUN_ROOT:${PYTHONPATH:-}"
+
+job_id="${SLURM_JOB_ID:-${SLURM_JOBID:-${JOB_ID:-local_$$}}}"
+status_file="$LOG_DIR/logs-${job_id}-batch_${BATCH_LABEL}.status.tsv"
+printf 'task_id\tstatus\texit_code\tlog\tconfig\n' > "$status_file"
+
+echo "[INFO] Batch $BATCH_LABEL"
+echo "[INFO] Logs: $LOG_DIR/logs-${job_id}-task_<id>.out"
+
+failed=0
+succeeded=0
+for line in "${batch_tasks[@]}"; do
+    idx="${line%% *}"
+    cfg_rel="${line#* }"
+    config_path="$CANDEL_ROOT/$cfg_rel"
+    task_log="$LOG_DIR/logs-${job_id}-task_${idx}.out"
+
+    {
+        echo "[INFO] Task $idx"
+        echo "[INFO] Config: $config_path"
+        echo "[INFO] Started: $(date -Is)"
+    } > "$task_log"
+
+    echo "[INFO] === Task $idx ==="
+    echo "[INFO] task log: $task_log"
+
+    if [[ ! -f "$config_path" ]]; then
+        echo "[ERROR] Config file not found: $config_path" | tee -a "$task_log"
+        printf '%s\tfailed\t2\t%s\t%s\n' "$idx" "$task_log" "$config_path" >> "$status_file"
+        failed=$((failed + 1))
+        continue
+    fi
+
+    if "$CANDEL_PYTHON" -u "$RUN_MAIN" --config "$config_path" \
+        --host-devices "$HOST_DEVICES" >> "$task_log" 2>&1
+    then
+        echo "[INFO] Finished: $(date -Is)" >> "$task_log"
+        echo "[OK] task $idx"
+        printf '%s\tok\t0\t%s\t%s\n' "$idx" "$task_log" "$config_path" >> "$status_file"
+        succeeded=$((succeeded + 1))
+    else
+        rc=$?
+        echo "[ERROR] Failed with exit code $rc at $(date -Is)" >> "$task_log"
+        echo "[FAIL] task $idx exit=$rc"
+        printf '%s\tfailed\t%s\t%s\t%s\n' "$idx" "$rc" "$task_log" "$config_path" >> "$status_file"
+        failed=$((failed + 1))
+    fi
+done
+
+echo "[INFO] Batch $BATCH_LABEL complete: $succeeded ok, $failed failed"
+echo "[INFO] Status: $status_file"
+if (( failed > 0 )); then
+    exit 1
+fi
+SCRIPT
+    } > "$runner"
+    chmod +x "$runner"
+}
+
+if $batch_mode; then
+    stamp="$(date +%Y%m%d_%H%M%S)_$$"
+    batch_script_root="$PWD/generated_batch_scripts/${task_index}/${stamp}"
+    local_failed=0
+
+    for ((start=0; start<${#task_lines[@]}; start+=batch_size)); do
+        end=$((start + batch_size))
+        (( end > ${#task_lines[@]} )) && end=${#task_lines[@]}
+        first_id=${task_lines[$start]%% *}
+        last_id=${task_lines[$((end - 1))]%% *}
+        batch_label=$(printf '%04d-%04d' "$first_id" "$last_id")
+        batch_job_name="task_${first_id}_batch_${batch_label}"
+        runner="$batch_script_root/batch_${batch_label}.sh"
+        batch_log_dir="$PWD"
+
+        _write_batch_runner "$runner" "$batch_label" "$batch_log_dir" \
+            "$start" "$end"
+
+        echo "[INFO] === Batch $batch_label ==="
+        echo "[INFO] Tasks: $first_id-$last_id"
+        echo "[INFO] Runner: $runner"
+        echo "[INFO] Per-task logs: $batch_log_dir/logs-<jobid>-task_<id>.out"
+
+        if $local_mode; then
+            echo "[INFO] Running batch locally..."; echo "  $runner"
+            if ! "$runner"; then
+                local_failed=1
+            fi
+        else
+            gpu_flags=()
+            if $is_gpu; then
+                gpu_flags+=(--gpu)
+                [[ -n "$gputype" ]] && gpu_flags+=(--gputype "$gputype")
+                [[ -n "$gpu_mem" ]] && gpu_flags+=(--gpu-mem "$gpu_mem")
+            fi
+            dry_flag=()
+            $dry && dry_flag=(--dry)
+            time_flag=()
+            [[ -n "$walltime" ]] && time_flag=(--time "$walltime")
+            submit_job "${gpu_flags[@]}" --queue "$queue" --mem "$submit_memory" \
+                --cpus "$ncpu" --name "$batch_job_name" \
+                "${time_flag[@]}" "${dry_flag[@]}" -- "$runner"
+        fi
+        echo
+    done
+
+    if (( local_failed )); then
+        exit 1
+    fi
+    echo "Done."
+    exit 0
+fi
 
 for i in "${!task_lines[@]}"; do
     line="${task_lines[$i]}"
