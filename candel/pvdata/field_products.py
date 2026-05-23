@@ -163,8 +163,9 @@ def reconstruction_los_label(config, reconstruction):
     return f"{reconstruction}_{mas}"
 
 
-def resolve_los_data_path(path, reconstruction=None, field_smoothing_scale=None,
-                          config=None, velocity_field_smoothing_scale=None):
+def resolve_los_data_path(
+        path, reconstruction=None, field_smoothing_scale=None, config=None,
+        velocity_field_smoothing_scale=None):
     """Resolve ``<X>`` and optional field-smoothing LOS filename suffix."""
     if path is None:
         return None
@@ -329,7 +330,7 @@ class LOSCacheRequest:
         return self.angular_position_scatter is not None
 
     def ensure_from_data(self, data, verbose=True):
-        """Build missing cache files using the catalogue coordinates in data."""
+        """Build missing cache files from catalogue coordinates."""
         if self._resolved is not None:
             return self._resolved
         if self.angular_position_scatter is not None:
@@ -408,7 +409,8 @@ def los_field_cache_path(config, catalogue, reconstruction, los_template,
             "LOS cache files are stored per realisation; use "
             "`los_field_cache_paths` for multiple fields.")
     if radial_grid is None:
-        radial_grid = los_radial_grid_payload(config, catalogue, reconstruction)
+        radial_grid = los_radial_grid_payload(
+            config, catalogue, reconstruction)
     payload = {
         "kind": "los",
         "catalogue": catalogue,

@@ -303,7 +303,8 @@ class PVDataFrame:
         if reconstruction_name is not None and not np.isclose(Om, Om_model):
             fprint(
                 f"using reconstruction Omega_m={Om:g} for "
-                f"`{reconstruction_name}` instead of model Omega_m={Om_model:g}.")
+                f"`{reconstruction_name}` instead of model "
+                f"Omega_m={Om_model:g}.")
         data["r_grid"] = _compute_r_grid(r_limits, dr, data, Om)
 
         los_decay_scale = config_pv_model.get("los_decay_scale", 5.0)

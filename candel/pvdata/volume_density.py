@@ -32,7 +32,7 @@ from ..field.field_interp import apply_gaussian_smoothing
 from ..field.loader import field_allows_raw_product_reads, name2field_loader
 from ..model.pv_utils import galaxy_bias_density_mode
 from ..util import fprint, get_nested
-from .field_cache import (_ArrayShapeOnly, _VOLUME_FIELD_CACHE_PREFIX,
+from .field_cache import (_VOLUME_FIELD_CACHE_PREFIX, _ArrayShapeOnly,
                           _field_cache_dir_from_config,
                           _field_cache_enabled_from_config,
                           _field_cache_mpi_comm, _field_cache_path,
@@ -137,7 +137,7 @@ def _extract_subcube(field_3d, observer_pos, dx, radius):
 
 
 def _field_loader_grid_shape(loader):
-    """Return the native density-grid shape without reading it when possible."""
+    """Return native density-grid shape without reading when possible."""
     if hasattr(loader, "ngrid"):
         ngrid = int(loader.ngrid)
         return (ngrid, ngrid, ngrid)
@@ -1519,7 +1519,8 @@ def _load_h0_volume_data_from_config(config, los_data_path, reconstruction,
     field_kwargs = recon_main.get(reconstruction, {})
     if not field_kwargs:
         raise ValueError(
-            f"No `io.reconstruction_main.{reconstruction}` configuration found "
+            f"No `io.reconstruction_main.{reconstruction}` "
+            "configuration found "
             f"for {label} 3D volume normalizer.")
     cache_enabled = _field_cache_enabled_from_config(config)
     cache_dir = (

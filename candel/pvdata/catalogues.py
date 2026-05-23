@@ -35,12 +35,11 @@ from .angular_scatter import (angular_position_scatter_from_config,
                               scatter_data_coordinates)
 from .dust import read_dustmap
 from .field_products import (field_smoothing_scale_from_config,
-                             resolve_or_build_los_data_path,
                              resolve_los_data_path,
+                             resolve_or_build_los_data_path,
                              velocity_field_smoothing_scale_from_config)
 from .los import (_compute_r_grid, _filter_data, _zcmb_blat_mask,
-                  effective_rank_entropy, load_los,
-                  resolve_los_cache_request)
+                  effective_rank_entropy, load_los, resolve_los_cache_request)
 from .volume_density import _load_h0_volume_data_from_config
 
 
@@ -1088,7 +1087,7 @@ def load_CCHP_from_config(config_path, ra_dec_only=False):
             host_los = load_los(
                 los_data_path, {}, mask=None, field_indices=field_indices)
             # LOS file has one entry per row in the original TSV (25 entries).
-            # Apply the same row mask as above, then extract selected host rows.
+            # Apply the same row mask, then extract selected host rows.
             los_density = host_los["los_density"][:, row_mask]
             los_velocity = host_los["los_velocity"][:, row_mask]
             data["host_los_density"] = los_density[:, selected_idx]

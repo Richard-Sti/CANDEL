@@ -124,8 +124,7 @@ from ..util import (fprint, fsection, get_nested, load_config,
                     radec_to_cartesian, replace_prior_with_delta)
 from .integration import ln_simpson_precomputed, simpson_log_weights
 from .interp import LOSInterpolator
-from .pv_utils import (GALAXY_BIAS_PRIOR_DEFAULTS,
-                       GALAXY_BIAS_REQUIRED_PRIORS,
+from .pv_utils import (GALAXY_BIAS_PRIOR_DEFAULTS, GALAXY_BIAS_REQUIRED_PRIORS,
                        galaxy_bias_needs_log_rho, lp_galaxy_bias,
                        octupole_radial, quadrupole_radial, rsample,
                        sample_octupole, sample_quadrupole,

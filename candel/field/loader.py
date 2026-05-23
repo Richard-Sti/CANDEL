@@ -227,8 +227,10 @@ class BORGFieldLoader(BaseFieldLoader):
             key = self._density_dataset_key(f)
             shape = tuple(int(size) for size in f[key].shape)
             grid_shape = _first_hdf5_attr(f.attrs, ("grid_shape",), shape)
-            self.grid_shape = tuple(int(size) for size in np.asarray(grid_shape))
-            self.ngrid = int(ngrid if ngrid is not None else self.grid_shape[0])
+            grid_shape = np.asarray(grid_shape)
+            self.grid_shape = tuple(int(size) for size in grid_shape)
+            self.ngrid = int(
+                ngrid if ngrid is not None else self.grid_shape[0])
 
     def _scalar_boxsize(self, value):
         value = np.asarray(value)
@@ -887,7 +889,8 @@ def field_metadata(name):
             storage_schema="density_momentum",
             require_cached_products=True,
             cache_group=str(name),
-            description="Local Manticore SWIFT/SPH density and momentum fields.")
+            description=(
+                "Local Manticore SWIFT/SPH density and momentum fields."))
 
     return UNKNOWN_FIELD_METADATA
 

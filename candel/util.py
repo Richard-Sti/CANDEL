@@ -370,7 +370,7 @@ def radec_to_cartesian(ra, dec):
 
 
 def scatter_radec(ra, dec, sigma_deg, seed=42):
-    """Randomly scatter sky coordinates by an isotropic tangent-plane offset."""
+    """Scatter sky coordinates by an isotropic tangent-plane offset."""
     sigma_deg = float(sigma_deg)
     if sigma_deg < 0 or not np.isfinite(sigma_deg):
         raise ValueError(

@@ -737,7 +737,10 @@ def _make_nss_step_pmap(logprior_fn, loglikelihood_fn, total_num_delete,
             max_cov_condition=cov_condition,
             num_cov_regularized=cov_regularized.astype(jnp.int32),
         )
-        return _NSSState(updated, new_integrator, new_cov), _DeadInfo(dead_p, info)
+        return (
+            _NSSState(updated, new_integrator, new_cov),
+            _DeadInfo(dead_p, info),
+        )
 
     def _attempt(state, rng_key):
         dead_idx, dead_p, logL_0, start_p, mcmc_keys = _prepare(

@@ -263,13 +263,16 @@ def _los_field_cache_path(cache_dir, payload):
     """Return the canonical field-cache path for one LOS HDF5 product."""
     if cache_dir is None:
         return None
-    return join(cache_dir, _field_cache_slug(payload["reconstruction"],
-                                            max_len=70),
-                _LOS_FIELD_CACHE_PREFIX, _los_field_cache_filename(payload))
+    return join(
+        cache_dir,
+        _field_cache_slug(payload["reconstruction"], max_len=70),
+        _LOS_FIELD_CACHE_PREFIX,
+        _los_field_cache_filename(payload),
+    )
 
 
 def _volume_field_source_name(payload):
-    """Return the configured reconstruction/loader name for a volume product."""
+    """Return the reconstruction/loader name for a volume product."""
     for key in ("loader_name", "field_name", "reconstruction"):
         if key in payload:
             return payload[key]
