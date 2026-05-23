@@ -183,7 +183,6 @@ def _trgbh0_sigma_int_prior():
 
 TRGBH0_COMMON["model/priors/sigma_int"] = _trgbh0_sigma_int_prior()
 TRGBH0_COMMON["model/priors/alpha_c"] = _delta(-0.2)
-TRGBH0_COMMON["model/priors/alpha_high/low"] = 0.0
 
 
 def _trgbh0_cchp_config():
