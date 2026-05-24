@@ -184,7 +184,12 @@ if __name__ == "__main__":
 
     try:
         which_run = get_nested(config, "model/which_run", None)
-        if which_run == "CH0":
+        if which_run == "MWCepheids":
+            fprint("selected `MWCepheids` model.")
+            data = candel.pvdata.load_MWCepheids_from_config(args.config)
+            model = candel.model.MWCepheidModel(config, data)
+            candel.run_MWCepheids_inference(model)
+        elif which_run == "CH0":
             fprint("selected `CH0` model.")
             data = candel.pvdata.load_SH0ES_from_config(args.config, )
             model = candel.model.CH0Model(args.config, data)
