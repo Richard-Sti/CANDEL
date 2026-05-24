@@ -36,8 +36,6 @@ These models work in units of $h^{-1}\,\mathrm{Mpc}$ (i.e. assume $h = 1$). Mult
 
 - **Cepheid-calibrated $H_0$:** 35 Cepheid host galaxies from SH0ES
 - **TRGB-calibrated $H_0$:** Tip of the Red Giant Branch distances from CCHP and EDD, including grouped EDD hosts
-- **Joint TRGB + CSP $H_0$:** CCHP TRGB calibrators combined with CSP SNe Ia *(development)*
-- **2MTF-calibrated $H_0$:** Tully--Fisher distances from the EDD-2MTF sample *(experimental)*
 - **Megamaser disk $H_0$:** spot-level warped disk fits for NGC 5765b, NGC 6264, NGC 6323, UGC 3789, CGCG 074-064, and NGC 4258. `JointMaserModel` fits multiple disks with a shared $H_0$; `toy_joint_H0.py` can combine saved per-galaxy distance posteriors.
 
 ## Package structure
