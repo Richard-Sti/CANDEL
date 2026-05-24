@@ -238,7 +238,7 @@ def generate_dynamic_tag(config, base_tag="default"):
 
     if which_run in (
             "CH0", "CCHP", "CCHP_CSP", "EDD_TRGB",
-            "EDD_TRGB_grouped"):
+            "EDD_TRGB_grouped", "MWCepheids"):
         model_name = which_run
         catalogue = which_run
         parts.append(which_run)
@@ -450,6 +450,71 @@ def generate_dynamic_tag(config, base_tag="default"):
                 if not (beta_prior.get("dist") == "normal"
                         and beta_loc == 0.461 and beta_scale == 0.013):
                     parts.append("beta_free")
+
+    elif which_run == "MWCepheids":
+        model_type = get_nested(config, "model/model_type", "forward")
+        parts.append(model_type)
+        if model_type == "R21" and get_nested(config, "model/use_Q", False):
+            parts.append("Q")
+        if model_type == "forward":
+            if get_nested(config, "model/marginalise_distance", False):
+                parts.append("margd")
+            else:
+                parts.append("sampled")
+
+            distance_prior = get_nested(
+                config, "model/distance_prior", "disk")
+            if distance_prior != "disk":
+                parts.append(distance_prior)
+
+            if not get_nested(config, "model/shared_scatter", True):
+                parts.append("split_scatter")
+
+            if get_nested(config, "model/use_Q", False):
+                parts.append("Q")
+
+            anchors = get_nested(config, "model/anchors", [])
+            if not anchors:
+                parts.append("no_anchors")
+            elif tuple(anchors) != ("NGC4258", "LMC"):
+                parts.append("anchors-" + "+".join(anchors))
+
+            if _is_active(get_nested(
+                    config, "model/anchor_scatter_correction", None)):
+                parts.append("anchor_scatter")
+
+            if get_nested(config, "model/spiral_arms/apply", False):
+                parts.append("spiral")
+
+            c22 = []
+            for key, label in (
+                    ("apply_mW", "mW"), ("apply_AH", "AH"),
+                    ("apply_pi", "pi"), ("apply_logP", "logP")):
+                if get_nested(config, f"model/C22/selection/{key}", False):
+                    c22.append(label)
+            if c22:
+                parts.append("C22-" + "+".join(c22))
+                if get_nested(
+                        config, "model/C22/selection/mW_width", None) \
+                        == "infer":
+                    parts.append("C22_mW_width_infer")
+                if get_nested(
+                        config, "model/C22/selection/logP_width", None) \
+                        == "infer":
+                    parts.append("C22_logP_width_infer")
+                if not get_nested(
+                        config, "model/C22/selection/pi_smooth", True):
+                    parts.append("C22_pi_hard")
+
+            c27 = []
+            for key, label in (("apply_pi", "pi"), ("apply_mW", "mW")):
+                if get_nested(config, f"model/C27/selection/{key}", False):
+                    c27.append(label)
+            if c27:
+                parts.append("C27-" + "+".join(c27))
+                if not get_nested(
+                        config, "model/C27/selection/pi_smooth", True):
+                    parts.append("C27_pi_hard")
 
     shared = get_nested(config, "inference/shared_params", None)
     if _is_active(shared):
@@ -671,7 +736,7 @@ def validate_generated_config(config):
     """Validate generated config values that commonly fail late at runtime."""
     which_run = get_nested(config, "model/which_run", None)
     valid_runs = (None, "CH0", "CCHP", "CCHP_CSP", "EDD_TRGB",
-                  "EDD_TRGB_grouped")
+                  "EDD_TRGB_grouped", "MWCepheids")
     if which_run not in valid_runs:
         raise ValueError(
             f"Invalid which_run='{which_run}'. Must be one of {valid_runs}.")
