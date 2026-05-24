@@ -97,6 +97,14 @@ def get_nested_default(mapping, keys, default=None):
     return value
 
 
+def active_reconstruction(config):
+    return (
+        get_nested_default(
+            config, ("io", "PV_main", "EDD_TRGB", "reconstruction"))
+        or get_nested_default(config, ("io", "CCHP", "reconstruction"))
+    )
+
+
 def reconstruction_label(reconstruction, mas):
     text = str(reconstruction)
     if "ManticoreLocalCOLA" in text:
@@ -130,8 +138,7 @@ def task_specs(task_file, cz_likelihood):
             mas = get_nested_default(
                 config, ("io", "reconstruction_main",
                          "ManticoreLocalCOLA", "which_MAS"), "")
-            reconstruction = get_nested(
-                config, ("io", "PV_main", "EDD_TRGB", "reconstruction"))
+            reconstruction = active_reconstruction(config)
             smooth_R = float(get_nested_default(
                 config, ("model", "field_3d_smoothing_scale"), 0.0))
             which_bias = get_nested(config, ("model", "which_bias"))

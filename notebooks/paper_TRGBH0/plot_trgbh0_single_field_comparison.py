@@ -118,6 +118,13 @@ def get_nested(mapping, keys, default=None):
     return value
 
 
+def active_reconstruction(config):
+    return (
+        get_nested(config, ("io", "PV_main", "EDD_TRGB", "reconstruction"))
+        or get_nested(config, ("io", "CCHP", "reconstruction"))
+    )
+
+
 def task_config_paths(task_file):
     paths = []
     with repo_path(task_file).open() as handle:
@@ -136,8 +143,7 @@ def output_spec(task_index, config_path, cz_likelihood):
     with config_path.open("rb") as handle:
         config = tomllib.load(handle)
 
-    reconstruction = get_nested(
-        config, ("io", "PV_main", "EDD_TRGB", "reconstruction"))
+    reconstruction = active_reconstruction(config)
     if reconstruction != "ManticoreLocalCOLA":
         return None
 
