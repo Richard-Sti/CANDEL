@@ -1,0 +1,53 @@
+base = [
+    "config_paths.toml",
+    "config_MWCepheids_priors.toml",
+    "config_MWCepheids.toml",
+]
+
+###############################################################################
+#                  Paper-facing MW Cepheid interactive config                  #
+###############################################################################
+
+[inference]
+num_warmup = 1000
+num_samples = 1000
+num_chains = 1
+chain_method = "parallel"
+seed = 42
+compute_evidence = false
+
+[model]
+disable_all_selection = false
+shared_scatter = false
+n_mc_selection = 5000
+n_mc_dustmap = 5000
+mc_seed = 42
+marginalise_distance = false
+anchors = []
+anchor_scatter_correction = 0.06
+
+[model.R21]
+sigma_int = 0.06
+pi_err_inflation = 1.1
+
+[model.selection_mc]
+ell_min = 0.0
+ell_max = 360.0
+b_min = -15.0
+b_max = 15.0
+
+[model.C22.selection]
+apply_mW = true
+apply_AH = false
+apply_pi = true
+apply_logP = true
+dust_map = "bayestar+marshall"
+delta_pi_max = 0.1
+
+[model.C27.selection]
+apply_pi = true
+apply_mW = true
+delta_pi_max = 0.1
+
+[plotting]
+colours = ["#c52233", "#0e0004", "#2e8b57", "#3c91e6", "#f2a359"]
