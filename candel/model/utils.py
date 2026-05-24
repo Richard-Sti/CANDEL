@@ -18,14 +18,16 @@ physics, priors, and SH0ES helpers.
 """
 import jax.numpy as jnp
 import numpy as np
+import numpyro
 from jax import random
 from jax.scipy.linalg import solve_triangular
 from jax.scipy.special import gammaln, logsumexp
 from jax.scipy.stats import norm as norm_jax
 from numpy.polynomial.hermite import hermgauss as _hermgauss
+from numpyro import distributions as dist
 from numpyro.distributions import (Delta, Distribution, Gamma, LogUniform,
-                                   Normal, TruncatedNormal, Uniform,
-                                   constraints)
+                                   HalfCauchy, HalfNormal, Normal,
+                                   TruncatedNormal, Uniform, constraints)
 
 from ..util import SPEED_OF_LIGHT
 
@@ -147,6 +149,19 @@ def smoothclip_nr(nr, tau):
     return 0.5 * (nr + jnp.sqrt(nr**2 + tau**2))
 
 
+def sample_prior(name, distribution):
+    """Sample a NumPyro prior, recording delta priors as deterministic."""
+    if isinstance(distribution, Delta):
+        return numpyro.deterministic(name, distribution.v)
+    return numpyro.sample(name, distribution)
+
+
+def get_named_or_shared(prefix, name, values):
+    """Return ``values[f"{prefix}_{name}"]`` or shared ``values[prefix]``."""
+    key = f"{prefix}_{name}"
+    return values[key] if key in values else values[prefix]
+
+
 class SineAngle(Distribution):
     r"""Sine-weighted angle prior for disk inclination.
 
@@ -228,6 +243,34 @@ class VolumePrior(Distribution):
                          -jnp.inf)
 
 
+class DistanceModulusPrior(Distribution):
+    """Distance prior corresponding to a uniform distance modulus."""
+
+    arg_constraints = {"low": constraints.positive,
+                       "high": constraints.positive}
+
+    def __init__(self, low, high, validate_args=None):
+        self.low = low
+        self.high = high
+        self._log_norm = jnp.log(jnp.log(high / low))
+        super().__init__(
+            batch_shape=jnp.broadcast_shapes(
+                jnp.shape(low), jnp.shape(high)),
+            validate_args=validate_args,
+        )
+
+    @constraints.dependent_property(is_discrete=False, event_dim=0)
+    def support(self):
+        return constraints.interval(self.low, self.high)
+
+    def sample(self, key, sample_shape=()):
+        u = random.uniform(key, shape=sample_shape + self.batch_shape)
+        return self.low * jnp.exp(u * jnp.log(self.high / self.low))
+
+    def log_prob(self, value):
+        return -jnp.log(value) - self._log_norm
+
+
 class JeffreysPrior(Uniform):
     """
     Wrapper around Uniform that keeps Uniform sampling but overrides
@@ -282,14 +325,30 @@ class Maxwell(Distribution):
         return jnp.where(in_support, lp, -jnp.inf)
 
 
+def _truncated_normal_prior(params):
+    loc = params.get("loc", params.get("mean"))
+    scale = params["scale"]
+    low = params.get("low", None)
+    high = params.get("high", None)
+
+    if low is None and high is None:
+        return Normal(loc, scale)
+    if low is not None and high is not None:
+        return TruncatedNormal(loc, scale, low=low, high=high)
+    return dist.TruncatedDistribution(
+        Normal(loc, scale), low=low, high=high)
+
+
 def load_priors(config_priors):
     """Load NumPyro distributions from a parsed config-priors dictionary."""
     _DIST_MAP = {
         "normal": lambda p: Normal(p["loc"], p["scale"]),
-        "truncated_normal": lambda p: TruncatedNormal(p["mean"], p["scale"], low=p.get("low", None), high= p.get("high", None)),  # noqa
+        "truncated_normal": _truncated_normal_prior,
         "uniform": lambda p: Uniform(p["low"], p["high"]),
         "log_uniform": lambda p: LogUniform(p["low"], p["high"]),
         "delta": lambda p: Delta(p["value"]),
+        "half_cauchy": lambda p: HalfCauchy(p["scale"]),
+        "half_normal": lambda p: HalfNormal(p["scale"]),
         "jeffreys": lambda p: JeffreysPrior(p["low"], p["high"]),
         "volume": lambda p: VolumePrior(p["low"], p["high"]),
         "gamma": lambda p: Gamma(p["concentration"], p["rate"]),
@@ -307,6 +366,7 @@ def load_priors(config_priors):
     priors = {}
     prior_dist_name = {}
     for name, spec in config_priors.items():
+        spec = dict(spec)
         dist_name = spec.pop("dist", None)
         if dist_name not in _DIST_MAP:
             raise ValueError(
