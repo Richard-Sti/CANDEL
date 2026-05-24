@@ -49,4 +49,13 @@ from .megamaser_data import (                                                   
     load_megamaser_spots,                                                       # noqa
     )
 
+from .mwcepheids import (                                                       # noqa
+    FEH_TO_OH,                                                                  # noqa
+    MWCepheidAnchorData,                                                        # noqa
+    MWCepheidCampaignData,                                                      # noqa
+    MWCepheidDataset,                                                           # noqa
+    load_MWCepheids_from_config,                                                # noqa
+    to_mwcepheids_config,                                                       # noqa
+    )
+
 from .field_products import cleanup_temporary_los_files                         # noqa

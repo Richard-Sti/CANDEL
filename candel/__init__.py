@@ -48,6 +48,7 @@ from .inference.inference import (                                              
     find_initial_point,                                                         # noqa
     run_pv_inference,                                                           # noqa
     run_H0_inference,                                                           # noqa
+    run_MWCepheids_inference,                                                   # noqa
     save_mcmc_samples,                                                          # noqa
     get_log_density,                                                            # noqa
     )
