@@ -1,7 +1,7 @@
 CANDEL
 ======
 
-**CANDEL** is a framework for calibrating nearby-universe distance indicators.
+**CANDEL** is a framework for calibrating distance indicators in the local Universe.
 
 CANDEL forward-models distance-indicator observables and redshift while
 marginalising over latent variables such as distance and absolute magnitude.
