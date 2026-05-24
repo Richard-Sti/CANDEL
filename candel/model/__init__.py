@@ -14,7 +14,10 @@
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 from .utils import (                                                            # noqa
+    DistanceModulusPrior,                                                       # noqa
+    get_named_or_shared,                                                        # noqa
     load_priors,                                                                # noqa
+    sample_prior,                                                               # noqa
     smoothclip_nr,                                                              # noqa
     )
 from .pv_utils import (                                                         # noqa
@@ -32,8 +35,9 @@ from .dev.model_H0_2MTF import EDD2MTFModel                                     
 from .model_H0_maser import MaserDiskModel, JointMaserModel                     # noqa
 from .model_MWCepheids import MWCepheidModel                                    # noqa
 from .interp import LOSInterpolator                                             # noqa
-from .integration import (ln_simpson, ln_trapz_precomputed,                     # noqa
-                          simpson_log_weights, trapz_log_weights)               # noqa
+from .integration import (ln_simpson, ln_simpson_uniform,                       # noqa
+                          ln_trapz_precomputed, simpson_log_weights,            # noqa
+                          trapz_log_weights, uniform_simpson_log_weights)       # noqa
 
 from ..util import fprint, fsection, get_nested, load_config
 

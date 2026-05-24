@@ -85,6 +85,18 @@ def simpson_log_weights(x):
     return jnp.log(w)
 
 
+def uniform_simpson_log_weights(n):
+    """Log of composite Simpson weights for a uniformly spaced grid."""
+    if n < 3 or n % 2 == 0:
+        raise ValueError(
+            f"Simpson's rule requires an odd number of points >= 3, "
+            f"got {n}.")
+    idx = jnp.arange(n)
+    w = jnp.where(idx % 2 == 1, 4.0,
+                  jnp.where((idx == 0) | (idx == n - 1), 1.0, 2.0))
+    return jnp.log(w)
+
+
 def trapz_log_weights(x):
     """Log of composite trapezoidal weights for a 1D grid.
 
@@ -140,6 +152,20 @@ def ln_simpson_precomputed(ln_y, log_w, axis=-1):
         Axis along which to integrate.
     """
     return logsumexp(ln_y + log_w, axis=axis)
+
+
+@partial(jax.jit, static_argnums=2)
+def ln_simpson_uniform(ln_y, dx, axis=-1):
+    """Log-space Simpson integration on a uniformly spaced grid."""
+    ln_y = jnp.asarray(ln_y)
+    n = ln_y.shape[axis]
+
+    log_w = uniform_simpson_log_weights(n)
+    shape = [1] * ln_y.ndim
+    shape[axis] = n
+    log_w = log_w.reshape(shape)
+
+    return jnp.log(dx / 3.0) + logsumexp(ln_y + log_w, axis=axis)
 
 
 @partial(jax.jit, static_argnums=2)
