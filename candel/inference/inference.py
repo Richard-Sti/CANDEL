@@ -14,6 +14,7 @@
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 """Running the MCMC inference for the model and some postprocessing."""
 import contextlib
+import importlib.util
 from os import makedirs
 from os.path import abspath, dirname, splitext
 
@@ -41,6 +42,7 @@ from ..util import (fprint, fsection, galactic_to_radec,
                     radec_to_galactic)
 from .evidence import (BIC_AIC, dict_samples_to_array, harmonic_evidence,
                        laplace_evidence)
+from .optimise import _use_de, find_MAP
 
 _BASE_AUXILIARY_KEYS = ("Vpec_host_skipZ",)
 _PER_GALAXY_LOG_LIKELIHOOD_AUXILIARY_KEYS = (
@@ -54,7 +56,6 @@ _PER_GALAXY_LOG_LIKELIHOOD_AUXILIARY_KEYS = (
 
 def _harmonic_available():
     """True iff the optional ``harmonic`` package can be imported."""
-    import importlib.util
     return importlib.util.find_spec("harmonic") is not None
 
 
@@ -68,6 +69,16 @@ def _h0_ndata(model, model_kwargs):
             return int(getattr(model, name))
 
     return 1
+
+
+def _mwcepheids_ndata(model):
+    """Data count for MW-Cepheid information criteria."""
+    ndata = 0
+    for data in getattr(model, "data", {}).values():
+        ndata += 2 * data.n_stars
+    for anchor in getattr(model, "anchor_data", {}).values():
+        ndata += anchor.n_stars + 1
+    return max(int(ndata), 1)
 
 
 def _setup_platform():
@@ -367,13 +378,20 @@ def _print_gof(gof):
         gof["err_lnZ_harmonic"])
 
 
-def _post_sampling_flags(kwargs, model, require_config_evidence=False):
+def _post_sampling_flags(kwargs, model, evidence_source="model"):
     """Return whether to compute log density and optional evidence."""
     compute_log_density = bool(kwargs.get("compute_log_density", False))
-    compute_evidence = bool(getattr(model, "compute_evidence", False))
-    if require_config_evidence:
+    if evidence_source == "model":
+        compute_evidence = bool(getattr(model, "compute_evidence", False))
+    elif evidence_source == "model_and_config":
         compute_evidence = (
-            bool(kwargs.get("compute_evidence", False)) and compute_evidence)
+            bool(kwargs.get("compute_evidence", False))
+            and bool(getattr(model, "compute_evidence", False))
+        )
+    elif evidence_source == "config":
+        compute_evidence = bool(kwargs.get("compute_evidence", False))
+    else:
+        raise ValueError(f"unknown evidence source: {evidence_source}")
 
     if compute_evidence and not _harmonic_available():
         fprint("[WARN] `harmonic` not installed — disabling evidence "
@@ -453,6 +471,213 @@ def _print_output_manifest(fname_out, fname_summary, plot_paths,
         fprint(f"{label}: {abspath(path)}")
 
 
+def _initialise_from_lbfgs(model, model_kwargs, kwargs, init_maxiter,
+                           dynamic_model_kwargs=False):
+    """Return NUTS initial parameters, site names, and init strategy."""
+    if init_maxiter is None:
+        init_maxiter = kwargs.get("init_maxiter", 1000)
+
+    site_names = None
+    if init_maxiter > 0:
+        init_params, site_names = find_initial_point(
+            model, model_kwargs, maxiter=init_maxiter,
+            seed=kwargs["seed"], return_site_names=True,
+            dynamic_model_kwargs=dynamic_model_kwargs)
+        if init_params is not None:
+            fprint("initialising NUTS from L-BFGS solution.")
+            init_strategy = init_to_value(values=init_params)
+        else:
+            init_params = None
+            fprint("L-BFGS failed, initialising NUTS from prior median.")
+            init_strategy = init_to_median(num_samples=5000)
+    else:
+        init_params = None
+        fprint("initialising NUTS from prior median.")
+        init_strategy = init_to_median(num_samples=5000)
+
+    return init_params, site_names, init_strategy
+
+
+def _run_nuts_mcmc(model, model_kwargs, kwargs, init_params, site_names,
+                   init_strategy, progress_bar, use_configured_nuts=False,
+                   jit_model_args=None):
+    """Build and run the common NUTS/MCMC machinery."""
+    dense_mass = _setup_dense_mass(kwargs, init_params, model, model_kwargs,
+                                   site_names=site_names)
+
+    nuts_kwargs = {
+        "init_strategy": init_strategy,
+        "dense_mass": dense_mass,
+    }
+    if use_configured_nuts:
+        max_tree_depth = kwargs.get("max_tree_depth", 10)
+        target_accept_prob = kwargs.get("target_accept_prob", 0.8)
+        nuts_kwargs.update({
+            "max_tree_depth": max_tree_depth,
+            "target_accept_prob": target_accept_prob,
+        })
+        fprint(f"NUTS: max_tree_depth={max_tree_depth}, "
+               f"target_accept_prob={target_accept_prob}")
+
+    kernel = NUTS(model, **nuts_kwargs)
+    mcmc_kwargs = {
+        "num_warmup": kwargs["num_warmup"],
+        "num_samples": kwargs["num_samples"],
+        "num_chains": kwargs["num_chains"],
+        "chain_method": kwargs["chain_method"],
+        "progress_bar": progress_bar,
+    }
+    if jit_model_args is not None:
+        mcmc_kwargs["jit_model_args"] = jit_model_args
+
+    mcmc = MCMC(kernel, **mcmc_kwargs)
+    mcmc.run(jax.random.key(kwargs["seed"]), **model_kwargs)
+    return mcmc
+
+
+def _postprocess_inference_run(model, model_kwargs, samples, kwargs,
+                               site_names, ndata, evidence_source,
+                               auxiliary_keys=(), attach_auxiliary=False,
+                               keep_original_samples=False):
+    """Apply common log-density, evidence, and sample post-processing."""
+    auxiliary = (
+        extract_auxiliary(samples, auxiliary_keys) if auxiliary_keys else None)
+    if attach_auxiliary and auxiliary is not None:
+        _attach_auxiliary_metadata(auxiliary, model)
+
+    compute_log_density, compute_evidence = _post_sampling_flags(
+        kwargs, model, evidence_source=evidence_source)
+    _print_post_sampling_plan(compute_log_density, compute_evidence)
+    if (compute_log_density or compute_evidence) and site_names is None:
+        site_names = _get_sample_site_names(model, model_kwargs,
+                                            seed=kwargs["seed"])
+
+    samples_for_log_density = _select_sample_sites(samples, site_names)
+    if compute_log_density:
+        log_density = get_log_density(
+            samples_for_log_density, model, model_kwargs)
+    else:
+        log_density = None
+
+    if keep_original_samples:
+        original_samples = dict(samples)
+    else:
+        original_samples = None
+
+    samples_for_evidence = drop_deterministic(
+        samples_for_log_density.copy())
+    samples = drop_deterministic(samples)
+
+    if compute_evidence:
+        gof = _compute_gof(samples_for_evidence, log_density, ndata, kwargs)
+    else:
+        gof = None
+
+    samples = postprocess_samples(samples)
+    return samples, log_density, gof, auxiliary, original_samples
+
+
+def _print_posterior_summary(samples, extra_summary=None):
+    """Print the common posterior summary block."""
+    fsection("Posterior summary")
+    fprint(_summarise_sample_block(samples))
+    print_clean_summary(samples)
+    if extra_summary is not None:
+        extra_summary(samples)
+
+
+def _write_summary_file(fname_summary, samples, gof, extra_summary=None):
+    """Write the common posterior summary text file."""
+    with open(fname_summary, "w") as f:
+        with contextlib.redirect_stdout(f):
+            print_clean_summary(samples)
+            if extra_summary is not None:
+                extra_summary(samples)
+            if gof is not None:
+                _print_gof(gof)
+    fprint(f"saved summary to {fname_summary}")
+
+
+def _plot_pv_vext_outputs(model, samples, fname_out):
+    """Generate PV-specific velocity-field plots."""
+    plot_paths = []
+    if model.which_Vext == "radial":
+        fname_plot = splitext(fname_out)[0] + "_corner_Vext_rad.png"
+        plot_Vext_rad_corner(samples, show_fig=False, filename=fname_plot)
+        plot_paths.append(("Vext radial corner plot", fname_plot))
+
+        fname_plot = splitext(fname_out)[0] + "_profile_Vext_rad.png"
+        plot_radial_profiles(samples, model, show_fig=False,
+                             filename=fname_plot)
+        plot_paths.append(("Vext radial profile plot", fname_plot))
+
+        fname_plot = splitext(fname_out)[0] + "_bulkflow_Vext_rad.png"
+        plot_Vext_radial_bulkflow(
+            samples, model, show_fig=False, filename=fname_plot)
+        plot_paths.append(("Vext radial bulk-flow plot", fname_plot))
+    elif model.which_Vext == "radial_magnitude":
+        fname_plot = splitext(fname_out)[0] + "_profile_Vext_radmag.png"
+        plot_Vext_radmag(samples, model, show_fig=False, filename=fname_plot)
+        plot_paths.append(("Vext radial-magnitude profile plot", fname_plot))
+
+        fname_plot = splitext(fname_out)[0] + "_bulkflow_Vext_radmag.png"
+        plot_Vext_radial_bulkflow(
+            samples, model, show_fig=False, filename=fname_plot)
+        plot_paths.append(("Vext radial-magnitude bulk-flow plot",
+                           fname_plot))
+
+    if model.which_Vext == "per_pix":
+        npix = samples["Vext_pix"].shape[1]
+        if npix > 50:
+            fprint(f"Skipping corner plot of Vext_pix with {npix} pixels.")
+        else:
+            fname_plot = splitext(fname_out)[0] + "_corner_Vext_pix.png"
+            samples_Vext = {
+                f"Vext_pix_{i}": samples["Vext_pix"][:, i]
+                for i in range(npix)}
+            plot_corner(samples_Vext, show_fig=False, filename=fname_plot)
+            plot_paths.append(("Vext per-pixel corner plot", fname_plot))
+
+        fname_plot = splitext(fname_out)[0] + "_moll_Vext_pix.png"
+        plot_Vext_moll(samples["Vext_pix"], fname_plot)
+        plot_paths.append(("Vext per-pixel mollweide plot", fname_plot))
+
+    return plot_paths
+
+
+def _save_inference_outputs(model, samples, log_density,
+                            log_density_per_sample, gof, auxiliary,
+                            extra_summary=None, catch_corner_errors=False,
+                            extra_plots=None):
+    """Save common inference outputs and any runner-specific plots."""
+    fname_out = model.config["io"]["fname_output"]
+    fprint(f"writing outputs under {abspath(dirname(fname_out))}.")
+    save_mcmc_samples(samples, log_density, log_density_per_sample, gof,
+                      fname_out, auxiliary=auxiliary)
+
+    plot_paths = []
+    fname_plot = splitext(fname_out)[0] + ".png"
+    if catch_corner_errors:
+        try:
+            plot_corner(samples, show_fig=False, filename=fname_plot)
+            plot_paths.append(("corner plot", fname_plot))
+        except Exception as exc:
+            fprint(f"[WARN] corner plot failed: {exc}")
+    else:
+        plot_corner(samples, show_fig=False, filename=fname_plot)
+        plot_paths.append(("corner plot", fname_plot))
+
+    if extra_plots is not None:
+        plot_paths.extend(extra_plots(model, samples, fname_out))
+
+    fname_summary = splitext(fname_out)[0] + "_summary.txt"
+    _write_summary_file(fname_summary, samples, gof,
+                        extra_summary=extra_summary)
+    _print_output_manifest(
+        fname_out, fname_summary, plot_paths, log_density,
+        log_density_per_sample, gof, auxiliary)
+
+
 def run_pv_inference(model, model_kwargs, print_summary=True,
                      save_samples=True, return_original_samples=False,
                      init_maxiter=None, progress_bar=True):
@@ -504,139 +729,29 @@ def run_pv_inference(model, model_kwargs, print_summary=True,
     elif hasattr(model, "validate_data"):
         model.validate_data(model_kwargs["data"])
 
-    if init_maxiter is None:
-        init_maxiter = kwargs.get("init_maxiter", 1000)
-
     dynamic_model_kwargs = False
-
-    if init_maxiter > 0:
-        init_params, site_names = find_initial_point(
-            model, model_kwargs, maxiter=init_maxiter,
-            seed=kwargs["seed"], return_site_names=True)
-        if init_params is not None:
-            fprint("initialising NUTS from L-BFGS solution.")
-            init_strategy = init_to_value(values=init_params)
-        else:
-            fprint("L-BFGS failed, initialising NUTS from prior median.")
-            init_strategy = init_to_median(num_samples=5000)
-    else:
-        init_params = None
-        site_names = None
-        fprint("initialising NUTS from prior median.")
-        init_strategy = init_to_median(num_samples=5000)
-
-    dense_mass = _setup_dense_mass(kwargs, init_params, model, model_kwargs,
-                                   site_names=site_names)
-    kernel = NUTS(model, init_strategy=init_strategy, dense_mass=dense_mass)
-    mcmc = MCMC(
-        kernel, num_warmup=kwargs["num_warmup"],
-        num_samples=kwargs["num_samples"], num_chains=kwargs["num_chains"],
-        chain_method=kwargs["chain_method"],
-        progress_bar=progress_bar,
-        jit_model_args=dynamic_model_kwargs)
-    mcmc.run(jax.random.key(kwargs["seed"]), **model_kwargs)
+    init_params, site_names, init_strategy = _initialise_from_lbfgs(
+        model, model_kwargs, kwargs, init_maxiter)
+    mcmc = _run_nuts_mcmc(
+        model, model_kwargs, kwargs, init_params, site_names, init_strategy,
+        progress_bar, jit_model_args=dynamic_model_kwargs)
 
     samples = mcmc.get_samples()
-    auxiliary = extract_auxiliary(samples, _BASE_AUXILIARY_KEYS)
     log_density_per_sample = samples.pop("log_density_per_sample", None)
-
-    compute_log_density, compute_evidence = _post_sampling_flags(kwargs, model)
-    _print_post_sampling_plan(compute_log_density, compute_evidence)
-    if (compute_log_density or compute_evidence) and site_names is None:
-        site_names = _get_sample_site_names(model, model_kwargs,
-                                            seed=kwargs["seed"])
-    samples_for_log_density = _select_sample_sites(samples, site_names)
-
-    if compute_log_density:
-        log_density = get_log_density(
-            samples_for_log_density, model, model_kwargs)
-    else:
-        log_density = None
-
-    if return_original_samples:
-        original_samples = dict(samples)
-
-    samples_for_evidence = drop_deterministic(samples_for_log_density.copy())
-    samples = drop_deterministic(samples)
-
-    if compute_evidence:
-        ndata = len(model_kwargs["data"])
-        gof = _compute_gof(samples_for_evidence, log_density, ndata, kwargs)
-    else:
-        gof = None
-
-    samples = postprocess_samples(samples)
+    samples, log_density, gof, auxiliary, original_samples = (
+        _postprocess_inference_run(
+            model, model_kwargs, samples, kwargs, site_names,
+            len(model_kwargs["data"]), "model",
+            auxiliary_keys=_BASE_AUXILIARY_KEYS,
+            keep_original_samples=return_original_samples))
 
     if print_summary:
-        fsection("Posterior summary")
-        fprint(_summarise_sample_block(samples))
-        print_clean_summary(samples)
+        _print_posterior_summary(samples)
 
     if save_samples:
-        fname_out = model.config["io"]["fname_output"]
-        fprint(f"writing outputs under {abspath(dirname(fname_out))}.")
-        save_mcmc_samples(
-            samples, log_density, log_density_per_sample, gof, fname_out,
-            auxiliary=auxiliary)
-
-        fname_plot = splitext(fname_out)[0] + ".png"
-        plot_corner(samples, show_fig=False, filename=fname_plot,)
-        plot_paths = [("corner plot", fname_plot)]
-
-        fname_summary = splitext(fname_out)[0] + "_summary.txt"
-        with open(fname_summary, "w") as f:
-            with contextlib.redirect_stdout(f):
-                print_clean_summary(samples)
-                if compute_evidence:
-                    _print_gof(gof)
-        fprint(f"saved summary to {fname_summary}")
-
-        if model.which_Vext == "radial":
-            fname_plot = splitext(fname_out)[0] + "_corner_Vext_rad.png"
-            plot_Vext_rad_corner(samples, show_fig=False, filename=fname_plot)
-            plot_paths.append(("Vext radial corner plot", fname_plot))
-
-            fname_plot = splitext(fname_out)[0] + "_profile_Vext_rad.png"
-            plot_radial_profiles(samples, model, show_fig=False,
-                                 filename=fname_plot)
-            plot_paths.append(("Vext radial profile plot", fname_plot))
-
-            fname_plot = splitext(fname_out)[0] + "_bulkflow_Vext_rad.png"
-            plot_Vext_radial_bulkflow(
-                samples, model, show_fig=False, filename=fname_plot)
-            plot_paths.append(("Vext radial bulk-flow plot", fname_plot))
-        elif model.which_Vext == "radial_magnitude":
-            fname_plot = splitext(fname_out)[0] + "_profile_Vext_radmag.png"
-            plot_Vext_radmag(
-                samples, model, show_fig=False, filename=fname_plot,)
-            plot_paths.append(("Vext radial-magnitude profile plot",
-                               fname_plot))
-
-            fname_plot = splitext(fname_out)[0] + "_bulkflow_Vext_radmag.png"
-            plot_Vext_radial_bulkflow(
-                samples, model, show_fig=False, filename=fname_plot)
-            plot_paths.append(("Vext radial-magnitude bulk-flow plot",
-                               fname_plot))
-
-        if model.which_Vext == "per_pix":
-            npix = samples["Vext_pix"].shape[1]
-            if npix > 50:
-                fprint(f"Skipping corner plot of Vext_pix with {npix} pixels.")
-            else:
-                fname_plot = splitext(fname_out)[0] + "_corner_Vext_pix.png"
-                samples_Vext = {
-                    f"Vext_pix_{i}": samples["Vext_pix"][:, i]
-                    for i in range(npix)}
-                plot_corner(samples_Vext, show_fig=False, filename=fname_plot,)
-                plot_paths.append(("Vext per-pixel corner plot", fname_plot))
-
-            fname_plot = splitext(fname_out)[0] + "_moll_Vext_pix.png"
-            plot_Vext_moll(samples["Vext_pix"], fname_plot,)
-            plot_paths.append(("Vext per-pixel mollweide plot", fname_plot))
-
-        _print_output_manifest(
-            fname_out, fname_summary, plot_paths, log_density,
-            log_density_per_sample, gof, auxiliary)
+        _save_inference_outputs(
+            model, samples, log_density, log_density_per_sample, gof,
+            auxiliary, extra_plots=_plot_pv_vext_outputs)
 
     if return_original_samples:
         return samples, log_density, original_samples
@@ -709,47 +824,18 @@ def run_H0_inference(model, model_kwargs=None, print_summary=True,
 
     site_names = None
     if init_method == "sobol_adam":
-        from .optimise import _use_de, find_MAP
         init_params = find_MAP(model, model_kwargs, seed=kwargs["seed"])
         method = "DE" if _use_de(model) else "Sobol+Adam"
         fprint(f"initialising NUTS from {method} MAP.")
         init_strategy = init_to_value(values=init_params)
     else:
-        if init_maxiter is None:
-            init_maxiter = kwargs.get("init_maxiter", 1000)
+        init_params, site_names, init_strategy = _initialise_from_lbfgs(
+            model, model_kwargs, kwargs, init_maxiter,
+            dynamic_model_kwargs=dynamic_model_kwargs)
 
-        if init_maxiter > 0:
-            init_params, site_names = find_initial_point(
-                model, model_kwargs, maxiter=init_maxiter,
-                seed=kwargs["seed"], return_site_names=True,
-                dynamic_model_kwargs=dynamic_model_kwargs)
-            if init_params is not None:
-                fprint("initialising NUTS from L-BFGS solution.")
-                init_strategy = init_to_value(values=init_params)
-            else:
-                init_params = None
-                fprint("L-BFGS failed, initialising NUTS from prior median.")
-                init_strategy = init_to_median(num_samples=5000)
-        else:
-            init_params = None
-            fprint("initialising NUTS from prior median.")
-            init_strategy = init_to_median(num_samples=5000)
-
-    dense_mass = _setup_dense_mass(kwargs, init_params, model, model_kwargs,
-                                   site_names=site_names)
-    max_tree_depth = kwargs.get("max_tree_depth", 10)
-    target_accept_prob = kwargs.get("target_accept_prob", 0.8)
-    kernel = NUTS(model, init_strategy=init_strategy, dense_mass=dense_mass,
-                  max_tree_depth=max_tree_depth,
-                  target_accept_prob=target_accept_prob)
-    fprint(f"NUTS: max_tree_depth={max_tree_depth}, "
-           f"target_accept_prob={target_accept_prob}")
-    mcmc = MCMC(
-        kernel, num_warmup=kwargs["num_warmup"],
-        num_samples=kwargs["num_samples"], num_chains=kwargs["num_chains"],
-        chain_method=kwargs["chain_method"],
-        progress_bar=progress_bar)
-    mcmc.run(jax.random.key(kwargs["seed"]), **model_kwargs)
+    mcmc = _run_nuts_mcmc(
+        model, model_kwargs, kwargs, init_params, site_names, init_strategy,
+        progress_bar, use_configured_nuts=True)
 
     samples = mcmc.get_samples()
     diagnostic_summary = None
@@ -760,63 +846,59 @@ def run_H0_inference(model, model_kwargs=None, print_summary=True,
         diagnostic_summary = summary_numpyro(samples_by_chain,
                                              group_by_chain=True)
 
-    auxiliary = extract_auxiliary(samples, _auxiliary_keys(kwargs))
-    _attach_auxiliary_metadata(auxiliary, model)
-    compute_log_density, compute_evidence = _post_sampling_flags(
-        kwargs, model, require_config_evidence=True)
-    _print_post_sampling_plan(compute_log_density, compute_evidence)
-    if (compute_log_density or compute_evidence) and site_names is None:
-        site_names = _get_sample_site_names(model, model_kwargs,
-                                            seed=kwargs["seed"])
-    samples_for_log_density = _select_sample_sites(samples, site_names)
-
-    if compute_log_density:
-        log_density = get_log_density(
-            samples_for_log_density, model, model_kwargs)
-    else:
-        log_density = None
-
-    samples_for_evidence = drop_deterministic(samples_for_log_density.copy())
-    samples = drop_deterministic(samples)
-
-    if compute_evidence:
-        ndata = _h0_ndata(model, model_kwargs)
-        gof = _compute_gof(samples_for_evidence, log_density, ndata, kwargs)
-    else:
-        gof = None
-
-    samples = postprocess_samples(samples)
+    samples, log_density, gof, auxiliary, _ = _postprocess_inference_run(
+        model, model_kwargs, samples, kwargs, site_names,
+        _h0_ndata(model, model_kwargs), "model_and_config",
+        auxiliary_keys=_auxiliary_keys(kwargs), attach_auxiliary=True)
 
     if print_summary:
-        fsection("Posterior summary")
-        fprint(_summarise_sample_block(samples))
-        print_clean_summary(samples)
-        print_student_t_nu_warnings(samples)
+        _print_posterior_summary(
+            samples, extra_summary=print_student_t_nu_warnings)
 
     if save_samples:
-        fname_out = model.config["io"]["fname_output"]
-        fprint(f"writing outputs under {abspath(dirname(fname_out))}.")
-        save_mcmc_samples(samples, log_density, None, gof, fname_out,
-                          auxiliary=auxiliary)
-
-        fname_plot = splitext(fname_out)[0] + ".png"
-        plot_corner(samples, show_fig=False, filename=fname_plot,)
-        plot_paths = [("corner plot", fname_plot)]
-
-        fname_summary = splitext(fname_out)[0] + "_summary.txt"
-        with open(fname_summary, "w") as f:
-            with contextlib.redirect_stdout(f):
-                print_clean_summary(samples)
-                print_student_t_nu_warnings(samples)
-                if compute_evidence:
-                    _print_gof(gof)
-        fprint(f"saved summary to {fname_summary}")
-        _print_output_manifest(
-            fname_out, fname_summary, plot_paths, log_density, None, gof,
-            auxiliary)
+        _save_inference_outputs(
+            model, samples, log_density, None, gof, auxiliary,
+            extra_summary=print_student_t_nu_warnings)
 
     if return_diagnostics:
         return samples, diagnostic_summary
+    return samples
+
+
+def run_MWCepheids_inference(model, print_summary=True, save_samples=True,
+                             init_maxiter=None, progress_bar=True,
+                             return_mcmc=False):
+    """Run MCMC inference for the standalone MW-Cepheid calibration model."""
+    fsection("Inference")
+    _setup_platform()
+
+    kwargs = dict(model.config["inference"])
+    kwargs.setdefault(
+        "num_chains_harmonic",
+        kwargs.get("num_chains_evidence", kwargs["num_chains"]))
+
+    model_kwargs = {}
+    init_params, site_names, init_strategy = _initialise_from_lbfgs(
+        model, model_kwargs, kwargs, init_maxiter)
+    mcmc = _run_nuts_mcmc(
+        model, model_kwargs, kwargs, init_params, site_names, init_strategy,
+        progress_bar, use_configured_nuts=True)
+
+    samples = mcmc.get_samples()
+    samples, log_density, gof, _, _ = _postprocess_inference_run(
+        model, model_kwargs, samples, kwargs, site_names,
+        _mwcepheids_ndata(model), "config")
+
+    if print_summary:
+        _print_posterior_summary(samples)
+
+    if save_samples:
+        _save_inference_outputs(
+            model, samples, log_density, None, gof, None,
+            catch_corner_errors=True)
+
+    if return_mcmc:
+        return mcmc, samples
     return samples
 
 
