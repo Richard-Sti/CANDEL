@@ -45,14 +45,24 @@ from .frame import (                                                            
     load_PV_dataframes,                                                         # noqa
     )
 
+from .dust import (                                                             # noqa
+    AKS_TO_AH,                                                                  # noqa
+    R_H_BAYESTAR,                                                               # noqa
+    postprocess_extinction_profiles,                                            # noqa
+    query_AH,                                                                   # noqa
+    query_AH_grid,                                                              # noqa
+    query_reddening,                                                            # noqa
+    read_dustmap,                                                               # noqa
+    )
+
 from .megamaser_data import (                                                   # noqa
     load_megamaser_spots,                                                       # noqa
     )
 
 from .mwcepheids import (                                                       # noqa
+    AnchorCepheidData,                                                          # noqa
+    CepheidData,                                                                # noqa
     FEH_TO_OH,                                                                  # noqa
-    MWCepheidAnchorData,                                                        # noqa
-    MWCepheidCampaignData,                                                      # noqa
     MWCepheidDataset,                                                           # noqa
     load_MWCepheids_from_config,                                                # noqa
     to_mwcepheids_config,                                                       # noqa
