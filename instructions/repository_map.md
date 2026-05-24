@@ -59,11 +59,14 @@ should not bake in local paths, queue names, Python executables, or outputs.
   radial external-velocity plots, and likelihood-selection diagnostics.
 
 - `/mnt/users/rstiskalek/CANDEL/candel/pvdata`
-  contains peculiar-velocity data loading. `frame.py` defines `PVDataFrame`
-  and config-driven PV dataframe loading; `catalogues.py`, `dust.py`,
-  `los.py`, `volume_density.py`, `field_cache.py`, and `megamaser_data.py`
-  hold catalogue readers, dust corrections, LOS helpers, 3D density loading,
-  field-cache utilities, and spot-level maser data loading.
+  contains peculiar-velocity and calibration data loading. `frame.py` defines
+  `PVDataFrame` and config-driven PV dataframe loading; `catalogues.py`,
+  `dust.py`, `los.py`, `volume_density.py`, `field_cache.py`, and
+  `megamaser_data.py` hold catalogue readers, 2D/3D dust-map helpers, LOS
+  helpers, 3D density loading, field-cache utilities, and spot-level maser
+  data loading. `mwcepheids.py` contains the MW Cepheid calibration data and
+  anchor loaders, plus the translation from CANDEL run configs into the
+  model's data shape.
 
 - `/mnt/users/rstiskalek/CANDEL/candel/model/base_model.py`
   contains shared model setup: priors, data arrays, cosmography, Malmquist and
@@ -82,6 +85,19 @@ should not bake in local paths, queue names, Python executables, or outputs.
 - `/mnt/users/rstiskalek/CANDEL/candel/model/model_H0_CH0.py` and
   `/mnt/users/rstiskalek/CANDEL/candel/model/model_H0_TRGB.py`
   implement Cepheid and TRGB H0 inference.
+
+- `/mnt/users/rstiskalek/CANDEL/candel/model/mwcepheids`
+  contains the standalone Milky Way Cepheid P-L calibration model:
+  forward/R21 likelihoods, distance marginalisation, selection,
+  spiral-cache helpers, and MW-specific disk-prior logic. It is wired through
+  `model/which_run = "MWCepheids"` but is not an H0 or PV model.
+
+- The old top-level MW Cepheid namespace has been removed. Place data and dust
+  support in `candel/pvdata`, MW model code
+  in `candel/model/mwcepheids`, inference and evidence in `candel/inference`,
+  log-space quadrature and prior helpers in `candel/model`, PPC code in
+  `candel/mock`, and MW paper plotting helpers in
+  `/mnt/users/rstiskalek/CANDEL/notebooks/paper_MWCepheids`.
 
 - `/mnt/users/rstiskalek/CANDEL/candel/model/model_H0_maser.py`
   implements the warped megamaser disk likelihood, marginalization grids,
@@ -107,9 +123,10 @@ should not bake in local paths, queue names, Python executables, or outputs.
   contains inference engines and postprocessing: NumPyro NUTS in
   `inference.py`, checkpointed NUTS helpers in `checkpointed_nuts.py`, nested
   slice sampling in `nested.py`, MAP optimization in `optimise.py`, and
-  evidence utilities in `evidence.py`. NSS can shard replacement chains over
-  multiple local devices on one node; the single-device path remains the
-  fallback.
+  evidence utilities in `evidence.py`. It also hosts the standalone
+  MW-Cepheid NUTS runner used by `model/which_run = "MWCepheids"`. NSS can
+  shard replacement chains over multiple local devices on one node; the
+  single-device path remains the fallback.
 
 - `/mnt/users/rstiskalek/CANDEL/candel/field`,
   `/mnt/users/rstiskalek/CANDEL/candel/cosmo`,
@@ -122,8 +139,8 @@ should not bake in local paths, queue names, Python executables, or outputs.
 
 - `/mnt/users/rstiskalek/CANDEL/scripts/runs/main.py`
   is the generic config-driven inference runner. It dispatches by
-  `model/which_run` for H0 and maser cases; otherwise it loads PV data with
-  `candel.pvdata.load_PV_dataframes`, builds models through
+  `model/which_run` for H0, maser, and MWCepheids cases; otherwise it loads
+  PV data with `candel.pvdata.load_PV_dataframes`, builds models through
   `candel.model.name2model`, and calls `run_pv_inference`.
 
 - `/mnt/users/rstiskalek/CANDEL/scripts/runs/generate_tasks.py`
@@ -135,7 +152,14 @@ should not bake in local paths, queue names, Python executables, or outputs.
   holds named parameter sweeps for `generate_tasks.py`.
 
 - `/mnt/users/rstiskalek/CANDEL/scripts/runs/configs`
-  contains reusable TOML templates for PV and H0 runs.
+  contains reusable TOML templates for PV and H0 runs. MW Cepheid calibration
+  uses `config_MWCepheids.toml`, `config_MWCepheids_priors.toml`, and the
+  notebook-facing override `config_MWCepheids_paper.toml`.
+
+- `/mnt/users/rstiskalek/CANDEL/scripts/runs/mwcepheids`
+  contains MW Cepheid run-side utilities: SH0ES baseline H0 comparison
+  samplers and mock-closure MPI runners. Generic production task generation
+  still goes through `generate_tasks.py` and `scripts/runs/main.py`.
 
 - `/mnt/users/rstiskalek/CANDEL/scripts/runs/submit.sh` and
   `/mnt/users/rstiskalek/CANDEL/scripts/_cluster_*.sh`
@@ -153,9 +177,22 @@ should not bake in local paths, queue names, Python executables, or outputs.
   field caches. `prepare_field_inputs.py` is the single Python entry point
   for LOS computation plus cache warmup from config/task inputs, with
   `prepare_field_inputs.sh` submitting it to CPU/MPI nodes. Helper logic lives
-  in `field_input_los.py` and `field_input_cache.py`. Read
+  in `field_input_los.py` and `field_input_cache.py`.
+  `MWCepheids/` contains MW Cepheid data-preparation helpers:
+  `generate_mwcepheid_anchor_data.py`,
+  `fetch_mwcepheid_ddo_positions.py`,
+  `merge_mwcepheid_r21_coordinates.py`, `fetch_mwcepheids_dustmaps.py`,
+  `precompute_mwcepheids_extinction.py`, and
+  `precompute_mwcepheids_spiral.py`. The precompute scripts build the optional
+  MW Cepheid dust and spiral-arm caches from `config_MWCepheids.toml`. Read
   `/mnt/users/rstiskalek/CANDEL/instructions/field_product_runtime_plan.md`
   before changing runtime field-product/cache-miss behaviour.
+
+- `/mnt/users/rstiskalek/CANDEL/notebooks/paper_MWCepheids`
+  contains MW Cepheid paper-side notebooks and plotting helpers. Run-side
+  scripts live under `/mnt/users/rstiskalek/CANDEL/scripts/runs/mwcepheids`,
+  and data-preparation scripts live under
+  `/mnt/users/rstiskalek/CANDEL/scripts/preprocess`.
 
 - `/mnt/users/rstiskalek/CANDEL/scripts/H0_convergence`,
   `/mnt/users/rstiskalek/CANDEL/scripts/diagnostics`, and
