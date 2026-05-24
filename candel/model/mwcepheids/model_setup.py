@@ -304,7 +304,10 @@ class ModelSetupMixin:
             (self.sel_c27.mW, "mW_min", "mW_min_C27"),
         )
         for selection, local_name, prior_name in mappings:
-            if local_name not in selection.priors and prior_name in self.priors:
+            if (
+                local_name not in selection.priors
+                and prior_name in self.priors
+            ):
                 selection.priors[local_name] = self.priors[prior_name]
 
     def _setup_distance_grids(self, model_cfg):

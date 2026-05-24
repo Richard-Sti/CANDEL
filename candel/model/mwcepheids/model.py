@@ -19,8 +19,7 @@ import numpyro
 from jax.scipy.special import log_ndtr
 from numpyro import distributions as dist
 
-from ..utils import (DistanceModulusPrior, get_named_or_shared,
-                     sample_prior)
+from ..utils import DistanceModulusPrior, get_named_or_shared, sample_prior
 from .distance_marg import log_likelihood_marg_distance
 from .distributions import DiskPrior
 from .model_setup import ModelSetupMixin

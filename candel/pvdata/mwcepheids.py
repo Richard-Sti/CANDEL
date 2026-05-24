@@ -13,16 +13,17 @@
 # with this program; if not, write to the Free Software Foundation, Inc.,
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 """Milky Way Cepheid calibration data loaders."""
-from dataclasses import dataclass
 import logging
 import os
-from pathlib import Path
 import re
+from dataclasses import dataclass
+from pathlib import Path
 
 import jax.numpy as jnp
 import numpy as np
 
-from ..util import fprint, get_nested, load_config as load_candel_config
+from ..util import fprint, get_nested
+from ..util import load_config as load_candel_config
 
 logger = logging.getLogger(__name__)
 

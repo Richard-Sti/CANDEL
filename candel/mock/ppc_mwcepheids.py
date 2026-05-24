@@ -19,10 +19,11 @@ import os
 import numpy as np
 from tqdm.auto import tqdm
 
-from ..pvdata.dust import postprocess_extinction_profiles
 from ..model.mwcepheids.selection import C22SelectionConfig, C27SelectionConfig
+from ..pvdata.dust import postprocess_extinction_profiles
 
 logger = logging.getLogger(__name__)
+
 
 def _generate_ppc_campaign(samples, data, config, rng):
     """Generate PPC samples for a single campaign via rejection sampling.

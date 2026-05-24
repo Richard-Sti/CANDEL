@@ -25,8 +25,8 @@ from jax.scipy.special import gammaln, logsumexp
 from jax.scipy.stats import norm as norm_jax
 from numpy.polynomial.hermite import hermgauss as _hermgauss
 from numpyro import distributions as dist
-from numpyro.distributions import (Delta, Distribution, Gamma, LogUniform,
-                                   HalfCauchy, HalfNormal, Normal,
+from numpyro.distributions import (Delta, Distribution, Gamma, HalfCauchy,
+                                   HalfNormal, LogUniform, Normal,
                                    TruncatedNormal, Uniform, constraints)
 
 from ..util import SPEED_OF_LIGHT
