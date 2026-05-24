@@ -1,6 +1,6 @@
 # CANDEL
 
-**CANDEL** (*CA*libration and *N*ormalization of the *D*istanc*E* *L*adder) is a JAX-based framework for peculiar-velocity inference, distance-ladder calibration, and megamaser disk modelling.
+**CANDEL** is a framework for calibrating nearby-universe distance indicators.
 
 **Documentation:** [candel.readthedocs.io](https://candel.readthedocs.io/en/latest/)
 

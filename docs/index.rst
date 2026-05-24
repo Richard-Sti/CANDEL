@@ -1,9 +1,7 @@
 CANDEL
 ======
 
-**CANDEL** (*CA*\libration and *N*\ormalization of the *D*\istanc\ *E* *L*\adder)
-is a JAX-based framework for peculiar-velocity inference and distance-ladder
-calibration.
+**CANDEL** is a framework for calibrating nearby-universe distance indicators.
 
 CANDEL forward-models distance-indicator observables and redshift while
 marginalising over latent variables such as distance and absolute magnitude.
