@@ -835,7 +835,8 @@ def run_H0_inference(model, model_kwargs=None, print_summary=True,
 
     mcmc = _run_nuts_mcmc(
         model, model_kwargs, kwargs, init_params, site_names, init_strategy,
-        progress_bar, use_configured_nuts=True)
+        progress_bar, use_configured_nuts=True,
+        jit_model_args=dynamic_model_kwargs)
 
     samples = mcmc.get_samples()
     diagnostic_summary = None
