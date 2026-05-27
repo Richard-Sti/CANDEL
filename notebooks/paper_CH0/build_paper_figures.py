@@ -223,8 +223,8 @@ def plot_h0_proportion():
     for i in range(36):
         fname = (
             MIXED
-            / f"CH0_sel-SN_magnitude_or_redshift_Nmag_Nmag{i}_"
-              "manticore_2MPP_MULTIBIN_N256_DES_V2_paper_mixed.hdf5"
+            / f"CH0_MAS-PCS_sel-SN_magnitude_or_redshift_Nmag_Nmag{i}_"
+              "ManticoreLocalCOLA_paper_mixed.hdf5"
         )
         samples = read_samples(fname, "H0")
         xs.append(i)
@@ -426,6 +426,7 @@ def main():
     plot_mu_host_cz(data)
     plot_h0_comparison()
     plot_h0_stacked()
+    plot_h0_proportion()
     plot_manticore_corner()
 
 
