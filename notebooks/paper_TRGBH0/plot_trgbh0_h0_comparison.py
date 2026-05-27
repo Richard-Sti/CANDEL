@@ -27,16 +27,16 @@ H0_COLOURS = {
 
 POSTERIORS = [
     (
-        r"Density $\sigma_v$",
+        r"\texttt{Manticore}, Gaussian",
         RESULTS
-        / "EDD_TRGB_sel-TRGB_magnitude_manticore_2MPP_MULTIBIN_N256_DES_V2_sigv_rho_main.hdf5",
+        / "EDD_TRGB_rhoSmoothR4_MAS-PCS_sel-TRGB_magnitude_ManticoreLocalCOLA_main.hdf5",
         H0_COLOURS["density_sigv"],
         "-",
     ),
     (
-        r"Student-$t$",
+        r"\texttt{Manticore}, Student-$t$",
         RESULTS
-        / "EDD_TRGB_cz-student_t_sel-TRGB_magnitude_manticore_2MPP_MULTIBIN_N256_DES_V2_main.hdf5",
+        / "EDD_TRGB_rhoSmoothR4_cz-student_t_MAS-PCS_sel-TRGB_magnitude_ManticoreLocalCOLA_main.hdf5",
         H0_COLOURS["student_t"],
         "--",
     ),
@@ -89,7 +89,7 @@ def main():
         ax.set_xlabel(
             r"$H_0 ~ [\mathrm{km}\,\mathrm{s}^{-1}\,\mathrm{Mpc}^{-1}]$")
         ax.set_ylabel("Normalised PDF")
-        ax.set_xlim(66.0, 75.5)
+        ax.set_xlim(61.5, 75.8)
         ax.set_ylim(bottom=0)
         ax.legend(
             loc="lower center",
