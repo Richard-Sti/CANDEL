@@ -11,7 +11,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 TARGETS = {
     "corner": [SCRIPT_DIR / "plot_trgbh0_fiducial_corner.py"],
     "data": [
-        SCRIPT_DIR / "plot_edd_trgb_velocity_magnitude_histograms.py",
+        SCRIPT_DIR / "plot_edd_trgb_magnitude_redshift_scatter.py",
         SCRIPT_DIR / "plot_edd_trgb_sky_distribution.py",
         SCRIPT_DIR / "plot_edd_trgb_data_availability_ks.py",
     ],
@@ -21,7 +21,7 @@ TARGETS = {
 TARGET_OUTPUTS = {
     "corner": ["trgbh0_manticore_density_sigma_v_corner.pdf"],
     "data": [
-        "edd_trgb_velocity_magnitude_histograms.pdf",
+        "edd_trgb_magnitude_redshift_scatter.pdf",
         "edd_trgb_sky_distribution.pdf",
         "edd_trgb_data_availability_ks.pdf",
     ],
