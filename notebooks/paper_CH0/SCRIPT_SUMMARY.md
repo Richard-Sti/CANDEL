@@ -10,6 +10,7 @@ The exploratory `.ipynb` notebooks are not covered here.
 - `plot_imb_geometric_reconstruction_effects.py`: reads the imb-geometric reconstruction-effect CSV summaries and plots CPLR shifts, host-distance shifts, distance-shift coherence, and evidence comparisons when `/gof` datasets exist.
 - `plot_leaveoneout_diagnostics.py`: reads `tasks_CH0_leaveoneout.txt`, tolerates still-missing leave-one-out HDF5 outputs, and plots per-host `H_0` shifts, evidence values, and influence summaries relative to the full field-21 run.
 - `plot_manticore_evidence_drivers.py`: reads CH0 single-Manticore-field HDF5 outputs with auxiliary likelihood tracking, decomposes total likelihood differences into raw likelihood, observed selection, and selection normalisation, and writes diagnostic summaries and plots.
+- `plot_sh0es_cepheids_by_galaxy.py`: loads the CH0 SH0ES Cepheid rows by host/anchor and plots Cepheid magnitude against period in per-galaxy panels.
 - `plot_single_field_comparison.py`: canonical driver for the single-field reconstruction-comparison plots; modes are `cola-mas`, `swift-cola-sph`, and `swift-sph-cola-cic`.
 - `plot_cola_mas_comparison.py`: compatibility wrapper for `plot_single_field_comparison.py cola-mas`.
 - `plot_swift_cola_sph_comparison.py`: compatibility wrapper for `plot_single_field_comparison.py swift-cola-sph`.
