@@ -6,6 +6,14 @@ from dataclasses import dataclass
 import csv
 from itertools import combinations
 from pathlib import Path
+import sys
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+PLOT_DIR = next(path for path in SCRIPT_DIR.parents
+                if path.name == "paper_TRGBH0")
+for path in (SCRIPT_DIR, PLOT_DIR):
+    if str(path) not in sys.path:
+        sys.path.insert(0, str(path))
 
 import h5py
 import matplotlib
@@ -17,17 +25,24 @@ import scienceplots  # noqa: F401,E402
 import tomllib  # noqa: E402
 from matplotlib.colors import Normalize  # noqa: E402
 from matplotlib.lines import Line2D  # noqa: E402
+from matplotlib.ticker import MaxNLocator  # noqa: E402
+from scipy.stats import gaussian_kde  # noqa: E402
 
-from trgbh0_plot_style import trgbh0_cmap  # noqa: E402
+from trgbh0_plot_style import (  # noqa: E402
+    FIGURE_DPI,
+    ROOT,
+    save_pdf_png,
+    set_paper_rc,
+    trgbh0_cmap,
+)
 
 
-ROOT = Path("/mnt/users/rstiskalek/CANDEL")
 TASK_FILE = ROOT / "scripts" / "runs" / "tasks_TRGBH0_single.txt"
 DEFAULT_OUTDIR = (
     ROOT / "results" / "TRGBH0_paper" / "single_fields"
     / "plots" / "single_field_comparison"
 )
-FIGURE_DPI = 500
+MAX_KDE_SAMPLES = 40_000
 MAS_ORDER = ("CIC", "PCS", "SPH")
 MAS_LABELS = {
     "CIC": "CIC",
@@ -40,6 +55,7 @@ MAS_COLOURS = {
     "SPH": "#fe9000",
 }
 LIKELIHOOD_CHOICES = ("gaussian", "student_t", "all")
+BETA_PRIOR_CHOICES = ("delta", "uniform", "all")
 PARAMETERS = (
     "M_TRGB",
     "alpha_low",
@@ -51,10 +67,11 @@ PARAMETERS = (
     "mag_lim_TRGB",
     "mag_lim_TRGB_width",
     "sigma_v",
+    "beta",
     "Vext_mag",
 )
 H0_LABEL = r"$H_0~[\mathrm{km}\,\mathrm{s}^{-1}\,\mathrm{Mpc}^{-1}]$"
-LNZ_LABEL = r"harmonic $\ln Z$"
+LNZ_LABEL = r"$\ln \mathcal{Z}$"
 
 
 @dataclass(frozen=True)
@@ -66,6 +83,8 @@ class Row:
     config: str
     source: str
     cz_likelihood: str
+    smooth_R: float
+    beta_prior_dist: str
     values: dict[str, float | int | str]
 
 
@@ -88,6 +107,30 @@ def parse_args():
         choices=LIKELIHOOD_CHOICES,
         default="gaussian",
         help="Redshift likelihood to plot from the mixed task file.",
+    )
+    parser.add_argument(
+        "--smooth-R",
+        type=float,
+        default=None,
+        help="Only plot runs with this 3D density-field smoothing scale.",
+    )
+    parser.add_argument(
+        "--beta-prior-dist",
+        choices=BETA_PRIOR_CHOICES,
+        default="all",
+        help="Only plot runs with this beta prior distribution.",
+    )
+    parser.add_argument(
+        "--task-min",
+        type=int,
+        default=None,
+        help="Only consider tasks with index greater than or equal to this.",
+    )
+    parser.add_argument(
+        "--task-max",
+        type=int,
+        default=None,
+        help="Only consider tasks with index less than or equal to this.",
     )
     parser.add_argument(
         "--require-complete",
@@ -139,7 +182,14 @@ def task_config_paths(task_file):
     return paths
 
 
-def output_spec(task_index, config_path, cz_likelihood):
+def output_spec(
+        task_index, config_path, cz_likelihood, smooth_R, beta_prior_dist,
+        task_min, task_max):
+    if task_min is not None and task_index < task_min:
+        return None
+    if task_max is not None and task_index > task_max:
+        return None
+
     with config_path.open("rb") as handle:
         config = tomllib.load(handle)
 
@@ -159,6 +209,18 @@ def output_spec(task_index, config_path, cz_likelihood):
     if cz_likelihood != "all" and config_likelihood != cz_likelihood:
         return None
 
+    config_smooth_R = float(get_nested(
+        config, ("model", "field_3d_smoothing_scale"), default=0.0))
+    if smooth_R is not None and not np.isclose(config_smooth_R, smooth_R):
+        return None
+
+    config_beta_prior_dist = get_nested(
+        config, ("model", "priors", "beta", "dist"), default="unknown")
+    if (
+            beta_prior_dist != "all"
+            and config_beta_prior_dist != beta_prior_dist):
+        return None
+
     return {
         "task": task_index,
         "field": int(get_nested(config, ("io", "field_indices"))),
@@ -167,6 +229,8 @@ def output_spec(task_index, config_path, cz_likelihood):
         "config": str(config_path),
         "source": str(repo_path(get_nested(config, ("io", "fname_output")))),
         "cz_likelihood": config_likelihood,
+        "smooth_R": config_smooth_R,
+        "beta_prior_dist": config_beta_prior_dist,
     }
 
 
@@ -217,8 +281,6 @@ def read_row(spec):
             "lnZ_harmonic": read_scalar(handle, "gof/lnZ_harmonic"),
             "err_lnZ_harmonic": read_scalar(
                 handle, "gof/err_lnZ_harmonic"),
-            "lnZ_laplace": read_scalar(handle, "gof/lnZ_laplace"),
-            "err_lnZ_laplace": read_scalar(handle, "gof/err_lnZ_laplace"),
             "BIC": read_scalar(handle, "gof/BIC"),
             "AIC": read_scalar(handle, "gof/AIC"),
         }
@@ -245,10 +307,20 @@ def read_row(spec):
     return Row(**spec, values=values)
 
 
-def load_rows(task_file, cz_likelihood, fail_on_unusable=False):
+def load_rows(
+        task_file, cz_likelihood, smooth_R=None, beta_prior_dist="all",
+        task_min=None, task_max=None, fail_on_unusable=False):
     specs = []
     for task_index, config_path in task_config_paths(task_file):
-        spec = output_spec(task_index, config_path, cz_likelihood)
+        spec = output_spec(
+            task_index,
+            config_path,
+            cz_likelihood,
+            smooth_R,
+            beta_prior_dist,
+            task_min,
+            task_max,
+        )
         if spec is not None:
             specs.append(spec)
     rows = []
@@ -316,18 +388,6 @@ def matched_fields(rows, mas_order, require_complete=False):
     return matched, missing
 
 
-def set_paper_rc():
-    plt.rcParams.update({
-        "font.size": 8.0,
-        "axes.labelsize": 8.0,
-        "axes.titlesize": 8.0,
-        "xtick.labelsize": 7.0,
-        "ytick.labelsize": 7.0,
-        "legend.fontsize": 6.5,
-        "axes.linewidth": 0.7,
-    })
-
-
 def field_norm(rows):
     fields = np.asarray([row.field for row in rows], dtype=float)
     vmin = min(0.0, float(np.min(fields)))
@@ -337,13 +397,23 @@ def field_norm(rows):
     return Normalize(vmin=vmin, vmax=vmax)
 
 
-def save_pdf_png(fig, out_pdf):
-    out_pdf.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_pdf, dpi=FIGURE_DPI, bbox_inches="tight")
-    out_png = out_pdf.with_suffix(".png")
-    fig.savefig(out_png, dpi=FIGURE_DPI, bbox_inches="tight")
-    plt.close(fig)
-    return out_pdf, out_png
+def evidence_norm(values):
+    vmin = float(np.min(values))
+    vmax = float(np.max(values))
+    if vmin == vmax:
+        vmin -= 1.0
+        vmax += 1.0
+    return Normalize(vmin=vmin, vmax=vmax)
+
+
+def kde_on_grid(samples, x_grid, bw=1.2):
+    if samples.size > MAX_KDE_SAMPLES:
+        indices = np.linspace(0, samples.size - 1, MAX_KDE_SAMPLES,
+                              dtype=int)
+        samples = samples[indices]
+    kde = gaussian_kde(samples)
+    kde.set_bandwidth(kde.factor * bw)
+    return kde(x_grid)
 
 
 def write_summary_csv(rows, out_csv):
@@ -352,6 +422,8 @@ def write_summary_csv(rows, out_csv):
         "field",
         "mas",
         "cz_likelihood",
+        "smooth_R",
+        "beta_prior_dist",
         "reconstruction",
         "n_H0",
         "H0_mean",
@@ -361,8 +433,6 @@ def write_summary_csv(rows, out_csv):
         "H0_q84",
         "lnZ_harmonic",
         "err_lnZ_harmonic",
-        "lnZ_laplace",
-        "err_lnZ_laplace",
         "BIC",
         "AIC",
         "lnZ_bic",
@@ -384,6 +454,7 @@ def write_summary_csv(rows, out_csv):
                 key for key in base_fields
                 if key not in (
                     "task", "field", "mas", "cz_likelihood",
+                    "smooth_R", "beta_prior_dist",
                     "reconstruction")
             ] + parameter_fields
             writer.writerow({
@@ -391,6 +462,8 @@ def write_summary_csv(rows, out_csv):
                 "field": row.field,
                 "mas": row.mas,
                 "cz_likelihood": row.cz_likelihood,
+                "smooth_R": row.smooth_R,
+                "beta_prior_dist": row.beta_prior_dist,
                 "reconstruction": row.reconstruction,
                 **{key: row.values.get(key, "") for key in value_fields},
                 "source": row.source,
@@ -424,10 +497,6 @@ def delta_rows(matched, mas_order):
                     row_value(left_row, "lnZ_harmonic")
                     - row_value(right_row, "lnZ_harmonic")
                 ),
-                "delta_lnZ_laplace": (
-                    row_value(left_row, "lnZ_laplace")
-                    - row_value(right_row, "lnZ_laplace")
-                ),
                 "H0_q50_left": row_value(left_row, "H0_q50"),
                 "H0_q50_right": row_value(right_row, "H0_q50"),
                 "lnZ_harmonic_left": row_value(left_row, "lnZ_harmonic"),
@@ -442,7 +511,6 @@ def write_delta_csv(rows, out_csv):
         "comparison",
         "delta_H0_q50",
         "delta_lnZ_harmonic",
-        "delta_lnZ_laplace",
         "H0_q50_left",
         "H0_q50_right",
         "lnZ_harmonic_left",
@@ -542,100 +610,6 @@ def add_best_label(ax, rows, x_key, y_key="H0_q50"):
     )
 
 
-def plot_h0_vs_lnz(rows, mas_order, out_pdf):
-    cmap = trgbh0_cmap("trgbh0_single_field_index")
-    norm = field_norm(rows)
-    evidence_specs = (
-        ("lnZ_harmonic", "err_lnZ_harmonic", LNZ_LABEL),
-        ("lnZ_laplace", "err_lnZ_laplace", r"Laplace $\ln Z$"),
-    )
-
-    with plt.style.context(["science", "no-latex"]):
-        set_paper_rc()
-        fig, axes = plt.subplots(
-            len(evidence_specs), len(mas_order),
-            figsize=(8.4, 5.25),
-            sharey="row",
-            constrained_layout=True,
-        )
-        axes = np.asarray(axes).reshape(len(evidence_specs), len(mas_order))
-        for col, mas in enumerate(mas_order):
-            mas_rows = rows_for_mas(rows, mas)
-            fields = np.asarray([row.field for row in mas_rows], dtype=float)
-            h0 = np.asarray([row_value(row, "H0_q50") for row in mas_rows])
-            h0_lo = np.asarray([row_value(row, "H0_q16") for row in mas_rows])
-            h0_hi = np.asarray([row_value(row, "H0_q84") for row in mas_rows])
-            yerr = np.vstack([h0 - h0_lo, h0_hi - h0])
-
-            for row_index, (x_key, xerr_key, xlabel) in enumerate(evidence_specs):
-                ax = axes[row_index, col]
-                x = np.asarray([row_value(row, x_key) for row in mas_rows])
-                xerr = np.asarray([
-                    abs(row.values.get(xerr_key, np.nan)) for row in mas_rows
-                ])
-                finite = (
-                    np.isfinite(x)
-                    & np.isfinite(h0)
-                    & np.isfinite(h0_lo)
-                    & np.isfinite(h0_hi)
-                )
-                x_plot = x[finite]
-                h0_plot = h0[finite]
-                fields_plot = fields[finite]
-                yerr_plot = yerr[:, finite]
-                xerr_plot = xerr[finite]
-                finite_xerr = np.isfinite(xerr_plot)
-                if np.all(finite_xerr):
-                    ax.errorbar(
-                        x_plot,
-                        h0_plot,
-                        xerr=xerr_plot,
-                        yerr=yerr_plot,
-                        fmt="none",
-                        ecolor="0.55",
-                        elinewidth=0.45,
-                        capsize=1.1,
-                        alpha=0.58,
-                        zorder=1,
-                    )
-                else:
-                    ax.errorbar(
-                        x_plot,
-                        h0_plot,
-                        yerr=yerr_plot,
-                        fmt="none",
-                        ecolor="0.55",
-                        elinewidth=0.45,
-                        capsize=1.1,
-                        alpha=0.58,
-                        zorder=1,
-                    )
-                sc = ax.scatter(
-                    x_plot,
-                    h0_plot,
-                    c=fields_plot,
-                    cmap=cmap,
-                    norm=norm,
-                    s=25,
-                    edgecolor="0.15",
-                    linewidth=0.25,
-                    zorder=3,
-                )
-                add_best_label(ax, mas_rows, x_key)
-                ax.set_title(
-                    f"{MAS_LABELS[mas]}: {len(mas_rows)} fields",
-                    loc="left",
-                )
-                ax.set_xlabel(xlabel)
-                if col == 0:
-                    ax.set_ylabel(H0_LABEL)
-
-        cbar = fig.colorbar(sc, ax=axes, pad=0.012, fraction=0.035)
-        cbar.set_label("Manticore field")
-        cbar.ax.tick_params(labelsize=7.0)
-        return save_pdf_png(fig, out_pdf)
-
-
 def plot_h0_vs_harmonic_lnz(rows, mas_order, out_pdf):
     cmap = trgbh0_cmap("trgbh0_single_harmonic_field_index")
     norm = field_norm(rows)
@@ -713,6 +687,108 @@ def plot_h0_vs_harmonic_lnz(rows, mas_order, out_pdf):
         cbar = fig.colorbar(sc, ax=axes, pad=0.012, fraction=0.04)
         cbar.set_label("Manticore field")
         cbar.ax.tick_params(labelsize=7.0)
+        return save_pdf_png(fig, out_pdf)
+
+
+def plot_h0_histograms(rows, mas_order, out_pdf):
+    with plt.style.context(["science", "no-latex"]):
+        set_paper_rc()
+        fig, axes = plt.subplots(
+            1,
+            len(mas_order),
+            figsize=(4.7 * len(mas_order), 3.1),
+            sharey=True,
+            constrained_layout=True,
+        )
+        axes = np.atleast_1d(axes)
+        scalar_mappable = None
+        for ax, mas in zip(axes, mas_order):
+            mas_rows = rows_for_mas(rows, mas)
+            rows_with_samples = []
+            for row in mas_rows:
+                with h5py.File(row.source, "r") as handle:
+                    samples = finite_samples(handle, "H0", row.source)
+                if samples is not None:
+                    rows_with_samples.append((row, samples))
+            if not rows_with_samples:
+                continue
+
+            evidence = np.asarray([
+                row_value(row, "lnZ_harmonic")
+                for row, _ in rows_with_samples
+            ])
+            h0_samples = [samples for _, samples in rows_with_samples]
+            stacked_h0 = np.concatenate(h0_samples)
+            field_medians = np.asarray([
+                row_value(row, "H0_q50") for row, _ in rows_with_samples
+            ])
+            x_min, x_max = np.percentile(stacked_h0, [0.2, 99.8])
+            pad = 0.15 * (x_max - x_min)
+            x_grid = np.linspace(x_min - pad, x_max + pad, 600)
+            cmap = trgbh0_cmap(f"trgbh0_single_h0_{mas}")
+            norm = evidence_norm(evidence)
+
+            ax.hist(
+                field_medians,
+                bins=min(9, max(4, int(np.sqrt(len(field_medians))) + 2)),
+                density=True,
+                color="#b8b8b8",
+                alpha=0.45,
+                label=r"Field median $H_0$",
+                zorder=0,
+            )
+
+            for lnz_harmonic, samples in zip(evidence, h0_samples):
+                ax.plot(
+                    x_grid,
+                    kde_on_grid(samples, x_grid),
+                    color=cmap(norm(lnz_harmonic)),
+                    lw=0.9,
+                    alpha=0.72,
+                    zorder=2,
+                )
+
+            ax.plot(
+                x_grid,
+                kde_on_grid(stacked_h0, x_grid),
+                color="black",
+                lw=1.35,
+                label=r"Stacked posterior",
+                zorder=4,
+            )
+            ax.axvline(
+                np.median(field_medians), color="black", lw=1.0, ls=":",
+                label=r"Median of field medians")
+            ax.set_title(
+                f"{MAS_LABELS[mas]}: {len(rows_with_samples)} fields",
+                loc="left",
+            )
+            ax.set_xlabel(H0_LABEL)
+            ax.set_xlim(x_grid[0], x_grid[-1])
+            ax.set_ylim(bottom=0)
+
+            curve_proxy = Line2D(
+                [0], [0], color=cmap(norm(np.median(evidence))), lw=1.0,
+                label=r"Individual field posterior")
+            handles, labels = ax.get_legend_handles_labels()
+            handles.insert(1, curve_proxy)
+            labels.insert(1, curve_proxy.get_label())
+            ax.legend(
+                handles, labels,
+                loc="upper right",
+                fontsize=6.5,
+                frameon=False,
+                handlelength=1.7,
+            )
+            scalar_mappable = plt.cm.ScalarMappable(norm=norm, cmap=cmap)
+
+        axes[0].set_ylabel("Posterior density")
+        if scalar_mappable is not None:
+            scalar_mappable.set_array([])
+            cbar = fig.colorbar(
+                scalar_mappable, ax=axes, pad=0.015, fraction=0.055)
+            cbar.set_label(LNZ_LABEL)
+            cbar.ax.tick_params(labelsize=7.0)
         return save_pdf_png(fig, out_pdf)
 
 
@@ -801,7 +877,7 @@ def plot_mas_deltas(delta_data, out_pdf):
         )
         for ax, key, ylabel in (
             (axes[0], "delta_H0_q50", r"$\Delta H_0$"),
-            (axes[1], "delta_lnZ_harmonic", r"$\Delta \ln Z$"),
+            (axes[1], "delta_lnZ_harmonic", r"$\Delta \ln \mathcal{Z}$"),
         ):
             positions = np.arange(len(comparisons), dtype=float)
             for idx, comparison in enumerate(comparisons):
@@ -907,6 +983,157 @@ def plot_parameter_diagnostics(rows, mas_order, out_pdf):
         return save_pdf_png(fig, out_pdf)
 
 
+def plot_beta_diagnostics(rows, out_pdf):
+    beta_rows = [
+        row for row in rows
+        if all(
+            np.isfinite(row.values.get(key, np.nan))
+            for key in (
+                "beta_q16", "beta_q50", "beta_q84",
+                "H0_q16", "H0_q50", "H0_q84", "lnZ_harmonic")
+        )
+    ]
+    if not beta_rows:
+        return []
+
+    beta_mid = np.asarray([row_value(row, "beta_q50") for row in beta_rows])
+    beta_std = np.asarray([
+        row.values.get("beta_std", np.nan) for row in beta_rows])
+    if (
+            np.nanmax(np.abs(beta_std)) <= 1.0e-10
+            and np.ptp(beta_mid) <= 1.0e-10):
+        return []
+
+    fields = np.asarray([row.field for row in beta_rows], dtype=float)
+    beta_lo = np.asarray([row_value(row, "beta_q16") for row in beta_rows])
+    beta_hi = np.asarray([row_value(row, "beta_q84") for row in beta_rows])
+    beta_err = np.vstack([beta_mid - beta_lo, beta_hi - beta_mid])
+    h0_mid = np.asarray([row_value(row, "H0_q50") for row in beta_rows])
+    h0_lo = np.asarray([row_value(row, "H0_q16") for row in beta_rows])
+    h0_hi = np.asarray([row_value(row, "H0_q84") for row in beta_rows])
+    h0_err = np.vstack([h0_mid - h0_lo, h0_hi - h0_mid])
+    lnz = np.asarray([row_value(row, "lnZ_harmonic") for row in beta_rows])
+    lnz_err = np.asarray([
+        abs(row.values.get("err_lnZ_harmonic", np.nan))
+        for row in beta_rows
+    ])
+    finite_lnz_err = np.isfinite(lnz_err)
+
+    cmap = trgbh0_cmap("trgbh0_single_beta_fields")
+    norm = field_norm(beta_rows)
+
+    with plt.style.context(["science", "no-latex"]):
+        set_paper_rc()
+        fig, axes = plt.subplots(
+            2, 2, figsize=(7.1, 5.1), constrained_layout=True)
+        axes = axes.ravel()
+
+        axes[0].errorbar(
+            beta_mid,
+            h0_mid,
+            xerr=beta_err,
+            yerr=h0_err,
+            fmt="none",
+            ecolor="0.55",
+            elinewidth=0.45,
+            capsize=1.1,
+            alpha=0.58,
+            zorder=1,
+        )
+        sc = axes[0].scatter(
+            beta_mid,
+            h0_mid,
+            c=fields,
+            cmap=cmap,
+            norm=norm,
+            s=23,
+            edgecolor="0.15",
+            linewidth=0.25,
+            zorder=3,
+        )
+        axes[0].axvline(1.0, color="0.35", lw=0.7, ls=":")
+        axes[0].set_xlabel(r"$\beta$")
+        axes[0].set_ylabel(H0_LABEL)
+        axes[0].set_title(r"Free-$\beta$ single fields", loc="left")
+
+        axes[1].errorbar(
+            beta_mid,
+            lnz,
+            xerr=beta_err,
+            yerr=lnz_err if np.all(finite_lnz_err) else None,
+            fmt="none",
+            ecolor="0.55",
+            elinewidth=0.45,
+            capsize=1.1,
+            alpha=0.58,
+            zorder=1,
+        )
+        axes[1].scatter(
+            beta_mid,
+            lnz,
+            c=fields,
+            cmap=cmap,
+            norm=norm,
+            s=23,
+            edgecolor="0.15",
+            linewidth=0.25,
+            zorder=3,
+        )
+        axes[1].axvline(1.0, color="0.35", lw=0.7, ls=":")
+        axes[1].set_xlabel(r"$\beta$")
+        axes[1].set_ylabel(LNZ_LABEL)
+
+        axes[2].errorbar(
+            fields,
+            beta_mid,
+            yerr=beta_err,
+            fmt="none",
+            ecolor="0.55",
+            elinewidth=0.45,
+            capsize=1.1,
+            alpha=0.58,
+            zorder=1,
+        )
+        axes[2].scatter(
+            fields,
+            beta_mid,
+            c=fields,
+            cmap=cmap,
+            norm=norm,
+            s=23,
+            edgecolor="0.15",
+            linewidth=0.25,
+            zorder=3,
+        )
+        axes[2].axhline(1.0, color="0.35", lw=0.7, ls=":")
+        axes[2].set_xlabel("Manticore field")
+        axes[2].set_ylabel(r"$\beta$")
+        axes[2].xaxis.set_major_locator(MaxNLocator(integer=True))
+
+        axes[3].hist(
+            beta_mid,
+            bins=min(12, max(5, int(np.sqrt(beta_mid.size)) + 2)),
+            color="#b8b8b8",
+            edgecolor="0.25",
+            linewidth=0.45,
+        )
+        axes[3].axvline(1.0, color="0.35", lw=0.7, ls=":")
+        axes[3].axvline(
+            np.median(beta_mid),
+            color="black",
+            lw=1.0,
+            label="field-median median",
+        )
+        axes[3].set_xlabel(r"$\beta$")
+        axes[3].set_ylabel("Number of fields")
+        axes[3].legend(frameon=False, handlelength=1.7)
+
+        cbar = fig.colorbar(sc, ax=axes, pad=0.012, fraction=0.04)
+        cbar.set_label("Manticore field")
+        cbar.ax.tick_params(labelsize=7.0)
+        return save_pdf_png(fig, out_pdf)
+
+
 def print_summary(rows, mas_order, matched, missing, unusable, plot_exclusions):
     print(f"Loaded {len(rows)} outputs.")
     if unusable:
@@ -992,9 +1219,17 @@ def print_summary(rows, mas_order, matched, missing, unusable, plot_exclusions):
 def main():
     args = parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
+    variant = args.output_dir.name
 
     rows, unusable = load_rows(
-        args.task_file, args.cz_likelihood, args.fail_on_unusable)
+        args.task_file,
+        args.cz_likelihood,
+        smooth_R=args.smooth_R,
+        beta_prior_dist=args.beta_prior_dist,
+        task_min=args.task_min,
+        task_max=args.task_max,
+        fail_on_unusable=args.fail_on_unusable,
+    )
     plot_rows, plot_exclusions = split_plot_rows(rows)
     mas_order = active_mas_order(plot_rows)
     matched, missing = matched_fields(
@@ -1010,30 +1245,34 @@ def main():
     write_unusable_csv(unusable, unusable_csv)
     write_plot_exclusions_csv(plot_exclusions, exclusions_csv)
 
-    plot_h0_vs_lnz(
-        plot_rows,
-        mas_order,
-        args.output_dir / "trgbh0_single_h0_vs_lnz.pdf",
-    )
     plot_h0_vs_harmonic_lnz(
         plot_rows,
         mas_order,
-        args.output_dir / "trgbh0_single_h0_vs_harmonic_lnz.pdf",
+        args.output_dir / f"trgbh0_single_{variant}_h0_vs_harmonic_lnz.pdf",
+    )
+    plot_h0_histograms(
+        plot_rows,
+        mas_order,
+        args.output_dir / f"trgbh0_single_{variant}_h0_posteriors.pdf",
     )
     if len(mas_order) >= 2 and matched:
         plot_matched_fields(
             matched,
             mas_order,
-            args.output_dir / "trgbh0_single_matched_fields.pdf",
+            args.output_dir / f"trgbh0_single_{variant}_matched_fields.pdf",
         )
     plot_mas_deltas(
         deltas,
-        args.output_dir / "trgbh0_single_mas_deltas.pdf",
+        args.output_dir / f"trgbh0_single_{variant}_mas_deltas.pdf",
     )
     plot_parameter_diagnostics(
         plot_rows,
         mas_order,
-        args.output_dir / "trgbh0_single_h0_vs_parameters.pdf",
+        args.output_dir / f"trgbh0_single_{variant}_h0_vs_parameters.pdf",
+    )
+    plot_beta_diagnostics(
+        plot_rows,
+        args.output_dir / f"trgbh0_single_{variant}_beta_diagnostics.pdf",
     )
 
     print_summary(

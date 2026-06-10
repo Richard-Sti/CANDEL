@@ -3,6 +3,14 @@
 from argparse import ArgumentParser
 import csv
 from pathlib import Path
+import sys
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+PLOT_DIR = next(path for path in SCRIPT_DIR.parents
+                if path.name == "paper_TRGBH0")
+for path in (SCRIPT_DIR, PLOT_DIR):
+    if str(path) not in sys.path:
+        sys.path.insert(0, str(path))
 import re
 
 import h5py
@@ -14,9 +22,9 @@ import numpy as np  # noqa: E402
 from matplotlib.patches import Circle  # noqa: E402
 
 from candel.field.loader import ManticoreLocalCOLA_FieldLoader  # noqa: E402
+from trgbh0_plot_style import ROOT, save_pdf_png as save_pdf_png_common  # noqa: E402
 
 
-ROOT = Path("/mnt/users/rstiskalek/CANDEL")
 SOURCE_ROOT = (
     Path("/mnt/extraspace/rstiskalek/MANTICORE")
     / "2MPP_MULTIBIN_N256_DES_V2"
@@ -163,12 +171,7 @@ def extent(a, b, dx):
 
 
 def save_pdf_png(fig, out_pdf):
-    out_pdf.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_pdf, dpi=FIGURE_DPI, bbox_inches="tight")
-    out_png = out_pdf.with_suffix(".png")
-    fig.savefig(out_png, dpi=FIGURE_DPI, bbox_inches="tight")
-    plt.close(fig)
-    return out_pdf, out_png
+    return save_pdf_png_common(fig, out_pdf, dpi=FIGURE_DPI)
 
 
 def plot_slices(items, radius, outdir):

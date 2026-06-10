@@ -6,6 +6,14 @@ from dataclasses import dataclass
 import re
 import shutil
 from pathlib import Path
+import sys
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+PLOT_DIR = next(path for path in SCRIPT_DIR.parents
+                if path.name == "paper_TRGBH0")
+for path in (SCRIPT_DIR, PLOT_DIR):
+    if str(path) not in sys.path:
+        sys.path.insert(0, str(path))
 
 import h5py
 import matplotlib
@@ -20,10 +28,15 @@ from scipy.stats import gaussian_kde, ks_2samp, pearsonr, spearmanr  # noqa: E40
 
 import plot_trgbh0_manticore_evidence_drivers as evidence_drivers  # noqa: E402
 import plot_trgbh0_manticore_tempered_evidence_h0 as tempered_evidence_h0  # noqa: E402
-from trgbh0_plot_style import trgbh0_cmap  # noqa: E402
+from trgbh0_plot_style import (  # noqa: E402
+    FIGURE_DPI,
+    ROOT,
+    save_pdf_png as save_pdf_png_common,
+    set_paper_rc,
+    trgbh0_cmap,
+)
 
 
-ROOT = Path("/mnt/users/rstiskalek/CANDEL")
 RESULTS = ROOT / "results" / "TRGBH0_paper" / "manticore_fields_const_sigv"
 DEFAULT_OUTDIR = RESULTS / "plots"
 MANTICORE_SCHEDULE = (
@@ -55,7 +68,6 @@ FIELD_SET_SPECS = {
     },
 }
 FIELD_RE = re.compile(r"_field(\d+)_")
-FIGURE_DPI = 500
 PARAMS = ("H0", "sigma_int", "sigma_v", "mag_lim_TRGB",
           "mag_lim_TRGB_width")
 
@@ -573,17 +585,6 @@ def kde_on_grid(samples, x_grid, bw=1.2):
     return kde(x_grid)
 
 
-def set_paper_rc():
-    plt.rcParams.update({
-        "font.size": 8.0,
-        "axes.labelsize": 8.0,
-        "axes.titlesize": 8.0,
-        "xtick.labelsize": 7.0,
-        "ytick.labelsize": 7.0,
-        "legend.fontsize": 6.4,
-    })
-
-
 def copy_outputs(config, *paths):
     if not config.copy_to_results:
         return
@@ -603,11 +604,7 @@ def copy_figure_outputs(config, outputs):
 
 def save_pdf_png(fig, out_pdf):
     fig.tight_layout()
-    fig.savefig(out_pdf, dpi=FIGURE_DPI, bbox_inches="tight")
-    out_png = out_pdf.with_suffix(".png")
-    fig.savefig(out_png, dpi=FIGURE_DPI, bbox_inches="tight")
-    plt.close(fig)
-    return out_png
+    return save_pdf_png_common(fig, out_pdf, dpi=FIGURE_DPI)[1]
 
 
 def fields_and_missing(rows, expected_field_count):
@@ -701,7 +698,7 @@ def plot_evidence_comparison(config):
             va="top",
             fontsize=6.8,
         )
-        ax.set_xlabel(r"Harmonic $\ln Z$")
+        ax.set_xlabel(r"$\ln \mathcal{Z}$")
         ax.set_ylabel("Density")
         ax.set_xlim(x_grid[0], x_grid[-1])
         ax.set_ylim(bottom=0)
@@ -898,7 +895,7 @@ def plot_sigma_v_posterior(rows, config):
             sm.set_array([])
             cbar = fig.colorbar(sm, ax=ax, pad=0.015, fraction=0.055)
             if config.colour_by_lnz_harmonic:
-                cbar.set_label(r"Harmonic $\ln Z$")
+                cbar.set_label(r"$\ln \mathcal{Z}$")
             else:
                 cbar.set_label("Manticore field")
             cbar.ax.tick_params(labelsize=7.0)
@@ -999,7 +996,7 @@ def plot_two_parameter_scatter(
         sm = plt.cm.ScalarMappable(norm=norm, cmap=cmap)
         sm.set_array([])
         cbar = fig.colorbar(sm, ax=ax, pad=0.015, fraction=0.055)
-        cbar.set_label(r"Harmonic $\ln Z$")
+        cbar.set_label(r"$\ln \mathcal{Z}$")
         cbar.ax.tick_params(labelsize=7.0)
 
         out_pdf = (
@@ -1060,7 +1057,7 @@ def plot_h0_lnz_harmonic_scatter(rows, config):
                 zorder=2,
             )
 
-        ax.set_xlabel(r"Harmonic $\ln Z$")
+        ax.set_xlabel(r"$\ln \mathcal{Z}$")
         ax.set_ylabel(H0_LABEL)
         ax.set_title(f"{config.field_label}; {len(rows)} fields", loc="left")
         ax.text(
@@ -1079,7 +1076,7 @@ def plot_h0_lnz_harmonic_scatter(rows, config):
         sm = plt.cm.ScalarMappable(norm=norm, cmap=cmap)
         sm.set_array([])
         cbar = fig.colorbar(sm, ax=ax, pad=0.015, fraction=0.055)
-        cbar.set_label(r"Harmonic $\ln Z$")
+        cbar.set_label(r"$\ln \mathcal{Z}$")
         cbar.ax.tick_params(labelsize=7.0)
 
         out_pdf = (

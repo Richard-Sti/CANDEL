@@ -2,15 +2,25 @@
 """Write the TRGBH0 summary table from task-list posterior summaries."""
 import math
 from pathlib import Path
+import sys
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+PLOT_DIR = next(path for path in SCRIPT_DIR.parents
+                if path.name == "paper_TRGBH0")
+for path in (SCRIPT_DIR, PLOT_DIR):
+    if str(path) not in sys.path:
+        sys.path.insert(0, str(path))
 
 import h5py
 
+from trgbh0_plot_style import PAPER_DIR, ROOT, TRGBH0_TABLE_RESULTS
 
-ROOT = Path("/mnt/users/rstiskalek/CANDEL")
+
 TASKS = ROOT / "scripts" / "runs" / "tasks_TRGBH0_main.txt"
-RESULTS = ROOT / "results" / "TRGBH0_paper" / "table"
-PAPERDIR = Path("/mnt/users/rstiskalek/Papers/TRGBH0")
+RESULTS = TRGBH0_TABLE_RESULTS
+PAPERDIR = PAPER_DIR
 TABLE = PAPERDIR / "TRGBH0_variants_table.tex"
+TRACK_CHANGES = True
 
 
 def parse_summary(path):
@@ -32,7 +42,7 @@ def format_parameter(summary, name, fmt):
     if name not in summary:
         raise ValueError(f"Could not find {name} row in summary")
     values = summary[name]
-    return f"${values['median']:{fmt}}\\pm{values['std']:{fmt}}$"
+    return red(f"${values['median']:{fmt}}\\pm{values['std']:{fmt}}$")
 
 
 def log10_evidence(path):
@@ -45,7 +55,13 @@ def log10_evidence(path):
 
 
 def format_delta_log10_evidence(value):
-    return f"${value:.2f}$"
+    return red(f"${value:.2f}$")
+
+
+def red(text):
+    if not TRACK_CHANGES:
+        return text
+    return rf"\red{{{text}}}"
 
 
 def task_stems():
@@ -57,12 +73,24 @@ def task_stems():
 
 
 def reconstruction_label(stem):
-    if "Carrick2015" in stem:
+    stem_lower = stem.lower()
+    if "carrick2015" in stem_lower:
+        if "double_powerlaw" in stem_lower:
+            if "beta_0p43" in stem_lower:
+                return r"\citetalias{Carrick_2015}, double power law, $\beta=0.43$"
+            if "beta_0p48" in stem_lower:
+                return r"\citetalias{Carrick_2015}, double power law, $\beta=0.48$"
+            return r"\citetalias{Carrick_2015}, double power law"
+        if "voct" in stem_lower:
+            return r"\citetalias{Carrick_2015}, octupole $\Vext$"
         return r"\citetalias{Carrick_2015}"
-    if "manticore" in stem:
-        if "beta_free" in stem:
-            return r"\Manticore, free $\beta$"
-        return r"\Manticore"
+    if "manticore" in stem_lower:
+        label = r"\Manticore, $R_\rho=4\Mpch$"
+        if "beta_free" in stem_lower:
+            label += r", free $\beta$"
+        if "voct" in stem_lower:
+            label += r", octupole $\Vext$"
+        return label
     if "Vext" in stem or stem.startswith("CCHP_sel-"):
         return r"No reconstruction, free $\Vext$"
     return "No reconstruction"
@@ -155,7 +183,8 @@ def write_table(rows):
             r"Entries are posterior medians with standard deviations.",
             r"For Student-$t$ redshift-likelihood rows, $\sigma_v$ is the Gaussian core scale of the residual-velocity likelihood.",
             r"The evidence column reports the harmonic-estimator evidence stored in the run output, converted from natural logs to $\log_{10}$ and quoted relative to the highest-evidence row within each catalogue block.",
-            r"Rows are restricted to \texttt{TRGBH0\_main} task-list entries with matching posterior summaries in the table output directory.}",
+            r"For no-reconstruction rows we include the analytic full-sky angular-density correction, subtracting $N\log_{10}(4\pi)$ from the radial-only output before normalising the block where applicable.",
+            r"Rows are restricted to the current \texttt{TRGBH0\_main} task-list entries with matching posterior summaries in \texttt{results/TRGBH0\_paper/table}.}",
             r"\label{tab:trgb_h0_variants}",
             r"\end{table*}",
             "",

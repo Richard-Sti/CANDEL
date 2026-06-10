@@ -1,6 +1,14 @@
 #!/usr/bin/env python
 """Plot TRGBH0 H0 posteriors against SH0ES and Planck bands."""
 from pathlib import Path
+import sys
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+PLOT_DIR = next(path for path in SCRIPT_DIR.parents
+                if path.name == "paper_TRGBH0")
+for path in (SCRIPT_DIR, PLOT_DIR):
+    if str(path) not in sys.path:
+        sys.path.insert(0, str(path))
 
 import h5py
 import matplotlib
@@ -10,12 +18,18 @@ import numpy as np
 import scienceplots  # noqa: F401
 from scipy.stats import gaussian_kde
 
-from trgbh0_plot_style import TRGBH0_COLOURS
+from trgbh0_plot_style import (
+    FIGURE_DPI,
+    OUTPUT_DIR,
+    TRGBH0_COLOURS,
+    TRGBH0_TABLE_RESULTS,
+    paper_style,
+    save_figure,
+)
 
 
-ROOT = Path("/mnt/users/rstiskalek/CANDEL")
-RESULTS = ROOT / "results" / "TRGBH0_paper" / "table"
-OUTDIR = ROOT / "notebooks" / "paper_TRGBH0" / "output"
+RESULTS = TRGBH0_TABLE_RESULTS
+OUTDIR = OUTPUT_DIR
 OUTNAME = "trgbh0_h0_comparison.pdf"
 
 H0_COLOURS = {
@@ -69,7 +83,7 @@ def kde_line(ax, samples, label, color, fill=False, ls="-", bw=1.0):
 def main():
     OUTDIR.mkdir(parents=True, exist_ok=True)
 
-    with plt.style.context("science"):
+    with paper_style(styles=("science",)):
         fig, ax = plt.subplots(figsize=(3.45, 2.55))
         for label, mean, sigma, color in REFERENCE_BANDS:
             ax.axvspan(
@@ -102,7 +116,8 @@ def main():
         )
 
         fig.tight_layout()
-        fig.savefig(OUTDIR / OUTNAME, dpi=500, bbox_inches="tight")
+        save_figure(fig, OUTNAME, output_dir=OUTDIR, dpi=FIGURE_DPI,
+                    bbox_inches="tight")
         plt.close(fig)
         print(f"Wrote {OUTDIR / OUTNAME}")
 

@@ -4,6 +4,14 @@ from argparse import ArgumentParser
 import csv
 import re
 from pathlib import Path
+import sys
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+PLOT_DIR = next(path for path in SCRIPT_DIR.parents
+                if path.name == "paper_TRGBH0")
+for path in (SCRIPT_DIR, PLOT_DIR):
+    if str(path) not in sys.path:
+        sys.path.insert(0, str(path))
 
 import h5py
 import matplotlib
@@ -14,10 +22,15 @@ import numpy as np  # noqa: E402
 import scienceplots  # noqa: F401
 from matplotlib.colors import Normalize  # noqa: E402
 
-from trgbh0_plot_style import trgbh0_cmap  # noqa: E402
+from trgbh0_plot_style import (  # noqa: E402
+    FIGURE_DPI,
+    ROOT,
+    save_pdf_png,
+    set_paper_rc,
+    trgbh0_cmap,
+)
 
 
-ROOT = Path("/mnt/users/rstiskalek/CANDEL")
 RESULTS = ROOT / "results" / "TRGBH0_paper" / "manticore_fields_const_sigv"
 DEFAULT_OUTDIR = RESULTS / "plots"
 PATTERNS = {
@@ -37,9 +50,6 @@ LIKELIHOOD_LABELS = {
     "student-t": "Student-t redshift likelihood",
 }
 FIELD_RE = re.compile(r"_field(\d+)_")
-FIGURE_DPI = 500
-
-
 def likelihood_suffix(likelihood):
     if likelihood == "gaussian":
         return ""
@@ -623,15 +633,8 @@ def write_density_summary(path, x_grid, densities):
             })
 
 
-def set_paper_rc():
-    plt.rcParams.update({
-        "font.size": 8.0,
-        "axes.labelsize": 8.0,
-        "axes.titlesize": 8.0,
-        "xtick.labelsize": 7.0,
-        "ytick.labelsize": 7.0,
-        "legend.fontsize": 6.5,
-    })
+def save_tempered_plot(fig, out_pdf):
+    return save_pdf_png(fig, out_pdf)[1]
 
 
 def plot_tempered_h0(summaries, rows, likelihood, out_pdf):
@@ -699,11 +702,11 @@ def plot_tempered_h0(summaries, rows, likelihood, out_pdf):
         text = (
             LIKELIHOOD_LABELS[likelihood] + "\n"
             rf"$N_{{\rm fields}}={len(rows)}$" "\n"
-            rf"$\Delta \ln Z_{{\rm max-med}}={delta_lnz:.1f}$" "\n"
+            rf"$\Delta \ln \mathcal{{Z}}_{{\rm max-med}}={delta_lnz:.1f}$" "\n"
             rf"$N_{{\rm eff}}(\beta=1)={n_eff[-1]:.1f}$"
         )
         if bad_fields:
-            text += "\n" + "non-finite " + r"$\ln Z$" + (
+            text += "\n" + "non-finite " + r"$\ln \mathcal{Z}$" + (
                 ": " + ", ".join(str(field) for field in bad_fields)
             )
         ax.text(
@@ -727,11 +730,7 @@ def plot_tempered_h0(summaries, rows, likelihood, out_pdf):
         )
 
         fig.tight_layout()
-        fig.savefig(out_pdf, dpi=FIGURE_DPI, bbox_inches="tight")
-        out_png = out_pdf.with_suffix(".png")
-        fig.savefig(out_png, dpi=FIGURE_DPI, bbox_inches="tight")
-        plt.close(fig)
-    return out_png
+    return save_tempered_plot(fig, out_pdf)
 
 
 def h0_interval(values):
@@ -892,15 +891,11 @@ def plot_resampling_h0(bootstrap_rows, loo_rows, full, rows, likelihood, out_pdf
             fontsize=6.6,
         )
         cbar = fig.colorbar(sc, ax=ax, fraction=0.048, pad=0.02)
-        cbar.set_label(r"Omitted-field harmonic $\ln Z$")
+        cbar.set_label(r"Omitted-field $\ln \mathcal{Z}$")
         cbar.ax.tick_params(labelsize=6.5)
 
         fig.tight_layout()
-        fig.savefig(out_pdf, dpi=FIGURE_DPI, bbox_inches="tight")
-        out_png = out_pdf.with_suffix(".png")
-        fig.savefig(out_png, dpi=FIGURE_DPI, bbox_inches="tight")
-        plt.close(fig)
-    return out_png
+    return save_tempered_plot(fig, out_pdf)
 
 
 def plot_progressive_top_drop(summaries, likelihood, out_pdf):
@@ -1010,11 +1005,7 @@ def plot_progressive_top_drop(summaries, likelihood, out_pdf):
             ax.set_xlim(-0.5, np.max(n_removed) + 0.5)
 
         fig.tight_layout()
-        fig.savefig(out_pdf, dpi=FIGURE_DPI, bbox_inches="tight")
-        out_png = out_pdf.with_suffix(".png")
-        fig.savefig(out_png, dpi=FIGURE_DPI, bbox_inches="tight")
-        plt.close(fig)
-    return out_png
+    return save_tempered_plot(fig, out_pdf)
 
 
 def plot_field_subset_bma(summaries, likelihood, out_pdf):
@@ -1143,11 +1134,7 @@ def plot_field_subset_bma(summaries, likelihood, out_pdf):
         )
 
         fig.tight_layout()
-        fig.savefig(out_pdf, dpi=FIGURE_DPI, bbox_inches="tight")
-        out_png = out_pdf.with_suffix(".png")
-        fig.savefig(out_png, dpi=FIGURE_DPI, bbox_inches="tight")
-        plt.close(fig)
-    return out_png
+    return save_tempered_plot(fig, out_pdf)
 
 
 def plot_field_subset_stacked_h0(stack_rows, rows, likelihood, out_pdf,
@@ -1267,11 +1254,7 @@ def plot_field_subset_stacked_h0(stack_rows, rows, likelihood, out_pdf,
         )
 
         fig.tight_layout()
-        fig.savefig(out_pdf, dpi=FIGURE_DPI, bbox_inches="tight")
-        out_png = out_pdf.with_suffix(".png")
-        fig.savefig(out_png, dpi=FIGURE_DPI, bbox_inches="tight")
-        plt.close(fig)
-    return out_png
+    return save_tempered_plot(fig, out_pdf)
 
 
 def plot_target_neff_h0(summaries, rows, likelihood, out_pdf, density_csv):
@@ -1397,11 +1380,7 @@ def plot_target_neff_h0(summaries, rows, likelihood, out_pdf, density_csv):
         )
 
         fig.tight_layout()
-        fig.savefig(out_pdf, dpi=FIGURE_DPI, bbox_inches="tight")
-        out_png = out_pdf.with_suffix(".png")
-        fig.savefig(out_png, dpi=FIGURE_DPI, bbox_inches="tight")
-        plt.close(fig)
-    return out_png
+    return save_tempered_plot(fig, out_pdf)
 
 
 def run_analysis(

@@ -3,11 +3,19 @@
 Manual TikZ layout. Sized for an MNRAS two-column figure.
 """
 from pathlib import Path
-import subprocess
-
+import sys
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-OUTPUT_DIR = SCRIPT_DIR / "output"
+PLOT_DIR = next(path for path in SCRIPT_DIR.parents
+                if path.name == "paper_TRGBH0")
+for path in (SCRIPT_DIR, PLOT_DIR):
+    if str(path) not in sys.path:
+        sys.path.insert(0, str(path))
+import subprocess
+
+from trgbh0_plot_style import OUTPUT_DIR
+
+
 TEX_FILE = SCRIPT_DIR / "trgb_forward_model_dag.tex"
 PDF_FILE = OUTPUT_DIR / "trgb_forward_model_dag.pdf"
 
@@ -442,31 +450,33 @@ tex = rf"""
 \end{{document}}
 """
 
-# =========================================================================
-# Compile
-# =========================================================================
-OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-TEX_FILE.write_text(tex)
+def main():
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    TEX_FILE.write_text(tex)
 
-result = subprocess.run(
-    [
-        "pdflatex",
-        "-interaction=nonstopmode",
-        "-output-directory",
-        str(OUTPUT_DIR),
-        str(TEX_FILE),
-    ],
-    capture_output=True,
-    text=True,
-)
+    result = subprocess.run(
+        [
+            "pdflatex",
+            "-interaction=nonstopmode",
+            "-output-directory",
+            str(OUTPUT_DIR),
+            str(TEX_FILE),
+        ],
+        capture_output=True,
+        text=True,
+    )
 
-if result.returncode != 0:
-    print("pdflatex FAILED:")
-    print(result.stdout[-2000:])
-    print(result.stderr[-500:])
-else:
-    for ext in [".aux", ".log"]:
-        p = OUTPUT_DIR / f"trgb_forward_model_dag{ext}"
-        if p.exists():
-            p.unlink()
-    print(f"DAG rendered to {PDF_FILE}")
+    if result.returncode != 0:
+        print("pdflatex FAILED:")
+        print(result.stdout[-2000:])
+        print(result.stderr[-500:])
+    else:
+        for ext in [".aux", ".log"]:
+            p = OUTPUT_DIR / f"trgb_forward_model_dag{ext}"
+            if p.exists():
+                p.unlink()
+        print(f"DAG rendered to {PDF_FILE}")
+
+
+if __name__ == "__main__":
+    main()

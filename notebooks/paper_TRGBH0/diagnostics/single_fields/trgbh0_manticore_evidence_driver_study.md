@@ -91,13 +91,13 @@ The key robustness question is whether this selection-normalisation sensitivity 
 
 Analysis script:
 
-`/mnt/users/rstiskalek/CANDEL/notebooks/paper_TRGBH0/plot_trgbh0_manticore_evidence_drivers.py`
+`/mnt/users/rstiskalek/CANDEL/notebooks/paper_TRGBH0/diagnostics/single_fields/plot_trgbh0_manticore_evidence_drivers.py`
 
 Run:
 
 ```bash
 /mnt/users/rstiskalek/CANDEL/venv_candel/bin/python \
-  /mnt/users/rstiskalek/CANDEL/notebooks/paper_TRGBH0/plot_trgbh0_manticore_evidence_drivers.py \
+  /mnt/users/rstiskalek/CANDEL/notebooks/paper_TRGBH0/diagnostics/single_fields/plot_trgbh0_manticore_evidence_drivers.py \
   --field-set cola \
   --results-dir /mnt/users/rstiskalek/CANDEL/results/TRGBH0_paper/manticore_fields_const_sigv \
   --output-dir /mnt/users/rstiskalek/CANDEL/results/TRGBH0_paper/manticore_fields_const_sigv/plots

@@ -1,13 +1,21 @@
 #!/usr/bin/env python
 """Plot the fiducial TRGBH0 posterior corner."""
 from pathlib import Path
+import sys
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+PLOT_DIR = next(path for path in SCRIPT_DIR.parents
+                if path.name == "paper_TRGBH0")
+for path in (SCRIPT_DIR, PLOT_DIR):
+    if str(path) not in sys.path:
+        sys.path.insert(0, str(path))
 
 from candel.plotting.corner import plot_corner_from_hdf5
+from trgbh0_plot_style import OUTPUT_DIR, TRGBH0_TABLE_RESULTS
 
 
-ROOT = Path("/mnt/users/rstiskalek/CANDEL")
-RESULTS = ROOT / "results" / "TRGBH0_paper" / "table"
-OUTDIR = ROOT / "notebooks" / "paper_TRGBH0" / "output"
+RESULTS = TRGBH0_TABLE_RESULTS
+OUTDIR = OUTPUT_DIR
 
 FIDUCIAL = (
     RESULTS

@@ -5,6 +5,14 @@ import csv
 import math
 import os
 from pathlib import Path
+import sys
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+PLOT_DIR = next(path for path in SCRIPT_DIR.parents
+                if path.name == "paper_TRGBH0")
+for path in (SCRIPT_DIR, PLOT_DIR):
+    if str(path) not in sys.path:
+        sys.path.insert(0, str(path))
 import shutil
 
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/candel_mplconfig")
@@ -16,12 +24,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.stats import ks_2samp
 
-from edd_trgb_plot_data import PAPER_RC
-from trgbh0_plot_style import TRGBH0_COLOURS
+from trgbh0_plot_style import OUTPUT_DIR, PAPER_RC, ROOT, TRGBH0_COLOURS
 
 
-ROOT = Path("/mnt/users/rstiskalek/CANDEL")
-OUTDIR = ROOT / "notebooks" / "paper_TRGBH0" / "output"
+OUTDIR = OUTPUT_DIR
 OUTNAME = "cchp_lsq_sn_population_comparison"
 SPEED_OF_LIGHT = 299_792.458
 

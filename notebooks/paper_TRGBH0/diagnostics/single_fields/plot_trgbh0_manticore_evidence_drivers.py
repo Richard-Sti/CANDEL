@@ -4,6 +4,14 @@ from argparse import ArgumentParser
 import csv
 import re
 from pathlib import Path
+import sys
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+PLOT_DIR = next(path for path in SCRIPT_DIR.parents
+                if path.name == "paper_TRGBH0")
+for path in (SCRIPT_DIR, PLOT_DIR):
+    if str(path) not in sys.path:
+        sys.path.insert(0, str(path))
 
 import h5py
 import matplotlib
@@ -17,10 +25,15 @@ from scipy.stats import pearsonr, spearmanr  # noqa: E402
 from candel.plotting.selection_diagnostics import (  # noqa: E402
     plot_raw_selection_evidence,
 )
-from trgbh0_plot_style import TRGBH0_COLOURS  # noqa: E402
+from trgbh0_plot_style import (  # noqa: E402
+    FIGURE_DPI,
+    ROOT,
+    TRGBH0_COLOURS,
+    save_pdf_png as save_pdf_png_common,
+    set_paper_rc,
+)
 
 
-ROOT = Path("/mnt/users/rstiskalek/CANDEL")
 RESULTS = ROOT / "results" / "TRGBH0_paper" / "manticore_fields_const_sigv"
 DEFAULT_OUTDIR = RESULTS / "plots"
 FIELD_RE = re.compile(r"_field(\d+)_")
@@ -37,9 +50,6 @@ REQUIRED_AUX = (
     "auxiliary/host_names",
     "gof/lnZ_harmonic",
 )
-FIGURE_DPI = 500
-
-
 def parse_args():
     parser = ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -326,17 +336,6 @@ def write_best_galaxies(rows, host_names, best, path):
             writer.writerow(row)
 
 
-def set_paper_rc():
-    plt.rcParams.update({
-        "font.size": 8.0,
-        "axes.labelsize": 8.0,
-        "axes.titlesize": 8.0,
-        "xtick.labelsize": 7.0,
-        "ytick.labelsize": 7.0,
-        "legend.fontsize": 6.4,
-    })
-
-
 def p_label(value):
     if not np.isfinite(value):
         return r"=\mathrm{nan}"
@@ -371,11 +370,7 @@ def annotate_best(ax, x, y, fields, best_field):
 
 
 def save_pdf_png(fig, out_pdf):
-    fig.savefig(out_pdf, dpi=FIGURE_DPI, bbox_inches="tight")
-    out_png = out_pdf.with_suffix(".png")
-    fig.savefig(out_png, dpi=FIGURE_DPI, bbox_inches="tight")
-    plt.close(fig)
-    return out_png
+    return save_pdf_png_common(fig, out_pdf, dpi=FIGURE_DPI)[1]
 
 
 def plot_driver_scatter(rows, best, out_pdf):
@@ -415,7 +410,7 @@ def plot_driver_scatter(rows, best, out_pdf):
                 alpha=0.78, edgecolor="none")
             annotate_best(ax, x, lnz, fields, best["field"])
             ax.set_xlabel(xlabel)
-            ax.set_ylabel(r"Harmonic $\ln Z$")
+            ax.set_ylabel(r"$\ln \mathcal{Z}$")
             ax.set_title(title, loc="left")
             ax.text(
                 0.04,

@@ -8,25 +8,32 @@ import sys
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
+PAPER_FIGURE_DIR = SCRIPT_DIR / "paper_figures"
 TARGETS = {
-    "corner": [SCRIPT_DIR / "plot_trgbh0_fiducial_corner.py"],
+    "corner": [PAPER_FIGURE_DIR / "plot_trgbh0_fiducial_corner.py"],
     "data": [
-        SCRIPT_DIR / "plot_edd_trgb_magnitude_redshift_scatter.py",
-        SCRIPT_DIR / "plot_edd_trgb_sky_distribution.py",
-        SCRIPT_DIR / "plot_edd_trgb_data_availability_ks.py",
+        PAPER_FIGURE_DIR / "plot_edd_trgb_magnitude_redshift_scatter.py",
+        PAPER_FIGURE_DIR / "plot_edd_trgb_sky_distribution.py",
     ],
-    "h0": [SCRIPT_DIR / "plot_trgbh0_h0_comparison.py"],
-    "model": [SCRIPT_DIR / "render_trgb_forward_model_dag.py"],
+    "h0": [PAPER_FIGURE_DIR / "plot_trgbh0_h0_comparison.py"],
+    "model": [PAPER_FIGURE_DIR / "render_trgb_forward_model_dag.py"],
+    "student_t_beta": [PAPER_FIGURE_DIR / "plot_trgbh0_student_t_beta_h0.py"],
 }
 TARGET_OUTPUTS = {
     "corner": ["trgbh0_manticore_density_sigma_v_corner.pdf"],
     "data": [
         "edd_trgb_magnitude_redshift_scatter.pdf",
         "edd_trgb_sky_distribution.pdf",
-        "edd_trgb_data_availability_ks.pdf",
     ],
     "h0": ["trgbh0_h0_comparison.pdf"],
     "model": ["trgb_forward_model_dag.pdf"],
+    "student_t_beta": [
+        (
+            "trgbh0_student_t_beta/"
+            "trgbh0_student_t_beta_free_h0_posteriors_by_lnz.pdf"
+        ),
+        "trgbh0_student_t_beta/trgbh0_student_t_beta_free_h0_vs_lnz.pdf",
+    ],
 }
 
 
@@ -52,7 +59,7 @@ def run_target(name, args):
         args.paper_figdir.mkdir(parents=True, exist_ok=True)
         for filename in TARGET_OUTPUTS[name]:
             src = SCRIPT_DIR / "output" / filename
-            shutil.copyfile(src, args.paper_figdir / filename)
+            shutil.copyfile(src, args.paper_figdir / Path(filename).name)
 
 
 def main():
