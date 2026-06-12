@@ -81,12 +81,13 @@ def galaxy_bias_log_weight(rho, bias_params, which_bias):
     log_rho = np.log(np.clip(rho, 1e-6, None))
     params = [np.asarray(p) for p in bias_params]
 
-    if which_bias in ("uniform", "unity"):
+    if which_bias == "uniform":
         return np.zeros_like(rho, dtype=np.float64)
     if which_bias == "powerlaw":
         return params[0] * log_rho
     if which_bias in (
-            "linear", "linear_from_beta", "linear_from_beta_stochastic"):
+            "unity", "linear", "linear_from_beta",
+            "linear_from_beta_stochastic"):
         return np.log(smoothclip(1.0 + params[0] * delta))
     if which_bias == "double_powerlaw":
         alpha_low, alpha_high, log_rho_t, log_rho_width = params

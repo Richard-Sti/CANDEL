@@ -190,7 +190,7 @@ def _bias_samples(samples, config, beta, n_post):
 
 def _bias_values(rho, bias, idx_post):
     which_bias = bias["which_bias"]
-    if which_bias in ("uniform", "unity"):
+    if which_bias == "uniform":
         return np.ones_like(rho, dtype=float)
     params = galaxy_bias_params_from_values(bias, which_bias, idx=idx_post)
     return galaxy_bias_weight(rho, params, which_bias)
