@@ -13,11 +13,10 @@
 # with this program; if not, write to the Free Software Foundation, Inc.,
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 """Shared utilities for mock generation and posterior predictive checks."""
-import jax.numpy as jnp
 import numpy as np
 
 from ..field.field_interp import build_regular_interpolator
-from ..model.pv_utils import lp_galaxy_bias, validate_galaxy_bias
+from ..model.pv_utils import validate_galaxy_bias
 from ..util import (cartesian_to_radec, fprint, galactic_to_radec,
                     radec_to_cartesian)
 
@@ -76,12 +75,35 @@ def galaxy_bias_params_from_values(values, which_bias, Om=None, idx=None):
 
 
 def galaxy_bias_log_weight(rho, bias_params, which_bias):
-    """Evaluate model galaxy-bias log weights with JAX model utilities."""
+    """Evaluate model galaxy-bias log weights with NumPy model formulas."""
     rho = np.asarray(rho, dtype=np.float64)
-    delta = jnp.asarray(rho - 1.0)
-    log_rho = jnp.log(jnp.clip(jnp.asarray(rho), 1e-6, None))
-    params = [jnp.asarray(p) for p in bias_params]
-    return np.asarray(lp_galaxy_bias(delta, log_rho, params, which_bias))
+    delta = rho - 1.0
+    log_rho = np.log(np.clip(rho, 1e-6, None))
+    params = [np.asarray(p) for p in bias_params]
+
+    if which_bias in ("uniform", "unity"):
+        return np.zeros_like(rho, dtype=np.float64)
+    if which_bias == "powerlaw":
+        return params[0] * log_rho
+    if which_bias in (
+            "linear", "linear_from_beta", "linear_from_beta_stochastic"):
+        return np.log(smoothclip(1.0 + params[0] * delta))
+    if which_bias == "double_powerlaw":
+        alpha_low, alpha_high, log_rho_t, log_rho_width = params
+        log_x = log_rho - log_rho_t
+        z = log_x / log_rho_width
+        return (
+            alpha_low * log_x
+            + ((alpha_high - alpha_low) * log_rho_width
+               * np.logaddexp(0.0, z)))
+    if which_bias == "quadratic":
+        b1, b2 = params
+        return np.log(smoothclip(1.0 + b1 * delta + b2 * delta**2))
+    if which_bias == "cubic":
+        b1, b2, b3 = params
+        return np.log(
+            smoothclip(1.0 + b1 * delta + b2 * delta**2 + b3 * delta**3))
+    raise ValueError(f"Invalid galaxy bias model '{which_bias}'.")
 
 
 def galaxy_bias_weight(rho, bias_params, which_bias):

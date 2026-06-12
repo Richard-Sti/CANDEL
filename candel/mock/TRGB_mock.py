@@ -21,12 +21,16 @@ from ..field import interpolate_los_density_velocity
 from ..field.field_interp import build_regular_interpolator
 from ..util import (SPEED_OF_LIGHT, galactic_to_radec_cartesian,
                     radec_to_cartesian)
-from ._field_utils import field_xyz_to_radec, smoothclip
+from ._field_utils import (field_xyz_to_radec, galaxy_bias_log_weight,
+                           galaxy_bias_params_from_values)
 
 DEFAULT_TRUE_PARAMS = {
     "H0": 73.0,
     "M_TRGB": -4.05,
+    "alpha_c": 0.2,
     "c_star": 1.23,
+    "c_bar": 1.23,
+    "w_c": 0.2,
     "sigma_int": 0.1,
     "sigma_v": 300.0,
     "Vext_mag": 150.0,
@@ -34,9 +38,18 @@ DEFAULT_TRUE_PARAMS = {
     "Vext_b": 30.0,
     "beta": 0.43,
     "b1": 1.2,
+    "b2": 0.0,
+    "b3": 0.0,
+    "alpha": 1.0,
+    "delta_b1": 0.0,
+    "alpha_low": 1.5,
+    "alpha_high_frac": 0.5,
+    "log_rho_t": 0.5,
+    "log_rho_width": 0.5,
 }
 
 DEFAULT_COLOUR_STD = 0.2  # spread of dereddened F606W-F814W in mock
+DEFAULT_COLOUR_ERR = 0.03
 
 DEFAULT_ANCHORS = {
     "mu_LMC": 18.477,
@@ -47,176 +60,88 @@ DEFAULT_ANCHORS = {
     "e_mag_N4258_TRGB": 0.0443,
 }
 
-SELECTION_TAIL_SIGMA = 7.5
+SELECTION_TAIL_SIGMA = 5.0
 
 
-def _apply_selection(mag_obs, cz_obs, mag_lim, mag_lim_width,
-                     cz_lim, cz_lim_width, gen):
+def _apply_selection(mag_obs, mag_min, mag_lim, mag_lim_width, gen):
     """Return boolean selection mask."""
     n = len(mag_obs)
     if mag_lim is not None:
         p_sel = norm.cdf((mag_lim - mag_obs) / mag_lim_width)
+        if mag_min is not None:
+            p_sel -= norm.cdf((mag_min - mag_obs) / mag_lim_width)
+        p_sel = np.clip(p_sel, 0.0, 1.0)
         return gen.random(n) < p_sel
-    elif cz_lim is not None:
-        if cz_lim_width:
-            p_sel = norm.cdf((cz_lim - cz_obs) / cz_lim_width)
-            return gen.random(n) < p_sel
-        else:
-            return cz_obs < cz_lim
     return np.ones(n, dtype=bool)
 
 
-def _redshift_sampling_radius(cz_lim, cz_lim_width, h, rmax, e_czcmb,
-                              sigma_v, Vext):
-    """Radius enclosing the noisy redshift-selection tail."""
-    width = 0.0 if cz_lim_width is None else cz_lim_width
-    sigma_cz = np.sqrt(e_czcmb**2 + sigma_v**2 + width**2)
-    cz_cutoff = (
-        cz_lim + SELECTION_TAIL_SIGMA * sigma_cz + np.linalg.norm(Vext))
-    return min(cz_cutoff / (h * 100), rmax)
-
-
-def _gen_homogeneous_path(nsamples, h, rmin, rmax, e_mag, e_czcmb,
-                          M_TRGB, c_star, colour_mean, colour_std,
-                          sigma_int, sigma_v, Vext,
-                          mag_lim, mag_lim_width, cz_lim, cz_lim_width,
-                          r2mu, r2z, gen, verbose):
-    """Homogeneous (no field) distance sampling path."""
-    # Tighten sampling sphere based on selection
-    r_sample = rmax
-    if mag_lim is not None:
-        M_sel = M_TRGB + 0.2 * (colour_mean - c_star)
-        sigma_colour = 0.2 * colour_std
-        mu_max = mag_lim - M_sel
-        sigma_tot = np.sqrt(sigma_int**2 + e_mag**2
-                            + mag_lim_width**2 + sigma_colour**2)
-        mu_cutoff = mu_max + SELECTION_TAIL_SIGMA * sigma_tot
-        r_sample = min(10**((mu_cutoff - 25) / 5), rmax)
-    elif cz_lim is not None:
-        r_sample = _redshift_sampling_radius(
-            cz_lim, cz_lim_width, h, rmax, e_czcmb, sigma_v, Vext)
-
-    if verbose and r_sample < rmax:
-        print(f"Homogeneous mock: tightened r_max from {rmax:.1f} to "
-              f"{r_sample:.1f} Mpc based on selection")
-
-    collected = {k: [] for k in [
-        "RA", "dec", "r", "mag_obs", "cz_obs", "colour_dered"]}
-    n_accepted = 0
-    n_parent = 0
-    batch = max(int(1.5 * nsamples), 100)
-
-    while n_accepted < nsamples:
-        RA = gen.uniform(0, 360, batch)
-        dec = np.rad2deg(np.arcsin(gen.uniform(-1, 1, batch)))
-        rhat = radec_to_cartesian(RA, dec)
-
-        u = gen.random(batch)
-        r = (rmin**3 + u * (r_sample**3 - rmin**3))**(1 / 3)
-
-        mu = np.asarray(r2mu(r, h=h))
-        z_cosmo = np.asarray(r2z(r, h=h))
-        Vext_rad = rhat @ Vext
-
-        colour = gen.normal(colour_mean, colour_std, batch)
-        sigma_mag_tot = np.sqrt(sigma_int**2 + e_mag**2)
-        mag_obs = gen.normal(
-            M_TRGB + 0.2 * (colour - c_star) + mu, sigma_mag_tot)
-
-        cz_true = SPEED_OF_LIGHT * (
-            (1 + z_cosmo) * (1 + Vext_rad / SPEED_OF_LIGHT) - 1)
-        cz_obs = gen.normal(cz_true, np.sqrt(e_czcmb**2 + sigma_v**2))
-
-        mask = _apply_selection(mag_obs, cz_obs, mag_lim, mag_lim_width,
-                                cz_lim, cz_lim_width, gen)
-
-        n_parent += batch
-        n_accepted += mask.sum()
-
-        for k, v in zip(
-                ["RA", "dec", "r", "mag_obs", "cz_obs", "colour_dered"],
-                [RA, dec, r, mag_obs, cz_obs, colour]):
-            collected[k].append(v[mask])
-
-    for k in collected:
-        collected[k] = np.concatenate(collected[k])[:nsamples]
-
-    if verbose:
-        sel_frac = n_accepted / n_parent
-        print(f"Generated {nsamples} TRGB hosts "
-              f"(acceptance {sel_frac:.2f}, {n_parent} drawn).")
-        print(f"  max true distance retained: "
-              f"{collected['r'].max():.2f} Mpc "
-              f"(allowed: {rmax:.2f} Mpc)")
-
-    collected["n_parent"] = n_parent
-    return collected
-
-
-def _gen_field_path(nsamples, h, b1, beta, rmin, rmax, e_mag, e_czcmb,
-                    M_TRGB, c_star, colour_mean, colour_std,
+def _gen_field_path(nsamples, h, beta, rmin, rmax, e_mag, e_czcmb,
+                    M_TRGB, alpha_c, c_star, colour_mean, colour_std,
+                    e_colour_dered,
                     sigma_int, sigma_v, Vext,
-                    mag_lim, mag_lim_width, cz_lim, cz_lim_width,
+                    mag_min, mag_lim, mag_lim_width,
+                    which_bias, bias_params,
                     field_loader, r2mu, r2z, gen, verbose):
-    """Field-based (inhomogeneous Malmquist) distance sampling path.
+    """Sample TRGB hosts from a field, or from unit density if absent.
 
-    Galaxies are sampled from the 3D density field using accept/reject,
-    ensuring both angular and radial positions follow the biased tracer
-    distribution p(r, Ω) ∝ smoothclip(1 + b1*δ(r,Ω)) * r².
+    With a 3D density field, galaxies are sampled using accept/reject with the
+    configured model galaxy-bias law so that p(r, Ω) ∝ b[ρ(r,Ω)] * r².
+    Without a field, the density is unity everywhere and velocities are zero.
     """
-    # LOS grid for the model covers the full rmax range (in Mpc/h)
-    r_grid = np.linspace(0.1, rmax * h, 301)
+    has_field = field_loader is not None
+    if has_field:
+        # LOS grid for the model covers the full rmax range (in Mpc/h)
+        r_grid = np.linspace(0.1, rmax * h, 301)
 
     # Sampling sphere: set from selection threshold, not the full rmax
     r_sample_Mpc = rmax
     if mag_lim is not None:
-        M_sel = M_TRGB + 0.2 * (colour_mean - c_star)
-        sigma_colour = 0.2 * colour_std
+        M_sel = M_TRGB + alpha_c * (colour_mean - c_star)
+        sigma_colour = abs(alpha_c) * colour_std
         mu_max = mag_lim - M_sel
         sigma_tot = np.sqrt(sigma_int**2 + e_mag**2
                             + mag_lim_width**2 + sigma_colour**2)
         mu_cutoff = mu_max + SELECTION_TAIL_SIGMA * sigma_tot
         r_sample_Mpc = min(10**((mu_cutoff - 25) / 5), rmax)
-    elif cz_lim is not None:
-        r_sample_Mpc = _redshift_sampling_radius(
-            cz_lim, cz_lim_width, h, rmax, e_czcmb, sigma_v, Vext)
     r_sphere = r_sample_Mpc * h  # Mpc/h
 
     if verbose:
-        print(f"Field mock: 3D sampling "
+        label = "Field mock" if has_field else "Unit-density mock"
+        print(f"{label}: 3D sampling "
               f"(r_sphere: {r_sphere:.1f} Mpc/h = "
-              f"{r_sample_Mpc:.1f} Mpc, "
-              f"r_grid: {r_grid[0]:.1f}–{r_grid[-1]:.1f} Mpc/h, "
-              f"{len(r_grid)} points)...")
+              f"{r_sample_Mpc:.1f} Mpc)...")
 
     # --- Load fields and build 3D interpolators ---
-    eps = 1e-4
-    density_raw = field_loader.load_density()
-    density_log = np.log(density_raw + eps).astype(np.float32)
-    f_density_3d = build_regular_interpolator(
-        density_log, field_loader.boxsize,
-        fill_value=np.float32(np.log(1 + eps)))
+    if has_field:
+        eps = 1e-4
+        density_raw = field_loader.load_density()
+        density_log = np.log(density_raw + eps).astype(np.float32)
+        f_density_3d = build_regular_interpolator(
+            density_log, field_loader.boxsize,
+            fill_value=np.float32(np.log(1 + eps)))
 
-    delta_max = float(density_raw.max()) - 1
-    max_weight = smoothclip(1 + b1 * delta_max)
-    del density_raw, density_log
+        log_weight_max = float(np.max(galaxy_bias_log_weight(
+            density_raw, bias_params, which_bias)))
+        del density_raw, density_log
 
-    velocity_3d = field_loader.load_velocity()
-    f_vel_3d = []
-    for i in range(3):
-        f_vel_3d.append(build_regular_interpolator(
-            velocity_3d[i], field_loader.boxsize,
-            fill_value=np.float32(0)))
-    del velocity_3d
+        velocity_3d = field_loader.load_velocity()
+        f_vel_3d = []
+        for i in range(3):
+            f_vel_3d.append(build_regular_interpolator(
+                velocity_3d[i], field_loader.boxsize,
+                fill_value=np.float32(0)))
+        del velocity_3d
 
-    if verbose:
-        print(f"  max delta = {delta_max:.1f}, "
-              f"max weight = {max_weight:.1f}, "
-              f"est. accept rate = {1 / max_weight:.4f}")
+        if verbose:
+            print(f"  galaxy bias = {which_bias}, "
+                  f"max log weight = {log_weight_max:.3f}")
 
-    obs = field_loader.observer_pos
-    rmin_h = 0.1
-    coord_frame = field_loader.coordinate_frame
+        obs = field_loader.observer_pos
+        coord_frame = field_loader.coordinate_frame
+    else:
+        obs = None
+        coord_frame = "icrs"
+    rmin_h = rmin * h
     sigma_mag_tot = np.sqrt(sigma_int**2 + e_mag**2)
     sigma_cz_tot = np.sqrt(e_czcmb**2 + sigma_v**2)
 
@@ -225,7 +150,7 @@ def _gen_field_path(nsamples, h, b1, beta, rmin, rmax, e_mag, e_czcmb,
         "RA", "dec", "r_h", "mag_obs", "cz_obs", "colour_dered"]}
     n_total_proposed = 0
     n_total_density_accepted = 0
-    batch_size = 200000
+    batch_size = 200000 if has_field else max(int(1.5 * nsamples), 100)
 
     while sum(len(v) for v in collected["RA"]) < nsamples:
         n_total_proposed += batch_size
@@ -238,12 +163,15 @@ def _gen_field_path(nsamples, h, b1, beta, rmin, rmax, e_mag, e_czcmb,
         xyz = xyz[in_shell]
 
         # Density accept/reject
-        rho_log = f_density_3d(xyz + obs[None, :])
-        rho = np.exp(rho_log) - eps
-        np.clip(rho, eps, None, out=rho)
-        weight = smoothclip(1 + b1 * (rho - 1))
-        accept = gen.random(len(weight)) < (weight / max_weight)
-        xyz = xyz[accept]
+        if has_field:
+            rho_log = f_density_3d(xyz + obs[None, :])
+            rho = np.exp(rho_log) - eps
+            np.clip(rho, eps, None, out=rho)
+            log_weight = galaxy_bias_log_weight(
+                rho, bias_params, which_bias)
+            p_accept = np.exp(np.minimum(log_weight - log_weight_max, 0.0))
+            accept = gen.random(len(p_accept)) < p_accept
+            xyz = xyz[accept]
         n_total_density_accepted += len(xyz)
 
         if len(xyz) == 0:
@@ -255,11 +183,12 @@ def _gen_field_path(nsamples, h, b1, beta, rmin, rmax, e_mag, e_czcmb,
         RA, dec = field_xyz_to_radec(xyz, r_h, coord_frame)
 
         # Radial velocity at 3D positions
-        pos_box = (xyz + obs[None, :]).astype(np.float32)
         rhat = xyz / r_h[:, None]
         Vpec_field = np.zeros(len(xyz), dtype=np.float32)
-        for i in range(3):
-            Vpec_field += f_vel_3d[i](pos_box) * rhat[:, i]
+        if has_field:
+            pos_box = (xyz + obs[None, :]).astype(np.float32)
+            for i in range(3):
+                Vpec_field += f_vel_3d[i](pos_box) * rhat[:, i]
 
         # Compute observables
         rhat_icrs = radec_to_cartesian(RA, dec)
@@ -270,26 +199,30 @@ def _gen_field_path(nsamples, h, b1, beta, rmin, rmax, e_mag, e_czcmb,
         mu = np.asarray(r2mu(r_Mpc, h=h))
         z_cosmo = np.asarray(r2z(r_Mpc, h=h))
 
-        colour = gen.normal(colour_mean, colour_std, len(r_Mpc))
+        colour_true = gen.normal(colour_mean, colour_std, len(r_Mpc))
+        if e_colour_dered is None:
+            colour_obs = colour_true
+        else:
+            colour_obs = gen.normal(colour_true, e_colour_dered)
         mag_obs = gen.normal(
-            M_TRGB + 0.2 * (colour - c_star) + mu, sigma_mag_tot)
+            M_TRGB + alpha_c * (colour_true - c_star) + mu,
+            sigma_mag_tot)
         cz_true = SPEED_OF_LIGHT * (
             (1 + z_cosmo) * (1 + Vpec / SPEED_OF_LIGHT) - 1)
         cz_obs = gen.normal(cz_true, sigma_cz_tot)
 
         # Apply selection
-        sel = _apply_selection(mag_obs, cz_obs,
-                               mag_lim, mag_lim_width,
-                               cz_lim, cz_lim_width, gen)
+        sel = _apply_selection(mag_obs, mag_min, mag_lim, mag_lim_width, gen)
 
         collected["RA"].append(RA[sel])
         collected["dec"].append(dec[sel])
         collected["r_h"].append(r_h[sel])
         collected["mag_obs"].append(mag_obs[sel])
         collected["cz_obs"].append(cz_obs[sel])
-        collected["colour_dered"].append(colour[sel])
+        collected["colour_dered"].append(colour_obs[sel])
 
-    del f_density_3d, f_vel_3d
+    if has_field:
+        del f_density_3d, f_vel_3d
 
     # Trim to nsamples
     for k in collected:
@@ -304,13 +237,6 @@ def _gen_field_path(nsamples, h, b1, beta, rmin, rmax, e_mag, e_czcmb,
               f"{collected['r_h'].max() / h:.2f} Mpc "
               f"(allowed: {rmax:.2f} Mpc)")
 
-    # --- Interpolate full LOS for selected hosts ---
-    if verbose:
-        print(f"  interpolating LOS for {nsamples} hosts...")
-    los_density, los_velocity = interpolate_los_density_velocity(
-        field_loader, r_grid, collected["RA"], collected["dec"],
-        verbose=verbose)
-
     result = {
         "RA": collected["RA"],
         "dec": collected["dec"],
@@ -319,33 +245,40 @@ def _gen_field_path(nsamples, h, b1, beta, rmin, rmax, e_mag, e_czcmb,
         "cz_obs": collected["cz_obs"],
         "colour_dered": collected["colour_dered"],
         "n_parent": n_total_density_accepted,
-        # Host LOS data: (1, nsamples, n_r)
-        "host_los_density": los_density[None, ...],
-        "host_los_velocity": los_velocity[None, ...],
-        "host_los_r": r_grid,
     }
+    if has_field:
+        # --- Interpolate full LOS for selected hosts ---
+        if verbose:
+            print(f"  interpolating LOS for {nsamples} hosts...")
+        los_density, los_velocity = interpolate_los_density_velocity(
+            field_loader, r_grid, collected["RA"], collected["dec"],
+            verbose=verbose)
+        # Host LOS data: (1, nsamples, n_r)
+        result["host_los_density"] = los_density[None, ...]
+        result["host_los_velocity"] = los_velocity[None, ...]
+        result["host_los_r"] = r_grid
     return result
 
 
 def gen_TRGB_mock(nsamples=480, Om=0.3, e_mag=0.05, e_czcmb=10.0,
                   rmin=0.5, rmax=40.0,
+                  mag_min=22.1,
                   mag_lim=25.0, mag_lim_width=0.75,
-                  cz_lim=None, cz_lim_width=None,
+                  which_bias="linear",
                   true_params=None, anchors=None,
-                  colour_mean=None, colour_std=DEFAULT_COLOUR_STD,
+                  colour_mean=None, colour_std=None,
+                  e_colour_dered=DEFAULT_COLOUR_ERR,
                   noisy_anchors=True, field_loader=None,
                   density_3d_data=None, seed=42, verbose=True):
     """Generate a mock TRGB survey compatible with TRGBModel.
 
-    When ``field_loader`` is None (default), distances are drawn from
-    p(r) ~ r^2 on [rmin, rmax] (homogeneous).  When a field loader is
-    provided, distances are drawn from p(r) ~ (1 + b1*delta(r)) * r^2
-    using the density field, and the field's radial peculiar velocity
-    is included in the observed cz.
+    When ``field_loader`` is None (default), distances are drawn from unit
+    density on [rmin, rmax].  When a field loader is provided, distances are
+    drawn from p(r) ~ b[rho(r)] * r^2 using the density field, and the field's
+    radial peculiar velocity is included in the observed cz.
 
     Selection (optional):
-      - mag_lim  : sigmoid cut p(sel) = Phi((mag_lim - m) / mag_lim_width)
-      - cz_lim   : hard (cz_lim_width=None) or sigmoid cz cut
+      - mag_min, mag_lim: finite sigmoid window in observed TRGB magnitude
 
     Returns
     -------
@@ -354,16 +287,16 @@ def gen_TRGB_mock(nsamples=480, Om=0.3, e_mag=0.05, e_czcmb=10.0,
     true_params : dict
         True parameter values used.
     n_parent : int
-        Parent count used for selection accounting. For homogeneous mocks this
-        is the number proposed before selection; for field mocks this is the
-        number accepted by the density sampler before observable selection.
+        Number accepted by the density sampler before observable selection.
     """
     tp = {**DEFAULT_TRUE_PARAMS, **(true_params or {})}
     anch = {**DEFAULT_ANCHORS, **(anchors or {})}
     gen = np.random.default_rng(seed)
+    bias_params = galaxy_bias_params_from_values(tp, which_bias, Om=Om)
 
     H0 = tp["H0"]
     M_TRGB = tp["M_TRGB"]
+    alpha_c = tp["alpha_c"]
     c_star = tp["c_star"]
     sigma_int = tp["sigma_int"]
     sigma_v = tp["sigma_v"]
@@ -375,22 +308,17 @@ def gen_TRGB_mock(nsamples=480, Om=0.3, e_mag=0.05, e_czcmb=10.0,
     Vext = tp["Vext_mag"] * galactic_to_radec_cartesian(
         tp["Vext_ell"], tp["Vext_b"])
 
-    cmean = c_star if colour_mean is None else colour_mean
+    cmean = tp.get("c_bar", c_star) if colour_mean is None else colour_mean
+    cstd = tp.get("w_c", DEFAULT_COLOUR_STD) if colour_std is None \
+        else colour_std
 
-    if field_loader is not None:
-        collected = _gen_field_path(
-            nsamples, h, tp["b1"], beta, rmin, rmax, e_mag, e_czcmb,
-            M_TRGB, c_star, cmean, colour_std,
-            sigma_int, sigma_v, Vext,
-            mag_lim, mag_lim_width, cz_lim, cz_lim_width,
-            field_loader, r2mu, r2z, gen, verbose)
-    else:
-        collected = _gen_homogeneous_path(
-            nsamples, h, rmin, rmax, e_mag, e_czcmb,
-            M_TRGB, c_star, cmean, colour_std,
-            sigma_int, sigma_v, Vext,
-            mag_lim, mag_lim_width, cz_lim, cz_lim_width,
-            r2mu, r2z, gen, verbose)
+    collected = _gen_field_path(
+        nsamples, h, beta, rmin, rmax, e_mag, e_czcmb,
+        M_TRGB, alpha_c, c_star, cmean, cstd, e_colour_dered,
+        sigma_int, sigma_v, Vext,
+        mag_min, mag_lim, mag_lim_width,
+        which_bias, bias_params,
+        field_loader, r2mu, r2z, gen, verbose)
     n_parent = collected.pop("n_parent")
 
     # --- Anchor observations ---
@@ -415,10 +343,7 @@ def gen_TRGB_mock(nsamples=480, Om=0.3, e_mag=0.05, e_czcmb=10.0,
 
     # --- Build data dict ---
     n_kept = len(collected["RA"])
-    if "r_h" in collected:
-        r_true = collected["r_h"] / h
-    else:
-        r_true = collected["r"]
+    r_true = collected["r_h"] / h
     data = {
         "RA_host": collected["RA"],
         "dec_host": collected["dec"],
@@ -440,6 +365,8 @@ def gen_TRGB_mock(nsamples=480, Om=0.3, e_mag=0.05, e_czcmb=10.0,
         "e_mag_N4258_TRGB": anch["e_mag_N4258_TRGB"],
         "has_rand_los": False,
     }
+    if e_colour_dered is not None:
+        data["e_colour_dered"] = np.full(n_kept, e_colour_dered)
 
     # Add host LOS data for field-based mocks. Reconstruction integrals use
     # 3D density data, not random LOS.
