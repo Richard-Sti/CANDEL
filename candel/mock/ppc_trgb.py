@@ -313,15 +313,8 @@ def generate_trgb_ppc(samples, data, config, n_ppc=None, seed=42,
         if "mag_lim_TRGB" in samples else None
     mag_width_samples = _flat(samples["mag_lim_TRGB_width"]) \
         if "mag_lim_TRGB_width" in samples else None
-    cz_lim_samples = _flat(samples["cz_lim_selection"]) \
-        if "cz_lim_selection" in samples else None
-    cz_width_samples = _flat(samples["cz_lim_selection_width"]) \
-        if "cz_lim_selection_width" in samples else None
-
     mag_lim_fixed = get_nested(config, "model/mag_lim_TRGB", None)
     mag_width_fixed = get_nested(config, "model/mag_lim_TRGB_width", None)
-    cz_lim_fixed = get_nested(config, "model/cz_lim_selection", None)
-    cz_width_fixed = get_nested(config, "model/cz_lim_selection_width", None)
 
     # ---- Data ----
     mag_obs = np.asarray(data["mag_obs"])
@@ -351,7 +344,7 @@ def generate_trgb_ppc(samples, data, config, n_ppc=None, seed=42,
         mag_lim=mag_lim_samples if mag_lim_samples is not None else mag_lim_fixed,  # noqa
         M_abs=M_TRGB, sigma_int=sigma_int, e_mag=e_mag_obs_all,
         mag_lim_width=mag_width_samples if mag_width_samples is not None else mag_width_fixed,  # noqa
-        cz_lim=cz_lim_samples if cz_lim_samples is not None else cz_lim_fixed,
+        cz_lim=None,
         h=H0 / 100, r_max=r_max,
         colour_mean=colour_dered_mean, c_star=c_star,
         colour_std=colour_dered_std)
@@ -367,7 +360,6 @@ def generate_trgb_ppc(samples, data, config, n_ppc=None, seed=42,
             beta, bias, nu_cz, use_density_sigma_v, data, field_index,
             which_sel, mag_lim_samples, mag_lim_fixed,
             mag_width_samples, mag_width_fixed,
-            cz_lim_samples, cz_lim_fixed, cz_width_samples, cz_width_fixed,
             e_mag_obs_all, e_czcmb_all, colour_dered_all,
             r_min, r_max_eff, r2mu, r2z, n_ppc, n_hosts)
     else:
@@ -376,7 +368,6 @@ def generate_trgb_ppc(samples, data, config, n_ppc=None, seed=42,
             nu_cz,
             which_sel, mag_lim_samples, mag_lim_fixed,
             mag_width_samples, mag_width_fixed,
-            cz_lim_samples, cz_lim_fixed, cz_width_samples, cz_width_fixed,
             e_mag_obs_all, e_czcmb_all, colour_dered_all,
             r_min, r_max_eff, r2mu, r2z, n_ppc, n_hosts)
 
@@ -398,8 +389,6 @@ def _ppc_field_path(gen, config, H0, M_TRGB, c_star, sigma_int, sigma_v, Vext,
                     field_index,
                     which_sel, mag_lim_samples, mag_lim_fixed,
                     mag_width_samples, mag_width_fixed,
-                    cz_lim_samples, cz_lim_fixed,
-                    cz_width_samples, cz_width_fixed,
                     e_mag_obs_all, e_czcmb_all, colour_dered_all,
                     r_min, r_max, r2mu, r2z, n_ppc, n_hosts):
     """PPC using 3D field sampling (matches mock generator)."""
@@ -531,11 +520,9 @@ def _ppc_field_path(gen, config, H0, M_TRGB, c_star, sigma_int, sigma_v, Vext,
 
         # Selection
         accept_sel = _apply_selection_ppc(
-            mag_sim, cz_sim, which_sel, idx_post_acc,
+            mag_sim, which_sel, idx_post_acc,
             mag_lim_samples, mag_lim_fixed,
-            mag_width_samples, mag_width_fixed,
-            cz_lim_samples, cz_lim_fixed,
-            cz_width_samples, cz_width_fixed, gen)
+            mag_width_samples, mag_width_fixed, gen)
 
         collected_mag.append(mag_sim[accept_sel])
         collected_cz.append(cz_sim[accept_sel])
@@ -556,8 +543,6 @@ def _ppc_homogeneous_path(gen, H0, M_TRGB, c_star, sigma_int, sigma_v,
                           Vext, beta, nu_cz,
                           which_sel, mag_lim_samples, mag_lim_fixed,
                           mag_width_samples, mag_width_fixed,
-                          cz_lim_samples, cz_lim_fixed,
-                          cz_width_samples, cz_width_fixed,
                           e_mag_obs_all, e_czcmb_all, colour_dered_all,
                           r_min, r_max, r2mu, r2z, n_ppc, n_hosts):
     """PPC with homogeneous distance sampling (no reconstruction)."""
@@ -617,11 +602,9 @@ def _ppc_homogeneous_path(gen, H0, M_TRGB, c_star, sigma_int, sigma_v,
 
         # Selection
         accept_sel = _apply_selection_ppc(
-            mag_sim, cz_sim, which_sel, idx_post,
+            mag_sim, which_sel, idx_post,
             mag_lim_samples, mag_lim_fixed,
-            mag_width_samples, mag_width_fixed,
-            cz_lim_samples, cz_lim_fixed,
-            cz_width_samples, cz_width_fixed, gen)
+            mag_width_samples, mag_width_fixed, gen)
 
         collected_mag.append(mag_sim[accept_sel])
         collected_cz.append(cz_sim[accept_sel])
@@ -638,11 +621,9 @@ def _ppc_homogeneous_path(gen, H0, M_TRGB, c_star, sigma_int, sigma_v,
 ###############################################################################
 
 
-def _apply_selection_ppc(mag_sim, cz_sim, which_sel, idx_post,
+def _apply_selection_ppc(mag_sim, which_sel, idx_post,
                          mag_lim_samples, mag_lim_fixed,
-                         mag_width_samples, mag_width_fixed,
-                         cz_lim_samples, cz_lim_fixed,
-                         cz_width_samples, cz_width_fixed, gen):
+                         mag_width_samples, mag_width_fixed, gen):
     """Apply selection function, returning boolean mask."""
     n = len(mag_sim)
     if which_sel == "TRGB_magnitude":
@@ -651,13 +632,6 @@ def _apply_selection_ppc(mag_sim, cz_sim, which_sel, idx_post,
         mw = mag_width_samples[idx_post] \
             if mag_width_samples is not None else mag_width_fixed
         p_sel = norm.cdf((ml - mag_sim) / mw)
-        return gen.random(n) < p_sel
-    elif which_sel == "redshift":
-        cl = cz_lim_samples[idx_post] \
-            if cz_lim_samples is not None else cz_lim_fixed
-        cw = cz_width_samples[idx_post] \
-            if cz_width_samples is not None else cz_width_fixed
-        p_sel = norm.cdf((cl - cz_sim) / cw)
         return gen.random(n) < p_sel
     return np.ones(n, dtype=bool)
 

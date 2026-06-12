@@ -179,7 +179,7 @@ options:
   --num-samples N         NUTS samples (default: $num_samples)
   --num-chains N          NUTS chains per mock (default: $num_chains)
   --rhat-threshold X      warn when NumPyro R-hat exceeds X (default: 1.05)
-  --which-selection NAME   TRGB_magnitude or redshift (default: $which_selection)
+  --which-selection NAME   TRGB_magnitude (default: $which_selection)
   --config PATH           base config (default: $config)
   --outdir PATH           output dir (default: $outdir)
   --infer-selection       infer selection thresholds instead of fixing truth

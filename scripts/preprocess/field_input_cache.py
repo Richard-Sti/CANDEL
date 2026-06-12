@@ -308,7 +308,8 @@ def _sh0es_num_hosts(config):
 def _h0_velocity_key(config):
     which_run = get_nested(config, "model/which_run", None)
     which_sel = get_nested(config, "model/which_selection", None)
-    if which_sel in ("redshift", "SN_magnitude_redshift"):
+    if (which_sel in ("redshift", "SN_magnitude_redshift")
+            and which_run not in ("EDD_TRGB", "EDD_TRGB_grouped")):
         return "velocity"
     if which_run == "CH0" and which_sel == "SN_magnitude_or_redshift_Nmag":
         n_mag = get_nested(config, "model/num_hosts_selection_mag", None)

@@ -194,6 +194,11 @@ should not bake in local paths, queue names, Python executables, or outputs.
   and data-preparation scripts live under
   `/mnt/users/rstiskalek/CANDEL/scripts/preprocess`.
 
+- `/mnt/users/rstiskalek/CANDEL/notebooks/paper_TRGBH0`
+  contains TRGBH0 paper figure scripts under `paper_figures/`, shared
+  plotting/data helpers at top level, and non-paper diagnostics under
+  `diagnostics/`.
+
 - `/mnt/users/rstiskalek/CANDEL/scripts/H0_convergence`,
   `/mnt/users/rstiskalek/CANDEL/scripts/diagnostics`, and
   `/mnt/users/rstiskalek/CANDEL/scripts/mocks`

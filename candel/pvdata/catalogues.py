@@ -1775,7 +1775,7 @@ def _load_EDD_TRGB_from_config_common(config_path, config_key, loader):
 
     volume_data = _load_h0_volume_data_from_config(
         config, los_data_path, reconstruction, config_key,
-        velocity_selections=("redshift",),
+        velocity_selections=(),
         field_indices=data.get("host_los_field_indices", None))
 
     if volume_data is not None:

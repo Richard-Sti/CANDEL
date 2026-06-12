@@ -147,7 +147,6 @@ def _write_tmp_config(config):
 def make_mock_config(base_config_path, seed, num_warmup=500,
                      num_samples=500, which_selection="TRGB_magnitude",
                      mag_lim=None, mag_lim_width=None,
-                     cz_lim=None, cz_lim_width=None,
                      infer_selection=True, use_field=False, rmax=40.0,
                      num_chains=1, fix_Vext=False, true_params=None):
     """Build a config dict for mock inference."""
@@ -169,15 +168,6 @@ def make_mock_config(base_config_path, seed, num_warmup=500,
                 config["model"]["mag_lim_TRGB"] = mag_lim
             if mag_lim_width is not None:
                 config["model"]["mag_lim_TRGB_width"] = mag_lim_width
-    elif which_selection == "redshift":
-        if infer_selection:
-            config["model"]["cz_lim_selection"] = "infer"
-            config["model"]["cz_lim_selection_width"] = "infer"
-        else:
-            if cz_lim is not None:
-                config["model"]["cz_lim_selection"] = cz_lim
-            if cz_lim_width is not None:
-                config["model"]["cz_lim_selection_width"] = cz_lim_width
 
     # When not using field, fix beta prior to delta(0)
     if not use_field:
@@ -215,8 +205,7 @@ def _load_density_3d_data(config, field_name):
         raise ValueError(
             f"No `io.reconstruction_main.{field_name}` configuration found.")
 
-    which_selection = config["model"]["which_selection"]
-    load_velocity = which_selection == "redshift"
+    load_velocity = False
     key = (
         field_name,
         repr(sorted(field_kwargs.items())),
@@ -261,8 +250,6 @@ def run_one_mock(seed, base_config_path, true_params, mock_kwargs,
         which_selection=which_selection,
         mag_lim=mock_kwargs.get("mag_lim"),
         mag_lim_width=mock_kwargs.get("mag_lim_width"),
-        cz_lim=mock_kwargs.get("cz_lim"),
-        cz_lim_width=mock_kwargs.get("cz_lim_width"),
         infer_selection=infer_selection,
         use_field=use_field,
         rmax=mock_kwargs.get("rmax", 40.0),
@@ -825,9 +812,6 @@ def run_single(seed, true_params, mock_kwargs, config_path,
     if which_selection == "TRGB_magnitude":
         print(f"  mag_lim         = {mock_kwargs.get('mag_lim')}")
         print(f"  mag_lim_width   = {mock_kwargs.get('mag_lim_width')}")
-    elif which_selection == "redshift":
-        print(f"  cz_lim          = {mock_kwargs.get('cz_lim')}")
-        print(f"  cz_lim_width    = {mock_kwargs.get('cz_lim_width')}")
     print(f"  use_field       = {use_field}")
     if use_field:
         print(f"  field_loader    = {mock_kwargs.get('field_loader')}")
@@ -845,8 +829,6 @@ def run_single(seed, true_params, mock_kwargs, config_path,
         which_selection=which_selection,
         mag_lim=mock_kwargs.get("mag_lim"),
         mag_lim_width=mock_kwargs.get("mag_lim_width"),
-        cz_lim=mock_kwargs.get("cz_lim"),
-        cz_lim_width=mock_kwargs.get("cz_lim_width"),
         infer_selection=infer_selection,
         use_field=use_field,
         rmax=mock_kwargs.get("rmax", 40.0),
@@ -1003,16 +985,12 @@ def main():
     # Selection options
     parser.add_argument("--which-selection", type=str,
                         default="TRGB_magnitude",
-                        choices=["TRGB_magnitude", "redshift"],
+                        choices=["TRGB_magnitude"],
                         help="Selection function type")
     parser.add_argument("--mag-lim", type=float, default=25.0,
                         help="TRGB magnitude selection limit")
     parser.add_argument("--mag-lim-width", type=float, default=0.75,
                         help="Sigmoid width for magnitude selection")
-    parser.add_argument("--cz-lim", type=float, default=250.0,
-                        help="cz selection limit [km/s]")
-    parser.add_argument("--cz-lim-width", type=float, default=500.0,
-                        help="Sigmoid width for cz selection")
     parser.add_argument("--rmax", type=float, default=40.0,
                         help="Maximum mock distance [Mpc]")
     parser.add_argument("--fix-selection", action="store_false",
@@ -1069,26 +1047,12 @@ def main():
         "b1": args.b1,
     }
 
-    # Only pass the selection parameters relevant to the chosen mode so the
-    # mock generator uses the correct branch (mag_lim vs cz_lim).
-    if args.which_selection == "redshift":
-        mock_kwargs = {
-            "nsamples": args.nsamples,
-            "rmax": args.rmax,
-            "mag_lim": None,
-            "mag_lim_width": None,
-            "cz_lim": args.cz_lim,
-            "cz_lim_width": args.cz_lim_width,
-        }
-    else:
-        mock_kwargs = {
-            "nsamples": args.nsamples,
-            "rmax": args.rmax,
-            "mag_lim": args.mag_lim,
-            "mag_lim_width": args.mag_lim_width,
-            "cz_lim": None,
-            "cz_lim_width": None,
-        }
+    mock_kwargs = {
+        "nsamples": args.nsamples,
+        "rmax": args.rmax,
+        "mag_lim": args.mag_lim,
+        "mag_lim_width": args.mag_lim_width,
+    }
 
     # Set up field loader if requested
     if args.use_field:
