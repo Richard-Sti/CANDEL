@@ -29,8 +29,7 @@ from ..pvdata.volume_density import (_density_unit_normalization,
 from ..util import (SPEED_OF_LIGHT, fprint, galactic_to_radec, get_nested,
                     load_config, radec_to_cartesian)
 from ._field_utils import (build_field_pool, compute_r_max_selection,
-                           galaxy_bias_params_from_values,
-                           galaxy_bias_weight)
+                           galaxy_bias_params_from_values, galaxy_bias_weight)
 
 
 def _flat(x):
