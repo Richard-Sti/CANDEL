@@ -43,7 +43,7 @@ which_bias = "linear"
 which_selection = "TRGB_magnitude"
 
 run_ppc = false
-ppc_factor = 10
+ppc_factor = 2
 num_rand_los_no_recon = 1000
 # max_rand_los: disabled, use all available random LOS
 distmod_limits = [10, 38]
@@ -91,7 +91,7 @@ scale = 0.1
 
 [model.priors.alpha_c]
 dist = "delta"
-value = -0.2
+value = 0.2
 # dist = "normal"
 # loc = 0.0
 # scale = 1.0
