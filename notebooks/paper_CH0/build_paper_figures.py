@@ -29,6 +29,8 @@ CONFIG = ROOT / "scripts" / "runs" / "configs" / "config_CH0.toml"
 DATA = ROOT / "data"
 
 COLS = ["#87193d", "#1e42b9", "#d42a29", "#05dd6b", "#ee35d5"]
+MANTICORE_SN = "CH0_MAS-PCS_sel-SN_magnitude_ManticoreLocalCOLA_paper.hdf5"
+MANTICORE_REDSHIFT = "CH0_MAS-PCS_sel-redshift_ManticoreLocalCOLA_paper.hdf5"
 
 
 def read_samples(fname, keys=None):
@@ -72,12 +74,8 @@ def kde_line(ax, samples, label, color, fill=False, ls="-", bw=1.0,
 
 def plot_h0_comparison():
     curves = [
-        ("SN mag. sel.", h0(
-            "CH0_sel-SN_magnitude_manticore_2MPP_MULTIBIN_N256_DES_V2_paper.hdf5"),
-         COLS[0]),
-        ("Host redshift sel.", h0(
-            "CH0_sel-redshift_manticore_2MPP_MULTIBIN_N256_DES_V2_paper.hdf5"),
-         COLS[3]),
+        ("SN mag. sel.", h0(MANTICORE_SN), COLS[0]),
+        ("Host redshift sel.", h0(MANTICORE_REDSHIFT), COLS[3]),
     ]
     rng = np.random.default_rng(42)
     with plt.style.context("science"):
@@ -136,11 +134,11 @@ def plot_h0_stacked():
     lit_col = "#444444"
     spec = [
         ("SN mag.\nselection", "Manticore", manticore_col,
-         "CH0_sel-SN_magnitude_manticore_2MPP_MULTIBIN_N256_DES_V2_paper.hdf5"),
+         MANTICORE_SN),
         ("SN mag.\nselection", "Carrick", carrick_col,
          "CH0_sel-SN_magnitude_Carrick2015_paper.hdf5"),
         ("Host redshift\nselection", "Manticore", manticore_col,
-         "CH0_sel-redshift_manticore_2MPP_MULTIBIN_N256_DES_V2_paper.hdf5"),
+         MANTICORE_REDSHIFT),
         ("Host redshift\nselection", "Carrick", carrick_col,
          "CH0_sel-redshift_Carrick2015_paper.hdf5"),
     ]
@@ -225,8 +223,8 @@ def plot_h0_proportion():
     for i in range(36):
         fname = (
             MIXED
-            / f"CH0_sel-SN_magnitude_or_redshift_Nmag_Nmag{i}_"
-              "manticore_2MPP_MULTIBIN_N256_DES_V2_paper_mixed.hdf5"
+            / f"CH0_MAS-PCS_sel-SN_magnitude_or_redshift_Nmag_Nmag{i}_"
+              "ManticoreLocalCOLA_paper_mixed.hdf5"
         )
         samples = read_samples(fname, "H0")
         xs.append(i)
@@ -250,8 +248,8 @@ def plot_h0_proportion():
 
 def plot_manticore_corner():
     fnames = [
-        TABLE / "CH0_sel-SN_magnitude_manticore_2MPP_MULTIBIN_N256_DES_V2_paper.hdf5",
-        TABLE / "CH0_sel-redshift_manticore_2MPP_MULTIBIN_N256_DES_V2_paper.hdf5",
+        TABLE / MANTICORE_SN,
+        TABLE / MANTICORE_REDSHIFT,
     ]
     truths = [{
         "dict": {
@@ -428,6 +426,7 @@ def main():
     plot_mu_host_cz(data)
     plot_h0_comparison()
     plot_h0_stacked()
+    plot_h0_proportion()
     plot_manticore_corner()
 
 

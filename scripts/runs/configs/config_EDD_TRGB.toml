@@ -28,7 +28,6 @@ dense_mass_params = [
     "beta", "b1",
     "mu_LMC", "mu_N4258",
     "mag_lim_TRGB", "mag_lim_TRGB_width",
-    "cz_lim_selection", "cz_lim_selection_width",
 ]
 
 ###############################################################################
@@ -75,8 +74,6 @@ selection_integral_supersample_target_dx = 0.325
 mag_min_TRGB = 22.1
 mag_lim_TRGB = "infer"
 mag_lim_TRGB_width = "infer"
-cz_lim_selection = "infer"
-cz_lim_selection_width = "infer"
 
 # --- Overrides from default priors ---
 
@@ -94,7 +91,7 @@ scale = 0.1
 
 [model.priors.alpha_c]
 dist = "delta"
-value = -0.2
+value = 0.2
 # dist = "normal"
 # loc = 0.0
 # scale = 1.0
@@ -158,16 +155,6 @@ high = 29.0
 dist = "uniform"
 low = 0.05
 high = 1.5
-
-[model.priors.cz_lim_selection]
-dist = "uniform"
-low = 100.0
-high = 3500.0
-
-[model.priors.cz_lim_selection_width]
-dist = "uniform"
-low = 50.0
-high = 500.0
 
 ###############################################################################
 #                             TRGB Calibration                                #

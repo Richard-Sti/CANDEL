@@ -26,7 +26,7 @@ import numpy as np
 from scipy.interpolate import RegularGridInterpolator
 
 import candel
-from candel.field.loader import Manticore_FieldLoader
+from candel.field.loader import ManticoreLocalSWIFT_FieldLoader
 
 
 ROOT = Path("/mnt/users/rstiskalek/CANDEL")
@@ -37,7 +37,7 @@ DEFAULT_FIELD_ROOT = (
 DEFAULT_POSTERIOR = (
     ROOT
     / "results/TRGBH0_paper/table/"
-    / "EDD_TRGB_sel-TRGB_magnitude_manticore_2MPP_MULTIBIN_N256_DES_V2_main.hdf5"
+    / "EDD_TRGB_rhoSmoothR4_MAS-PCS_sel-TRGB_magnitude_ManticoreLocalCOLA_main.hdf5"
 )
 DEFAULT_CACHE = ROOT / "notebooks/manticore_velocity_field_cache.npz"
 DEFAULT_OUTDIR = ROOT / "notebooks/manticore_velocity_field"
@@ -172,7 +172,8 @@ def velocity_component(h5: h5py.File, density: np.ndarray, component: int,
 
 
 def compute_cache(args: argparse.Namespace, realisations: np.ndarray) -> dict:
-    loader = Manticore_FieldLoader(int(realisations[0]), str(args.field_root))
+    loader = ManticoreLocalSWIFT_FieldLoader(
+        int(realisations[0]), str(args.field_root))
     with h5py.File(loader.fname, "r") as f:
         ngrid = int(f["density"].shape[0])
 

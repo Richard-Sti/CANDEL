@@ -135,12 +135,9 @@ class TRGBModel(H0ModelBase):
     def _load_selection_thresholds(self):
         active_map = {
             "TRGB_magnitude": {"mag_lim_TRGB", "mag_lim_TRGB_width"},
-            "redshift": {"cz_lim_selection", "cz_lim_selection_width"},
             "SN_magnitude": {"mag_lim_SN", "mag_lim_SN_width"},
         }
         spec = {
-            "cz_lim_selection":       None,
-            "cz_lim_selection_width":  None,
             "mag_lim_TRGB":           None,
             "mag_lim_TRGB_width":     None,
             "mag_lim_SN":             None,
@@ -216,6 +213,10 @@ class TRGBModel(H0ModelBase):
                 "e_m_Bprime", "e_m_Bprime_median")
         super()._set_data_arrays(data, skip_keys=skip)
 
+    def _setup_no_recon_direction_grid(self):
+        """TRGB selections do not require no-reconstruction redshift cuts."""
+        return
+
     # ------------------------------------------------------------------
     #  Validation
     # ------------------------------------------------------------------
@@ -271,7 +272,6 @@ class TRGBModel(H0ModelBase):
     def _validate_active_selection_widths(self):
         width_names = {
             "TRGB_magnitude": ("mag_lim_TRGB_width",),
-            "redshift": ("cz_lim_selection_width",),
             "SN_magnitude": ("mag_lim_SN_width",),
         }.get(self.which_selection, ())
         for name in width_names:
@@ -341,7 +341,7 @@ class TRGBModel(H0ModelBase):
                     f"{', '.join(missing)}.")
 
         allowed_selection = [
-            "TRGB_magnitude", "redshift", "SN_magnitude", None]
+            "TRGB_magnitude", "SN_magnitude", None]
         if self.which_selection not in allowed_selection:
             raise ValueError(
                 f"Unknown `which_selection`: {self.which_selection}. "
@@ -355,14 +355,8 @@ class TRGBModel(H0ModelBase):
                 "SN_magnitude selection requires SN data "
                 "(m_Bprime, e_m_Bprime) in the data dict.")
 
-        selection_needs_redshift = self.which_selection == "redshift"
-        if selection_needs_redshift and not self.use_TRGB_host_redshift:
-            raise ValueError(
-                "`which_selection='redshift'` requires "
-                "`use_TRGB_host_redshift` to be set to True.")
-        self._validate_student_t_redshift_selection(selection_needs_redshift)
-        self._validate_selection_integral(
-            needs_velocity=selection_needs_redshift)
+        self._validate_student_t_redshift_selection(False)
+        self._validate_selection_integral(needs_velocity=False)
 
         if self.which_selection == "TRGB_magnitude":
             if not np.isfinite(float(self.mag_min_TRGB)):
@@ -379,12 +373,6 @@ class TRGBModel(H0ModelBase):
                 raise ValueError(
                     "`mag_lim_TRGB` must exceed `mag_min_TRGB` for "
                     "TRGB_magnitude selection.")
-        if self.which_selection == "redshift":
-            if self.cz_lim_selection is None \
-                    and not self._infer_cz_lim_selection:
-                raise ValueError(
-                    "`cz_lim_selection` must be set or "
-                    "'infer' for redshift selection.")
         if self.which_selection == "SN_magnitude":
             if self.mag_lim_SN is None \
                     and not self._infer_mag_lim_SN:
@@ -399,16 +387,6 @@ class TRGBModel(H0ModelBase):
         log_rho = jnp.log(rho)
         return sigma_v_low + (sigma_v_high - sigma_v_low) / (
             1.0 + jnp.exp(-k * (log_rho - log_rho_t)))
-
-    def _volume_sigma_v_fields(self, sigma_v_low, sigma_v_high,
-                               log_rho_t, k):
-        """Evaluate density-dependent sigma_v on the 3D selection grid."""
-        if self.density_3d_mode == "log_rho":
-            delta_3d = jnp.exp(self.density_3d_fields) - 1.0
-        else:
-            delta_3d = self.density_3d_fields
-        return self.sigma_v_from_density(
-            delta_3d, sigma_v_low, sigma_v_high, log_rho_t, k)
 
     def _sum_sn_terms_by_host(self, terms):
         """Sum SN-level terms into their corresponding TRGB host bins."""
@@ -457,11 +435,6 @@ class TRGBModel(H0ModelBase):
                        log_sigma_v_rho_t, sigma_v_k)
         else:
             sigma_v = rsample("sigma_v", self.priors["sigma_v"])
-
-        def selection_sigma_v():
-            if self.use_density_dependent_sigma_v:
-                return self._volume_sigma_v_fields(*sigma_v)
-            return sigma_v
 
         nu_cz = self._sample_nu_cz()
         Vext, Vext_quad, Vext_oct, Vext_mono = \
@@ -550,20 +523,6 @@ class TRGBModel(H0ModelBase):
             log_S = self._compute_volume_log_S_mag_window(
                 bias_params, M_TRGB_sel, e_eff, H0,
                 self.mag_min_TRGB, mag_lim, mag_width)
-
-        elif self.which_selection == "redshift":
-            cz_lim = self._resolve_threshold("cz_lim_selection")
-            cz_width = self._resolve_threshold("cz_lim_selection_width")
-
-            ll_observed_selection_host = norm_jax.logcdf(
-                (cz_lim - self.czcmb) / cz_width)
-            factor("ll_sel_per_object", jnp.sum(
-                ll_observed_selection_host))
-
-            log_S = self._compute_volume_log_S_cz(
-                bias_params, H0, selection_sigma_v(), beta,
-                Vext, Vext_mono, cz_lim, cz_width,
-                nu_cz=nu_cz)
 
         elif self.which_selection == "SN_magnitude":
             M_B = rsample("M_B", self.priors["M_B"])

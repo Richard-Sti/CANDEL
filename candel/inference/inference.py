@@ -444,8 +444,9 @@ def _summarise_sample_block(samples):
 def _print_post_sampling_plan(compute_log_density, compute_evidence):
     """Print the requested post-sampling calculations."""
     fsection("Post-processing")
-    fprint(f"log density: {'computed' if compute_log_density else 'skipped'}")
-    fprint(f"evidence: {'computed' if compute_evidence else 'skipped'}")
+    fprint(
+        f"log density: {'will compute' if compute_log_density else 'skipped'}")
+    fprint(f"evidence: {'will compute' if compute_evidence else 'skipped'}")
 
 
 def _print_output_manifest(fname_out, fname_summary, plot_paths,
@@ -538,7 +539,8 @@ def _run_nuts_mcmc(model, model_kwargs, kwargs, init_params, site_names,
 def _postprocess_inference_run(model, model_kwargs, samples, kwargs,
                                site_names, ndata, evidence_source,
                                auxiliary_keys=(), attach_auxiliary=False,
-                               keep_original_samples=False):
+                               keep_original_samples=False,
+                               dynamic_model_kwargs=False):
     """Apply common log-density, evidence, and sample post-processing."""
     auxiliary = (
         extract_auxiliary(samples, auxiliary_keys) if auxiliary_keys else None)
@@ -555,7 +557,8 @@ def _postprocess_inference_run(model, model_kwargs, samples, kwargs,
     samples_for_log_density = _select_sample_sites(samples, site_names)
     if compute_log_density:
         log_density = get_log_density(
-            samples_for_log_density, model, model_kwargs)
+            samples_for_log_density, model, model_kwargs,
+            dynamic_model_kwargs=dynamic_model_kwargs)
     else:
         log_density = None
 
@@ -824,7 +827,9 @@ def run_H0_inference(model, model_kwargs=None, print_summary=True,
 
     site_names = None
     if init_method == "sobol_adam":
-        init_params = find_MAP(model, model_kwargs, seed=kwargs["seed"])
+        init_params = find_MAP(
+            model, model_kwargs, seed=kwargs["seed"],
+            dynamic_model_kwargs=dynamic_model_kwargs)
         method = "DE" if _use_de(model) else "Sobol+Adam"
         fprint(f"initialising NUTS from {method} MAP.")
         init_strategy = init_to_value(values=init_params)
@@ -835,7 +840,8 @@ def run_H0_inference(model, model_kwargs=None, print_summary=True,
 
     mcmc = _run_nuts_mcmc(
         model, model_kwargs, kwargs, init_params, site_names, init_strategy,
-        progress_bar, use_configured_nuts=True)
+        progress_bar, use_configured_nuts=True,
+        jit_model_args=dynamic_model_kwargs)
 
     samples = mcmc.get_samples()
     diagnostic_summary = None
@@ -849,7 +855,8 @@ def run_H0_inference(model, model_kwargs=None, print_summary=True,
     samples, log_density, gof, auxiliary, _ = _postprocess_inference_run(
         model, model_kwargs, samples, kwargs, site_names,
         _h0_ndata(model, model_kwargs), "model_and_config",
-        auxiliary_keys=_auxiliary_keys(kwargs), attach_auxiliary=True)
+        auxiliary_keys=_auxiliary_keys(kwargs), attach_auxiliary=True,
+        dynamic_model_kwargs=dynamic_model_kwargs)
 
     if print_summary:
         _print_posterior_summary(
@@ -902,16 +909,23 @@ def run_MWCepheids_inference(model, print_summary=True, save_samples=True,
     return samples
 
 
-def get_log_density(samples, model, model_kwargs, batch_size=5):
+def get_log_density(samples, model, model_kwargs, batch_size=5,
+                    dynamic_model_kwargs=False):
     """
     Compute the NumPyro model log density for posterior samples.
 
     Samples are evaluated in batches to avoid exhausting device memory.
     """
-    def f(sample):
-        return log_density(model, (), model_kwargs, sample)[0]
+    if dynamic_model_kwargs:
+        def f(sample, kwargs):
+            return log_density(model, (), kwargs, sample)[0]
 
-    f_vmap = jit(vmap(f))
+        f_vmap = jit(vmap(f, in_axes=(0, None)))
+    else:
+        def f(sample):
+            return log_density(model, (), model_kwargs, sample)[0]
+
+        f_vmap = jit(vmap(f))
 
     samples = {k: jnp.array(v) for k, v in samples.items()}
     num_samples = len(samples[next(iter(samples))])
@@ -919,7 +933,10 @@ def get_log_density(samples, model, model_kwargs, batch_size=5):
     chunks = []
     for i in trange(0, num_samples, batch_size, desc="Batched log densities"):
         batch = {k: v[i:i + batch_size] for k, v in samples.items()}
-        chunks.append(f_vmap(batch))
+        if dynamic_model_kwargs:
+            chunks.append(f_vmap(batch, model_kwargs))
+        else:
+            chunks.append(f_vmap(batch))
 
     return jnp.concatenate(chunks)
 

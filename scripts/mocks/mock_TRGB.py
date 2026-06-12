@@ -28,14 +28,18 @@ from scipy.stats import kstest
 import candel
 from candel.mock import gen_TRGB_mock
 from candel.mock.TRGB_mock import DEFAULT_ANCHORS, DEFAULT_TRUE_PARAMS
+from candel.model.pv_utils import GALAXY_BIAS_MODELS
 from candel.util import results_path
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
-TRACKED_PARAMS = ["H0", "M_TRGB", "c_star", "sigma_int", "sigma_v",
+TRACKED_PARAMS = ["H0", "M_TRGB", "alpha_c", "c_star", "c_bar", "w_c",
+                  "sigma_int", "sigma_v",
                   "Vext_mag", "Vext_phi", "Vext_cos_theta",
-                  "beta", "b1", "mu_LMC", "mu_N4258",
-                  "mag_lim_TRGB", "mag_lim_TRGB_width"]
+                  "beta", "b1", "b2", "b3", "alpha", "delta_b1",
+                  "alpha_low", "alpha_high_frac",
+                  "log_rho_t", "log_rho_width", "mu_LMC", "mu_N4258",
+                  "mag_min_TRGB", "mag_lim_TRGB", "mag_lim_TRGB_width"]
 
 PERIODIC_PARAMS = {"Vext_phi": 2 * np.pi}
 
@@ -146,21 +150,25 @@ def _write_tmp_config(config):
 
 def make_mock_config(base_config_path, seed, num_warmup=500,
                      num_samples=500, which_selection="TRGB_magnitude",
-                     mag_lim=None, mag_lim_width=None,
-                     cz_lim=None, cz_lim_width=None,
+                     mag_min=None, mag_lim=None, mag_lim_width=None,
                      infer_selection=True, use_field=False, rmax=40.0,
-                     num_chains=1, fix_Vext=False, true_params=None):
+                     num_chains=1, fix_Vext=False, true_params=None,
+                     which_bias=None):
     """Build a config dict for mock inference."""
     config = candel.load_config(base_config_path, replace_los_prior=False)
 
     config["model"]["use_reconstruction"] = use_field
     config["model"]["which_selection"] = which_selection
+    if which_bias is not None:
+        config["model"]["which_bias"] = which_bias
     # Match integration range to mock's distance range to avoid
     # extrapolation artefacts in the LOSInterpolator.
     config["model"]["r_limits_malmquist"] = [0.01, rmax]
     config["model"]["num_points_malmquist"] = 1001
 
     if which_selection == "TRGB_magnitude":
+        if mag_min is not None:
+            config["model"]["mag_min_TRGB"] = mag_min
         if infer_selection:
             config["model"]["mag_lim_TRGB"] = "infer"
             config["model"]["mag_lim_TRGB_width"] = "infer"
@@ -169,15 +177,6 @@ def make_mock_config(base_config_path, seed, num_warmup=500,
                 config["model"]["mag_lim_TRGB"] = mag_lim
             if mag_lim_width is not None:
                 config["model"]["mag_lim_TRGB_width"] = mag_lim_width
-    elif which_selection == "redshift":
-        if infer_selection:
-            config["model"]["cz_lim_selection"] = "infer"
-            config["model"]["cz_lim_selection_width"] = "infer"
-        else:
-            if cz_lim is not None:
-                config["model"]["cz_lim_selection"] = cz_lim
-            if cz_lim_width is not None:
-                config["model"]["cz_lim_selection_width"] = cz_lim_width
 
     # When not using field, fix beta prior to delta(0)
     if not use_field:
@@ -188,6 +187,11 @@ def make_mock_config(base_config_path, seed, num_warmup=500,
             "dist": "delta",
             "value": _true_Vext_cartesian(true_params),
         }
+    alpha_prior = config["model"]["priors"].get("alpha_c")
+    if (true_params is not None and "alpha_c" in true_params
+            and isinstance(alpha_prior, dict)
+            and alpha_prior.get("dist") == "delta"):
+        alpha_prior["value"] = true_params["alpha_c"]
 
     config["inference"]["seed"] = seed
     config["inference"]["num_warmup"] = num_warmup
@@ -215,8 +219,7 @@ def _load_density_3d_data(config, field_name):
         raise ValueError(
             f"No `io.reconstruction_main.{field_name}` configuration found.")
 
-    which_selection = config["model"]["which_selection"]
-    load_velocity = which_selection == "redshift"
+    load_velocity = False
     key = (
         field_name,
         repr(sorted(field_kwargs.items())),
@@ -253,27 +256,31 @@ def run_one_mock(seed, base_config_path, true_params, mock_kwargs,
                  which_selection="TRGB_magnitude",
                  infer_selection=True, use_field=False, field_name=None,
                  quiet=True, progress_bar=False, num_chains=1,
-                 rhat_threshold=1.05, fix_Vext=False):
+                 rhat_threshold=1.05, fix_Vext=False, which_bias=None):
     """Generate one mock, run inference, and return diagnostics."""
     config = make_mock_config(
         base_config_path, seed, num_warmup=num_warmup,
         num_samples=num_samples,
         which_selection=which_selection,
+        mag_min=mock_kwargs.get("mag_min"),
         mag_lim=mock_kwargs.get("mag_lim"),
         mag_lim_width=mock_kwargs.get("mag_lim_width"),
-        cz_lim=mock_kwargs.get("cz_lim"),
-        cz_lim_width=mock_kwargs.get("cz_lim_width"),
         infer_selection=infer_selection,
         use_field=use_field,
         rmax=mock_kwargs.get("rmax", 40.0),
         num_chains=num_chains,
         fix_Vext=fix_Vext,
-        true_params=true_params)
+        true_params=true_params,
+        which_bias=which_bias)
     density_3d_data = _load_density_3d_data(
         config, field_name) if use_field else None
+    mock_gen_kwargs = {
+        **mock_kwargs,
+        "which_bias": config["model"].get("which_bias", "linear"),
+    }
     data, tp, n_parent = gen_TRGB_mock(
         seed=seed, true_params=true_params, verbose=not quiet,
-        density_3d_data=density_3d_data, **mock_kwargs)
+        density_3d_data=density_3d_data, **mock_gen_kwargs)
     mock_diag = {
         "mag_obs": np.asarray(data["mag_obs"]),
         "czcmb": np.asarray(data["czcmb"]),
@@ -286,6 +293,8 @@ def run_one_mock(seed, base_config_path, true_params, mock_kwargs,
     tp["Vext_cos_theta"] = np.sin(np.deg2rad(_dec))
     if mock_kwargs.get("mag_lim") is not None:
         tp["mag_lim_TRGB"] = mock_kwargs["mag_lim"]
+    if mock_kwargs.get("mag_min") is not None:
+        tp["mag_min_TRGB"] = mock_kwargs["mag_min"]
     if mock_kwargs.get("mag_lim_width") is not None:
         tp["mag_lim_TRGB_width"] = mock_kwargs["mag_lim_width"]
     n_hosts = len(data["mag_obs"])
@@ -491,6 +500,7 @@ def worker(comm, config_info):
     infer_selection = config_info["infer_selection"]
     use_field = config_info.get("use_field", False)
     field_name = config_info.get("field_name")
+    which_bias = config_info.get("which_bias")
     num_chains = config_info.get("num_chains", 1)
     rhat_threshold = config_info.get("rhat_threshold", 1.05)
     fix_Vext = config_info.get("fix_Vext", False)
@@ -518,7 +528,7 @@ def worker(comm, config_info):
                 infer_selection=infer_selection,
                 use_field=use_field, field_name=field_name, quiet=True,
                 num_chains=num_chains, rhat_threshold=rhat_threshold,
-                fix_Vext=fix_Vext)
+                fix_Vext=fix_Vext, which_bias=which_bias)
             result = (*result, time.time() - t_start)
         except TimeoutError:
             result = None
@@ -716,7 +726,8 @@ def run_sequential(config_info):
                 progress_bar=config_info.get("progress_bar", True),
                 num_chains=config_info.get("num_chains", 1),
                 rhat_threshold=config_info.get("rhat_threshold", 1.05),
-                fix_Vext=config_info.get("fix_Vext", False))
+                fix_Vext=config_info.get("fix_Vext", False),
+                which_bias=config_info.get("which_bias"))
             dt = time.time() - t_start
             result = (*result, dt)
             results.append(result)
@@ -813,7 +824,8 @@ def run_single(seed, true_params, mock_kwargs, config_path,
                num_warmup=500, num_samples=500,
                which_selection="TRGB_magnitude",
                infer_selection=True, use_field=False, field_name=None,
-               outdir=None, plot_only=False, fix_Vext=False):
+               outdir=None, plot_only=False, fix_Vext=False,
+               which_bias=None):
     """Generate a single mock, optionally run inference, plot, and return data."""
     print(f"{'='*60}")
     print("Mock configuration")
@@ -823,11 +835,9 @@ def run_single(seed, true_params, mock_kwargs, config_path,
     print(f"  rmax            = {mock_kwargs.get('rmax')} Mpc")
     print(f"  selection       = {which_selection}")
     if which_selection == "TRGB_magnitude":
+        print(f"  mag_min         = {mock_kwargs.get('mag_min')}")
         print(f"  mag_lim         = {mock_kwargs.get('mag_lim')}")
         print(f"  mag_lim_width   = {mock_kwargs.get('mag_lim_width')}")
-    elif which_selection == "redshift":
-        print(f"  cz_lim          = {mock_kwargs.get('cz_lim')}")
-        print(f"  cz_lim_width    = {mock_kwargs.get('cz_lim_width')}")
     print(f"  use_field       = {use_field}")
     if use_field:
         print(f"  field_loader    = {mock_kwargs.get('field_loader')}")
@@ -843,20 +853,24 @@ def run_single(seed, true_params, mock_kwargs, config_path,
         config_path, seed, num_warmup=num_warmup,
         num_samples=num_samples,
         which_selection=which_selection,
+        mag_min=mock_kwargs.get("mag_min"),
         mag_lim=mock_kwargs.get("mag_lim"),
         mag_lim_width=mock_kwargs.get("mag_lim_width"),
-        cz_lim=mock_kwargs.get("cz_lim"),
-        cz_lim_width=mock_kwargs.get("cz_lim_width"),
         infer_selection=infer_selection,
         use_field=use_field,
         rmax=mock_kwargs.get("rmax", 40.0),
         fix_Vext=fix_Vext,
-        true_params=true_params)
+        true_params=true_params,
+        which_bias=which_bias)
     density_3d_data = _load_density_3d_data(
         config, field_name) if use_field else None
+    mock_gen_kwargs = {
+        **mock_kwargs,
+        "which_bias": config["model"].get("which_bias", "linear"),
+    }
     data, tp, n_parent = gen_TRGB_mock(
         seed=seed, true_params=true_params, verbose=True,
-        density_3d_data=density_3d_data, **mock_kwargs)
+        density_3d_data=density_3d_data, **mock_gen_kwargs)
     tp["mu_LMC"] = DEFAULT_ANCHORS["mu_LMC"]
     tp["mu_N4258"] = DEFAULT_ANCHORS["mu_N4258"]
     _ra, _dec = candel.galactic_to_radec(tp["Vext_ell"], tp["Vext_b"])
@@ -1003,16 +1017,14 @@ def main():
     # Selection options
     parser.add_argument("--which-selection", type=str,
                         default="TRGB_magnitude",
-                        choices=["TRGB_magnitude", "redshift"],
+                        choices=["TRGB_magnitude"],
                         help="Selection function type")
     parser.add_argument("--mag-lim", type=float, default=25.0,
                         help="TRGB magnitude selection limit")
+    parser.add_argument("--mag-min", type=float, default=22.1,
+                        help="Lower TRGB magnitude selection limit")
     parser.add_argument("--mag-lim-width", type=float, default=0.75,
                         help="Sigmoid width for magnitude selection")
-    parser.add_argument("--cz-lim", type=float, default=250.0,
-                        help="cz selection limit [km/s]")
-    parser.add_argument("--cz-lim-width", type=float, default=500.0,
-                        help="Sigmoid width for cz selection")
     parser.add_argument("--rmax", type=float, default=40.0,
                         help="Maximum mock distance [Mpc]")
     parser.add_argument("--fix-selection", action="store_false",
@@ -1030,12 +1042,43 @@ def main():
                         "(inhomogeneous Malmquist)")
     parser.add_argument("--field-name", type=str, default="Carrick2015",
                         help="Reconstruction field name")
+    parser.add_argument("--which-bias", choices=GALAXY_BIAS_MODELS,
+                        help="Galaxy-bias model for mock generation and "
+                        "inference. Defaults to the base config value.")
     parser.add_argument("--beta", type=float,
                         default=DEFAULT_TRUE_PARAMS["beta"],
                         help="True beta (velocity bias parameter)")
     parser.add_argument("--b1", type=float,
                         default=DEFAULT_TRUE_PARAMS["b1"],
                         help="True b1 (linear galaxy bias)")
+    parser.add_argument("--b2", type=float,
+                        default=DEFAULT_TRUE_PARAMS["b2"],
+                        help="True b2 (quadratic/cubic galaxy bias)")
+    parser.add_argument("--b3", type=float,
+                        default=DEFAULT_TRUE_PARAMS["b3"],
+                        help="True b3 (cubic galaxy bias)")
+    parser.add_argument("--alpha", type=float,
+                        default=DEFAULT_TRUE_PARAMS["alpha"],
+                        help="True alpha (power-law galaxy bias)")
+    parser.add_argument("--delta-b1", type=float,
+                        default=DEFAULT_TRUE_PARAMS["delta_b1"],
+                        help="True delta_b1 for stochastic beta-derived bias")
+    parser.add_argument("--alpha-low", type=float,
+                        default=DEFAULT_TRUE_PARAMS["alpha_low"],
+                        help="True low-density slope for double power-law "
+                        "galaxy bias")
+    parser.add_argument("--alpha-high-frac", type=float,
+                        default=DEFAULT_TRUE_PARAMS["alpha_high_frac"],
+                        help="True high-density slope as a fraction of "
+                        "alpha_low for double power-law galaxy bias")
+    parser.add_argument("--log-rho-t", type=float,
+                        default=DEFAULT_TRUE_PARAMS["log_rho_t"],
+                        help="True transition log-density for double "
+                        "power-law galaxy bias")
+    parser.add_argument("--log-rho-width", type=float,
+                        default=DEFAULT_TRUE_PARAMS["log_rho_width"],
+                        help="True transition width for double power-law "
+                        "galaxy bias")
 
     # True parameter overrides (defaults from DEFAULT_TRUE_PARAMS)
     tp = DEFAULT_TRUE_PARAMS
@@ -1043,8 +1086,16 @@ def main():
                         help="True H0")
     parser.add_argument("--M-TRGB", type=float, default=tp["M_TRGB"],
                         help="True M_TRGB")
+    parser.add_argument("--alpha-c", type=float, default=tp["alpha_c"],
+                        help="True TRGB colour slope alpha_c")
     parser.add_argument("--c-star", type=float, default=tp["c_star"],
                         help="True F606W-F814W colour pivot c_star")
+    parser.add_argument("--c-bar", type=float, default=tp["c_bar"],
+                        help="True mean dereddened F606W-F814W colour")
+    parser.add_argument("--w-c", type=float, default=tp["w_c"],
+                        help="True intrinsic F606W-F814W colour scatter")
+    parser.add_argument("--e-colour-dered", type=float, default=0.03,
+                        help="Observed dereddened colour uncertainty")
     parser.add_argument("--sigma-int", type=float, default=tp["sigma_int"],
                         help="True sigma_int")
     parser.add_argument("--sigma-v", type=float, default=tp["sigma_v"],
@@ -1062,33 +1113,32 @@ def main():
     true_params = {
         "H0": args.H0,
         "M_TRGB": args.M_TRGB,
+        "alpha_c": args.alpha_c,
         "c_star": args.c_star,
+        "c_bar": args.c_bar,
+        "w_c": args.w_c,
         "sigma_int": args.sigma_int,
         "sigma_v": args.sigma_v,
         "beta": args.beta,
         "b1": args.b1,
+        "b2": args.b2,
+        "b3": args.b3,
+        "alpha": args.alpha,
+        "delta_b1": args.delta_b1,
+        "alpha_low": args.alpha_low,
+        "alpha_high_frac": args.alpha_high_frac,
+        "log_rho_t": args.log_rho_t,
+        "log_rho_width": args.log_rho_width,
     }
 
-    # Only pass the selection parameters relevant to the chosen mode so the
-    # mock generator uses the correct branch (mag_lim vs cz_lim).
-    if args.which_selection == "redshift":
-        mock_kwargs = {
-            "nsamples": args.nsamples,
-            "rmax": args.rmax,
-            "mag_lim": None,
-            "mag_lim_width": None,
-            "cz_lim": args.cz_lim,
-            "cz_lim_width": args.cz_lim_width,
-        }
-    else:
-        mock_kwargs = {
-            "nsamples": args.nsamples,
-            "rmax": args.rmax,
-            "mag_lim": args.mag_lim,
-            "mag_lim_width": args.mag_lim_width,
-            "cz_lim": None,
-            "cz_lim_width": None,
-        }
+    mock_kwargs = {
+        "nsamples": args.nsamples,
+        "rmax": args.rmax,
+        "mag_min": args.mag_min,
+        "mag_lim": args.mag_lim,
+        "mag_lim_width": args.mag_lim_width,
+        "e_colour_dered": args.e_colour_dered,
+    }
 
     # Set up field loader if requested
     if args.use_field:
@@ -1108,7 +1158,8 @@ def main():
                    field_name=args.field_name,
                    outdir=args.outdir,
                    plot_only=args.plot_only,
-                   fix_Vext=args.fix_Vext)
+                   fix_Vext=args.fix_Vext,
+                   which_bias=args.which_bias)
         return
 
     # Batch mode
@@ -1126,6 +1177,7 @@ def main():
         "rhat_threshold": args.rhat_threshold,
         "which_selection": args.which_selection,
         "infer_selection": args.infer_selection,
+        "which_bias": args.which_bias,
         "use_field": args.use_field,
         "field_name": args.field_name,
         "mode_tag": _mode_tag(args.which_selection, args.use_field,

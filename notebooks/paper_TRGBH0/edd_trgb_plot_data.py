@@ -2,25 +2,28 @@
 import csv
 import math
 from pathlib import Path
-import shutil
+import sys
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+PLOT_DIR = (
+    SCRIPT_DIR if SCRIPT_DIR.name == "paper_TRGBH0"
+    else next(path for path in SCRIPT_DIR.parents
+              if path.name == "paper_TRGBH0")
+)
+for path in (SCRIPT_DIR, PLOT_DIR):
+    if str(path) not in sys.path:
+        sys.path.insert(0, str(path))
 
 import numpy as np
 
+from trgbh0_plot_style import OUTPUT_DIR as OUTDIR
+from trgbh0_plot_style import PAPER_RC, ROOT
+from trgbh0_plot_style import save_figure as save_figure_common
 
-ROOT = Path("/mnt/users/rstiskalek/CANDEL")
+
 DATA_FILE = ROOT / "data" / "EDD_TRGB" / "EDD_TRGB.txt"
-OUTDIR = ROOT / "notebooks" / "paper_TRGBH0" / "output"
 
 DROP_NAMES = {"LMC", "SMC", "NGC4258", "NGC4258-DF6"}
-PAPER_RC = {
-    "font.family": "serif",
-    "font.size": 9,
-    "axes.labelsize": 9,
-    "xtick.labelsize": 8,
-    "ytick.labelsize": 8,
-    "mathtext.fontset": "cm",
-    "pdf.fonttype": 42,
-}
 
 
 def _float_or_nan(value):
@@ -81,10 +84,5 @@ def load_edd_trgb_plot_data(include_sky=True):
 
 
 def save_figure(fig, outname, paper_figdir=None):
-    OUTDIR.mkdir(parents=True, exist_ok=True)
-    out = OUTDIR / outname
-    fig.savefig(out)
-    if paper_figdir is not None:
-        paper_figdir.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(out, paper_figdir / outname)
-    return out
+    return save_figure_common(fig, outname, output_dir=OUTDIR,
+                              paper_figdir=paper_figdir)

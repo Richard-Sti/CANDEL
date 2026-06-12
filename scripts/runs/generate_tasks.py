@@ -89,6 +89,7 @@ RUN_DIR = Path(__file__).resolve().parent
 CANDEL_ROOT = RUN_DIR.parent.parent
 TASK_INDEX_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 VERBOSE = True
+DEFAULT_TRGBH0_EDD_MAG_MIN = 22.1
 
 fprint = None
 get_nested = None
@@ -423,6 +424,10 @@ def generate_dynamic_tag(config, base_tag="default"):
         which_sel = get_nested(config, "model/which_selection", None)
         if _is_active(which_sel):
             parts.append(f"sel-{which_sel}")
+        mag_min = get_nested(config, "model/mag_min_TRGB", None)
+        if (_is_active(mag_min)
+                and float(mag_min) != DEFAULT_TRGBH0_EDD_MAG_MIN):
+            parts.append(f"magmin{_tag_number(mag_min)}")
         if not get_nested(config, "model/use_TRGB_host_redshift", True):
             parts.append("no_TRGB_redshift")
         use_reconstruction = get_nested(

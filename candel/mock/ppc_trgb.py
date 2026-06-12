@@ -14,17 +14,23 @@
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 """Posterior predictive check for the EDD TRGB H0 model."""
 import numpy as np
+from astropy.cosmology import FlatLambdaCDM
 from scipy.stats import ks_2samp, norm
+from tqdm.auto import tqdm
 
-from ..cosmo.cosmography import Distance2Distmod, Distance2Redshift
 from ..field import name2field_loader
 from ..pvdata.field_cache import (_field_cache_dir_from_config,
                                   _field_cache_enabled_from_config)
+from ..pvdata.field_products import (
+    field_smoothing_scale_from_config,
+    velocity_field_smoothing_scale_from_config)
 from ..pvdata.volume_density import (_density_unit_normalization,
                                      _load_volume_data_for_H0)
 from ..util import (SPEED_OF_LIGHT, fprint, galactic_to_radec, get_nested,
                     load_config, radec_to_cartesian)
-from ._field_utils import build_field_pool, compute_r_max_selection, smoothclip
+from ._field_utils import (build_field_pool, compute_r_max_selection,
+                           galaxy_bias_params_from_values,
+                           galaxy_bias_weight)
 
 
 def _flat(x):
@@ -41,6 +47,21 @@ def _sample_or_default(samples, key, n, default):
     if key in samples:
         return _flat(samples[key])
     return np.full(n, default)
+
+
+def _sample_empirical(gen, values, size):
+    """Draw from an empirical 1D array using integer indexing."""
+    values = np.asarray(values)
+    return values[gen.integers(0, len(values), size)]
+
+
+def _prior_reference_value(config, name, default):
+    spec = get_nested(config, f"model/priors/{name}", None)
+    if isinstance(spec, dict):
+        for key in ("value", "loc", "mean"):
+            if key in spec:
+                return spec[key]
+    return default
 
 
 def _vext_samples(samples, n_post):
@@ -61,6 +82,26 @@ def _draw_cz(gen, mean, sigma, nu=None):
     if nu is None:
         return gen.normal(mean, sigma)
     return mean + sigma * gen.standard_t(nu, size=np.shape(mean))
+
+
+class _FastDistanceConversions:
+    """NumPy distance-modulus/redshift interpolation for PPC draws."""
+
+    def __init__(self, Om0=0.3, zmin=1e-8, zmax=0.5, npoints=1000):
+        cosmo = FlatLambdaCDM(H0=100, Om0=Om0)
+        self.z_grid = np.logspace(np.log10(zmin), np.log10(zmax), npoints)
+        self.r_grid = cosmo.comoving_distance(self.z_grid).value
+        self.log_r_grid = np.log(self.r_grid)
+        self.mu_grid = cosmo.distmod(self.z_grid).value
+
+    def distmod(self, r, h=1):
+        return (
+            np.interp(np.log(np.asarray(r) * h),
+                      self.log_r_grid, self.mu_grid)
+            - 5 * np.log10(h))
+
+    def redshift(self, r, h=1):
+        return np.interp(np.asarray(r) * h, self.r_grid, self.z_grid)
 
 
 def _sigma_v_from_density(rho, sigma_v_low, sigma_v_high, log_rho_t, k):
@@ -108,15 +149,31 @@ def _bias_samples(samples, config, beta, n_post):
     which_bias = get_nested(config, "model/which_bias", "linear")
     Om = get_nested(config, "model/Om", get_nested(config, "model/Om0", 0.3))
     out = {"which_bias": which_bias}
-    if which_bias == "unity":
+    if which_bias in ("uniform", "unity"):
         return out
     if which_bias == "linear_from_beta":
         out["b1"] = Om**0.55 / beta
-    elif "linear" in which_bias:
+    elif which_bias == "linear_from_beta_stochastic":
+        if "b1" in samples:
+            out["b1"] = _flat(samples["b1"])
+        else:
+            key = (
+                "delta_b1_skipZ" if "delta_b1_skipZ" in samples
+                else "delta_b1")
+            out["b1"] = Om**0.55 / beta + _sample_or_default(
+                samples, key, n_post, 0.0)
+    elif which_bias == "linear":
         out["b1"] = _sample_or_default(samples, "b1", n_post, 1.0)
+    elif which_bias == "powerlaw":
+        out["alpha"] = _sample_or_default(samples, "alpha", n_post, 1.0)
     elif which_bias == "double_powerlaw":
         out["alpha_low"] = _flat(samples["alpha_low"])
-        out["alpha_high"] = _flat(samples["alpha_high"])
+        if "alpha_high" in samples:
+            out["alpha_high"] = _flat(samples["alpha_high"])
+        elif "alpha_high_skipZ" in samples:
+            out["alpha_high"] = _flat(samples["alpha_high_skipZ"])
+        else:
+            out["alpha_high_frac"] = _flat(samples["alpha_high_frac"])
         out["log_rho_t"] = _flat(samples["log_rho_t"])
         out["log_rho_width"] = _sample_or_default(
             samples, "log_rho_width", n_post, 1.0)
@@ -134,34 +191,10 @@ def _bias_samples(samples, config, beta, n_post):
 
 def _bias_values(rho, bias, idx_post):
     which_bias = bias["which_bias"]
-    if which_bias == "unity":
-        return np.ones_like(rho)
-    delta = rho - 1.0
-    if "linear" in which_bias:
-        b1 = bias["b1"][idx_post]
-        return smoothclip(1.0 + b1 * delta)
-    if which_bias == "double_powerlaw":
-        alpha_low = bias["alpha_low"][idx_post]
-        alpha_high = bias["alpha_high"][idx_post]
-        log_rho_t = bias["log_rho_t"][idx_post]
-        log_rho_width = bias["log_rho_width"][idx_post]
-        log_x = np.log(np.clip(rho, 1e-6, None)) - log_rho_t
-        z = log_x / log_rho_width
-        log_weight = (
-            alpha_low * log_x
-            + ((alpha_high - alpha_low) * log_rho_width
-               * np.logaddexp(0.0, z)))
-        return np.exp(np.clip(log_weight, -50.0, 50.0))
-    if which_bias == "quadratic":
-        b1 = bias["b1"][idx_post]
-        b2 = bias["b2"][idx_post]
-        return smoothclip(1.0 + b1 * delta + b2 * delta**2)
-    if which_bias == "cubic":
-        b1 = bias["b1"][idx_post]
-        b2 = bias["b2"][idx_post]
-        b3 = bias["b3"][idx_post]
-        return smoothclip(1.0 + b1 * delta + b2 * delta**2 + b3 * delta**3)
-    raise ValueError(f"Unsupported PPC galaxy-bias model: {which_bias}")
+    if which_bias in ("uniform", "unity"):
+        return np.ones_like(rho, dtype=float)
+    params = galaxy_bias_params_from_values(bias, which_bias, idx=idx_post)
+    return galaxy_bias_weight(rho, params, which_bias)
 
 
 def _bias_upper_bound(rho_support, bias, idx_post):
@@ -171,8 +204,11 @@ def _bias_upper_bound(rho_support, bias, idx_post):
     rho_min = float(np.min(rho_support))
     rho_max = float(np.max(rho_support))
 
-    if which_bias == "unity":
+    if which_bias == "uniform":
         return np.ones_like(idx_post, dtype=float)
+    if which_bias == "unity":
+        bound = np.max(_bias_values(rho_support, bias, 0))
+        return np.full_like(idx_post, bound, dtype=float)
     if "linear" in which_bias:
         b1 = bias["b1"][idx_post]
         rho_extreme = np.where(b1 >= 0.0, rho_max, rho_min)
@@ -219,7 +255,10 @@ def _cached_volume_pool(config, field_name, field_index):
         cache_dir=(
             _field_cache_dir_from_config(config)
             if _field_cache_enabled_from_config(config) else None),
-        cache_enabled=_field_cache_enabled_from_config(config))
+        cache_enabled=_field_cache_enabled_from_config(config),
+        field_smoothing_scale=field_smoothing_scale_from_config(config),
+        velocity_field_smoothing_scale=(
+            velocity_field_smoothing_scale_from_config(config)))
 
     density = np.asarray(loaded["density_3d_fields"])[0]
     if loaded.get("density_3d_mode") == "log_rho":
@@ -247,13 +286,34 @@ def _cached_volume_pool(config, field_name, field_index):
         "rho_support": _rho_support(rho),
     }
 
+
+def _uniform_density_pool(gen, r_sphere, pool_size):
+    """Build a unit-density, zero-velocity pool in Mpc/h coordinates."""
+    r_h = r_sphere * gen.random(pool_size)**(1.0 / 3.0)
+    phi = gen.uniform(0.0, 2.0 * np.pi, pool_size)
+    cos_dec = gen.uniform(-1.0, 1.0, pool_size)
+    sin_dec = np.sqrt(1.0 - cos_dec**2)
+    rhat = np.column_stack([
+        sin_dec * np.cos(phi),
+        sin_dec * np.sin(phi),
+        cos_dec,
+    ])
+    return {
+        "r_h": r_h,
+        "rho": np.ones(pool_size, dtype=np.float64),
+        "v_los": np.zeros(pool_size, dtype=np.float64),
+        "rhat_icrs": rhat,
+        "base_weight": None,
+        "rho_support": np.array([1.0], dtype=np.float64),
+    }
+
 ###############################################################################
 #                         PPC generation                                      #
 ###############################################################################
 
 
 def generate_trgb_ppc(samples, data, config, n_ppc=None, seed=42,
-                      field_index=None):
+                      field_index=None, progress=True):
     """Generate posterior predictive samples for the EDD TRGB model.
 
     When a reconstruction field is available, galaxies are sampled from
@@ -273,6 +333,8 @@ def generate_trgb_ppc(samples, data, config, n_ppc=None, seed=42,
         Number of PPC galaxies to generate.
     seed : int
         Random seed.
+    progress : bool
+        Whether to show a tqdm progress bar for accepted PPC galaxies.
 
     Returns
     -------
@@ -286,10 +348,17 @@ def generate_trgb_ppc(samples, data, config, n_ppc=None, seed=42,
     M_TRGB = _flat(samples["M_TRGB"])
     sigma_int = _flat(samples["sigma_int"])
     n_post = len(H0)
-    c_star = _sample_or_default(samples, "c_star", n_post, 1.23)
+    c_star = _sample_or_default(
+        samples, "c_star", n_post,
+        _prior_reference_value(config, "c_star", 1.23))
+    alpha_c = _sample_or_default(
+        samples, "alpha_c", n_post,
+        _prior_reference_value(config, "alpha_c", 0.2))
     Vext = _vext_samples(samples, n_post)
     beta = _sample_or_default(samples, "beta", n_post, 0.0)
-    bias = _bias_samples(samples, config, beta, n_post)
+    use_reconstruction = get_nested(config, "model/use_reconstruction", False)
+    bias = (_bias_samples(samples, config, beta, n_post)
+            if use_reconstruction else {"which_bias": "uniform"})
 
     use_density_sigma_v = get_nested(
         config, "model/use_density_dependent_sigma_v", False)
@@ -313,15 +382,9 @@ def generate_trgb_ppc(samples, data, config, n_ppc=None, seed=42,
         if "mag_lim_TRGB" in samples else None
     mag_width_samples = _flat(samples["mag_lim_TRGB_width"]) \
         if "mag_lim_TRGB_width" in samples else None
-    cz_lim_samples = _flat(samples["cz_lim_selection"]) \
-        if "cz_lim_selection" in samples else None
-    cz_width_samples = _flat(samples["cz_lim_selection_width"]) \
-        if "cz_lim_selection_width" in samples else None
-
+    mag_min_fixed = get_nested(config, "model/mag_min_TRGB", None)
     mag_lim_fixed = get_nested(config, "model/mag_lim_TRGB", None)
     mag_width_fixed = get_nested(config, "model/mag_lim_TRGB_width", None)
-    cz_lim_fixed = get_nested(config, "model/cz_lim_selection", None)
-    cz_width_fixed = get_nested(config, "model/cz_lim_selection_width", None)
 
     # ---- Data ----
     mag_obs = np.asarray(data["mag_obs"])
@@ -329,9 +392,26 @@ def generate_trgb_ppc(samples, data, config, n_ppc=None, seed=42,
     e_mag_obs_all = np.asarray(data["e_mag_obs"])
     e_czcmb_all = np.asarray(data["e_czcmb"])
     colour_dered_all = np.asarray(data["colour_dered"])
+    e_colour_dered_all = np.asarray(
+        data.get("e_colour_dered", np.zeros_like(colour_dered_all)))
     colour_dered_mean = np.mean(colour_dered_all)
     colour_dered_std = np.std(colour_dered_all)
     n_hosts = len(mag_obs)
+    has_trgb_colour = "colour_dered" in data and "e_colour_dered" in data
+    c_bar = _sample_or_default(
+        samples, "c_bar", n_post,
+        _prior_reference_value(config, "c_bar", colour_dered_mean))
+    w_c = _sample_or_default(
+        samples, "w_c", n_post,
+        _prior_reference_value(config, "w_c",
+                               max(float(colour_dered_std), 1e-3)))
+    colour_model = {
+        "has_colour": has_trgb_colour,
+        "alpha_c": alpha_c,
+        "c_bar": c_bar,
+        "w_c": w_c,
+        "e_colour": e_colour_dered_all,
+    }
 
     if n_ppc is None:
         ppc_factor = get_nested(config, "model/ppc_factor", 10)
@@ -339,8 +419,9 @@ def generate_trgb_ppc(samples, data, config, n_ppc=None, seed=42,
 
     # ---- Cosmography ----
     Om = get_nested(config, "model/Om", 0.3)
-    r2mu = Distance2Distmod(Om0=Om)
-    r2z = Distance2Redshift(Om0=Om)
+    dist = _FastDistanceConversions(Om0=Om)
+    r2mu = dist.distmod
+    r2z = dist.redshift
 
     # ---- Distance limits ----
     r_limits = get_nested(config, "model/r_limits_malmquist", [0.01, 150])
@@ -351,41 +432,43 @@ def generate_trgb_ppc(samples, data, config, n_ppc=None, seed=42,
         mag_lim=mag_lim_samples if mag_lim_samples is not None else mag_lim_fixed,  # noqa
         M_abs=M_TRGB, sigma_int=sigma_int, e_mag=e_mag_obs_all,
         mag_lim_width=mag_width_samples if mag_width_samples is not None else mag_width_fixed,  # noqa
-        cz_lim=cz_lim_samples if cz_lim_samples is not None else cz_lim_fixed,
+        cz_lim=None,
         h=H0 / 100, r_max=r_max,
-        colour_mean=colour_dered_mean, c_star=c_star,
-        colour_std=colour_dered_std)
+        colour_mean=c_bar if has_trgb_colour else None,
+        c_star=c_star if has_trgb_colour else None,
+        colour_std=w_c if has_trgb_colour else None,
+        alpha_c=alpha_c if has_trgb_colour else 0.0)
     fprint(f"PPC: effective r_max = {r_max_eff:.1f} Mpc "
            f"(config r_max = {r_max:.1f} Mpc)")
 
-    # ---- Check for reconstruction field ----
-    use_reconstruction = get_nested(config, "model/use_reconstruction", False)
+    pool = None
+    pool_label = None
+    if not use_reconstruction:
+        r_sphere = r_max_eff * float(np.max(H0) / 100)
+        pool_size = max(n_ppc * 100, 500_000)
+        pool = _uniform_density_pool(gen, r_sphere, pool_size)
+        pool_label = "homogeneous"
 
-    if use_reconstruction:
-        mag_sim, cz_sim = _ppc_field_path(
-            gen, config, H0, M_TRGB, c_star, sigma_int, sigma_v, Vext,
-            beta, bias, nu_cz, use_density_sigma_v, data, field_index,
-            which_sel, mag_lim_samples, mag_lim_fixed,
-            mag_width_samples, mag_width_fixed,
-            cz_lim_samples, cz_lim_fixed, cz_width_samples, cz_width_fixed,
-            e_mag_obs_all, e_czcmb_all, colour_dered_all,
-            r_min, r_max_eff, r2mu, r2z, n_ppc, n_hosts)
-    else:
-        mag_sim, cz_sim = _ppc_homogeneous_path(
-            gen, H0, M_TRGB, c_star, sigma_int, sigma_v, Vext, beta,
-            nu_cz,
-            which_sel, mag_lim_samples, mag_lim_fixed,
-            mag_width_samples, mag_width_fixed,
-            cz_lim_samples, cz_lim_fixed, cz_width_samples, cz_width_fixed,
-            e_mag_obs_all, e_czcmb_all, colour_dered_all,
-            r_min, r_max_eff, r2mu, r2z, n_ppc, n_hosts)
+    mag_sim, cz_sim, colour_sim = _ppc_field_path(
+        gen, config, H0, M_TRGB, c_star, sigma_int, sigma_v, Vext,
+        beta, bias, nu_cz, use_density_sigma_v, data, field_index,
+        colour_model,
+        which_sel, mag_min_fixed, mag_lim_samples, mag_lim_fixed,
+        mag_width_samples, mag_width_fixed,
+        e_mag_obs_all, e_czcmb_all,
+        r_min, r_max_eff, r2mu, r2z, n_ppc, n_hosts, progress,
+        pool=pool, pool_label=pool_label)
 
-    return {
+    out = {
         "mag_sim": mag_sim,
         "cz_sim": cz_sim,
         "mag_obs": mag_obs,
         "cz_obs": cz_obs,
     }
+    if colour_sim is not None:
+        out["colour_sim"] = colour_sim
+        out["colour_obs"] = colour_dered_all
+    return out
 
 
 ###############################################################################
@@ -395,242 +478,190 @@ def generate_trgb_ppc(samples, data, config, n_ppc=None, seed=42,
 
 def _ppc_field_path(gen, config, H0, M_TRGB, c_star, sigma_int, sigma_v, Vext,
                     beta, bias, nu_cz, use_density_sigma_v, data,
-                    field_index,
-                    which_sel, mag_lim_samples, mag_lim_fixed,
+                    field_index, colour_model,
+                    which_sel, mag_min_fixed, mag_lim_samples, mag_lim_fixed,
                     mag_width_samples, mag_width_fixed,
-                    cz_lim_samples, cz_lim_fixed,
-                    cz_width_samples, cz_width_fixed,
-                    e_mag_obs_all, e_czcmb_all, colour_dered_all,
-                    r_min, r_max, r2mu, r2z, n_ppc, n_hosts):
-    """PPC using 3D field sampling (matches mock generator)."""
+                    e_mag_obs_all, e_czcmb_all,
+                    r_min, r_max, r2mu, r2z, n_ppc, n_hosts, progress,
+                    pool=None, pool_label=None):
+    """PPC using a 3D pool; use rho=1 and v_los=0 for homogeneous PPC."""
     n_post = len(H0)
-    field_name, field_config = _field_name_config(config)
-    field_index = _selected_field_index(data, gen, field_index=field_index)
-    try:
-        pool = _cached_volume_pool(config, field_name, field_index)
-        pool_source = "cached cut-out"
-    except Exception as exc:
-        fprint("PPC: cached cut-out unavailable; falling back to full field "
-               f"pool ({exc}).")
-        field_config = dict(field_config)
-        field_config.setdefault("nsim", field_index)
-        field_loader = name2field_loader(field_name)(**field_config)
-        r_sphere = r_max * (float(np.max(H0)) / 100)
-        pool_size = max(n_ppc * 100, 500_000)
-        pool = build_field_pool(
-            field_loader, r_sphere, pool_size, gen,
-            density_divisor=_density_divisor(field_name))
-        pool["base_weight"] = None
-        pool["rho_support"] = _rho_support(pool["rho"])
-        pool_source = "full field pool"
+    if pool is None:
+        field_name, field_config = _field_name_config(config)
+        field_index = _selected_field_index(data, gen, field_index=field_index)
+        try:
+            pool = _cached_volume_pool(config, field_name, field_index)
+            pool_label = f"field={field_name}[{field_index}], cached cut-out"
+        except Exception as exc:
+            fprint("PPC: cached cut-out unavailable; falling back to full "
+                   f"field pool ({exc}).")
+            field_config = dict(field_config)
+            field_config.setdefault("nsim", field_index)
+            field_loader = name2field_loader(field_name)(**field_config)
+            r_sphere = r_max * (float(np.max(H0)) / 100)
+            pool_size = max(n_ppc * 100, 500_000)
+            pool = build_field_pool(
+                field_loader, r_sphere, pool_size, gen,
+                density_divisor=_density_divisor(field_name))
+            pool["base_weight"] = None
+            pool["rho_support"] = _rho_support(pool["rho"])
+            pool_label = f"field={field_name}[{field_index}], full field pool"
 
     r_h_pool = pool["r_h"]
     rho_pool = pool["rho"]
     v_los_pool = pool["v_los"]
     rhat_icrs_pool = pool["rhat_icrs"]
     n_pool = len(r_h_pool)
+    h_post = H0 / 100
+    bias_upper = _bias_upper_bound(
+        pool["rho_support"], bias, np.arange(n_post))
+    base_cdf = None
+    if pool["base_weight"] is not None:
+        base_cdf = np.cumsum(pool["base_weight"])
+        base_cdf[-1] = 1.0
 
     # Vectorized rejection-sampling loop
     collected_mag = []
     collected_cz = []
+    collected_colour = []
     n_accepted = 0
     batch_size = max(int(20.0 * n_ppc), 10_000)
 
     fprint(f"PPC: generating {n_ppc} galaxies "
            f"(n_post={n_post}, n_hosts={n_hosts}, "
-           f"field={field_name}[{field_index}], pool={n_pool}, "
-           f"{pool_source})")
+           f"pool={n_pool}, {pool_label})")
 
-    while n_accepted < n_ppc:
-        n_need = n_ppc - n_accepted
-        batch = min(batch_size, max(n_need * 3, 1000))
+    with tqdm(total=n_ppc, desc="TRGB PPC", unit="gal",
+              disable=not progress) as pbar:
+        while n_accepted < n_ppc:
+            n_need = n_ppc - n_accepted
+            batch = min(batch_size, max(n_need * 3, 1000))
 
-        # Draw posterior sample and pool indices
-        idx_post = gen.integers(0, n_post, batch)
-        if pool["base_weight"] is None:
-            idx_pool = gen.integers(0, n_pool, batch)
-        else:
-            idx_pool = gen.choice(n_pool, batch, p=pool["base_weight"])
+            # Draw posterior sample and pool indices
+            idx_post = gen.integers(0, n_post, batch)
+            if pool["base_weight"] is None:
+                idx_pool = gen.integers(0, n_pool, batch)
+            else:
+                idx_pool = np.searchsorted(
+                    base_cdf, gen.random(batch), side="right")
 
-        # Pool values
-        r_h = r_h_pool[idx_pool]
-        rho = rho_pool[idx_pool]
-        v_los = v_los_pool[idx_pool]
-        rhat = rhat_icrs_pool[idx_pool]
+            # Pool values
+            r_h = r_h_pool[idx_pool]
+            rho = rho_pool[idx_pool]
+            v_los = v_los_pool[idx_pool]
+            rhat = rhat_icrs_pool[idx_pool]
 
-        # Posterior values
-        h = H0[idx_post] / 100
-        M = M_TRGB[idx_post]
-        cs = c_star[idx_post]
-        sint = sigma_int[idx_post]
-        if use_density_sigma_v:
-            sv_low = sigma_v[0][idx_post]
-            sv_high = sigma_v[1][idx_post]
-            sv_log_rho_t = sigma_v[2][idx_post]
-            sv_k = sigma_v[3][idx_post]
-        else:
-            sv = sigma_v[idx_post]
-        Vext_cand = Vext[idx_post]
-        bt = beta[idx_post]
+            # Posterior values
+            h = h_post[idx_post]
+            M = M_TRGB[idx_post]
+            cs = c_star[idx_post]
+            if colour_model["has_colour"]:
+                ac = colour_model["alpha_c"][idx_post]
+                c0 = colour_model["c_bar"][idx_post]
+                wc = colour_model["w_c"][idx_post]
+            sint = sigma_int[idx_post]
+            if use_density_sigma_v:
+                sv_low = sigma_v[0][idx_post]
+                sv_high = sigma_v[1][idx_post]
+                sv_log_rho_t = sigma_v[2][idx_post]
+                sv_k = sigma_v[3][idx_post]
+            else:
+                sv = sigma_v[idx_post]
+            Vext_cand = Vext[idx_post]
+            bt = beta[idx_post]
 
-        # Distance cut: r_Mpc = r_h / h
-        r_Mpc = r_h / h
-        in_range = (r_Mpc >= r_min) & (r_Mpc <= r_max)
+            # Distance cut: r_Mpc = r_h / h
+            r_Mpc = r_h / h
+            in_range = (r_Mpc >= r_min) & (r_Mpc <= r_max)
 
-        # Density rejection
-        weight = _bias_values(rho, bias, idx_post)
-        weight_max = _bias_upper_bound(pool["rho_support"], bias, idx_post)
-        accept_bias = gen.random(batch) < np.minimum(weight / weight_max, 1.0)
+            # Density rejection
+            weight = _bias_values(rho, bias, idx_post)
+            weight_max = bias_upper[idx_post]
+            accept_bias = gen.random(batch) < np.minimum(
+                weight / weight_max, 1.0)
 
-        accept = in_range & accept_bias
-        if not np.any(accept):
-            continue
+            accept = in_range & accept_bias
+            if not np.any(accept):
+                continue
 
-        # Apply mask
-        idx_post_acc = idx_post[accept]
-        r_Mpc = r_Mpc[accept]
-        h_acc = h[accept]
-        M_acc = M[accept]
-        cs_acc = cs[accept]
-        sint_acc = sint[accept]
-        if use_density_sigma_v:
-            sv_acc = _sigma_v_from_density(
-                rho[accept], sv_low[accept], sv_high[accept],
-                sv_log_rho_t[accept], sv_k[accept])
-        else:
-            sv_acc = sv[accept]
-        Vext_acc = Vext_cand[accept]
-        bt_acc = bt[accept]
-        v_los_acc = v_los[accept]
-        rhat_acc = rhat[accept]
-        nu_acc = None if nu_cz is None else nu_cz[idx_post_acc]
-        n_batch = len(r_Mpc)
+            # Apply mask
+            idx_post_acc = idx_post[accept]
+            r_Mpc = r_Mpc[accept]
+            h_acc = h[accept]
+            M_acc = M[accept]
+            cs_acc = cs[accept]
+            if colour_model["has_colour"]:
+                ac_acc = ac[accept]
+                c0_acc = c0[accept]
+                wc_acc = wc[accept]
+            sint_acc = sint[accept]
+            if use_density_sigma_v:
+                sv_acc = _sigma_v_from_density(
+                    rho[accept], sv_low[accept], sv_high[accept],
+                    sv_log_rho_t[accept], sv_k[accept])
+            else:
+                sv_acc = sv[accept]
+            Vext_acc = Vext_cand[accept]
+            bt_acc = bt[accept]
+            v_los_acc = v_los[accept]
+            rhat_acc = rhat[accept]
+            nu_acc = None if nu_cz is None else nu_cz[idx_post_acc]
+            n_batch = len(r_Mpc)
 
-        # Distance modulus
-        mu = np.asarray(r2mu(r_Mpc, h=h_acc))
+            # Distance modulus
+            mu = np.asarray(r2mu(r_Mpc, h=h_acc))
 
-        # Measurement errors and colour resampled from observed distribution
-        e_mag = gen.choice(e_mag_obs_all, n_batch)
-        e_cz = gen.choice(e_czcmb_all, n_batch)
-        colour = gen.choice(colour_dered_all, n_batch)
+            # Measurement errors and colour population draw.
+            e_mag = _sample_empirical(gen, e_mag_obs_all, n_batch)
+            e_cz = _sample_empirical(gen, e_czcmb_all, n_batch)
+            if colour_model["has_colour"]:
+                e_colour = _sample_empirical(
+                    gen, colour_model["e_colour"], n_batch)
+                colour_true = gen.normal(
+                    c0_acc, np.clip(wc_acc, 1e-6, None))
+                colour_obs = gen.normal(colour_true, e_colour)
+                colour_term = ac_acc * (colour_true - cs_acc)
+            else:
+                colour_obs = None
+                colour_term = 0.0
 
-        # Apparent magnitude with colour standardisation
-        sigma_mag = np.sqrt(e_mag**2 + sint_acc**2)
-        mag_sim = gen.normal(
-            M_acc + 0.2 * (colour - cs_acc) + mu, sigma_mag)
+            # Apparent magnitude with colour standardisation
+            sigma_mag = np.sqrt(e_mag**2 + sint_acc**2)
+            mag_sim = gen.normal(
+                M_acc + colour_term + mu, sigma_mag)
 
-        # Redshift with peculiar velocity from field
-        z_cosmo = np.asarray(r2z(r_Mpc, h=h_acc))
-        Vext_rad = np.sum(Vext_acc * rhat_acc, axis=1)
-        Vpec = bt_acc * v_los_acc + Vext_rad
+            # Redshift with peculiar velocity from field
+            z_cosmo = np.asarray(r2z(r_Mpc, h=h_acc))
+            Vext_rad = np.sum(Vext_acc * rhat_acc, axis=1)
+            Vpec = bt_acc * v_los_acc + Vext_rad
 
-        cz_pred = SPEED_OF_LIGHT * (
-            (1 + z_cosmo) * (1 + Vpec / SPEED_OF_LIGHT) - 1)
-        sigma_cz = np.sqrt(e_cz**2 + sv_acc**2)
-        cz_sim = _draw_cz(gen, cz_pred, sigma_cz, nu=nu_acc)
+            cz_pred = SPEED_OF_LIGHT * (
+                (1 + z_cosmo) * (1 + Vpec / SPEED_OF_LIGHT) - 1)
+            sigma_cz = np.sqrt(e_cz**2 + sv_acc**2)
+            cz_sim = _draw_cz(gen, cz_pred, sigma_cz, nu=nu_acc)
 
-        # Selection
-        accept_sel = _apply_selection_ppc(
-            mag_sim, cz_sim, which_sel, idx_post_acc,
-            mag_lim_samples, mag_lim_fixed,
-            mag_width_samples, mag_width_fixed,
-            cz_lim_samples, cz_lim_fixed,
-            cz_width_samples, cz_width_fixed, gen)
+            # Selection
+            accept_sel = _apply_selection_ppc(
+                mag_sim, which_sel, idx_post_acc,
+                mag_min_fixed, mag_lim_samples, mag_lim_fixed,
+                mag_width_samples, mag_width_fixed, gen)
 
-        collected_mag.append(mag_sim[accept_sel])
-        collected_cz.append(cz_sim[accept_sel])
-        n_accepted += int(np.sum(accept_sel))
-
-    mag_sim = np.concatenate(collected_mag)[:n_ppc]
-    cz_sim = np.concatenate(collected_cz)[:n_ppc]
-    fprint(f"PPC: generated {n_ppc} simulated galaxies (field path).")
-    return mag_sim, cz_sim
-
-
-###############################################################################
-#                    Homogeneous PPC path (no field)                          #
-###############################################################################
-
-
-def _ppc_homogeneous_path(gen, H0, M_TRGB, c_star, sigma_int, sigma_v,
-                          Vext, beta, nu_cz,
-                          which_sel, mag_lim_samples, mag_lim_fixed,
-                          mag_width_samples, mag_width_fixed,
-                          cz_lim_samples, cz_lim_fixed,
-                          cz_width_samples, cz_width_fixed,
-                          e_mag_obs_all, e_czcmb_all, colour_dered_all,
-                          r_min, r_max, r2mu, r2z, n_ppc, n_hosts):
-    """PPC with homogeneous distance sampling (no reconstruction)."""
-    n_post = len(H0)
-
-    collected_mag = []
-    collected_cz = []
-    n_accepted = 0
-    batch_size = max(int(2.0 * n_ppc), 1000)
-
-    fprint(f"PPC: generating {n_ppc} galaxies "
-           f"(n_post={n_post}, n_hosts={n_hosts}, homogeneous)")
-
-    while n_accepted < n_ppc:
-        n_need = n_ppc - n_accepted
-        batch = min(batch_size, max(n_need * 3, 1000))
-
-        # Draw posterior samples
-        idx_post = gen.integers(0, n_post, batch)
-
-        # Draw distance from r^2 volume prior
-        u = gen.random(batch)
-        r = (r_min**3 + u * (r_max**3 - r_min**3))**(1.0 / 3)
-
-        h = H0[idx_post] / 100
-        M = M_TRGB[idx_post]
-        cs = c_star[idx_post]
-        sint = sigma_int[idx_post]
-        sv = sigma_v[idx_post]
-        Vext_cand = Vext[idx_post]
-        nu = None if nu_cz is None else nu_cz[idx_post]
-
-        # Random sky direction
-        RA_rand = gen.uniform(0, 360, batch)
-        dec_rand = np.rad2deg(np.arcsin(gen.uniform(-1, 1, batch)))
-        rhat = radec_to_cartesian(RA_rand, dec_rand)
-
-        # Distance modulus
-        mu = np.asarray(r2mu(r, h=h))
-
-        # Measurement errors and colour resampled from observed distribution
-        e_mag = gen.choice(e_mag_obs_all, batch)
-        e_cz = gen.choice(e_czcmb_all, batch)
-        colour = gen.choice(colour_dered_all, batch)
-
-        # Apparent magnitude with colour standardisation
-        sigma_mag = np.sqrt(e_mag**2 + sint**2)
-        mag_sim = gen.normal(M + 0.2 * (colour - cs) + mu, sigma_mag)
-
-        # Redshift (no field velocity, only Vext)
-        z_cosmo = np.asarray(r2z(r, h=h))
-        Vext_rad = np.sum(Vext_cand * rhat, axis=1)
-        cz_pred = SPEED_OF_LIGHT * (
-            (1 + z_cosmo) * (1 + Vext_rad / SPEED_OF_LIGHT) - 1)
-        sigma_cz = np.sqrt(e_cz**2 + sv**2)
-        cz_sim = _draw_cz(gen, cz_pred, sigma_cz, nu=nu)
-
-        # Selection
-        accept_sel = _apply_selection_ppc(
-            mag_sim, cz_sim, which_sel, idx_post,
-            mag_lim_samples, mag_lim_fixed,
-            mag_width_samples, mag_width_fixed,
-            cz_lim_samples, cz_lim_fixed,
-            cz_width_samples, cz_width_fixed, gen)
-
-        collected_mag.append(mag_sim[accept_sel])
-        collected_cz.append(cz_sim[accept_sel])
-        n_accepted += int(np.sum(accept_sel))
+            n_new = int(np.sum(accept_sel))
+            collected_mag.append(mag_sim[accept_sel])
+            collected_cz.append(cz_sim[accept_sel])
+            if colour_obs is not None:
+                collected_colour.append(colour_obs[accept_sel])
+            n_accepted += n_new
+            pbar.update(min(n_new, n_ppc - pbar.n))
 
     mag_sim = np.concatenate(collected_mag)[:n_ppc]
     cz_sim = np.concatenate(collected_cz)[:n_ppc]
-    fprint(f"PPC: generated {n_ppc} simulated galaxies (homogeneous).")
-    return mag_sim, cz_sim
+    if collected_colour:
+        colour_sim = np.concatenate(collected_colour)[:n_ppc]
+    else:
+        colour_sim = None
+    fprint(f"PPC: generated {n_ppc} simulated galaxies ({pool_label}).")
+    return mag_sim, cz_sim, colour_sim
 
 
 ###############################################################################
@@ -638,11 +669,9 @@ def _ppc_homogeneous_path(gen, H0, M_TRGB, c_star, sigma_int, sigma_v,
 ###############################################################################
 
 
-def _apply_selection_ppc(mag_sim, cz_sim, which_sel, idx_post,
-                         mag_lim_samples, mag_lim_fixed,
-                         mag_width_samples, mag_width_fixed,
-                         cz_lim_samples, cz_lim_fixed,
-                         cz_width_samples, cz_width_fixed, gen):
+def _apply_selection_ppc(mag_sim, which_sel, idx_post,
+                         mag_min_fixed, mag_lim_samples, mag_lim_fixed,
+                         mag_width_samples, mag_width_fixed, gen):
     """Apply selection function, returning boolean mask."""
     n = len(mag_sim)
     if which_sel == "TRGB_magnitude":
@@ -651,13 +680,9 @@ def _apply_selection_ppc(mag_sim, cz_sim, which_sel, idx_post,
         mw = mag_width_samples[idx_post] \
             if mag_width_samples is not None else mag_width_fixed
         p_sel = norm.cdf((ml - mag_sim) / mw)
-        return gen.random(n) < p_sel
-    elif which_sel == "redshift":
-        cl = cz_lim_samples[idx_post] \
-            if cz_lim_samples is not None else cz_lim_fixed
-        cw = cz_width_samples[idx_post] \
-            if cz_width_samples is not None else cz_width_fixed
-        p_sel = norm.cdf((cl - cz_sim) / cw)
+        if mag_min_fixed is not None:
+            p_sel -= norm.cdf((mag_min_fixed - mag_sim) / mw)
+        p_sel = np.clip(p_sel, 0.0, 1.0)
         return gen.random(n) < p_sel
     return np.ones(n, dtype=bool)
 
@@ -667,8 +692,44 @@ def _apply_selection_ppc(mag_sim, cz_sim, which_sel, idx_post,
 ###############################################################################
 
 
+def _hist_contour_levels(hist, enclosed=(0.68, 0.95)):
+    """Return histogram levels enclosing the requested probability masses."""
+    vals = np.asarray(hist, dtype=float).ravel()
+    vals = vals[np.isfinite(vals) & (vals > 0)]
+    if len(vals) == 0:
+        return np.array([])
+
+    vals = np.sort(vals)[::-1]
+    cdf = np.cumsum(vals)
+    cdf /= cdf[-1]
+    levels = []
+    for p in enclosed:
+        idx = min(np.searchsorted(cdf, p), len(vals) - 1)
+        levels.append(vals[idx])
+    return np.unique(np.sort(levels))
+
+
+def _plot_2d_contours(ax, x, y, bins, color, linestyle, label):
+    """Plot smoothed 2D histogram contours for one sample."""
+    from scipy.ndimage import gaussian_filter
+
+    hist, xedges, yedges = np.histogram2d(x, y, bins=bins)
+    hist = gaussian_filter(hist.astype(float), sigma=1.0)
+    levels = _hist_contour_levels(hist)
+    levels = levels[(levels > np.min(hist)) & (levels < np.max(hist))]
+    if len(levels) == 0:
+        return None
+
+    xmid = 0.5 * (xedges[:-1] + xedges[1:])
+    ymid = 0.5 * (yedges[:-1] + yedges[1:])
+    ax.contour(xmid, ymid, hist.T, levels=levels, colors=color,
+               linestyles=linestyle, linewidths=1.5)
+    return ax.plot([], [], color=color, linestyle=linestyle,
+                   linewidth=1.5, label=label)[0]
+
+
 def plot_trgb_ppc(ppc, fname):
-    """Plot 3-panel PPC comparison: mag histogram, cz histogram, scatter.
+    """Plot 3-panel PPC comparison: 1D histograms and 2D contours.
 
     Parameters
     ----------
@@ -721,15 +782,24 @@ def plot_trgb_ppc(ppc, fname):
     ax.text(0.05, 0.95, f"KS $p = {ks_cz.pvalue:.3f}$",
             transform=ax.transAxes, va="top", fontsize=8)
 
-    # Panel 3: scatter plot
+    # Panel 3: 2D distribution contours
     ax = axes[2]
-    ax.scatter(mag_sim, cz_sim, s=2, alpha=0.1, color="C0",
-               label="PPC", rasterized=True)
-    ax.scatter(mag_obs, cz_obs, s=15, color="k", zorder=5,
-               label="Observed")
+    bins_2d = (
+        np.linspace(min(mag_obs.min(), mag_sim.min()) - 0.5,
+                    max(mag_obs.max(), mag_sim.max()) + 0.5, 35),
+        np.linspace(min(cz_obs.min(), cz_sim.min()) - 200,
+                    max(cz_obs.max(), cz_sim.max()) + 200, 35),
+    )
+    handles = [
+        _plot_2d_contours(ax, mag_sim, cz_sim, bins_2d, "C0", "-", "PPC"),
+        _plot_2d_contours(ax, mag_obs, cz_obs, bins_2d, "k", "--",
+                          "Observed"),
+    ]
+    handles = [h for h in handles if h is not None]
     ax.set_xlabel(r"$m_{\rm TRGB}$ [mag]")
     ax.set_ylabel(r"$cz_{\rm CMB}$ [km/s]")
-    ax.legend(fontsize=8, markerscale=2)
+    if handles:
+        ax.legend(handles=handles, fontsize=8)
 
     fig.tight_layout()
     fig.savefig(fname, dpi=200, bbox_inches="tight")

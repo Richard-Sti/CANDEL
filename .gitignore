@@ -22,7 +22,9 @@ scripts/preprocess/env.sh
 logs_*/
 slurm-*
 scripts/runs/tasks_*.txt
+scripts/runs/batch_*.sh*
 scripts/runs/generated_configs/
+scripts/runs/logs-*.tsv
 scripts/runs/logs
 scripts/runs/logs
 scripts/runs/generated_configs/

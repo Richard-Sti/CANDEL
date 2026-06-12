@@ -4,6 +4,14 @@
 from argparse import ArgumentParser
 import csv
 from pathlib import Path
+import sys
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+PLOT_DIR = next(path for path in SCRIPT_DIR.parents
+                if path.name == "paper_TRGBH0")
+for path in (SCRIPT_DIR, PLOT_DIR):
+    if str(path) not in sys.path:
+        sys.path.insert(0, str(path))
 
 import h5py
 import matplotlib
@@ -16,16 +24,22 @@ import tomllib  # noqa: E402
 from matplotlib.colors import Normalize  # noqa: E402
 from scipy.stats import gaussian_kde  # noqa: E402
 
-from trgbh0_plot_style import TRGBH0_COLOURS, trgbh0_cmap  # noqa: E402
+from trgbh0_plot_style import (  # noqa: E402
+    FIGURE_DPI,
+    OUTPUT_DIR,
+    ROOT,
+    TRGBH0_COLOURS,
+    save_pdf_png,
+    set_paper_rc,
+    trgbh0_cmap,
+)
 
 
-ROOT = Path(__file__).resolve().parents[2]
 TASK_FILE = ROOT / "scripts" / "runs" / "tasks_TRGBH0_single_smoothed.txt"
 DEFAULT_OUTDIR = (
-    Path(__file__).resolve().parent / "output"
+    OUTPUT_DIR
     / "trgbh0_single_smoothed_likelihood_comparison_R4"
 )
-FIGURE_DPI = 500
 MAX_KDE_SAMPLES = 40_000
 LIKELIHOOD_ORDER = ("gaussian", "student_t")
 LIKELIHOOD_LABELS = {
@@ -239,27 +253,6 @@ def load_rows(task_file, smooth_R, mas, allow_missing):
     return rows, matched, missing
 
 
-def set_paper_rc():
-    plt.rcParams.update({
-        "font.size": 8.0,
-        "axes.labelsize": 8.0,
-        "axes.titlesize": 8.0,
-        "xtick.labelsize": 7.0,
-        "ytick.labelsize": 7.0,
-        "legend.fontsize": 6.5,
-        "axes.linewidth": 0.7,
-    })
-
-
-def save_pdf_png(fig, out_pdf):
-    out_pdf.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_pdf, dpi=FIGURE_DPI, bbox_inches="tight")
-    out_png = out_pdf.with_suffix(".png")
-    fig.savefig(out_png, dpi=FIGURE_DPI, bbox_inches="tight")
-    plt.close(fig)
-    return out_pdf, out_png
-
-
 def smooth_token(smooth_R):
     return f"R{smooth_R:g}".replace(".", "p")
 
@@ -302,7 +295,7 @@ def plot_matched_fields(matched, smooth_R, out_pdf):
             constrained_layout=True)
         for ax, key, ylabel in (
             (axes[0], "H0_q50", H0_LABEL),
-            (axes[1], "lnZ_harmonic", r"harmonic $\ln Z$"),
+            (axes[1], "lnZ_harmonic", r"$\ln \mathcal{Z}$"),
         ):
             values_by_field = []
             for field in fields:
@@ -355,7 +348,7 @@ def plot_deltas(matched, out_pdf):
             1, 3, figsize=(8.2, 2.7), constrained_layout=True)
         specs = (
             (axes[0], delta_h0, r"$\Delta H_0$ Student-$t$ $-$ Gaussian"),
-            (axes[1], delta_lnz, r"$\Delta$ harmonic $\ln Z$"),
+            (axes[1], delta_lnz, r"$\Delta \ln \mathcal{Z}$"),
         )
         for ax, delta, ylabel in specs:
             finite = np.isfinite(delta)
@@ -378,7 +371,7 @@ def plot_deltas(matched, out_pdf):
             alpha=0.84)
         axes[2].axhline(0.0, color="0.35", lw=0.75, ls=":")
         axes[2].axvline(0.0, color="0.35", lw=0.75, ls=":")
-        axes[2].set_xlabel(r"$\Delta$ harmonic $\ln Z$")
+        axes[2].set_xlabel(r"$\Delta \ln \mathcal{Z}$")
         axes[2].set_ylabel(r"$\Delta H_0$")
         axes[0].set_title("Field-by-field likelihood shift", loc="left")
         cbar = fig.colorbar(sc, ax=axes, pad=0.012, fraction=0.035)

@@ -15,7 +15,7 @@ The exploratory `.ipynb` notebooks are not covered here.
 - `plot_cola_mas_comparison.py`: compatibility wrapper for `plot_single_field_comparison.py cola-mas`.
 - `plot_swift_cola_sph_comparison.py`: compatibility wrapper for `plot_single_field_comparison.py swift-cola-sph`.
 - `plot_swift_sph_cola_cic_comparison.py`: compatibility wrapper for `plot_single_field_comparison.py swift-sph-cola-cic`.
-- `plot_single_field_h0_diagnostics.py`: reads CH0 single-Manticore-field HDF5 outputs from `results/CH0_paper/single_fields`, writes per-field and stacked `H_0` summaries, plots the field-summary histogram and posterior KDEs, and plots per-field `H_0` against Laplace, harmonic, and BIC evidence estimates.
+- `plot_single_field_h0_diagnostics.py`: reads CH0 single-Manticore-field HDF5 outputs from `results/CH0_paper/single_fields`, writes per-field and stacked `H_0` summaries, plots the field-summary histogram and posterior KDEs, and plots per-field `H_0` against Laplace, harmonic, and BIC evidence estimates; the `pcs-redshift` preset targets the COLA PCS redshift-selection single-field outputs.
 - `plot_single_fixed_bias_comparison.py`: reads sampled-bias and fixed-bias single-field task files, compares matched realisations, and writes fixed-bias comparison plots and tables.
 - `plot_single_fixed_bias_diagnostics.py`: reads fixed-bias single-field outputs from `results/CH0_paper/single_fields_fixed_bias`, writes per-field summaries, and plots `H_0`, evidence, likelihood-decomposition, and fixed galaxy-bias diagnostics.
 - `plot_single_selection_integral_diagnostics.py`: reads sampled-bias and fixed-bias single-field task files, recomputes controlled selection integrals, and plots selection-integral drivers of `H_0` and evidence behaviour.

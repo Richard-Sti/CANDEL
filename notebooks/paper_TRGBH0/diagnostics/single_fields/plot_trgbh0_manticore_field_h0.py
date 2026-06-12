@@ -5,6 +5,14 @@ import csv
 import re
 import shutil
 from pathlib import Path
+import sys
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+PLOT_DIR = next(path for path in SCRIPT_DIR.parents
+                if path.name == "paper_TRGBH0")
+for path in (SCRIPT_DIR, PLOT_DIR):
+    if str(path) not in sys.path:
+        sys.path.insert(0, str(path))
 
 import h5py
 import matplotlib
@@ -15,10 +23,15 @@ import scienceplots  # noqa: F401
 from matplotlib.lines import Line2D  # noqa: E402
 from scipy.stats import gaussian_kde  # noqa: E402
 
-from trgbh0_plot_style import trgbh0_cmap  # noqa: E402
+from trgbh0_plot_style import (  # noqa: E402
+    FIGURE_DPI,
+    ROOT,
+    paper_style,
+    save_pdf_png,
+    trgbh0_cmap,
+)
 
 
-ROOT = Path("/mnt/users/rstiskalek/CANDEL")
 RESULTS = (
     ROOT / "results" / "TRGBH0_paper" / "manticore_fields_const_sigv"
 )
@@ -169,15 +182,7 @@ def make_plot(rows, out_pdf, field_spec):
     cmap = trgbh0_cmap("trgbh0_manticore_lnz_harmonic")
     norm = evidence_norm(evidence)
 
-    with plt.style.context("science"):
-        plt.rcParams.update({
-            "font.size": 8.0,
-            "axes.labelsize": 8.0,
-            "axes.titlesize": 8.0,
-            "xtick.labelsize": 7.0,
-            "ytick.labelsize": 7.0,
-            "legend.fontsize": 6.4,
-        })
+    with paper_style(styles=("science",), extra_rc={"legend.fontsize": 6.4}):
         fig, ax = plt.subplots(figsize=(4.7, 3.1))
         ax.hist(
             medians,
@@ -238,15 +243,11 @@ def make_plot(rows, out_pdf, field_spec):
         sm = plt.cm.ScalarMappable(norm=norm, cmap=cmap)
         sm.set_array([])
         cbar = fig.colorbar(sm, ax=ax, pad=0.015, fraction=0.055)
-        cbar.set_label(r"Harmonic $\ln Z$")
+        cbar.set_label(r"$\ln \mathcal{Z}$")
         cbar.ax.tick_params(labelsize=7.0)
 
         fig.tight_layout()
-        fig.savefig(out_pdf, dpi=500, bbox_inches="tight")
-        png = out_pdf.with_suffix(".png")
-        fig.savefig(png, dpi=500, bbox_inches="tight")
-        plt.close(fig)
-    return png
+    return save_pdf_png(fig, out_pdf, dpi=FIGURE_DPI)[1]
 
 
 def main():

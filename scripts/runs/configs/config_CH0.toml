@@ -118,9 +118,6 @@ dist = "normal"
 loc = 0.43
 scale = 0.02
 
-[model.priors.alpha_high]
-low = 0.0
-
 [model.priors.A_covmat]
 dist = "truncated_normal"
 low = 0.0

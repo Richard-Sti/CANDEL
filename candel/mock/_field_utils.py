@@ -16,6 +16,7 @@
 import numpy as np
 
 from ..field.field_interp import build_regular_interpolator
+from ..model.pv_utils import validate_galaxy_bias
 from ..util import (cartesian_to_radec, fprint, galactic_to_radec,
                     radec_to_cartesian)
 
@@ -25,11 +26,98 @@ def smoothclip(x, tau=0.1):
     return 0.5 * (x + np.sqrt(x**2 + tau**2))
 
 
+def galaxy_bias_params_from_values(values, which_bias, Om=None, idx=None):
+    """Return galaxy-bias parameters in ``lp_galaxy_bias`` order."""
+    validate_galaxy_bias(which_bias)
+
+    def get(name, default=None):
+        if name in values:
+            val = values[name]
+        elif default is not None:
+            val = default
+        else:
+            raise KeyError(name)
+        if idx is None:
+            return val
+        arr = np.asarray(val)
+        return arr[idx] if arr.ndim > 0 else val
+
+    if which_bias == "uniform":
+        return []
+    if which_bias == "unity":
+        return [1.0]
+    if which_bias == "powerlaw":
+        return [get("alpha")]
+    if which_bias == "linear":
+        return [get("b1")]
+    if which_bias == "linear_from_beta":
+        if "b1" in values:
+            return [get("b1")]
+        return [Om**0.55 / get("beta")]
+    if which_bias == "linear_from_beta_stochastic":
+        if "b1" in values:
+            return [get("b1")]
+        return [Om**0.55 / get("beta") + get("delta_b1")]
+    if which_bias == "double_powerlaw":
+        alpha_low = get("alpha_low")
+        if "alpha_high" in values:
+            alpha_high = get("alpha_high")
+        else:
+            alpha_high = alpha_low * get("alpha_high_frac")
+        return [
+            alpha_low, alpha_high, get("log_rho_t"), get("log_rho_width"),
+        ]
+    if which_bias == "quadratic":
+        return [get("b1"), get("b2")]
+    if which_bias == "cubic":
+        return [get("b1"), get("b2"), get("b3")]
+    raise ValueError(f"Invalid galaxy bias model '{which_bias}'.")
+
+
+def galaxy_bias_log_weight(rho, bias_params, which_bias):
+    """Evaluate model galaxy-bias log weights with NumPy model formulas."""
+    rho = np.asarray(rho, dtype=np.float64)
+    delta = rho - 1.0
+    log_rho = np.log(np.clip(rho, 1e-6, None))
+    params = [np.asarray(p) for p in bias_params]
+
+    if which_bias in ("uniform", "unity"):
+        return np.zeros_like(rho, dtype=np.float64)
+    if which_bias == "powerlaw":
+        return params[0] * log_rho
+    if which_bias in (
+            "linear", "linear_from_beta", "linear_from_beta_stochastic"):
+        return np.log(smoothclip(1.0 + params[0] * delta))
+    if which_bias == "double_powerlaw":
+        alpha_low, alpha_high, log_rho_t, log_rho_width = params
+        log_x = log_rho - log_rho_t
+        z = log_x / log_rho_width
+        return (
+            alpha_low * log_x
+            + ((alpha_high - alpha_low) * log_rho_width
+               * np.logaddexp(0.0, z)))
+    if which_bias == "quadratic":
+        b1, b2 = params
+        return np.log(smoothclip(1.0 + b1 * delta + b2 * delta**2))
+    if which_bias == "cubic":
+        b1, b2, b3 = params
+        return np.log(
+            smoothclip(1.0 + b1 * delta + b2 * delta**2 + b3 * delta**3))
+    raise ValueError(f"Invalid galaxy bias model '{which_bias}'.")
+
+
+def galaxy_bias_weight(rho, bias_params, which_bias):
+    """Evaluate model galaxy-bias weights with overflow protection."""
+    log_weight = galaxy_bias_log_weight(rho, bias_params, which_bias)
+    return np.exp(np.clip(log_weight, -50.0, 50.0))
+
+
 def field_xyz_to_radec(pos_rel, r, coordinate_frame):
     """Convert field-frame Cartesian offsets to ICRS (RA, dec) in degrees."""
     x, y, z = pos_rel[:, 0], pos_rel[:, 1], pos_rel[:, 2]
     if coordinate_frame == "icrs":
-        return cartesian_to_radec(x, y, z)
+        _, ra, dec = cartesian_to_radec(x, y, z)
+        return ra, dec
     elif coordinate_frame == "galactic":
         ell = np.rad2deg(np.arctan2(y, x))
         b = np.rad2deg(np.arcsin(z / r))
@@ -49,7 +137,7 @@ def field_xyz_to_radec(pos_rel, r, coordinate_frame):
 def compute_r_max_selection(mag_lim, M_abs, sigma_int, e_mag,
                             mag_lim_width=0.0, cz_lim=None, h=1.0,
                             r_max=150.0, colour_mean=None, c_star=None,
-                            colour_std=None):
+                            colour_std=None, alpha_c=0.2):
     """Tighten sampling sphere based on selection cuts.
 
     All arguments can be scalars or arrays; worst-case (most permissive)
@@ -59,7 +147,7 @@ def compute_r_max_selection(mag_lim, M_abs, sigma_int, e_mag,
         ml = float(np.max(mag_lim))
         M_eff = M_abs
         if colour_mean is not None and c_star is not None:
-            M_eff = M_abs + 0.2 * (
+            M_eff = M_abs + np.asarray(alpha_c) * (
                 np.asarray(colour_mean) - np.asarray(c_star))
         M_min = float(np.min(M_eff))
         sint_max = float(np.max(sigma_int))
@@ -67,7 +155,8 @@ def compute_r_max_selection(mag_lim, M_abs, sigma_int, e_mag,
         mw = float(np.max(mag_lim_width)) if mag_lim_width is not None else 0.0
         if isinstance(mw, str):
             mw = 0.0
-        cstd = 0.0 if colour_std is None else 0.2 * float(np.max(colour_std))
+        cstd = 0.0 if colour_std is None else float(
+            np.max(np.abs(alpha_c) * np.asarray(colour_std)))
 
         sigma_tot = np.sqrt(sint_max**2 + e_max**2 + mw**2 + cstd**2)
         mu_cutoff = ml - M_min + 5 * sigma_tot

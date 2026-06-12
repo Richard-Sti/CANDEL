@@ -5,6 +5,14 @@ from argparse import ArgumentParser
 from collections import defaultdict
 import csv
 from pathlib import Path
+import sys
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+PLOT_DIR = next(path for path in SCRIPT_DIR.parents
+                if path.name == "paper_TRGBH0")
+for path in (SCRIPT_DIR, PLOT_DIR):
+    if str(path) not in sys.path:
+        sys.path.insert(0, str(path))
 
 import h5py
 import matplotlib
@@ -18,15 +26,20 @@ from matplotlib.colors import Normalize  # noqa: E402
 from matplotlib.ticker import MaxNLocator  # noqa: E402
 from scipy.stats import gaussian_kde, pearsonr, spearmanr  # noqa: E402
 
-from trgbh0_plot_style import TRGBH0_COLOURS, trgbh0_cmap  # noqa: E402
+from trgbh0_plot_style import (  # noqa: E402
+    FIGURE_DPI,
+    OUTPUT_DIR,
+    ROOT,
+    TRGBH0_COLOURS,
+    save_pdf_png,
+    set_paper_rc,
+    trgbh0_cmap,
+)
 
 
-ROOT = Path(__file__).resolve().parents[2]
 TASK_FILE = ROOT / "scripts" / "runs" / "tasks_TRGBH0_single_smoothed.txt"
 BASELINE_TASK_FILE = ROOT / "scripts" / "runs" / "tasks_TRGBH0_single.txt"
-DEFAULT_OUTDIR = Path(__file__).resolve().parent / "output" / (
-    "trgbh0_single_smoothed")
-FIGURE_DPI = 500
+DEFAULT_OUTDIR = OUTPUT_DIR / "trgbh0_single_smoothed"
 MAX_KDE_SAMPLES = 40_000
 H0_LABEL = (
     r"$H_0~[\mathrm{km}\,\mathrm{s}^{-1}\,\mathrm{Mpc}^{-1}]$"
@@ -345,26 +358,6 @@ def add_reference_deltas(rows):
             row["lnZ_harmonic"] - base["lnZ_harmonic"])
 
 
-def set_paper_rc():
-    plt.rcParams.update({
-        "font.size": 8.0,
-        "axes.labelsize": 8.0,
-        "axes.titlesize": 8.0,
-        "xtick.labelsize": 7.0,
-        "ytick.labelsize": 7.0,
-        "legend.fontsize": 6.5,
-    })
-
-
-def save_pdf_png(fig, out_pdf):
-    out_pdf.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_pdf, dpi=FIGURE_DPI, bbox_inches="tight")
-    out_png = out_pdf.with_suffix(".png")
-    fig.savefig(out_png, dpi=FIGURE_DPI, bbox_inches="tight")
-    plt.close(fig)
-    return out_pdf, out_png
-
-
 def field_cmap():
     return trgbh0_cmap("trgbh0_single_smoothed_fields")
 
@@ -621,7 +614,7 @@ def plot_h0_vs_harmonic_lnz(rows, out_pdf):
                     color=colour, ecolor=colour, elinewidth=0.45,
                     capsize=1.0, alpha=0.72, zorder=2)
             ax.set_title(scale_label(scale), loc="left")
-            ax.set_xlabel(r"harmonic $\ln Z$")
+            ax.set_xlabel(r"$\ln \mathcal{Z}$")
             ax.xaxis.set_major_locator(MaxNLocator(nbins=4))
             ax.text(
                 0.03, 0.97, correlation_summary(x, h0),
@@ -709,10 +702,10 @@ def plot_lnz_distributions(rows, out_pdf):
             marker="o", ms=3.7, lw=1.15, capsize=2.2, zorder=5)
         ax_delta.axhline(0.0, color="0.35", lw=0.75, ls="--")
 
-        ax_lnz.set_ylabel(r"harmonic $\ln Z$")
+        ax_lnz.set_ylabel(r"$\ln \mathcal{Z}$")
         ax_lnz.set_title("Evidence distribution", loc="left")
         ax_lnz.legend(loc="best", frameon=False, handlelength=1.6)
-        ax_delta.set_ylabel(r"$\Delta$ harmonic $\ln Z$")
+        ax_delta.set_ylabel(r"$\Delta \ln \mathcal{Z}$")
         ax_delta.set_xlabel(
             r"Density-field smoothing scale [$h^{-1}\mathrm{Mpc}$]")
         ax_delta.set_xticks(positions)
