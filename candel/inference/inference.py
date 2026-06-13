@@ -477,6 +477,7 @@ def _initialise_from_lbfgs(model, model_kwargs, kwargs, init_maxiter,
     """Return NUTS initial parameters, site names, and init strategy."""
     if init_maxiter is None:
         init_maxiter = kwargs.get("init_maxiter", 1000)
+    init_median_num_samples = kwargs.get("init_median_num_samples", 5000)
 
     site_names = None
     if init_maxiter > 0:
@@ -490,11 +491,12 @@ def _initialise_from_lbfgs(model, model_kwargs, kwargs, init_maxiter,
         else:
             init_params = None
             fprint("L-BFGS failed, initialising NUTS from prior median.")
-            init_strategy = init_to_median(num_samples=5000)
+            init_strategy = init_to_median(
+                num_samples=init_median_num_samples)
     else:
         init_params = None
         fprint("initialising NUTS from prior median.")
-        init_strategy = init_to_median(num_samples=5000)
+        init_strategy = init_to_median(num_samples=init_median_num_samples)
 
     return init_params, site_names, init_strategy
 
