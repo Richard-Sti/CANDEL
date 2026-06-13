@@ -20,6 +20,8 @@ import time
 from contextlib import redirect_stdout
 from datetime import datetime
 
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import tomli_w
