@@ -35,6 +35,7 @@ These models work in units of $h^{-1}\,\mathrm{Mpc}$ (i.e. assume $h = 1$). Mult
 ### $H_0$ inference
 
 - **Cepheid-calibrated $H_0$:** 35 Cepheid host galaxies from SH0ES
+- **Milky Way Cepheid calibration:** standalone Galactic Cepheid period-luminosity calibration via `model.which_run = "MWCepheids"`
 - **TRGB-calibrated $H_0$:** Tip of the Red Giant Branch distances from CCHP and EDD, including grouped EDD hosts
 - **Megamaser disk $H_0$:** spot-level warped disk fits for NGC 5765b, NGC 6264, NGC 6323, UGC 3789, CGCG 074-064, and NGC 4258. `JointMaserModel` fits multiple disks with a shared $H_0$; `toy_joint_H0.py` can combine saved per-galaxy distance posteriors.
 
@@ -43,19 +44,25 @@ These models work in units of $h^{-1}\,\mathrm{Mpc}$ (i.e. assume $h = 1$). Mult
 ```
 candel/
   model/          Forward models for each distance indicator
+    mwcepheids/   Milky Way Cepheid calibration model
   pvdata/         Data loaders for all supported catalogues
   cosmo/          Cosmography, growth rate, PV covariance matrices
   inference/      NUTS sampling, nested sampling (NSS), Sobol+Adam optimisation, evidence estimation
   field/          3D density/velocity field loading and LOS interpolation
   redshift2real/  Map observed redshift → cosmological redshift given a velocity field
   mock/           Synthetic catalogue generation for testing
+  plotting/       Reusable posterior and diagnostic plotting helpers
   util.py         Coordinate transforms, config I/O, plotting utilities
 
 scripts/
   runs/           PV and H0 model configs and main runner
   megamaser/      Maser disk model config and runner
+  H0_convergence/ H0 selection-integral convergence checks
+  BORG_fields/    Reconstruction-field product helpers
+  diagnostics/    Standalone model-component diagnostics
   mocks/          Mock TRGB inference runs
   preprocess/     Precompute line-of-sight density/velocity data
+  sharing/        Posterior/data sharing utilities
   sync/           Cluster sync helpers
 ```
 
