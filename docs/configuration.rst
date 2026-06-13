@@ -11,30 +11,29 @@ A typical configuration file is organized into several sections:
 
 .. code-block:: toml
 
-   # Root directories for code, data, and results
-   root_main = "/path/to/CANDEL/"           # repo root
-   root_data = "/path/to/CANDEL/data/"      # optional, defaults to <root_main>/data
-   root_results = "/path/to/CANDEL/results/" # optional, defaults to <root_main>/results
-   fname_output = "samples.h5"
-
-   [model]
-   # Model type and parameters
-   name = "TRGB"
-   Om = 0.3
-   r_limits_malmquist = [0.01, 150]
-   which_selection = "TRGB_magnitude"
-
-   [model.priors]
-   # Priors for free parameters
-   H0 = { dist = "uniform", low = 40.0, high = 100.0 }
-   M_TRGB = { dist = "normal", mean = -4.0, std = 0.5 }
-   sigma_int = { dist = "half_normal", std = 0.1 }
+   base = ["config.toml"]
 
    [inference]
-   # Sampler settings
+   model = "TFRModel"
    num_warmup = 500
    num_samples = 1000
    num_chains = 4
+
+   [io]
+   catalogue_name = "CF4_W1"
+   fname_output = "results/example/samples.hdf5"
+
+   [pv_model]
+   kind = "Vext"
+   r_limits_malmquist = [0.01, 200.0]
+   dr_malmquist = 0.5
+   which_distance_prior = "empirical"
+
+   [model]
+   which_selection = "none"
+
+Base paths are resolved relative to the TOML file, so this compact form assumes
+the run config lives in ``scripts/runs/configs`` next to ``config.toml``.
 
 Path handling
 -------------
@@ -67,7 +66,9 @@ The ``[model]`` section contains settings specific to the distance indicator
 and the physical model:
 
 - ``name``: The name of the PV model class (e.g., ``"TFR"``, ``"SN"``, ``"PantheonPlus"``, ``"FP"``).
-- ``which_run``: For H0 models, specifies the pipeline to run (``"CH0"``, ``"CCHP"``, ``"EDD_TRGB"``, ``"CCHP_CSP"``).
+- ``which_run``: For non-PV runners, specifies the pipeline to run
+  (``"CH0"``, ``"CCHP"``, ``"EDD_TRGB"``, ``"EDD_TRGB_grouped"``,
+  ``"CCHP_CSP"``, ``"MWCepheids"``, or ``"maser_disk"``).
 - ``Om``: Matter density parameter :math:`\Omega_m`.
 - ``use_reconstruction``: Boolean, whether to use a reconstructed density/velocity field.
 - ``which_selection``: Type of selection function to apply (e.g., ``"TRGB_magnitude"``, ``"redshift"``, or ``"none"``).
@@ -104,10 +105,11 @@ configuration generator:
 
 .. code-block:: bash
 
-   python scripts/runs/generate_tasks.py [index]
+   python scripts/runs/generate_tasks.py list
+   python scripts/runs/generate_tasks.py build test
 
-This script reads a template TOML and applies a grid of overrides defined in the
-``manual_overrides`` dictionary within the script. It generates:
+This script reads a template TOML and applies a named grid of overrides defined
+in ``scripts/runs/specs_tasks.py``. It generates:
 
 1. A directory of ``.toml`` files, one for each combination of parameters.
 2. A ``tasks_[index].txt`` file containing the paths to all generated configs.
