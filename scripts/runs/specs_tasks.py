@@ -1634,7 +1634,7 @@ TASK_SPECS = {
             **TRGBH0_COMMON,
             "inference/init_maxiter": 0,
             "inference/num_warmup": 2000,
-            "inference/num_samples": 5000,
+            "inference/num_samples": 100,
             "model/selection_integral_supersample_radius": (
                 TRGBH0_SELECTION_SUPERSAMPLE_RADIUS),
             "model/selection_integral_supersample_target_dx": (
