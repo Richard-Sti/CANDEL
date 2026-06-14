@@ -28,7 +28,6 @@ import numpy as np
 from h5py import File
 from jax import numpy as jnp
 
-from ..field.field_interp import apply_gaussian_smoothing
 from ..field.loader import field_allows_raw_product_reads, name2field_loader
 from ..model.pv_utils import galaxy_bias_density_mode
 from ..util import fprint, get_nested
@@ -48,6 +47,13 @@ from .field_products import (field_smoothing_cache_payload,
                              velocity_field_smoothing_scale_from_config)
 
 _SPHERE_RADIUS_DX_WARN_MIN = 15.0
+
+
+def _smooth_field_gaussian(field, smooth_scale, boxsize, make_copy=False):
+    """Import the optional smoother only when smoothing is requested."""
+    from ..field.field_interp import apply_gaussian_smoothing
+    return apply_gaussian_smoothing(field, smooth_scale, boxsize,
+                                    make_copy=make_copy)
 
 
 def _field_cache_warmup_active():
@@ -1240,7 +1246,7 @@ def _load_volume_data_for_H0(
                     "density field with scale "
                     f"{field_smoothing_scale:g} "
                     "Mpc/h.")
-            rho = apply_gaussian_smoothing(
+            rho = _smooth_field_gaussian(
                 rho.astype(np.float32, copy=False),
                 field_smoothing_scale, loader.boxsize, make_copy=True)
         if velocity_field_smoothing_scale is not None and k == 0:
@@ -1329,7 +1335,7 @@ def _load_volume_data_for_H0(
                     for comp in range(3):
                         v_full = loader.load_velocity_component(comp)
                         if velocity_field_smoothing_scale is not None:
-                            v_full = apply_gaussian_smoothing(
+                            v_full = _smooth_field_gaussian(
                                 v_full.astype(np.float32, copy=False),
                                 velocity_field_smoothing_scale,
                                 loader.boxsize, make_copy=True)
@@ -1350,7 +1356,7 @@ def _load_volume_data_for_H0(
                 for comp in range(3):
                     v_comp = v_full[comp]
                     if velocity_field_smoothing_scale is not None:
-                        v_comp = apply_gaussian_smoothing(
+                        v_comp = _smooth_field_gaussian(
                             v_comp.astype(np.float32, copy=False),
                             velocity_field_smoothing_scale,
                             loader.boxsize, make_copy=True)
@@ -1672,7 +1678,7 @@ def _load_volume_density_3d(loader_name, loader_kwargs, downsample=1,
         fprint(
             "  applying real-space Gaussian smoothing to the PV 3D density "
             f"field with scale {field_smoothing_scale:g} Mpc/h.")
-        rho = apply_gaussian_smoothing(
+        rho = _smooth_field_gaussian(
             rho.astype(np.float32, copy=False),
             field_smoothing_scale, loader.boxsize, make_copy=True)
     if downsample > 1:
