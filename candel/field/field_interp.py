@@ -244,12 +244,14 @@ def apply_gaussian_smoothing(field, smooth_scale, boxsize, make_copy=False):
         smoothed = SL.field_smoothing(x, W_k, 1)
         return smoothed.astype(field.dtype, copy=False)
     except ImportError:
-        warn(
-            "Optional `smoothing_library` (from Pylians3) not found; "
-            "falling back to a NumPy implementation of the same sampled "
-            "periodic Gaussian kernel. Install it with `pip install pylians` "
-            "for the optimised path.",
-            UserWarning, stacklevel=2)
+        pass
+
+    warn(
+        "Optional `smoothing_library` (from Pylians3) not found; "
+        "falling back to a NumPy implementation of the same sampled "
+        "periodic Gaussian kernel. Install it with `pip install pylians` "
+        "for the optimised path.",
+        UserWarning, stacklevel=2)
 
     estimated, available = _check_numpy_gaussian_fallback_memory(
         N, field.dtype, make_copy)
