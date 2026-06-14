@@ -17,8 +17,6 @@ import numpy as np
 from scipy.stats import norm
 
 from ..cosmo.cosmography import Distance2Distmod, Distance2Redshift
-from ..field import interpolate_los_density_velocity
-from ..field.field_interp import build_regular_interpolator
 from ..util import (SPEED_OF_LIGHT, galactic_to_radec_cartesian,
                     radec_to_cartesian)
 from ._field_utils import (field_xyz_to_radec, galaxy_bias_log_weight,
@@ -113,6 +111,8 @@ def _gen_field_path(nsamples, h, beta, rmin, rmax, e_mag, e_czcmb,
 
     # --- Load fields and build 3D interpolators ---
     if has_field:
+        from ..field.field_interp import build_regular_interpolator
+
         eps = 1e-4
         density_raw = field_loader.load_density()
         density_log = np.log(density_raw + eps).astype(np.float32)
@@ -250,6 +250,7 @@ def _gen_field_path(nsamples, h, beta, rmin, rmax, e_mag, e_czcmb,
         # --- Interpolate full LOS for selected hosts ---
         if verbose:
             print(f"  interpolating LOS for {nsamples} hosts...")
+        from ..field import interpolate_los_density_velocity
         los_density, los_velocity = interpolate_los_density_velocity(
             field_loader, r_grid, collected["RA"], collected["dec"],
             verbose=verbose)

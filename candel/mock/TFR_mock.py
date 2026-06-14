@@ -16,7 +16,6 @@
 import numpy as np
 from scipy.integrate import cumulative_simpson
 
-from ..field import interpolate_los_density_velocity
 from ..util import (SPEED_OF_LIGHT, fprint, galactic_to_radec,
                     galactic_to_radec_cartesian, radec_to_cartesian)
 
@@ -58,6 +57,7 @@ def gen_TFR_mock(nsamples, r_grid, Vext_mag, Vext_ell, Vext_b, sigma_v, beta,
     RA_c, dec_c = galactic_to_radec(ell, b)
 
     if field_loader is not None:
+        from ..field import interpolate_los_density_velocity
         los_density_c, los_velocity_c = interpolate_los_density_velocity(
             field_loader, r_grid, RA_c, dec_c, verbose=False)
     else:
