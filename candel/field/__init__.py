@@ -13,12 +13,6 @@
 # with this program; if not, write to the Free Software Foundation, Inc.,
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
-from .field_interp import (                                                     # noqa
-    interpolate_los_density_velocity,                                           # noqa
-    apply_gaussian_smoothing,                                                   # noqa
-    prepare_los_geometry,                                                       # noqa
-    )
-
 from .loader import (                                                           # noqa
     BORGFieldLoader,                                                            # noqa
     BORGSPHFieldLoader,                                                         # noqa
@@ -36,3 +30,19 @@ from .loader import (                                                           
     name2field_loader,                                                          # noqa
     supported_field_names,                                                      # noqa
     )
+
+
+_FIELD_INTERP_EXPORTS = {
+    "interpolate_los_density_velocity",
+    "apply_gaussian_smoothing",
+    "prepare_los_geometry",
+}
+
+
+def __getattr__(name):
+    if name in _FIELD_INTERP_EXPORTS:
+        from . import field_interp
+        value = getattr(field_interp, name)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
