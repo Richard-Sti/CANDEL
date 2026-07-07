@@ -1,0 +1,66 @@
+# Copyright (C) 2025 Richard Stiskalek
+# This program is free software; you can redistribute it and/or modify it
+# under the terms of the GNU General Public License as published by the
+# Free Software Foundation; either version 3 of the License, or (at your
+# option) any later version.
+#
+# This program is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General
+# Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along
+# with this program; if not, write to the Free Software Foundation, Inc.,
+# 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+
+from setuptools import setup, find_packages
+
+setup(
+    name="candel",
+    version="0.1.0",
+    author="Richard Stiskalek",
+    author_email="richard.stiskalek@protonmail.com",
+    description=(
+        "JAX framework for peculiar-velocity inference and distance-ladder "
+        "calibration"
+    ),
+    long_description=open("README.md").read(),
+    long_description_content_type="text/markdown",
+    url="https://github.com/richard-sti/candel",
+    packages=find_packages(include=["candel", "candel.*"]),
+    extras_require={
+        "docs": ["sphinx", "sphinx-rtd-theme", "numpydoc"],
+    },
+    classifiers=[
+        "Programming Language :: Python :: 3",
+        "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+        "Operating System :: OS Independent",
+        "Intended Audience :: Science/Research",
+        "Topic :: Scientific/Engineering :: Astronomy",
+    ],
+    python_requires=">=3.10",
+    install_requires=[
+        "jax==0.9.2",
+        "jaxlib==0.9.2",
+        "jax-cuda12-plugin==0.9.2",
+        "numpyro",
+        "numpy",
+        "scipy",
+        "h5py",
+        "tomli; python_version < '3.11'",
+        "interpax",
+        "astropy",
+        "matplotlib",
+        "corner",
+        "tomli_w",
+        "scienceplots",
+        "joblib",
+        "getdist",
+        "healpy",
+        "tqdm",
+        "numba",
+        "mpi4py",
+    ],
+    include_package_data=True,
+    zip_safe=False,
+)

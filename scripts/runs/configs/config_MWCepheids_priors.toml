@@ -1,0 +1,177 @@
+###############################################################################
+#                    Milky Way Cepheid calibration priors                     #
+###############################################################################
+
+[model.priors.M_H_1]
+dist = "normal"
+loc = -5.9
+scale = 0.5
+
+[model.priors.b_W]
+dist = "normal"
+loc = -3.3
+scale = 0.5
+
+[model.priors.Z_W]
+dist = "normal"
+loc = -0.2
+scale = 0.5
+
+[model.priors.sigma_int]
+dist = "truncated_normal"
+mean = 0.06
+scale = 0.03
+low = 0.01
+
+[model.priors.delta_pi]
+dist = "truncated_normal"
+mean = 0.0
+scale = 0.01
+low = -0.1
+high = 0.1
+
+[model.priors.f_pi]
+dist = "delta"
+value = 1.0
+
+[model.priors.mu_logP]
+dist = "uniform"
+low = -2.5
+high = 2.5
+
+[model.priors.sigma_logP]
+dist = "truncated_normal"
+mean = 0.0
+scale = 1.0
+low = 0.0
+
+[model.priors.mu_logP_C22]
+dist = "normal"
+loc = 0.58
+scale = 0.75
+
+[model.priors.sigma_logP_C22]
+dist = "truncated_normal"
+mean = 0.46
+scale = 0.225
+low = 0.0
+
+[model.priors.mu_logP_C27]
+dist = "normal"
+loc = 0.76
+scale = 0.15
+
+[model.priors.sigma_logP_C27]
+dist = "truncated_normal"
+mean = 0.15
+scale = 0.075
+low = 0.0
+
+[model.priors.mu_logP_LMC]
+dist = "normal"
+loc = -0.3
+scale = 0.5
+
+[model.priors.sigma_logP_LMC]
+dist = "truncated_normal"
+mean = 0.0
+scale = 1.0
+low = 0.0
+
+[model.priors.mu_logP_NGC4258]
+dist = "normal"
+loc = -0.3
+scale = 0.5
+
+[model.priors.sigma_logP_NGC4258]
+dist = "truncated_normal"
+mean = 0.0
+scale = 1.0
+low = 0.0
+
+[model.priors.mu_OH]
+dist = "uniform"
+low = -0.5
+high = 0.5
+
+[model.priors.sigma_OH]
+dist = "truncated_normal"
+mean = 0.0
+scale = 1.0
+low = 0.0
+
+[model.priors.sigma_int_anchor]
+dist = "truncated_normal"
+mean = 0.06
+scale = 0.03
+low = 0.01
+
+[model.priors.mW_max_C22]
+dist = "normal"
+loc = 7.736
+scale = 1.0
+
+[model.priors.pi_min_C22]
+dist = "uniform"
+low = 0.0
+high = 0.5
+
+[model.priors.logP_min_C22]
+dist = "normal"
+loc = 0.903
+scale = 0.05
+
+[model.priors.logP_width_C22]
+dist = "truncated_normal"
+mean = 0.02
+scale = 0.01
+low = 0.001
+
+[model.priors.mW_width_C22]
+dist = "truncated_normal"
+mean = 0.0
+scale = 0.3
+low = 0.0
+
+[model.priors.AH_max_C22]
+dist = "uniform"
+low = 0.1
+high = 2.0
+
+[model.priors.pi_min_C27]
+dist = "uniform"
+low = 0.5
+high = 1.0
+
+[model.priors.mW_min_C27]
+dist = "truncated_normal"
+mean = 3.0
+scale = 1.0
+high = 6.0
+
+[model.priors.c_W]
+dist = "uniform"
+low = -3.0
+high = 3.0
+
+[model.priors.mu_Q]
+dist = "uniform"
+low = -0.5
+high = 0.5
+
+[model.priors.sigma_Q]
+dist = "truncated_normal"
+mean = 0.0
+scale = 1.0
+low = 0.0
+
+[model.priors.spiral_arm_frac]
+dist = "uniform"
+low = 0.0
+high = 1.0
+
+[model.priors.spiral_width]
+dist = "truncated_normal"
+mean = 0.3
+scale = 0.2
+low = 0.0

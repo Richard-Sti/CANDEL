@@ -1,0 +1,152 @@
+###############################################################################
+#                     Shared data and reconstruction paths                    #
+###############################################################################
+
+[io]
+los_file_random = "data/los_random_<X>.hdf5"
+los_r0_decay_scale = 5
+field_cache_dir = "data/field_cache"
+
+# --- Catalog paths ---
+
+[io.PV_main]
+
+[io.PV_main.EDD_TRGB]
+root = "data/EDD_TRGB"
+los_file = "data/EDD_TRGB/los_EDD_TRGB_<X>.hdf5"
+
+[io.PV_main.EDD_TRGB_grouped]
+root = "data/EDD_TRGB"
+los_file = "data/EDD_TRGB/los_EDD_TRGB_grouped_<X>.hdf5"
+
+[io.PV_main.EDD_2MTF]
+root = "data/EDD_2MTF"
+los_file = "data/EDD_2MTF/los_EDD_2MTF_<X>.hdf5"
+
+[io.PV_main.SH0ES]
+root = "data/SH0ES"
+los_file = "data/SH0ES/los_SH0ES_TFR_<X>.hdf5"
+
+[io.PV_main.CF4]
+root = "data/CF4"
+which_band = "i"
+return_all = true
+los_file = "data/CF4/los_CF4_TFR_<X>.hdf5"
+
+[io.PV_main.2MTF]
+root = "data/2MTF"
+return_all = true
+los_file = "data/2MTF/los_2MTF_<X>.hdf5"
+
+[io.PV_main.SFI]
+root = "data/SFI"
+return_all = true
+los_file = "data/SFI/los_SFI_<X>.hdf5"
+
+[io.PV_main.Foundation]
+root = "data/Foundation"
+return_all = true
+los_file = "data/Foundation/los_Foundation_<X>.hdf5"
+
+[io.PV_main.LOSS]
+root = "data/LOSS"
+return_all = true
+los_file = "data/LOSS/los_LOSS_<X>.hdf5"
+
+[io.PV_main.PantheonPlus]
+root = "data/Pantheon+"
+return_all = true
+los_file = "data/Pantheon+/los_CF4_Pantheon+_<X>.hdf5"
+
+[io.PV_main.PantheonPlusLane]
+root = "data/Pantheon+_Lane"
+return_all = true
+los_file = "data/Pantheon+_Lane/los_CF4_PantheonPlusLane_<X>.hdf5"
+
+[io.PV_main.Clusters]
+root = "data/Clusters"
+return_all = true
+los_file = "data/Clusters/los_Clusters_<X>.hdf5"
+
+[io.PV_main.SDSS_FP]
+root = "data/SDSS"
+return_all = true
+los_file = "data/SDSS/los_SDSS_FP_<X>.hdf5"
+
+[io.PV_main.6dF_FP]
+root = "data/6dF_FP"
+return_all = true
+los_file = "data/6dF_FP/los_6dF_FP_<X>.hdf5"
+
+[io.PV_main.CSP]
+root = "data/CSP"
+return_all = true
+
+[io.PV_main.CF4_HQ]
+root = "data/CF4_HQ"
+los_file = "data/CF4_HQ/los_CF4_HQ_<X>.hdf5"
+
+# --- Reconstruction field paths ---
+
+[io.reconstruction_main]
+rmin = 0.1
+rmax = 251
+num_steps = 251
+
+# Radial grid for random LOS. Uses dr (Mpc/h) instead of num_steps so that
+# per-reconstruction overrides are easy to set.
+[io.reconstruction_rand_los]
+rmin = 0.1
+rmax = 251
+dr = 1.0
+
+[io.reconstruction_rand_los.Carrick2015]
+dr = 0.5
+
+[io.reconstruction_rand_los.manticore_2MPP_MULTIBIN_N256_DES_V2]
+dr = 0.5
+
+[io.reconstruction_rand_los.ManticoreLocalCOLA]
+dr = 0.5
+
+[io.reconstruction_rand_los.ManticoreLocalSWIFT]
+dr = 0.5
+
+[io.reconstruction_main.Carrick2015]
+path_density = "data/fields/carrick2015_twompp_density.npy"
+path_velocity = "data/fields/carrick2015_twompp_velocity.npy"
+Om0 = 0.3
+
+[io.reconstruction_main.manticore_2MPP_MULTIBIN_N256_DES_V2]
+fpath_root = "data/MANTICORE/2MPP_MULTIBIN_N256_DES_V2/sph_fields_new_feb/sph_fields"
+Om0 = 0.306
+
+[io.reconstruction_main.ManticoreLocalCOLA]
+which_MAS = "CIC"
+
+[io.reconstruction_main.ManticoreLocalSWIFT]
+
+[io.reconstruction_main.Lilow2024]
+Om0 = 0.3175
+
+[io.reconstruction_main.CF4]
+Om0 = 0.3
+
+[io.reconstruction_main.CLONES]
+Om0 = 0.307115
+
+[io.reconstruction_main.HAMLET_V0]
+version = 0
+Om0 = 0.3
+
+[io.reconstruction_main.HAMLET_V1]
+version = 1
+Om0 = 0.3
+
+[io.reconstruction_main.CB1]
+version = "csiborg1"
+Om0 = 0.307
+
+[io.reconstruction_main.CB2]
+version = "csiborg2"
+Om0 = 0.3111

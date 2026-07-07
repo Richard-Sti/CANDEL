@@ -1,0 +1,623 @@
+base = ["config_priors.toml", "config_paths.toml"]
+
+###############################################################################
+#                               Inference                                     #
+###############################################################################
+
+[inference]
+model = "PantheonPlusModel"
+shared_params = "none"
+
+num_warmup = 1000
+num_samples = 5000
+num_chains = 4
+chain_method = "parallel"
+seed = 44
+compute_log_density = true
+compute_evidence = true
+track_log_density_per_sample = false
+num_chains_harmonic = 10
+
+###############################################################################
+#                           Peculiar velocity model                           #
+###############################################################################
+
+[pv_model]
+# Default kind. Task specs can override this during config generation.
+kind = "precomputed_los_Carrick2015"
+# kind = "Vext"
+galaxy_bias = "linear_from_beta"  # Ignored unless having an underlying density field
+# galaxy_bias = "linear"  # Ignored unless having an underlying density field
+quadratic_bias_delta0 = 0.0  # Expansion point for quadratic bias
+which_Vext = "constant"
+use_Mmiss = false
+Mmiss_model = "gaussian_point"
+Mmiss_sigma = 5.0  # Gaussian smoothing width, Mpc/h
+Mmiss_coordinate_frame = "galactic"  # priors use (ell, b) in degrees
+Mmiss_growth_index = 0.55
+
+# (Inhomogeneous Malmquist bias settings and extrapolation), in units of Mpc / h.
+r_limits_malmquist = "auto"
+dr_malmquist = 0.3
+
+los_decay_scale = 10.0
+density_3d_geometry = "sphere"
+density_3d_radius = 200.0  # Mpc/h numerical truncation for the 3D normalizer
+density_3d_normalizer_batch_size = 1
+
+Vext_per_pix_nside = "none"
+which_distance_prior = "empirical"
+
+###############################################################################
+#                      Optional interpolator settings                         #
+###############################################################################
+
+
+[interp_kwargs.Distance2Distmod_withOm]
+nr = 1000
+Om_max = 3.0
+nOm = 1000
+
+[interp_kwargs.Distance2Redshift_withOm]
+nr = 1000
+Om_max = 3.0
+nOm = 1000
+
+
+###############################################################################
+#                                 Model                                       #
+###############################################################################
+
+[model]
+marginalize_eta = true
+
+# Optional Gaussian smoothing scale in Mpc/h for reconstruction density fields.
+# Applies consistently to LOS products and 3D field caches; 0 disables it.
+field_3d_smoothing_scale = 0.0
+# Optional velocity-field smoothing. Disabled unless explicitly set non-zero.
+velocity_3d_smoothing_scale = 0.0
+
+# CSP selection integral grid settings (CSPModel)
+# LSQ data ranges: st=[0.50, 1.22], BV=[-0.05, 0.47], zcmb=[0.021, 0.126]
+r_limits_selection = "auto"
+n_r_selection = 51
+s_limits_selection = "auto"
+n_s_selection = 15
+BV_limits_selection = "auto"
+n_BV_selection = 15
+auto_limits_nsigma = 5.0  # padding for auto limits: data range +/- n*sigma
+zcmb_limits_selection = "auto"
+# Use 2-component GMM for stretch distribution (CSPModel)
+use_stretch_gmm = false
+
+[model.eta_grid]
+n_grid = 5
+
+# --- Overrides from default priors ---
+
+[model.priors.h]
+# Currently sampled only for the CF4 calibrated data.
+# dist = "delta"
+# value = 1.0
+dist = "uniform"
+low = 0.01
+high = 1.0
+
+[model.priors.Om]
+# Currently sampled only for the CF4 calibrated data.
+# dist = "delta"
+# value = 0.3
+dist = "uniform"
+low = 0.01
+high = 2.99
+
+[model.priors.alpha]
+dist = "truncated_normal"
+low = 0.0
+mean = 1.0
+scale = 1.0
+
+[model.priors.b1]
+dist = "uniform"
+low = 0.0
+high = 10.0
+
+[model.priors.b2]
+dist = "truncated_normal"
+mean = 0.0
+scale = 1.0
+
+[model.priors.b3]
+dist = "truncated_normal"
+low = 0.0
+mean = 0.0
+scale = 1.0
+
+[model.priors.delta_b1]
+dist = "normal"
+loc = 0.0
+scale = 0.04
+
+[model.priors.sigma_int_SN]
+dist = "jeffreys"
+low = 0.005
+high = 1.0
+
+[model.priors.sigma_log_theta]
+dist = "jeffreys"
+low = 0.001
+high = 0.5
+
+# TFR priors
+[model.priors.TFR_zeropoint]
+dist = "normal"
+loc = -19.8
+scale = 2.0
+
+[model.priors.TFR_slope]
+dist = "normal"
+loc = -10.0
+scale = 2.0
+
+[model.priors.TFR_curvature]
+dist = "normal"
+loc = 10
+scale = 5.0
+
+[model.priors.zeropoint_dipole]
+dist = "delta"
+value = [0.0, 0.0, 0.0]
+# dist = "vector_uniform_fixed"
+# low = 0.0
+# high = 0.3
+
+# SN priors (Pantheon+, Foundation, LOSS)
+[model.priors.SN_absmag]
+dist = "normal"
+loc = -18.5
+scale = 2.0
+
+[model.priors.SN_alpha]
+dist = "normal"
+loc = 0.15
+scale = 1.0
+
+[model.priors.SN_beta]
+dist = "normal"
+loc = 3.0
+scale = 1.0
+
+###############################################################################
+#                       CSP Model Priors (CSPModel)                           #
+###############################################################################
+
+# Tripp standardization: m_true = M_B + mu(r) - alpha_tripp*(s-1) + beta_tripp*BV
+[model.priors.M_B]
+dist = "normal"
+loc = -18.5
+scale = 1.0
+
+[model.priors.alpha_tripp]
+dist = "truncated_normal"
+low = 0.0
+mean = 0.7
+scale = 0.5
+
+[model.priors.beta_tripp]
+dist = "truncated_normal"
+low = 0.0
+mean = 2.5
+scale = 1.0
+
+# Population hyperparameters for latent (s, BV)
+[model.priors.mu_s]
+dist = "normal"
+loc = 1.0
+scale = 0.2
+
+[model.priors.sigma_s]
+dist = "truncated_normal"
+low = 0.01
+mean = 0.1
+scale = 0.1
+
+[model.priors.mu_BV]
+dist = "normal"
+loc = 0.0
+scale = 0.2
+
+[model.priors.sigma_BV]
+dist = "truncated_normal"
+low = 0.01
+mean = 0.1
+scale = 0.1
+
+[model.priors.rho_pop]
+dist = "uniform"
+low = -0.999
+high = 0.999
+
+# GMM hyperparameters for stretch (when use_stretch_gmm = true)
+# mu_s2 = mu_s + delta_mu_s, so delta_mu_s > 0 ensures mu_s2 > mu_s
+[model.priors.delta_mu_s]
+dist = "truncated_normal"
+low = 0.0
+mean = 0.2
+scale = 0.2
+
+[model.priors.sigma_s2]
+dist = "truncated_normal"
+low = 0.01
+mean = 0.1
+scale = 0.1
+
+[model.priors.rho_pop2]
+dist = "uniform"
+low = -0.999
+high = 0.999
+
+[model.priors.w_s]
+dist = "uniform"
+low = 0.0
+high = 1.0
+
+# Selection parameters: m_sel = m_obs + alpha_sel*(s-1) - beta_sel*BV
+# p(S=1|obs) = Phi((m_lim - m_sel) / sigma_sel)
+[model.priors.m_lim]
+# dist = "delta"
+# value = 19.0
+dist = "uniform"
+low = 10.0
+high = 22.0
+
+[model.priors.alpha_sel]
+# dist = "delta"
+# value = 0.0
+dist = "normal"
+loc = 0.0
+scale = 1.0
+
+[model.priors.beta_sel]
+# dist = "delta"
+# value = 0.0
+dist = "normal"
+loc = 0
+scale = 1.0
+
+[model.priors.sigma_sel]
+# dist = "delta"
+# value = 0.5
+dist = "truncated_normal"
+low = 0.001
+mean = 0.5
+scale = 0.5
+
+
+## Cluster scaling relation priors
+[model.priors.CL_A]
+dist = "uniform"
+low = -10
+high = 10
+
+[model.priors.CL_B]
+dist = "uniform"
+low = -5
+high = 5
+
+[model.priors.CL_C]
+dist = "uniform"
+low = -5.0
+high = 5.0
+
+[model.priors.CL_C_intercept]
+dist = "uniform"
+low = -5.0
+high = 5.0
+
+# FP priors
+[model.priors.FP_a]
+dist = "normal"
+loc = 1.0
+scale = 5.0
+
+[model.priors.FP_b]
+dist = "normal"
+loc = -1.0
+scale = 5.0
+
+[model.priors.FP_c]
+dist = "normal"
+loc = -1
+scale = 5.0
+
+# Velocity priors (overriding defaults)
+[model.priors.Vext]
+dist = "vector_uniform_fixed"
+low = 0.0
+high = 2500
+# dist = "delta"
+# value = [0.0, 0.0, 0.0]
+
+[model.priors.Vext_radial]
+dist = "vector_radial_uniform"
+low = 0.0
+high = 500
+
+rknot = [0, 20, 40, 60, 80, 100]
+method = "cubic"
+
+[model.priors.Vext_radial_magnitude]
+dist = "vector_radialmag_uniform"
+low = 0.0
+high = 500
+
+rknot = [0, 20, 40, 60, 80, 100]
+method = "cubic"
+
+[model.priors.Vext_sigma]
+dist = "uniform"
+low = 1
+high = 10_000
+
+# Gaussian Mmiss component. Mmiss is in Msun/h; distance and smoothing
+# width are in the same Mpc/h-like units as the reconstruction grid.
+[model.priors.logM_miss]
+dist = "uniform"
+low = 14.0
+high = 18.0
+
+[model.priors.Mmiss_distance]
+dist = "uniform"
+low = 5.0
+high = 300.0
+
+[model.priors.Mmiss_ell]
+dist = "uniform"
+low = 0.0
+high = 360.0
+
+[model.priors.Mmiss_b]
+dist = "uniform"
+low = -20.0
+high = 20.0
+
+[model.priors.Rdust]
+# 0.19 +- 0.01 for W1. For W2 should be 0.15 +- 0.01. I take it a little bit
+# larger to be conservative.
+dist = "normal"
+loc = 0.19
+scale = 0.05
+
+[model.priors.R_dist_emp]
+dist = "uniform"
+low = 1.0
+high = 300
+
+# Volume-normalized empirical prior cutoff exponent: f(r) = exp(-(r/R)^q).
+[model.priors.q_dist_emp]
+dist = "truncated_normal"
+low = 0.0
+mean = 1.0
+scale = 30
+
+# H0 transition priors
+[model.priors.dH0]
+dist = "normal"
+loc = 0.0
+scale = 1.0
+
+[model.priors.R_H0_alpha]
+dist = "truncated_normal"
+low = 0.0
+mean = 1.0
+scale = 5.0
+
+
+################################################################################
+#                                  Data                                        #
+################################################################################
+
+[io]
+root_output = "results"
+# Default catalogue name and output path. Task specs can override these during
+# config generation.
+# catalogue_name = ["CF4_W1", "CF4_i"]
+catalogue_name = "PantheonPlusLane"
+fname_output = "results/test.hdf5"
+
+
+[io.CF4_mock]
+root = "data/CF4_mock"
+add_eta_selection = true
+
+
+[io.CF4_W1]
+root = "data/CF4"
+which_band = "w1"
+best_mag_quality = true
+eta_min = -0.3
+zcmb_min = "none"
+zcmb_max = 0.05
+b_min = 7.5
+remove_outliers = true
+calibration = "None"
+dust_model = "none"
+
+add_eta_selection = true
+
+nsamples_subsample = "none"
+seed_subsample = 42
+
+los_file = "data/CF4/los_CF4_TFR_<X>.hdf5"
+
+
+[io.CF4_i]
+root = "data/CF4"
+which_band = "i"
+best_mag_quality = true
+eta_min = -0.3
+zcmb_min = "none"
+zcmb_max = 0.05
+b_min = 7.5
+remove_outliers = true
+calibration = "None"
+
+exclude_W1 = false
+
+add_eta_selection = true
+
+nsamples_subsample = "none"
+seed_subsample = 42
+
+los_file = "data/CF4/los_CF4_TFR_<X>.hdf5"
+
+
+[io.2MTF]
+root = "data/2MTF"
+eta_min = -0.1
+eta_max = 0.2
+
+zcmb_min = "none"
+zcmb_max = 0.05
+b_min = 7.5
+
+add_eta_selection = true
+
+nsamples_subsample = "none"
+seed_subsample = 42
+
+los_file = "data/2MTF/los_2MTF_<X>.hdf5"
+
+[io.SFI]
+root = "data/SFI"
+eta_min = -0.1
+
+zcmb_min = "none"
+zcmb_max = 0.05
+b_min = 7.5
+
+add_eta_selection = true
+
+nsamples_subsample = "none"
+seed_subsample = 42
+
+los_file = "data/SFI/los_SFI_<X>.hdf5"
+
+[io.Foundation]
+root = "data/Foundation"
+
+zcmb_min = "none"
+zcmb_max = 0.05
+b_min = 7.5
+
+nsamples_subsample = "none"
+seed_subsample = 42
+
+los_file = "data/Foundation/los_Foundation_<X>.hdf5"
+
+[io.LOSS]
+root = "data/LOSS"
+
+zcmb_min = "none"
+zcmb_max = 0.05
+b_min = 7.5
+
+nsamples_subsample = "none"
+seed_subsample = 42
+
+los_file = "data/LOSS/los_LOSS_<X>.hdf5"
+
+[io.PantheonPlus]
+root = "data/Pantheon+"
+zcmb_min = "none"
+zcmb_max = 0.05
+b_min = 7.5
+
+nsamples_subsample = "none"
+seed_subsample = 42
+
+los_file = "data/Pantheon+/los_CF4_Pantheon+_<X>.hdf5"
+
+[io.PantheonPlusLane]
+root = "data/Pantheon+_Lane"
+zcmb_min = "none"
+zcmb_max = 0.05
+b_min = 7.5
+
+nsamples_subsample = "none"
+seed_subsample = 42
+
+los_file = "data/Pantheon+_Lane/los_CF4_PantheonPlusLane_<X>.hdf5"
+
+[io.CSP]
+root = "data/CSP"
+zcmb_min = "none"
+zcmb_max = "none"
+b_min = "none"
+quality_min = 0.9
+# exclude_phys = true  # default: exclude physics sample
+which_sample = "LSQ"  # "CSPI", "CSPII", or "LSQ"
+
+nsamples_subsample = "none"
+seed_subsample = 42
+
+los_file = "none"
+
+[io.Clusters]
+root = "data/Clusters"
+zcmb_max = 0.2
+which_relation = "LT"
+finite_logY = true
+convert_to_CMB_frame = true
+
+los_file = "data/Clusters/los_Clusters_<X>.hdf5"
+
+nsamples_subsample = "none"
+seed_subsample = 42
+
+[io.SDSS_FP]
+root = "data/SDSS"
+zcmb_min = "none"
+zcmb_max = 0.05
+
+los_file = "data/SDSS/los_SDSS_FP_<X>.hdf5"
+
+nsamples_subsample = "none"
+seed_subsample = 42
+
+[io.6dF_FP]
+root = "data/6dF_FP"
+which_band = "J"
+zcmb_min = "none"
+zcmb_max = 0.05
+
+los_file = "data/6dF_FP/los_6dF_FP_<X>.hdf5"
+
+nsamples_subsample = "none"
+seed_subsample = 42
+
+
+[io.CF4_calibrated]
+root = "data/CF4_calibrated"
+zcmb_min = "none"
+zcmb_max = "none"
+b_min = "none"
+
+nsamples_subsample = "none"
+seed_subsample = 42
+
+
+################################################################################
+#                         Redshift2real mapping                                #
+################################################################################
+
+[redshift2real]
+
+which_calibration = "none"
+which_reconstruction = "Carrick2015"
+
+# Override reconstruction grid (rmin differs from default)
+[io.reconstruction_main]
+rmin = 0.001
+rmax = 201
+num_steps = 251

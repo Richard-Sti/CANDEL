@@ -1,0 +1,202 @@
+base = ["config_priors.toml", "config_paths.toml"]
+
+###############################################################################
+#                               Inference                                     #
+###############################################################################
+
+[inference]
+num_warmup = 1000
+num_samples = 1000
+num_chains = 1
+chain_method = "parallel"
+seed = 44
+save_log_likelihood_per_galaxy = false
+dense_mass_params = [
+    "H0", "M_TRGB", "alpha_c", "c_star", "c_bar", "w_c",
+    "sigma_int", "sigma_v",
+    "sigma_v_low", "sigma_v_high", "log_sigma_v_rho_t", "sigma_v_k",
+    "Vext_phi", "Vext_cos_theta", "Vext_mag",
+    "Vext_mono",
+    "Vext_mono_left", "Vext_mono_rt", "Vext_mono_angle",
+    "Vext_quad_mag",
+    "Vext_quad_q1_phi", "Vext_quad_q1_cos_theta",
+    "Vext_quad_q2_phi", "Vext_quad_q2_cos_theta",
+    "Vext_oct_mag",
+    "Vext_oct_q1_phi", "Vext_oct_q1_cos_theta",
+    "Vext_oct_q2_phi", "Vext_oct_q2_cos_theta",
+    "Vext_oct_q3_phi", "Vext_oct_q3_cos_theta",
+    "beta", "b1",
+    "mu_LMC", "mu_N4258",
+    "mag_lim_TRGB", "mag_lim_TRGB_width",
+    "cz_lim_selection", "cz_lim_selection_width",
+]
+
+###############################################################################
+#                                 Model                                       #
+###############################################################################
+
+[model]
+which_run = "EDD_TRGB"
+
+use_reconstruction = true
+use_TRGB_host_redshift = true
+which_bias = "linear"
+which_selection = "TRGB_magnitude"
+
+run_ppc = false
+ppc_factor = 10
+num_rand_los_no_recon = 1000
+# max_rand_los: disabled, use all available random LOS
+distmod_limits = [10, 38]
+distmod_limits_LMC = [17, 20]
+distmod_limits_N4258 = [28, 31]
+r_limits_malmquist = [0.15, 35]
+
+delta_mu = 0.00625
+dr_max = 0.05
+
+delta_mu_sel = 0.0875
+dr_max_sel = 0.375
+
+# 3D selection integral spherical truncation radius in Mpc/h.
+selection_integral_geometry = "sphere"
+selection_integral_grid_radius = 50.0
+density_3d_subsample_fraction = 1.0
+# Optional Gaussian smoothing scale in Mpc/h for reconstruction density fields.
+# Applies consistently to LOS products and 3D field caches; 0 disables it.
+field_3d_smoothing_scale = 0.0
+# Optional velocity-field smoothing. Disabled unless explicitly set non-zero.
+velocity_3d_smoothing_scale = 0.0
+# Optional inner-region supersampling for the 3D selection integral.
+# target_dx=0 or radius=0 disables inner-region supersampling.
+selection_integral_supersample_radius = 15.0
+selection_integral_supersample_target_dx = 0.325
+
+mag_min_TRGB = 22.1
+mag_lim_TRGB = "infer"
+mag_lim_TRGB_width = "infer"
+
+# --- Overrides from default priors ---
+
+# TRGB absolute magnitude
+[model.priors.M_TRGB]
+dist = "normal"
+loc = -4.05
+scale = 0.5
+
+# F606W-F814W colour pivot (Anand+22 reference value 1.23)
+[model.priors.c_star]
+dist = "normal"
+loc = 1.23
+scale = 0.1
+
+[model.priors.alpha_c]
+dist = "delta"
+value = 0.2
+# dist = "normal"
+# loc = 0.0
+# scale = 1.0
+
+[model.priors.c_bar]
+dist = "uniform"
+low = 0.0
+high = 3.0
+
+[model.priors.w_c]
+dist = "uniform"
+low = 0.001
+high = 1.0
+
+[model.priors.sigma_int]
+dist = "maxwell"
+scale = 0.0627
+
+[model.priors.sigma_v]
+dist = "maxwell"
+scale = 187.997121  # mean = 300 km/s
+
+[model.priors.sigma_v_low]
+dist = "maxwell"
+scale = 187.997121
+
+[model.priors.sigma_v_high]
+dist = "maxwell"
+scale = 187.997121
+
+[model.priors.log_sigma_v_rho_t]
+dist = "normal"
+loc = 1.0
+scale = 5.0
+
+[model.priors.sigma_v_k]
+dist = "truncated_normal"
+low = 0.0
+mean = 1.0
+scale = 1.0
+
+[model.priors.beta]
+dist = "normal"
+loc = 0.43
+scale = 1.0
+
+[model.priors.b1]
+dist = "truncated_normal"
+mean = 1.2
+scale = 1.0
+low = 0.0
+high = 5.0
+
+# Selection thresholds
+[model.priors.mag_lim_TRGB]
+dist = "uniform"
+low = 22.101
+high = 29.0
+
+[model.priors.mag_lim_TRGB_width]
+dist = "uniform"
+low = 0.05
+high = 1.5
+
+###############################################################################
+#                             TRGB Calibration                                #
+###############################################################################
+# All TRGB magnitudes are in the F814W band.
+#
+# LMC geometric distance (Pietrzynski et al. 2019, arXiv:1903.08096):
+#   mu_LMC = 18.477 +/- 0.026
+#
+# LMC TRGB magnitude (Hoyt et al. 2021, arXiv:2106.13337):
+#   mag_LMC_TRGB = 14.456 +/- 0.018
+#
+# NGC 4258 geometric distance (Reid et al. 2019):
+#   mu_N4258 = 29.398 +/- 0.032
+#
+# NGC 4258 TRGB magnitude (Jang & Lee 2020, arXiv:2008.04181):
+#   mag_N4258_TRGB = 25.347 +/- 0.0443
+
+[model.anchors]
+mu_LMC = 18.477
+e_mu_LMC = 0.026
+mag_LMC_TRGB = 14.456
+e_mag_LMC_TRGB = 0.018
+mu_N4258 = 29.398
+e_mu_N4258 = 0.032
+mag_N4258_TRGB = 25.347
+e_mag_N4258_TRGB = 0.0443
+
+###############################################################################
+#                                  Data                                       #
+###############################################################################
+
+[io]
+root_output = "results/EDD_TRGB"
+fname_output = "results/EDD_TRGB/test.hdf5"
+
+# Override reconstruction grid for TRGB (shorter range, finer grid)
+[io.reconstruction_main]
+rmin = 0.1
+rmax = 51
+num_steps = 301
+
+[io.PV_main.EDD_TRGB]
+reconstruction = "Carrick2015"

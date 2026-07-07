@@ -1,0 +1,142 @@
+###############################################################################
+#                               Inference                                     #
+###############################################################################
+
+[inference]
+num_warmup = 750
+num_samples = 1000
+num_chains = 2
+chain_method = "sequential"
+seed = 42
+init_maxiter = 500
+
+###############################################################################
+#                                 Data                                        #
+###############################################################################
+
+[data]
+# Not used for mock data (CepheidData.from_arrays bypasses file loading)
+R21_MW = "dummy.csv"
+
+###############################################################################
+#                                 Model                                       #
+###############################################################################
+
+[model]
+disable_all_selection = false
+model_type = "forward"
+distance_prior = "volume"
+shared_scatter = true
+n_mc_selection = 1
+mc_seed = 9999
+epsilon_OH = 0.06
+use_Q = false
+anchors = []
+
+[model.disk_prior]
+R_sun = 8.122
+
+[model.spiral_arms]
+apply = false
+
+[model.selection_mc]
+ell_min = 0.0
+ell_max = 360.0
+b_min = -90.0
+b_max = 90.0
+
+# --- C22 campaign (magnitude-selected) ---
+[model.C22]
+d_min = 0.3
+d_max = 10.0
+d_spacing = 0.05
+
+[model.C22.selection]
+apply_mW = true
+mW_max = 6.5
+mW_width = 0.0
+apply_AH = false
+apply_pi = false
+apply_logP = true
+logP_min = 0.903
+logP_width = 0.0
+delta_pi_max = 0.1
+
+# --- C27 (not used in this config) ---
+[model.C27]
+d_min = 0.3
+d_max = 3.0
+d_spacing = 0.01
+
+[model.C27.selection]
+apply_pi = false
+apply_mW = false
+
+# --- Priors ---
+
+[model.priors.M_H_1]
+dist = "uniform"
+low = -6.5
+high = -5.0
+
+[model.priors.b_W]
+dist = "uniform"
+low = -4.0
+high = -2.5
+
+[model.priors.Z_W]
+dist = "uniform"
+low = -1.0
+high = 1.0
+
+[model.priors.sigma_int]
+dist = "uniform"
+low = 0.01
+high = 0.2
+
+[model.priors.delta_pi]
+dist = "uniform"
+low = -0.1
+high = 0.1
+
+[model.priors.f_pi]
+dist = "delta"
+value = 1.0
+
+[model.priors.mu_logP]
+dist = "uniform"
+low = -2.5
+high = 2.5
+
+[model.priors.sigma_logP]
+dist = "uniform"
+low = 0.01
+high = 1.0
+
+[model.priors.mu_logP_C22]
+dist = "normal"
+loc = 0.8
+scale = 0.5
+
+[model.priors.sigma_logP_C22]
+dist = "truncated_normal"
+loc = 0.3
+scale = 0.15
+low = 0.0
+
+[model.priors.mu_OH]
+dist = "uniform"
+low = -0.5
+high = 0.5
+
+[model.priors.sigma_OH]
+dist = "uniform"
+low = 0.01
+high = 1.0
+
+###############################################################################
+#                                  I/O                                        #
+###############################################################################
+
+[io]
+output_file = "mock_mW_samples.hdf5"

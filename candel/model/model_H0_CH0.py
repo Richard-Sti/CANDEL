@@ -1,0 +1,879 @@
+# Copyright (C) 2025 Richard Stiskalek
+# This program is free software; you can redistribute it and/or modify it
+# under the terms of the GNU General Public License as published by the
+# Free Software Foundation; either version 3 of the License, or (at your
+# option) any later version.
+#
+# This program is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General
+# Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along
+# with this program; if not, write to the Free Software Foundation, Inc.,
+# 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+"""Cepheid-calibrated H0 (CH0) forward model in JAX."""
+import jax.numpy as jnp
+import numpy as np
+from jax import checkpoint, lax
+from jax.scipy.special import logsumexp
+from jax.scipy.stats import norm as norm_jax
+from numpyro import deterministic, factor, plate, sample
+from numpyro.distributions import MultivariateNormal, Normal, Uniform
+
+from ..util import fprint, get_nested, replace_prior_with_delta
+from .base_model import LOG_4PI, H0ModelBase
+from .integration import simpson_log_weights
+from .pv_utils import rsample, sample_galaxy_bias
+from .utils import (logmeanexp, mvn_logpdf_cholesky, normal_logpdf_var,
+                    predict_cz)
+
+###############################################################################
+#                          Base CH0 model                                     #
+###############################################################################
+
+
+class CH0Model(H0ModelBase):
+    """
+    Base class for Cepheid-calibrated H0 models, handling configuration,
+    data loading, and numerical grid setup.
+    """
+
+    # ------------------------------------------------------------------
+    #  Phase 1: model physics configuration
+    # ------------------------------------------------------------------
+
+    def _replace_unused_priors(self, config):
+        config = super()._replace_unused_priors(config)
+
+        use_Cepheid_host_redshift = get_nested(
+            config, "model/use_Cepheid_host_redshift", False)
+        use_PV_covmat_scaling = get_nested(
+            config, "model/use_PV_covmat_scaling", False)
+        which_selection = get_nested(
+            config, "model/which_selection", None)
+
+        mixed_nmag = get_nested(config, "model/num_hosts_selection_mag", 0)
+        uses_SN_selection = (
+            which_selection in ["SN_magnitude", "SN_magnitude_redshift"]
+            or (which_selection == "SN_magnitude_or_redshift_Nmag"
+                and type(mixed_nmag) is int
+                and mixed_nmag > 0)
+        )
+        if not uses_SN_selection:
+            replace_prior_with_delta(config, "M_B", -19.25)
+
+        if not use_Cepheid_host_redshift:
+            replace_prior_with_delta(config, "H0", 73.04)
+            replace_prior_with_delta(config, "Vext", [0., 0., 0.])
+            replace_prior_with_delta(config, "sigma_v", 100.0)
+
+        if not use_PV_covmat_scaling:
+            replace_prior_with_delta(config, "A_covmat", 1.0)
+
+        return config
+
+    def _load_selection_thresholds(self):
+        active_map = {
+            "redshift": {"cz_lim_selection", "cz_lim_selection_width"},
+            "SN_magnitude": {"mag_lim_SN", "mag_lim_SN_width"},
+            "SN_magnitude_redshift": {
+                "cz_lim_selection", "cz_lim_selection_width",
+                "mag_lim_SN", "mag_lim_SN_width"},
+            "SN_magnitude_or_redshift_Nmag": {
+                "cz_lim_selection", "cz_lim_selection_width",
+                "mag_lim_SN", "mag_lim_SN_width"},
+        }
+        spec = {
+            "cz_lim_selection": 3300.0,
+            "cz_lim_selection_width": None,
+            "mag_lim_SN": 14.0,
+            "mag_lim_SN_width": None,
+        }
+        super()._load_selection_thresholds(active_map, spec)
+
+    def _load_model_flags(self):
+        super()._load_model_flags()
+        config = self.config
+        self.use_Cepheid_host_redshift = get_nested(
+            config, "model/use_Cepheid_host_redshift", False)
+        fprint(f"use_Cepheid_host_redshift set to {self.use_Cepheid_host_redshift}")  # noqa
+        self.use_uniform_mu_host_priors = get_nested(
+            config, "model/use_uniform_mu_host_priors", True)
+        fprint(f"use_uniform_mu_host_priors set to {self.use_uniform_mu_host_priors}")  # noqa
+        self.use_fiducial_Cepheid_host_PV_covariance = get_nested(
+            config, "model/use_fiducial_Cepheid_host_PV_covariance", True)
+        fprint(f"use_fiducial_Cepheid_host_PV_covariance set to {self.use_fiducial_Cepheid_host_PV_covariance}")  # noqa
+        self.use_PV_covmat_scaling = get_nested(
+            config, "model/use_PV_covmat_scaling", False)
+        fprint(f"use_PV_covmat_scaling set to {self.use_PV_covmat_scaling}")
+        self.use_density_dependent_sigma_v = get_nested(
+            config, "model/use_density_dependent_sigma_v", False)
+        fprint("use_density_dependent_sigma_v set to "
+               f"{self.use_density_dependent_sigma_v}")
+        self.track_host_velocity = get_nested(
+            config, "model/track_host_velocity", False)
+        fprint(f"track_host_velocity set to {self.track_host_velocity}")
+        self.save_log_likelihood_per_galaxy = bool(get_nested(
+            config, "inference/save_log_likelihood_per_galaxy", False))
+        if self.save_log_likelihood_per_galaxy:
+            fprint("saving total and per-host CH0 log likelihood diagnostics.")
+        self.weight_selection_by_covmat_Neff = get_nested(
+            config, "model/weight_selection_by_covmat_Neff", False)
+        fprint(f"weight_selection_by_covmat_Neff set to "
+               f"{self.weight_selection_by_covmat_Neff}")
+        self.num_hosts_selection_mag = get_nested(
+            config, "model/num_hosts_selection_mag", None)
+        if self.which_selection == "SN_magnitude_or_redshift_Nmag":
+            fprint("num_hosts_selection_mag set to "
+                   f"{self.num_hosts_selection_mag}")
+
+    # ------------------------------------------------------------------
+    #  Phase 2: data loading
+    # ------------------------------------------------------------------
+
+    def _load_data(self, data):
+        self.config.setdefault("io", {}).setdefault("load_rand_los", False)
+        super()._load_data(data)
+        self._setup_cepheid_host_index()
+
+    def _set_data_arrays(self, data):
+        if data.get("host_names") is not None:
+            self.host_names = np.asarray(data["host_names"], dtype=str)
+        skip = ("q_names", "host_map", "host_names")
+        super()._set_data_arrays(data, skip_keys=skip)
+
+    def _setup_cepheid_host_index(self):
+        """Precompute Cepheid host indices from the one-hot design matrix."""
+        L_dist = np.asarray(self.L_Cepheid_host_dist)
+        if L_dist.ndim != 2:
+            raise ValueError(
+                "`L_Cepheid_host_dist` must be a 2D one-hot matrix.")
+
+        nonzero = L_dist != 0
+        row_nnz = np.sum(nonzero, axis=1)
+        if not np.all(row_nnz == 1):
+            raise ValueError(
+                "`L_Cepheid_host_dist` must have exactly one nonzero entry "
+                "per Cepheid row.")
+
+        host_index = np.argmax(nonzero, axis=1)
+        row_values = L_dist[np.arange(L_dist.shape[0]), host_index]
+        if not np.all(row_values == 1):
+            raise ValueError(
+                "`L_Cepheid_host_dist` nonzero entries must all equal one.")
+
+        self._cepheid_host_index = jnp.asarray(host_index)
+
+    def _setup_malmquist_grid(self):
+        """Set only the selection grid needed by CH0.
+
+        CH0 samples distance moduli directly, so there is no host radial
+        grid. Reconstruction selections use the shared 3D volume integral;
+        no-reconstruction selections still need a radial selection grid.
+        """
+        if self.apply_sel and self.use_uniform_mu_host_priors:
+            if self.use_reconstruction:
+                if self.selection_integral_grid_radius is not None:
+                    self._cap_uniform_mu_limits_to_selection(
+                        rh_max=self.selection_integral_grid_radius)
+            else:
+                r_min = 0.01
+                r_max_sel = get_nested(
+                    self.config, "model/r_max_selection", 70)
+                self._cap_uniform_mu_limits_to_selection(
+                    r_min=r_min, r_max=r_max_sel)
+
+        if not self.use_reconstruction and self.apply_sel:
+            r_min = 0.01
+            r_max_sel = get_nested(self.config, "model/r_max_selection", 70)
+            dr = get_nested(self.config, "model/dr_malmquist", 0.5)
+
+            num_pts = int(round((r_max_sel - r_min) / dr)) + 1
+            num_pts = max(num_pts, 3)
+            if num_pts % 2 == 0:
+                num_pts += 1
+
+            self.r_sel_range = jnp.linspace(r_min, r_max_sel, num_pts)
+            self._simpson_log_w_sel = simpson_log_weights(self.r_sel_range)
+            self._num_points_malmquist = num_pts
+            fprint(f"selection grid: {num_pts} points over "
+                   f"[{r_min}, {r_max_sel}] Mpc (dr={dr:.3f}).")
+        return
+
+    def _H0_support_values(self):
+        """Representative bounded H0 support values for grid coverage."""
+        dist = self.priors["H0"]
+        dist_name = self.prior_dist_name.get("H0")
+        if dist_name == "delta":
+            return jnp.atleast_1d(dist.v)
+        if hasattr(dist, "low") and hasattr(dist, "high"):
+            low = float(dist.low)
+            high = float(dist.high)
+            if jnp.isfinite(low) and jnp.isfinite(high):
+                return jnp.asarray([low, high])
+        raise ValueError(
+            "Selected uniform-mu CH0 runs require a bounded or delta H0 "
+            "prior so the selection grid can cover the distance-modulus "
+            "support.")
+
+    def _cap_uniform_mu_limits_to_selection(self, r_min=None, r_max=None,
+                                            rh_max=None):
+        """Cap uniform-mu host support to the selection-integration reach."""
+        H0_values = self._H0_support_values()
+        h_values = H0_values / 100
+        low, high = map(float, self.distmod_limits)
+
+        if r_min is not None:
+            mu_low_grid = self.distance2distmod(
+                jnp.full_like(H0_values, r_min), h=h_values)
+            low = max(low, float(jnp.max(mu_low_grid)))
+
+        if r_max is not None:
+            mu_high_grid = self.distance2distmod(
+                jnp.full_like(H0_values, r_max), h=h_values)
+            high = min(high, float(jnp.min(mu_high_grid)))
+
+        if rh_max is not None:
+            r_max_grid = rh_max / h_values
+            mu_high_grid = self.distance2distmod(r_max_grid, h=h_values)
+            high = min(high, float(jnp.min(mu_high_grid)))
+
+        if high <= low:
+            raise ValueError(
+                "Selection grid leaves no valid uniform-mu host prior "
+                f"support after capping: [{low:.6g}, {high:.6g}].")
+
+        old_low, old_high = map(float, self.distmod_limits)
+        if low > old_low or high < old_high:
+            fprint("capping distmod_limits from "
+                   f"[{old_low:.6g}, {old_high:.6g}] to "
+                   f"[{low:.6g}, {high:.6g}] to match the selection "
+                   "integration range.")
+            self.distmod_limits = [low, high]
+            self.config["model"]["distmod_limits"] = [low, high]
+
+    # ------------------------------------------------------------------
+    #  Validation
+    # ------------------------------------------------------------------
+
+    def _validate_selection_width(self, name):
+        """Require fixed selection widths to be present and positive."""
+        if getattr(self, f"_infer_{name}", False):
+            return
+        value = getattr(self, name)
+        if value is None:
+            raise ValueError(
+                f"`{name}` must be set or 'infer' for "
+                f"{self.which_selection} selection.")
+        try:
+            value_arr = np.asarray(value, dtype=float)
+        except (TypeError, ValueError):
+            raise ValueError(f"`{name}` must be numeric, got {value!r}.")
+        if np.any(~np.isfinite(value_arr)) or np.any(value_arr <= 0):
+            raise ValueError(f"`{name}` must be positive, got {value!r}.")
+
+    def _validate_active_selection_widths(self):
+        width_names = {
+            "redshift": ("cz_lim_selection_width",),
+            "SN_magnitude": ("mag_lim_SN_width",),
+            "SN_magnitude_redshift": (
+                "cz_lim_selection_width", "mag_lim_SN_width"),
+            "SN_magnitude_or_redshift_Nmag": (
+                "cz_lim_selection_width", "mag_lim_SN_width"),
+        }.get(self.which_selection, ())
+        for name in width_names:
+            self._validate_selection_width(name)
+
+    def _validate_config(self):
+        if self.use_reconstruction and self.use_fiducial_Cepheid_host_PV_covariance:  # noqa
+            raise ValueError(
+                "Cannot use `use_reconstruction` and "
+                "`use_fiducial_Cepheid_host_PV_covariance` at the same time.")
+
+        if self.use_reconstruction and not self.has_host_los:
+            raise ValueError("Option `use_reconstruction` requires host LOS "
+                             "interpolators to be available. Please provide "
+                             "`host_los_r` and `host_los_density` "
+                             "in the data.")
+
+        if self.use_density_dependent_sigma_v and not self.use_reconstruction:
+            raise ValueError(
+                "`use_density_dependent_sigma_v` requires "
+                "`use_reconstruction` to be set to True.")
+
+        if (self.cz_likelihood == "student_t"
+                and self.use_fiducial_Cepheid_host_PV_covariance):
+            raise ValueError(
+                "`cz_likelihood='student_t'` is incompatible with "
+                "`use_fiducial_Cepheid_host_PV_covariance=True` "
+                "(PV covariance path requires multivariate Gaussian).")
+
+        if self.use_density_dependent_sigma_v:
+            required = ["sigma_v_low", "sigma_v_high",
+                        "log_sigma_v_rho_t", "sigma_v_k"]
+            missing = [k for k in required if k not in self.priors]
+            if missing:
+                raise ValueError(
+                    "Missing priors for density-dependent sigma_v: "
+                    f"{', '.join(missing)}.")
+
+        allowed_selection = [
+            "redshift", "SN_magnitude",
+            "SN_magnitude_redshift", "SN_magnitude_or_redshift_Nmag",
+            None]
+        if self.which_selection not in allowed_selection:
+            raise ValueError(
+                f"Unknown `which_selection`: {self.which_selection}. "
+                f"Expected one of {allowed_selection}.")
+        self._validate_active_selection_widths()
+
+        mixed_needs_redshift = False
+        if self.which_selection == "SN_magnitude_or_redshift_Nmag":
+            if self.num_hosts_selection_mag is None:
+                raise ValueError(
+                    "`SN_magnitude_or_redshift_Nmag` requires "
+                    "`model.num_hosts_selection_mag`.")
+            if type(self.num_hosts_selection_mag) is not int:
+                raise TypeError(
+                    "`model.num_hosts_selection_mag` must be an int.")
+            if not (0 <= self.num_hosts_selection_mag <= self.num_hosts):
+                raise ValueError(
+                    "`model.num_hosts_selection_mag` must be between 0 and "
+                    f"{self.num_hosts}, got {self.num_hosts_selection_mag}.")
+            if self.weight_selection_by_covmat_Neff:
+                raise ValueError(
+                    "`weight_selection_by_covmat_Neff` is not supported with "
+                    "`SN_magnitude_or_redshift_Nmag`.")
+            mixed_needs_redshift = (
+                self.num_hosts_selection_mag < self.num_hosts)
+
+        selection_needs_redshift = (
+            self.which_selection in ["redshift", "SN_magnitude_redshift"]
+            or mixed_needs_redshift)
+        if selection_needs_redshift and not self.use_Cepheid_host_redshift:
+            raise ValueError(
+                "Redshift-based selection requires "
+                "`use_Cepheid_host_redshift` to be set to True.")
+        self._validate_student_t_redshift_selection(selection_needs_redshift)
+
+        self._validate_selection_integral(
+            needs_velocity=selection_needs_redshift)
+
+        if self.save_log_likelihood_per_galaxy:
+            if not self.use_reconstruction:
+                raise ValueError(
+                    "Per-host CH0 log likelihood saving requires "
+                    "`use_reconstruction` to be set to True.")
+            if not self.apply_sel:
+                raise ValueError(
+                    "Per-host CH0 log likelihood saving requires an explicit "
+                    "`which_selection`.")
+            if self.num_fields != 1:
+                raise ValueError(
+                    "Per-host CH0 log likelihood saving is defined only for "
+                    "single-field runs.")
+            if (hasattr(self, "host_names")
+                    and self.host_names.shape != (self.num_hosts,)):
+                raise ValueError(
+                    "`host_names` must be one-dimensional with length "
+                    "matching the number of Cepheid hosts when saving "
+                    "per-host log likelihoods.")
+
+        if not self.apply_sel and self.use_reconstruction:
+            if self.selection_integral_grid_radius is None:
+                raise ValueError(
+                    "Reconstructed no-selection CH0 runs require "
+                    "`model.selection_integral_grid_radius` for the finite "
+                    "3D distance-prior normalizer.")
+            if not self.has_volume_density_3d:
+                raise ValueError(
+                    "Reconstructed no-selection CH0 runs require 3D density "
+                    "data for the finite distance-prior normalizer.")
+
+        if not self.use_fiducial_Cepheid_host_PV_covariance and self.weight_selection_by_covmat_Neff:  # noqa
+            raise ValueError(
+                "Cannot use `weight_selection_by_covmat_Neff` without "
+                "`use_fiducial_Cepheid_host_PV_covariance` set to True.")
+
+    # ------------------------------------------------------------------
+    #  Sampling helpers
+    # ------------------------------------------------------------------
+
+    def sample_host_distmod(self):
+        """
+        Sample distance moduli for host galaxies, with a uniform prior in the
+        distance modulus. Includes geometric anchor information for NGC 4258,
+        the LMC, and M31.
+        """
+        with plate("hosts", self.num_hosts):
+            mu_host = sample("mu_host", Uniform(*self.distmod_limits))
+
+        mu_N4258 = sample("mu_N4258", Uniform(*self.distmod_limits_N4258))
+        mu_LMC = sample("mu_LMC", Uniform(*self.distmod_limits_LMC))
+        mu_M31 = sample("mu_M31", Uniform(*self.distmod_limits_anchor))
+
+        ll_mu_N4258 = normal_logpdf_var(
+            mu_N4258, self.mu_N4258_anchor, self.e2_mu_N4258_anchor)
+        ll_mu_LMC = normal_logpdf_var(
+            mu_LMC, self.mu_LMC_anchor, self.e2_mu_LMC_anchor)
+        factor("mu_N4258_ll", ll_mu_N4258)
+        factor("mu_LMC_ll", ll_mu_LMC)
+
+        return mu_host, mu_N4258, mu_LMC, mu_M31, ll_mu_N4258 + ll_mu_LMC
+
+    def sigma_v_from_density(self, delta, sigma_v_low, sigma_v_high,
+                             log_rho_t, k):
+        """Map overdensity to sigma_v through a sigmoid in log density."""
+        rho = jnp.clip(1.0 + delta, a_min=1e-6)
+        log_rho = jnp.log(rho)
+        return sigma_v_low + (sigma_v_high - sigma_v_low) / (
+            1.0 + jnp.exp(-k * (log_rho - log_rho_t)))
+
+    def _volume_sigma_v_fields(self, sigma_v_low, sigma_v_high,
+                               log_rho_t, k):
+        """Evaluate density-dependent sigma_v on the 3D selection grid."""
+        if self.density_3d_mode == "log_rho":
+            delta_3d = jnp.exp(self.density_3d_fields) - 1.0
+        else:
+            delta_3d = self.density_3d_fields
+        return self.sigma_v_from_density(
+            delta_3d, sigma_v_low, sigma_v_high, log_rho_t, k)
+
+    def _factor_sn_likelihood(self, mu_host_all, M_B, n_mag=None):
+        """Add the SN-magnitude likelihood for all or the first n_mag hosts."""
+        if n_mag == 0:
+            return 0.0
+
+        if n_mag is None:
+            mag_obs = self.mag_SN_unique_Cepheid_host
+            L_sn = self.L_SN_unique_Cepheid_host
+            L_dist = self.L_SN_unique_Cepheid_host_dist
+        else:
+            mag_obs = self.mag_SN_unique_Cepheid_host[:n_mag]
+            L_sn = self.L_SN_unique_Cepheid_host[:n_mag, :n_mag]
+            L_dist = self.L_SN_unique_Cepheid_host_dist[:n_mag]
+
+        mag_SN = (L_dist @ mu_host_all) + M_B
+        ll_SN = mvn_logpdf_cholesky(mag_obs, mag_SN, L_sn)
+        factor("ll_SN", ll_SN)
+        return ll_SN
+
+    def _sn_selection_mag_error(self, n_mag=None):
+        """Representative SN magnitude error for selection integrals."""
+        if n_mag is None:
+            return self.mean_std_mag_SN_unique_Cepheid_host
+        std = jnp.sqrt(jnp.diag(
+            self.C_SN_unique_Cepheid_host[:n_mag, :n_mag]))
+        return jnp.mean(std)
+
+    def _mixed_selection_log_S(self, log_S_mag, log_S_cz):
+        """Per-host log S for a split SN-magnitude/redshift selection."""
+        n_mag = self.num_hosts_selection_mag
+        # The split follows the fixed SH0ES host order: first N are SN-mag.
+        mask_mag = jnp.arange(self.num_hosts) < n_mag
+        return jnp.where(mask_mag[None, :],
+                         log_S_mag[:, None], log_S_cz[:, None])
+
+    def _sn_selection_terms_by_host(self, terms, n_mag=None):
+        """Map unique-SN selection terms onto Cepheid-host bins."""
+        if n_mag is None:
+            L_dist = self.L_SN_unique_Cepheid_host_dist[:, :self.num_hosts]
+        else:
+            L_dist = self.L_SN_unique_Cepheid_host_dist[:n_mag,
+                                                        :self.num_hosts]
+        if L_dist.shape[0] == 0:
+            return jnp.zeros(self.num_hosts)
+        return L_dist.T @ terms
+
+    def _record_per_galaxy_log_likelihood(
+            self, ll_without_selection, ll_selection_observed,
+            log_selection_integral=0.0):
+        """Expose per-host CH0 likelihood terms as deterministic sites."""
+        if not self.save_log_likelihood_per_galaxy:
+            return
+
+        with_selection = (
+            ll_without_selection
+            + ll_selection_observed
+            - log_selection_integral
+        )
+        deterministic("log_likelihood_per_galaxy", ll_without_selection)
+        deterministic(
+            "log_observed_selection_per_galaxy",
+            ll_selection_observed)
+        deterministic("log_selection_integral", log_selection_integral)
+        deterministic(
+            "log_likelihood_per_galaxy_with_selection", with_selection)
+
+    def _selection_radial_log_measure(self, H0):
+        """Selection measure matching the configured host-distance prior."""
+        if not self.use_uniform_mu_host_priors:
+            return super()._selection_radial_log_measure(H0)
+
+        h = H0 / 100
+        mu_grid = self.distance2distmod(self.r_sel_range, h=h)
+        log_dmu_dr = -self.log_grad_distmod2comoving_distance(mu_grid, h=h)
+        in_support = ((mu_grid >= self.distmod_limits[0])
+                      & (mu_grid <= self.distmod_limits[1]))
+        return jnp.where(
+            in_support, log_dmu_dr + LOG_4PI, -jnp.inf)[None, None, :]
+
+    def _selection_3d_log_measure(self, H0):
+        """3D selection measure matching the configured host-distance prior."""
+        if not self.use_uniform_mu_host_priors:
+            return super()._selection_3d_log_measure(H0)
+
+        h = H0 / 100
+        mu_3d = self.mu_at_h1_3d - 5 * jnp.log10(h)
+        shape = mu_3d.shape
+        log_dmu_dr = -self.log_grad_distmod2comoving_distance(
+            jnp.ravel(mu_3d), h=h).reshape(shape)
+        log_r_phys = self.log_r_3d - jnp.log(h)
+        in_support = ((mu_3d >= self.distmod_limits[0])
+                      & (mu_3d <= self.distmod_limits[1]))
+        log_measure = (self._volume_log_cell_weight_phys(H0)
+                       + log_dmu_dr - 2 * log_r_phys)
+        return jnp.where(in_support, log_measure, -jnp.inf)
+
+    def _compute_no_selection_volume_log_norm(self, bias_params, H0):
+        """3D normalizer for reconstructed no-selection CH0 runs."""
+        h = H0 / 100
+        mu_3d = self.mu_at_h1_3d - 5 * jnp.log10(h)
+        in_support = (
+            (self.log_r_3d <= jnp.log(self.selection_integral_grid_radius))
+            & (mu_3d >= self.distmod_limits[0])
+            & (mu_3d <= self.distmod_limits[1])
+        )
+        log_cell_weight = self._selection_3d_log_measure(H0)
+
+        def _one(density_3d):
+            log_n = self._vol_sel_galaxy_bias(density_3d, bias_params)
+            return logsumexp(jnp.where(in_support,
+                                       log_n + log_cell_weight,
+                                       -jnp.inf))
+
+        return lax.map(checkpoint(_one), self.density_3d_fields,
+                       batch_size=self.volume_density_batch_size)
+
+    def _factor_no_selection_distance_prior_norm(self, r_host, H0,
+                                                 bias_params,
+                                                 ll_reconstruction=None):
+        """Normalize reconstructed no-selection host-distance priors."""
+        if self.use_reconstruction:
+            rh_host = r_host * H0 / 100
+            r_max = self.selection_integral_grid_radius
+            factor("volume_limit", jnp.sum(jnp.where(rh_host <= r_max, 0.0,
+                                                     -jnp.inf)))
+            log_norm = self._compute_no_selection_volume_log_norm(
+                bias_params, H0)
+            return ll_reconstruction - log_norm[:, None]
+
+        return ll_reconstruction
+
+    def __call__(self, **dynamic_attrs):
+        if dynamic_attrs:
+            with self._temporary_attrs(dynamic_attrs):
+                return self.__call__()
+
+        # Hubble constant
+        H0 = rsample("H0", self.priors["H0"])
+
+        # CPLR calibration
+        M_W = rsample("M_W", self.priors["M_W"])
+        b_W = rsample("b_W", self.priors["b_W"])
+        Z_W = rsample("Z_W", self.priors["Z_W"])
+
+        # SN calibration
+        M_B = rsample("M_B", self.priors["M_B"])
+
+        # Velocity field calibration
+        Vext, Vext_quad, Vext_oct, Vext_mono = \
+            self._sample_external_velocity()
+        if self.use_density_dependent_sigma_v:
+            sigma_v_low = rsample("sigma_v_low", self.priors["sigma_v_low"])
+            sigma_v_high = rsample("sigma_v_high", self.priors["sigma_v_high"])
+            log_sigma_v_rho_t = rsample(
+                "log_sigma_v_rho_t", self.priors["log_sigma_v_rho_t"])
+            sigma_v_k = rsample("sigma_v_k", self.priors["sigma_v_k"])
+            sigma_v_base = 0.5 * (sigma_v_low + sigma_v_high)
+        else:
+            sigma_v = rsample("sigma_v", self.priors["sigma_v"])
+            sigma_v_base = sigma_v
+
+        nu_cz = self._sample_nu_cz()
+
+        A_covmat = rsample("A_covmat", self.priors["A_covmat"])
+        beta = rsample("beta", self.priors["beta"])
+
+        # Galaxy bias parameters
+        bias_params = sample_galaxy_bias(
+            self.priors, self.which_bias, beta=beta, Om=self.Om)
+
+        def map_sigma_v(delta):
+            if self.use_density_dependent_sigma_v:
+                return self.sigma_v_from_density(
+                    delta, sigma_v_low, sigma_v_high, log_sigma_v_rho_t,
+                    sigma_v_k)
+            return jnp.broadcast_to(sigma_v_base, delta.shape)
+
+        def selection_sigma_v():
+            if self.use_density_dependent_sigma_v:
+                return self._volume_sigma_v_fields(
+                    sigma_v_low, sigma_v_high, log_sigma_v_rho_t, sigma_v_k)
+            return sigma_v_base
+
+        h = H0 / 100
+        Vext_rad_host = self._host_Vext_radial(
+            Vext, Vext_quad, Vext_oct)
+
+        # HST and Gaia zero-point calibration of MW Cepheids.
+        ll_M_W_HST = normal_logpdf_var(self.M_HST, M_W, self.e2_M_HST)
+        ll_M_W_Gaia = normal_logpdf_var(self.M_Gaia, M_W, self.e2_M_Gaia)
+        factor("M_W_HST", ll_M_W_HST)
+        factor("M_W_Gaia", ll_M_W_Gaia)
+        ll_total = ll_M_W_HST + ll_M_W_Gaia
+
+        mu_host, mu_N4258, mu_LMC, mu_M31, ll_anchor = \
+            self.sample_host_distmod()
+        ll_total += ll_anchor
+
+        # Distance moduli for Cepheids, with per-Cepheid dZP correction.
+        dZP = sample("dZP", Normal(0, self.sigma_grnd))
+        mu_host_cepheid = jnp.concatenate(
+            [mu_host,
+             jnp.array([mu_N4258, mu_LMC, mu_M31])]
+            )
+
+        # Distance moduli without any corrections.
+        mu_host_all = jnp.concatenate(
+            [mu_host, jnp.array([mu_N4258, mu_LMC, mu_M31])]
+            )
+
+        # Comoving distances to all hosts in Mpc and in Mpc / h.
+        r_host_all = self.distmod2distance(mu_host_all, h=h)
+        r_host = r_host_all[:self.num_hosts]
+
+        Vext_mono_host = self._Vext_monopole_radial(Vext_mono, r_host)
+        if Vext_mono_host is not None:
+            Vext_rad_host = Vext_rad_host + Vext_mono_host
+
+        # Do we use a r^2 prior on the host distance moduli?
+        if self.use_uniform_mu_host_priors:
+            lp_host_dist = jnp.zeros(self.num_hosts)
+        else:
+            lp_host_dist = self.log_prior_distance(r_host)
+            lp_host_dist += self.log_grad_distmod2comoving_distance(
+                mu_host, h=h)
+
+        # SN magnitude likelihood (shared by SN_magnitude* selections)
+        if self.which_selection in ["SN_magnitude", "SN_magnitude_redshift"]:
+            ll_total += self._factor_sn_likelihood(mu_host_all, M_B)
+        elif self.which_selection == "SN_magnitude_or_redshift_Nmag":
+            ll_total += self._factor_sn_likelihood(
+                mu_host_all, M_B, n_mag=self.num_hosts_selection_mag)
+
+        if self.use_reconstruction:
+            ll_reconstruction, los_delta_host, rh_host = \
+                self._apply_host_reconstruction(
+                    lp_host_dist, r_host, h, bias_params)
+            sigma_v_host = map_sigma_v(los_delta_host)
+        else:
+            ll_reconstruction = None
+            self._no_reconstruction_fallback(lp_host_dist)
+            sigma_v_host = map_sigma_v(jnp.zeros((1, self.num_hosts)))
+
+        ll_observed_selection_host = jnp.zeros(self.num_hosts)
+        log_selection_integral = None
+
+        if self.apply_sel:
+            if self.which_selection == "SN_magnitude":
+                mag_lim = self._resolve_threshold("mag_lim_SN")
+                mag_width = self._resolve_threshold("mag_lim_SN_width")
+                ll_sel_mag = norm_jax.logcdf(
+                    (mag_lim - self.mag_SN_unique_Cepheid_host)
+                    / mag_width)
+                ll_observed_selection_host = (
+                    self._sn_selection_terms_by_host(ll_sel_mag))
+                ll_sel_object = jnp.sum(ll_sel_mag)
+                factor("ll_sel_per_object", ll_sel_object)
+                ll_total += ll_sel_object
+                log_S = self._compute_volume_log_S_mag(
+                    bias_params, M_B,
+                    self._sn_selection_mag_error(),
+                    H0, mag_lim, mag_width)
+            elif self.which_selection == "redshift":
+                cz_lim = self._resolve_threshold("cz_lim_selection")
+                cz_width = self._resolve_threshold(
+                    "cz_lim_selection_width")
+                ll_sel_cz = norm_jax.logcdf(
+                    (cz_lim - self.czcmb_cepheid_host)
+                    / cz_width)
+                ll_observed_selection_host = ll_sel_cz
+                ll_sel_object = jnp.sum(ll_sel_cz)
+                factor("ll_sel_per_object", ll_sel_object)
+                ll_total += ll_sel_object
+                log_S = self._compute_volume_log_S_cz(
+                    bias_params, H0, selection_sigma_v(), beta,
+                    Vext, Vext_mono, cz_lim, cz_width,
+                    nu_cz=nu_cz)
+            elif self.which_selection == "SN_magnitude_redshift":
+                cz_lim = self._resolve_threshold("cz_lim_selection")
+                cz_width = self._resolve_threshold(
+                    "cz_lim_selection_width")
+                mag_lim = self._resolve_threshold("mag_lim_SN")
+                mag_width = self._resolve_threshold("mag_lim_SN_width")
+                ll_sel_cz = norm_jax.logcdf(
+                    (cz_lim - self.czcmb_cepheid_host) / cz_width)
+                ll_sel_mag = norm_jax.logcdf(
+                    (mag_lim - self.mag_SN_unique_Cepheid_host)
+                    / mag_width)
+                ll_observed_selection_host = (
+                    ll_sel_cz + self._sn_selection_terms_by_host(ll_sel_mag))
+                ll_sel_object = jnp.sum(ll_sel_cz) + jnp.sum(ll_sel_mag)
+                factor("ll_sel_per_object", ll_sel_object)
+                ll_total += ll_sel_object
+                log_S = self._compute_volume_log_S_mag_cz(
+                    bias_params, M_B,
+                    self._sn_selection_mag_error(),
+                    H0, selection_sigma_v(), beta, Vext, Vext_mono,
+                    mag_lim, mag_width, cz_lim, cz_width,
+                    nu_cz=nu_cz)
+            elif self.which_selection == "SN_magnitude_or_redshift_Nmag":
+                n_mag = self.num_hosts_selection_mag
+                cz_lim = self._resolve_threshold("cz_lim_selection")
+                cz_width = self._resolve_threshold(
+                    "cz_lim_selection_width")
+                mag_lim = self._resolve_threshold("mag_lim_SN")
+                mag_width = self._resolve_threshold("mag_lim_SN_width")
+
+                ll_sel_mag = norm_jax.logcdf(
+                    (mag_lim - self.mag_SN_unique_Cepheid_host[:n_mag])
+                    / mag_width)
+                ll_sel_cz = norm_jax.logcdf(
+                    (cz_lim - self.czcmb_cepheid_host[n_mag:])
+                    / cz_width)
+                ll_observed_selection_host = jnp.concatenate(
+                    [ll_sel_mag, ll_sel_cz])
+                ll_sel_object = jnp.sum(ll_sel_mag) + jnp.sum(ll_sel_cz)
+                factor("ll_sel_per_object", ll_sel_object)
+                ll_total += ll_sel_object
+
+                if n_mag == 0:
+                    log_S_cz = self._compute_volume_log_S_cz(
+                        bias_params, H0, selection_sigma_v(), beta,
+                        Vext, Vext_mono, cz_lim, cz_width,
+                        nu_cz=nu_cz)
+                    log_S = jnp.broadcast_to(
+                        log_S_cz[:, None],
+                        (log_S_cz.shape[0], self.num_hosts))
+                elif n_mag == self.num_hosts:
+                    log_S_mag = self._compute_volume_log_S_mag(
+                        bias_params, M_B,
+                        self._sn_selection_mag_error(n_mag),
+                        H0, mag_lim, mag_width)
+                    log_S = jnp.broadcast_to(
+                        log_S_mag[:, None],
+                        (log_S_mag.shape[0], self.num_hosts))
+                else:
+                    log_S_mag = self._compute_volume_log_S_mag(
+                        bias_params, M_B,
+                        self._sn_selection_mag_error(n_mag),
+                        H0, mag_lim, mag_width)
+                    log_S_cz = self._compute_volume_log_S_cz(
+                        bias_params, H0, selection_sigma_v(), beta,
+                        Vext, Vext_mono, cz_lim, cz_width,
+                        nu_cz=nu_cz)
+                    log_S = self._mixed_selection_log_S(log_S_mag, log_S_cz)
+
+            if self.weight_selection_by_covmat_Neff:
+                Neff = (self.Neff_PV_covmat_cepheid_host
+                        if self.which_selection in (
+                            "redshift", "SN_magnitude_redshift")
+                        else self.Neff_C_SN_unique_Cepheid_host)
+                log_S = log_S * Neff / self.num_hosts
+            if self.use_reconstruction:
+                log_selection_integral = log_S
+                log_S_host = log_S
+                if log_S_host.ndim == 1:
+                    log_S_host = log_S_host[:, None]
+                ll_reconstruction -= log_S_host
+            else:
+                if log_S.ndim == 1:
+                    ll_neg_log_S = -log_S[0] * self.num_hosts
+                else:
+                    ll_neg_log_S = -jnp.sum(log_S[0])
+                factor("neg_log_S_correction", ll_neg_log_S)
+                ll_total += ll_neg_log_S
+        else:
+            ll_reconstruction = self._factor_no_selection_distance_prior_norm(
+                r_host, H0, bias_params, ll_reconstruction)
+
+        mu_cepheid = mu_host_cepheid[self._cepheid_host_index]
+        mu_cepheid = mu_cepheid.at[self.idx_dZP].add(dZP)
+
+        mag_cepheid = mu_cepheid + M_W + b_W * self.logP + Z_W * self.OH
+        ll_cepheid = mvn_logpdf_cholesky(
+            self.mag_cepheid, mag_cepheid, self.L_Cepheid)
+        factor("ll_cepheid", ll_cepheid)
+        ll_total += ll_cepheid
+
+        if self.use_Cepheid_host_redshift:
+            z_cosmo = self.distmod2redshift(mu_host, h=h)
+
+            if self.use_reconstruction:
+                e2_cz = (
+                    self.e2_czcmb_cepheid_host[None, :] + sigma_v_host**2)
+            else:
+                e2_cz = self.e2_czcmb_cepheid_host + sigma_v_host[0]**2
+
+            ll_cz_fn = self._cz_logpdf_fn(nu_cz)
+
+            if self.use_fiducial_Cepheid_host_PV_covariance:
+                # PV covariance path: remains multivariate Gaussian.
+                cz_pred = predict_cz(z_cosmo, Vext_rad_host)
+                C = A_covmat * self.PV_covmat_cepheid_host
+                C = C.at[jnp.diag_indices(len(e2_cz))].add(e2_cz)
+                cz_dist = MultivariateNormal(cz_pred, C)
+                sample("cz_pred", cz_dist, obs=self.czcmb_cepheid_host)
+                ll_total += cz_dist.log_prob(self.czcmb_cepheid_host)
+            elif self.use_reconstruction:
+                Vpec = beta * self.f_host_los_velocity(rh_host)
+                Vpec += Vext_rad_host[None, :]
+                cz_pred = predict_cz(z_cosmo[None, :], Vpec)
+
+                if self.track_host_velocity:
+                    deterministic("Vpec_host_skipZ", Vpec)
+
+                ll_reconstruction += ll_cz_fn(
+                    self.czcmb_cepheid_host[None, :], cz_pred, e2_cz)
+            else:
+                cz_pred = predict_cz(z_cosmo, Vext_rad_host)
+                ll_cz = ll_cz_fn(
+                    self.czcmb_cepheid_host, cz_pred, e2_cz).sum()
+                factor("cz_pred", ll_cz)
+                ll_total += ll_cz
+
+        if self.use_reconstruction:
+            if self.save_log_likelihood_per_galaxy:
+                if log_selection_integral is None:
+                    raise RuntimeError(
+                        "Per-host CH0 log likelihood saving requires a "
+                        "selection integral.")
+                log_S_host = log_selection_integral
+                if log_S_host.ndim == 1:
+                    log_S_host = log_S_host[:, None]
+                self._record_per_galaxy_log_likelihood(
+                    ll_reconstruction[0] + log_S_host[0],
+                    ll_selection_observed=ll_observed_selection_host,
+                    log_selection_integral=log_selection_integral[0])
+
+            # Take the product over host likelihoods, then average over
+            # field realizations.
+            ll_reconstruction = logmeanexp(
+                jnp.sum(ll_reconstruction, axis=1), axis=0)
+            factor("ll_reconstruction", ll_reconstruction)
+            ll_total += ll_reconstruction
+
+        if self.save_log_likelihood_per_galaxy:
+            deterministic("log_likelihood_total", ll_total)

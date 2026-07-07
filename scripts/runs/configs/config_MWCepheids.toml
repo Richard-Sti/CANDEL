@@ -1,0 +1,113 @@
+base = ["config_paths.toml", "config_MWCepheids_priors.toml"]
+
+###############################################################################
+#                               Inference                                     #
+###############################################################################
+
+[inference]
+num_warmup = 20
+num_samples = 20
+num_chains = 1
+chain_method = "sequential"
+seed = 42
+init_maxiter = 0
+dense_mass_blocks = [["M_H_1", "b_W", "Z_W"]]
+compute_log_density = false
+
+###############################################################################
+#                                 Model                                       #
+###############################################################################
+
+[model]
+which_run = "MWCepheids"
+model_type = "forward"
+distance_prior = "disk"
+disable_all_selection = true
+shared_scatter = true
+marginalise_distance = false
+epsilon_OH = 0.06
+use_Q = false
+Q_err_median = false
+anchors = ["NGC4258", "LMC"]
+anchor_scatter_correction = "none"
+
+[model.disk_prior]
+R_d = 2.5
+z_d = 0.1
+R_sun = 8.122
+
+[model.spiral_arms]
+apply = false
+use_extrapolated = true
+ds = 0.01
+
+[model.C22]
+d_min = 0.1
+d_max = 8.5
+d_spacing = 0.05
+d_spacing_marg = 0.005
+
+[model.C22.selection]
+apply_mW = false
+apply_AH = false
+apply_pi = false
+apply_logP = false
+mW_max = "infer"
+mW_width = 0.5
+AH_max = 0.4
+AH_width = 0.1
+pi_min = "infer"
+pi_smooth = true
+pi_width = 0.1
+logP_min = 0.903
+logP_width = 0.01
+
+[model.C27]
+d_min = 0.1
+d_max = 2.0
+d_spacing = 0.01
+d_spacing_marg = 0.001
+
+[model.C27.selection]
+apply_pi = false
+apply_mW = false
+pi_min = 0.8
+pi_smooth = true
+pi_width = 0.05
+mW_min = "infer"
+mW_width = 0.1
+
+###############################################################################
+#                                  Data                                        #
+###############################################################################
+
+[io]
+root_output = "results/MWCepheids"
+fname_output = "results/MWCepheids/smoke.hdf5"
+
+[io.MWCepheids]
+root = "data/MWCepheids"
+R21_MW = "Riess2021_Table1_with_coords.csv"
+exclude_stars = ["S-VUL", "SV-VUL"]
+which_subset = "none"
+
+[io.MWCepheids.C22]
+pi_cut = 0.0
+
+[io.MWCepheids.C27]
+pi_cut = 0.79
+
+[io.MWCepheids.anchors.NGC4258]
+csv = "SH0ES_N4258_Cepheids.csv"
+covmat = "SH0ES_N4258_covmat.npy"
+mu = 29.398
+e_mu = 0.032
+logP_min = -0.3
+
+[io.MWCepheids.anchors.LMC]
+csv = "SH0ES_LMC_Cepheids.csv"
+covmat = "SH0ES_LMC_covmat.npy"
+mu = 18.477
+e_mu = 0.0263
+logP_min = -0.3
+hst_only = true

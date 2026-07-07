@@ -1,0 +1,48 @@
+# Copyright (C) 2025 Richard Stiskalek
+# This program is free software; you can redistribute it and/or modify it
+# under the terms of the GNU General Public License as published by the
+# Free Software Foundation; either version 3 of the License, or (at your
+# option) any later version.
+#
+# This program is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General
+# Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along
+# with this program; if not, write to the Free Software Foundation, Inc.,
+# 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+
+from .loader import (                                                           # noqa
+    BORGFieldLoader,                                                            # noqa
+    BORGSPHFieldLoader,                                                         # noqa
+    FIELD_METADATA,                                                             # noqa
+    FieldMetadata,                                                              # noqa
+    ManticoreLocalCOLA_FieldLoader,                                             # noqa
+    ManticoreLocalSWIFT_FieldLoader,                                            # noqa
+    UNKNOWN_FIELD_METADATA,                                                     # noqa
+    available_mcmc_field_indices,                                               # noqa
+    field_allows_raw_product_reads,                                             # noqa
+    field_mas_directory,                                                        # noqa
+    field_metadata,                                                             # noqa
+    field_product_policy,                                                       # noqa
+    field_requires_cached_products,                                             # noqa
+    name2field_loader,                                                          # noqa
+    supported_field_names,                                                      # noqa
+    )
+
+
+_FIELD_INTERP_EXPORTS = {
+    "interpolate_los_density_velocity",
+    "apply_gaussian_smoothing",
+    "prepare_los_geometry",
+}
+
+
+def __getattr__(name):
+    if name in _FIELD_INTERP_EXPORTS:
+        from . import field_interp
+        value = getattr(field_interp, name)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -1,0 +1,853 @@
+# Copyright (C) 2025 Richard Stiskalek
+# This program is free software; you can redistribute it and/or modify it
+# under the terms of the GNU General Public License as published by the
+# Free Software Foundation; either version 3 of the License, or (at your
+# option) any later version.
+#
+# This program is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General
+# Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along
+# with this program; if not, write to the Free Software Foundation, Inc.,
+# 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+"""
+PV-specific sampling utilities: vector sampling, galaxy bias, external
+velocity, distance priors, coordinate-frame transforms, missing-mass kernels,
+and TFR/SN helpers.
+"""
+import jax.numpy as jnp
+from interpax import interp1d
+from jax import vmap
+from jax.scipy.special import erf
+from jax.scipy.stats.norm import cdf as jax_norm_cdf
+from numpy.polynomial.hermite import hermgauss
+from numpyro import deterministic, plate, sample
+from numpyro.distributions import Delta, Normal, Uniform
+
+from .utils import smoothclip_nr
+
+RHO_CRIT_H2 = 2.77536627e11  # (Msun / h) / (Mpc / h)^3
+
+GALAXY_BIAS_REQUIRED_PRIORS = {
+    "uniform": frozenset(),
+    "unity": frozenset(),
+    "powerlaw": frozenset(("alpha",)),
+    "linear": frozenset(("b1",)),
+    "linear_from_beta": frozenset(),
+    "linear_from_beta_stochastic": frozenset(("delta_b1",)),
+    "double_powerlaw": frozenset(
+        ("alpha_low", "alpha_high_frac", "log_rho_t", "log_rho_width")),
+    "quadratic": frozenset(("b1", "b2")),
+    "cubic": frozenset(("b1", "b2", "b3")),
+}
+GALAXY_BIAS_MODELS = tuple(GALAXY_BIAS_REQUIRED_PRIORS)
+GALAXY_BIAS_LOG_RHO_MODELS = frozenset(
+    ("powerlaw", "double_powerlaw"))
+GALAXY_BIAS_LINEAR_DELTA_MODELS = frozenset(
+    ("unity", "linear", "linear_from_beta", "linear_from_beta_stochastic"))
+GALAXY_BIAS_PRIOR_DEFAULTS = {
+    "b1": 1.0,
+    "b2": 0.0,
+    "b3": 0.0,
+    "alpha": 1.0,
+    "delta_b1": 0.0,
+    "alpha_low": 1.0,
+    "log_rho_t": 0.0,
+    "log_rho_width": 1.0,
+}
+
+_R_ICRS_TO_GAL = jnp.array([
+    [-0.05487565771259163, -0.87343705195561590, -0.48383507361671546],
+    [+0.49410943719272680, -0.44482972122329520, +0.74698218398666760],
+    [-0.86766613755965760, -0.19807633727300053, +0.45598381368730160]])
+
+_R_ICRS_TO_SUPERGAL = jnp.array([
+    [+0.37501555570303163, +0.34135887185624750, +0.86188018516831910],
+    [-0.89832043772761380, -0.09572710024885137, +0.42878516000301936],
+    [+0.22887490937543750, -0.93504569026490690, +0.27075049949244600]])
+
+###############################################################################
+#                        Vector sampling utilities                            #
+###############################################################################
+
+
+def sample_vector_components_uniform(name, low, high):
+    """
+    Sample a 3D vector by drawing each Cartesian component independently
+    from a uniform distribution over [xmin, xmax].
+    """
+    x = sample(f"{name}_x", Uniform(low, high))
+    y = sample(f"{name}_y", Uniform(low, high))
+    z = sample(f"{name}_z", Uniform(low, high))
+    return jnp.array([x, y, z])
+
+
+def sample_vector_fixed(name, mag_min, mag_max):
+    """
+    Sample a 3D vector with direction ~ isotropic, magnitude ~ Uniform.
+    """
+    phi = sample(f"{name}_phi", Uniform(0, 2 * jnp.pi))
+    cos_theta = sample(f"{name}_cos_theta", Uniform(-1, 1))
+    sin_theta = jnp.sqrt(1 - cos_theta**2)
+
+    mag = sample(f"{name}_mag", Uniform(mag_min, mag_max))
+
+    return mag * jnp.array(
+        [sin_theta * jnp.cos(phi),
+         sin_theta * jnp.sin(phi),
+         cos_theta]
+        )
+
+
+def sample_quadrupole(name, mag_min, mag_max):
+    """
+    Sample a general symmetric traceless quadrupole (5 DOF).
+
+    The quadrupole tensor is parameterized by a magnitude Q and two unit
+    vectors q1, q2. The radial velocity contribution is:
+        V_quad = Q * [(q1.rhat)(q2.rhat) - 1/3 (q1.q2)]
+
+    All phis are sampled independently (no ordering constraint) to avoid
+    dependent distributions that break L-BFGS / NUTS initialization.
+    The q1<->q2 swap degeneracy is harmless: NUTS stays in one mode and
+    the physical prediction is invariant.
+
+    Returns (Q_mag, q1_hat, q2_hat).
+    """
+    Q_mag = sample(f"{name}_mag", Uniform(mag_min, mag_max))
+
+    q1_phi = sample(f"{name}_q1_phi", Uniform(0, 2 * jnp.pi))
+    q1_cos_theta = sample(f"{name}_q1_cos_theta", Uniform(-1, 1))
+    q1_sin_theta = jnp.sqrt(1 - q1_cos_theta**2)
+    q1_hat = jnp.array([q1_sin_theta * jnp.cos(q1_phi),
+                        q1_sin_theta * jnp.sin(q1_phi),
+                        q1_cos_theta])
+
+    q2_phi = sample(f"{name}_q2_phi", Uniform(0, 2 * jnp.pi))
+    q2_cos_theta = sample(f"{name}_q2_cos_theta", Uniform(-1, 1))
+    q2_sin_theta = jnp.sqrt(1 - q2_cos_theta**2)
+    q2_hat = jnp.array([q2_sin_theta * jnp.cos(q2_phi),
+                        q2_sin_theta * jnp.sin(q2_phi),
+                        q2_cos_theta])
+
+    return Q_mag, q1_hat, q2_hat
+
+
+def sample_radialmag_vector(name, nval, low, high):
+    """
+    Sample a vector whose magnitude varies at `nval` knots but a direction
+    is shared by all knots and sampled isotropically on the sky. The magnitude
+    is sampled ~ Uniform(low, high).
+
+    Returns the tuple (mag, rhat), where `mag` has shape (nval,) and `rhat`
+    has shape (3,).
+    """
+    phi = sample(f"{name}_phi", Uniform(0, 2 * jnp.pi))
+    cos_theta = sample(f"{name}_cos_theta", Uniform(-1, 1))
+    sin_theta = jnp.sqrt(1 - cos_theta**2)
+
+    with plate(f"{name}_plate", nval):
+        mag = sample(f"{name}_mag", Uniform(low, high))
+
+    rhat = jnp.array([
+        sin_theta * jnp.cos(phi),
+        sin_theta * jnp.sin(phi),
+        cos_theta
+        ])
+
+    return mag, rhat
+
+
+def sample_radial_vector(name, nval, low, high):
+    """
+    Sample a radial vector at `nval` knots: direction ~ isotropic,
+    magnitude ~ Uniform(low, high). Returns an array of shape (nval, 3).
+    """
+    with plate(f"{name}_plate", nval):
+        phi = sample(f"{name}_phi", Uniform(0.0, 2.0 * jnp.pi))
+        cos_theta = sample(f"{name}_cos_theta", Uniform(-1.0, 1.0))
+        sin_theta = jnp.sqrt(jnp.clip(1.0 - cos_theta**2, 0.0, 1.0))
+
+        mag = sample(f"{name}_mag", Uniform(low, high))
+
+        # Unit direction vector
+        u = jnp.stack(
+            (sin_theta * jnp.cos(phi),
+             sin_theta * jnp.sin(phi),
+             cos_theta),
+            axis=-1
+        )
+
+    return mag[..., None] * u
+
+
+###############################################################################
+#                        Vector interpolation                                 #
+###############################################################################
+
+
+def interp_cartesian_vector(rq, rknot, v_knot, method="cubic"):
+    """Interpolate Cartesian vector components with constant extrapolation."""
+    rq = jnp.asarray(rq)
+    x = jnp.asarray(rknot)
+    y = jnp.asarray(v_knot)            # (K, 3)
+    x0, x1 = x[0], x[-1]
+
+    def interp_component(vals):
+        out = interp1d(rq, x, vals, method=method)
+        out = jnp.where(rq < x0, vals[0], out)
+        out = jnp.where(rq > x1, vals[-1], out)
+        return out
+
+    return vmap(interp_component, in_axes=1, out_axes=1)(y)  # (R, 3)
+
+
+###############################################################################
+#                           Sampling utilities                                #
+###############################################################################
+
+
+def galaxy_bias_needs_log_rho(galaxy_bias):
+    """Return whether a galaxy-bias model requires ``log(1 + delta)``."""
+    validate_galaxy_bias(galaxy_bias)
+    return galaxy_bias in GALAXY_BIAS_LOG_RHO_MODELS
+
+
+def galaxy_bias_density_mode(galaxy_bias):
+    """Return the minimal density representation needed by a bias model."""
+    validate_galaxy_bias(galaxy_bias)
+    if galaxy_bias == "uniform":
+        return "uniform"
+    if galaxy_bias in GALAXY_BIAS_LOG_RHO_MODELS:
+        return "log_rho"
+    return "delta"
+
+
+def validate_galaxy_bias(galaxy_bias):
+    """Raise if ``galaxy_bias`` is not a known bias model."""
+    if galaxy_bias not in GALAXY_BIAS_REQUIRED_PRIORS:
+        raise ValueError(f"Invalid galaxy bias model '{galaxy_bias}'.")
+
+
+def _rsample(name, dist):
+    """
+    Samples from `dist` unless it is a delta function or vector directive.
+    """
+    if isinstance(dist, Delta) and name == "zeropoint_dipole":
+        return jnp.zeros(3)
+
+    if isinstance(dist, Delta):
+        return deterministic(name, dist.v)
+
+    if isinstance(dist, dict) and dist.get("type") == "vector_uniform_fixed":
+        return sample_vector_fixed(name, dist["low"], dist["high"])
+
+    if isinstance(dist, dict) and dist.get("type") == "quadrupole":
+        return sample_quadrupole(name, dist["low"], dist["high"])
+
+    if isinstance(dist, dict) and dist.get("type") == "octupole":
+        return sample_octupole(name, dist["low"], dist["high"])
+
+    if isinstance(dist, dict) and dist.get("type") == "vector_components_uniform":  # noqa
+        return sample_vector_components_uniform(
+            name, dist["low"], dist["high"])
+
+    if isinstance(dist, dict) and dist.get("type") == "vector_radial_uniform":
+        return sample_radial_vector(
+            name, dist["nval"], dist["low"], dist["high"], )
+
+    if isinstance(dist, dict) and dist.get("type") == "vector_radialmag_uniform":  # noqa
+        return sample_radialmag_vector(
+            name, dist["nval"], dist["low"], dist["high"], )
+
+    return sample(name, dist)
+
+
+def rsample(name, dist, shared_params=None):
+    """
+    Retrieve a parameter value: use `shared_params[name]` when provided (for
+    sharing/conditioning across submodels), otherwise draw from `dist`.
+    """
+    if shared_params is not None and name in shared_params:
+        return shared_params[name]
+    return _rsample(name, dist)
+
+
+###############################################################################
+#                           TFR helpers                                       #
+###############################################################################
+
+
+def marginalise_2d_latent(prior_std1, prior_std2, rho,
+                          prior_mean1, prior_mean2,
+                          e2_obs1, e2_obs2, obs1, obs2, f1, f2):
+    """Analytically marginalise 2D Gaussian latent variables.
+
+    Given a bivariate Gaussian hyperprior on latent x = (x1, x2) with mean
+    (prior_mean1, prior_mean2) and covariance parameterised by (prior_std1,
+    prior_std2, rho), independent Gaussian observations obs1, obs2 with
+    variances e2_obs1, e2_obs2, and a linear projection f = (f1, f2),
+    returns:
+
+        f_dot_mu1 : fᵀ μ₁  (posterior mean projected onto f)
+        fSf       : fᵀ Σ₁ f (posterior variance projected onto f)
+        log_ev_obs: ln N(d_obs | μ_h, Σ_h + Σ_o)
+    """
+    # Hyperprior variances and covariance
+    s_12 = prior_std1**2
+    s_22 = prior_std2**2
+    s_xc = rho * prior_std1 * prior_std2
+    det_h = s_12 * s_22 - s_xc**2
+
+    # Λ_h = Σ_h⁻¹
+    Lh00 = s_22 / det_h
+    Lh01 = -s_xc / det_h
+    Lh11 = s_12 / det_h
+
+    # Λ_h @ μ_h
+    Lh_mu0 = Lh00 * prior_mean1 + Lh01 * prior_mean2
+    Lh_mu1 = Lh01 * prior_mean1 + Lh11 * prior_mean2
+
+    # Observation precisions
+    tau1 = 1.0 / e2_obs1
+    tau2 = 1.0 / e2_obs2
+
+    # Posterior precision Λ₁ = Λ_h + Λ_o
+    L11 = Lh00 + tau1
+    L12 = Lh01
+    L22 = Lh11 + tau2
+    det_1 = L11 * L22 - L12**2
+
+    # Posterior covariance Σ₁ = Λ₁⁻¹
+    S11 = L22 / det_1
+    S12 = -L12 / det_1
+    S22 = L11 / det_1
+
+    # Natural parameter η₁ = Λ_h μ_h + Λ_o d_obs
+    eta1 = Lh_mu0 + tau1 * obs1
+    eta2 = Lh_mu1 + tau2 * obs2
+
+    # Posterior mean μ₁ = Σ₁ η₁
+    mu1_1 = S11 * eta1 + S12 * eta2
+    mu1_2 = S12 * eta1 + S22 * eta2
+
+    # fᵀ μ₁ and fᵀ Σ₁ f
+    f_dot_mu1 = f1 * mu1_1 + f2 * mu1_2
+    fSf = f1**2 * S11 + 2 * f1 * f2 * S12 + f2**2 * S22
+
+    # Evidence for obs: ln N(d_obs | μ_h, Σ_h + Σ_o)
+    P11 = s_12 + e2_obs1
+    P12 = s_xc
+    P22 = s_22 + e2_obs2
+    det_P = P11 * P22 - P12**2
+    r1 = obs1 - prior_mean1
+    r2 = obs2 - prior_mean2
+    mahal = (P22 * r1**2 - 2 * P12 * r1 * r2 + P11 * r2**2) / det_P
+    log_ev_obs = -0.5 * mahal - 0.5 * jnp.log(det_P) - jnp.log(2 * jnp.pi)
+
+    return f_dot_mu1, fSf, log_ev_obs
+
+
+def get_absmag_TFR(eta, a_TFR, b_TFR, c_TFR=0.0):
+    """
+    Tully–Fisher absolute magnitude with optional curvature:
+
+        M(eta) = a + b * eta + c * eta^2 for eta > 0,
+                 a + b * eta           otherwise.
+
+    The quadratic term only applies on the high-width (eta > 0) side to
+    capture potential curvature while keeping the low-width branch linear.
+    """
+    return a_TFR + b_TFR * eta + jnp.where(eta > 0, c_TFR * eta**2, 0.0)
+
+
+def gauss_hermite_log_weights(n):
+    """Gauss-Hermite nodes and log-weights for Gaussian-weighted integration.
+
+    Returns (nodes, log_weights) such that::
+
+        int f(x) N(x;mu,s) dx ~ sum_i exp(lw_i) * f(mu + sqrt(2)*s*x_i)
+    """
+    x, w = hermgauss(n)
+    log_w = jnp.log(jnp.asarray(w, dtype=jnp.float32)) - 0.5 * jnp.log(jnp.pi)
+    return jnp.asarray(x, dtype=jnp.float32), log_w
+
+
+###############################################################################
+#                      Galaxy bias & velocity                                #
+###############################################################################
+
+
+def sigma_v_from_density(delta, sigma_v_low, sigma_v_high, log_rho_t, k):
+    """Map overdensity to sigma_v through a sigmoid in log density."""
+    rho = jnp.clip(1.0 + delta, a_min=1e-6)
+    log_rho = jnp.log(rho)
+    return sigma_v_low + (sigma_v_high - sigma_v_low) / (
+        1.0 + jnp.exp(-k * (log_rho - log_rho_t)))
+
+
+def spherical_rhat(lon_deg, lat_deg):
+    """Unit vector from longitude/latitude in degrees in the chosen frame."""
+    lon = jnp.deg2rad(lon_deg)
+    lat = jnp.deg2rad(lat_deg)
+    cos_lat = jnp.cos(lat)
+    return jnp.array([
+        cos_lat * jnp.cos(lon),
+        cos_lat * jnp.sin(lon),
+        jnp.sin(lat),
+    ])
+
+
+def convert_cartesian_frame(rhat, source_frame, target_frame):
+    """Convert a Cartesian unit vector between ICRS/Galactic/Supergalactic."""
+    source_frame = source_frame.lower()
+    target_frame = target_frame.lower()
+    if source_frame == target_frame:
+        out = rhat
+    elif source_frame == "icrs":
+        if target_frame == "galactic":
+            out = _R_ICRS_TO_GAL @ rhat
+        elif target_frame == "supergalactic":
+            out = _R_ICRS_TO_SUPERGAL @ rhat
+        else:
+            raise ValueError(f"Unknown target frame: {target_frame!r}.")
+    elif source_frame == "galactic":
+        rhat_icrs = _R_ICRS_TO_GAL.T @ rhat
+        if target_frame == "icrs":
+            out = rhat_icrs
+        elif target_frame == "supergalactic":
+            out = _R_ICRS_TO_SUPERGAL @ rhat_icrs
+        else:
+            raise ValueError(f"Unknown target frame: {target_frame!r}.")
+    elif source_frame == "supergalactic":
+        rhat_icrs = _R_ICRS_TO_SUPERGAL.T @ rhat
+        if target_frame == "icrs":
+            out = rhat_icrs
+        elif target_frame == "galactic":
+            out = _R_ICRS_TO_GAL @ rhat_icrs
+        else:
+            raise ValueError(f"Unknown target frame: {target_frame!r}.")
+    else:
+        raise ValueError(f"Unknown source frame: {source_frame!r}.")
+    return out / jnp.linalg.norm(out)
+
+
+def gaussian_missing_mass_delta(
+        pos, cluster_pos, mass, sigma, Om, rho_crit=RHO_CRIT_H2):
+    """Gaussian-smoothed matter overdensity of an added mass component.
+
+    Positions and ``sigma`` are in Mpc/h-like reconstruction units, ``mass`` is
+    in Msun/h, and the returned density is dimensionless overdensity.
+    """
+    disp = pos - cluster_pos
+    s2 = jnp.sum(disp * disp, axis=-1)
+    rho_m = rho_crit * Om
+    norm = mass / (rho_m * (2.0 * jnp.pi)**1.5 * sigma**3)
+    return norm * jnp.exp(-0.5 * s2 / sigma**2)
+
+
+def gaussian_missing_mass_velocity(
+        pos, rhat_los, cluster_pos, mass, sigma, Om, growth_index=0.55,
+        rho_crit=RHO_CRIT_H2):
+    r"""Line-of-sight velocity from the smoothed point mass in linear theory.
+
+    The velocity follows from ``div v = -H0 f delta``. For a spherical excess,
+
+        v(s) = -100 f M(<s) / (4 pi rho_m) s_vec / s^3,
+
+    using Mpc/h and Msun/h units, so the Hubble prefactor is 100 km/s per
+    Mpc/h. The Gaussian enclosed-mass fraction regularizes the point-mass
+    singularity at ``s=0``.
+    """
+    disp = pos - cluster_pos
+    s = jnp.sqrt(jnp.sum(disp * disp, axis=-1))
+    x = s / sigma
+    frac = (erf(x / jnp.sqrt(2.0))
+            - jnp.sqrt(2.0 / jnp.pi) * x * jnp.exp(-0.5 * x * x))
+    small = x < 1e-3
+    enclosed_over_s3 = jnp.where(
+        small,
+        jnp.sqrt(2.0 / jnp.pi) / (3.0 * sigma**3),
+        frac / jnp.maximum(s, 1e-12 * sigma)**3)
+
+    rho_m = rho_crit * Om
+    coeff = -100.0 * Om**growth_index * mass / (4.0 * jnp.pi * rho_m)
+    v_vec = coeff * enclosed_over_s3[..., None] * disp
+    return jnp.sum(v_vec * rhat_los, axis=-1)
+
+
+def missing_mass_los_delta_velocity(
+        r_grid, rhat, cluster_r, cluster_rhat, mass, sigma, Om,
+        growth_index=0.55, rho_crit=RHO_CRIT_H2):
+    """Density and radial-velocity contribution on each observed LOS."""
+    pos = r_grid[None, :, None] * rhat[:, None, :]
+    cluster_pos = cluster_r * cluster_rhat
+    rhat_los = jnp.broadcast_to(rhat[:, None, :], pos.shape)
+    delta = gaussian_missing_mass_delta(
+        pos, cluster_pos, mass, sigma, Om, rho_crit=rho_crit)
+    velocity = gaussian_missing_mass_velocity(
+        pos, rhat_los, cluster_pos, mass, sigma, Om,
+        growth_index=growth_index, rho_crit=rho_crit)
+    return delta, velocity
+
+
+def missing_mass_at_distance_delta_velocity(
+        r, rhat, cluster_r, cluster_rhat, mass, sigma, Om,
+        growth_index=0.55, rho_crit=RHO_CRIT_H2):
+    """Density and radial velocity at one latent distance per object."""
+    pos = r[:, None] * rhat
+    cluster_pos = cluster_r * cluster_rhat
+    delta = gaussian_missing_mass_delta(
+        pos, cluster_pos, mass, sigma, Om, rho_crit=rho_crit)
+    velocity = gaussian_missing_mass_velocity(
+        pos, rhat, cluster_pos, mass, sigma, Om,
+        growth_index=growth_index, rho_crit=rho_crit)
+    return delta, velocity
+
+
+def missing_mass_volume_delta(
+        r_3d, rhat_3d, cluster_r, cluster_rhat, mass, sigma, Om,
+        rho_crit=RHO_CRIT_H2):
+    """Density contribution on flattened 3D normalizer voxels."""
+    pos = r_3d[..., None] * rhat_3d
+    cluster_pos = cluster_r * cluster_rhat
+    return gaussian_missing_mass_delta(
+        pos, cluster_pos, mass, sigma, Om, rho_crit=rho_crit)
+
+
+def sample_galaxy_bias(priors, galaxy_bias, shared_params=None, **kwargs):
+    """
+    Sample a vector of galaxy bias parameters based on the specified model.
+    """
+    if galaxy_bias == "uniform":
+        return []
+    elif galaxy_bias == "unity":
+        return [1.,]
+    elif galaxy_bias == "powerlaw":
+        alpha = rsample("alpha", priors["alpha"], shared_params)
+        bias_params = [alpha,]
+    elif galaxy_bias == "linear":
+        b1 = rsample("b1", priors["b1"], shared_params)
+        bias_params = [b1,]
+    elif galaxy_bias == "linear_from_beta":
+        b1 = kwargs["Om"]**0.55 / kwargs["beta"]
+        bias_params = [b1,]
+    elif galaxy_bias == "linear_from_beta_stochastic":
+        b1_mean = kwargs["Om"]**0.55 / kwargs["beta"]
+        delta_b1 = rsample("delta_b1_skipZ", priors["delta_b1"], shared_params)
+        b1 = deterministic("b1", b1_mean + delta_b1)
+        bias_params = [b1,]
+    elif galaxy_bias == "double_powerlaw":
+        alpha_low = rsample("alpha_low", priors["alpha_low"], shared_params)
+        if "alpha_high_frac" in priors:
+            alpha_high_frac = rsample(
+                "alpha_high_frac", priors["alpha_high_frac"], shared_params)
+            alpha_high = deterministic(
+                "alpha_high_skipZ", alpha_low * alpha_high_frac)
+        else:
+            alpha_high_raw = rsample(
+                "alpha_high", priors["alpha_high"], shared_params)
+            alpha_high = deterministic(
+                "alpha_high_skipZ", jnp.minimum(alpha_high_raw, alpha_low))
+        log_rho_t = rsample("log_rho_t", priors["log_rho_t"], shared_params)
+        log_rho_width = rsample(
+            "log_rho_width", priors["log_rho_width"], shared_params)
+        bias_params = [alpha_low, alpha_high, log_rho_t, log_rho_width]
+    elif galaxy_bias == "quadratic":
+        b1 = rsample("b1", priors["b1"], shared_params)
+        b2 = rsample("b2", priors["b2"], shared_params)
+        bias_params = [b1, b2]
+    elif galaxy_bias == "cubic":
+        b1 = rsample("b1", priors["b1"], shared_params)
+        b2 = rsample("b2", priors["b2"], shared_params)
+        b3 = rsample("b3", priors["b3"], shared_params)
+        bias_params = [b1, b2, b3]
+    else:
+        raise ValueError(f"Invalid galaxy bias model '{galaxy_bias}'.")
+
+    return bias_params
+
+
+def lp_galaxy_bias(delta, log_rho, bias_params, galaxy_bias,
+                   quadratic_bias_delta0=0.0):
+    """
+    Log galaxy bias probability, given some density and a bias model.
+    """
+    if galaxy_bias == "uniform":
+        ref = delta
+        if ref is None or (jnp.shape(ref) == () and log_rho is not None):
+            ref = log_rho
+        lp = jnp.zeros_like(ref)
+    elif galaxy_bias == "powerlaw":
+        lp = bias_params[0] * log_rho
+    elif galaxy_bias == "double_powerlaw":
+        alpha_low, alpha_high, log_rho_t, log_rho_width = bias_params
+        log_x = log_rho - log_rho_t
+        z = log_x / log_rho_width
+        lp = (alpha_low * log_x
+              + ((alpha_high - alpha_low) * log_rho_width
+                 * jnp.logaddexp(0.0, z)))
+    elif galaxy_bias in GALAXY_BIAS_LINEAR_DELTA_MODELS:
+        lp = jnp.log(smoothclip_nr(1 + bias_params[0] * delta, tau=0.1))
+    elif galaxy_bias == "quadratic":
+        b1, b2 = bias_params
+        d = delta - quadratic_bias_delta0
+        lp = jnp.log(smoothclip_nr(1 + b1 * d + b2 * d**2, tau=0.1))
+    elif galaxy_bias == "cubic":
+        b1, b2, b3 = bias_params
+        d = delta - quadratic_bias_delta0
+        lp = jnp.log(smoothclip_nr(
+            1 + b1 * d + b2 * d**2 + b3 * d**3, tau=0.1))
+    else:
+        raise ValueError(f"Invalid galaxy bias model '{galaxy_bias}'.")
+
+    return lp
+
+
+def compute_Vext_radial(data, r_grid, Vext, which_Vext, **kwargs_Vext):
+    """
+    Compute the line-of-sight projection of the external velocity.
+
+    Return shape `(1, n_gal, n_rbins)` for radial models,
+    `(1, n_gal, 1)` for per-pixel and constant models.
+    """
+    if which_Vext == "radial":
+        # Shape (n_rbins, 3)
+        Vext = interp_cartesian_vector(r_grid, v_knot=Vext, **kwargs_Vext)
+
+        Vext_rad = jnp.sum(
+            data["rhat"][:, None, :] * Vext[None, :, :], axis=-1)[None, ...]
+    elif which_Vext == "radial_magnitude":
+        # Unpack the tuple of magnitude and direction.
+        Vext_mag, rhat = Vext
+        # Interpolate the magnitude as a function of radius, shape (n_rbins,).
+        Vext_mag_r = interp1d(
+            r_grid, kwargs_Vext["rknot"], Vext_mag,
+            method=kwargs_Vext["method"], extrap=(Vext_mag[0], Vext_mag[-1]))
+        # Clipping to only keep positive magnitudes.
+        Vext_mag_r = smoothclip_nr(Vext_mag_r, tau=2.5)
+
+        # Project the LOS of each galaxy onto the dipole direction, shape
+        # is (n_gal,).
+        cos_theta = jnp.sum(data["rhat"] * rhat[None, :], axis=1)
+
+        # Finally, the shape is (n_field, n_gal, n_rbins).
+        Vext_rad = (cos_theta[:, None] * Vext_mag_r[None, :])[None, :, :]
+    elif which_Vext == "per_pix":
+        Vext_rad = (data["C_pix"] @ Vext)[None, :, None]
+    elif which_Vext == "constant":
+        Vext_rad = jnp.sum(data["rhat"] * Vext[None, :], axis=1)[None, :, None]
+    else:
+        raise ValueError(f"Invalid which_Vext '{which_Vext}'.")
+    return Vext_rad
+
+
+def quadrupole_radial(Q_mag, q1_hat, q2_hat, rhat):
+    """
+    General symmetric traceless quadrupole radial velocity.
+
+        V_quad = Q_mag * [(q1.rhat)(q2.rhat) - 1/3 (q1.q2)]
+
+    Parameters
+    ----------
+    Q_mag : scalar
+        Quadrupole magnitude.
+    q1_hat, q2_hat : (3,) arrays
+        Unit vectors defining the quadrupole axes.
+    rhat : (..., 3) array
+        Unit direction vectors.
+
+    Returns
+    -------
+    V_quad_rad : (...) array
+    """
+    q1_dot_r = jnp.sum(q1_hat * rhat, axis=-1)
+    q2_dot_r = jnp.sum(q2_hat * rhat, axis=-1)
+    q1_dot_q2 = jnp.sum(q1_hat * q2_hat)
+    return Q_mag * (q1_dot_r * q2_dot_r - q1_dot_q2 / 3)
+
+
+def sample_octupole(name, mag_min, mag_max):
+    """
+    Sample a general symmetric traceless octupole (7 DOF).
+
+    Parameterized by a magnitude O and three unit vectors q1, q2, q3.
+    The radial velocity contribution is:
+        V_oct = O * [(q1.r)(q2.r)(q3.r)
+                     - 1/5 ((q1.q2)(q3.r) + (q1.q3)(q2.r) + (q2.q3)(q1.r))]
+
+    All phis are sampled independently (no ordering constraint) to avoid
+    dependent distributions that break L-BFGS / NUTS initialization.
+
+    Returns (O_mag, q1_hat, q2_hat, q3_hat).
+    """
+    O_mag = sample(f"{name}_mag", Uniform(mag_min, mag_max))
+
+    q1_phi = sample(f"{name}_q1_phi", Uniform(0, 2 * jnp.pi))
+    q1_cos_theta = sample(f"{name}_q1_cos_theta", Uniform(-1, 1))
+    q1_sin_theta = jnp.sqrt(1 - q1_cos_theta**2)
+    q1_hat = jnp.array([q1_sin_theta * jnp.cos(q1_phi),
+                        q1_sin_theta * jnp.sin(q1_phi),
+                        q1_cos_theta])
+
+    q2_phi = sample(f"{name}_q2_phi", Uniform(0, 2 * jnp.pi))
+    q2_cos_theta = sample(f"{name}_q2_cos_theta", Uniform(-1, 1))
+    q2_sin_theta = jnp.sqrt(1 - q2_cos_theta**2)
+    q2_hat = jnp.array([q2_sin_theta * jnp.cos(q2_phi),
+                        q2_sin_theta * jnp.sin(q2_phi),
+                        q2_cos_theta])
+
+    q3_phi = sample(f"{name}_q3_phi", Uniform(0, 2 * jnp.pi))
+    q3_cos_theta = sample(f"{name}_q3_cos_theta", Uniform(-1, 1))
+    q3_sin_theta = jnp.sqrt(1 - q3_cos_theta**2)
+    q3_hat = jnp.array([q3_sin_theta * jnp.cos(q3_phi),
+                        q3_sin_theta * jnp.sin(q3_phi),
+                        q3_cos_theta])
+
+    return O_mag, q1_hat, q2_hat, q3_hat
+
+
+def octupole_radial(O_mag, q1_hat, q2_hat, q3_hat, rhat):
+    """
+    General symmetric traceless octupole radial velocity.
+
+        V_oct = O * [(q1.r)(q2.r)(q3.r)
+                     - 1/5 ((q1.q2)(q3.r) + (q1.q3)(q2.r) + (q2.q3)(q1.r))]
+
+    Parameters
+    ----------
+    O_mag : scalar
+        Octupole magnitude.
+    q1_hat, q2_hat, q3_hat : (3,) arrays
+        Unit vectors defining the octupole axes.
+    rhat : (..., 3) array
+        Unit direction vectors.
+
+    Returns
+    -------
+    V_oct_rad : (...) array
+    """
+    q1r = jnp.sum(q1_hat * rhat, axis=-1)
+    q2r = jnp.sum(q2_hat * rhat, axis=-1)
+    q3r = jnp.sum(q3_hat * rhat, axis=-1)
+    q1q2 = jnp.sum(q1_hat * q2_hat)
+    q1q3 = jnp.sum(q1_hat * q3_hat)
+    q2q3 = jnp.sum(q2_hat * q3_hat)
+    return O_mag * (q1r * q2r * q3r
+                    - (q1q2 * q3r + q1q3 * q2r + q2q3 * q1r) / 5)
+
+
+def sigmoid_monopole_radial(V_left, r_t, k, r):
+    """
+    Radially decaying monopole velocity: large at small r, zero at large r.
+
+        V_mono(r) = V_left / (1 + exp(k * (r - r_t)))
+
+    Callers typically pass k = tan(angle) where angle is sampled uniformly.
+
+    Parameters
+    ----------
+    V_left : scalar
+        Monopole amplitude at r << r_t.
+    r_t : scalar
+        Transition radius (Mpc).
+    k : scalar
+        Steepness (inverse Mpc). Larger k = sharper transition.
+    r : (...) array
+        Radial distances (Mpc).
+
+    Returns
+    -------
+    V_mono : (...) array
+    """
+    return V_left / (1 + jnp.exp(k * (r - r_t)))
+
+
+def sample_distance_prior_volume(priors):
+    """Hyperparameters of the volume-normalized empirical prior:
+        π̃(x) ∝ n(x) * exp(-(|x|/R)^q),
+    integrated globally over the 3D field volume. Used by base_pv when
+    `which_distance_prior == "empirical"`.
+    """
+    return {
+        "R": rsample("R_dist_emp", priors["R_dist_emp"]),
+        "q": rsample("q_dist_emp", priors["q_dist_emp"]),
+        }
+
+
+def sumzero_basis(npix):
+    """
+    Return an orthonormal basis `(npix x (npix - 1))` for the subspace of
+    vectors with zero sum.
+    """
+    one = jnp.ones((npix,)) / jnp.sqrt(npix)
+    e1 = jnp.zeros((npix,)).at[0].set(1.0)
+    v = one - e1
+    beta = 2.0 / jnp.dot(v, v)
+    H = jnp.eye(npix) - beta * jnp.outer(v, v)
+    Q = H[:, 1:]
+    return Q
+
+
+def sample_Vext(priors, which_Vext, shared_params=None, kwargs_Vext={}):
+    if which_Vext == "radial":
+        Vext = rsample("Vext_rad", priors["Vext_radial"], shared_params)
+    elif which_Vext == "radial_magnitude":
+        Vext = rsample(
+            "Vext_radmag", priors["Vext_radial_magnitude"],
+            shared_params)
+    elif which_Vext == "per_pix":
+        Vext_sigma = rsample("Vext_sigma", priors["Vext_sigma"], shared_params)
+
+        with plate("Vext_pix_plate", kwargs_Vext["npix"] - 1):
+            u = rsample("Vext_pix_skipZ", Normal(0., 1.), shared_params)
+
+        Vext = rsample(
+            "Vext_pix",
+            Delta(Vext_sigma * (kwargs_Vext["Q"] @ u)), shared_params)
+    elif which_Vext == "constant":
+        Vext = rsample("Vext", priors["Vext"], shared_params)
+    else:
+        raise ValueError(f"Invalid which_Vext '{which_Vext}'.")
+
+    return Vext
+
+
+###############################################################################
+#                              TFR/SN helpers                                 #
+###############################################################################
+
+
+def log_p_S_TFR_eta(eta_mean, w_eta, e_eta, eta_min, eta_max, ):
+    """
+    Compute the fraction of samples given a truncation in linewidth
+    distribution, whose hyperprior is assumed to be Gaussian.
+    """
+    denom = jnp.sqrt(e_eta**2 + w_eta**2)
+    if eta_min is not None and eta_max is not None:
+        a = jax_norm_cdf((eta_max - eta_mean) / denom)
+        b = jax_norm_cdf((eta_min - eta_mean) / denom)
+        p = a - b
+    elif eta_max is not None:
+        p = jax_norm_cdf((eta_max - eta_mean) / denom)
+    elif eta_min is not None:
+        p = jax_norm_cdf((eta_mean - eta_min) / denom)
+    else:
+        raise ValueError("Invalid eta_min/eta_max configuration.")
+
+    return jnp.log(jnp.clip(p, 1e-300, 1.0))  # guard against log(0)
+
+
+def add_sigma_mag_to_lane_cov(sigma_mag, Sigma_d):
+    """
+    Add the intrinsic magnitude scatter to the Lane covariance matrix. It is
+    added along the diagonal and the indices corresponding to the magnitude
+    residuals.
+    """
+    n3 = Sigma_d.shape[0]
+    N = n3 // 3
+    idx = 3 * jnp.arange(N)
+    diag_D = jnp.zeros(n3).at[idx].set(sigma_mag**2)
+    return Sigma_d + jnp.diag(diag_D)

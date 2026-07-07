@@ -1,0 +1,2014 @@
+"""Named task-list specifications for generate_tasks.py.
+
+Keep this file focused on sweep definitions. Generator behavior belongs in
+generate_tasks.py.
+"""
+
+
+CH0_PAPER_ROOT = "results/CH0_paper"
+CH0_MANTICORE_LOS = "ManticoreLocalSWIFT"
+CH0_MANTICORE_COLA_LOS = "ManticoreLocalCOLA"
+CH0_MANTICORE_BIAS = "double_powerlaw"
+TRGBH0_ROOT = "results/TRGBH0_paper"
+TRGBH0_MANTICORE_LOS = "ManticoreLocalSWIFT"
+TRGBH0_MANTICORE_COLA_LOS = "ManticoreLocalCOLA"
+TRGBH0_MANTICORE_BIAS = "double_powerlaw"
+TRGBH0_MAIN_MANTICORE_BIAS = TRGBH0_MANTICORE_BIAS
+TRGBH0_CARRICK_BETA_LOC = 0.461
+TRGBH0_CARRICK_BETA_SCALE = 0.013
+TRGBH0_EDD_B_MIN = 10.0
+TRGBH0_EDD_MAG_MIN = 22.1
+TRGBH0_EDD_MAG_LIM_LOW = 22.101
+TRGBH0_EDD_MAG_LIM_HIGH = 29.0
+TRGBH0_EDD_CZ_LIM_LOW = 0.0
+TRGBH0_EDD_CZ_LIM_HIGH = 5000.0
+TRGBH0_EDD_CZ_WIDTH_LOW = 50.0
+TRGBH0_EDD_CZ_WIDTH_HIGH = 1000.0
+TRGBH0_SELECTION_SUPERSAMPLE_RADIUS = 15.0
+TRGBH0_SELECTION_SUPERSAMPLE_TARGET_DX = 0.325
+TRGBH0_SKY_EXPOSURE_NSIDE = 1
+TRGBH0_SKY_EXPOSURE_KAPPA = 48.0
+TRGBH0_CCHP_SELECTION_SUPERSAMPLE_RADIUS = 30.0
+TRGBH0_CCHP_SELECTION_SUPERSAMPLE_TARGET_DX = 0.3
+S8_ROOT = "results/S8"
+S8_PV_KIND = "precomputed_los_Carrick2015"
+S8_BIAS_MODELS = ["linear", "quadratic", "double_powerlaw"]
+VEXT_RAD_ROOT = "results/Vext_rad"
+VEXT_RAD_SDSS_FP_VEXT_KNOTS = [0, 100, 200, 300, 400]
+VEXT_RAD_SDSS_FP_CARRICK_KNOTS = [0, 20, 40, 60, 80, 100, 120, 140]
+VEXT_RAD_SDSS_FP_VEXT_PRIOR = {
+    "dist": "vector_radial_uniform",
+    "low": 0.0,
+    "high": 500,
+    "rknot": VEXT_RAD_SDSS_FP_VEXT_KNOTS,
+    "method": "cubic",
+}
+VEXT_RADMAG_SDSS_FP_VEXT_PRIOR = {
+    "dist": "vector_radialmag_uniform",
+    "low": 0.0,
+    "high": 500,
+    "rknot": VEXT_RAD_SDSS_FP_VEXT_KNOTS,
+    "method": "cubic",
+}
+VEXT_RAD_SDSS_FP_CARRICK_PRIOR = {
+    "dist": "vector_radial_uniform",
+    "low": 0.0,
+    "high": 500,
+    "rknot": VEXT_RAD_SDSS_FP_CARRICK_KNOTS,
+    "method": "cubic",
+}
+VEXT_RADMAG_SDSS_FP_CARRICK_PRIOR = {
+    "dist": "vector_radialmag_uniform",
+    "low": 0.0,
+    "high": 500,
+    "rknot": VEXT_RAD_SDSS_FP_CARRICK_KNOTS,
+    "method": "cubic",
+}
+VFO_ROOT = "results/VFO"
+VFO_MANTICORE_LOS = "ManticoreLocalSWIFT"
+VFO_MANTICORE_COLA_LOS = "ManticoreLocalCOLA"
+MWCEPHEIDS_ROOT = "results/MWCepheids"
+
+CH0_PAPER_COMMON = {
+    "inference/compute_log_density": False,
+    "inference/compute_evidence": False,
+    "inference/num_chains": 12,
+    "inference/chain_method": "sequential",
+    "inference/num_warmup": 1000,
+    "inference/num_samples": 6000,
+    "model/use_uniform_mu_host_priors": False,
+    "model/selection_integral_geometry": "sphere",
+    "model/selection_integral_grid_radius": 60.0,
+    "model/density_3d_subsample_fraction": 1.0,
+    "model/priors/M_B": {"dist": "uniform", "low": -22.0, "high": -18.0},
+    "model/priors/Vext": {
+        "dist": "vector_uniform_fixed",
+        "low": 0.0,
+        "high": 1000.0,
+    },
+}
+
+TRGBH0_COMMON = {
+    "inference/compute_log_density": True,
+    "inference/compute_evidence": True,
+    "inference/num_chains": 1,
+    "inference/chain_method": "sequential",
+    "inference/num_warmup": 1000,
+    "inference/num_samples": 1000,
+    "inference/num_chains_harmonic": 10,
+    "model/selection_integral_geometry": "sphere",
+    "model/selection_integral_grid_radius": 50.0,
+    "model/density_3d_subsample_fraction": 1.0,
+    "model/priors/Vext": {
+        "dist": "vector_uniform_fixed",
+        "low": 0.0,
+        "high": 1000.0,
+    },
+}
+
+
+def _delta(value):
+    return {"dist": "delta", "value": value}
+
+
+def _normal(loc, scale):
+    return {"dist": "normal", "loc": loc, "scale": scale}
+
+
+CH0_FIXED_BIAS_PRIORS = {
+    "model/priors/alpha_low": _delta(1.835),
+    "model/priors/alpha_high": _delta(0.343),
+    "model/priors/log_rho_t": _delta(0.313),
+    "model/priors/log_rho_width": _delta(0.879),
+}
+
+CH0_SWIFT_FIXED_BIAS_PRIORS = {
+    "model/priors/alpha_low": _delta(1.542),
+    "model/priors/alpha_high": _delta(0.286),
+    "model/priors/log_rho_t": _delta(-0.027),
+    "model/priors/log_rho_width": _delta(0.954),
+}
+
+
+def _nu_cz_student_t_prior():
+    return {
+        "dist": "truncated_normal",
+        "low": 1.0,
+        "high": 100.0,
+        "mean": 30.0,
+        "scale": 10.0,
+    }
+
+
+def _trgbh0_carrick_beta_prior():
+    return _normal(TRGBH0_CARRICK_BETA_LOC, TRGBH0_CARRICK_BETA_SCALE)
+
+
+def _trgbh0_edd_mag_lim_uninformative_prior():
+    return {
+        "dist": "uniform",
+        "low": TRGBH0_EDD_MAG_LIM_LOW,
+        "high": TRGBH0_EDD_MAG_LIM_HIGH,
+    }
+
+
+def _trgbh0_edd_cz_lim_prior():
+    return {
+        "dist": "uniform",
+        "low": TRGBH0_EDD_CZ_LIM_LOW,
+        "high": TRGBH0_EDD_CZ_LIM_HIGH,
+    }
+
+
+def _trgbh0_edd_cz_width_prior():
+    return {
+        "dist": "uniform",
+        "low": TRGBH0_EDD_CZ_WIDTH_LOW,
+        "high": TRGBH0_EDD_CZ_WIDTH_HIGH,
+    }
+
+
+def _trgbh0_edd_mag_lim_informative_prior():
+    return {
+        "dist": "truncated_normal",
+        "mean": 24.1,
+        "scale": 0.5,
+        "low": TRGBH0_EDD_MAG_LIM_LOW,
+    }
+
+
+def _trgbh0_edd_mag_lim_prior():
+    prior = _trgbh0_edd_mag_lim_informative_prior()
+    # prior = _trgbh0_edd_mag_lim_uninformative_prior()
+    return prior
+
+
+def _trgbh0_sigma_int_uninformative_prior():
+    return {
+        "dist": "maxwell",
+        "scale": 0.0627,
+    }
+
+
+def _trgbh0_sigma_int_informative_prior():
+    return {
+        "dist": "truncated_normal",
+        "mean": 0.1,
+        "scale": 0.01,
+        "low": 0.01,
+    }
+
+
+def _trgbh0_sigma_int_prior():
+    prior = _trgbh0_sigma_int_informative_prior()
+    # prior = _trgbh0_sigma_int_uninformative_prior()
+    return prior
+
+
+TRGBH0_COMMON["model/priors/sigma_int"] = _trgbh0_sigma_int_prior()
+TRGBH0_COMMON["model/priors/alpha_c"] = _delta(0.2)
+
+
+def _ch0_selection(selection):
+    return {"model/which_selection": selection}
+
+
+def _trgbh0_selection(selection):
+    return {"model/which_selection": selection}
+
+
+def _trgbh0_edd_b_cut():
+    return {
+        "io/PV_main/EDD_TRGB/b_min": TRGBH0_EDD_B_MIN,
+        "io/PV_main/EDD_TRGB_grouped/b_min": TRGBH0_EDD_B_MIN,
+    }
+
+
+def _trgbh0_sky_exposure(
+        nside=TRGBH0_SKY_EXPOSURE_NSIDE,
+        kappa=TRGBH0_SKY_EXPOSURE_KAPPA):
+    return {
+        "model/TRGB_sky_exposure/enabled": True,
+        "model/TRGB_sky_exposure/nside": nside,
+        "model/TRGB_sky_exposure/kappa": kappa,
+    }
+
+
+def _with_root(root_output):
+    return {"io/root_output": root_output}
+
+
+def _ch0_main_datasets():
+    selections = ("none", "SN_magnitude", "redshift")
+    pv_models = [
+        {
+            "model/use_reconstruction": False,
+            "model/use_fiducial_Cepheid_host_PV_covariance": False,
+            "model/use_PV_covmat_scaling": False,
+            "model/weight_selection_by_covmat_Neff": False,
+            "model/priors/Vext": _delta([0.0, 0.0, 0.0]),
+        },
+        {
+            "model/use_reconstruction": False,
+            "model/use_fiducial_Cepheid_host_PV_covariance": False,
+            "model/use_PV_covmat_scaling": False,
+            "model/weight_selection_by_covmat_Neff": False,
+        },
+        {
+            "model/use_reconstruction": False,
+            "model/use_fiducial_Cepheid_host_PV_covariance": True,
+            "model/use_PV_covmat_scaling": False,
+            "model/priors/Vext": _delta([0.0, 0.0, 0.0]),
+        },
+        {
+            "model/use_reconstruction": False,
+            "model/use_fiducial_Cepheid_host_PV_covariance": True,
+            "model/use_PV_covmat_scaling": True,
+            "model/priors/Vext": _delta([0.0, 0.0, 0.0]),
+        },
+        {
+            "model/use_reconstruction": True,
+            "model/use_fiducial_Cepheid_host_PV_covariance": False,
+            "model/use_PV_covmat_scaling": False,
+            "model/weight_selection_by_covmat_Neff": False,
+            "model/use_density_dependent_sigma_v": False,
+            "io/SH0ES/reconstruction": "Carrick2015",
+            "model/priors/beta": _normal(0.43, 0.02),
+        },
+        {
+            "model/use_reconstruction": True,
+            "model/use_fiducial_Cepheid_host_PV_covariance": False,
+            "model/use_PV_covmat_scaling": False,
+            "model/weight_selection_by_covmat_Neff": False,
+            "model/use_density_dependent_sigma_v": False,
+            "model/field_3d_smoothing_scale": 0.0,
+            "model/velocity_3d_smoothing_scale": 0.0,
+            "io/SH0ES/reconstruction": CH0_MANTICORE_COLA_LOS,
+            "io/reconstruction_main/ManticoreLocalCOLA/which_MAS": "PCS",
+            "model/which_bias": CH0_MANTICORE_BIAS,
+        },
+        {
+            "model/use_reconstruction": True,
+            "model/use_fiducial_Cepheid_host_PV_covariance": False,
+            "model/use_PV_covmat_scaling": False,
+            "model/weight_selection_by_covmat_Neff": False,
+            "model/use_density_dependent_sigma_v": True,
+            "model/field_3d_smoothing_scale": 0.0,
+            "model/velocity_3d_smoothing_scale": 0.0,
+            "io/SH0ES/reconstruction": CH0_MANTICORE_COLA_LOS,
+            "io/reconstruction_main/ManticoreLocalCOLA/which_MAS": "PCS",
+            "model/which_bias": CH0_MANTICORE_BIAS,
+        },
+        {
+            "model/use_reconstruction": True,
+            "model/use_fiducial_Cepheid_host_PV_covariance": False,
+            "model/use_PV_covmat_scaling": False,
+            "model/weight_selection_by_covmat_Neff": False,
+            "model/use_density_dependent_sigma_v": False,
+            "model/field_3d_smoothing_scale": 0.0,
+            "model/velocity_3d_smoothing_scale": 0.0,
+            "io/SH0ES/reconstruction": CH0_MANTICORE_COLA_LOS,
+            "io/reconstruction_main/ManticoreLocalCOLA/which_MAS": "PCS",
+            "model/which_bias": CH0_MANTICORE_BIAS,
+            "model/priors/beta": _normal(1.0, 0.5),
+        },
+    ]
+
+    datasets = []
+    for pv_model in pv_models:
+        for selection in selections:
+            dataset = {
+                **pv_model,
+                **_ch0_selection(selection),
+            }
+            if dataset.get("model/use_fiducial_Cepheid_host_PV_covariance") \
+                    and selection == "redshift":
+                dataset["model/weight_selection_by_covmat_Neff"] = True
+            else:
+                dataset.setdefault(
+                    "model/weight_selection_by_covmat_Neff", False)
+            datasets.append(dataset)
+    return datasets
+
+
+def _ch0_distance_only_datasets():
+    base = {
+        "model/use_Cepheid_host_redshift": False,
+        "model/use_reconstruction": False,
+        "model/use_fiducial_Cepheid_host_PV_covariance": False,
+        "model/use_PV_covmat_scaling": False,
+        "model/weight_selection_by_covmat_Neff": False,
+        "model/priors/Vext": _delta([0.0, 0.0, 0.0]),
+        **_with_root(f"{CH0_PAPER_ROOT}/distances"),
+    }
+    return [
+        {
+            **base,
+            **_ch0_selection("none"),
+            "model/use_uniform_mu_host_priors": True,
+        },
+        {
+            **base,
+            **_ch0_selection("none"),
+            "model/use_uniform_mu_host_priors": False,
+        },
+        {
+            **base,
+            **_ch0_selection("SN_magnitude"),
+            "model/use_uniform_mu_host_priors": False,
+        },
+    ]
+
+
+def _ch0_imb_geometric_datasets():
+    base = {
+        "model/which_selection": "SN_magnitude",
+        "model/use_uniform_mu_host_priors": False,
+        "model/use_Cepheid_host_redshift": False,
+        "model/use_fiducial_Cepheid_host_PV_covariance": False,
+        "model/use_PV_covmat_scaling": False,
+        "model/weight_selection_by_covmat_Neff": False,
+        "model/use_density_dependent_sigma_v": False,
+        "model/field_3d_smoothing_scale": 0.0,
+        "model/velocity_3d_smoothing_scale": 0.0,
+    }
+    no_density = {
+        **base,
+        "model/use_reconstruction": False,
+        "model/priors/Vext": _delta([0.0, 0.0, 0.0]),
+        "model/priors/alpha_high": _delta(1.0),
+    }
+    carrick = {
+        **base,
+        "model/use_reconstruction": True,
+        "io/SH0ES/reconstruction": "Carrick2015",
+        "model/which_bias": "linear",
+        "model/priors/alpha_high": _delta(1.0),
+    }
+    manticore = [
+        {
+            **base,
+            "model/use_reconstruction": True,
+            "io/SH0ES/reconstruction": CH0_MANTICORE_COLA_LOS,
+            "io/reconstruction_main/ManticoreLocalCOLA/which_MAS": "PCS",
+            "model/which_bias": CH0_MANTICORE_BIAS,
+            "io/field_indices": field,
+        }
+        for field in range(80)
+    ]
+    return [no_density, carrick, *manticore]
+
+
+def _ch0_mixed_selection_datasets():
+    return [
+        {
+            "model/which_selection": "SN_magnitude_or_redshift_Nmag",
+            "model/num_hosts_selection_mag": n_mag,
+            "model/use_reconstruction": True,
+            "model/use_fiducial_Cepheid_host_PV_covariance": False,
+            "model/use_PV_covmat_scaling": False,
+            "model/weight_selection_by_covmat_Neff": False,
+            "model/use_density_dependent_sigma_v": False,
+            "model/field_3d_smoothing_scale": 0.0,
+            "model/velocity_3d_smoothing_scale": 0.0,
+            "io/SH0ES/reconstruction": CH0_MANTICORE_COLA_LOS,
+            "io/reconstruction_main/ManticoreLocalCOLA/which_MAS": "PCS",
+            "model/which_bias": CH0_MANTICORE_BIAS,
+        }
+        for n_mag in range(36)
+    ]
+
+
+def _ch0_manticore_field_datasets():
+    datasets = []
+    for field in range(30):
+        datasets.append({
+            "model/which_selection": "SN_magnitude",
+            "model/use_reconstruction": True,
+            "model/use_fiducial_Cepheid_host_PV_covariance": False,
+            "model/use_PV_covmat_scaling": False,
+            "model/weight_selection_by_covmat_Neff": False,
+            "model/use_density_dependent_sigma_v": False,
+            "io/SH0ES/reconstruction": CH0_MANTICORE_LOS,
+            "model/which_bias": CH0_MANTICORE_BIAS,
+            "io/field_indices": field,
+        })
+
+    for mas in ("CIC", "PCS", "SPH"):
+        for field in range(80):
+            datasets.append({
+                "model/which_selection": "SN_magnitude",
+                "model/use_reconstruction": True,
+                "model/use_fiducial_Cepheid_host_PV_covariance": False,
+                "model/use_PV_covmat_scaling": False,
+                "model/weight_selection_by_covmat_Neff": False,
+                "model/use_density_dependent_sigma_v": False,
+                "io/SH0ES/reconstruction": CH0_MANTICORE_COLA_LOS,
+                "io/reconstruction_main/ManticoreLocalCOLA/which_MAS": mas,
+                "model/which_bias": CH0_MANTICORE_BIAS,
+                "io/field_indices": field,
+            })
+
+    for field in range(80):
+        datasets.append({
+            "model/which_selection": "redshift",
+            "model/use_reconstruction": True,
+            "model/use_fiducial_Cepheid_host_PV_covariance": False,
+            "model/use_PV_covmat_scaling": False,
+            "model/weight_selection_by_covmat_Neff": False,
+            "model/use_density_dependent_sigma_v": False,
+            "io/SH0ES/reconstruction": CH0_MANTICORE_COLA_LOS,
+            "io/reconstruction_main/ManticoreLocalCOLA/which_MAS": "PCS",
+            "model/which_bias": CH0_MANTICORE_BIAS,
+            "io/field_indices": field,
+        })
+
+    return datasets
+
+
+def _ch0_manticore_cola_cic_field_datasets():
+    return [
+        {
+            "model/which_selection": "SN_magnitude",
+            "model/use_reconstruction": True,
+            "model/use_fiducial_Cepheid_host_PV_covariance": False,
+            "model/use_PV_covmat_scaling": False,
+            "model/weight_selection_by_covmat_Neff": False,
+            "model/use_density_dependent_sigma_v": False,
+            "io/SH0ES/reconstruction": CH0_MANTICORE_COLA_LOS,
+            "io/reconstruction_main/ManticoreLocalCOLA/which_MAS": "CIC",
+            "model/which_bias": CH0_MANTICORE_BIAS,
+            "io/field_indices": field,
+        }
+        for field in range(80)
+    ]
+
+
+def _ch0_manticore_cola_cic_fixed_bias_datasets():
+    return [
+        {
+            **dataset,
+            "model/which_bias": CH0_MANTICORE_BIAS,
+            **CH0_FIXED_BIAS_PRIORS,
+        }
+        for dataset in _ch0_manticore_cola_cic_field_datasets()
+    ]
+
+
+def _ch0_manticore_swift_fixed_bias_datasets():
+    return [
+        {
+            "model/which_selection": "SN_magnitude",
+            "model/use_reconstruction": True,
+            "model/use_fiducial_Cepheid_host_PV_covariance": False,
+            "model/use_PV_covmat_scaling": False,
+            "model/weight_selection_by_covmat_Neff": False,
+            "model/use_density_dependent_sigma_v": False,
+            "io/SH0ES/reconstruction": CH0_MANTICORE_LOS,
+            "model/which_bias": CH0_MANTICORE_BIAS,
+            "io/field_indices": field,
+            **CH0_SWIFT_FIXED_BIAS_PRIORS,
+        }
+        for field in range(30)
+    ]
+
+
+def _ch0_manticore_swift_cola_cic_uniform_bias_datasets():
+    swift_datasets = [
+        {
+            "model/which_selection": "SN_magnitude",
+            "model/use_reconstruction": True,
+            "model/use_fiducial_Cepheid_host_PV_covariance": False,
+            "model/use_PV_covmat_scaling": False,
+            "model/weight_selection_by_covmat_Neff": False,
+            "model/use_density_dependent_sigma_v": False,
+            "io/SH0ES/reconstruction": CH0_MANTICORE_LOS,
+            "model/which_bias": "uniform",
+            "model/field_3d_smoothing_scale": 0.0,
+            "io/field_indices": field,
+        }
+        for field in range(30)
+    ]
+    cola_datasets = [
+        {
+            **dataset,
+            "model/which_bias": "uniform",
+            "model/field_3d_smoothing_scale": 0.0,
+        }
+        for dataset in _ch0_manticore_cola_cic_field_datasets()
+    ]
+    return swift_datasets + cola_datasets
+
+
+def _ch0_leaveoneout_datasets():
+    return [{
+        "model/which_selection": "SN_magnitude",
+        "model/use_reconstruction": True,
+        "model/use_fiducial_Cepheid_host_PV_covariance": False,
+        "model/use_PV_covmat_scaling": False,
+        "model/weight_selection_by_covmat_Neff": False,
+        "model/use_density_dependent_sigma_v": False,
+        "io/SH0ES/reconstruction": CH0_MANTICORE_LOS,
+        "model/which_bias": CH0_MANTICORE_BIAS,
+        "io/field_indices": 21,
+        "io/SH0ES/drop_observation": list(range(35)),
+    }]
+
+
+def _ch0_angular_scatter_datasets():
+    return [{
+        "model/which_selection": "SN_magnitude",
+        "model/use_reconstruction": True,
+        "model/use_fiducial_Cepheid_host_PV_covariance": False,
+        "model/use_PV_covmat_scaling": False,
+        "model/weight_selection_by_covmat_Neff": False,
+        "model/use_density_dependent_sigma_v": False,
+        "io/SH0ES/reconstruction": CH0_MANTICORE_COLA_LOS,
+        "io/reconstruction_main/ManticoreLocalCOLA/which_MAS": "CIC",
+        "model/which_bias": CH0_MANTICORE_BIAS,
+        "io/field_indices": list(range(30)),
+        "io/angular_position_scatter_deg": [2.0, 4.0, 8.0, 16.0],
+        "io/angular_position_scatter_seed": 42,
+    }]
+
+
+def _trgbh0_selection_datasets(pv_models, selections=("TRGB_magnitude",)):
+    return [
+        {
+            **pv_model,
+            **_trgbh0_selection(selection),
+        }
+        for pv_model in pv_models
+        for selection in selections
+    ]
+
+
+def _trgbh0_edd_selection_datasets(
+        pv_models, selections=("TRGB_magnitude",)):
+    return [
+        {
+            **_trgbh0_edd_b_cut(),
+            **pv_model,
+            **_trgbh0_selection(selection),
+        }
+        for pv_model in pv_models
+        for selection in selections
+    ]
+
+
+def _trgbh0_main_datasets():
+    selections = ("TRGB_magnitude",)
+    main_pv_models = [
+        {
+            "model/use_reconstruction": True,
+            "model/use_density_dependent_sigma_v": False,
+            "model/run_ppc": True,
+            "model/cz_likelihood": "gaussian",
+            "model/mag_min_TRGB": TRGBH0_EDD_MAG_MIN,
+            "model/priors/mag_lim_TRGB": (
+                _trgbh0_edd_mag_lim_uninformative_prior()),
+            "inference/init_maxiter": 500,
+            "io/PV_main/EDD_TRGB/reconstruction": "Carrick2015",
+            "model/priors/beta": _trgbh0_carrick_beta_prior(),
+        },
+        {
+            "model/use_reconstruction": True,
+            "model/use_density_dependent_sigma_v": False,
+            "model/cz_likelihood": "gaussian",
+            "model/mag_min_TRGB": TRGBH0_EDD_MAG_MIN,
+            "model/priors/mag_lim_TRGB": (
+                _trgbh0_edd_mag_lim_uninformative_prior()),
+            "io/PV_main/EDD_TRGB/reconstruction": TRGBH0_MANTICORE_COLA_LOS,
+            "io/reconstruction_main/ManticoreLocalCOLA/which_MAS": "PCS",
+            "model/field_3d_smoothing_scale": 4.0,
+            "model/velocity_3d_smoothing_scale": 0.0,
+            "model/which_bias": TRGBH0_MAIN_MANTICORE_BIAS,
+        },
+    ]
+    extra_pv_models = [
+        {
+            "model/use_reconstruction": True,
+            "model/use_density_dependent_sigma_v": False,
+            "model/run_ppc": True,
+            "model/cz_likelihood": "student_t",
+            "model/mag_min_TRGB": TRGBH0_EDD_MAG_MIN,
+            "model/priors/mag_lim_TRGB": (
+                _trgbh0_edd_mag_lim_uninformative_prior()),
+            "model/priors/nu_cz": _nu_cz_student_t_prior(),
+            "io/PV_main/EDD_TRGB/reconstruction": "Carrick2015",
+            "model/priors/beta": _trgbh0_carrick_beta_prior(),
+        },
+        {
+            "model/use_reconstruction": True,
+            "model/use_density_dependent_sigma_v": False,
+            "model/cz_likelihood": "student_t",
+            "model/mag_min_TRGB": TRGBH0_EDD_MAG_MIN,
+            "model/priors/mag_lim_TRGB": (
+                _trgbh0_edd_mag_lim_uninformative_prior()),
+            "model/priors/nu_cz": _nu_cz_student_t_prior(),
+            "io/PV_main/EDD_TRGB/reconstruction": TRGBH0_MANTICORE_COLA_LOS,
+            "io/reconstruction_main/ManticoreLocalCOLA/which_MAS": "PCS",
+            "model/field_3d_smoothing_scale": 4.0,
+            "model/velocity_3d_smoothing_scale": 0.0,
+            "model/which_bias": TRGBH0_MAIN_MANTICORE_BIAS,
+        },
+        {
+            "model/use_reconstruction": True,
+            "model/use_density_dependent_sigma_v": False,
+            "model/cz_likelihood": "gaussian",
+            "model/mag_min_TRGB": TRGBH0_EDD_MAG_MIN,
+            "model/priors/mag_lim_TRGB": (
+                _trgbh0_edd_mag_lim_uninformative_prior()),
+            "io/PV_main/EDD_TRGB/reconstruction": TRGBH0_MANTICORE_COLA_LOS,
+            "io/reconstruction_main/ManticoreLocalCOLA/which_MAS": "PCS",
+            "model/field_3d_smoothing_scale": 4.0,
+            "model/velocity_3d_smoothing_scale": 0.0,
+            "model/which_bias": TRGBH0_MAIN_MANTICORE_BIAS,
+            "model/priors/beta": {
+                "dist": "uniform",
+                "low": 0.0,
+                "high": 2.0,
+            },
+        },
+        {
+            "model/use_reconstruction": True,
+            "model/use_density_dependent_sigma_v": False,
+            "model/cz_likelihood": "student_t",
+            "model/mag_min_TRGB": TRGBH0_EDD_MAG_MIN,
+            "model/priors/mag_lim_TRGB": (
+                _trgbh0_edd_mag_lim_uninformative_prior()),
+            "model/priors/nu_cz": _nu_cz_student_t_prior(),
+            "io/PV_main/EDD_TRGB/reconstruction": TRGBH0_MANTICORE_COLA_LOS,
+            "io/reconstruction_main/ManticoreLocalCOLA/which_MAS": "PCS",
+            "model/field_3d_smoothing_scale": 4.0,
+            "model/velocity_3d_smoothing_scale": 0.0,
+            "model/which_bias": TRGBH0_MAIN_MANTICORE_BIAS,
+            "model/priors/beta": {
+                "dist": "uniform",
+                "low": 0.0,
+                "high": 2.0,
+            },
+        },
+        {
+            "model/use_reconstruction": False,
+            "model/use_density_dependent_sigma_v": False,
+            "model/run_ppc": True,
+            "model/cz_likelihood": "gaussian",
+            "model/mag_min_TRGB": TRGBH0_EDD_MAG_MIN,
+            "model/priors/mag_lim_TRGB": (
+                _trgbh0_edd_mag_lim_uninformative_prior()),
+        },
+        {
+            "model/use_reconstruction": False,
+            "model/use_density_dependent_sigma_v": False,
+            "model/run_ppc": True,
+            "model/cz_likelihood": "student_t",
+            "model/mag_min_TRGB": TRGBH0_EDD_MAG_MIN,
+            "model/priors/mag_lim_TRGB": (
+                _trgbh0_edd_mag_lim_uninformative_prior()),
+            "model/priors/nu_cz": _nu_cz_student_t_prior(),
+        },
+    ]
+    carrick_vext_monopole_models = [
+        {
+            "model/use_reconstruction": True,
+            "model/use_density_dependent_sigma_v": False,
+            "model/run_ppc": True,
+            "model/cz_likelihood": "gaussian",
+            "model/which_Vext_monopole": "constant",
+            "model/mag_min_TRGB": TRGBH0_EDD_MAG_MIN,
+            "model/priors/mag_lim_TRGB": (
+                _trgbh0_edd_mag_lim_uninformative_prior()),
+            "inference/init_maxiter": 500,
+            "io/PV_main/EDD_TRGB/reconstruction": "Carrick2015",
+            "model/priors/beta": _trgbh0_carrick_beta_prior(),
+        },
+        {
+            "model/use_reconstruction": True,
+            "model/use_density_dependent_sigma_v": False,
+            "model/run_ppc": True,
+            "model/cz_likelihood": "student_t",
+            "model/which_Vext_monopole": "constant",
+            "model/mag_min_TRGB": TRGBH0_EDD_MAG_MIN,
+            "model/priors/mag_lim_TRGB": (
+                _trgbh0_edd_mag_lim_uninformative_prior()),
+            "model/priors/nu_cz": _nu_cz_student_t_prior(),
+            "io/PV_main/EDD_TRGB/reconstruction": "Carrick2015",
+            "model/priors/beta": _trgbh0_carrick_beta_prior(),
+        },
+    ]
+    carrick_sky_exposure_models = [
+        {
+            "model/use_reconstruction": True,
+            "model/use_density_dependent_sigma_v": False,
+            "model/run_ppc": True,
+            "model/cz_likelihood": "student_t",
+            "model/which_Vext_monopole": "constant",
+            "model/mag_min_TRGB": TRGBH0_EDD_MAG_MIN,
+            "model/priors/mag_lim_TRGB": (
+                _trgbh0_edd_mag_lim_uninformative_prior()),
+            "model/priors/nu_cz": _nu_cz_student_t_prior(),
+            "io/PV_main/EDD_TRGB/reconstruction": "Carrick2015",
+            "model/priors/beta": _trgbh0_carrick_beta_prior(),
+            **_trgbh0_sky_exposure(),
+        },
+        {
+            "model/use_reconstruction": True,
+            "model/use_density_dependent_sigma_v": False,
+            "model/run_ppc": True,
+            "model/cz_likelihood": "student_t",
+            "model/mag_min_TRGB": TRGBH0_EDD_MAG_MIN,
+            "model/priors/mag_lim_TRGB": (
+                _trgbh0_edd_mag_lim_uninformative_prior()),
+            "model/priors/nu_cz": _nu_cz_student_t_prior(),
+            "io/PV_main/EDD_TRGB/reconstruction": "Carrick2015",
+            "model/priors/beta": _trgbh0_carrick_beta_prior(),
+            "inference/init_maxiter": 0,
+            "inference/num_warmup": 4000,
+            "inference/num_samples": 15000,
+            **_trgbh0_sky_exposure(),
+        },
+        {
+            "model/use_reconstruction": True,
+            "model/use_density_dependent_sigma_v": False,
+            "model/run_ppc": True,
+            "model/cz_likelihood": "gaussian",
+            "model/mag_min_TRGB": TRGBH0_EDD_MAG_MIN,
+            "model/priors/mag_lim_TRGB": (
+                _trgbh0_edd_mag_lim_uninformative_prior()),
+            "inference/init_maxiter": 500,
+            "io/PV_main/EDD_TRGB/reconstruction": "Carrick2015",
+            "model/priors/beta": _trgbh0_carrick_beta_prior(),
+            **_trgbh0_sky_exposure(),
+        },
+    ]
+    manticore_sky_exposure_models = [
+        {
+            "model/use_reconstruction": True,
+            "model/use_density_dependent_sigma_v": False,
+            "model/cz_likelihood": "gaussian",
+            "model/mag_min_TRGB": TRGBH0_EDD_MAG_MIN,
+            "model/priors/mag_lim_TRGB": (
+                _trgbh0_edd_mag_lim_uninformative_prior()),
+            "io/PV_main/EDD_TRGB/reconstruction": TRGBH0_MANTICORE_COLA_LOS,
+            "io/reconstruction_main/ManticoreLocalCOLA/which_MAS": "PCS",
+            "model/field_3d_smoothing_scale": 4.0,
+            "model/velocity_3d_smoothing_scale": 0.0,
+            "model/which_bias": TRGBH0_MAIN_MANTICORE_BIAS,
+            "inference/init_maxiter": 0,
+            **_trgbh0_sky_exposure(),
+        },
+        {
+            "model/use_reconstruction": True,
+            "model/use_density_dependent_sigma_v": False,
+            "model/cz_likelihood": "student_t",
+            "model/mag_min_TRGB": TRGBH0_EDD_MAG_MIN,
+            "model/priors/mag_lim_TRGB": (
+                _trgbh0_edd_mag_lim_uninformative_prior()),
+            "model/priors/nu_cz": _nu_cz_student_t_prior(),
+            "io/PV_main/EDD_TRGB/reconstruction": TRGBH0_MANTICORE_COLA_LOS,
+            "io/reconstruction_main/ManticoreLocalCOLA/which_MAS": "PCS",
+            "model/field_3d_smoothing_scale": 4.0,
+            "model/velocity_3d_smoothing_scale": 0.0,
+            "model/which_bias": TRGBH0_MAIN_MANTICORE_BIAS,
+            **_trgbh0_sky_exposure(),
+        },
+    ]
+    carrick_double_powerlaw_models = [
+        {
+            "model/use_reconstruction": True,
+            "model/use_density_dependent_sigma_v": False,
+            "model/cz_likelihood": "gaussian",
+            "model/mag_min_TRGB": TRGBH0_EDD_MAG_MIN,
+            "model/priors/mag_lim_TRGB": (
+                _trgbh0_edd_mag_lim_uninformative_prior()),
+            "io/PV_main/EDD_TRGB/reconstruction": "Carrick2015",
+            "model/which_bias": "double_powerlaw",
+            "model/priors/beta": {"dist": "uniform", "low": 0.0, "high": 2.0},
+        },
+        {
+            "model/use_reconstruction": True,
+            "model/use_density_dependent_sigma_v": False,
+            "model/cz_likelihood": "student_t",
+            "model/mag_min_TRGB": TRGBH0_EDD_MAG_MIN,
+            "model/priors/mag_lim_TRGB": (
+                _trgbh0_edd_mag_lim_uninformative_prior()),
+            "model/priors/nu_cz": _nu_cz_student_t_prior(),
+            "io/PV_main/EDD_TRGB/reconstruction": "Carrick2015",
+            "model/which_bias": "double_powerlaw",
+            "model/priors/beta": {"dist": "uniform", "low": 0.0, "high": 2.0},
+        },
+        {   # beta fixed at the Carrick2015 velocity-amplitude calibration
+            "model/use_reconstruction": True,
+            "model/use_density_dependent_sigma_v": False,
+            "model/cz_likelihood": "gaussian",
+            "model/mag_min_TRGB": TRGBH0_EDD_MAG_MIN,
+            "model/priors/mag_lim_TRGB": (
+                _trgbh0_edd_mag_lim_uninformative_prior()),
+            "io/PV_main/EDD_TRGB/reconstruction": "Carrick2015",
+            "model/which_bias": "double_powerlaw",
+            "model/priors/beta": _delta(0.43),
+        },
+        {
+            "model/use_reconstruction": True,
+            "model/use_density_dependent_sigma_v": False,
+            "model/cz_likelihood": "student_t",
+            "model/mag_min_TRGB": TRGBH0_EDD_MAG_MIN,
+            "model/priors/mag_lim_TRGB": (
+                _trgbh0_edd_mag_lim_uninformative_prior()),
+            "model/priors/nu_cz": _nu_cz_student_t_prior(),
+            "io/PV_main/EDD_TRGB/reconstruction": "Carrick2015",
+            "model/which_bias": "double_powerlaw",
+            "model/priors/beta": _delta(0.43),
+        },
+        {   # beta fixed at the Boruah2019 velocity-amplitude calibration
+            "model/use_reconstruction": True,
+            "model/use_density_dependent_sigma_v": False,
+            "model/cz_likelihood": "gaussian",
+            "model/mag_min_TRGB": TRGBH0_EDD_MAG_MIN,
+            "model/priors/mag_lim_TRGB": (
+                _trgbh0_edd_mag_lim_uninformative_prior()),
+            "io/PV_main/EDD_TRGB/reconstruction": "Carrick2015",
+            "model/which_bias": "double_powerlaw",
+            "model/priors/beta": _delta(0.48),
+        },
+        {
+            "model/use_reconstruction": True,
+            "model/use_density_dependent_sigma_v": False,
+            "model/cz_likelihood": "student_t",
+            "model/mag_min_TRGB": TRGBH0_EDD_MAG_MIN,
+            "model/priors/mag_lim_TRGB": (
+                _trgbh0_edd_mag_lim_uninformative_prior()),
+            "model/priors/nu_cz": _nu_cz_student_t_prior(),
+            "io/PV_main/EDD_TRGB/reconstruction": "Carrick2015",
+            "model/which_bias": "double_powerlaw",
+            "model/priors/beta": _delta(0.48),
+        },
+    ]
+    return (
+        _trgbh0_edd_selection_datasets(main_pv_models, selections)
+        + _trgbh0_edd_selection_datasets(extra_pv_models, selections)
+        + _trgbh0_distance_only_datasets()
+        + _trgbh0_edd_selection_datasets(
+            carrick_vext_monopole_models, selections)
+        + _trgbh0_edd_selection_datasets(
+            carrick_sky_exposure_models, selections)
+        + _trgbh0_edd_selection_datasets(
+            manticore_sky_exposure_models, selections)
+        + _trgbh0_edd_selection_datasets(
+            carrick_double_powerlaw_models, selections)
+    )
+
+
+def _trgbh0_distance_only_datasets():
+    return [
+        {
+            **_trgbh0_edd_b_cut(),
+            "model/use_TRGB_host_redshift": False,
+            "model/use_reconstruction": False,
+            "model/use_density_dependent_sigma_v": False,
+            "model/run_ppc": True,
+            "model/mag_min_TRGB": TRGBH0_EDD_MAG_MIN,
+            "model/priors/mag_lim_TRGB": (
+                _trgbh0_edd_mag_lim_uninformative_prior()),
+            "model/priors/H0": _delta(73.04),
+            "model/priors/Vext": _delta([0.0, 0.0, 0.0]),
+            "model/priors/sigma_v": _delta(100.0),
+            **_trgbh0_selection("TRGB_magnitude"),
+            **_with_root(f"{TRGBH0_ROOT}/distances"),
+        },
+    ]
+
+
+def _trgbh0_manticore_cola_mas_field_datasets(mas_values):
+    datasets = []
+    for mas in mas_values:
+        for field in range(80):
+            datasets.append({
+                **_trgbh0_edd_b_cut(),
+                "model/use_reconstruction": True,
+                "model/use_density_dependent_sigma_v": False,
+                "model/cz_likelihood": "gaussian",
+                "model/mag_min_TRGB": TRGBH0_EDD_MAG_MIN,
+                "model/priors/mag_lim_TRGB": (
+                    _trgbh0_edd_mag_lim_uninformative_prior()),
+                "io/PV_main/EDD_TRGB/reconstruction": (
+                    TRGBH0_MANTICORE_COLA_LOS),
+                "io/reconstruction_main/ManticoreLocalCOLA/which_MAS": mas,
+                "model/which_bias": TRGBH0_MANTICORE_BIAS,
+                "io/field_indices": field,
+                **_trgbh0_selection("TRGB_magnitude"),
+            })
+    return datasets
+
+
+def _trgbh0_manticore_cola_single_datasets():
+    return (
+        _trgbh0_manticore_cola_mas_field_datasets(("CIC", "PCS", "SPH"))
+        + _trgbh0_manticore_cola_pcs_student_t_field_datasets()
+    )
+
+
+def _trgbh0_manticore_cola_pcs_student_t_field_datasets():
+    datasets = _trgbh0_manticore_cola_mas_field_datasets(("PCS",))
+    for dataset in datasets:
+        dataset["model/cz_likelihood"] = "student_t"
+        dataset["model/priors/nu_cz"] = _nu_cz_student_t_prior()
+    return datasets
+
+
+def _trgbh0_manticore_cola_pcs_field_datasets():
+    return _trgbh0_manticore_cola_mas_field_datasets(("PCS",))
+
+
+def _trgbh0_manticore_cola_pcs_freebeta_smoothed_field_datasets():
+    datasets = _trgbh0_manticore_cola_pcs_field_datasets()
+    for dataset in datasets:
+        dataset["model/cz_likelihood"] = "student_t"
+        dataset["model/priors/nu_cz"] = _nu_cz_student_t_prior()
+        dataset["model/priors/beta"] = {
+            "dist": "uniform",
+            "low": 0.0,
+            "high": 2.0,
+        }
+        dataset["model/field_3d_smoothing_scale"] = 4.0
+    return datasets
+
+
+def _trgbh0_manticore_cola_pcs_monopole_smoothed_field_datasets():
+    datasets = _trgbh0_manticore_cola_pcs_field_datasets()
+    for dataset in datasets:
+        dataset["model/which_Vext_monopole"] = "constant"
+        dataset["model/field_3d_smoothing_scale"] = 4.0
+    return datasets
+
+
+def _trgbh0_manticore_cola_pcs_monopole_smoothed_nosky_field_datasets():
+    datasets = _trgbh0_manticore_cola_pcs_monopole_smoothed_field_datasets()
+    for dataset in datasets:
+        dataset["model/TRGB_sky_exposure/enabled"] = False
+    return datasets
+
+
+def _trgbh0_manticore_cola_pcs_monopole_student_t_smoothed_field_datasets():
+    datasets = _trgbh0_manticore_cola_pcs_monopole_smoothed_field_datasets()
+    for dataset in datasets:
+        dataset["model/cz_likelihood"] = "student_t"
+        dataset["model/priors/nu_cz"] = _nu_cz_student_t_prior()
+    return datasets
+
+
+def _trgbh0_manticore_cola_pcs_smoothed_nosky_field_datasets():
+    datasets = _trgbh0_manticore_cola_pcs_field_datasets()
+    for dataset in datasets:
+        dataset["model/field_3d_smoothing_scale"] = 4.0
+        dataset["model/TRGB_sky_exposure/enabled"] = False
+    return datasets
+
+
+def _trgbh0_cchp_cola_pcs_field_datasets():
+    datasets = []
+    for field in range(80):
+        datasets.append({
+            "model/use_reconstruction": True,
+            "model/use_density_dependent_sigma_v": False,
+            "model/cz_likelihood": "gaussian",
+            "io/CCHP/reconstruction": TRGBH0_MANTICORE_COLA_LOS,
+            "io/reconstruction_main/ManticoreLocalCOLA/which_MAS": "PCS",
+            "model/which_bias": TRGBH0_MANTICORE_BIAS,
+            "io/field_indices": field,
+            **_trgbh0_selection("TRGB_magnitude"),
+        })
+    return datasets
+
+
+def _trgbh0_cchp_cola_pcs_student_t_field_datasets():
+    datasets = _trgbh0_cchp_cola_pcs_field_datasets()
+    for dataset in datasets:
+        dataset["model/cz_likelihood"] = "student_t"
+        dataset["model/priors/nu_cz"] = _nu_cz_student_t_prior()
+    return datasets
+
+
+def _trgbh0_cchp_cola_pcs_likelihood_datasets():
+    return (
+        _trgbh0_cchp_cola_pcs_field_datasets()
+        + _trgbh0_cchp_cola_pcs_student_t_field_datasets()
+    )
+
+
+def _s8_production_datasets():
+    return [
+        {
+            "inference/model": "TFRModel",
+            "io/catalogue_name": "CF4_W1",
+        },
+        {
+            "inference/model": "TFRModel",
+            "io/catalogue_name": "CF4_i",
+            "pv_model/galaxy_bias": ["linear", "double_powerlaw"],
+        },
+        {
+            # quadratic split off with its own seed: seed 44 drove L-BFGS init
+            # into a NaN region (ABNORMAL line-search), then NUTS stalled.
+            "inference/model": "TFRModel",
+            "io/catalogue_name": "CF4_i",
+            "pv_model/galaxy_bias": "quadratic",
+            "inference/seed": 45,
+        },
+        {
+            "inference/model": "FPModel",
+            "io/catalogue_name": "6dF_FP",
+            "pv_model/galaxy_bias": [*S8_BIAS_MODELS, "cubic"],
+        },
+        {
+            "inference/model": "FPModel",
+            "io/catalogue_name": "SDSS_FP",
+            "pv_model/galaxy_bias": [*S8_BIAS_MODELS, "cubic"],
+        },
+        {
+            "inference/model": "PantheonPlusModel",
+            "io/catalogue_name": "PantheonPlus",
+            "inference/init_maxiter": 0,
+        },
+        {
+            "inference/model": [
+                "TFRModel", "TFRModel", "PantheonPlusModel"],
+            "io/catalogue_name": ["CF4_i", "CF4_W1", "PantheonPlus"],
+            "inference/shared_params": "beta,sigma_v",
+            "inference/init_maxiter": 0,
+        },
+    ]
+
+
+def _vfo_datasets():
+    catalogues = [
+        {
+            "inference/model": "SNModel",
+            "io/catalogue_name": "LOSS",
+        },
+        {
+            "inference/model": "SNModel",
+            "io/catalogue_name": "Foundation",
+        },
+        {
+            "inference/model": "TFRModel",
+            "io/catalogue_name": "CF4_W1",
+        },
+        {
+            "inference/model": "TFRModel",
+            "io/catalogue_name": "CF4_i",
+        },
+        {
+            "inference/model": "TFRModel",
+            "io/catalogue_name": "2MTF",
+        },
+        {
+            "inference/model": "TFRModel",
+            "io/catalogue_name": "SFI",
+        },
+    ]
+    pv_models = [
+        {
+            "pv_model/kind": "precomputed_los_Carrick2015",
+            "pv_model/galaxy_bias": "linear",
+            "pv_model/density_3d_subsample_fraction": 0.5,
+            "model/priors/beta": {
+                "dist": "uniform",
+                "low": 0.0,
+                "high": 1.0,
+            },
+        },
+        {
+            "pv_model/kind": f"precomputed_los_{VFO_MANTICORE_LOS}",
+            "pv_model/galaxy_bias": "double_powerlaw",
+            "pv_model/density_3d_subsample_fraction": 0.1,
+            "model/priors/beta": _delta(1.0),
+        },
+        {
+            "pv_model/kind": f"precomputed_los_{VFO_MANTICORE_LOS}",
+            "pv_model/galaxy_bias": "powerlaw",
+            "pv_model/density_3d_subsample_fraction": 0.1,
+            "model/priors/beta": _delta(1.0),
+        },
+    ]
+    manticore_linear_models = [
+        {
+            "pv_model/kind": f"precomputed_los_{VFO_MANTICORE_LOS}",
+            "pv_model/galaxy_bias": "linear",
+            "pv_model/density_3d_subsample_fraction": 0.1,
+            "model/priors/beta": _delta(1.0),
+        },
+        {
+            "pv_model/kind": f"precomputed_los_{VFO_MANTICORE_LOS}",
+            "pv_model/galaxy_bias": "quadratic",
+            "pv_model/density_3d_subsample_fraction": 0.1,
+            "model/priors/beta": _delta(1.0),
+        },
+    ]
+    manticore_beta_free_models = [
+        {
+            "pv_model/kind": f"precomputed_los_{VFO_MANTICORE_LOS}",
+            "pv_model/galaxy_bias": "double_powerlaw",
+            "pv_model/density_3d_subsample_fraction": 0.1,
+            "model/priors/beta": _normal(1.0, 0.1),
+        },
+    ]
+    carrick_double_powerlaw_models = [
+        {
+            "pv_model/kind": "precomputed_los_Carrick2015",
+            "pv_model/galaxy_bias": "double_powerlaw",
+            "pv_model/density_3d_subsample_fraction": 0.5,
+            "model/priors/beta": {
+                "dist": "uniform",
+                "low": 0.0,
+                "high": 1.0,
+            },
+        },
+    ]
+    fp_catalogues = [
+        {
+            "inference/model": "FPModel",
+            "io/catalogue_name": "SDSS_FP",
+        },
+        {
+            "inference/model": "FPModel",
+            "io/catalogue_name": "6dF_FP",
+        },
+    ]
+    fp_pv_models = [
+        {
+            "pv_model/kind": "precomputed_los_Carrick2015",
+            "pv_model/galaxy_bias": "linear",
+            "pv_model/density_3d_subsample_fraction": 0.5,
+            "model/priors/beta": {
+                "dist": "uniform",
+                "low": 0.0,
+                "high": 1.0,
+            },
+        },
+        {
+            "pv_model/kind": "precomputed_los_Carrick2015",
+            "pv_model/galaxy_bias": "double_powerlaw",
+            "pv_model/density_3d_subsample_fraction": 0.5,
+            "model/priors/beta": {
+                "dist": "uniform",
+                "low": 0.0,
+                "high": 1.0,
+            },
+        },
+        {
+            "pv_model/kind": f"precomputed_los_{VFO_MANTICORE_LOS}",
+            "pv_model/galaxy_bias": "double_powerlaw",
+            "pv_model/density_3d_subsample_fraction": 0.1,
+            "model/priors/beta": _delta(1.0),
+        },
+        {
+            "pv_model/kind": f"precomputed_los_{VFO_MANTICORE_LOS}",
+            "pv_model/galaxy_bias": "double_powerlaw",
+            "pv_model/density_3d_subsample_fraction": 0.1,
+            "model/priors/beta": {
+                "dist": "uniform",
+                "low": 0.0,
+                "high": 2.0,
+            },
+        },
+    ]
+    student_t_pv_models = [
+        {
+            "pv_model/kind": f"precomputed_los_{VFO_MANTICORE_LOS}",
+            "pv_model/galaxy_bias": "double_powerlaw",
+            "pv_model/density_3d_subsample_fraction": 0.1,
+            "model/priors/beta": _delta(1.0),
+            "model/cz_likelihood": "student_t",
+            "model/priors/nu_cz": _nu_cz_student_t_prior(),
+        },
+        {
+            "pv_model/kind": "precomputed_los_Carrick2015",
+            "pv_model/galaxy_bias": "linear",
+            "pv_model/density_3d_subsample_fraction": 0.5,
+            "model/priors/beta": {
+                "dist": "uniform",
+                "low": 0.0,
+                "high": 1.0,
+            },
+            "model/cz_likelihood": "student_t",
+            "model/priors/nu_cz": _nu_cz_student_t_prior(),
+        },
+    ]
+    cola_manticore_pv_models = [
+        {
+            "pv_model/kind": f"precomputed_los_{VFO_MANTICORE_COLA_LOS}",
+            "pv_model/galaxy_bias": "double_powerlaw",
+            "pv_model/density_3d_subsample_fraction": 0.5,
+            "model/priors/beta": _delta(1.0),
+            "model/cz_likelihood": "gaussian",
+        },
+    ]
+    return [
+        {
+            **catalogue,
+            **pv_model,
+        }
+        for catalogue in catalogues
+        for pv_model in pv_models
+    ] + [
+        {
+            **catalogue,
+            **pv_model,
+        }
+        for catalogue in catalogues
+        for pv_model in manticore_linear_models
+    ] + [
+        {
+            **catalogue,
+            **pv_model,
+        }
+        for catalogue in catalogues
+        for pv_model in manticore_beta_free_models
+    ] + [
+        {
+            **catalogue,
+            **pv_model,
+        }
+        for catalogue in catalogues
+        for pv_model in carrick_double_powerlaw_models
+    ] + [
+        {
+            **catalogue,
+            **pv_model,
+        }
+        for catalogue in fp_catalogues
+        for pv_model in fp_pv_models
+    ] + [
+        {
+            **catalogue,
+            **pv_model,
+        }
+        for catalogue in catalogues + fp_catalogues
+        for pv_model in student_t_pv_models
+    ] + [
+        {
+            **catalogue,
+            **pv_model,
+        }
+        for catalogue in catalogues + fp_catalogues
+        for pv_model in cola_manticore_pv_models
+    ]
+
+
+def _vfo_single_datasets():
+    datasets = []
+    for los, n_fields, subsample_fraction in (
+            (VFO_MANTICORE_LOS, 30, 0.1),
+            (VFO_MANTICORE_COLA_LOS, 50, 0.5),
+    ):
+        for field in range(n_fields):
+            dataset = {
+                "pv_model/kind": f"precomputed_los_{los}",
+                "io/field_indices": field,
+            }
+            if subsample_fraction != 0.1:
+                dataset[
+                    "pv_model/density_3d_subsample_fraction"
+                ] = subsample_fraction
+            datasets.append(dataset)
+    return datasets
+
+
+MWCEPHEIDS_DENSE_MASS_BLOCKS = (
+    ("M_H_1", "b_W", "Z_W", "delta_pi"),
+    ("mu_logP_C22", "sigma_logP_C22"),
+    ("mu_logP_C27", "sigma_logP_C27"),
+    ("mu_logP_NGC4258", "sigma_logP_NGC4258"),
+    ("mu_logP_LMC", "sigma_logP_LMC"),
+)
+
+
+MWCEPHEIDS_RUN_COMMON = {
+    "inference/num_chains": 4,
+    "inference/chain_method": "sequential",
+    "inference/init_maxiter": 500,
+    "inference/target_accept_prob": 0.95,
+    "inference/compute_log_density": False,
+    "inference/dense_mass_blocks": MWCEPHEIDS_DENSE_MASS_BLOCKS,
+}
+
+
+def _mwcepheids_forward_base():
+    return {
+        "model/model_type": "forward",
+        "model/distance_prior": "disk",
+        "model/shared_scatter": True,
+        "model/marginalise_distance": True,
+        "model/use_Q": False,
+        "model/Q_err_median": False,
+        "model/anchors": ("NGC4258", "LMC"),
+        "model/anchor_scatter_correction": "none",
+        "model/spiral_arms/apply": False,
+        "model/C22/selection/apply_mW": False,
+        "model/C22/selection/apply_AH": False,
+        "model/C22/selection/apply_pi": False,
+        "model/C22/selection/apply_logP": False,
+        "model/C27/selection/apply_pi": False,
+        "model/C27/selection/apply_mW": False,
+    }
+
+
+def _mwcepheids_selection_no_ah():
+    return {
+        **_mwcepheids_forward_base(),
+        "model/C22/selection/apply_mW": True,
+        "model/C22/selection/apply_pi": True,
+        "model/C22/selection/apply_logP": True,
+        "model/C22/selection/mW_max": "infer",
+        "model/C22/selection/mW_width": 0.5,
+        "model/C22/selection/pi_min": "infer",
+        "model/C22/selection/pi_smooth": True,
+        "model/C22/selection/pi_width": 0.1,
+        "model/C22/selection/logP_min": 0.903,
+        "model/C22/selection/logP_width": 0.01,
+        "model/C27/selection/apply_pi": True,
+        "model/C27/selection/apply_mW": True,
+        "model/C27/selection/pi_min": 0.8,
+        "model/C27/selection/pi_smooth": True,
+        "model/C27/selection/pi_width": 0.05,
+        "model/C27/selection/mW_min": "infer",
+        "model/C27/selection/mW_width": 0.1,
+    }
+
+
+def _mwcepheids_selection_ah():
+    return {
+        **_mwcepheids_selection_no_ah(),
+        "model/C22/selection/apply_AH": True,
+        "model/C22/selection/AH_max": 0.4,
+        "model/C22/selection/AH_width": 0.1,
+        "model/C22/selection/dust_map": "bayestar+marshall",
+    }
+
+
+def _mwcepheids_smoke_datasets():
+    return [
+        {
+            "model/model_type": "R21",
+            "model/marginalise_distance": False,
+        },
+        _mwcepheids_forward_base(),
+        _mwcepheids_selection_no_ah(),
+        _mwcepheids_selection_ah(),
+    ]
+
+
+def _mwcepheids_main_datasets():
+    return [
+        {
+            "model/model_type": "R21",
+            "model/marginalise_distance": False,
+        },
+        {
+            "model/model_type": "R21",
+            "model/marginalise_distance": False,
+            "model/use_Q": True,
+        },
+        _mwcepheids_forward_base(),
+        {
+            **_mwcepheids_forward_base(),
+            "model/use_Q": True,
+        },
+        {
+            **_mwcepheids_forward_base(),
+            "model/shared_scatter": False,
+        },
+        {
+            **_mwcepheids_forward_base(),
+            "model/shared_scatter": False,
+            "model/anchor_scatter_correction": 0.06,
+        },
+        _mwcepheids_selection_no_ah(),
+        _mwcepheids_selection_ah(),
+        {
+            **_mwcepheids_forward_base(),
+            "model/marginalise_distance": False,
+            "model/spiral_arms/apply": True,
+        },
+        {
+            **_mwcepheids_forward_base(),
+            "model/spiral_arms/apply": True,
+        },
+        {
+            **_mwcepheids_selection_no_ah(),
+            "model/spiral_arms/apply": True,
+        },
+        {
+            **_mwcepheids_selection_ah(),
+            "model/spiral_arms/apply": True,
+        },
+    ]
+
+
+def _mwcepheids_selection_datasets():
+    return [
+        {
+            **_mwcepheids_forward_base(),
+            "model/C22/selection/apply_mW": True,
+            "model/C22/selection/mW_max": "infer",
+            "model/C22/selection/mW_width": 0.5,
+        },
+        {
+            **_mwcepheids_forward_base(),
+            "model/C22/selection/apply_mW": True,
+            "model/C22/selection/mW_max": "infer",
+            "model/C22/selection/mW_width": "infer",
+        },
+        {
+            **_mwcepheids_forward_base(),
+            "model/C22/selection/apply_pi": True,
+            "model/C22/selection/pi_min": "infer",
+            "model/C22/selection/pi_smooth": True,
+            "model/C22/selection/pi_width": 0.1,
+        },
+        {
+            **_mwcepheids_forward_base(),
+            "model/C22/selection/apply_pi": True,
+            "model/C22/selection/pi_min": 0.35,
+            "model/C22/selection/pi_smooth": False,
+        },
+        {
+            **_mwcepheids_forward_base(),
+            "model/C22/selection/apply_logP": True,
+            "model/C22/selection/logP_min": 0.903,
+            "model/C22/selection/logP_width": 0.01,
+        },
+        {
+            **_mwcepheids_forward_base(),
+            "model/C22/selection/apply_AH": True,
+            "model/C22/selection/AH_max": 0.4,
+            "model/C22/selection/AH_width": 0.1,
+            "model/C22/selection/dust_map": "bayestar+marshall",
+        },
+        {
+            **_mwcepheids_forward_base(),
+            "model/C27/selection/apply_pi": True,
+            "model/C27/selection/pi_min": 0.8,
+            "model/C27/selection/pi_smooth": True,
+            "model/C27/selection/pi_width": 0.05,
+        },
+        {
+            **_mwcepheids_forward_base(),
+            "model/C27/selection/apply_pi": True,
+            "model/C27/selection/apply_mW": True,
+            "model/C27/selection/pi_min": 0.8,
+            "model/C27/selection/mW_min": "infer",
+            "model/C27/selection/mW_width": 0.1,
+        },
+        _mwcepheids_selection_no_ah(),
+        _mwcepheids_selection_ah(),
+    ]
+
+
+_pcs_mono_smoothed_nosky = (
+    _trgbh0_manticore_cola_pcs_monopole_smoothed_nosky_field_datasets)
+_pcs_mono_student_t_smoothed = (
+    _trgbh0_manticore_cola_pcs_monopole_student_t_smoothed_field_datasets)
+
+
+TASK_SPECS = {
+    "MWCepheids_smoke": {
+        "description": "Short MW-Cepheid task-generator smoke runs.",
+        "config_path": "configs/config_MWCepheids.toml",
+        "tag": "smoke",
+        "common": {
+            **MWCEPHEIDS_RUN_COMMON,
+            "inference/num_warmup": 20,
+            "inference/num_samples": 20,
+            "inference/num_chains": 1,
+            "inference/init_maxiter": 0,
+            "io/root_output": f"{MWCEPHEIDS_ROOT}/smoke",
+        },
+        "datasets": _mwcepheids_smoke_datasets(),
+        "expected_tasks": 4,
+    },
+    "MWCepheids_main": {
+        "description": (
+            "MW-Cepheid calibration production grid covering R21, "
+            "forward, Q, scatter, selection, AH, and spiral variants."),
+        "config_path": "configs/config_MWCepheids.toml",
+        "tag": "main",
+        "common": {
+            **MWCEPHEIDS_RUN_COMMON,
+            "inference/num_warmup": 1000,
+            "inference/num_samples": 4000,
+            "io/root_output": f"{MWCEPHEIDS_ROOT}/main",
+        },
+        "datasets": _mwcepheids_main_datasets(),
+        "expected_tasks": 12,
+    },
+    "MWCepheids_selection": {
+        "description": (
+            "MW-Cepheid selection-function grid for C22/C27 selection "
+            "branches."),
+        "config_path": "configs/config_MWCepheids.toml",
+        "tag": "selection",
+        "common": {
+            **MWCEPHEIDS_RUN_COMMON,
+            "inference/num_warmup": 1000,
+            "inference/num_samples": 4000,
+            "io/root_output": f"{MWCEPHEIDS_ROOT}/selection",
+        },
+        "datasets": _mwcepheids_selection_datasets(),
+        "expected_tasks": 10,
+    },
+    "test": {
+        "description": (
+            "Foundation SN simple Carrick/COLA field test with optional "
+            "density smoothing."),
+        "config_path": "configs/config.toml",
+        "tag": "foundation_simple",
+        "common": {
+            "inference/model": "SNModel",
+            "io/catalogue_name": "Foundation",
+            "inference/num_chains": 1,
+            "inference/chain_method": "sequential",
+            "inference/num_warmup": 500,
+            "inference/num_samples": 500,
+            "inference/compute_evidence": False,
+            "inference/compute_log_density": False,
+            "inference/target_accept_prob": 0.9,
+            "pv_model/density_3d_geometry": "sphere",
+            "pv_model/density_3d_radius": 150.0,
+            "pv_model/density_3d_downsample": 1,
+            "pv_model/density_3d_subsample_fraction": 0.5,
+            "model/field_3d_smoothing_scale": [0.0, 8.0],
+            "io/root_output": "results/test",
+        },
+        "datasets": [
+            {
+                "pv_model/kind": "precomputed_los_Carrick2015",
+                "pv_model/galaxy_bias": "linear",
+                "model/priors/beta": {
+                    "dist": "uniform",
+                    "low": 0.0,
+                    "high": 1.0,
+                },
+            },
+            {
+                "pv_model/kind": f"precomputed_los_{VFO_MANTICORE_COLA_LOS}",
+                "pv_model/galaxy_bias": "double_powerlaw",
+                "model/priors/beta": _delta(1.0),
+                "model/cz_likelihood": "gaussian",
+                "io/field_indices": 0,
+            },
+            {
+                "pv_model/kind": f"precomputed_los_{VFO_MANTICORE_COLA_LOS}",
+                "pv_model/galaxy_bias": "double_powerlaw",
+                "model/priors/beta": _delta(1.0),
+                "model/cz_likelihood": "gaussian",
+            },
+        ],
+        "expected_tasks": 6,
+    },
+    "CH0_main": {
+        "description": "CH0 paper H0 grid plus redshift-free distance runs.",
+        "config_path": "configs/config_CH0.toml",
+        "tag": "paper",
+        "common": {
+            **CH0_PAPER_COMMON,
+            "inference/compute_log_density": True,
+            "inference/compute_evidence": True,
+            "inference/num_chains": 1,
+            "inference/num_warmup": 1000,
+            "inference/num_samples": 5000,
+            **_with_root(f"{CH0_PAPER_ROOT}/table"),
+        },
+        "datasets": _ch0_main_datasets() + _ch0_distance_only_datasets(),
+        "expected_tasks": 27,
+    },
+    "CH0_mixed_selection": {
+        "description": "CH0 paper mixed SN-magnitude/redshift split.",
+        "config_path": "configs/config_CH0.toml",
+        "tag": "paper_mixed",
+        "common": {
+            **CH0_PAPER_COMMON,
+            "inference/num_chains": 5,
+            "inference/chain_method": "sequential",
+            "inference/num_warmup": 1000,
+            "inference/num_samples": 5000,
+            **_with_root(f"{CH0_PAPER_ROOT}/mixed_selection"),
+            "model/density_3d_subsample_fraction": 0.5,
+        },
+        "datasets": _ch0_mixed_selection_datasets(),
+        "expected_tasks": 36,
+    },
+    "CH0_imb_geometric": {
+        "description": (
+            "CH0 redshift-free geometric Cepheid-calibration runs testing "
+            "no density field, Carrick linear bias, and Manticore COLA/PCS "
+            "double-power-law density priors."),
+        "config_path": "configs/config_CH0.toml",
+        "tag": "imb_geometric",
+        "common": {
+            **CH0_PAPER_COMMON,
+            "inference/num_chains": 1,
+            "inference/num_warmup": 1000,
+            "inference/num_samples": 2000,
+            **_with_root(f"{CH0_PAPER_ROOT}/imb_geometric"),
+        },
+        "datasets": _ch0_imb_geometric_datasets(),
+        "expected_tasks": 82,
+    },
+    "CH0_single": {
+        "description": (
+            "CH0 one-Manticore-field runs with evidence."),
+        "config_path": "configs/config_CH0.toml",
+        "tag": "single",
+        "common": {
+            **CH0_PAPER_COMMON,
+            "inference/compute_log_density": True,
+            "inference/compute_evidence": True,
+            "inference/num_chains": 1,
+            "inference/num_warmup": 1000,
+            "inference/num_samples": 2000,
+            "inference/save_log_likelihood_per_galaxy": True,
+            **_with_root(f"{CH0_PAPER_ROOT}/single_fields"),
+        },
+        "datasets": _ch0_manticore_field_datasets(),
+        "expected_tasks": 350,
+    },
+    "CH0_single_smoothed": {
+        "description": (
+            "CH0 CIC COLA one-field runs with density-field smoothing."),
+        "config_path": "configs/config_CH0.toml",
+        "tag": "single_smoothed",
+        "common": {
+            **CH0_PAPER_COMMON,
+            "inference/compute_log_density": True,
+            "inference/compute_evidence": True,
+            "inference/num_chains": 1,
+            "inference/num_warmup": 1000,
+            "inference/num_samples": 2000,
+            "inference/save_log_likelihood_per_galaxy": True,
+            "model/field_3d_smoothing_scale": [4.0, 8.0, 16.0, 32.0],
+            "model/velocity_3d_smoothing_scale": 0.0,
+            **_with_root(f"{CH0_PAPER_ROOT}/single_fields_smoothed"),
+        },
+        "datasets": (
+            _ch0_manticore_cola_cic_field_datasets()
+            + _ch0_manticore_swift_cola_cic_uniform_bias_datasets()
+        ),
+        "expected_tasks": 430,
+    },
+    "CH0_single_fixed_bias": {
+        "description": (
+            "CH0 CIC COLA and SWIFT one-field runs with fixed "
+            "double-power-law bias."),
+        "config_path": "configs/config_CH0.toml",
+        "tag": "single_fixed_bias",
+        "common": {
+            **CH0_PAPER_COMMON,
+            "inference/compute_log_density": True,
+            "inference/compute_evidence": True,
+            "inference/num_chains": 1,
+            "inference/num_warmup": 1000,
+            "inference/num_samples": 2000,
+            "inference/save_log_likelihood_per_galaxy": True,
+            **_with_root(f"{CH0_PAPER_ROOT}/single_fields_fixed_bias"),
+        },
+        "datasets": (
+            _ch0_manticore_cola_cic_fixed_bias_datasets()
+            + _ch0_manticore_swift_fixed_bias_datasets()
+        ),
+        "expected_tasks": 110,
+    },
+    "CH0_leaveoneout": {
+        "description": (
+            "CH0 SN-magnitude leave-one-out runs for ManticoreLocalSWIFT "
+            "field 21."),
+        "config_path": "configs/config_CH0.toml",
+        "tag": "leaveoneout",
+        "common": {
+            **CH0_PAPER_COMMON,
+            "inference/compute_log_density": True,
+            "inference/compute_evidence": True,
+            "inference/num_chains": 1,
+            "inference/num_warmup": 1000,
+            "inference/num_samples": 2000,
+            "inference/save_log_likelihood_per_galaxy": True,
+            **_with_root(f"{CH0_PAPER_ROOT}/leaveoneout"),
+        },
+        "datasets": _ch0_leaveoneout_datasets(),
+        "expected_tasks": 35,
+    },
+    "CH0_angular_scatter": {
+        "description": (
+            "CH0 SN-magnitude angular-position scatter runs for CIC "
+            "ManticoreLocalCOLA fields 0-29."),
+        "config_path": "configs/config_CH0.toml",
+        "tag": "angular_scatter",
+        "common": {
+            **CH0_PAPER_COMMON,
+            "inference/compute_log_density": True,
+            "inference/compute_evidence": True,
+            "inference/num_chains": 1,
+            "inference/num_warmup": 1000,
+            "inference/num_samples": 2000,
+            "inference/save_log_likelihood_per_galaxy": True,
+            **_with_root(f"{CH0_PAPER_ROOT}/angular_scatter"),
+        },
+        "datasets": _ch0_angular_scatter_datasets(),
+        "expected_tasks": 120,
+    },
+    "Vext_rad": {
+        "description": (
+            "CF4 W1 and SDSS FP radial Vext comparison."),
+        "config_path": "configs/config.toml",
+        "common": {
+            "inference/model": "TFRModel",
+            "inference/num_chains": 1,
+            "inference/chain_method": "sequential",
+            "inference/compute_log_density": False,
+            "inference/compute_evidence": False,
+            "pv_model/which_Vext": [
+                "constant", "radial", "radial_magnitude"],
+            "io/root_output": VEXT_RAD_ROOT,
+        },
+        "datasets": [
+            {
+                "io/catalogue_name": "CF4_W1",
+                "pv_model/kind": "Vext",
+            },
+            {
+                "io/catalogue_name": "CF4_W1",
+                "pv_model/kind": "precomputed_los_Carrick2015",
+                "pv_model/galaxy_bias": "linear",
+                "model/priors/beta": {
+                    "dist": "uniform",
+                    "low": 0.0,
+                    "high": 2.0,
+                },
+            },
+            {
+                "inference/model": "FPModel",
+                "io/catalogue_name": "SDSS_FP",
+                "io/SDSS_FP/zcmb_max": 0.1,
+                "pv_model/kind": "Vext",
+                "model/priors/Vext_radial": VEXT_RAD_SDSS_FP_VEXT_PRIOR,
+                "model/priors/Vext_radial_magnitude": (
+                    VEXT_RADMAG_SDSS_FP_VEXT_PRIOR),
+            },
+            {
+                "inference/model": "FPModel",
+                "io/catalogue_name": "SDSS_FP",
+                "pv_model/kind": "precomputed_los_Carrick2015",
+                "pv_model/galaxy_bias": "linear",
+                "model/priors/Vext_radial": VEXT_RAD_SDSS_FP_CARRICK_PRIOR,
+                "model/priors/Vext_radial_magnitude": (
+                    VEXT_RADMAG_SDSS_FP_CARRICK_PRIOR),
+                "model/priors/beta": {
+                    "dist": "uniform",
+                    "low": 0.0,
+                    "high": 2.0,
+                },
+            },
+        ],
+        "expected_tasks": 12,
+    },
+    "TRGBH0_main": {
+        "description": (
+            "TRGB H0 grid plus redshift-free distance run, including "
+            "Carrick Vmono, Carrick/Manticore sky-exposure, and Carrick "
+            "double-power-law (inferred/0.43/0.48 beta) "
+            "Gaussian/Student-t variants."),
+        "config_path": "configs/config_EDD_TRGB.toml",
+        "tag": "main",
+        "common": {
+            **TRGBH0_COMMON,
+            "inference/init_maxiter": 500,
+            "inference/init_median_num_samples": 100,
+            "inference/num_warmup": 2000,
+            "inference/num_samples": 5000,
+            "model/selection_integral_supersample_radius": (
+                TRGBH0_SELECTION_SUPERSAMPLE_RADIUS),
+            "model/selection_integral_supersample_target_dx": (
+                TRGBH0_SELECTION_SUPERSAMPLE_TARGET_DX),
+            "model/priors/H0/low": 40,
+            "model/priors/H0/high": 100,
+            "model/priors/mag_lim_TRGB": (
+                _trgbh0_edd_mag_lim_uninformative_prior()),
+            "model/priors/mag_lim_TRGB_width/low": 0.15,
+            **_with_root(f"{TRGBH0_ROOT}/table"),
+        },
+        "datasets": _trgbh0_main_datasets(),
+        "expected_tasks": 22,
+    },
+    "TRGBH0_single": {
+        "description": (
+            "TRGB H0 COLA one-field runs for CIC, PCS, SPH MAS, "
+            "plus PCS with Student-t redshift likelihood and 4 Mpc/h "
+            "density smoothing variants."),
+        "config_path": "configs/config_EDD_TRGB.toml",
+        "tag": "single",
+        "common": {
+            **TRGBH0_COMMON,
+            "inference/num_warmup": 1000,
+            "inference/num_samples": 1000,
+            "inference/save_log_likelihood_per_galaxy": True,
+            "model/priors/H0/low": 40,
+            "model/priors/H0/high": 100,
+            "model/selection_integral_supersample_radius": (
+                TRGBH0_SELECTION_SUPERSAMPLE_RADIUS),
+            "model/selection_integral_supersample_target_dx": (
+                TRGBH0_SELECTION_SUPERSAMPLE_TARGET_DX),
+            "model/priors/mag_lim_TRGB_width/low": 0.15,
+            **_trgbh0_edd_b_cut(),
+            **_trgbh0_sky_exposure(),
+            **_with_root(f"{TRGBH0_ROOT}/single_fields"),
+        },
+        "datasets": _trgbh0_manticore_cola_single_datasets(),
+        "expected_tasks": 320,
+    },
+    "TRGBH0_single_smoothed": {
+        "description": (
+            "TRGB H0 PCS COLA one-field runs with density-field smoothing, "
+            "including Gaussian and Student-t redshift likelihoods."),
+        "config_path": "configs/config_EDD_TRGB.toml",
+        "tag": "single_smoothed",
+        "common": {
+            **TRGBH0_COMMON,
+            "inference/num_warmup": 1000,
+            "inference/num_samples": 1000,
+            "inference/save_log_likelihood_per_galaxy": True,
+            "model/priors/H0/low": 40,
+            "model/priors/H0/high": 100,
+            "model/selection_integral_supersample_radius": (
+                TRGBH0_SELECTION_SUPERSAMPLE_RADIUS),
+            "model/selection_integral_supersample_target_dx": (
+                TRGBH0_SELECTION_SUPERSAMPLE_TARGET_DX),
+            "model/priors/mag_lim_TRGB_width/low": 0.15,
+            **_trgbh0_edd_b_cut(),
+            **_trgbh0_sky_exposure(),
+            "model/field_3d_smoothing_scale": [4.0, 8.0],
+            "model/velocity_3d_smoothing_scale": 0.0,
+            **_with_root(f"{TRGBH0_ROOT}/single_fields_smoothed"),
+        },
+        "datasets": (
+            _trgbh0_manticore_cola_pcs_field_datasets()
+            + _trgbh0_manticore_cola_pcs_student_t_field_datasets()
+            + _trgbh0_manticore_cola_pcs_monopole_smoothed_field_datasets()
+            + _pcs_mono_smoothed_nosky()
+            + _pcs_mono_student_t_smoothed()
+            + _trgbh0_manticore_cola_pcs_smoothed_nosky_field_datasets()
+            + _trgbh0_manticore_cola_pcs_freebeta_smoothed_field_datasets()
+        ),
+        "expected_tasks": 720,
+    },
+    "TRGBH0_CCHP_single": {
+        "description": (
+            "CCHP TRGB H0 PCS COLA one-field runs with Gaussian and "
+            "Student-t redshift likelihoods."),
+        "config_path": "configs/config_CCHP_TRGB.toml",
+        "tag": "single",
+        "common": {
+            **TRGBH0_COMMON,
+            "inference/num_warmup": 1000,
+            "inference/num_samples": 1000,
+            "inference/save_log_likelihood_per_galaxy": True,
+            "model/priors/H0/low": 40,
+            "model/priors/H0/high": 100,
+            "model/selection_integral_supersample_radius": (
+                TRGBH0_CCHP_SELECTION_SUPERSAMPLE_RADIUS),
+            "model/selection_integral_supersample_target_dx": (
+                TRGBH0_CCHP_SELECTION_SUPERSAMPLE_TARGET_DX),
+            "model/priors/mag_lim_TRGB_width/low": 0.15,
+            **_with_root(f"{TRGBH0_ROOT}/cchp_single_fields"),
+        },
+        "datasets": _trgbh0_cchp_cola_pcs_likelihood_datasets(),
+        "expected_tasks": 160,
+    },
+    "TRGBH0_CCHP_single_smoothed": {
+        "description": (
+            "CCHP TRGB H0 PCS COLA one-field runs with density-field "
+            "smoothing and Gaussian/Student-t redshift likelihoods."),
+        "config_path": "configs/config_CCHP_TRGB.toml",
+        "tag": "single_smoothed",
+        "common": {
+            **TRGBH0_COMMON,
+            "inference/num_warmup": 1000,
+            "inference/num_samples": 1000,
+            "inference/save_log_likelihood_per_galaxy": True,
+            "model/priors/H0/low": 40,
+            "model/priors/H0/high": 100,
+            "model/selection_integral_supersample_radius": (
+                TRGBH0_CCHP_SELECTION_SUPERSAMPLE_RADIUS),
+            "model/selection_integral_supersample_target_dx": (
+                TRGBH0_CCHP_SELECTION_SUPERSAMPLE_TARGET_DX),
+            "model/priors/mag_lim_TRGB_width/low": 0.15,
+            "model/field_3d_smoothing_scale": [4.0, 8.0],
+            "model/velocity_3d_smoothing_scale": 0.0,
+            **_with_root(f"{TRGBH0_ROOT}/cchp_single_fields_smoothed"),
+        },
+        "datasets": _trgbh0_cchp_cola_pcs_likelihood_datasets(),
+        "expected_tasks": 320,
+    },
+    "S8_production": {
+        "description": (
+            "S8 production PV sweep for individual and joint catalogues."),
+        "config_path": "configs/config.toml",
+        "tag": "default",
+        "common": {
+            "pv_model/kind": S8_PV_KIND,
+            "pv_model/galaxy_bias": S8_BIAS_MODELS,
+            "pv_model/density_3d_downsample": 1,
+            "model/priors/beta": {
+                "dist": "uniform",
+                "low": 0.0,
+                "high": 2.0,
+            },
+            "inference/num_chains": 1,
+            "inference/num_warmup": 2000,
+            "inference/num_samples": 10000,
+            "io/root_output": S8_ROOT,
+        },
+        "datasets": _s8_production_datasets(),
+        "expected_tasks": 20,
+    },
+    "VFO": {
+        "description": (
+            "VFO PV catalogue Carrick2015/Manticore/COLA comparison."),
+        "config_path": "configs/config.toml",
+        "tag": "paper",
+        "common": {
+            "pv_model/density_3d_geometry": "sphere",
+            "pv_model/density_3d_radius": 150.0,
+            "pv_model/density_3d_downsample": 1,
+            "inference/num_chains": 1,
+            "inference/num_warmup": 1000,
+            "inference/num_samples": 5000,
+            "io/root_output": VFO_ROOT,
+        },
+        "datasets": _vfo_datasets(),
+        "expected_tasks": 74,
+    },
+    "VFO_single": {
+        "description": (
+            "CF4 W1 TFR one-field Manticore/COLA runs for the VFO setup."),
+        "config_path": "configs/config.toml",
+        "tag": "single",
+        "common": {
+            "inference/model": "TFRModel",
+            "io/catalogue_name": "CF4_W1",
+            "pv_model/galaxy_bias": "double_powerlaw",
+            "pv_model/density_3d_subsample_fraction": 0.1,
+            "pv_model/density_3d_geometry": "sphere",
+            "pv_model/density_3d_radius": 150.0,
+            "pv_model/density_3d_downsample": 1,
+            "model/priors/beta": _delta(1.0),
+            "inference/num_chains": 1,
+            "inference/num_warmup": 1000,
+            "inference/num_samples": 5000,
+            "io/root_output": f"{VFO_ROOT}/single_fields",
+        },
+        "datasets": _vfo_single_datasets(),
+        "expected_tasks": 80,
+    },
+}

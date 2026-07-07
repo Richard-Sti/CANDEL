@@ -1,0 +1,102 @@
+# Copy this file to local_config.toml and edit the machine-local paths.
+
+# =============================================================================
+# Core CANDEL paths
+# =============================================================================
+
+root_main = "/path/to/CANDEL/"
+root_data = "/path/to/CANDEL/"
+root_results = "/path/to/CANDEL/"
+python_exec = "/path/to/CANDEL/venv_candel/bin/python"
+machine = "local"
+
+# =============================================================================
+# Runtime and cluster submission
+# =============================================================================
+
+# Optional cluster/runtime settings used by submission helpers.
+use_frozen = false
+modules = ""
+modules_gpu = ""
+gpu_ld_library_path = []
+
+# =============================================================================
+# BORG field helper executables
+# =============================================================================
+
+[borg_fields]
+# Python environment that can run BORG helper scripts and import BORG-side
+# dependencies such as boto3 for downloads and MAS_library for CIC/PCS fields.
+borg_python = "/path/to/borg/venv/bin/python"
+
+# BORG forward executable used to produce split particle/field outputs.
+borg_forward = "/path/to/borg_forward"
+
+# CosmoTool SPH executable, only used with `--mas sph`.
+cosmotool_sph = "/path/to/simple3DFilter"
+
+# Python environment used for CANDEL plotting/validation helpers.
+plot_python = "/path/to/CANDEL/venv_candel/bin/python"
+
+# srun executable for cluster submission; use "srun" if it is on PATH.
+srun = "srun"
+
+# Active BORG chain used by scripts/BORG_fields helpers.
+active_chain = "ManticoreLocal"
+
+# =============================================================================
+# Active BORG chain configuration
+# =============================================================================
+
+[borg_fields.chains.ManticoreLocal]
+# Root directory containing chain/, schedule_final.yaml, and forward products.
+run_dir = "/path/to/BORG_RUN"
+
+# Schedule mapping requested field steps to chain subchains and MCMC samples.
+schedule = "/path/to/BORG_RUN/schedule_final.yaml"
+
+# Packed HDF5 products written by run_borg_fields.sh.
+field_output_dir = "/path/to/BORG_RUN/forward_fields"
+
+# Optional reference products used by compare_sph_density_fields.py --step.
+reference_fields_dir = "/path/to/BORG_RUN/sph_fields_new_feb/sph_fields"
+
+# Public Manticore download generation used by download_manticore_chain.py.
+download_generation = "2MPP_MULTIBIN_N256_DES_V2"
+
+# =============================================================================
+# Machine-local reconstruction field products
+# =============================================================================
+
+# Machine-local reconstruction field products that are too large or too
+# installation-specific to live in reusable configs.
+[io.reconstruction_main.Lilow2024]
+path_density = "/path/to/Lilow2024_density.npy"
+path_velocity_x = "/path/to/Lilow2024_xVelocity.npy"
+path_velocity_y = "/path/to/Lilow2024_yVelocity.npy"
+path_velocity_z = "/path/to/Lilow2024_zVelocity.npy"
+
+[io.reconstruction_main.CF4]
+folder = "/path/to/CF4gp_23avr24_256-z008_test_100_realizations"
+
+[io.reconstruction_main.CLONES]
+file_path = "/path/to/cf2gvpecc1pt5elmo73_sig6distribsbvoldi_RZA3Derrv2_512_500_ss8_zinit60_000.hdf5"
+
+[io.reconstruction_main.HAMLET_V0]
+fpath_root = "/path/to/HAMLET_V0"
+
+[io.reconstruction_main.HAMLET_V1]
+fpath_root = "/path/to/HAMLET_V1"
+
+[io.reconstruction_main.CB1]
+fpath_root = "/path/to/csiborg1/field"
+
+[io.reconstruction_main.CB2]
+fpath_root = "/path/to/csiborg2_main/field"
+
+[io.reconstruction_main.ManticoreLocalCOLA]
+fpath_root = "/path/to/BORG_RUN/forward_fields"
+which_MAS = "CIC"
+
+[io.reconstruction_main.ManticoreLocalSWIFT]
+fpath_root = "/path/to/BORG_RUN/sph_fields_new_feb/sph_fields"

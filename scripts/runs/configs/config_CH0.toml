@@ -1,0 +1,181 @@
+base = ["config_priors.toml", "config_paths.toml"]
+
+###############################################################################
+#                               Inference                                     #
+###############################################################################
+
+[inference]
+num_warmup = 1000
+num_samples = 5000
+num_chains = 4
+chain_method = "sequential"
+seed = 44
+save_log_likelihood_per_galaxy = false
+num_chains_harmonic = 10
+
+###############################################################################
+#                                 Model                                       #
+###############################################################################
+
+[model]
+which_run = "CH0"
+
+which_selection = "redshift"
+use_uniform_mu_host_priors = false
+use_Cepheid_host_redshift = true
+
+use_reconstruction = true
+use_density_dependent_sigma_v = false
+which_bias = "linear"
+
+use_fiducial_Cepheid_host_PV_covariance = false
+use_PV_covmat_scaling = false
+weight_selection_by_covmat_Neff = false
+
+# Selection parameters (set to "infer" to sample from prior below)
+cz_lim_selection = 3300
+cz_lim_selection_width = 300
+
+mag_lim_SN = 14.0
+mag_lim_SN_width = 0.15
+
+# Used only for which_selection = "SN_magnitude_or_redshift_Nmag";
+# the first N Cepheid hosts are treated as SN-magnitude selected.
+num_hosts_selection_mag = 35
+
+distmod_limits = [27.5, 36]
+distmod_limits_LMC = [17, 20]
+distmod_limits_N4258 = [28, 31]
+distmod_limits_anchor = [23, 26]
+
+# 3D selection integral spherical truncation radius in Mpc/h.
+selection_integral_geometry = "sphere"
+selection_integral_grid_radius = 60.0
+density_3d_subsample_fraction = 1.0
+# Optional Gaussian smoothing scale in Mpc/h for reconstruction density fields.
+# Applies consistently to LOS products and 3D field caches; 0 disables it.
+field_3d_smoothing_scale = 0.0
+# Optional velocity-field smoothing. Disabled unless explicitly set non-zero.
+velocity_3d_smoothing_scale = 0.0
+# Optional inner-region supersampling for the 3D selection integral.
+# target_dx=0 or radius=0 disables inner-region supersampling.
+selection_integral_supersample_radius = 0.0
+selection_integral_supersample_target_dx = 0.0
+
+# --- Overrides from default priors ---
+
+# SN absolute magnitude (only if including supernovae)
+[model.priors.M_B]
+dist = "uniform"
+low = -20
+high = -18
+
+# Cepheid absolute magnitude at P=10d, solar metallicity
+[model.priors.M_W]
+dist = "uniform"
+low = -7
+high = -5
+
+# Cepheid period-luminosity slope
+[model.priors.b_W]
+dist = "uniform"
+low = -6
+high = 0
+
+# Cepheid metallicity dependence
+[model.priors.Z_W]
+dist = "uniform"
+low = -2
+high = 2
+
+# Small-scale peculiar velocity dispersion
+[model.priors.sigma_v]
+dist = "jeffreys"
+low = 25
+high = 2500
+
+[model.priors.sigma_v_low]
+dist = "maxwell"
+scale = 200
+
+[model.priors.sigma_v_high]
+dist = "maxwell"
+scale = 200
+
+[model.priors.log_sigma_v_rho_t]
+dist = "normal"
+loc = 1.0
+scale = 5.0
+
+[model.priors.sigma_v_k]
+dist = "truncated_normal"
+low = 0.0
+mean = 1.0
+scale = 1.0
+
+[model.priors.beta]
+dist = "normal"
+loc = 0.43
+scale = 0.02
+
+[model.priors.A_covmat]
+dist = "truncated_normal"
+low = 0.0
+mean = 1.0
+scale = 0.5
+
+[model.priors.Vext]
+dist = "vector_uniform_fixed"
+low = 0.0
+high = 2500
+
+# --- Selection threshold priors (used when value = "infer") ---
+
+[model.priors.cz_lim_selection]
+dist = "uniform"
+low = 500
+high = 5000
+
+[model.priors.cz_lim_selection_width]
+dist = "uniform"
+low = 50
+high = 1000
+
+[model.priors.mag_lim_SN]
+dist = "uniform"
+low = 10
+high = 18
+
+[model.priors.mag_lim_SN_width]
+dist = "uniform"
+low = 0.01
+high = 1.0
+
+################################################################################
+#                                  Data                                        #
+################################################################################
+
+[io]
+root_output = "results/CH0"
+fname_output = "results/CH0/test.hdf5"
+los_file_random = "data/los_random_<X>.hdf5"
+los_r0_decay_scale = 5
+
+# Override reconstruction grid for Cepheid H0.
+[io.reconstruction_main]
+rmin = 0.1
+rmax = 75
+num_steps = 401
+
+[io.SH0ES]
+root = "data/SH0ES"
+cepheid_host_cz_cmb_max = 3300
+# Leave-one-out Cepheid host observation. Set to a zero-based active host
+# index; "none" disables the drop.
+drop_observation = "none"
+reconstruction = "Carrick2015"
+# reconstruction = "manticore_2MPP_MULTIBIN_N256_DES_V2"
+
+[io.PV_main.SH0ES]
+root = "data/SH0ES"
+los_file = "data/SH0ES/los_SH0ES_TFR_<X>.hdf5"
